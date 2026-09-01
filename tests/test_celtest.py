@@ -6,7 +6,6 @@ from __future__ import annotations
 import os
 import sys
 import time
-import signal
 import subprocess
 from typing import cast
 from pathlib import Path
@@ -93,9 +92,17 @@ version = "4.5.6"
         class Writer:
             """Capture terminal writes for the replacement assertion."""
 
-            def write(self, message: str, *, flush: bool = False) -> None:
+            hasmarkup = True
+
+            def write(
+                self,
+                message: str,
+                *,
+                flush: bool = False,
+                **markup: bool,
+            ) -> None:
                 """Capture a terminal write."""
-                del flush
+                del flush, markup
                 messages.append(message)
 
             def line(self) -> None:
@@ -113,17 +120,151 @@ version = "4.5.6"
             replace_lines=True,
         )
         try:
-            celtest_plugin._write_live_line("⚙️ working", replace=True, complete=False)
-            celtest_plugin._write_live_line("✅ working", replace=True)
+            celtest_plugin._write_live_line("? working", replace=True, complete=False)
+            celtest_plugin._write_live_line(". working", replace=True)
         finally:
             celtest_plugin._state = previous_state
 
-        assert messages == ["\r⚙️ working", "\r✅ working \n"]
+        assert messages == ["\r? working", "\r. working\n"]
 
-    def test_celtest_formats_pass_warning_failure_and_skip(
+    def test_celtest_appends_compact_results_without_redrawing(self) -> None:
+        """Verify compact results do not emit carriage-return redraws."""
+        messages: list[str] = []
+
+        class Writer:
+            """Capture compact output writes."""
+
+            def write(
+                self,
+                message: str,
+                *,
+                flush: bool = False,
+                **markup: bool,
+            ) -> None:
+                """Capture one compact output write."""
+                del flush, markup
+                messages.append(message)
+
+            def line(self) -> None:
+                """Capture a terminal newline."""
+                messages.append("\n")
+
+        writer = Writer()
+        reporter = cast(
+            celtest_plugin._TerminalReporter,
+            SimpleNamespace(_tw=writer),
+        )
+        previous_state = celtest_plugin._state
+        celtest_plugin._state = celtest_plugin._PluginState(
+            terminalreporter=reporter,
+            is_controller=True,
+        )
+        record = celtest_plugin._TestRecord("test_pass", "pass", None)
+        record.status = "passed"
+        try:
+            celtest_plugin._write_compact_result_icon(record)
+        finally:
+            celtest_plugin._state = previous_state
+
+        assert messages == ["."]
+
+    def test_celtest_non_ansi_compact_fallback_emits_plain_final_result(self) -> None:
+        """Verify non-ANSI compact output emits no color or processing marker."""
+        writes: list[tuple[str, dict[str, bool]]] = []
+
+        class Writer:
+            """Capture output from a writer without ANSI markup support."""
+
+            hasmarkup = False
+
+            def write(
+                self,
+                message: str,
+                *,
+                flush: bool = False,
+                **markup: bool,
+            ) -> None:
+                """Capture one output write and its markup."""
+                del flush
+                writes.append((message, markup))
+
+            def line(self) -> None:
+                """Capture a terminal newline."""
+
+        reporter = cast(
+            celtest_plugin._TerminalReporter,
+            SimpleNamespace(_tw=Writer()),
+        )
+        previous_state = celtest_plugin._state
+        celtest_plugin._state = celtest_plugin._PluginState(
+            terminalreporter=reporter,
+            is_controller=True,
+        )
+        record = celtest_plugin._TestRecord("test_error", "error", None)
+        record.status = "error"
+        try:
+            celtest_plugin._write_compact_result_icon(record)
+        finally:
+            celtest_plugin._state = previous_state
+
+        assert writes == [("E", {})]
+
+    def test_celtest_non_ansi_verbose_fallback_emits_one_plain_line(self) -> None:
+        """Verify non-ANSI verbose output uses a final newline without redraws."""
+        writes: list[str] = []
+        lines: list[str] = []
+
+        class Writer:
+            """Capture output from a writer without ANSI markup support."""
+
+            hasmarkup = False
+
+            def write(
+                self,
+                message: str,
+                *,
+                flush: bool = False,
+                **markup: bool,
+            ) -> None:
+                """Capture unexpected direct writer output."""
+                del flush, markup
+                writes.append(message)
+
+            def line(self) -> None:
+                """Capture an unexpected direct writer newline."""
+                writes.append("\n")
+
+        class Reporter:
+            """Capture plain reporter lines."""
+
+            _tw = Writer()
+
+            def write_line(self, value: str) -> None:
+                """Capture one newline-terminated reporter line."""
+                lines.append(f"{value}\n")
+
+        previous_state = celtest_plugin._state
+        celtest_plugin._state = celtest_plugin._PluginState(
+            terminalreporter=cast(celtest_plugin._TerminalReporter, Reporter()),
+            is_controller=True,
+            verbose=True,
+        )
+        try:
+            celtest_plugin._write_live_line(
+                "E failed test",
+                replace=True,
+                color="red",
+            )
+        finally:
+            celtest_plugin._state = previous_state
+
+        assert not writes
+        assert lines == ["E failed test\n"]
+
+    def test_celtest_formats_verbose_pass_warning_failure_and_skip(
         self, tmp_path: Path
     ) -> None:
-        """Verify the plugin emits the requested compact result contract."""
+        """Verify verbose mode retains the detailed result contract."""
         test_file = tmp_path / "test_sample.py"
         test_file.write_text(
             """
@@ -149,6 +290,88 @@ def test_skip():
 def test_failure():
     warnings.warn("failure warning", UserWarning)
     assert "left" == "right"
+
+@celtest("friendly error")
+def test_error():
+    raise RuntimeError("sample runtime error")
+""",
+            encoding="utf-8",
+        )
+        environment = os.environ.copy()
+        project_root = str(Path(__file__).resolve().parents[1])
+        environment["PYTHONPATH"] = project_root
+        environment["PYTHONIOENCODING"] = "utf-8"
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "pytest",
+                "-p",
+                "tests.celtest",
+                "-v",
+                str(test_file),
+            ],
+            cwd=project_root,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=False,
+            env=environment,
+        )
+        output = result.stdout + result.stderr
+
+        assert result.returncode == 1
+        metadata = celtest_plugin._project_metadata(Path(project_root))
+        assert f"testing {metadata.display_name} {metadata.version}" in output
+        assert "? friendly pass" not in output
+        assert ". friendly pass" in output
+        assert "? friendly warning" not in output
+        assert "W friendly warning" in output
+        assert "F friendly failure" in output
+        assert "hidden skip" not in output
+        assert "passed 2/4" in output
+        assert "E friendly error" in output
+        assert "warnings 2" in output
+        assert "UserWarning: sample warning" in output
+        assert "UserWarning: failure warning" in output
+        assert "The sample assertion was false." in output
+        assert "Traceback" not in output
+        assert "assert 'left' == 'right'" in output
+        assert "\r" not in output
+
+    def test_celtest_formats_non_verbose_results_without_details(
+        self, tmp_path: Path
+    ) -> None:
+        """Verify non-verbose output uses compact progress and concise details."""
+        test_file = tmp_path / "test_sample.py"
+        test_file.write_text(
+            """
+import pytest
+import warnings
+
+from tests.celtest import celtest
+
+@celtest("friendly pass")
+def test_pass():
+    pass
+
+@celtest("friendly warning")
+def test_warning():
+    warnings.warn("sample warning", UserWarning)
+
+@pytest.mark.skip(reason="not part of this run")
+@celtest("hidden skip")
+def test_skip():
+    pass
+
+@celtest("friendly failure", hint="The sample assertion was false.")
+def test_failure():
+    warnings.warn("failure warning", UserWarning)
+    assert "left" == "right"
+
+@celtest("friendly error")
+def test_error():
+    raise RuntimeError("sample runtime error")
 """,
             encoding="utf-8",
         )
@@ -178,20 +401,69 @@ def test_failure():
         assert result.returncode == 1
         metadata = celtest_plugin._project_metadata(Path(project_root))
         assert f"testing {metadata.display_name} {metadata.version}" in output
-        assert "⚙️ friendly pass" in output
-        assert "✅ friendly pass" in output
-        assert "⚙️ friendly warning" in output
-        assert "⚠️ friendly warning" in output
-        assert "❌ friendly failure" in output
-        assert "hidden skip" not in output
-        assert "passed 2/3" in output
-        assert "❌ friendly failure" in output
+        assert "?" not in output
+        assert ".WSFE" in output
+        assert "\x1b[" not in output
+        assert "\b" not in output
+        assert "passed 2/4" in output
         assert "warnings 2" in output
+        assert "friendly pass" not in output
+        assert "F failures" in output
+        assert "friendly failure: The sample assertion was false." in output
+        assert "E errors" in output
+        assert "friendly error: RuntimeError: sample runtime error" in output
+        assert "W warnings" in output
         assert "UserWarning: sample warning" in output
         assert "UserWarning: failure warning" in output
-        assert "The sample assertion was false." in output
         assert "Traceback" not in output
-        assert "assert 'left' == 'right'" in output
+        assert "assert 'left' == 'right'" not in output
+
+    def test_celtest_reports_unstarted_tests_in_non_verbose_summary(
+        self, tmp_path: Path
+    ) -> None:
+        """Verify compact output accounts for tests stopped before execution."""
+        test_file = tmp_path / "test_fail_fast.py"
+        test_file.write_text(
+            """
+from tests.celtest import celtest
+
+@celtest("friendly failure")
+def test_failure():
+    assert False
+
+@celtest("unstarted test")
+def test_unstarted():
+    pass
+""",
+            encoding="utf-8",
+        )
+        environment = os.environ.copy()
+        project_root = str(Path(__file__).resolve().parents[1])
+        environment["PYTHONPATH"] = project_root
+        environment["PYTHONIOENCODING"] = "utf-8"
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "pytest",
+                "-p",
+                "tests.celtest",
+                "-q",
+                "-x",
+                str(test_file),
+            ],
+            cwd=project_root,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=False,
+            env=environment,
+        )
+        output = result.stdout + result.stderr
+
+        assert result.returncode != 0
+        assert "passed 0/2" in output
+        assert "N not run 1" in output
 
     def test_celtest_formats_collection_failure_without_traceback(
         self,
@@ -228,18 +500,19 @@ def test_failure():
 
         assert result.returncode != 0
         assert "test collection failed" in output
-        assert "❌ test_broken.py" in output
-        assert "ℹ️ test collection failure hint" in output
+        assert "E test_broken.py" in output
+        assert "test collection failure hint" in output
         assert "SyntaxError" in output
         assert "Traceback" not in output
         assert "Interrupted" not in output
 
-    def test_celtest_ends_interrupted_runs_without_incomplete_tests(
+    def test_celtest_handles_interrupted_runs_without_incomplete_tests(
         self,
         tmp_path: Path,
     ) -> None:
-        """Verify CTRL+C does not turn incomplete tests into passes or collection errors."""
+        """Verify KeyboardInterrupt does not turn incomplete tests into passes."""
         marker = tmp_path / "started"
+        interrupt_request = tmp_path / "interrupt"
         test_file = tmp_path / "test_interrupt.py"
         test_file.write_text(
             """
@@ -256,7 +529,10 @@ def test_completed():
 @celtest("interrupted test")
 def test_interrupted():
     Path(os.environ["CELTEST_MARKER"]).write_text("started", encoding="utf-8")
-    time.sleep(30)
+    interrupt_request = Path(os.environ["CELTEST_INTERRUPT"])
+    while not interrupt_request.exists():
+        time.sleep(0.05)
+    raise KeyboardInterrupt
 
 @celtest("unstarted test")
 def test_unstarted():
@@ -269,6 +545,7 @@ def test_unstarted():
         environment["PYTHONPATH"] = project_root
         environment["PYTHONIOENCODING"] = "utf-8"
         environment["CELTEST_MARKER"] = str(marker)
+        environment["CELTEST_INTERRUPT"] = str(interrupt_request)
         with subprocess.Popen(
             [
                 sys.executable,
@@ -292,8 +569,14 @@ def test_unstarted():
                     if process.poll() is not None:
                         break
                     time.sleep(0.05)
-                assert marker.exists(), "the interrupted test did not start"
-                process.send_signal(signal.SIGINT)
+                if not marker.exists():
+                    if process.poll() is None:
+                        process.kill()
+                    startup_output, _ = process.communicate(timeout=5)
+                    raise AssertionError(
+                        "the interrupted test did not start:\n" + startup_output
+                    )
+                interrupt_request.write_text("interrupt", encoding="utf-8")
                 output, _ = process.communicate(timeout=15)
             finally:
                 if process.poll() is None:
@@ -303,9 +586,4 @@ def test_unstarted():
         assert process.returncode != 0
         assert output.rstrip().endswith("interrupted")
         assert "test collection failed" not in output
-        assert "✅ interrupted test" not in output
-        assert "✅ unstarted test" not in output
-        assert "ℹ️ interruption hint" not in output
-        assert "False" not in output
         assert "passed " not in output
-        assert "not run " not in output

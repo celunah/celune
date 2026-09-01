@@ -8,26 +8,49 @@ local test commands, and the limits of incremental test selection.
 
 The test suite loads `tests/celtest.py` as a pytest plugin through
 `tests/conftest.py`. It keeps pytest's collection, fixtures, warning capture,
-reporting hooks, and exit codes, while replacing only pytest's terminal
-presentation with a compact report:
+reporting hooks, and exit codes, while replacing pytest's terminal presentation.
+Without `-v`, it prints a compact status row as tests finish, followed by the
+totals:
 
 ```text
 testing [app name and version]
 
-⚙️ friendly test description
-✅ friendly test description
-❌ friendly test description
+....................
+
+passed 20/20 time 0:10 warnings 0
+```
+
+Non-verbose output does not include test descriptions or failure tracebacks. If
+tests fail or emit warnings, concise details appear directly below the totals.
+With `-v`, ANSI-capable terminals show a processing line followed by the final
+result and detailed display:
+
+```text
+testing [app name and version]
+
+? friendly test description
+. friendly test description
+F friendly test description
 [pytest's exact failure representation]
-⚠️ friendly test description
+W friendly test description
+E friendly test description
 
-passed 2/3 time 0:01 warnings 1
+passed 2/4 time 0:01 warnings 1
 
-⚠️ warnings
+W warnings
 [warnings reported during tests]
 
-ℹ️ test failure hint
+test failure hint
 [a concise assertion or exception explanation]
 ```
+
+When ANSI markup is unavailable, verbose mode omits the processing `?` line and
+emits each final result directly as a plain line terminated by `\n`; it does not
+use carriage-return replacement.
+
+`F` marks assertion-style failures, while `E` marks execution, setup, teardown,
+collection, and other errors. Configured skips use the blue `S` marker. Tests
+that were collected but never started use `N`.
 
 If CTRL+C interrupts a run after collection, Celtest keeps any completed test
 results already shown and ends with a simple `interrupted` message. It omits
@@ -39,18 +62,23 @@ interrupted
 
 The header uses `project.version` and `tool.celtest.display_name` from the
 active project's `pyproject.toml`, falling back to `project.name` when no
-display name is configured. The processing line is replaced with a raw
-carriage return and fixed-width padding whenever pytest exposes a terminal
-writer, including controller output from parallel runs. If no terminal writer
-is available, the processing and final result are printed on separate lines.
-A failed test is always marked `❌`,
-including when it also produces warnings. Skipped tests are omitted from the
-final list, count, and summary. Fallback descriptions preserve common Celune
-acronyms such as `UI`, `TTS`, and `VRAM`. Parallel runs label worker startup as
-`setting up parallel test harness`. Collection and other fatal errors use a
-separate failure block with module names and a concise hint. The
-`test collection failed` block is reserved for actual collection failures;
-interruptions use `interrupted`.
+display name is configured. Non-verbose output appends each completed status
+symbol once, avoiding carriage-return redraws in interactive terminals and
+redirected output. When ANSI markup is unavailable, these symbols and summary
+details are emitted without color. ANSI-capable verbose terminals use a raw
+carriage return and fixed-width padding for processing lines, including
+controller output from parallel runs. Non-ANSI verbose output emits only final
+results as plain newline-terminated lines.
+Assertion-style failures are marked `F`; execution, setup, teardown, collection,
+and other errors are marked `E`, including when a failed test also produces
+warnings. Skipped tests are omitted from the final list, count, and summary.
+Fallback descriptions preserve common Celune acronyms such as `UI`, `TTS`, and
+`VRAM`. Parallel runs label worker startup as `setting up parallel test harness`.
+Collection and other fatal errors use a separate failure block with module names
+and a concise hint. Configured skips appear as blue `S` markers in the
+non-verbose status row, while tests prevented from starting use `N` and are
+reported as `N not run N`. The `test collection failed` block is reserved for
+actual collection failures; interruptions use `interrupted`.
 
 Decorate tests with a friendly description, and optionally provide a stable
 failure explanation:
@@ -138,7 +166,7 @@ change and in CI.
 ## Verify failures
 
 The plugin retains setup, call, and teardown failures and writes pytest's
-original failure representation immediately after the failed test's `❌`
+original failure representation immediately after the failed test's `F` or `E`
 line. It derives the final hint from pytest's assertion or exception message,
 without stack frames; a decorator `hint=` overrides that derived text.
 

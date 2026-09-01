@@ -29,8 +29,9 @@ is absent. The plugin has no dependency on the host project's package.
 
 from __future__ import annotations
 
-import re
 import ast
+import re
+import sys
 import time
 import tomllib
 import warnings
@@ -48,6 +49,13 @@ _HINT_PROPERTY = "celtest_hint"
 _SKIP_PROPERTY = "celtest_known_skip"
 _PARALLEL_SETUP_LABEL = "setting up parallel test harness"
 _PARALLEL_SETUP_SOURCE = "bringing up nodes..."
+_ERROR_SYMBOL = "E"
+_FAILURE_SYMBOL = "F"
+_NOT_RUN_SYMBOL = "N"
+_PASS_SYMBOL = "."
+_PROCESSING_SYMBOL = "?"
+_SKIP_SYMBOL = "S"
+_WARNING_SYMBOL = "W"
 _ACRONYMS = {
     "ansi": "ANSI",
     "api": "API",
@@ -87,7 +95,13 @@ _ACRONYMS = {
 class _TerminalWriter(Protocol):
     """Small terminal-writer surface used by the presentation plugin."""
 
-    def write(self, message: str, *, flush: bool = False) -> None:
+    def write(
+        self,
+        message: str,
+        *,
+        flush: bool = False,
+        **markup: bool,
+    ) -> None:
         """Write terminal text."""
 
     def line(self) -> None:
@@ -212,6 +226,7 @@ class _PluginState:
     terminalreporter: Optional[_TerminalReporter] = None
     is_controller: bool = True
     parallel: bool = False
+    verbose: bool = False
     replace_lines: bool = False
     live_line_width: int = 0
 
@@ -397,28 +412,138 @@ def _terminal_writer() -> Optional[_TerminalWriter]:
     return getattr(terminalreporter, "_tw", None)
 
 
-def _write_line(value: str) -> None:
+def _terminal_markup(color: Optional[str]) -> dict[str, bool]:
+    """Return color markup only when the terminal supports ANSI styling."""
+    writer = _terminal_writer()
+    if color is None or writer is None or not getattr(writer, "hasmarkup", False):
+        return {}
+    return {color: True}
+
+
+def _terminal_supports_ansi() -> bool:
+    """Return whether the terminal writer supports ANSI styling and controls."""
+    writer = _terminal_writer()
+    return writer is not None and bool(getattr(writer, "hasmarkup", False))
+
+
+def _write_line(value: str, *, color: Optional[str] = None) -> None:
     """Write one custom line through pytest's terminal reporter."""
     if not _state.is_controller:
         return
     terminalreporter = _state.terminalreporter
     if terminalreporter is not None:
+        markup = _terminal_markup(color)
+        if markup:
+            writer = _terminal_writer()
+            if writer is not None:
+                writer.write(value, **markup)
+                writer.line()
+                return
         terminalreporter.write_line(value)
 
 
-def _write_live_line(value: str, *, replace: bool, complete: bool = True) -> None:
+def _write_live_line(
+    value: str,
+    *,
+    replace: bool,
+    complete: bool = True,
+    color: Optional[str] = None,
+) -> None:
     """Write a processing or final result line with carriage-return replacement."""
     writer = _terminal_writer()
-    if not replace or writer is None:
-        _write_line(value)
+    if not replace or writer is None or not _terminal_supports_ansi():
+        _write_line(value, color=color)
         if complete:
             _state.live_line_width = 0
         return
     line_width = max(_state.live_line_width, len(value))
     padded = f"{value}{' ' * (line_width - len(value))}"
     suffix = "\n" if complete else ""
-    writer.write(f"\r{padded}{suffix}", flush=True)
+    markup = _terminal_markup(color)
+    writer.write(f"\r{padded}{suffix}", flush=True, **markup)
     _state.live_line_width = 0 if complete else line_width
+
+
+def _compact_symbol(record: _TestRecord) -> str:
+    """Return the inline icon for one compact test status."""
+    symbols = {
+        "error": _ERROR_SYMBOL,
+        "failed": _FAILURE_SYMBOL,
+        "not_run": _NOT_RUN_SYMBOL,
+        "passed": _PASS_SYMBOL,
+        "skipped": _SKIP_SYMBOL,
+        "warning": _WARNING_SYMBOL,
+    }
+    return symbols.get(record.status or "processing", _PROCESSING_SYMBOL)
+
+
+def _compact_color(record: _TestRecord) -> Optional[str]:
+    """Return the terminal color for one compact test status."""
+    if record.status is None:
+        return None
+    colors = {
+        "error": "red",
+        "failed": "red",
+        "not_run": "blue",
+        "passed": "green",
+        "skipped": "blue",
+        "warning": "yellow",
+    }
+    return colors.get(record.status)
+
+
+def _write_compact_output(
+    value: str,
+    *,
+    color: Optional[str] = None,
+    flush: bool = True,
+) -> None:
+    """Write compact output inline through pytest or the captured stdout."""
+    writer = _terminal_writer()
+    if writer is not None:
+        markup = _terminal_markup(color)
+        writer.write(value, flush=flush, **markup)
+        return
+    sys.stdout.write(value)
+    if flush:
+        sys.stdout.flush()
+
+
+def _write_compact_result_icon(record: _TestRecord) -> None:
+    """Append one final compact status icon without redrawing prior output."""
+    _write_compact_output(_compact_symbol(record), color=_compact_color(record))
+
+
+def _finish_compact_status_line() -> None:
+    """End the inline compact status line before printing the totals."""
+    _write_compact_output("\n")
+
+
+def _write_compact_summary_details(
+    runnable: list[_TestRecord],
+) -> None:
+    """Write concise failures and warnings below the compact totals."""
+    failures = [record for record in runnable if record.status == "failed"]
+    errors = [record for record in runnable if record.status == "error"]
+    if failures:
+        _write_line("")
+        _write_line(f"{_FAILURE_SYMBOL} failures", color="red")
+        for record in failures:
+            detail = record.hint or _failure_message(record.failure_report)
+            _write_line(f"{record.description}: {detail}")
+
+    if errors:
+        _write_line("")
+        _write_line(f"{_ERROR_SYMBOL} errors", color="red")
+        for record in errors:
+            detail = record.hint or _failure_message(record.failure_report)
+            _write_line(f"{record.description}: {detail}")
+
+    if _state.warning_lines:
+        _write_line("")
+        _write_line(f"{_WARNING_SYMBOL} warnings", color="yellow")
+        for warning_line in _state.warning_lines:
+            _write_line(warning_line)
 
 
 def _install_parallel_setup_label(terminalreporter: _TerminalReporter) -> None:
@@ -465,6 +590,14 @@ def _failure_message(report: Optional[object]) -> str:
     return "Pytest reported a failure without an assertion message."
 
 
+def _is_assertion_failure(report: pytest.TestReport) -> bool:
+    """Return whether a failed call report represents a test assertion."""
+    if report.when != "call":
+        return False
+    message = _failure_message(report)
+    return message.startswith(("assert ", "AssertionError", "Failed"))
+
+
 def _collection_name(nodeid: str) -> str:
     """Return the concise module name for a collection failure."""
     return re.split(r"[\\/]", nodeid.rsplit("::", 1)[0])[-1]
@@ -489,6 +622,8 @@ def _warning_text(
 
 def _write_failure_traceback(report: pytest.TestReport) -> None:
     """Write pytest's original failure representation after its result line."""
+    if not _state.verbose:
+        return
     writer = _terminal_writer()
     if writer is None:
         return
@@ -509,8 +644,10 @@ def _finish_record(record: _TestRecord) -> None:
 
     failures = [report for report in record.reports.values() if report.failed]
     if failures:
-        record.status = "failed"
         record.failure_report = failures[0]
+        record.status = (
+            "failed" if _is_assertion_failure(record.failure_report) else "error"
+        )
     elif any(report.skipped for report in record.reports.values()):
         record.status = "skipped"
     elif not {"setup", "call", "teardown"}.issubset(record.reports):
@@ -519,19 +656,18 @@ def _finish_record(record: _TestRecord) -> None:
     else:
         record.status = "warning" if record.warning_lines else "passed"
 
+    if not _state.verbose:
+        if _state.is_controller:
+            _write_compact_result_icon(record)
+        return
     if record.status == "skipped":
         return
 
-    symbol = (
-        "❌"
-        if record.status == "failed"
-        else "⚠️"
-        if record.status == "warning"
-        else "✅"
-    )
+    symbol = _compact_symbol(record)
     _write_live_line(
         f"{symbol} {record.description}",
         replace=_state.replace_lines and record.processing_written,
+        color=_compact_color(record),
     )
     if record.failure_report is not None:
         _write_failure_traceback(record.failure_report)
@@ -547,6 +683,7 @@ def pytest_configure(config: pytest.Config) -> None:
     _state.is_controller = not hasattr(config, "workerinput")
     _state.rootpath = config.rootpath
     _state.project_metadata = _project_metadata(config.rootpath)
+    _state.verbose = getattr(config.option, "verbose", 0) > 0
     worker_count = getattr(config.option, "numprocesses", 0)
     parallel = worker_count not in {0, 1, None, "0", "1"}
     _state.parallel = parallel
@@ -563,7 +700,12 @@ def pytest_sessionstart(session: pytest.Session) -> None:
         Optional[_TerminalReporter],
         config.pluginmanager.get_plugin("terminalreporter"),
     )
-    if _state.is_controller and _state.parallel and _state.terminalreporter is not None:
+    if (
+        _state.verbose
+        and _state.is_controller
+        and _state.parallel
+        and _state.terminalreporter is not None
+    ):
         _install_parallel_setup_label(_state.terminalreporter)
     if not _state.is_controller:
         return
@@ -598,7 +740,7 @@ def pytest_deselected(items: list[pytest.Item]) -> None:
 
 
 def pytest_runtest_logstart(nodeid: str, location: tuple[str, int, str]) -> None:
-    """Show a processing line when a non-skipped test starts."""
+    """Show a processing line when a non-skipped test starts in verbose mode."""
     for pending_nodeid in tuple(_state.pending_records):
         pending = _state.records.get(pending_nodeid)
         if pending is not None:
@@ -614,11 +756,17 @@ def pytest_runtest_logstart(nodeid: str, location: tuple[str, int, str]) -> None
         )
         _state.records[nodeid] = record
     del location
-    if record is None or record.known_skipped:
+    if record is None:
+        return
+    if not _state.verbose or not _state.is_controller:
+        return
+    if record.known_skipped:
+        return
+    if not _terminal_supports_ansi():
         return
     record.processing_written = True
     _write_live_line(
-        f"⚙️ {record.description}",
+        f"{_PROCESSING_SYMBOL} {record.description}",
         replace=_state.replace_lines,
         complete=False,
     )
@@ -770,9 +918,9 @@ def _render_summary(
                 _collection_name(record.nodeid) for record in _state.records.values()
             ] or ["pytest internal error"]
         for nodeid in dict.fromkeys(module_names):
-            _write_line(f"❌ {nodeid}")
+            _write_line(f"{_ERROR_SYMBOL} {nodeid}", color="red")
         _write_line("")
-        _write_line("ℹ️ test collection failure hint")
+        _write_line("test collection failure hint")
         hints = [hint for _nodeid, hint in _state.collection_errors]
         hints.extend(_state.internal_errors)
         if fatal_hint:
@@ -792,9 +940,9 @@ def _render_summary(
             _collection_name(record.nodeid) for record in _state.records.values()
         ] or ["pytest internal error"]
         for nodeid in dict.fromkeys(module_names):
-            _write_line(f"❌ {nodeid}")
+            _write_line(f"{_ERROR_SYMBOL} {nodeid}", color="red")
         _write_line("")
-        _write_line("ℹ️ pytest failure hint")
+        _write_line("pytest failure hint")
         hints = list(_state.internal_errors)
         if fatal_hint:
             hints.append(fatal_hint)
@@ -813,6 +961,20 @@ def _render_summary(
     passed = sum(record.status in {"passed", "warning"} for record in runnable)
     not_run = [record for record in runnable if record.status == "not_run"]
     elapsed = time.monotonic() - _state.started_at
+
+    if not _state.verbose:
+        _finish_compact_status_line()
+        _write_line("")
+        _write_line(
+            f"passed {passed}/{len(runnable)} time {_format_duration(elapsed)} "
+            f"warnings {len(_state.warning_lines)}"
+        )
+        _write_compact_summary_details(runnable)
+        if not_run:
+            _write_line("")
+            _write_line(f"{_NOT_RUN_SYMBOL} not run {len(not_run)}", color="blue")
+        return
+
     _write_line("")
     _write_line(
         f"passed {passed}/{len(runnable)} time {_format_duration(elapsed)} "
@@ -823,18 +985,18 @@ def _render_summary(
         _write_line("")
         _write_line(f"not run {len(not_run)}")
         for record in not_run:
-            _write_line(f"⏭️ {record.description}")
+            _write_line(f"{_NOT_RUN_SYMBOL} {record.description}", color="blue")
 
     if _state.warning_lines:
         _write_line("")
-        _write_line("⚠️ warnings")
+        _write_line(f"{_WARNING_SYMBOL} warnings", color="yellow")
         for warning_line in _state.warning_lines:
             _write_line(warning_line)
 
-    failures = [record for record in runnable if record.status == "failed"]
+    failures = [record for record in runnable if record.status in {"failed", "error"}]
     if failures:
         _write_line("")
-        _write_line("ℹ️ test failure hint")
+        _write_line("test failure hint")
         for record in failures:
             hint = record.hint or _failure_message(record.failure_report)
             _write_line(f"{record.description}: {hint}")

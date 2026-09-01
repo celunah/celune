@@ -290,9 +290,9 @@ min-severity = "warn"
 
 [tool.poe.tasks]
 start = "python main.py"
-test = "pytest tests -n 2 --dist loadfile"
-test_basic = "pytest tests"
-test_changed = "pytest tests --testmon"
+test = "pytest -v tests -n 2 --dist loadfile"
+test_basic = "pytest -v tests"
+test_changed = "pytest -v tests --testmon"
 types = "pyrefly check"
 ruff = "ruff check"
 format = "ruff format --check"
