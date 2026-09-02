@@ -1307,11 +1307,14 @@ class Celune(CeluneStateAccessors):
                     self.persona_loading = False
             return
         try:
-            with huggingface_progress(self.progress_callback):
-                vision.load(
-                    persona_model_id(self.config),
-                    persona_quantization(self.config),
-                )
+            # Persona preloading runs after speech readiness and must not take
+            # ownership of the foreground progress bar. Its transfer events
+            # otherwise arrive after the UI reports idle and can replace the
+            # completed bar with an indeterminate state.
+            vision.load(
+                persona_model_id(self.config),
+                persona_quantization(self.config),
+            )
         except Exception as e:
             self.log(string("celune.persona_not_initialized"), "warning")
             self.log(string("celune.speech_only_mode"), "warning")
@@ -1323,7 +1326,6 @@ class Celune(CeluneStateAccessors):
                 ),
                 "warning",
             )
-            self.progress_callback(0, 1)
             with self._model_lock:
                 if self.vision is vision:
                     self.vision = None
@@ -1341,7 +1343,6 @@ class Celune(CeluneStateAccessors):
             else:
                 self.log(string("celune.persona_initialized"))
                 self.change_input_state_callback(locked=False)
-                self.progress_callback(1, 1)
         finally:
             with self._model_lock:
                 if self._persona_load_thread is threading.current_thread():
@@ -3716,7 +3717,7 @@ class Celune(CeluneStateAccessors):
                     self.log,
                     self.backend,
                     self.config,
-                    progress_callback=self.progress_callback,
+                    progress_callback=None,
                 )
                 with self._model_lock:
                     if (
@@ -3741,7 +3742,6 @@ class Celune(CeluneStateAccessors):
                     self.tokenizer = loaded_tokenizer
                     self.llm = loaded_llm
                 self.log(string("celune.normalizer_loaded"))
-                self.progress_callback(1, 1)
             except Exception as e:
                 self.log(
                     format_error_message(
@@ -3753,7 +3753,6 @@ class Celune(CeluneStateAccessors):
                 )
                 self.log(string("celune.normalizer_failed"), "warning")
                 self.log(string("celune.normalization_unavailable"), "warning")
-                self.progress_callback(0, 1)
 
         with self._model_lock:
             if self.persona_ready or self.persona_loading:
@@ -3761,7 +3760,6 @@ class Celune(CeluneStateAccessors):
 
         thread = threading.Thread(target=_worker, daemon=True)
         thread.start()
-        self.progress_callback(None, None)
         self.log(
             f"Loading normalizer {NORMALIZER_MODEL_ID} "
             f"on {normalizer_device(self.config)}..."

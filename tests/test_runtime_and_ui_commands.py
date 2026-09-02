@@ -4070,6 +4070,55 @@ class TestUIStartup(CeluneTestCase):
 
         assert len(fewer_timing_words) == 3
 
+    def test_caption_transcriber_does_not_publish_progress_to_playback_bar(
+        self,
+    ) -> None:
+        """Verify caption model loading does not alter the foreground bar."""
+        ui = CeluneUI()
+        ui.celune = cast(
+            Celune,
+            SimpleNamespace(config={"persona": {"enabled": True}}),
+        )
+        ui._persona_speech_model_id = mock.Mock(return_value="test/whisper")
+        ui._persona_speech_language = mock.Mock(return_value=None)
+        ui._run_on_ui_thread = lambda callback: callback()
+        transcriber = mock.Mock()
+        transcriber.transcribe_segments.return_value = ()
+
+        class ImmediateThread:
+            """Run one background analysis target synchronously."""
+
+            def __init__(self, target: Callable[[], None], **_kwargs: object) -> None:
+                self._target = target
+
+            def start(self) -> None:
+                """Run the captured target."""
+                self._target()
+
+        with (
+            mock.patch.object(ui_app, "np", np, create=True),
+            mock.patch.object(
+                ui_app,
+                "persona_enabled",
+                return_value=True,
+                create=True,
+            ),
+            mock.patch.object(
+                ui_app,
+                "WhisperTranscriber",
+                return_value=transcriber,
+                create=True,
+            ) as transcriber_type,
+            mock.patch.object(ui_app.threading, "Thread", ImmediateThread),
+        ):
+            ui.tts_caption_timing(
+                "One two",
+                np.ones(8, dtype=np.float32),
+                48000,
+            )
+
+        transcriber_type.assert_called_once_with("test/whisper", language=None)
+
     def test_speech_caption_timing_refinement_does_not_hide_words(self) -> None:
         """Verify late word timings cannot regress an already rendered caption."""
         ui = CeluneUI()

@@ -656,6 +656,7 @@ class TestCeluneCore(CeluneTestCase):
             thread_cls.return_value.start = mock.Mock()
             assert celune.load()
 
+        progress_events_before_persona = progress_events.copy()
         persona_thread = thread_cls.call_args_list[-1]
         assert not celune.persona_ready
         assert celune.persona_loading
@@ -666,7 +667,7 @@ class TestCeluneCore(CeluneTestCase):
         )
         assert celune.persona_ready
         assert not celune.persona_loading
-        assert progress_events[-1] == (1, 1)
+        assert progress_events == progress_events_before_persona
 
     def test_load_defers_temp_cleanup_until_shutdown(self) -> None:
         """Verify temp cleanup waits until runtime shutdown after initialization."""
@@ -2508,6 +2509,10 @@ class TestCeluneCore(CeluneTestCase):
         ready = threading.Event()
         release = threading.Event()
         finished = threading.Event()
+        progress_events: list[tuple[Optional[float], Optional[float]]] = []
+        celune.progress_callback = lambda progress, total: progress_events.append(
+            (progress, total)
+        )
         fake_tokenizer = cast(
             PreTrainedTokenizerBase,
             mock.Mock(spec=PreTrainedTokenizerBase),
@@ -2524,7 +2529,7 @@ class TestCeluneCore(CeluneTestCase):
             mock.patch(
                 "celune.celune.load_normalizer_components",
                 side_effect=fake_load_components,
-            ),
+            ) as load_components,
             mock.patch("celune.celune.torch.cuda.is_available", return_value=False),
         ):
             celune.load_normalizer()
@@ -2535,6 +2540,9 @@ class TestCeluneCore(CeluneTestCase):
 
         assert celune.llm is None
         assert celune.tokenizer is None
+        load_components.assert_called_once()
+        assert load_components.call_args.kwargs["progress_callback"] is None
+        assert not progress_events
 
     def test_sleep_mode_unloads_configured_models_and_wakes(self) -> None:
         """Verify sleep mode honors unload settings and reloads on wake."""

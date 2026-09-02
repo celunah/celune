@@ -2912,7 +2912,6 @@ class CeluneUI(App):
                     transcriber = WhisperTranscriber(
                         model_id_getter(),
                         language=language_value_getter(),
-                        progress_callback=self.safe_progress,
                     )
                     self._caption_transcriber = transcriber
                 segments = transcriber.transcribe_segments(audio_copy, sample_rate)
@@ -4035,7 +4034,6 @@ class CeluneUI(App):
         transcriber = WhisperTranscriber(
             self._persona_speech_model_id(),
             language=self._persona_speech_language(),
-            progress_callback=self.safe_progress,
         )
         prefix = self.input_box.text.strip() if self.input_box is not None else ""
         recording_started_at = time.monotonic()
