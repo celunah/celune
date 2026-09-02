@@ -11,7 +11,6 @@ import json
 import time
 import uuid
 import errno
-import queue
 import socket
 import asyncio
 import inspect
@@ -194,10 +193,33 @@ class TaskCommandResponse(BaseModel):
 
 @dataclass
 class TaskSubscription:
-    """Thread-safe event queue owned by one WebSocket connection."""
+    """Event-loop-owned queue with a thread-safe event publisher."""
 
-    events: queue.Queue[TaskEvent] = field(default_factory=queue.Queue)
+    loop: asyncio.AbstractEventLoop
+    events: asyncio.Queue[Optional[TaskEvent]] = field(
+        default_factory=asyncio.Queue,
+        repr=False,
+    )
     closed: threading.Event = field(default_factory=threading.Event)
+
+    def _enqueue(self, event: Optional[TaskEvent]) -> None:
+        """Enqueue an event or the close sentinel on the owning loop."""
+        if event is None or not self.closed.is_set():
+            self.events.put_nowait(event)
+
+    def _call_on_loop(self, event: Optional[TaskEvent]) -> None:
+        """Schedule one queue mutation on the subscription's event loop."""
+        try:
+            running_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            running_loop = None
+
+        if running_loop is self.loop:
+            self._enqueue(event)
+            return
+
+        with contextlib.suppress(RuntimeError):
+            self.loop.call_soon_threadsafe(self._enqueue, event)
 
     def put(self, event: TaskEvent) -> None:
         """Queue one event for the subscribed WebSocket.
@@ -206,38 +228,30 @@ class TaskSubscription:
             event: The typed event to deliver to the subscriber.
         """
         if not self.closed.is_set():
-            self.events.put(event)
+            self._call_on_loop(event)
 
     def close(self) -> None:
         """Stop waiting for events without affecting the underlying task."""
+        if self.closed.is_set():
+            return
         self.closed.set()
+        self._call_on_loop(None)
 
-    def get(self) -> Optional[TaskEvent]:
-        """Return the next event, or ``None`` while waiting for one.
+    async def next_event(self) -> TaskEvent:
+        """Wait natively on the subscription's event-loop queue.
 
         Returns:
-            Optional[TaskEvent]: The next queued event, or ``None`` after a timed wait.
+            TaskEvent: The next event published for this subscription.
 
         Raises:
             TaskSubscriptionClosed: If the subscription was closed.
         """
         if self.closed.is_set():
             raise TaskSubscriptionClosed
-        try:
-            return self.events.get(timeout=0.25)
-        except queue.Empty:
-            return None
-
-    async def next_event(self) -> TaskEvent:
-        """Wait asynchronously for the next event without blocking the API loop.
-
-        Returns:
-            TaskEvent: The next event published for this subscription.
-        """
-        while True:
-            event = await asyncio.to_thread(self.get)
-            if event is not None:
-                return event
+        event = await self.events.get()
+        if event is None:
+            raise TaskSubscriptionClosed
+        return event
 
 
 def _run_async_runtime_call(
@@ -833,6 +847,13 @@ class StartedServer(uvicorn.Server):
         await super().startup(sockets=sockets)
         if self.started and self.on_started is not None:
             self.on_started()
+        if self.started:
+            ui_resources.start_gpu_usage_worker()
+
+    async def shutdown(self, sockets: Optional[list[socket.socket]] = None) -> None:
+        """Stop API-owned async resource workers before Uvicorn shuts down."""
+        ui_resources.stop_gpu_usage_worker()
+        await super().shutdown(sockets=sockets)
 
 
 def _is_port_in_use_error(error: OSError) -> bool:
@@ -1923,7 +1944,7 @@ def _set_active_speech_task(task_id: Optional[str]) -> None:
 
 def _subscribe_to_speech_job(job_id: str) -> Optional[TaskSubscription]:
     """Subscribe to one speech job and replay its retained event history."""
-    subscription = TaskSubscription()
+    subscription = TaskSubscription(loop=asyncio.get_running_loop())
     with speech_jobs_lock:
         job = speech_jobs.get(job_id)
         if job is None:

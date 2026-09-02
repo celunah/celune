@@ -37,6 +37,11 @@ timed status, theme, marquee, and resource-page updates through the CEDTS
 frontend channel so the browser does not maintain an independent timer state;
 browser polling is only a reconnect fallback.
 
+Tutorial text typing runs as a native Textual async worker, so its delays and
+input updates do not create a basic worker thread. Tutorial audio preparation
+and playback remain thread-backed because file metadata and audio submission
+are synchronous operations.
+
 When Celune requests an exit, including a settings-confirmed restart, the
 mounted Textual screen fades out as one surface, hides any mounted scrollbars,
 paints a final fully transparent frame, and only then does Textual unmount it.

@@ -119,14 +119,15 @@ def tutorial(ui: CeluneUI) -> None:
         ui.safe_log(string("commands.no_tutorial_assets"), "warning")
         return
 
+    def send_help() -> None:
+        """Submit the tutorial help command after its typing animation."""
+        ui.type_and_send("/help", process_commands=True)
+
     clips = (
         (assets / "tutorial1.wav", None),
         (assets / "tutorial2.wav", lambda: ui.pulse_border("#input")),
         (assets / "tutorial3.wav", lambda: ui.pulse_border("#style")),
-        (
-            assets / "tutorial4.wav",
-            lambda: ui.type_and_send("/help", process_commands=True),
-        ),
+        (assets / "tutorial4.wav", send_help),
     )
 
     ui.begin_tutorial()

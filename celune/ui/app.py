@@ -90,7 +90,6 @@ if TYPE_CHECKING:
         discard,
         is_april_fools,
         replace_ipa,
-        typing_animation,
         typing_delay,
     )
     from ..typing.aliases import _VCAudioCallback
@@ -156,6 +155,12 @@ if TYPE_CHECKING:
 
         def prime_usage(self) -> None:
             """Prime resource usage polling."""
+
+        def start_gpu_usage_worker(self) -> None:
+            """Start native async GPU usage polling."""
+
+        def stop_gpu_usage_worker(self) -> None:
+            """Stop native async GPU usage polling."""
 
         def resource_pages(
             self,
@@ -397,7 +402,6 @@ def _load_ui_runtime_dependencies() -> None:
     global set_terminal_title
     global supports_ansi
     global terminal_title_escape
-    global typing_animation
     global typing_delay
     global UILogHandler
     global ui_resources
@@ -426,7 +430,6 @@ def _load_ui_runtime_dependencies() -> None:
         is_april_fools,
         replace_ipa,
         supports_ansi,
-        typing_animation,
         typing_delay,
     )
     from ..watchdog import launcher_loss_requested as loaded_launcher_loss_requested
@@ -2092,6 +2095,7 @@ class CeluneUI(App):
         if resources is None:
             return
         resources.prime_usage()
+        resources.start_gpu_usage_worker()
         if not self._runtime_intervals_started:
             self.set_interval(FOOTER_ROTATE_SECONDS, self.advance_resources)
             self._status_marquee_timer = self.set_interval(
@@ -5736,7 +5740,8 @@ class CeluneUI(App):
 
         return True
 
-    def type_and_send(
+    @work(group="tutorial", exclusive=True)
+    async def type_and_send(
         self,
         text: str,
         process_commands: bool = False,
@@ -5750,38 +5755,39 @@ class CeluneUI(App):
             cancellable: Whether tutorial cancellation should stop this typing.
         """
         token = self._tutorial_token
+        typed = ""
 
-        def worker() -> None:
-            typed = ""
+        def replace_input(value: str) -> None:
+            self._suppress_input_change = True
+            try:
+                self.input_box.load_text(value)
+            finally:
+                self._suppress_input_change = False
 
-            def replace_input(value: str) -> None:
-                self._suppress_input_change = True
-                try:
-                    self.input_box.load_text(value)
-                finally:
-                    self._suppress_input_change = False
+        replace_input("")
 
-            self.call_from_thread(lambda: replace_input(""))
+        for char in text:
+            if cancellable and token != self._tutorial_token:
+                return
+            if self.cur_state == "exiting":
+                return
 
-            for char in typing_animation(text):
-                if cancellable and token != self._tutorial_token:
-                    return
-                if self.cur_state == "exiting":
-                    return
-                typed += char
-                self.call_from_thread(lambda value=typed: replace_input(value))
+            await asyncio.sleep(typing_delay(char))
 
-            final_char = text[-1] if text else " "
-            time.sleep(typing_delay(final_char))
+            if cancellable and token != self._tutorial_token:
+                return
+            if self.cur_state == "exiting":
+                return
+            typed += char
+            replace_input(typed)
 
-            if self.cur_state != "exiting" and (
-                not cancellable or token == self._tutorial_token
-            ):
-                self.call_from_thread(
-                    lambda value=typed: self._submit_text(value, process_commands)
-                )
+        final_char = text[-1] if text else " "
+        await asyncio.sleep(typing_delay(final_char))
 
-        threading.Thread(target=worker, daemon=True).start()
+        if self.cur_state != "exiting" and (
+            not cancellable or token == self._tutorial_token
+        ):
+            self._submit_text(typed, process_commands)
 
     async def action_quit(self) -> None:
         """Exit through the startup-aware graceful shutdown path."""
@@ -5935,6 +5941,8 @@ class CeluneUI(App):
                 string("osc.action_restarting" if restarting else "osc.action_exiting"),
             )
         )
+        if ui_resources is not None:
+            self._run_shutdown_step(ui_resources.stop_gpu_usage_worker)
         self._run_shutdown_step(self._shutdown_runtime)
 
         if self._runtime_log_capture_enabled:

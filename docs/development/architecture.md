@@ -81,6 +81,21 @@ playback complete, and release any held pipeline lease.
 Automatic sleep also waits for every registered playback source, including SFX
 overlays, before unloading runtime state.
 
+## Async coordination and blocking boundaries
+
+The API task WebSocket uses an `asyncio.Queue` owned by its event loop. Core
+callbacks may publish from generation or playback threads through a
+thread-safe loop callback, while WebSocket send and receive tasks remain native
+async workers. The UI GPU sampler follows the same boundary: its
+`nvidia-smi` query uses an asyncio subprocess task, while synchronous footer
+renderers read the latest cached sample.
+
+Model inference, audio devices, voice conversion, Persona transcription, VAD,
+CEDTS IPC, and other blocking or native operations remain on their
+dedicated threads or processes. An async-facing method for one of those
+operations does not make the operation native async; it only keeps the caller's
+event loop responsive while the synchronous work runs elsewhere.
+
 ## Component locks
 
 Reloads and concurrent operations use named component locks for TTS, VC, audio,

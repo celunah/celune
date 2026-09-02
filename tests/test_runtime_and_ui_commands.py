@@ -3456,37 +3456,87 @@ class TestUIStartup(CeluneTestCase):
 
         ui.safe_log.assert_called_once_with("ambiguous input device", "warning")
 
-    def test_gpu_usage_starts_background_query_without_blocking(self) -> None:
-        """Verify GPU polling starts asynchronously and returns the cached value."""
+    def test_gpu_usage_returns_cached_sample_without_starting_a_thread(self) -> None:
+        """Verify synchronous footer rendering only reads the async sampler cache."""
         with mock.patch("celune.ui.resources._NVIDIA_SMI", "nvidia-smi"):
-            previous_thread = ui_resources._NVIDIA_SMI_THREAD
+            previous_tasks = dict(ui_resources._NVIDIA_SMI_TASKS)
             previous_usage = ui_resources._NVIDIA_SMI_USAGE
-            thread = mock.Mock()
-            thread.is_alive.return_value = False
-            ui_resources._NVIDIA_SMI_THREAD = None
+            ui_resources._NVIDIA_SMI_TASKS.clear()
             ui_resources._NVIDIA_SMI_USAGE = 42
             try:
-                with mock.patch(
-                    "celune.ui.resources.threading.Thread", return_value=thread
-                ):
-                    assert ui_resources.gpu_usage() == 42
-                thread.start.assert_called_once_with()
+                assert ui_resources.gpu_usage() == 42
+                assert not ui_resources._NVIDIA_SMI_TASKS
             finally:
-                ui_resources._NVIDIA_SMI_THREAD = previous_thread
+                ui_resources._NVIDIA_SMI_TASKS.clear()
+                ui_resources._NVIDIA_SMI_TASKS.update(previous_tasks)
                 ui_resources._NVIDIA_SMI_USAGE = previous_usage
+
+    def test_gpu_usage_worker_is_a_native_async_task(self) -> None:
+        """Verify GPU polling is hosted by the current event loop."""
+
+        async def start_and_stop() -> None:
+            previous_tasks = dict(ui_resources._NVIDIA_SMI_TASKS)
+            try:
+                ui_resources._NVIDIA_SMI_TASKS.clear()
+                with (
+                    mock.patch("celune.ui.resources._NVIDIA_SMI", "nvidia-smi"),
+                    mock.patch.object(
+                        ui_resources,
+                        "_gpu_usage_worker",
+                        new=mock.AsyncMock(),
+                    ),
+                ):
+                    ui_resources.start_gpu_usage_worker()
+                    task = ui_resources._NVIDIA_SMI_TASKS.get(
+                        asyncio.get_running_loop()
+                    )
+                    assert isinstance(task, asyncio.Task)
+                    assert task.get_loop() is asyncio.get_running_loop()
+                    ui_resources.stop_gpu_usage_worker()
+                    await asyncio.sleep(0)
+            finally:
+                ui_resources._NVIDIA_SMI_TASKS.clear()
+                ui_resources._NVIDIA_SMI_TASKS.update(previous_tasks)
+
+        asyncio.run(start_and_stop())
 
     def test_gpu_usage_query_times_out(self) -> None:
         """Verify a stuck nvidia-smi query becomes an unavailable sample."""
+
+        class FakeProcess:
+            """Minimal async subprocess fake for timeout cleanup."""
+
+            returncode: Optional[int] = None
+            killed = False
+
+            def kill(self) -> None:
+                """Record process termination."""
+                self.killed = True
+                self.returncode = -9
+
+            async def communicate(self) -> tuple[bytes, bytes]:
+                """Raise until the timeout handler terminates the process."""
+                if not self.killed:
+                    raise TimeoutError
+                return b"", b""
+
+        process = FakeProcess()
+
+        async def create_process(*_args: object, **_kwargs: object) -> FakeProcess:
+            """Return the fake GPU query process."""
+            return process
+
         with (
             mock.patch("celune.ui.resources._NVIDIA_SMI", "nvidia-smi"),
             mock.patch(
-                "celune.ui.resources.subprocess.run",
-                side_effect=subprocess.TimeoutExpired("nvidia-smi", 2.0),
-            ) as run,
+                "celune.ui.resources.asyncio.create_subprocess_exec",
+                side_effect=create_process,
+            ) as create,
         ):
-            assert ui_resources._query_gpu_usage() is None
+            assert asyncio.run(ui_resources._query_gpu_usage()) is None
 
-        run.assert_called_once()
+        create.assert_called()
+        assert process.killed
 
     def test_textual_input_lock_update_with_persona_on_ui_thread(self) -> None:
         """Verify input state updates update with Persona."""
@@ -4280,6 +4330,38 @@ class TestUIStartup(CeluneTestCase):
 
         self.assertNotEqual(narrow, fake_status.rendered)
         self.assertEqual(fake_status.rendered, f"  {message}")
+
+    def test_tutorial_typing_runs_as_a_native_async_worker(self) -> None:
+        """Verify tutorial typing updates the UI loop without a worker thread."""
+
+        async def run_typing() -> None:
+            ui = CeluneUI()
+            with mock.patch.object(CeluneUI, "on_text_area_changed"):
+                async with ui.run_test(size=(80, 24)) as pilot:
+                    ui.celune = cast(
+                        Celune,
+                        SimpleNamespace(sleeping=False),
+                    )
+                    ui.cur_state = "ready"
+                    submitted = mock.Mock()
+                    ui._submit_text = submitted
+                    with (
+                        mock.patch.object(ui_app, "typing_delay", return_value=0.0),
+                        mock.patch.object(
+                            ui,
+                            "call_from_thread",
+                            side_effect=AssertionError(
+                                "native async typing must stay on the UI loop"
+                            ),
+                        ),
+                    ):
+                        ui.type_and_send("Hi", process_commands=True)
+                        await pilot.pause()
+
+                    assert ui.input_box.text == "Hi"
+                    submitted.assert_called_once_with("Hi", True)
+
+        asyncio.run(run_typing())
 
 
 class TestAgentStatusUI(CeluneTestCase):

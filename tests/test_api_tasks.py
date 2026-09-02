@@ -2,8 +2,10 @@
 """Tests for API task event streaming and cancellation."""
 
 import asyncio
+import threading
 from types import SimpleNamespace
 from typing import Literal, Optional, cast
+from unittest import mock
 
 import pytest
 from fastapi.testclient import TestClient
@@ -86,6 +88,51 @@ class TestApiTaskWebSocket(CeluneTestCase):
             assert all(event["task_id"] == job_id for event in events)
             with pytest.raises(WebSocketDisconnect):
                 websocket.receive_json()
+
+    def test_subscription_receives_thread_published_events_without_to_thread(
+        self,
+    ) -> None:
+        """Verify cross-thread event publication wakes a native async waiter."""
+
+        async def receive_event() -> None:
+            subscription = api.TaskSubscription(asyncio.get_running_loop())
+            event = api.TaskEvent(
+                task_id="task-1",
+                event="progress",
+                status="running",
+            )
+            waiter = asyncio.create_task(subscription.next_event())
+            await asyncio.sleep(0)
+
+            publisher = threading.Thread(
+                target=subscription.put,
+                args=(event,),
+            )
+            publisher.start()
+            publisher.join()
+
+            with mock.patch(
+                "celune.api.asyncio.to_thread",
+                side_effect=AssertionError("subscription must use asyncio.Queue"),
+            ):
+                assert await asyncio.wait_for(waiter, timeout=1.0) == event
+
+        asyncio.run(receive_event())
+
+    def test_subscription_close_wakes_native_async_waiter(self) -> None:
+        """Verify closing a subscription releases a pending async event wait."""
+
+        async def wait_for_close() -> None:
+            subscription = api.TaskSubscription(asyncio.get_running_loop())
+            waiter = asyncio.create_task(subscription.next_event())
+            await asyncio.sleep(0)
+
+            subscription.close()
+
+            with pytest.raises(api.TaskSubscriptionClosed):
+                await asyncio.wait_for(waiter, timeout=1.0)
+
+        asyncio.run(wait_for_close())
 
     def test_client_can_connect_after_task_started(self) -> None:
         """Verify late subscribers receive the retained start event before live events."""
