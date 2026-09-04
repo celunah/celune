@@ -418,6 +418,63 @@ def test_error():
         assert "Traceback" not in output
         assert "assert 'left' == 'right'" not in output
 
+    def test_celtest_suppresses_foreign_unknown_status_letters(
+        self, tmp_path: Path
+    ) -> None:
+        """Verify third-party unknown status hooks cannot leak invalid markers."""
+        plugin_file = tmp_path / "foreign_status.py"
+        plugin_file.write_text(
+            """
+def pytest_report_teststatus(report, config):
+    del config
+    if report.when == "call" and report.passed:
+        return "unknown", "u", "UNKNOWN"
+    return None
+""",
+            encoding="utf-8",
+        )
+        test_file = tmp_path / "test_sample.py"
+        test_file.write_text(
+            """
+def test_first():
+    pass
+
+
+def test_second():
+    pass
+""",
+            encoding="utf-8",
+        )
+        environment = os.environ.copy()
+        project_root = str(Path(__file__).resolve().parents[1])
+        environment["PYTHONPATH"] = os.pathsep.join((project_root, str(tmp_path)))
+        environment["PYTHONIOENCODING"] = "utf-8"
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "pytest",
+                "-q",
+                "-p",
+                "tests.celtest",
+                "-p",
+                "foreign_status",
+                test_file.name,
+            ],
+            cwd=tmp_path,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=False,
+            env=environment,
+        )
+        output = result.stdout + result.stderr
+
+        assert result.returncode == 0
+        assert "\nu" not in output
+        assert "[" not in output
+        assert "passed 2/2" in output
+
     def test_celtest_reports_unstarted_tests_in_non_verbose_summary(
         self, tmp_path: Path
     ) -> None:

@@ -859,6 +859,7 @@ def pytest_runtest_protocol(
     return result
 
 
+@pytest.hookimpl(tryfirst=True)
 def pytest_report_teststatus(
     report: pytest.TestReport,
     config: pytest.Config,

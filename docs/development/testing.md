@@ -9,6 +9,9 @@ local test commands, and the limits of incremental test selection.
 The test suite loads `tests/celtest.py` as a pytest plugin through
 `tests/conftest.py`. It keeps pytest's collection, fixtures, warning capture,
 reporting hooks, and exit codes, while replacing pytest's terminal presentation.
+Its result-status hook takes precedence over other pytest plugins, so foreign
+categories such as an `u`/unknown marker cannot leak into Celtest's status row
+or add a second percentage progress display.
 Without `-v`, it prints a compact status row as tests finish, followed by the
 totals:
 
