@@ -5,18 +5,14 @@ import os
 import sys
 import tempfile
 import threading
-from pathlib import Path
 from typing import Optional, cast
+from pathlib import Path
 from unittest import mock
 
-import pytest
 import yaml
+import pytest
 from textual.widgets import RichLog
-from celune.constants import APP_SLUG
-from celune.utils import discard, format_error
-from celune.ui.app import CeluneUI, UILogMessage
-from celune.persona.memory import default_memory_dir
-from celune.cevoice import bundled_voices_dir, default_bundle_path
+
 from celune.paths import (
     project_root,
     voices_data_dir,
@@ -25,15 +21,21 @@ from celune.paths import (
     runtime_data_dir,
     ensure_config_path,
     huggingface_home_dir,
+    huggingface_progress,
     migrate_legacy_app_data,
     backend_environments_dir,
     huggingface_hub_cache_dir,
-    huggingface_progress,
     configure_huggingface_runtime,
     configure_huggingface_cache_environment,
 )
+from celune.utils import discard, format_error
+from celune.ui.app import CeluneUI, UILogMessage
+from celune.cevoice import bundled_voices_dir, default_bundle_path
+from celune.constants import APP_SLUG
+from celune.persona.memory import default_memory_dir
 
 from .support import CeluneTestCase
+from .platform import LINUX_ONLY, WINDOWS_ONLY
 
 
 class TestRuntimePath(CeluneTestCase):
@@ -53,30 +55,6 @@ class TestRuntimePath(CeluneTestCase):
 
             assert "RuntimeError: tiered failure" in output
             assert trace_path.exists()
-
-    @staticmethod
-    def _compiled_root_layout(root_parts: tuple[str, ...]) -> tuple[Path, Path]:
-        """Return a platform-native fake app root and compiled executable path."""
-        if os.name == "nt":
-            root = Path("C:/", *root_parts)
-            executable = root / "celune.exe"
-            return root, executable
-
-        root = Path("/", *root_parts)
-        executable = root / "celune"
-        return root, executable
-
-    @staticmethod
-    def _compiled_bin_layout(root_parts: tuple[str, ...]) -> tuple[Path, Path]:
-        """Return a platform-native fake repo root and compiled bin executable path."""
-        if os.name == "nt":
-            root = Path("C:/", *root_parts)
-            executable = root / "bin" / "celune.exe"
-            return root, executable
-
-        root = Path("/", *root_parts)
-        executable = root / "bin" / "celune"
-        return root, executable
 
     def tearDown(self) -> None:
         """Reset singleton UI guards after each test."""
@@ -251,7 +229,7 @@ class TestRuntimePath(CeluneTestCase):
 
     def test_huggingface_progress_forwards_disabled_transfer_updates(self) -> None:
         """Verify quiet Hugging Face bars still update Celune's progress callback."""
-        from huggingface_hub import _snapshot_download, file_download
+        from huggingface_hub import file_download, _snapshot_download
 
         callback = mock.Mock()
         previous_tqdm = file_download.tqdm
@@ -402,10 +380,11 @@ class TestRuntimePath(CeluneTestCase):
             else:
                 delattr(main_module, "__compiled__")
 
-    def test_compiled_project_root_and_bundled_paths_follow_executable(self) -> None:
-        """Verify bundled files resolve beside the compiled executable."""
+    def _assert_compiled_project_root_and_bundled_paths(
+        self, expected_root: Path, executable: Path
+    ) -> None:
+        """Verify bundled files resolve beside a compiled executable."""
         fake_main = type("CompiledMain", (), {"__compiled__": True})()
-        expected_root, executable = self._compiled_root_layout(("Apps", "Celune"))
 
         with (
             mock.patch.dict(sys.modules, {"__main__": fake_main}),
@@ -421,10 +400,31 @@ class TestRuntimePath(CeluneTestCase):
             )
             assert bundled_voices_dir() == Path("C:/runtime-data/voices")
 
-    def test_compiled_project_root_uses_repo_parent_when_running_from_bin(self) -> None:
-        """Verify compiled launches from bin/ still resolve the repository root."""
+    @WINDOWS_ONLY
+    def test_compiled_project_root_and_bundled_paths_follow_executable_on_windows(
+        self,
+    ) -> None:
+        """Verify Windows bundled files resolve beside the compiled executable."""
+        self._assert_compiled_project_root_and_bundled_paths(
+            Path("C:/Apps/Celune"),
+            Path("C:/Apps/Celune/celune.exe"),
+        )
+
+    @LINUX_ONLY
+    def test_compiled_project_root_and_bundled_paths_follow_executable_on_linux(
+        self,
+    ) -> None:
+        """Verify Linux bundled files resolve beside the compiled executable."""
+        self._assert_compiled_project_root_and_bundled_paths(
+            Path("/Apps/Celune"),
+            Path("/Apps/Celune/celune"),
+        )
+
+    def _assert_compiled_project_root_from_bin(
+        self, expected_root: Path, executable: Path
+    ) -> None:
+        """Verify a compiled launch from bin/ resolves the repository root."""
         fake_main = type("CompiledMain", (), {"__compiled__": True})()
-        expected_root, executable = self._compiled_bin_layout(("repo",))
 
         def fake_exists(path: Path) -> bool:
             normalized = str(path).replace("\\", "/")
@@ -447,3 +447,19 @@ class TestRuntimePath(CeluneTestCase):
             assert default_bundle_path() == Path(
                 "C:/runtime-data/voices/default.cevoice"
             )
+
+    @WINDOWS_ONLY
+    def test_compiled_project_root_uses_repo_parent_from_bin_on_windows(self) -> None:
+        """Verify Windows compiled launches from bin/ resolve the repository root."""
+        self._assert_compiled_project_root_from_bin(
+            Path("C:/repo"),
+            Path("C:/repo/bin/celune.exe"),
+        )
+
+    @LINUX_ONLY
+    def test_compiled_project_root_uses_repo_parent_from_bin_on_linux(self) -> None:
+        """Verify Linux compiled launches from bin/ resolve the repository root."""
+        self._assert_compiled_project_root_from_bin(
+            Path("/repo"),
+            Path("/repo/bin/celune"),
+        )

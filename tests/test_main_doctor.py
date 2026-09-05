@@ -4,11 +4,13 @@
 import io
 import contextlib
 from types import SimpleNamespace
-from unittest import mock
 from pathlib import Path, PureWindowsPath
+from unittest import mock
+
 import pytest
 
 import main
+from tests.platform import LINUX_ONLY, WINDOWS_ONLY
 
 from .support import CeluneTestCase
 
@@ -18,41 +20,55 @@ entrypoint = main.load_entrypoint_module()
 class TestDoctorCommand(CeluneTestCase):
     """Verify `celune doctor` works without booting the full app."""
 
-    def test_auto_headless_mode_selects_platform_and_session(self) -> None:
-        """Verify nullable headless mode follows the terminal environment."""
+    @WINDOWS_ONLY
+    def test_auto_headless_mode_on_windows(self) -> None:
+        """Verify Windows always selects the graphical UI automatically."""
         streams = SimpleNamespace(
             stdin=SimpleNamespace(isatty=lambda: True),
             stdout=SimpleNamespace(isatty=lambda: True),
         )
         with (
-            mock.patch.object(entrypoint.platform, "system", return_value="Windows"),
             mock.patch.object(entrypoint.sys, "stdin", streams.stdin),
             mock.patch.object(entrypoint.sys, "stdout", streams.stdout),
         ):
             assert entrypoint._auto_detect_headless() is False
 
+    @LINUX_ONLY
+    def test_auto_headless_mode_on_linux_desktop(self) -> None:
+        """Verify a desktop Linux session selects the graphical UI automatically."""
+        streams = SimpleNamespace(
+            stdin=SimpleNamespace(isatty=lambda: True),
+            stdout=SimpleNamespace(isatty=lambda: True),
+        )
         with (
-            mock.patch.object(entrypoint.platform, "system", return_value="Linux"),
             mock.patch.object(entrypoint.sys, "stdin", streams.stdin),
             mock.patch.object(entrypoint.sys, "stdout", streams.stdout),
             mock.patch.dict(entrypoint.os.environ, {"DISPLAY": ":0"}, clear=True),
         ):
             assert entrypoint._auto_detect_headless() is False
 
+    @LINUX_ONLY
+    def test_auto_headless_mode_on_linux_without_desktop(self) -> None:
+        """Verify a Linux session without a desktop selects the headless UI."""
+        streams = SimpleNamespace(
+            stdin=SimpleNamespace(isatty=lambda: True),
+            stdout=SimpleNamespace(isatty=lambda: True),
+        )
         with (
-            mock.patch.object(entrypoint.platform, "system", return_value="Linux"),
             mock.patch.object(entrypoint.sys, "stdin", streams.stdin),
             mock.patch.object(entrypoint.sys, "stdout", streams.stdout),
             mock.patch.dict(entrypoint.os.environ, {}, clear=True),
         ):
             assert entrypoint._auto_detect_headless() is True
 
+    @LINUX_ONLY
+    def test_auto_headless_mode_on_linux_noninteractive_terminal(self) -> None:
+        """Verify a non-interactive Linux terminal selects the headless UI."""
         non_interactive_streams = SimpleNamespace(
             stdin=SimpleNamespace(isatty=lambda: False),
             stdout=SimpleNamespace(isatty=lambda: True),
         )
         with (
-            mock.patch.object(entrypoint.platform, "system", return_value="Linux"),
             mock.patch.object(entrypoint.sys, "stdin", non_interactive_streams.stdin),
             mock.patch.object(
                 entrypoint.sys,
@@ -63,6 +79,7 @@ class TestDoctorCommand(CeluneTestCase):
         ):
             assert entrypoint._auto_detect_headless() is True
 
+    @LINUX_ONLY
     def test_auto_headless_mode_falls_back_to_textual_on_detection_failure(
         self,
     ) -> None:
@@ -71,7 +88,6 @@ class TestDoctorCommand(CeluneTestCase):
             isatty=mock.Mock(side_effect=OSError("terminal unavailable"))
         )
         with (
-            mock.patch.object(entrypoint.platform, "system", return_value="Linux"),
             mock.patch.object(entrypoint.sys, "stdin", broken_stream),
             mock.patch.object(entrypoint.sys, "stdout", broken_stream),
         ):
@@ -190,6 +206,7 @@ class TestDoctorCommand(CeluneTestCase):
             check=False,
         )
 
+    @WINDOWS_ONLY
     def test_run_doctor_fix_uses_repo_venv_python_when_compiled(self) -> None:
         """Verify compiled doctor fixups use the repo virtualenv Python."""
         checks = [entrypoint.DoctorCheck("Python", True, "3.12.0")]
@@ -269,10 +286,10 @@ class TestDoctorCommand(CeluneTestCase):
         assert "[WARN] Accelerator backend" in output
         assert "performance may be impacted" in output
 
+    @WINDOWS_ONLY
     def test_doctor_checks_warn_when_running_outside_project_venv(self) -> None:
         """Verify doctor prefers the project virtual environment over system Python."""
         with (
-            mock.patch.object(entrypoint.platform, "system", return_value="Windows"),
             mock.patch.object(entrypoint.platform, "machine", return_value="AMD64"),
             mock.patch.object(
                 entrypoint.platform, "python_version", return_value="3.13.11"

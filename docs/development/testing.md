@@ -126,6 +126,11 @@ uv run poe test_basic
 The basic task runs the complete `tests/` collection without xdist. Both
 tasks return pytest's exit status and include all selected tests.
 
+Platform-specific tests use the shared `tests.platform` skip markers. Linux-only
+tests are skipped on Windows, and Windows-only tests are skipped on Linux;
+Celtest reports those configured skips with `S`. Tests that only model another
+platform's branch with mocks remain portable and run on both systems.
+
 ## Keep tests parallel-safe
 
 Each xdist worker receives a unique Celune data root before test modules are

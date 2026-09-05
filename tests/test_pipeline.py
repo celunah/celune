@@ -4,7 +4,6 @@
 # Import groups follow Celune's project-specific Ruff ordering.
 # pylint: disable=ungrouped-imports
 
-import os
 import sys
 import json as _json
 import queue
@@ -61,6 +60,7 @@ from .support import (
     make_voice_loader,
     make_pipeline_engine,
 )
+from .platform import LINUX_ONLY, WINDOWS_ONLY
 from .test_persona_memory import StubEmbeddingMemoryStore
 
 
@@ -858,8 +858,10 @@ class TestPipelineAsync(CeluneAsyncTestCase):
         assert "--print" not in command
         assert str(temp_root / "temp" / "temporary_audio.%(ext)s") in command
 
-    def test_download_youtube_sfx_uses_repo_venv_python_when_compiled(self) -> None:
-        """Verify compiled launches call yt-dlp through the repo venv Python."""
+    def _assert_download_youtube_sfx_uses_repo_venv_python(
+        self, expected_python: str
+    ) -> None:
+        """Verify a compiled yt-dlp launch uses the expected venv Python."""
         engine = make_pipeline_engine()
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_root = Path(temp_dir)
@@ -896,13 +898,22 @@ class TestPipelineAsync(CeluneAsyncTestCase):
 
         assert resolved == (expected, "Fixture Video Title")
         command = run.call_args.args[0]
-        expected_python = (
-            r"/repo/.venv/bin/python"
-            if os.name != "nt"
-            else r"\repo\.venv\Scripts\python.exe"
-        )
         assert command[0] == expected_python
         assert command[1:3] == ["-m", "yt_dlp"]
+
+    @LINUX_ONLY
+    def test_download_youtube_sfx_uses_repo_venv_python_on_linux(self) -> None:
+        """Verify Linux compiled launches use the repository venv Python."""
+        self._assert_download_youtube_sfx_uses_repo_venv_python(
+            "/repo/.venv/bin/python"
+        )
+
+    @WINDOWS_ONLY
+    def test_download_youtube_sfx_uses_repo_venv_python_on_windows(self) -> None:
+        """Verify Windows compiled launches use the repository venv Python."""
+        self._assert_download_youtube_sfx_uses_repo_venv_python(
+            r"\repo\.venv\Scripts\python.exe"
+        )
 
     def test_download_youtube_sfx_passes_optional_authentication_settings(self) -> None:
         """Verify optional YouTube cookies, tokens, and runtime settings reach yt-dlp."""
@@ -3239,8 +3250,10 @@ class TestPipelineAsync(CeluneAsyncTestCase):
         assert "<conversation_summary>" in prompt
         assert "The user and character already discussed the archive." in prompt
 
-    def test_persona_messages_include_pending_attachments(self) -> None:
-        """Verify visual attachments are sent in the next persona user turn."""
+    def _assert_persona_messages_include_pending_attachments(
+        self, expected_image: str, expected_video: str
+    ) -> None:
+        """Verify local visual attachments are converted for Persona."""
         engine = make_pipeline_engine()
         engine.config = {}
         engine.current_character = "Celune"
@@ -3268,22 +3281,30 @@ class TestPipelineAsync(CeluneAsyncTestCase):
         assert content == [
             {
                 "type": "image",
-                "image": (
-                    "C:/Users/user/Pictures/frame.png"
-                    if os.name == "nt"
-                    else "file:///C:/Users/user/Pictures/frame.png"
-                ),
+                "image": expected_image,
             },
             {
                 "type": "video",
-                "video": (
-                    "C:/Users/user/Videos/clip.mp4"
-                    if os.name == "nt"
-                    else "file:///C:/Users/user/Videos/clip.mp4"
-                ),
+                "video": expected_video,
             },
             {"type": "text", "text": "What is this?"},
         ]
+
+    @LINUX_ONLY
+    def test_persona_messages_include_pending_attachments_on_linux(self) -> None:
+        """Verify Linux Persona messages use file URLs for local attachments."""
+        self._assert_persona_messages_include_pending_attachments(
+            "file:///C:/Users/user/Pictures/frame.png",
+            "file:///C:/Users/user/Videos/clip.mp4",
+        )
+
+    @WINDOWS_ONLY
+    def test_persona_messages_include_pending_attachments_on_windows(self) -> None:
+        """Verify Windows Persona messages use local paths for attachments."""
+        self._assert_persona_messages_include_pending_attachments(
+            "C:/Users/user/Pictures/frame.png",
+            "C:/Users/user/Videos/clip.mp4",
+        )
 
     def test_persona_messages_preserve_remote_attachment_urls(self) -> None:
         """Verify remote visual URLs are passed through to Persona unchanged."""

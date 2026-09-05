@@ -17,12 +17,12 @@ from pathlib import Path
 from unittest import mock
 from contextlib import suppress
 from collections import OrderedDict, deque
-from collections.abc import Callable, Generator, Iterator
+from collections.abc import Callable, Iterator, Generator
 
 import numpy as np
 
-from celune.backends import environment
 from celune.cedts import remote, worker
+from celune.backends import environment
 from celune.exceptions import (
     CEDTSError,
     BackendError,
@@ -41,6 +41,19 @@ from celune.typing.worker import (
     WorkerControlMessage,
     WorkerPayloadDescriptor,
 )
+from celune.cedts.protocol import (
+    CEDTSLimits,
+    WorkerPayload,
+    build_packet,
+    send_message,
+    send_payloads,
+    decode_message,
+    encode_message,
+    receive_message,
+    receive_payloads,
+    limits_from_capabilities,
+    validate_payload_descriptors,
+)
 from celune.typing.backends import (
     BackendModel,
     BackendGeneration,
@@ -57,21 +70,9 @@ from celune.backends.environment import (
     backend_manifest,
 )
 from celune.dataclasses.pipeline import AudioOutput, VoiceConversionRequest
-from celune.cedts.protocol import (
-    CEDTSLimits,
-    WorkerPayload,
-    build_packet,
-    send_message,
-    send_payloads,
-    decode_message,
-    encode_message,
-    receive_message,
-    receive_payloads,
-    limits_from_capabilities,
-    validate_payload_descriptors,
-)
 
 from .support import CeluneTestCase
+from .platform import LINUX_ONLY, WINDOWS_ONLY
 
 
 def send_no_payload_packet(
@@ -406,12 +407,11 @@ class TestBackendEnvironment(CeluneTestCase):
 
             def fake_run(command: list[str], **_kwargs) -> None:
                 if command[1] == "venv":
-                    virtualenv = Path(command[-1])
-                    virtualenv_python = (
-                        virtualenv / "Scripts" / "python.exe"
-                        if os.name == "nt"
-                        else virtualenv / "bin" / "python"
+                    backend_environment = manager.environment_for(manifest)
+                    relative_python = backend_environment.python.relative_to(
+                        backend_environment.virtualenv
                     )
+                    virtualenv_python = Path(command[-1]) / relative_python
                     virtualenv_python.parent.mkdir(parents=True, exist_ok=True)
                     virtualenv_python.touch()
 
@@ -444,12 +444,11 @@ class TestBackendEnvironment(CeluneTestCase):
 
             def fake_run(command: list[str], **_kwargs) -> None:
                 if command[1] == "venv":
-                    virtualenv = Path(command[-1])
-                    virtualenv_python = (
-                        virtualenv / "Scripts" / "python.exe"
-                        if os.name == "nt"
-                        else virtualenv / "bin" / "python"
+                    backend_environment = manager.environment_for(manifest)
+                    relative_python = backend_environment.python.relative_to(
+                        backend_environment.virtualenv
                     )
+                    virtualenv_python = Path(command[-1]) / relative_python
                     virtualenv_python.parent.mkdir(parents=True, exist_ok=True)
                     virtualenv_python.touch()
 
@@ -507,12 +506,11 @@ class TestBackendEnvironment(CeluneTestCase):
 
             def fake_run(command: list[str], **_kwargs) -> None:
                 if command[1] == "venv":
-                    virtualenv = Path(command[-1])
-                    virtualenv_python = (
-                        virtualenv / "Scripts" / "python.exe"
-                        if os.name == "nt"
-                        else virtualenv / "bin" / "python"
+                    backend_environment = manager.environment_for(manifest)
+                    relative_python = backend_environment.python.relative_to(
+                        backend_environment.virtualenv
                     )
+                    virtualenv_python = Path(command[-1]) / relative_python
                     virtualenv_python.parent.mkdir(parents=True, exist_ok=True)
                     virtualenv_python.touch()
 
@@ -3635,13 +3633,11 @@ class TestBackendEnvironment(CeluneTestCase):
         self.assertEqual(proxy._cedts_limits.max_aggregate_payload_size, 8)
         self.assertEqual(proxy._cedts_limits.max_payload_descriptors, 1)
 
+    @LINUX_ONLY
     def test_worker_subprocess_completes_cedts_lifecycle_without_backend_dependencies(
         self,
     ) -> None:
         """Verify a real worker process performs handshake, request, and shutdown."""
-        if os.name == "nt":
-            self.skipTest("the subprocess fixture uses POSIX descriptor inheritance")
-
         child_code = """
 from celune.cedts import worker
 
@@ -3803,9 +3799,6 @@ raise SystemExit(worker.main())
         self, policy: str, *, ignore_cancellation: bool = False
     ) -> tuple[dict[str, WorkerValue], list[WorkerControlMessage]]:
         """Run an active stream through one CEDTS shutdown policy."""
-        if os.name == "nt":
-            self.skipTest("the subprocess fixture uses POSIX descriptor inheritance")
-
         child_code = """
 import time
 from celune.cedts import worker
@@ -3991,6 +3984,7 @@ raise SystemExit(worker.main())
                     if stream is not None:
                         stream.close()
 
+    @LINUX_ONLY
     def test_worker_shutdown_finish_waits_for_active_stream(self) -> None:
         """Verify finish waits for completion and reports no cancellation."""
         value, packets = self._run_worker_stream_shutdown_policy("finish")
@@ -4007,6 +4001,7 @@ raise SystemExit(worker.main())
             )
         )
 
+    @LINUX_ONLY
     def test_worker_shutdown_cancel_interrupts_active_stream(self) -> None:
         """Verify cancel interrupts an active stream and reports cancellation."""
         value, packets = self._run_worker_stream_shutdown_policy("cancel")
@@ -4023,6 +4018,7 @@ raise SystemExit(worker.main())
             )
         )
 
+    @LINUX_ONLY
     def test_worker_shutdown_cancel_bounds_ignored_stream_join(self) -> None:
         """Verify shutdown acknowledges an active generator that ignores cancellation."""
         value, packets = self._run_worker_stream_shutdown_policy(
@@ -4046,9 +4042,6 @@ raise SystemExit(worker.main())
         self, packet_kind: str, operation: str = "preload_models"
     ) -> float:
         """Verify control traffic remains responsive during a blocking request."""
-        if os.name == "nt":
-            self.skipTest("the subprocess fixture uses POSIX descriptor inheritance")
-
         child_code = """
 import os
 import threading
@@ -4361,6 +4354,7 @@ finally:
                     if stream is not None:
                         stream.close()
 
+    @LINUX_ONLY
     def test_worker_control_loop_handles_cancel_during_blocking_operation(self) -> None:
         """Verify non-stream cancellation is rejected before successful completion."""
         for operation in ("preload_models", "load_model", "call"):
@@ -4419,17 +4413,16 @@ finally:
         self.assertTrue(responses[0]["ok"])
         self.assertNotIn("cancelled", responses[0])
 
+    @LINUX_ONLY
     def test_worker_control_loop_handles_shutdown_during_blocking_operation(
         self,
     ) -> None:
         """Verify shutdown is acknowledged while preload remains blocked."""
         self.assertLess(self._run_blocking_worker_control_test("shutdown"), 1.0)
 
+    @LINUX_ONLY
     def test_worker_rejects_cancel_after_terminal_state_is_marked(self) -> None:
         """Verify a cancel racing with terminal transmission cannot cancel a finished job."""
-        if os.name == "nt":
-            self.skipTest("the subprocess fixture uses POSIX descriptor inheritance")
-
         child_code = """
 import threading
 from celune.cedts import worker
@@ -4918,6 +4911,7 @@ raise SystemExit(worker.main())
         proxy._binary_input.close()
         proxy._binary_output.close()
 
+    @WINDOWS_ONLY
     def test_remote_proxy_windows_launch_allowlists_binary_handles(self) -> None:
         """Verify Windows workers inherit only the two CEDTS binary handles."""
         proxy = object.__new__(remote.RemoteBackendProxy)
@@ -4965,7 +4959,6 @@ raise SystemExit(worker.main())
             return process
 
         with (
-            mock.patch.object(remote.os, "name", "nt"),
             mock.patch.object(remote, "project_root", return_value=ProjectRoot()),
             mock.patch.dict(sys.modules, {"msvcrt": fake_msvcrt}),
             mock.patch.object(
@@ -5009,6 +5002,7 @@ raise SystemExit(worker.main())
         proxy._binary_input.close()
         proxy._binary_output.close()
 
+    @WINDOWS_ONLY
     def test_worker_opens_windows_binary_handles_as_streams(self) -> None:
         """Verify Windows workers convert inherited handles into binary streams."""
         args = cast(

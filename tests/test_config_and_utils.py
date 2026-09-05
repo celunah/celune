@@ -3,14 +3,17 @@
 
 import math
 import datetime
+from typing import Literal, Optional, cast
 from unittest import mock
 from collections.abc import Mapping
-from typing import Literal, Optional, cast
+
 import pytest
-from celune import config, utils
+
+from celune import utils, config
 from celune.typing.common import JSON, JSONSerializable
 
 from .support import CeluneTestCase
+from .platform import WINDOWS_ONLY
 
 
 class TestConfig(CeluneTestCase):
@@ -61,33 +64,34 @@ class TestConfig(CeluneTestCase):
         assert config.config_audio_device({"device": 3}, "device") == 3
         assert config.config_audio_device({"device": True}, "device") is None
 
+    @WINDOWS_ONLY
     def test_config_audio_device_appends_windows_hostapi_from_audio_api(self) -> None:
         """Verify Windows audio config auto-appends the selected host API."""
-        with mock.patch("celune.config.os.name", "nt"):
-            assert (
-                config.config_audio_device(
-                    {"device": "Razer Kraken V4 - Chat", "audio_api": "wasapi"},
-                    "device",
-                )
-                == "Razer Kraken V4 - Chat, Windows WASAPI"
+        assert (
+            config.config_audio_device(
+                {"device": "Razer Kraken V4 - Chat", "audio_api": "wasapi"},
+                "device",
             )
+            == "Razer Kraken V4 - Chat, Windows WASAPI"
+        )
 
+    @WINDOWS_ONLY
     def test_config_audio_device_preserves_explicit_windows_hostapi_suffix(
         self,
     ) -> None:
         """Verify an explicit Windows host API suffix is kept stable."""
-        with mock.patch("celune.config.os.name", "nt"):
-            assert (
-                config.config_audio_device(
-                    {
-                        "device": "Razer Kraken V4 - Chat, Windows DirectSound",
-                        "audio_api": "wasapi",
-                    },
-                    "device",
-                )
-                == "Razer Kraken V4 - Chat, Windows DirectSound"
+        assert (
+            config.config_audio_device(
+                {
+                    "device": "Razer Kraken V4 - Chat, Windows DirectSound",
+                    "audio_api": "wasapi",
+                },
+                "device",
             )
+            == "Razer Kraken V4 - Chat, Windows DirectSound"
+        )
 
+    @WINDOWS_ONLY
     def test_config_audio_api_accepts_supported_windows_hostapis(self) -> None:
         """Verify Windows host API config only accepts supported values."""
         assert config.config_audio_api({}) is None
@@ -183,6 +187,7 @@ class TestConfig(CeluneTestCase):
 
         assert resolved == 0
 
+    @WINDOWS_ONLY
     def test_resolve_audio_device_filters_windows_hostapi_matches(self) -> None:
         """Verify Windows host API config resolves ambiguous device names cleanly."""
         devices = [
@@ -202,7 +207,6 @@ class TestConfig(CeluneTestCase):
         hostapis = [{"name": "Windows DirectSound"}, {"name": "Windows WASAPI"}]
 
         with (
-            mock.patch("celune.config.os.name", "nt"),
             mock.patch("celune.config.sd.query_devices", return_value=devices),
             mock.patch("celune.config.sd.query_hostapis", return_value=hostapis),
         ):
@@ -217,6 +221,7 @@ class TestConfig(CeluneTestCase):
 
         assert resolved == 1
 
+    @WINDOWS_ONLY
     def test_resolve_audio_device_returns_exact_index_after_direct_query_on_windows(
         self,
     ) -> None:
@@ -239,7 +244,6 @@ class TestConfig(CeluneTestCase):
         hostapis = [{"name": "Windows DirectSound"}, {"name": "Windows WASAPI"}]
 
         with (
-            mock.patch("celune.config.os.name", "nt"),
             mock.patch(
                 "celune.config.sd.query_devices",
                 side_effect=[direct_info, devices],
@@ -257,6 +261,7 @@ class TestConfig(CeluneTestCase):
 
         assert resolved == 1
 
+    @WINDOWS_ONLY
     def test_resolve_audio_device_accepts_sequence_results_from_sounddevice(
         self,
     ) -> None:
@@ -282,7 +287,6 @@ class TestConfig(CeluneTestCase):
         )
 
         with (
-            mock.patch("celune.config.os.name", "nt"),
             mock.patch(
                 "celune.config.sd.query_devices",
                 side_effect=[direct_info, devices],
@@ -300,6 +304,7 @@ class TestConfig(CeluneTestCase):
 
         assert resolved == 1
 
+    @WINDOWS_ONLY
     def test_resolve_audio_device_accepts_appended_windows_hostapi_selector(
         self,
     ) -> None:
@@ -321,7 +326,6 @@ class TestConfig(CeluneTestCase):
         hostapis = [{"name": "Windows DirectSound"}, {"name": "Windows WASAPI"}]
 
         with (
-            mock.patch("celune.config.os.name", "nt"),
             mock.patch("celune.config.sd.query_devices", return_value=devices),
             mock.patch("celune.config.sd.query_hostapis", return_value=hostapis),
         ):
@@ -337,13 +341,13 @@ class TestConfig(CeluneTestCase):
 
         assert resolved == 1
 
+    @WINDOWS_ONLY
     def test_format_audio_device_name_appends_windows_hostapi(self) -> None:
         """Verify runtime labels show the Windows host API when available."""
-        with mock.patch("celune.config.os.name", "nt"):
-            label = config.format_audio_device_name(
-                {"name": "Microphone", "hostapi": 1},
-                [{"name": "MME"}, {"name": "Windows WASAPI"}],
-            )
+        label = config.format_audio_device_name(
+            {"name": "Microphone", "hostapi": 1},
+            [{"name": "MME"}, {"name": "Windows WASAPI"}],
+        )
 
         assert label == "Microphone, Windows WASAPI"
 

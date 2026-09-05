@@ -9,6 +9,7 @@ import pytest
 from celune.audio import server
 
 from .support import CeluneTestCase
+from .platform import LINUX_ONLY, WINDOWS_ONLY
 
 
 class TestAudioServer(CeluneTestCase):
@@ -21,10 +22,10 @@ class TestAudioServer(CeluneTestCase):
         """Build one completed-process fixture."""
         return subprocess.CompletedProcess([], returncode, "", stderr)
 
+    @WINDOWS_ONLY
     def test_windows_restarts_windows_audio_service(self) -> None:
         """Verify Windows uses PowerShell to restart the Windows Audio service."""
         with (
-            mock.patch.object(server.os, "name", "nt"),
             mock.patch.object(server.shutil, "which", return_value="powershell.exe"),
             mock.patch.object(
                 server,
@@ -42,6 +43,7 @@ class TestAudioServer(CeluneTestCase):
         assert "-WindowStyle Hidden" in script
         assert "Restart-Service -Name Audiosrv -Force" in script
 
+    @LINUX_ONLY
     def test_linux_restarts_active_user_audio_units(self) -> None:
         """Verify Linux restarts active PipeWire-related user units together."""
         responses = [
@@ -52,8 +54,6 @@ class TestAudioServer(CeluneTestCase):
             self._completed(0),
         ]
         with (
-            mock.patch.object(server.os, "name", "posix"),
-            mock.patch.object(server.sys, "platform", "linux"),
             mock.patch.object(
                 server.shutil,
                 "which",
@@ -74,11 +74,10 @@ class TestAudioServer(CeluneTestCase):
         )
         assert run_command.call_args.args[0][0:3] == ("systemctl", "--user", "restart")
 
+    @LINUX_ONLY
     def test_linux_uses_pulseaudio_fallback(self) -> None:
         """Verify Linux can stop a running PulseAudio server without systemd user units."""
         with (
-            mock.patch.object(server.os, "name", "posix"),
-            mock.patch.object(server.sys, "platform", "linux"),
             mock.patch.object(
                 server.shutil,
                 "which",

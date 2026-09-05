@@ -45,6 +45,7 @@ from celune.ui.app import (
     CeluneLoadingScreen,
 )
 from tests.support import FakeBackend, FakeVCBackend, CeluneTestCase
+from tests.platform import WINDOWS_ONLY
 from celune.terminal import set_terminal_title
 from celune.ui.theme import severity_color
 from celune.constants import APP_NAME, COST_EQUIVALENTS, ExitCodes
@@ -853,12 +854,12 @@ class TestUICommand(CeluneTestCase):
             "warning",
         )
 
+    @WINDOWS_ONLY
     def test_windows_command_split_keeps_literal_backslashes(self) -> None:
         """Verify Windows slash commands keep single-backslash file paths intact."""
-        with mock.patch("celune.ui.app.os.name", "nt"):
-            parts = CeluneUI.split_command_input(
-                r'attach "C:\Users\user\Downloads\bad suggestion.png"'
-            )
+        parts = CeluneUI.split_command_input(
+            r'attach "C:\Users\user\Downloads\bad suggestion.png"'
+        )
 
         assert parts == ["attach", r"C:\Users\user\Downloads\bad suggestion.png"]
 

@@ -5,6 +5,8 @@ from unittest import mock
 
 from celune.cpu import check_cpu_features, required_cpu_features
 
+from .platform import WINDOWS_ONLY
+
 
 class TestCpuFeatures:
     """Verify CPU requirements are selected for each supported platform."""
@@ -30,10 +32,10 @@ class TestCpuFeatures:
         """Verify ARM64 does not inherit x86 SIMD requirements."""
         assert not required_cpu_features("aarch64")
 
+    @WINDOWS_ONLY
     def test_missing_features_make_check_unsupported(self) -> None:
         """Verify a detectable missing feature fails the compatibility check."""
         with (
-            mock.patch("celune.cpu.platform.system", return_value="Windows"),
             mock.patch("celune.cpu.platform.machine", return_value="AMD64"),
             mock.patch(
                 "celune.cpu._detect_cpu_features",

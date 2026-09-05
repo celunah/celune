@@ -8,6 +8,7 @@ from celune import watchdog
 from celune.constants import ExitCodes
 
 from .support import CeluneTestCase
+from .platform import LINUX_ONLY
 
 
 class TestWatchdog(CeluneTestCase):
@@ -21,6 +22,7 @@ class TestWatchdog(CeluneTestCase):
         """Verify launcher loss uses the reserved exit code eight."""
         assert ExitCodes.EXIT_LAUNCHER_LOST.value == 8
 
+    @LINUX_ONLY
     def test_posix_pipe_eof_exits_with_launcher_lost_code(self) -> None:
         """Verify EOF on the launcher pipe invokes the immediate exit path."""
         read_fd, write_fd = os.pipe()
@@ -38,6 +40,7 @@ class TestWatchdog(CeluneTestCase):
 
         exit_launcher_lost.assert_called_once_with()
 
+    @LINUX_ONLY
     def test_pipe_loss_requests_coordinated_shutdown_without_hard_exit(self) -> None:
         """Verify pipe loss sets the shutdown request instead of aborting the process."""
         read_fd, write_fd = os.pipe()
@@ -48,6 +51,7 @@ class TestWatchdog(CeluneTestCase):
         assert watchdog.launcher_loss_requested()
 
     @staticmethod
+    @LINUX_ONLY
     def test_watchdog_starts_for_configured_posix_pipe() -> None:
         """Verify a configured POSIX pipe is handed to a daemon watcher thread."""
         with (
@@ -56,7 +60,6 @@ class TestWatchdog(CeluneTestCase):
                 {"CELUNE_LAUNCHER_PIPE_FD": "17"},
                 clear=True,
             ),
-            mock.patch.object(watchdog.os, "name", "posix"),
             mock.patch.object(watchdog.threading, "Thread") as thread,
         ):
             watchdog.start_watchdog()
