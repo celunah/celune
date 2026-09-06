@@ -109,15 +109,16 @@ terminal period; names and acronyms elsewhere in that line are preserved.
 
 ## Run the suite
 
-The default development and CI test task uses two xdist workers and keeps each
-test module on one worker:
+The default development test task uses two xdist workers and keeps each test
+module on one worker:
 
 ```bash
 uv run poe test
 ```
 
-Use the basic serial task when debugging a failure or investigating
-process-global state:
+CI uses the complete serial task so worker startup, process-global state, and
+subprocess tests run in one pytest process. Use the same task when debugging a
+failure or investigating process-global state:
 
 ```bash
 uv run poe test_basic

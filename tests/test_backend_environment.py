@@ -3693,6 +3693,7 @@ raise SystemExit(worker.main())
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
+                bufsize=0,
                 pass_fds=(worker_binary_input, worker_binary_output),
             )
             os.close(worker_binary_input)
@@ -3701,6 +3702,15 @@ raise SystemExit(worker.main())
             worker_binary_output = -1
             assert process.stdin is not None
             assert process.stdout is not None
+
+            def receive_worker_message() -> WorkerMessage:
+                """Read one worker packet within a bounded test deadline."""
+                assert process is not None
+                assert process.stdout is not None
+                ready, _, _ = select.select([process.stdout], [], [], 10.0)
+                if not ready:
+                    self.fail("worker did not send the next CEDTS packet")
+                return receive_message(process.stdout)
 
             hello = build_packet(
                 "hello",
@@ -3716,8 +3726,8 @@ raise SystemExit(worker.main())
                 message_id="hello-request",
             )
             send_no_payload_packet(process.stdin, core_binary_output, hello)
-            hello_ack = receive_message(process.stdout)
-            ready = receive_message(process.stdout)
+            hello_ack = receive_worker_message()
+            ready = receive_worker_message()
             self.assertEqual(hello_ack["kind"], "hello_ack")
             self.assertEqual(hello_ack["reply_to"], "hello-request")
             self.assertEqual(ready["kind"], "ready")
@@ -3730,7 +3740,7 @@ raise SystemExit(worker.main())
                 message_id="describe-request",
             )
             send_no_payload_packet(process.stdin, core_binary_output, request)
-            response = receive_message(process.stdout)
+            response = receive_worker_message()
             self.assertEqual(response["kind"], "response")
             self.assertEqual(response["reply_to"], "describe-request")
             self.assertTrue(cast(dict, response["data"])["ok"])
@@ -3745,7 +3755,7 @@ raise SystemExit(worker.main())
                 message_id="load-request",
             )
             send_no_payload_packet(process.stdin, core_binary_output, load_request)
-            load_response = receive_message(process.stdout)
+            load_response = receive_worker_message()
             self.assertEqual(load_response["kind"], "response")
             self.assertEqual(load_response["reply_to"], "load-request")
             self.assertEqual(
@@ -3760,18 +3770,22 @@ raise SystemExit(worker.main())
                 message_id="shutdown-request",
             )
             send_no_payload_packet(process.stdin, core_binary_output, shutdown)
-            shutdown_ack = receive_message(process.stdout)
+            shutdown_ack = receive_worker_message()
             self.assertEqual(shutdown_ack["kind"], "shutdown_ack")
             self.assertEqual(shutdown_ack["reply_to"], "shutdown-request")
             self.assertEqual(
                 cast(dict, shutdown_ack["data"])["value"]["active_job_cancelled"],
                 False,
             )
-            self.assertEqual(process.wait(timeout=5), 0)
-            assert process.stderr is not None
+            stderr_output = b""
+            try:
+                _, stderr_output = process.communicate(timeout=15)
+            except subprocess.TimeoutExpired:
+                self.fail("worker did not exit after shutdown acknowledgement")
+            self.assertEqual(process.returncode, 0)
             self.assertIn(
                 "backend load diagnostic",
-                process.stderr.read().decode("utf-8", errors="replace"),
+                stderr_output.decode("utf-8", errors="replace"),
             )
         finally:
             for descriptor in (

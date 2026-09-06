@@ -23,8 +23,8 @@ def _get_revision() -> str:
 
 
 REVISION = _get_revision()
-VERSION = "5.0.0"
-DEVELOPMENT = True
+VERSION = "5.0.1"
+DEVELOPMENT = False
 
 if REVISION:
     _local = REVISION.rstrip("*")
