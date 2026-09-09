@@ -164,6 +164,12 @@ and the backend decides how quickly to release the current operation. A fatal
 protocol error tears down the worker rather than trying to reuse a stream with
 unknown framing state.
 
+If a CEDTS stream reaches EOF or reports another transport, protocol, or
+payload failure, the proxy stores the typed error, wakes the active request
+waiter, and emits the failure through Celune's log callback immediately. The
+worker is then torn down; the caller does not wait for the operation's normal
+timeout boundary.
+
 ## Errors and implementation API
 
 The transport defines these exception categories:

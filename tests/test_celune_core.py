@@ -1713,6 +1713,7 @@ class TestCeluneCore(CeluneTestCase):
         celune.current_voice = "balanced"
         celune.voices = ("balanced", "bold")
         celune.status_callback = mock.Mock()
+        celune.error_callback = mock.Mock()
 
         with mock.patch("celune.celune.play_signal", return_value=False):
             assert not celune._hot_reload_backend(FailingWarmupBackend, "storm")
@@ -1721,6 +1722,9 @@ class TestCeluneCore(CeluneTestCase):
         assert "Warming up" in status_calls
         assert "Restoring backend" in status_calls
         assert status_calls[-1] == "Idle"
+        celune.error_callback.assert_called_once_with(
+            i18n.string("status.could_not_reload", app_name="Celune")
+        )
 
     def test_hot_backend_reload_unloads_previous_runtime_before_loading_new_one(
         self,
@@ -2036,7 +2040,7 @@ class TestCeluneCore(CeluneTestCase):
         celune.change_voice_lock_state_callback.assert_not_called()
         celune._try_play_signal.assert_not_called()
         celune.log_callback.assert_called_once_with(
-            "unknown backend: qwen (available: mini, qwen3, dotstts, voxcpm2, gpt-sovits, seed-vc)",
+            "unknown backend: qwen (available: mini, qwen3, fireredtts3, dotstts, voxcpm2, gpt-sovits, seed-vc)",
             "warning",
         )
         assert celune.cur_state == "idle"

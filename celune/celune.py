@@ -2021,6 +2021,7 @@ class Celune(CeluneStateAccessors):
             self.progress_callback(1, 1)
             if rollback_succeeded:
                 self.log(string("celune.backend_restore_failed"), "warning")
+            self.error_callback(string("status.could_not_reload", app_name=APP_NAME))
             return False
         finally:
             self._clear_reload_backend(

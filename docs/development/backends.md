@@ -112,4 +112,10 @@ Celune's playback format.
    reload rollback.
 6. Update this page and the relevant user-facing capability table immediately.
 
+When a backend candidate fails during a hot reload, Celune reports the detailed
+failure to the log, restores the previous backend when possible, and then
+invokes the app-facing error callback with the localized reload failure. The
+UI can therefore show the failure after rollback instead of silently returning
+to an idle-looking screen.
+
 The core must remain importable without the backend package installed.

@@ -2896,6 +2896,65 @@ class TestBackendEnvironment(CeluneTestCase):
         proxy._start_packet_reader()
         return proxy, reader, writer
 
+    def test_remote_proxy_reports_eof_to_an_active_request_immediately(self) -> None:
+        """Verify an EOF wakes the active request instead of waiting for its deadline."""
+        proxy, reader, writer = self._make_packet_reader_proxy()
+        process = cast(SimpleNamespace, proxy._process)
+        process.stdin = io.BytesIO()
+        process.poll = lambda: None
+        proxy._protocol_lock = threading.Lock()
+        request_sent = threading.Event()
+
+        def send_packet(*_args: object, **_kwargs: object) -> str:
+            """Signal that the active request reached the stand-in worker."""
+            request_sent.set()
+            return "request-id"
+
+        proxy._send_packet = mock.Mock(side_effect=send_packet)
+        proxy.abort = mock.Mock()
+        errors: list[Exception] = []
+
+        def request() -> None:
+            """Wait for the active request to observe the closed worker stream."""
+            try:
+                proxy._request(
+                    "load_model",
+                    response_timeout=900.0,
+                    model_id="model",
+                )
+            except Exception as error:
+                errors.append(error)
+
+        request_thread = threading.Thread(target=request)
+        request_thread.start()
+        self.assertTrue(request_sent.wait(timeout=1))
+        writer.close()
+        request_thread.join(timeout=1)
+
+        try:
+            self.assertFalse(request_thread.is_alive())
+            self.assertEqual(len(errors), 1)
+            self.assertIsInstance(errors[0], CEDTSEOFError)
+            log_messages = [
+                str(call.args[0])
+                for call in cast(mock.Mock, proxy._log_callback).call_args_list
+                if call.args
+            ]
+            self.assertTrue(
+                any(
+                    "CEDTS transport error operation=load_model" in message
+                    and "unexpected EOF" in message
+                    for message in log_messages
+                )
+            )
+        finally:
+            proxy._reader_stop.set()
+            with suppress(OSError, ValueError):
+                reader.close()
+            reader_thread = proxy._reader_thread
+            if reader_thread is not None:
+                reader_thread.join(timeout=1)
+
     def test_remote_proxy_dispatches_idle_worker_events(self) -> None:
         """Verify fatal notifications and correlated worker events reach consumers."""
         event_callback = mock.Mock()
