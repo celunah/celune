@@ -28,10 +28,7 @@ __all__ = [
     "backend_manifest",
 ]
 
-_WORKER_HUGGINGFACE_REQUIREMENTS = (
-    "huggingface-hub>=0.36,<1.0.0",
-    "hf-xet",
-    "transformers>=4.56,<5.0.0",
+_WORKER_SHARED_REQUIREMENTS = (
     "lingua-language-detector>=2.2.0,<3.0.0",
     "librosa==0.11.0",
     "llvmlite==0.47.0",
@@ -43,6 +40,18 @@ _WORKER_HUGGINGFACE_REQUIREMENTS = (
     "sounddevice",
     "soundfile",
     "zstandard",
+)
+_WORKER_HUGGINGFACE_REQUIREMENTS = (
+    "huggingface-hub>=0.36,<1.0.0",
+    "hf-xet",
+    "transformers>=4.56,<5.0.0",
+    *_WORKER_SHARED_REQUIREMENTS,
+)
+_FIRERED_WORKER_HUGGINGFACE_REQUIREMENTS = (
+    "huggingface-hub>=1.5.0,<2.0.0",
+    "hf-xet",
+    "transformers==5.6.2",
+    *_WORKER_SHARED_REQUIREMENTS,
 )
 _MAIN_BRANCH_PYTORCH_REQUIREMENTS = (
     "torch==2.11.0+cu128",
@@ -140,6 +149,20 @@ BACKEND_MANIFESTS = {
         ),
         backend_module="celune.backends.tts.qwen3",
         backend_class="Qwen3",
+        index_urls=_PYTORCH_INDEX_URLS,
+    ),
+    "fireredtts3": BackendManifest(
+        backend_id="fireredtts3",
+        kind="tts",
+        requirements=(
+            *_MAIN_BRANCH_PYTORCH_REQUIREMENTS,
+            *_FIRERED_WORKER_HUGGINGFACE_REQUIREMENTS,
+            "einops==0.8.2",
+            "regex",
+            "torchcodec==0.16.0",
+        ),
+        backend_module="celune.backends.tts.fireredtts3",
+        backend_class="FireRedTTS3",
         index_urls=_PYTORCH_INDEX_URLS,
     ),
     "dotstts": BackendManifest(

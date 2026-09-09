@@ -17,17 +17,22 @@ manager; normal application configuration does not select that path.
 | --- | --- | --- | --- |
 | `mini` | TTS | `celune.backends.tts.mini:Mini` | `pocket-tts>=2.1.0` |
 | `qwen3` | TTS | `celune.backends.tts.qwen3:Qwen3` | `faster-qwen3-tts>=0.2.4` |
+| `fireredtts3` | TTS | `celune.backends.tts.fireredtts3:FireRedTTS3` | FireRedTTS3 source, Transformers 5.6.2, and TorchCodec 0.16.0; BF16 transformer path with PyTorch SDPA and latent streaming. |
 | `dotstts` | TTS | `celune.backends.tts.dotstts:DotsTtsMF` | Celune's `dots.tts` fork; Python 3.12. |
 | `voxcpm2` | TTS | `celune.backends.tts.voxcpm2:VoxCPM2` | `voxcpm>=2.0.0`; Python 3.12. |
 | `gpt-sovits` | TTS | `celune.backends.tts.gpt_sovits:GPTSoVITS` | GPT-SoVITS family dependencies. |
 | `seed-vc` | VC | `celune.backends.vc.seedvc:CeluneSeedVCBackend` | Celune's Seed-VC fork. |
 
-Workers share a compatibility baseline containing Hugging Face Hub and
+Most workers share a compatibility baseline containing Hugging Face Hub and
 `hf-xet`, Transformers below 5 in the worker environment, Lingua, librosa,
 llvmlite, NumPy/Numba, Pillow, platformdirs, psutil, sounddevice, soundfile,
 and Zstandard, plus the CEDTS-compatible PyTorch 2.11 CUDA 12.8 worker stack.
-The core project itself currently resolves its own CUDA 13.0 stack; the two
-environments are intentionally not the same lockfile.
+FireRedTTS3 is intentionally separate from that Hugging Face portion: its
+manifest uses `huggingface-hub>=1.5.0,<2.0.0` and `transformers==5.6.2`, which
+cannot be resolved alongside the shared Hub-below-1 and Transformers-below-5
+constraints. The core project itself currently resolves its own CUDA 13.0
+stack; the core and backend environments are intentionally not the same
+lockfile.
 
 ## Backend behavior
 
@@ -44,6 +49,32 @@ stability over full reference expressiveness.
 `mini` adapts Pocket TTS, streams at 12.5 chunks per second, and supports
 English, French, German, Italian, Portuguese, and Spanish. It is the supported
 CPU-friendly path and still uses pack reference data for cloning.
+
+### FireRedTTS3
+
+`fireredtts3` adapts the FireRedTTS3 base model for zero-shot voice cloning
+across 24 languages and 21 Chinese dialect tags. It consumes the active voice's
+reference WAV and exact `reference_text`, then streams progressive 24 kHz
+audio chunks to the CEDTS worker. FireRed's autoregressive core emits four
+RedAE frames per generation step; Celune keeps the RedAE decoder's Qwen3 KV
+cache and incrementally overlap-adds its ISTFT frames, forwarding each newly
+stable audio segment without waiting for the final waveform. Celune loads the
+RedAE and transformer checkpoints directly in BF16 before moving them to CUDA
+and runs the FireRed
+generation path under BF16 autocast so its FP32 prompt tensors remain
+compatible with the loaded model. During construction,
+every FireRed Qwen configuration that requests `flash_attention_2` is replaced
+with PyTorch SDPA. The backend reports model-construction stages through the
+CEDTS progress and log callbacks, so a blocking load remains observable. The
+source and Transformers modules are primed before the worker announces
+readiness; this keeps their native SciPy imports out of the CEDTS request
+thread on Windows without loading model weights during worker startup. The
+official source-only repository is downloaded into Celune runtime data on first
+use, and the model snapshot is cached through Hugging Face Hub. This backend
+therefore does not build or require the unsupported `flash-attn` package.
+Its redundant upstream text-front-end completion notice is filtered through
+Celune's shared runtime log suppression list; fallback warnings and failures
+remain visible.
 
 ### VoxCPM2
 

@@ -14,23 +14,8 @@ from contextlib import suppress
 from collections import OrderedDict
 from collections.abc import Mapping, Callable
 
-from ..exceptions import (
-    CEDTSError,
-    CEDTSEOFError,
-    CEDTSStreamError,
-    CEDTSPayloadError,
-    CEDTSProtocolError,
-)
-from ..backends.environment import BackendManifest, backend_manifest
-from ..typing.common import JSONSerializable
-from ..typing.worker import (
-    WorkerValue,
-    WorkerMessage,
-    WorkerRequest,
-    WorkerResponse,
-    WorkerPayloadDescriptor,
-)
-from ..typing.aliases import LogLevel
+from ..paths import configure_numba_cache
+from ..cevoice import select_voice_bundle
 from .protocol import (
     CEDTS_VERSION,
     WORKER_CAPABILITIES,
@@ -46,15 +31,30 @@ from .protocol import (
     receive_payloads,
     limits_from_capabilities,
 )
+from ..exceptions import (
+    CEDTSError,
+    CEDTSEOFError,
+    CEDTSStreamError,
+    CEDTSPayloadError,
+    CEDTSProtocolError,
+)
+from ..typing.common import JSONSerializable
+from ..typing.worker import (
+    WorkerValue,
+    WorkerMessage,
+    WorkerRequest,
+    WorkerResponse,
+    WorkerPayloadDescriptor,
+)
+from ..typing.aliases import LogLevel
 from ..typing.backends import (
     BackendModel,
     BackendArguments,
     BackendDescription,
     _BackendRuntime,
 )
+from ..backends.environment import BackendManifest, backend_manifest
 from ..dataclasses.pipeline import VoiceConversionRequest
-from ..paths import configure_numba_cache
-from ..cevoice import select_voice_bundle
 
 _WORKER_STDERR = sys.stderr
 # Retain recent packet IDs to reject replayed packets without growing state for
@@ -113,6 +113,13 @@ def _qwen3_constructor() -> Callable[..., _BackendRuntime]:
     return cast(Callable[..., _BackendRuntime], Qwen3)
 
 
+def _fireredtts3_constructor() -> Callable[..., _BackendRuntime]:
+    """Load the approved FireRedTTS3 backend constructor on demand."""
+    from ..backends.tts.fireredtts3 import FireRedTTS3
+
+    return cast(Callable[..., _BackendRuntime], FireRedTTS3)
+
+
 def _dotstts_constructor() -> Callable[..., _BackendRuntime]:
     """Load the approved DotsTTS backend constructor on demand."""
     from ..backends.tts.dotstts import DotsTtsMF
@@ -146,6 +153,7 @@ _BACKEND_REGISTRY: Mapping[
 ] = {
     "mini": ("tts", _mini_constructor),
     "qwen3": ("tts", _qwen3_constructor),
+    "fireredtts3": ("tts", _fireredtts3_constructor),
     "dotstts": ("tts", _dotstts_constructor),
     "voxcpm2": ("tts", _voxcpm2_constructor),
     "gpt-sovits": ("tts", _gpt_sovits_constructor),

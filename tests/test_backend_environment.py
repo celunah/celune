@@ -276,6 +276,7 @@ class TestBackendEnvironment(CeluneTestCase):
         assert set(BACKEND_MANIFESTS) == {
             "mini",
             "qwen3",
+            "fireredtts3",
             "dotstts",
             "voxcpm2",
             "gpt-sovits",
@@ -287,10 +288,18 @@ class TestBackendEnvironment(CeluneTestCase):
         assert backend_manifest(" QWEN3 ") is BACKEND_MANIFESTS["qwen3"]
 
     def test_worker_registry_contains_only_approved_backends(self) -> None:
-        """Verify worker construction is limited to the six CEDTS backends."""
+        """Verify worker construction is limited to the seven CEDTS backends."""
         self.assertEqual(
             set(worker._BACKEND_REGISTRY),
-            {"mini", "qwen3", "dotstts", "voxcpm2", "gpt-sovits", "seed-vc"},
+            {
+                "mini",
+                "qwen3",
+                "fireredtts3",
+                "dotstts",
+                "voxcpm2",
+                "gpt-sovits",
+                "seed-vc",
+            },
         )
         self.assertEqual(
             {
@@ -300,6 +309,7 @@ class TestBackendEnvironment(CeluneTestCase):
             {
                 "mini": "tts",
                 "qwen3": "tts",
+                "fireredtts3": "tts",
                 "dotstts": "tts",
                 "voxcpm2": "tts",
                 "gpt-sovits": "tts",
@@ -352,13 +362,18 @@ class TestBackendEnvironment(CeluneTestCase):
             assert expected_requirements.issubset(manifest.requirements)
 
     def test_manifests_use_the_main_branch_huggingface_versions(self) -> None:
-        """Verify isolated backends use the main branch's Hugging Face ranges."""
+        """Verify standard isolated backends use the main Hugging Face ranges."""
         expected_requirements = {
             "huggingface-hub>=0.36,<1.0.0",
             "hf-xet",
             "transformers>=4.56,<5.0.0",
         }
-        for manifest in BACKEND_MANIFESTS.values():
+        standard_manifests = (
+            manifest
+            for backend_id, manifest in BACKEND_MANIFESTS.items()
+            if backend_id != "fireredtts3"
+        )
+        for manifest in standard_manifests:
             assert expected_requirements.issubset(manifest.requirements)
 
     def test_manifests_pin_the_main_branch_librosa_stack(self) -> None:
@@ -377,6 +392,18 @@ class TestBackendEnvironment(CeluneTestCase):
             "dots.tts @ git+https://github.com/celunah/dots.tts"
             in BACKEND_MANIFESTS["dotstts"].requirements
         )
+
+    def test_fireredtts3_uses_its_isolated_huggingface_contract(self) -> None:
+        """Verify FireRedTTS3 gets an isolated Transformers 5 worker contract."""
+        requirements = BACKEND_MANIFESTS["fireredtts3"].requirements
+
+        assert "huggingface-hub>=1.5.0,<2.0.0" in requirements
+        assert "huggingface-hub>=0.36,<1.0.0" not in requirements
+        assert "transformers==5.6.2" in requirements
+        assert "transformers>=4.56,<5.0.0" not in requirements
+        assert "einops==0.8.2" in requirements
+        assert "flash_attn==2.8.3" not in requirements
+        assert "torchcodec==0.16.0" in requirements
 
     def test_backend_dependency_list_matches_main_backend_normalizers(self) -> None:
         """Verify the backend dependency list follows the main branch declarations."""

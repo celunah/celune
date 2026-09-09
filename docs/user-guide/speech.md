@@ -13,6 +13,7 @@ latency, and reference conditioning.
 | --- | --- | ---: | --- |
 | `qwen3` | Fast expressive cloning | 12.5 chunks/s | Supports Chinese, English, Japanese, Korean, German, French, Russian, Portuguese, Spanish, and Italian. |
 | `mini` | Small and CPU-friendly | 12.5 chunks/s | Pocket TTS; English, French, German, Italian, Portuguese, and Spanish. |
+| `fireredtts3` | Multilingual zero-shot cloning | 1 complete chunk/request | Supports 24 languages and 21 Chinese dialect tags; uses the active reference WAV and transcript and loads its transformer path in BF16. |
 | `voxcpm2` | High-fidelity multilingual generation | 6.25 chunks/s | Uses reference WAV plus per-voice `cfg_scale`; needs a compiler in some installs. |
 | `dotstts` | Speaker similarity and diffusion quality | 6.25 chunks/s | Uses Celune's forked `dots.tts` package. |
 | `gpt-sovits` | GPT-SoVITS family compatibility | 6.25 chunks/s | Supports Chinese, English, Japanese, Korean, and Cantonese variants; may exhibit accent drift. |
@@ -43,6 +44,11 @@ required, its exact `reference_text`. A full reference recording is preferred
 to a very short fragment because it preserves timbre more consistently. The
 `qwen3_x_vector_only` option can lock speaker identity while reducing expressive
 conditioning; use it when identity stability matters more than style transfer.
+
+FireRedTTS3 uses the active reference WAV and its exact `reference_text` for
+zero-shot cloning. It returns a complete 24 kHz waveform after inference, which
+Celune resamples at the common playback boundary. Its Qwen backbone, stop head,
+and RedAE encoder load in BF16; the flow head and decoder remain F32.
 
 VoxCPM2 reads `cfg_scale` from per-voice metadata, with the bundled defaults at
 2.4 for balanced/bold/upbeat and 3.0 for calm. GPT-SoVITS uses longer reference

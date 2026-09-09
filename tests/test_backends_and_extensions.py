@@ -10,35 +10,42 @@ import textwrap
 import importlib
 import threading
 import contextlib
-from types import ModuleType, SimpleNamespace
-from typing import Union, Optional, cast
 from pathlib import Path
 from unittest import mock
+from typing import Union, Optional, cast
+from types import ModuleType, SimpleNamespace
 from collections.abc import Iterator, Generator
 
-import numpy as np
 import torch
 import pytest
+import numpy as np
 import soundfile as sf
 
 from celune.i18n import string
-from celune.utils import discard
-from celune.paths import huggingface_progress
-from celune.celune import Celune
 from celune.exceptions import (
     InvalidExtensionError,
     ExtensionAlreadyRegisteredError,
 )
-from celune.backends.vc import BACKEND_MANIFESTS as VC_BACKEND_MANIFESTS
-from celune.backends.vc import resolve_vc_backend
-from celune.backends.tts import BACKEND_MANIFESTS, resolve_backend
+from celune.celune import Celune
+from celune.utils import discard
 from celune.typing.aliases import AudioChunk
-from celune.extensions.base import CeluneContext, CeluneExtension
-from celune.typing.backends import BackendModel, _SeedVCRealtimeModule
+from celune.paths import huggingface_progress
+from celune.backends.tts.fireredtts3 import (
+    FireRedTTS3,
+    _FireRedIncrementalDecoder,
+    _FireRedModel,
+    _FireRedRedAE,
+    _create_firered_model,
+)
+from celune.backends.vc import resolve_vc_backend
 from celune.backends.vc.seedvc import CeluneSeedVCBackend
 from celune.extensions.manager import CeluneExtensionManager
 from celune.dataclasses.pipeline import VoiceConversionRequest
+from celune.extensions.base import CeluneContext, CeluneExtension
+from celune.typing.backends import BackendModel, _SeedVCRealtimeModule
+from celune.backends.tts import BACKEND_MANIFESTS, resolve_backend
 from celune.backends.tts.gpt_sovits import GPTSoVITS, GPTSoVITSPipeline
+from celune.backends.vc import BACKEND_MANIFESTS as VC_BACKEND_MANIFESTS
 
 from .support import (
     FakeBackend,
@@ -489,13 +496,358 @@ class TestBackend(CeluneTestCase):
                 string(
                     "celune.unknown_backend",
                     backend="missing",
-                    available="mini, qwen3, dotstts, voxcpm2, gpt-sovits",
+                    available="mini, qwen3, fireredtts3, dotstts, voxcpm2, gpt-sovits",
                 )
             ),
         ):
             resolve_backend("missing")
         with pytest.raises(TypeError, match="backend_name"):
             resolve_backend(123)  # type: ignore[arg-type]
+
+    def test_fireredtts3_normalizes_supported_language_tags(self) -> None:
+        """Verify Celune language identifiers become FireRedTTS3 language tags."""
+        backend = object.__new__(FireRedTTS3)
+
+        assert backend.resolve_generation_language("en-US") == "English"
+        assert backend.resolve_generation_language("zh-sichuan") == "ZH_Sichuan"
+        assert backend.resolve_generation_language("auto") is None
+
+    def test_fireredtts3_loads_memory_heavy_components_in_bfloat16(self) -> None:
+        """Verify the backend applies BF16 to the intended FireRedTTS3 components."""
+        model = SimpleNamespace(
+            tts_core=SimpleNamespace(
+                backbone_llm=mock.Mock(),
+                stop_head=mock.Mock(),
+            ),
+            redae=SimpleNamespace(encoder=mock.Mock()),
+        )
+
+        FireRedTTS3._configure_bfloat16(cast(_FireRedModel, model))
+
+        model.tts_core.backbone_llm.to.assert_called_once_with(dtype=torch.bfloat16)
+        model.tts_core.stop_head.to.assert_called_once_with(dtype=torch.bfloat16)
+        model.redae.encoder.to.assert_called_once_with(dtype=torch.bfloat16)
+
+    def test_fireredtts3_preloads_source_modules_before_cedts_readiness(self) -> None:
+        """Verify FireRedTTS3 primes source imports before the worker read loop."""
+        backend = object.__new__(FireRedTTS3)
+        source_root = Path("source-root")
+
+        with (
+            mock.patch.object(
+                backend, "_ensure_source_root", return_value=source_root
+            ) as ensure_source_root,
+            mock.patch.object(
+                backend,
+                "_source_context",
+                return_value=contextlib.nullcontext(),
+            ) as source_context,
+            mock.patch.object(backend, "_preload_source_modules") as preload,
+        ):
+            backend.prepare_model_loading()
+
+        ensure_source_root.assert_called_once_with()
+        source_context.assert_called_once_with(source_root)
+        preload.assert_called_once_with()
+
+    def test_fireredtts3_uses_sdpa_without_flash_attention(self) -> None:
+        """Verify FireRedTTS3 selects PyTorch SDPA instead of flash-attn."""
+
+        redae_load_kwargs: dict[str, object] = {}
+        core_load_kwargs: dict[str, object] = {}
+        qwen_config_kwargs: dict[str, object] = {}
+
+        class FakePackageModule(ModuleType):
+            """Minimal fake FireRedTTS3 package module."""
+
+            llm: ModuleType
+            redae: ModuleType
+
+        class FakeRedaePackageModule(ModuleType):
+            """Minimal fake FireRedTTS3 RedAE package module."""
+
+            redae: ModuleType
+
+        class FakeQwen3Config:
+            """Minimal fake Qwen3 configuration."""
+
+            def __init__(self, **kwargs: object) -> None:
+                qwen_config_kwargs.update(kwargs)
+
+        class FakeLlmModule(ModuleType):
+            """Minimal fake FireRedTTS3 LLM package module."""
+
+            fireredtts3_base: ModuleType
+
+        class FakeBaseModule(ModuleType):
+            """Minimal fake FireRedTTS3 base module."""
+
+            Qwen3_1_7B_ConfigDict: dict[str, str]
+            RedAE: type["FakeRedAE"]
+            FireRedTTS3BaseCore: type["FakeFireRedTTS3BaseCore"]
+
+        class FakeRedaeModule(ModuleType):
+            """Minimal fake FireRedTTS3 RedAE module."""
+
+            RedAE: type["FakeRedAE"]
+            Qwen3Config: type[FakeQwen3Config]
+
+        class FakeRedAE:
+            """Minimal fake RedAE model class."""
+
+            @classmethod
+            def from_pretrained(
+                cls, pretrained_model_dir: str, **kwargs: object
+            ) -> "FakeRedAE":
+                """Record the loader arguments and return a fake model."""
+                del pretrained_model_dir
+                redae_load_kwargs.update(kwargs)
+                return cls()
+
+        class FakeFireRedTTS3BaseCore:
+            """Minimal fake FireRedTTS3 transformer class."""
+
+            @classmethod
+            def from_pretrained(
+                cls, pretrained_model_dir: str, **kwargs: object
+            ) -> "FakeFireRedTTS3BaseCore":
+                """Record the loader arguments and return a fake model."""
+                del pretrained_model_dir
+                core_load_kwargs.update(kwargs)
+                return cls()
+
+        class FakeCoreModule(ModuleType):
+            """Minimal fake FireRedTTS3 core module."""
+
+            FireRedTTS3: mock.Mock
+
+        fake_package = FakePackageModule("fireredtts3")
+        fake_llm = FakeLlmModule("fireredtts3.llm")
+        fake_base = FakeBaseModule("fireredtts3.llm.fireredtts3_base")
+        fake_core = FakeCoreModule("fireredtts3.core")
+        fake_redae_package = FakeRedaePackageModule("fireredtts3.redae")
+        fake_redae = FakeRedaeModule("fireredtts3.redae.redae")
+        fake_config = {"attn_implementation": "flash_attention_2"}
+        fake_base.RedAE = FakeRedAE
+        fake_base.FireRedTTS3BaseCore = FakeFireRedTTS3BaseCore
+        fake_redae.RedAE = FakeRedAE
+        fake_redae.Qwen3Config = FakeQwen3Config
+
+        def construct_firered_model(*_args: object, **_kwargs: object) -> object:
+            """Exercise the patched FireRedTTS3 construction dependencies."""
+            fake_base.RedAE.from_pretrained("redae")
+            fake_base.FireRedTTS3BaseCore.from_pretrained("core")
+            fake_redae.Qwen3Config(attn_implementation="flash_attention_2")
+            return mock.sentinel.model
+
+        fire_red_constructor = mock.Mock(side_effect=construct_firered_model)
+        fake_base.Qwen3_1_7B_ConfigDict = fake_config
+        fake_llm.fireredtts3_base = fake_base
+        fake_core.FireRedTTS3 = fire_red_constructor
+        fake_package.llm = fake_llm
+        fake_package.redae = fake_redae_package
+        fake_redae_package.redae = fake_redae
+        stage_messages: list[tuple[str, str]] = []
+        stage_progress: list[tuple[Optional[float], Optional[float]]] = []
+
+        with mock.patch.dict(
+            sys.modules,
+            {
+                "fireredtts3": fake_package,
+                "fireredtts3.llm": fake_llm,
+                "fireredtts3.llm.fireredtts3_base": fake_base,
+                "fireredtts3.core": fake_core,
+                "fireredtts3.redae": fake_redae_package,
+                "fireredtts3.redae.redae": fake_redae,
+            },
+        ):
+            result = _create_firered_model(
+                "model-root",
+                log=lambda message, severity: stage_messages.append(
+                    (message, severity)
+                ),
+                report_progress=lambda progress, total: stage_progress.append(
+                    (progress, total)
+                ),
+            )
+
+        assert result is mock.sentinel.model
+        assert fake_config["attn_implementation"] == "flash_attention_2"
+        assert redae_load_kwargs == {"dtype": torch.bfloat16}
+        assert core_load_kwargs == {"dtype": torch.bfloat16}
+        assert qwen_config_kwargs["attn_implementation"] == "sdpa"
+        assert [message for message, _severity in stage_messages] == [
+            string("fireredtts3.model_loading"),
+            string("fireredtts3.loading_redae"),
+            string("fireredtts3.redae_loaded"),
+            string("fireredtts3.loading_core"),
+            string("fireredtts3.core_loaded"),
+        ]
+        assert all(severity == "info" for _message, severity in stage_messages)
+        assert stage_progress == [(0, 4), (1, 4), (2, 4), (2, 4), (3, 4)]
+        fire_red_constructor.assert_called_once_with(
+            "model-root",
+            use_fasttext=False,
+            use_llm_tn=False,
+            use_wetext=False,
+        )
+
+    def test_fireredtts3_streams_cedts_audio_chunks(self) -> None:
+        """Verify FireRedTTS3 decodes and yields progressive CEDTS chunks."""
+        loader = make_voice_loader(
+            "balanced",
+            {"reference_text": "Reference prompt."},
+        )
+        model = mock.Mock()
+        model.device = torch.device("cpu")
+        model.redae.sample_rate = 24000
+        model.redae.downsample_rate = 960
+        model.redae.pad_to_multiple_of.side_effect = lambda audio, _multiple: audio
+        model.redae.encode.return_value = torch.zeros(1, 4, 64)
+        model.spk_extractor.forward.return_value = torch.zeros(1, 512)
+        model._tokenize_text.return_value = torch.ones(1, 2, dtype=torch.long)
+        model.tts_core.patch_size = 4
+        model.tts_core.generate_stream.return_value = iter(
+            [
+                torch.zeros(1, 4, 64, dtype=torch.bfloat16),
+                torch.zeros(1, 4, 64, dtype=torch.bfloat16),
+            ]
+        )
+        incremental_decoder = mock.Mock()
+        incremental_decoder.push.side_effect = [
+            (None, 0),
+            (np.array([0.25, -0.5], dtype=np.float32), 0),
+            (np.array([0.75, -1.0], dtype=np.float32), 0),
+        ]
+        incremental_decoder.finish.return_value = (None, 0)
+        with (
+            mock.patch(
+                "celune.backends.tts.fireredtts3.default_loader",
+                return_value=loader,
+            ),
+            mock.patch(
+                "celune.backends.tts.fireredtts3.torchaudio.load",
+                return_value=(torch.zeros(1, 0), 24000),
+            ),
+            mock.patch("celune.backends.tts.fireredtts3.torch.autocast") as autocast,
+            mock.patch(
+                "celune.backends.tts.fireredtts3._FireRedIncrementalDecoder",
+                return_value=incremental_decoder,
+            ),
+        ):
+            backend = FireRedTTS3(log=lambda _msg, _severity="info": None)
+            backend.random_seed = False
+            backend.current_seed = 7
+            with mock.patch.object(
+                backend, "_truncate_reference", side_effect=lambda path: path
+            ):
+                chunks = list(
+                    backend.generate_stream(
+                        model,
+                        text="Hello.",
+                        language="en",
+                        voice="balanced",
+                        chunk_size=1,
+                    )
+                )
+
+        assert len(chunks) == 2
+        np.testing.assert_array_equal(chunks[0][0], [0.25, -0.5])
+        np.testing.assert_array_equal(chunks[1][0], [0.75, -1.0])
+        assert all(audio.dtype == np.float32 for audio, _sr, _timing in chunks)
+        assert all(sample_rate == 24000 for _audio, sample_rate, _timing in chunks)
+        assert chunks[0][2] is not None
+        assert chunks[0][2]["is_final"] is False
+        assert chunks[1][2] is not None
+        assert chunks[1][2]["is_final"] is True
+        assert model._tokenize_text.call_args.args == (
+            "<|English|><|sot|>Reference prompt.Hello.<|eot|>",
+        )
+        assert model.tts_core.generate_stream.call_args.kwargs["n_timesteps"] == 10
+        assert incremental_decoder.push.call_count == 3
+        incremental_decoder.finish.assert_called_once_with()
+        assert not model.redae.decode.called
+        assert not model.generate.called
+        autocast.assert_called_once_with(device_type="cuda", dtype=torch.bfloat16)
+
+    def test_fireredtts3_incremental_decoder_reuses_qwen_cache(self) -> None:
+        """Verify RedAE decoding reuses KV state and flushes the ISTFT tail."""
+
+        class FakeProjection:
+            """Produce latent embeddings for the decoder fixture."""
+
+            def __call__(self, latents: torch.Tensor) -> torch.Tensor:
+                """Expand each latent into the decoder's two hidden frames."""
+                return torch.zeros(latents.shape[0], latents.shape[1] * 2, 2)
+
+        class FakeOutputProjection:
+            """Produce a deterministic two-sided spectral projection."""
+
+            def __call__(self, hidden: torch.Tensor) -> torch.Tensor:
+                """Return zero magnitude and phase logits for stable unit audio."""
+                return torch.zeros(hidden.shape[0], hidden.shape[1], 6)
+
+        class FakeQwen:
+            """Record cache handoff between incremental decoder calls."""
+
+            config = SimpleNamespace(hidden_size=2)
+
+            def __init__(self) -> None:
+                self.seen_caches: list[Optional[SimpleNamespace]] = []
+                self.returned_caches: list[SimpleNamespace] = []
+
+            def __call__(
+                self,
+                *,
+                inputs_embeds: torch.Tensor,
+                attention_mask: Optional[torch.Tensor],
+                past_key_values: Optional[SimpleNamespace],
+                use_cache: bool,
+            ) -> SimpleNamespace:
+                """Return hidden states and a new cache marker."""
+                del attention_mask
+                assert use_cache
+                cache = SimpleNamespace()
+                self.seen_caches.append(past_key_values)
+                self.returned_caches.append(cache)
+                return SimpleNamespace(
+                    last_hidden_state=inputs_embeds,
+                    past_key_values=cache,
+                )
+
+        qwen = FakeQwen()
+        decoder = SimpleNamespace(
+            in_proj=FakeProjection(),
+            qwen3=qwen,
+            istft_head=SimpleNamespace(
+                out=FakeOutputProjection(),
+                istft=SimpleNamespace(
+                    window=torch.ones(4),
+                    n_fft=4,
+                    hop_length=2,
+                ),
+            ),
+        )
+        redae = cast(
+            _FireRedRedAE,
+            SimpleNamespace(decoder=decoder),
+        )
+        incremental = _FireRedIncrementalDecoder(redae)
+
+        prompt_audio, prompt_start = incremental.push(torch.zeros(1, 1, 1))
+        generated_audio, generated_start = incremental.push(torch.zeros(1, 1, 1))
+        tail_audio, tail_start = incremental.finish()
+
+        assert prompt_audio is not None
+        assert prompt_start == 0
+        assert generated_audio is not None
+        assert generated_start == 3
+        assert tail_audio is not None
+        assert tail_start == 7
+        generated = np.concatenate([generated_audio[1:], tail_audio])
+        assert generated.shape == (4,)
+        assert np.isfinite(generated).all()
+        assert qwen.seen_caches == [None, qwen.returned_caches[0]]
 
     def test_resolve_vc_backend_accepts_instance_type_and_rejects_unknown(self) -> None:
         """Verify supported VC backend specifications and invalid input failures."""

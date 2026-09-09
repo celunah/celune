@@ -5,10 +5,10 @@ from typing import Union, Optional
 from collections.abc import Callable
 from importlib.metadata import PackageNotFoundError, version
 
-from ...i18n import string
 from .base import CeluneBackend
-from ...typing.backends import BackendModel
+from ...i18n import string
 from ..environment import BACKEND_MANIFESTS, BackendManifest, backend_manifest
+from ...typing.backends import BackendModel
 
 __all__ = [
     "BACKENDS",
@@ -24,6 +24,7 @@ __all__ = [
 BACKENDS = {
     "mini": ("celune.backends.tts.mini", "Mini"),
     "qwen3": ("celune.backends.tts.qwen3", "Qwen3"),
+    "fireredtts3": ("celune.backends.tts.fireredtts3", "FireRedTTS3"),
     "dotstts": ("celune.backends.tts.dotstts", "DotsTtsMF"),
     "voxcpm2": ("celune.backends.tts.voxcpm2", "VoxCPM2"),
     "gpt-sovits": ("celune.backends.tts.gpt_sovits", "GPTSoVITS"),
