@@ -36,6 +36,7 @@ RUNTIME_LOG_FILTER_MESSAGES = frozenset(
         "You are sending unauthenticated requests",
         "triton not found",
         "A custom logits processor of type",
+        "FireRedTTS3 (text front-end) loaded",
     }
 )
 
