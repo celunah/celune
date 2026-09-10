@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, TypeVar, Optional, Protocol, TypedDict
+from typing import TYPE_CHECKING, TypeVar, Union, Optional, Protocol, TypedDict
 from collections.abc import Mapping, Callable, Iterator
 
 import numpy as np
@@ -30,6 +30,13 @@ class BackendModel(Protocol):
 
 
 ModelT = TypeVar("ModelT", bound=BackendModel)
+type SeedVCModelValue = Union[
+    Callable[..., torch.Tensor],
+    Mapping[str, JSONSerializable],
+    torch.Tensor,
+    torch.nn.Module,
+    str,
+]
 type MiniPromptState = dict[str, dict[str, torch.Tensor]]
 type BackendArgumentValue = JSONSerializable
 type BackendArguments = dict[str, BackendArgumentValue]
@@ -193,12 +200,14 @@ class _SeedVCRealtimeModule(Protocol):  # noqa: PYI046
     device: torch.device
     fp16: bool
 
-    def load_models(self, args: _SeedVCRealtimeArguments) -> tuple[object, ...]:
+    def load_models(
+        self, args: _SeedVCRealtimeArguments
+    ) -> tuple[SeedVCModelValue, ...]:
         """Load Seed-VC's native real-time model set."""
 
     def custom_infer(
         self,
-        model_set: tuple[object, ...],
+        model_set: tuple[SeedVCModelValue, ...],
         reference_wav: np.ndarray,
         new_reference_wav_name: str,
         input_wav_res: torch.Tensor,

@@ -28,7 +28,11 @@ from ...paths import (
     huggingface_hub_cache_dir,
 )
 from ...typing.aliases import AudioChunk, SeedVCGenerator
-from ...typing.backends import _SeedVCWrapper, _SeedVCRealtimeModule
+from ...typing.backends import (
+    SeedVCModelValue,
+    _SeedVCRealtimeModule,
+    _SeedVCWrapper,
+)
 from ...dataclasses.pipeline import AudioOutput, VoiceConversionRequest
 
 __all__ = ["CeluneSeedVCBackend"]
@@ -106,7 +110,7 @@ class CeluneSeedVCBackend(CeluneVCBackend):
         self._wrapper: Optional[_SeedVCWrapper] = None
         self._live_module: Optional[_SeedVCRealtimeModule] = None
         self._prepared_live_module: Optional[_SeedVCRealtimeModule] = None
-        self._live_model_set: Optional[tuple[object, ...]] = None
+        self._live_model_set: Optional[tuple[SeedVCModelValue, ...]] = None
         self._live_session_key: Optional[tuple[Path, int]] = None
         self._live_reference_path: Optional[Path] = None
         self._live_reference_wav = np.zeros(0, dtype=np.float32)
@@ -205,7 +209,9 @@ class CeluneSeedVCBackend(CeluneVCBackend):
                     self._wrapper = wrapper_type()
             return self._wrapper
 
-    def _get_live_runtime(self) -> tuple[_SeedVCRealtimeModule, tuple[object, ...]]:
+    def _get_live_runtime(
+        self,
+    ) -> tuple[_SeedVCRealtimeModule, tuple[SeedVCModelValue, ...]]:
         """Return the cached native Seed-VC real-time module and model set."""
         with self._wrapper_lock:
             if self._live_module is None or self._live_model_set is None:
@@ -329,7 +335,9 @@ class CeluneSeedVCBackend(CeluneVCBackend):
         return None
 
     @staticmethod
-    def _get_live_model_sample_rate(model_set: tuple[object, ...]) -> int:
+    def _get_live_model_sample_rate(
+        model_set: tuple[SeedVCModelValue, ...],
+    ) -> int:
         """Return the sample rate declared by Seed-VC's live model set."""
         if len(model_set) < 6 or not isinstance(model_set[-1], dict):
             raise RuntimeError(string("seedvc.live_model_invalid"))
@@ -409,7 +417,7 @@ class CeluneSeedVCBackend(CeluneVCBackend):
     def _initialize_live_session(
         self,
         realtime_module: _SeedVCRealtimeModule,
-        model_set: tuple[object, ...],
+        model_set: tuple[SeedVCModelValue, ...],
         reference_path: Path,
         input_sample_rate: int,
     ) -> None:
