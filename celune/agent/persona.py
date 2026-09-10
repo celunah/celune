@@ -8,7 +8,7 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, cast
 
 from ..typing.persona import PersonaClientResponse
-from ..pipeline import _extract_persona_text, build_persona_request
+from ..conversation import _extract_persona_text, build_persona_request
 from ..typing.agent import (
     ToolResult,
     AgentOutput,

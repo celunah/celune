@@ -16,7 +16,7 @@ from celune.persona.impl import PersonaClient
 from celune.typing.common import JSONSerializable
 from celune.typing.persona import PersonaClientResponse
 from celune.agent.tools import AgentStatusTool, production_agent_tool_schemas
-from celune.pipeline import deliver_persona_response as celune_deliver_persona_response
+from celune.speech import deliver_persona_response as celune_deliver_persona_response
 from celune.agent.needle.impl import (
     NeedleHandler,
     NeedleToolSelector,
@@ -456,7 +456,9 @@ class TestAgentCoreIntegration(CeluneTestCase):
         assert route.route.value == "task"
         assert route.task_request is not None
 
-        with mock.patch("celune.celune.deliver_persona_response", return_value=True):
+        with mock.patch(
+            "celune.agent.core.deliver_persona_response", return_value=True
+        ):
             core._run_agent_route(route)
         task = runtime.get_active_task("default")
         assert task is not None
@@ -470,7 +472,9 @@ class TestAgentCoreIntegration(CeluneTestCase):
             "That is approved; continue.", persona_ready=True
         )
         assert approval_route.route.value == "approval_response"
-        with mock.patch("celune.celune.deliver_persona_response", return_value=True):
+        with mock.patch(
+            "celune.agent.core.deliver_persona_response", return_value=True
+        ):
             core._run_agent_route(approval_route)
 
         assert task.state == AgentTaskState.COMPLETED
@@ -502,9 +506,9 @@ class TestAgentCoreIntegration(CeluneTestCase):
                 agent_tool_selector=selector,
             )
         self.addCleanup(core.close)
-        speech = mock.patch("celune.pipeline.queue_speech", return_value=True)
+        speech = mock.patch("celune.speech.queue_speech", return_value=True)
         delivery = mock.patch(
-            "celune.celune.deliver_persona_response",
+            "celune.agent.core.deliver_persona_response",
             wraps=celune_deliver_persona_response,
         )
         speech_mock = speech.start()
@@ -646,7 +650,7 @@ class TestAgentCoreIntegration(CeluneTestCase):
 
         route = core.route_input("Inspect the unavailable thing.", persona_ready=True)
         with mock.patch(
-            "celune.celune.deliver_persona_response", side_effect=record_delivery
+            "celune.agent.core.deliver_persona_response", side_effect=record_delivery
         ):
             assert core._run_agent_route(route)
 
@@ -687,7 +691,7 @@ class TestAgentCoreIntegration(CeluneTestCase):
         )
         delivered: list[str] = []
         with mock.patch(
-            "celune.celune.deliver_persona_response",
+            "celune.agent.core.deliver_persona_response",
             side_effect=lambda _engine, _request, response: (
                 delivered.append(response) or True
             ),
@@ -727,7 +731,7 @@ class TestAgentCoreIntegration(CeluneTestCase):
             return True
 
         with mock.patch(
-            "celune.celune.deliver_persona_response", side_effect=record_delivery
+            "celune.agent.core.deliver_persona_response", side_effect=record_delivery
         ):
             for label, reason in (
                 ("permission", AgentFailureReason.PERMISSION_DENIED),
@@ -792,9 +796,9 @@ class TestAgentCoreIntegration(CeluneTestCase):
         core._agent_needle_selector = selector
         persona = _SpeakPersonaFixture()
         core.vision = cast(PersonaClient, persona)
-        speech = mock.patch("celune.pipeline.queue_speech", return_value=True)
+        speech = mock.patch("celune.speech.queue_speech", return_value=True)
         delivery = mock.patch(
-            "celune.celune.deliver_persona_response",
+            "celune.agent.core.deliver_persona_response",
             wraps=celune_deliver_persona_response,
         )
         speech_mock = speech.start()
@@ -839,7 +843,7 @@ class TestAgentCoreIntegration(CeluneTestCase):
             mock.patch("celune.celune.AudioRGBGlow", FakeGlow),
             mock.patch("celune.celune.default_loader", return_value=None),
             mock.patch("celune.celune.persona_is_available", return_value=False),
-            mock.patch("celune.pipeline.queue_speech", return_value=True),
+            mock.patch("celune.speech.queue_speech", return_value=True),
             mock.patch("celune.vram.torch.cuda.is_available", return_value=False),
             mock.patch(
                 "celune.celune.NeedleToolSelector.from_pretrained",

@@ -1,18 +1,26 @@
 # SPDX-License-Identifier: Apache-2.0
 """Shared runtime helpers for Celune voice conversion."""
 
+from __future__ import annotations
+
 import importlib
 import threading
 import contextlib
 import queue as queue_module
-from typing import Optional, cast
+from typing import TYPE_CHECKING, Optional, cast
 
 import torch
 import numpy as np
 from scipy import signal
 
+from .binding import install_class_functions
+from .dataclasses.pipeline import AudioInputRequest, AudioOutput
+from .i18n import string
 from .typing.aliases import AudioChunk
 from .typing.backends import _StreamingSpeechModel
+
+if TYPE_CHECKING:
+    from .celune import Celune
 
 VC_PITCH_SHIFT_MIN = -3
 VC_PITCH_SHIFT_MAX = 3
@@ -38,6 +46,8 @@ __all__ = [
     "VC_VAD_RMS_THRESHOLD",
     "LiveVoiceActivityDetector",
     "clamp_vc_pitch_shift",
+    "convert_audio",
+    "convert_live_audio",
     "create_live_voice_activity_detector",
     "normalize_vc_audio",
     "vc_input_has_voice",
@@ -83,6 +93,76 @@ def normalize_vc_audio(audio: AudioChunk) -> AudioChunk:
     if peak > _VC_AUDIO_PEAK:
         normalized = normalized * (_VC_AUDIO_PEAK / peak)
     return np.asarray(normalized, dtype=np.float32)
+
+
+def convert_audio(
+    engine: Celune,
+    audio: np.ndarray,
+    sample_rate: int,
+    label: str = "audio input",
+    pitch_shift: Optional[int] = None,
+    f0_condition: Optional[bool] = None,
+) -> Optional[AudioOutput]:
+    """Convert submitted audio and return the generated VC output."""
+    if not engine._is_voice_conversion_mode():
+        engine.log(string("celune.audio_conversion_unavailable"), "warning")
+        engine.error_callback(string("celune.not_possible"))
+        engine.progress_callback(0, 1)
+        return None
+
+    from .speech import convert_audio_input
+
+    return convert_audio_input(
+        engine,
+        AudioInputRequest(
+            audio=np.asarray(audio, dtype=np.float32),
+            sample_rate=sample_rate,
+            label=label,
+            pitch_shift=pitch_shift,
+            f0_condition=f0_condition,
+        ),
+    )
+
+
+def convert_live_audio(
+    engine: Celune,
+    audio: np.ndarray,
+    sample_rate: int,
+    label: str = "audio input",
+    pitch_shift: Optional[int] = None,
+    f0_condition: Optional[bool] = None,
+) -> Optional[AudioOutput]:
+    """Convert one low-latency live block through the active VC backend."""
+    if not engine._is_voice_conversion_mode():
+        return engine.convert_audio(
+            audio,
+            sample_rate,
+            label=label,
+            pitch_shift=pitch_shift,
+            f0_condition=f0_condition,
+        )
+
+    from .speech import convert_audio_input
+
+    return convert_audio_input(
+        engine,
+        AudioInputRequest(
+            audio=np.asarray(audio, dtype=np.float32),
+            sample_rate=sample_rate,
+            label=label,
+            pitch_shift=pitch_shift,
+            f0_condition=f0_condition,
+        ),
+        live=True,
+    )
+
+
+def install(target):
+    """Install public VC entrypoints on ``Celune``."""
+    install_class_functions(
+        target,
+        {name: globals()[name] for name in ("convert_audio", "convert_live_audio")},
+    )
 
 
 def vc_input_rms(audio: AudioChunk) -> float:

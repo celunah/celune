@@ -5,26 +5,19 @@ from __future__ import annotations
 
 import os
 import re
-import sys
 import json
 import time
 import ctypes
 import queue
 import random
 import asyncio
-import inspect
 import pathlib
 import datetime
 import contextlib
-import subprocess
 import threading
-from uuid import uuid4
-from typing import TYPE_CHECKING, Union, Optional, cast
-from importlib import util as importlib_util
+from typing import TYPE_CHECKING, Optional, cast
 from collections import deque
 from dataclasses import dataclass, replace
-from urllib.parse import urlparse, urlencode
-from urllib.request import urlopen
 from collections.abc import Mapping, Callable  # pylint: disable=ungrouped-imports
 
 import numpy as np
@@ -33,116 +26,188 @@ import torch
 import soundfile as sf
 import sounddevice as sd
 import pyrubberband as rb
-from iso639 import Lang
-from iso639.exceptions import InvalidLanguageValue, DeprecatedLanguageValue
 
 from . import __version__
-from .vc import normalize_vc_audio
 from .i18n import string, tagged_string
 from .paths import (
     outputs_dir,
-    project_root,
-    temp_data_dir,
-    running_compiled,
 )
 from .utils import (
     discard,
     run_async,
-    rng_replace,
     format_number,
     format_error_message,
-    is_april_fools,
-    detect_language,
-    normalize_special_characters,
 )
 from .config import resolve_audio_device
-from .cevoice import (
-    default_loader,
-    bundle_character_name,
-    persona_files_from_bundle,
-    persona_metadata_from_manifest,
-)
 from .analysis import analyze_voice_audio
 from .audio.dsp import (
-    split,
     soften,
     to_48khz,
     error_signal,
-    resample_audio,
     working_signal,
     sleeping_signal,
     readiness_signal,
-    pitch_shift_audio,
     is_silent_utterance,
 )
 from .constants import (
     BASE_SR,
     APP_NAME,
     APP_SLUG,
-    AGENT_CONTEXT_SPACE,
-    AGENT_ROUTING_CONTEXT_SPACE,
-    AGENT_ROUTING_MAX_NEW_TOKENS,
-    PERSONA_MEMORY_EMBEDDING_MODEL,
-    PipelineStates,
 )
 from .exceptions import NotAvailableError
-from .persona.impl import (
-    persona_config,
-    persona_model_id,
-    pack_persona_text,
-    pack_identity_text,
-    pack_persona_lines,
-    default_persona_age,
-    persona_context_size,
-    persona_quantization,
-    persona_style_traits,
-    default_persona_gender,
-    compact_persona_history,
-    default_persona_context,
-    default_persona_persona,
-    persona_session_summary,
-    persona_history_messages,
-    persona_pending_attachments,
-    persona_active_character_name,
-    persona_debug_overrides_enabled,
-)
-from .typing.agent import ToolCall, AgentContext, AgentToolSchema
-from .typing.locks import (
-    ComponentLockName,
-    ComponentLockOwner,
-    ComponentBusyResult,
-    ComponentLockAcquisition,
-    ComponentLockRequirement,
-)
-from .persona.paths import persona_override_files
 from .typing.common import JSON, JSONSerializable
-from .persona.memory import PersonaMemoryStore, classifier_memory_candidates
 from .typing.aliases import AudioChunk, AudioChunks
-from .typing.persona import PersonaModel, PersonaTokenizer
-from .persona.emotion import PersonaEmotionAnalyzer
-from .persona.prompts import (
-    PersonaCard,
-    PersonaContext,
-    CharacterProfile,
-    PersonaPromptBuilder,
-    PersonaSourceMaterial,
-    RetrievedMemoryBundle,
-)
 from .typing.pipeline import SpeechStreamQueue
 from .dataclasses.pipeline import (
-    AudioOutput,
     SpeechTiming,
     PlaybackChunk,
     SpeechRequest,
-    AudioInputRequest,
     PlaybackSourceDone,
-    VoiceConversionRequest,
 )
-from .persona.capabilities import PersonaCapabilities
+from .binding import install_class_functions
+from .pipelinecore import (
+    _PIPELINE_CPU_YIELD_SECONDS,
+    _PLAYBACK_BUFFER_CRITICAL_MAX_SECONDS,
+    _PLAYBACK_BUFFER_MAX_SECONDS,
+    _PLAYBACK_BUFFER_MIN_SECONDS,
+    _PLAYBACK_BUFFER_STARTUP_GRACE_SECONDS,
+    _PLAYBACK_CONTENTION_CPU_CRITICAL,
+    _PLAYBACK_CONTENTION_CPU_START,
+    _PLAYBACK_CONTENTION_LAG_CRITICAL_SECONDS,
+    _PLAYBACK_CONTENTION_LAG_START_SECONDS,
+    _PLAYBACK_CONTENTION_SAMPLE_SECONDS,
+    _PLAYBACK_CONTENTION_STABLE_DECAY,
+    _PLAYBACK_CONTENTION_REBUFFER_LEVEL,
+    _monotonic_time,
+)
+from .conversation import _effective_voice_prompt, _think_persona
+from .playback import (
+    _apply_source_gain,
+    _clear_playback_source_status,
+    _dequeue_playback_item,
+    _download_youtube_sfx,
+    _flush_buffered_speech_chunks,
+    _next_playback_source_id,
+    _notify_caption_timing,
+    _notify_speech_playback_finished,
+    _pipeline_cpu_config,
+    _playback_source_meta,
+    _playback_source_statuses,
+    _queue_playback_chunk,
+    _queue_playback_done,
+    _register_overlay_playback,
+    _register_playback_source,
+    _remember_smart_buffer_speed,
+    _set_playback_source_status,
+    _smart_buffer_target_seconds,
+    _update_playback_progress,
+    _youtube_sfx_title,
+    acquire_pipeline,
+    current_playback_status,
+    release_pipeline,
+)
 
 if TYPE_CHECKING:
     from .celune import Celune
-    from .typing.persona import PersonaClientResponse
+    from .conversation import (
+        _extract_persona_text,
+        _persona_manifest_files,
+        _persona_memory_store,
+        build_agent_classification_request,
+        build_persona_character_card,
+        build_persona_context,
+        build_persona_messages,
+        build_persona_request,
+        think,
+    )
+    from .playback import (
+        _config_lines,
+        _config_text,
+        _notify_component_busy,
+        acquire_pipeline_result,
+    )
+    from .speech import (
+        close,
+        convert_audio_input,
+        deliver_persona_response,
+        finish_streaming_sfx_audio,
+        handle_audio_input,
+        play,
+        prepare_playback_audio,
+        queue_sfx_audio,
+        queue_speech,
+        queue_speech_async,
+        queue_streaming_sfx_audio,
+        say,
+        say_async,
+        stop_live_audio_input,
+    )
+
+    _PIPELINE_TYPE_EXPORTS = (
+        _effective_voice_prompt,
+        _extract_persona_text,
+        _persona_manifest_files,
+        _persona_memory_store,
+        build_agent_classification_request,
+        build_persona_character_card,
+        build_persona_context,
+        build_persona_messages,
+        build_persona_request,
+        think,
+        _apply_source_gain,
+        _clear_playback_source_status,
+        _config_lines,
+        _config_text,
+        _dequeue_playback_item,
+        _download_youtube_sfx,
+        _flush_buffered_speech_chunks,
+        _next_playback_source_id,
+        _notify_caption_timing,
+        _notify_component_busy,
+        _notify_speech_playback_finished,
+        _pipeline_cpu_config,
+        _playback_source_meta,
+        _playback_source_statuses,
+        _queue_playback_chunk,
+        _queue_playback_done,
+        _register_overlay_playback,
+        _register_playback_source,
+        _remember_smart_buffer_speed,
+        _set_playback_source_status,
+        _smart_buffer_target_seconds,
+        _update_playback_progress,
+        _youtube_sfx_title,
+        acquire_pipeline,
+        acquire_pipeline_result,
+        current_playback_status,
+        release_pipeline,
+        close,
+        convert_audio_input,
+        deliver_persona_response,
+        finish_streaming_sfx_audio,
+        handle_audio_input,
+        play,
+        prepare_playback_audio,
+        queue_sfx_audio,
+        queue_speech,
+        queue_speech_async,
+        queue_streaming_sfx_audio,
+        say,
+        say_async,
+        stop_live_audio_input,
+        SpeechStreamQueue,
+    )
+
+
+def _stop_pipeline_jobs(self: Celune) -> None:
+    """Stop startup pipeline workers after an initialization failure."""
+    with self.queue_lock:
+        self.text_queue.put(self.sentinel)
+        if self._is_voice_conversion_mode():
+            self.audio_queue.put(self.sentinel)
+
+    if self._playback_thread is not None:
+        self._playback_thread.join()
 
 
 async def _run_in_daemon_thread[PipelineResult](
@@ -658,15 +723,6 @@ _AGENT_CLASSIFICATION_INSTRUCTIONS = (
     "end it with }. Do not add a preamble, explanation, Markdown fence, or trailing "
     "text."
 )
-_SFX_DUCK_GAIN = 0.25
-_SFX_DUCK_FADE_SECONDS = 0.15
-_LEGACY_BUFFER_SECONDS = 10.0
-_SMART_BUFFER_REALTIME_SPEED = 1.05
-
-
-def _monotonic_time() -> float:
-    """Return the current monotonic clock value for pipeline timing."""
-    return time.monotonic()
 
 
 def _format_stat_duration(seconds: float) -> str:
@@ -676,14 +732,7 @@ def _format_stat_duration(seconds: float) -> str:
     return f"{minutes}:{remaining_seconds:02d}"
 
 
-_SMART_BUFFER_PROTECTED_PLAYBACK_SECONDS = 20.0
-_SMART_BUFFER_MIN_SECONDS = 0.35
-_SMART_BUFFER_MIN_SPEED_SAMPLE_SECONDS = 0.75
-_SMART_BUFFER_MAX_SECONDS = 20.0
-_SMART_BUFFER_COMPLETE_BELOW_SPEED = 0.5
-_SMART_BUFFER_SMOOTHING = 0.35
 _MAX_SILENT_UTTERANCE_RETRIES = 3
-_MAX_YOUTUBE_DOWNLOAD_RETRIES = 3
 _MEMORY_CLASSIFIER_SYSTEM_PROMPT = """You classify durable user facts for long-term memory.
 Return JSON only in this exact shape:
 {"memories":[{"content":"...","importance":1,"confidence":0.0}]}
@@ -694,21 +743,6 @@ Do not include assistant statements, temporary requests, jokes, guesses, passwor
 tokens, financial details, medical details, or unrelated conversation. If there is no durable
 fact, return {"memories":[]}.
 """
-_PLAYBACK_BUFFER_MIN_SECONDS = 2.0
-_PLAYBACK_BUFFER_MAX_SECONDS = 12.0
-_PLAYBACK_BUFFER_CRITICAL_MAX_SECONDS = 30.0
-_PLAYBACK_BUFFER_STARTUP_GRACE_SECONDS = 0.25
-_PLAYBACK_CONTENTION_SAMPLE_SECONDS = 0.25
-_PLAYBACK_CONTENTION_CPU_START = 75.0
-_PLAYBACK_CONTENTION_CPU_CRITICAL = 95.0
-_PLAYBACK_CONTENTION_LAG_START_SECONDS = 0.015
-_PLAYBACK_CONTENTION_LAG_CRITICAL_SECONDS = 0.1
-_PLAYBACK_CONTENTION_STABLE_DECAY = 0.96
-_PLAYBACK_CONTENTION_REBUFFER_LEVEL = 0.5
-_PLAYBACK_TRACE_INTERVAL_SECONDS = 0.5
-_PIPELINE_CPU_MAX_BUFFER_SECONDS = _PLAYBACK_BUFFER_MAX_SECONDS
-_PIPELINE_CPU_MAX_DRAIN_ITEMS = 4
-_PIPELINE_CPU_YIELD_SECONDS = 0.001
 
 
 def _json_value(value: JSONSerializable) -> JSONSerializable:
@@ -1132,2435 +1166,6 @@ def _invalidate_speech_work(engine: Celune) -> None:
         clear_queue(engine.audio_queue)
         engine.kept_sfx_audio = None
         engine.audio_queue.put(engine.force_stop_marker)
-
-
-def _pipeline_requirements(action: str) -> tuple[ComponentLockRequirement, ...]:
-    """Return the existing pipeline resources required by one playback action."""
-    components = (
-        (ComponentLockName.TTS, ComponentLockName.SPEECH_QUEUE)
-        if action == "speak"
-        else (ComponentLockName.SPEECH_QUEUE,)
-    )
-    return tuple(
-        ComponentLockRequirement(component)
-        for component in (*components, ComponentLockName.AUDIO_PLAYBACK)
-    )
-
-
-def _component_busy_message(busy: ComponentBusyResult) -> str:
-    """Return a localized-friendly component list for busy diagnostics."""
-    return ", ".join(component.value.upper() for component in busy.components)
-
-
-def _notify_component_busy(
-    engine: Celune,
-    action: str,
-    busy: ComponentBusyResult,
-) -> None:
-    """Report one typed component conflict through the existing engine callbacks."""
-    engine._last_component_busy = busy
-    engine.log(
-        string(
-            "pipeline.busy_components",
-            components=_component_busy_message(busy),
-        ),
-        "warning",
-    )
-    engine.log(
-        string("pipeline.busy_action", action=action, app_name=APP_NAME),
-        "warning",
-    )
-    engine.error_callback(string("celune.app_busy", app_name=APP_NAME))
-
-
-def acquire_pipeline_result(
-    engine: Celune,
-    action: str,
-    owner: Optional[ComponentLockOwner] = None,
-) -> ComponentLockAcquisition:
-    """Atomically claim the legacy pipeline and typed component resources."""
-    resolved_owner = owner or ComponentLockOwner(
-        operation_id=f"pipeline:{action}:{uuid4().hex}",
-    )
-    requirements = _pipeline_requirements(action)
-    with engine.say_lock:
-        engine.log(
-            f"[LOCK] acquire requested by {action}, locked={engine.locked}",
-            loglevel="verbose",
-        )
-        manager = getattr(engine, "component_locks", None)
-        if engine.locked:
-            owners = (
-                tuple(
-                    manager.snapshot().get(component)
-                    for component in (
-                        requirement.component for requirement in requirements
-                    )
-                )
-                if manager is not None
-                else (None,) * len(requirements)
-            )
-            busy = ComponentBusyResult(
-                components=tuple(requirement.component for requirement in requirements),
-                owners=tuple(
-                    (requirement.component, owner_value)
-                    for requirement, owner_value in zip(requirements, owners)
-                ),
-            )
-            acquisition = ComponentLockAcquisition(
-                resolved_owner,
-                tuple(requirement.component for requirement in requirements),
-                busy,
-            )
-        elif manager is None:
-            acquisition = ComponentLockAcquisition(
-                resolved_owner,
-                tuple(requirement.component for requirement in requirements),
-            )
-        else:
-            acquisition = manager.try_acquire(requirements, resolved_owner)
-
-        if not acquisition.acquired:
-            busy = acquisition.busy
-            assert busy is not None
-            _notify_component_busy(engine, action, busy)
-            return acquisition
-
-        engine._pipeline_lock_owner = resolved_owner
-        engine._last_component_busy = None
-        if action != "play readiness signal":
-            engine._ready_announced = False
-        engine.locked = True
-        engine.playback_done.clear()
-        engine.log(
-            f"[LOCK] acquired by {action} text_queue={engine.text_queue.qsize()} "
-            f"audio_queue={engine.audio_queue.qsize()}",
-            loglevel="debug",
-        )
-        return acquisition
-
-
-def acquire_pipeline(engine: Celune, action: str) -> bool:
-    """Atomically claim Celune's shared playback pipeline.
-
-    Args:
-        engine: The Celune engine that owns the playback pipeline.
-        action: A short label describing the action requesting the lock.
-
-    Returns:
-        bool: ``True`` when the pipeline was claimed, otherwise ``False``.
-    """
-    return acquire_pipeline_result(engine, action).acquired
-
-
-def release_pipeline(engine: Celune, playback_idle: bool = True) -> None:
-    """Release Celune's shared playback pipeline.
-
-    Args:
-        engine: The Celune engine that owns the playback pipeline.
-        playback_idle: Whether playback should be marked fully idle now.
-    """
-    with engine.say_lock:
-        manager = getattr(engine, "component_locks", None)
-        owner = getattr(engine, "_pipeline_lock_owner", None)
-        if manager is not None and owner is not None:
-            manager.release(owner)
-        engine._pipeline_lock_owner = None
-        engine.locked = False
-        if playback_idle:
-            engine.playback_done.set()
-            if engine.cur_state not in {"error", "stopped"} and not getattr(
-                engine, "test_finished", False
-            ):
-                engine.cur_state = "idle"
-        engine.log("[LOCK] released", loglevel="verbose")
-        engine.log(
-            "[LOCK] release complete "
-            f"playback_done={engine.playback_done.is_set()} "
-            f"text_queue={engine.text_queue.qsize()} "
-            f"audio_queue={engine.audio_queue.qsize()}",
-            loglevel="debug",
-        )
-
-
-def _next_playback_source_id(engine: Celune) -> int:
-    """Return the next monotonically increasing playback source id."""
-    source_id = getattr(engine, "_next_playback_source_id", 0) + 1
-    engine._next_playback_source_id = source_id
-    return source_id
-
-
-def _register_overlay_playback(engine: Celune) -> None:
-    """Mark the mixer busy for a newly queued non-speech playback source."""
-    _register_overlay_playback_state(engine, reset_ready_announcement=True)
-
-
-def _register_overlay_playback_state(
-    engine: Celune,
-    *,
-    reset_ready_announcement: bool,
-) -> None:
-    """Mark the mixer busy for overlay playback with optional ready reset."""
-    with engine.say_lock:
-        if not engine.locked:
-            engine.cur_state = "speaking"
-        engine.playback_done.clear()
-        if reset_ready_announcement:
-            engine._ready_announced = False
-
-
-def _playback_source_statuses(engine: Celune) -> dict[int, str]:
-    """Return the mutable per-source playback status map."""
-    statuses = getattr(engine, "_playback_source_statuses", None)
-    if isinstance(statuses, dict):
-        return statuses
-
-    statuses = {}
-    engine._playback_source_statuses = statuses
-    return statuses
-
-
-def current_playback_status(engine: Celune) -> Optional[str]:
-    """Return the most recently registered status for an active playback source."""
-    statuses = _playback_source_statuses(engine)
-    try:
-        return next(reversed(statuses.values()), None)
-    except RuntimeError:
-        return None
-
-
-def _playback_source_meta(
-    engine: Celune,
-) -> dict[int, dict[str, Union[str, float]]]:
-    """Return per-source mixer metadata such as kind, gain state, and progress."""
-    meta = getattr(engine, "_playback_source_meta", None)
-    if isinstance(meta, dict):
-        return meta
-
-    meta = {}
-    engine._playback_source_meta = meta
-    return meta
-
-
-def _register_playback_source(
-    engine: Celune,
-    source_id: int,
-    *,
-    kind: str,
-    base_gain: float = 1.0,
-) -> None:
-    """Register one playback source for status and gain management."""
-    clipped = float(np.clip(base_gain, 0.0, 1.0))
-    _playback_source_meta(engine)[source_id] = {
-        "kind": kind,
-        "base_gain": clipped,
-        "current_gain": clipped,
-        "total_frames": 0.0,
-        "played_frames": 0.0,
-        "generation": float(getattr(engine, "_playback_generation", 0)),
-    }
-
-
-def _set_playback_source_status(engine: Celune, source_id: int, status: str) -> None:
-    """Record and surface the current status for one active playback source."""
-    statuses = _playback_source_statuses(engine)
-    statuses[source_id] = status
-    engine.status_callback(status)
-
-
-def _clear_playback_source_status(engine: Celune, source_id: int) -> None:
-    """Forget one playback-source status and restore the next active status."""
-    statuses = _playback_source_statuses(engine)
-    statuses.pop(source_id, None)
-    if statuses:
-        engine.status_callback(next(reversed(statuses.values())))
-    _playback_source_meta(engine).pop(source_id, None)
-
-
-def _notify_speech_playback_finished(engine: Celune, source_id: int) -> None:
-    """Complete caption progress when one speech source drains independently."""
-    source_meta = _playback_source_meta(engine).get(source_id)
-    if not isinstance(source_meta, dict) or source_meta.get("kind") != "speech":
-        return
-
-    caption_progress_callback = getattr(engine, "caption_progress_callback", None)
-    if callable(caption_progress_callback):
-        total_frames = max(1.0, float(source_meta.get("total_frames", 0.0)))
-        caption_progress_callback(total_frames, total_frames)
-
-
-def _queue_playback_chunk(
-    engine: Celune,
-    source_id: int,
-    audio: AudioChunk,
-    sample_rate: int,
-    timing: Optional[SpeechTiming] = None,
-    generation: Optional[int] = None,
-) -> bool:
-    """Queue one chunk for the shared DSP playback mixer."""
-    with engine.queue_lock:
-        active_playback_generation = getattr(engine, "_playback_generation", 0)
-        expected_generation = (
-            active_playback_generation if generation is None else generation
-        )
-        if expected_generation != active_playback_generation:
-            return False
-
-        active_generation = getattr(engine, "_active_speech_generation", None)
-        if active_generation is not None and (
-            active_generation
-            != getattr(engine, "_speech_generation", active_generation)
-            or engine.utterance_force_stop.is_set()
-        ):
-            return False
-
-        meta = _playback_source_meta(engine).get(source_id)
-        if isinstance(meta, dict):
-            if float(meta.get("generation", 0.0)) != float(
-                getattr(engine, "_playback_generation", 0)
-            ):
-                return False
-            meta["total_frames"] = float(meta.get("total_frames", 0.0)) + float(
-                len(audio)
-            )
-
-    queue_wait_started_at = _monotonic_time()
-    engine.audio_queue.put(
-        PlaybackChunk(
-            source_id=source_id,
-            audio=np.asarray(audio, dtype=np.float32),
-            sample_rate=sample_rate,
-            timing=timing,
-            generation=expected_generation,
-        )
-    )
-    enqueued_at = _monotonic_time()
-    queue_wait_seconds = max(0.0, enqueued_at - queue_wait_started_at)
-    with engine.queue_lock:
-        last_queued_by_source = engine._playback_chunk_last_queued_at
-        last_queued_at = last_queued_by_source.get(source_id)
-        if last_queued_at is None:
-            generation_gap_seconds = 0.0
-        else:
-            generation_gap_seconds = max(0.0, enqueued_at - last_queued_at)
-        last_queued_by_source[source_id] = enqueued_at
-        engine.playback_queue_wait_seconds = queue_wait_seconds
-        engine.playback_generation_gap_seconds = generation_gap_seconds
-    _playback_trace(engine, enqueued_at)
-    return True
-
-
-def _dequeue_playback_item(
-    engine: Celune,
-    prioritize_speech: bool = False,
-    audio_queue: Optional[queue.Queue[object]] = None,
-) -> Union[PlaybackChunk, PlaybackSourceDone, PipelineStates]:
-    """Remove one playback item, prioritizing speech overlays when requested."""
-    playback_queue = engine.audio_queue if audio_queue is None else audio_queue
-    if not prioritize_speech:
-        return cast(
-            Union[PlaybackChunk, PlaybackSourceDone, PipelineStates],
-            playback_queue.get_nowait(),
-        )
-
-    with playback_queue.mutex:
-        if not playback_queue.queue:
-            raise queue.Empty
-
-        speech_chunk_index: Optional[int] = None
-        speech_done_index: Optional[int] = None
-        for index, pending in enumerate(playback_queue.queue):
-            if isinstance(pending, PlaybackChunk):
-                source_meta = _playback_source_meta(engine).get(pending.source_id)
-                if (
-                    isinstance(source_meta, dict)
-                    and source_meta.get("kind") == "speech"
-                ):
-                    speech_chunk_index = index
-                    break
-            elif isinstance(pending, PlaybackSourceDone):
-                source_meta = _playback_source_meta(engine).get(pending.source_id)
-                if (
-                    speech_done_index is None
-                    and isinstance(source_meta, dict)
-                    and source_meta.get("kind") == "speech"
-                ):
-                    speech_done_index = index
-
-        selected_index = (
-            speech_chunk_index
-            if speech_chunk_index is not None
-            else speech_done_index
-            if speech_done_index is not None
-            else 0
-        )
-        playback_queue.queue.rotate(-selected_index)
-        pending = playback_queue.queue.popleft()
-        playback_queue.queue.rotate(selected_index)
-        playback_queue.not_full.notify()
-        return pending
-
-
-def _playback_trace(engine: Celune, now: Optional[float] = None) -> None:
-    """Emit the consolidated playback timing trace at a safe low frequency."""
-    timestamp = _monotonic_time() if now is None else now
-    last_trace_at = float(getattr(engine, "_playback_trace_last_logged_at", 0.0))
-    if timestamp - last_trace_at < _PLAYBACK_TRACE_INTERVAL_SECONDS:
-        return
-
-    engine._playback_trace_last_logged_at = timestamp
-    engine.log(
-        "[PLAY] playback timing "
-        f"reserve={float(getattr(engine, 'playback_buffer_seconds', 0.0)):.2f}s "
-        f"contention={float(getattr(engine, 'playback_contention_level', 0.0)):.2f} "
-        f"underflows={int(getattr(engine, 'playback_underflows', 0))} "
-        f"queue_wait={float(getattr(engine, 'playback_queue_wait_seconds', 0.0)):.3f}s "
-        f"generation_gap={float(getattr(engine, 'playback_generation_gap_seconds', 0.0)):.3f}s "
-        f"writer_wait={float(getattr(engine, 'playback_writer_wait_seconds', 0.0)):.3f}s "
-        f"writer_gap={float(getattr(engine, 'playback_writer_gap_seconds', 0.0)):.3f}s "
-        f"writer_write={float(getattr(engine, 'playback_writer_write_seconds', 0.0)):.3f}s "
-        f"rebuffer_wait={float(getattr(engine, 'playback_rebuffer_wait_seconds', 0.0)):.3f}s",
-        loglevel="debug",
-    )
-
-
-def _update_playback_progress(
-    engine: Celune,
-    source_buffers: dict[int, deque[tuple[AudioChunk, Optional[SpeechTiming]]]],
-) -> None:
-    """Reflect the active playback source position in the shared progress bar."""
-    if not source_buffers:
-        return
-
-    meta = _playback_source_meta(engine)
-    active_ids = [source_id for source_id in source_buffers if source_id in meta]
-    if not active_ids:
-        return
-
-    source_id = max(active_ids)
-    source_meta = meta.get(source_id)
-    if not isinstance(source_meta, dict):
-        return
-
-    total_frames = float(source_meta.get("total_frames", 0.0))
-    played_frames = float(source_meta.get("played_frames", 0.0))
-    if total_frames <= 0.0:
-        return
-
-    now = _monotonic_time()
-    last_emit_at = float(getattr(engine, "_playback_progress_last_emit_at", 0.0))
-    last_source_id = getattr(engine, "_playback_progress_last_source_id", None)
-    emit_interval = 0.08
-    if last_source_id == source_id and (now - last_emit_at) < emit_interval:
-        return
-
-    engine._playback_progress_last_emit_at = now
-    engine._playback_progress_last_source_id = source_id
-    engine.progress_callback(min(played_frames, total_frames), total_frames)
-
-    speech_ids = [
-        active_source_id
-        for active_source_id in active_ids
-        if meta.get(active_source_id, {}).get("kind") == "speech"
-    ]
-    if not speech_ids:
-        return
-    speech_meta = meta.get(max(speech_ids))
-    if not isinstance(speech_meta, dict):
-        return
-    caption_progress_callback = getattr(engine, "caption_progress_callback", None)
-    if callable(caption_progress_callback):
-        caption_progress_callback(
-            min(
-                float(speech_meta.get("played_frames", 0.0)),
-                float(speech_meta.get("total_frames", 0.0)),
-            ),
-            float(speech_meta.get("total_frames", 0.0)),
-        )
-
-
-def _active_speech_source_ids(
-    source_buffers: dict[int, deque[tuple[AudioChunk, Optional[SpeechTiming]]]],
-    engine: Celune,
-) -> set[int]:
-    """Return active speech-source ids that should trigger SFX ducking."""
-    meta = _playback_source_meta(engine)
-    return {
-        source_id
-        for source_id in source_buffers
-        if meta.get(source_id, {}).get("kind") == "speech"
-    }
-
-
-def _apply_source_gain(
-    audio: AudioChunk,
-    source_id: int,
-    *,
-    speech_active: bool,
-    block_seconds: float,
-    engine: Celune,
-    source_meta: Optional[dict[str, Union[str, float]]] = None,
-) -> AudioChunk:
-    """Apply ducking and smooth gain ramps for one mixer source block."""
-    meta = (
-        _playback_source_meta(engine).get(source_id)
-        if source_meta is None
-        else source_meta
-    )
-    if not isinstance(meta, dict):
-        return audio
-
-    kind = str(meta.get("kind", "sfx"))
-    base_gain = float(meta.get("base_gain", 1.0))
-    current_gain = float(meta.get("current_gain", base_gain))
-    if kind == "sfx":
-        target_gain = base_gain * (_SFX_DUCK_GAIN if speech_active else 1.0)
-    else:
-        target_gain = base_gain
-
-    if abs(target_gain - current_gain) < 1e-6:
-        meta["current_gain"] = target_gain
-        return np.asarray(audio * target_gain, dtype=np.float32)
-
-    fade_ratio = min(1.0, block_seconds / _SFX_DUCK_FADE_SECONDS)
-    next_gain = current_gain + (target_gain - current_gain) * fade_ratio
-    ramp = np.linspace(current_gain, next_gain, len(audio), dtype=np.float32)
-    meta["current_gain"] = next_gain
-    return np.asarray(audio * ramp[:, None], dtype=np.float32)
-
-
-def _queue_playback_done(
-    engine: Celune,
-    source_id: int,
-    *,
-    release_pipeline_when_finished: bool = False,
-    notify_idle_when_finished: bool = True,
-    saved_path: Optional[str] = None,
-    analysis_audio: Optional[AudioChunk] = None,
-    generation: Optional[int] = None,
-) -> bool:
-    """Queue a completion marker for one playback source."""
-    with engine.queue_lock:
-        active_playback_generation = getattr(engine, "_playback_generation", 0)
-        expected_generation = (
-            active_playback_generation if generation is None else generation
-        )
-        if expected_generation != active_playback_generation:
-            return False
-
-        active_generation = getattr(engine, "_active_speech_generation", None)
-        if active_generation is not None and (
-            active_generation
-            != getattr(engine, "_speech_generation", active_generation)
-            or engine.utterance_force_stop.is_set()
-        ):
-            return False
-
-        source_meta = _playback_source_meta(engine).get(source_id)
-        if isinstance(source_meta, dict) and float(
-            source_meta.get("generation", 0.0)
-        ) != float(getattr(engine, "_playback_generation", 0)):
-            return False
-
-    engine.audio_queue.put(
-        PlaybackSourceDone(
-            source_id=source_id,
-            release_pipeline=release_pipeline_when_finished,
-            notify_idle=notify_idle_when_finished,
-            saved_path=saved_path,
-            analysis_audio=analysis_audio,
-            generation=expected_generation,
-        )
-    )
-    with engine.queue_lock:
-        last_queued_at = getattr(engine, "_playback_chunk_last_queued_at", None)
-        if isinstance(last_queued_at, dict):
-            last_queued_at.pop(source_id, None)
-    engine.log(
-        "[QUEUE] playback done "
-        f"source={source_id} generation={expected_generation} "
-        f"release_pipeline={release_pipeline_when_finished} "
-        f"notify_idle={notify_idle_when_finished} "
-        f"audio_queue={engine.audio_queue.qsize()}",
-        loglevel="debug",
-    )
-    return True
-
-
-def _flush_buffered_speech_chunks(
-    engine: Celune,
-    source_id: int,
-    buffer: AudioChunks,
-    speech_timing: SpeechTiming,
-    pushed_audio: bool,
-    stream_queue: Optional[SpeechStreamQueue],
-    caption_text: Optional[str] = None,
-) -> bool:
-    """Queue buffered speech chunks without merging them into a larger copy."""
-    if not buffer:
-        return pushed_audio
-
-    first_buffer_chunk = True
-    for queued_audio in buffer:
-        queued = _queue_playback_chunk(
-            engine,
-            source_id,
-            queued_audio,
-            BASE_SR,
-            speech_timing if not pushed_audio and first_buffer_chunk else None,
-        )
-        if not queued:
-            buffer.clear()
-            return pushed_audio
-        if stream_queue is not None:
-            stream_queue.put(queued_audio.copy())
-        first_buffer_chunk = False
-
-    buffer.clear()
-    if not pushed_audio:
-        caption_callback = getattr(engine, "caption_callback", None)
-        if caption_text is not None and callable(caption_callback):
-            caption_callback(caption_text)
-        _set_playback_source_status(engine, source_id, string("status.speaking"))
-        engine.cur_state = "speaking"
-        engine.queue_avail_callback()
-        return True
-
-    return pushed_audio
-
-
-def _notify_caption_timing(
-    engine: Celune,
-    caption: str,
-    audio: AudioChunk,
-    sample_rate: int,
-    timing_text: str,
-) -> None:
-    """Send display and synthesis text to caption timing callbacks compatibly."""
-    caption_timing_callback = getattr(engine, "caption_timing_callback", None)
-    if not callable(caption_timing_callback):
-        return
-
-    try:
-        parameters = tuple(
-            inspect.signature(caption_timing_callback).parameters.values()
-        )
-    except (TypeError, ValueError):
-        parameters = ()
-
-    supports_timing_text = (
-        not parameters
-        or any(
-            parameter.kind == inspect.Parameter.VAR_POSITIONAL
-            for parameter in parameters
-        )
-        or sum(
-            parameter.kind
-            in {
-                inspect.Parameter.POSITIONAL_ONLY,
-                inspect.Parameter.POSITIONAL_OR_KEYWORD,
-            }
-            for parameter in parameters
-        )
-        >= 4
-    )
-    if supports_timing_text:
-        caption_timing_callback(caption, audio, sample_rate, timing_text)
-        return
-    caption_timing_callback(caption, audio, sample_rate)
-
-
-def _youtube_sfx_temp_path() -> pathlib.Path:
-    """Return the fixed temporary WAV path used for URL-backed SFX playback."""
-    return temp_data_dir(create=True) / "temporary_audio.wav"
-
-
-def _is_youtube_sfx_url(value: str) -> bool:
-    """Return whether ``value`` looks like a supported YouTube URL."""
-    parsed = urlparse(value.strip())
-    if parsed.scheme not in {"http", "https"}:
-        return False
-    host = (parsed.netloc or "").lower().removeprefix("www.")
-    return host in {"youtube.com", "youtu.be", "music.youtube.com"}
-
-
-def _youtube_sfx_title(url: str) -> str:
-    """Return a friendly title for one YouTube URL when available."""
-    query = urlencode({"url": url, "format": "json"})
-    endpoint = f"https://www.youtube.com/oembed?{query}"
-    # noinspection PyBroadException
-    try:
-        with urlopen(endpoint, timeout=5) as response:
-            payload = json.loads(response.read().decode("utf-8"))
-    except Exception:
-        return "YouTube audio"
-
-    title = payload.get("title")
-    if isinstance(title, str) and title.strip():
-        return title.strip()
-    return "YouTube audio"
-
-
-def _summarize_youtube_download_error(output: str) -> str:
-    """Extract the actionable reason from yt-dlp output."""
-    lines = [line.strip() for line in output.splitlines() if line.strip()]
-    ignored_markers = (
-        "no supported javascript runtime",
-        "only deno is enabled",
-        "youtube extraction without a js runtime",
-        "github.com/yt-dlp/yt-dlp/wiki/ejs",
-    )
-
-    for line in reversed(lines):
-        if line.upper().startswith("ERROR:"):
-            reason = line.split(":", 1)[1].strip()
-            if reason:
-                return reason
-
-    for line in reversed(lines):
-        if line.lower().startswith("warning:"):
-            continue
-        if not any(marker in line.lower() for marker in ignored_markers):
-            return line
-
-    return string("pipeline.download_unknown_error")
-
-
-def _download_youtube_sfx(
-    engine: Celune, url: str
-) -> Optional[tuple[pathlib.Path, str]]:
-    """Download one YouTube URL as a temporary WAV file for SFX playback."""
-    yt_dlp_module = "yt_dlp"
-    if importlib_util.find_spec(yt_dlp_module) is None:
-        engine.log(string("pipeline.yt_dlp_missing"), "warning")
-        engine.error_callback(string("pipeline.yt_dlp_required"))
-        return None
-
-    output_path = _youtube_sfx_temp_path()
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    with contextlib.suppress(OSError):
-        output_path.unlink(missing_ok=True)
-
-    title = _youtube_sfx_title(url)
-    out_tmpl = str(output_path.with_suffix(".%(ext)s"))
-    engine.status_callback(string("status.downloading_audio"))
-    engine.log(f"[SFX] Downloading audio from {url}...")
-    python_executable = sys.executable
-    if running_compiled():
-        if os.name == "nt":
-            python_executable = str(project_root() / ".venv" / "Scripts" / "python.exe")
-        else:
-            python_executable = str(project_root() / ".venv" / "bin" / "python")
-    command = [
-        python_executable,
-        "-m",
-        yt_dlp_module,
-        "--extract-audio",
-        "--audio-format",
-        "wav",
-        "--audio-quality",
-        "0",
-        "--no-playlist",
-        "--no-progress",
-        "--force-overwrites",
-        *_youtube_download_options(engine),
-        "--output",
-        out_tmpl,
-        url,
-    ]
-    failure_reason = string("pipeline.download_unknown_error")
-    total_attempts = _MAX_YOUTUBE_DOWNLOAD_RETRIES + 1
-
-    for attempt in range(1, total_attempts + 1):
-        with contextlib.suppress(OSError):
-            output_path.unlink(missing_ok=True)
-
-        try:
-            completed = subprocess.run(
-                command,
-                check=False,
-                capture_output=True,
-                text=True,
-                timeout=30,
-            )
-        except subprocess.TimeoutExpired:
-            failure_reason = string("pipeline.download_timeout")
-        else:
-            output = "\n".join(
-                part for part in (completed.stderr, completed.stdout) if part
-            )
-            failure_reason = _summarize_youtube_download_error(output)
-            if completed.returncode == 0 and output_path.exists():
-                return output_path, title
-            if completed.returncode == 0 and not output_path.exists():
-                failure_reason = string("pipeline.downloader_no_file")
-
-        if attempt < total_attempts:
-            engine.log(
-                f"{string('pipeline.download_failed')}: {failure_reason}; "
-                f"{string('pipeline.download_retry', retry_count=attempt, max_retries=_MAX_YOUTUBE_DOWNLOAD_RETRIES)}",
-                "warning",
-            )
-            continue
-
-        engine.log(f"{string('pipeline.download_failed')}: {failure_reason}", "warning")
-        engine.error_callback(string("pipeline.download_youtube_failed_short"))
-        return None
-
-    return None
-
-
-def _config_text(engine: Celune, key: str, default: str) -> str:
-    """Read a string configuration value with a fallback."""
-    value = engine.config.get(key)
-    if isinstance(value, str) and value.strip():
-        return value.strip()
-
-    return default
-
-
-def _config_lines(engine: Celune, key: str) -> tuple[str, ...]:
-    """Read a text or text-list configuration value as non-empty lines."""
-    return _config_value_lines(engine.config.get(key))
-
-
-def _config_value_lines(value: JSONSerializable) -> tuple[str, ...]:
-    """Normalize one scalar or list configuration value into text lines."""
-    if isinstance(value, str):
-        stripped = value.strip()
-        return (stripped,) if stripped else ()
-    if isinstance(value, list):
-        lines = [
-            item.strip() for item in value if isinstance(item, str) and item.strip()
-        ]
-        return tuple(lines)
-    return ()
-
-
-def _youtube_download_options(engine: Celune) -> list[str]:
-    """Build optional yt-dlp arguments from the nested YouTube configuration."""
-    value = engine.config.get("youtube")
-    if not isinstance(value, dict):
-        return []
-
-    options: list[str] = []
-    cookies_file = _config_value_lines(value.get("cookies_file"))
-    cookies_from_browser = _config_value_lines(value.get("cookies_from_browser"))
-    if cookies_file:
-        options.extend(("--cookies", cookies_file[0]))
-    elif cookies_from_browser:
-        options.extend(("--cookies-from-browser", cookies_from_browser[0]))
-
-    for key, option in (
-        ("js_runtimes", "--js-runtimes"),
-        ("remote_components", "--remote-components"),
-    ):
-        for configured_value in _config_value_lines(value.get(key)):
-            options.extend((option, configured_value))
-
-    po_tokens = _config_value_lines(value.get("po_token"))
-    if po_tokens:
-        options.extend(("--extractor-args", f"youtube:po_token={','.join(po_tokens)}"))
-
-    player_clients = _config_value_lines(value.get("player_client"))
-    if player_clients:
-        options.extend(
-            ("--extractor-args", f"youtube:player_client={','.join(player_clients)}")
-        )
-
-    for extractor_arg in _config_value_lines(value.get("extractor_args")):
-        options.extend(("--extractor-args", extractor_arg))
-    return options
-
-
-def _config_float(
-    source: Mapping[str, JSONSerializable], key: str, default: float
-) -> float:
-    """Read one numeric config field as a float with a fallback."""
-    value = source.get(key)
-    if isinstance(value, bool):
-        return default
-    if isinstance(value, (int, float)):
-        return float(value)
-    if isinstance(value, str):
-        stripped = value.strip()
-        if not stripped:
-            return default
-        try:
-            return float(stripped)
-        except ValueError:
-            return default
-    return default
-
-
-def _safe_config_int(
-    source: Mapping[str, JSONSerializable], key: str, default: int
-) -> int:
-    """Read a bounded integer configuration value without raising on bad input."""
-    value = _config_float(source, key, float(default))
-    try:
-        return int(value)
-    except (TypeError, ValueError, OverflowError):
-        return default
-
-
-def _smart_buffer_config(
-    engine: Celune,
-) -> tuple[bool, float, float, float, float, float, float]:
-    """Return Celune's fixed adaptive speech-buffer settings."""
-    del engine
-    return (
-        True,
-        _SMART_BUFFER_REALTIME_SPEED,
-        _SMART_BUFFER_PROTECTED_PLAYBACK_SECONDS,
-        _SMART_BUFFER_MIN_SECONDS,
-        _SMART_BUFFER_MIN_SPEED_SAMPLE_SECONDS,
-        _SMART_BUFFER_MAX_SECONDS,
-        _SMART_BUFFER_COMPLETE_BELOW_SPEED,
-    )
-
-
-def _pipeline_cpu_config(engine: Celune) -> tuple[bool, float, int, float]:
-    """Return Celune's bounded cooperative playback-pressure controls."""
-    del engine
-    return (
-        True,
-        _PIPELINE_CPU_MAX_BUFFER_SECONDS,
-        _PIPELINE_CPU_MAX_DRAIN_ITEMS,
-        _PIPELINE_CPU_YIELD_SECONDS,
-    )
-
-
-def _smart_buffer_speed_estimate(
-    engine: Celune,
-    speech_len: float,
-    generation_elapsed: float,
-    min_speed_sample_seconds: float,
-) -> Optional[float]:
-    """Estimate current generation speed in audio-seconds per wall-second."""
-    if generation_elapsed > 0.0 and speech_len >= min_speed_sample_seconds:
-        return speech_len / generation_elapsed
-
-    previous = getattr(engine, "smart_buffer_generation_speed", None)
-    if isinstance(previous, (int, float)) and previous > 0.0:
-        return float(previous)
-    return None
-
-
-def _smart_buffer_target_seconds(
-    engine: Celune,
-    speech_len: float,
-    generation_elapsed: float,
-) -> float:
-    """Return the current adaptive pre-playback buffer target in seconds."""
-    (
-        enabled,
-        realtime_speed,
-        protected_playback_seconds,
-        minimum_seconds,
-        min_speed_sample_seconds,
-        max_seconds,
-        complete_below_speed,
-    ) = _smart_buffer_config(engine)
-
-    if not enabled:
-        return _LEGACY_BUFFER_SECONDS
-
-    speed_estimate = _smart_buffer_speed_estimate(
-        engine,
-        speech_len,
-        generation_elapsed,
-        min_speed_sample_seconds,
-    )
-    if speed_estimate is None:
-        return min(max_seconds, max(1.0, minimum_seconds))
-
-    if speed_estimate >= realtime_speed:
-        return 0.0
-
-    if speed_estimate <= complete_below_speed:
-        return float("inf")
-
-    speed_deficit = max(0.0, 1.0 - speed_estimate)
-    target_seconds = minimum_seconds + (protected_playback_seconds * speed_deficit)
-    return min(max_seconds, max(minimum_seconds, target_seconds))
-
-
-def _remember_smart_buffer_speed(engine: Celune, generation_speed: float) -> None:
-    """Update the engine's rolling generation-speed estimate."""
-    if generation_speed <= 0.0:
-        return
-
-    previous = getattr(engine, "smart_buffer_generation_speed", None)
-    if isinstance(previous, (int, float)) and previous > 0.0:
-        generation_speed = (float(previous) * (1.0 - _SMART_BUFFER_SMOOTHING)) + (
-            generation_speed * _SMART_BUFFER_SMOOTHING
-        )
-    engine.smart_buffer_generation_speed = generation_speed
-
-
-def build_persona_character_card(engine: Celune) -> str:
-    """Build the compact character and persona summary sent with requests.
-
-    Args:
-        engine: The instance of Celune to use.
-
-    Returns:
-        str: The formatted Persona character card and summary.
-    """
-    context = build_persona_context(engine, "")
-    return f"{context.character_profile.render()}\n\n{context.persona_card.render()}"
-
-
-def _persona_emotion_analyzer(engine: Celune) -> Optional[PersonaEmotionAnalyzer]:
-    """Return the configured Persona emotion analyzer for this engine."""
-    existing = getattr(engine, "persona_emotion_analyzer", None)
-
-    emotion_config = persona_config(engine.config).get("emotion")
-    if isinstance(emotion_config, dict):
-        enabled = emotion_config.get("enabled", True)
-        if isinstance(enabled, bool) and not enabled:
-            return None
-        user_weight = emotion_config.get("user_weight", 0.75)
-        assistant_weight = emotion_config.get("assistant_weight", 0.25)
-        decay_power = emotion_config.get("history_decay_power", 3.0)
-        analyzer = PersonaEmotionAnalyzer(
-            user_weight=float(user_weight)
-            if isinstance(user_weight, (int, float))
-            and not isinstance(user_weight, bool)
-            else 0.75,
-            assistant_weight=float(assistant_weight)
-            if isinstance(assistant_weight, (int, float))
-            and not isinstance(assistant_weight, bool)
-            else 0.25,
-            history_decay_power=float(decay_power)
-            if isinstance(decay_power, (int, float))
-            and not isinstance(decay_power, bool)
-            else 3.0,
-        )
-    else:
-        analyzer = (
-            existing
-            if isinstance(existing, PersonaEmotionAnalyzer)
-            else PersonaEmotionAnalyzer()
-        )
-
-    if isinstance(existing, PersonaEmotionAnalyzer) and existing is not analyzer:
-        existing.user_weight = analyzer.user_weight
-        existing.assistant_weight = analyzer.assistant_weight
-        existing.history_decay_power = analyzer.history_decay_power
-
-    vision = getattr(engine, "vision", None)
-    get_capabilities = getattr(vision, "capabilities", None)
-    capabilities = get_capabilities() if callable(get_capabilities) else None
-    get_emotion_backend = getattr(vision, "emotion_backend", None)
-    emotion_backend = cast(
-        Optional[tuple[PersonaTokenizer, PersonaModel]],
-        get_emotion_backend() if callable(get_emotion_backend) else None,
-    )
-    if (
-        isinstance(capabilities, PersonaCapabilities)
-        and not capabilities.emotion_probes
-    ) or emotion_backend is None:
-        analyzer.clear_vlm()
-    else:
-        analyzer.bind_vlm(*emotion_backend)
-
-    engine.persona_emotion_analyzer = analyzer
-    return analyzer
-
-
-def _persona_mood_or_state(
-    engine: Celune,
-    request: str,
-) -> str:
-    """Return the Persona state string for the current request."""
-    configured_state = _config_text(engine, "persona_state", "")
-    if configured_state:
-        return configured_state
-
-    analyzer = _persona_emotion_analyzer(engine)
-    if analyzer is None:
-        return "Neutral."
-
-    summary = analyzer.summarize_history(persona_history_messages(engine), request)
-    if summary is None or not summary.target_state.strip():
-        emotion_warning = (
-            f"Persona emotion analysis fell back to Neutral: {analyzer.last_error}"
-            if analyzer.last_error.strip()
-            else "Persona emotion analysis fell back to Neutral."
-        )
-        log = getattr(engine, "log", None)
-        if callable(log):
-            log(emotion_warning, "warning", loglevel="verbose")
-        return "Neutral."
-    return summary.target_state
-
-
-def _persona_memory_store(engine: Celune) -> Optional[PersonaMemoryStore]:
-    """Return the configured Persona memory store for this engine."""
-    existing = getattr(engine, "persona_memory_store", None)
-    if isinstance(existing, PersonaMemoryStore):
-        return existing
-
-    memory_config = persona_config(engine.config).get("memory")
-    normalized_memory = memory_config if isinstance(memory_config, dict) else {}
-    enabled = normalized_memory.get("enabled", True)
-    if isinstance(enabled, bool) and not enabled:
-        return None
-
-    similarity_threshold = normalized_memory.get("semantic_similarity_threshold", 0.62)
-    overlap_threshold = normalized_memory.get("fallback_token_overlap_threshold", 1)
-    embedding_model = normalized_memory.get("semantic_embedding_model")
-    embedding_model_name = (
-        embedding_model.strip()
-        if isinstance(embedding_model, str) and embedding_model.strip()
-        else None
-    )
-    configured_storage = normalized_memory.get("storage_dir")
-    storage_dir = (
-        configured_storage.strip()
-        if isinstance(configured_storage, str) and configured_storage.strip()
-        else None
-    )
-    store = PersonaMemoryStore(
-        storage_dir=storage_dir,
-        semantic_similarity_threshold=float(similarity_threshold)
-        if isinstance(similarity_threshold, (int, float))
-        and not isinstance(similarity_threshold, bool)
-        else 0.62,
-        fallback_token_overlap_threshold=int(overlap_threshold)
-        if isinstance(overlap_threshold, (int, float))
-        and not isinstance(overlap_threshold, bool)
-        else 1,
-        embedding_model=embedding_model_name or PERSONA_MEMORY_EMBEDDING_MODEL,
-    )
-
-    engine.persona_memory_store = store
-    return store
-
-
-def _store_persona_memories(engine: Celune, request: str) -> None:
-    """Persist long-term memory candidates extracted from the user request."""
-    store = _persona_memory_store(engine)
-    if store is None:
-        return
-
-    character_name = persona_active_character_name(engine)
-    if not character_name.strip():
-        return
-
-    store.remember_from_user_message(character_name, request)
-
-
-def _persona_memory_classifier_context(engine: Celune) -> str:
-    """Build the bounded conversation context sent to the memory classifier."""
-    sections: list[str] = []
-    summary = persona_session_summary(engine)
-    if summary:
-        sections.append(f"Conversation summary:\n{summary}")
-
-    messages = persona_history_messages(engine)
-    if messages:
-        sections.append(
-            "Recent conversation:\n"
-            + "\n".join(
-                f"{message['role']}: {message['content']}" for message in messages
-            )
-        )
-    return "\n\n".join(sections)
-
-
-def _classify_persona_memories(engine: Celune, request: str) -> None:
-    """Classify and persist unmatched durable user facts without blocking reply logic."""
-    store = _persona_memory_store(engine)
-    if store is None or store.collect_candidates(request):
-        return
-
-    memory_config = persona_config(engine.config).get("memory")
-    normalized_memory = memory_config if isinstance(memory_config, dict) else {}
-    enabled = normalized_memory.get("auto_classifier", True)
-    if isinstance(enabled, bool) and not enabled:
-        return
-
-    classifier = cast(
-        "Optional[Callable[[JSON], PersonaClientResponse]]",
-        getattr(getattr(engine, "vision", None), "classify_memory", None),
-    )
-    if not callable(classifier):
-        return
-
-    minimum_confidence = normalized_memory.get("auto_classifier_min_confidence", 0.82)
-    if isinstance(minimum_confidence, bool) or not isinstance(
-        minimum_confidence, (int, float)
-    ):
-        minimum_confidence = 0.82
-    maximum_candidates = normalized_memory.get("auto_classifier_max_candidates", 3)
-    if isinstance(maximum_candidates, bool) or not isinstance(
-        maximum_candidates, (int, float)
-    ):
-        maximum_candidates = 3
-
-    context = _persona_memory_classifier_context(engine)
-    if request.strip():
-        context = f"{context}\n\nCurrent user message:\n{request.strip()}".strip()
-
-    payload: JSON = {
-        "format": "celune_memory_classifier",
-        "format_version": 1,
-        "model": persona_model_id(engine.config),
-        "quantization": persona_quantization(engine.config),
-        "quantized": True,
-        "system": _MEMORY_CLASSIFIER_SYSTEM_PROMPT,
-        "user": context,
-        "request": context,
-        "messages": [
-            {"role": "system", "content": _MEMORY_CLASSIFIER_SYSTEM_PROMPT},
-            {"role": "user", "content": context},
-        ],
-        "max_new_tokens": 180,
-        "temperature": 0.0,
-        "top_p": 1.0,
-        "repetition_penalty": 1.0,
-    }
-
-    try:
-        response = classifier(payload)
-        response.raise_for_status()
-        candidates = classifier_memory_candidates(
-            _extract_persona_text(response.json()),
-            minimum_confidence=float(minimum_confidence),
-            maximum_candidates=max(1, int(maximum_candidates)),
-        )
-        character_name = persona_active_character_name(engine)
-        if not character_name.strip():
-            return
-        for candidate in candidates:
-            store.remember(
-                character_name,
-                candidate.content,
-                importance=candidate.importance,
-                explicit=False,
-            )
-    except Exception as error:
-        log = getattr(engine, "log", None)
-        if callable(log):
-            log(
-                format_error_message(
-                    "Persona memory classification failed",
-                    error,
-                    engine.log_level,
-                ),
-                loglevel="verbose",
-            )
-
-
-def _build_retrieved_memory_bundle(
-    engine: Celune, request: str
-) -> RetrievedMemoryBundle:
-    """Return retrieved long-term memory for the current request."""
-    direct_memories = getattr(engine, "retrieved_long_term_memory", None)
-    if isinstance(direct_memories, list):
-        memories = [
-            memory.strip()
-            for memory in direct_memories
-            if isinstance(memory, str) and memory.strip()
-        ]
-        return RetrievedMemoryBundle(memories=tuple(memories))
-
-    store = _persona_memory_store(engine)
-    if store is not None:
-        character_name = persona_active_character_name(engine)
-        memories = tuple(
-            record.content
-            for record in store.retrieve(character_name, request.strip())
-            if record.content.strip()
-        )
-        if memories:
-            return RetrievedMemoryBundle(memories=memories)
-
-    return RetrievedMemoryBundle(
-        memories=_config_lines(engine, "persona_long_term_memory")
-    )
-
-
-def _persona_manifest_files(engine: Celune) -> dict[str, str]:
-    """Return whitelisted persona Markdown files for the active engine persona."""
-    loader = default_loader()
-    if loader is None:
-        return {}
-    pack_persona = persona_metadata_from_manifest(loader.bundle.metadata)
-    current_persona = getattr(engine, "current_character_persona", None)
-    if pack_persona is not None:
-        if current_persona != pack_persona:
-            return {}
-    else:
-        current_character = getattr(engine, "current_character", None)
-        bundle_name = bundle_character_name(loader.bundle)
-        if not (
-            isinstance(current_character, str)
-            and isinstance(bundle_name, str)
-            and current_character.strip()
-            and current_character.strip() == bundle_name.strip()
-        ):
-            return {}
-    files = persona_files_from_bundle(loader.bundle)
-    if persona_debug_overrides_enabled(engine.config):
-        files.update(persona_override_files(persona_active_character_name(engine)))
-    return files
-
-
-def _legacy_identity_source(profile: CharacterProfile) -> str:
-    """Render legacy identity metadata into CECHAR v3-style source material."""
-    lines: list[str] = []
-    if profile.name.strip():
-        lines.append(f"Name: {profile.name.strip()}")
-    if profile.age.strip():
-        lines.append(f"Age: {profile.age.strip()}")
-    if profile.gender.strip():
-        lines.append(f"Gender: {profile.gender.strip()}")
-    if profile.profile.strip():
-        if lines:
-            lines.append("")
-        lines.append(profile.profile.strip())
-    return "\n".join(lines).strip()
-
-
-def _legacy_personality_source(engine: Celune) -> str:
-    """Render legacy persona settings into the v3 personality source slot."""
-    blocks: list[str] = []
-    persona_text = _config_text(
-        engine,
-        "persona_persona",
-        default_persona_persona(),
-    )
-    if persona_text:
-        blocks.append(persona_text)
-
-    prompt_rules = pack_persona_lines(engine, "prompt_rules")
-    if prompt_rules:
-        blocks.append("\n".join(f"- {line}" for line in prompt_rules))
-
-    return "\n\n".join(block for block in blocks if block.strip()).strip()
-
-
-def _legacy_speech_style_source(engine: Celune) -> str:
-    """Render legacy speech-style metadata into the v3 speech-style slot."""
-    blocks: list[str] = []
-    speaking_style = pack_persona_text(engine, "speaking_style")
-    if speaking_style:
-        blocks.append(speaking_style)
-
-    traits = persona_style_traits(engine)
-    trait_lines = [
-        f"- Warmth: {traits['warmth']}",
-        f"- Directness: {traits['directness']}",
-        f"- Humor: {traits['humor']}",
-        f"- Detail: {traits['detail']}",
-        f"- Formality: {traits['formality']}",
-        f"- Enthusiasm: {traits['enthusiasm']}",
-    ]
-    blocks.append("\n".join(trait_lines))
-    return "\n\n".join(block for block in blocks if block.strip()).strip()
-
-
-def _legacy_boundaries_source(engine: Celune) -> str:
-    """Render legacy boundary lines into the v3 boundaries source slot."""
-    lines = pack_persona_lines(engine, "boundaries")
-    return "\n".join(f"- {line}" for line in lines)
-
-
-def _legacy_examples_source(engine: Celune) -> str:
-    """Render legacy example dialogue into the v3 examples source slot."""
-    return "\n".join(pack_persona_lines(engine, "example_dialogue")).strip()
-
-
-def _configured_persona_instructions(engine: Celune) -> str:
-    """Return explicit user Persona settings after pack-provided behavior."""
-    blocks: list[str] = []
-    configured_persona = engine.config.get("persona_persona")
-    if isinstance(configured_persona, str) and configured_persona.strip():
-        blocks.append(f"Persona guidance:\n{configured_persona.strip()}")
-    configured_context = engine.config.get("persona_context")
-    if isinstance(configured_context, str) and configured_context.strip():
-        blocks.append(f"User-provided context:\n{configured_context.strip()}")
-    return "\n\n".join(blocks)
-
-
-def _build_persona_source_material(
-    engine: Celune,
-    character_profile: CharacterProfile,
-) -> PersonaSourceMaterial:
-    """Build v3 prompt source material from package files with legacy fallback."""
-    persona_files = _persona_manifest_files(engine)
-    return PersonaSourceMaterial(
-        identity=persona_files.get("identity.md", "")
-        or _legacy_identity_source(character_profile),
-        soul=persona_files.get("soul.md", ""),
-        personality=persona_files.get("personality.md", "")
-        or _legacy_personality_source(engine),
-        speech_style=persona_files.get("speech_style.md", "")
-        or _legacy_speech_style_source(engine),
-        boundaries=persona_files.get("boundaries.md", "")
-        or _legacy_boundaries_source(engine),
-        examples=persona_files.get("examples.md", "")
-        or _legacy_examples_source(engine),
-    )
-
-
-def build_persona_context(
-    engine: Celune,
-    request: str,
-    *,
-    agent_context: Optional[AgentContext] = None,
-    tool_schemas: tuple[AgentToolSchema, ...] = (),
-    pending_tool_call: Optional[ToolCall] = None,
-) -> PersonaContext:
-    """Build structured Persona context for one user request.
-
-    Args:
-        engine: The instance of Celune to use.
-        request: The user's request.
-        agent_context: Optional existing agent callback context for task-aware prompts.
-        tool_schemas: Existing tool schemas available to the agent runtime.
-        pending_tool_call: Optional validated-boundary tool call awaiting runtime handling.
-
-    Returns:
-        PersonaContext: The built RAG context for Persona.
-    """
-    name = persona_active_character_name(engine)
-    voice = getattr(engine, "current_voice", None) or "balanced"
-    voice_prompt = _effective_voice_prompt(engine)
-    traits = persona_style_traits(engine)
-
-    voice_notes = f"Selected voice: {voice}."
-    if isinstance(voice_prompt, str) and voice_prompt.strip():
-        voice_notes = f"{voice_notes}\nVoice prompt: {voice_prompt.strip()}"
-
-    character_profile = CharacterProfile(
-        name=name,
-        age=pack_identity_text(engine, "age")
-        or _config_text(engine, "persona_character_age", default_persona_age(engine)),
-        gender=pack_identity_text(engine, "gender")
-        or _config_text(
-            engine, "persona_character_gender", default_persona_gender(engine)
-        ),
-        profile=pack_identity_text(engine, "profile")
-        or _config_text(engine, "persona_character_profile", ""),
-    )
-    persona_card = PersonaCard(
-        persona=_config_text(
-            engine,
-            "persona_persona",
-            default_persona_persona(),
-        ),
-        warmth=traits["warmth"],
-        directness=traits["directness"],
-        humor=traits["humor"],
-        detail=traits["detail"],
-        formality=traits["formality"],
-        enthusiasm=traits["enthusiasm"],
-        context=_config_text(
-            engine,
-            "persona_context",
-            default_persona_context(),
-        ),
-        voice=voice_notes,
-        speaking_style=pack_persona_text(engine, "speaking_style"),
-        boundaries=pack_persona_lines(engine, "boundaries"),
-        prompt_rules=pack_persona_lines(engine, "prompt_rules"),
-        example_dialogue=pack_persona_lines(engine, "example_dialogue"),
-    )
-    persona_source_material = _build_persona_source_material(engine, character_profile)
-    mood_or_state = _persona_mood_or_state(engine, request)
-
-    return PersonaContext(
-        character_profile=character_profile,
-        persona_card=persona_card,
-        persona_source_material=persona_source_material,
-        mood_or_state=mood_or_state,
-        conversation_summary=persona_session_summary(engine),
-        retrieved_long_term_memory=_build_retrieved_memory_bundle(engine, request),
-        user_instructions=_configured_persona_instructions(engine),
-        agent_context=agent_context,
-        tool_schemas=tool_schemas,
-        pending_tool_call=pending_tool_call,
-    )
-
-
-def _effective_voice_prompt(engine: Celune) -> Optional[str]:
-    """Return the active voice prompt only when the engine supports it."""
-    supported = getattr(engine, "voice_prompt_supported", None)
-    if callable(supported) and not supported():
-        return None
-    if supported is False:
-        return None
-
-    voice_prompt = getattr(engine, "voice_prompt", None)
-    return voice_prompt if isinstance(voice_prompt, str) else None
-
-
-def build_persona_messages(
-    engine: Celune,
-    request: str,
-    *,
-    context: Optional[PersonaContext] = None,
-) -> list[JSON]:
-    """Build OpenAI-style messages for the Persona model.
-
-    Args:
-        engine: The instance of Celune to use.
-        request: The user's request.
-        context: Optional prebuilt context to keep the system prompt consistent.
-
-    Returns:
-        list[JSON]: A list of JSON objects containing current message history.
-    """
-    resolved_context = context or build_persona_context(engine, request)
-    attachments = persona_pending_attachments(engine)
-    user_content: JSONSerializable = request.strip()
-    if attachments:
-        user_content = [
-            *attachments,
-            {"type": "text", "text": request.strip()},
-        ]
-
-    messages: list[JSON] = [
-        cast(
-            JSON,
-            {"role": "system", "content": PersonaPromptBuilder.build(resolved_context)},
-        )
-    ]
-    messages.extend(persona_history_messages(engine))
-    messages.append(cast(JSON, {"role": "user", "content": user_content}))
-    return messages
-
-
-def build_persona_request(
-    engine: Celune,
-    request: str,
-    *,
-    agent_context: Optional[AgentContext] = None,
-    tool_schemas: tuple[AgentToolSchema, ...] = (),
-    pending_tool_call: Optional[ToolCall] = None,
-) -> JSON:
-    """Build the JSON payload sent to the Persona model.
-
-    Args:
-        engine: The instance of Celune to use.
-        request: The user's request.
-        agent_context: Optional existing agent callback context for task-aware prompts.
-        tool_schemas: Existing tool schemas available to the agent runtime.
-        pending_tool_call: Optional tool call awaiting runtime handling.
-
-    Returns:
-        JSON: The JSON payload to be sent to the Persona model.
-    """
-    context = build_persona_context(
-        engine,
-        request,
-        agent_context=agent_context,
-        tool_schemas=tool_schemas,
-        pending_tool_call=pending_tool_call,
-    )
-    character_card = (
-        f"{context.character_profile.render()}\n\n{context.persona_card.render()}"
-    )
-    system_prompt = PersonaPromptBuilder.build(context)
-    clean_request = request.strip()
-    context_size = persona_context_size(engine.config)
-    if agent_context is not None:
-        context_size = (
-            agent_context.task.config.context_size
-            if agent_context.task is not None
-            else AGENT_ROUTING_CONTEXT_SPACE
-        )
-    return {
-        "format": "celune_persona_request",
-        "format_version": 1,
-        "model": persona_model_id(engine.config),
-        "quantization": persona_quantization(engine.config),
-        "quantized": True,
-        "character": getattr(engine, "current_character", None) or "Unknown",
-        "voice": getattr(engine, "current_voice", None) or "balanced",
-        "character_card": character_card,
-        "system": system_prompt,
-        "user": clean_request,
-        "request": clean_request,
-        "context_space": context_size,
-        "messages": cast(
-            JSONSerializable,
-            build_persona_messages(engine, clean_request, context=context),
-        ),
-    }
-
-
-def _configured_agent_context_size(engine: Celune) -> int:
-    """Return the configured agent context size for pre-task classification."""
-    raw = engine.config.get("agent")
-    if not isinstance(raw, dict):
-        return AGENT_CONTEXT_SPACE
-    value = raw.get("context_size")
-    if isinstance(value, int) and not isinstance(value, bool) and value > 0:
-        return value
-    return AGENT_CONTEXT_SPACE
-
-
-def build_agent_classification_request(
-    engine: Celune,
-    request: str,
-    *,
-    routing_context: Optional[JSON] = None,
-) -> JSON:
-    """Build a routing request through the existing Persona prompt system.
-
-    Args:
-        engine: The Celune engine providing Persona context and configuration.
-        request: The latest user input to classify.
-        routing_context: Optional active-task state and pending response context.
-
-    Returns:
-        JSON: A Persona-compatible classification request.
-    """
-    context = build_persona_context(engine, request)
-    persona_prompt = PersonaPromptBuilder.build(context)
-    system_prompt = f"{persona_prompt}\n\n{_AGENT_CLASSIFICATION_INSTRUCTIONS}"
-    if routing_context is not None:
-        system_prompt = (
-            f"{system_prompt}\n\nActive routing context:\n"
-            f"{json.dumps(routing_context, ensure_ascii=True, sort_keys=True)}"
-        )
-    clean_request = request.strip()
-    messages: list[JSON] = [cast(JSON, {"role": "system", "content": system_prompt})]
-    messages.append(cast(JSON, {"role": "user", "content": clean_request}))
-    return {
-        "format": "celune_agent_classification",
-        "format_version": 1,
-        "model": persona_model_id(engine.config),
-        "quantization": persona_quantization(engine.config),
-        "quantized": True,
-        "system": system_prompt,
-        "user": clean_request,
-        "request": clean_request,
-        "context_space": min(
-            _configured_agent_context_size(engine), AGENT_ROUTING_CONTEXT_SPACE
-        ),
-        "routing_context": routing_context,
-        "messages": cast(JSONSerializable, messages),
-        "max_new_tokens": AGENT_ROUTING_MAX_NEW_TOKENS,
-        "temperature": 0.0,
-        "top_p": 1.0,
-        "repetition_penalty": 1.0,
-    }
-
-
-def _extract_persona_text(payload: JSONSerializable) -> str:
-    """Extract spoken text from common Persona response payload shapes."""
-    if isinstance(payload, str):
-        return payload.strip()
-
-    if not isinstance(payload, dict):
-        return ""
-
-    for key in ("text", "response", "reply", "output", "content"):
-        value = payload.get(key)
-        if isinstance(value, str) and value.strip():
-            return value.strip()
-
-    message = payload.get("message")
-    if isinstance(message, dict):
-        content = message.get("content")
-        if isinstance(content, str) and content.strip():
-            return content.strip()
-
-    choices = payload.get("choices")
-    if isinstance(choices, list) and choices:
-        first = choices[0]
-        if isinstance(first, dict):
-            return _extract_persona_text(first)
-
-    return ""
-
-
-def think(engine: Celune, request: str) -> bool:
-    """Let Celune think about the input given, and speak back.
-
-    Args:
-        engine: The Celune engine that should speak the output.
-        request: The input request that will be sent to Persona.
-
-    Returns:
-        bool: Whether Celune completed the thinking action successfully or not.
-    """
-    _store_persona_memories(engine, request)
-    payload = build_persona_request(engine, request)
-    attachments = getattr(engine, "persona_attachments", None)
-    lease = None
-    manager = getattr(engine, "component_locks", None)
-    if manager is not None:
-        acquisition, lease = manager.try_acquire_lease(
-            (ComponentLockRequirement(ComponentLockName.VLM),),
-            ComponentLockOwner(operation_id=f"persona:{uuid4().hex}"),
-        )
-        if not acquisition.acquired:
-            busy = acquisition.busy
-            assert busy is not None
-            _notify_component_busy(engine, "think", busy)
-            if isinstance(attachments, list):
-                attachments.clear()
-            return False
-
-    try:
-        vision = engine.vision
-        if vision is None:
-            engine.log(string("pipeline.persona_not_connected"), "warning")
-            return False
-
-        response = vision.post(json=payload)
-        response.raise_for_status()
-        spoken_text = _extract_persona_text(response.json())
-    except Exception as e:
-        engine.log(
-            format_error_message(
-                string("pipeline.persona_request_failed"),
-                e,
-                engine.log_level,
-            ),
-            "warning",
-        )
-        return False
-    finally:
-        if lease is not None:
-            lease.release()
-        if isinstance(attachments, list):
-            attachments.clear()
-
-    if not spoken_text:
-        engine.log(string("pipeline.persona_empty_response"), "warning")
-        return False
-
-    history = getattr(engine, "persona_history", None)
-    if isinstance(history, list):
-        history.extend(
-            [
-                {"role": "user", "content": request.strip()},
-                {"role": "assistant", "content": spoken_text},
-            ]
-        )
-
-    queued = queue_speech(
-        engine,
-        spoken_text,
-        save=False,
-        display_text=spoken_text,
-    )
-    if isinstance(history, list):
-        compact_persona_history(engine)
-    _classify_persona_memories(engine, request)
-    return queued
-
-
-def deliver_persona_response(engine: Celune, request: str, response: str) -> bool:
-    """Store and speak one response produced by a routed Persona task."""
-    spoken_text = response.strip()
-    if not spoken_text:
-        return False
-
-    _store_persona_memories(engine, request)
-    history = getattr(engine, "persona_history", None)
-    if isinstance(history, list):
-        history.extend(
-            [
-                {"role": "user", "content": request.strip()},
-                {"role": "assistant", "content": spoken_text},
-            ]
-        )
-
-    queued = queue_speech(
-        engine,
-        spoken_text,
-        save=False,
-        display_text=spoken_text,
-    )
-    if isinstance(history, list):
-        compact_persona_history(engine)
-    _classify_persona_memories(engine, request)
-    return queued
-
-
-def say(
-    engine: Celune,
-    text: str,
-    save: bool = True,
-    display_text: Optional[str] = None,
-) -> bool:
-    """Queue text for Celune to say.
-
-    Args:
-        engine: The Celune engine that should speak the text.
-        text: The input text to queue for synthesis.
-        save: Whether to save generated output artifacts.
-        display_text: Optional text to show in logs instead of the synthesis text.
-
-    Returns:
-        bool: ``True`` when the text was queued successfully, otherwise ``False``.
-
-    Raises:
-        Exception: Re-raised after releasing the pipeline if queueing fails.
-    """
-    return queue_speech(
-        engine, text, save=save, stream_queue=None, display_text=display_text
-    )
-
-
-async def say_async(
-    engine: Celune,
-    text: str,
-    save: bool = True,
-    display_text: Optional[str] = None,
-) -> bool:
-    """Queue text for Celune to say without blocking an async caller.
-
-    Args:
-        engine: Runtime that owns the speech queues.
-        text: The text to synthesize.
-        save: Whether the generated utterance should be persisted to disk.
-        display_text: Optional UI-facing text to associate with the request.
-
-    Returns:
-        bool: ``True`` when the request was queued successfully, otherwise ``False``.
-    """
-    return await queue_speech_async(
-        engine,
-        text,
-        save=save,
-        stream_queue=None,
-        display_text=display_text,
-    )
-
-
-def handle_audio_input(engine: Celune, request: AudioInputRequest) -> bool:
-    """Accept engine-level audio input and route it according to the active mode.
-
-    Args:
-        engine: The Celune engine receiving the audio input.
-        request: The submitted audio input request.
-
-    Returns:
-        bool: ``True`` when the request was accepted, otherwise ``False``.
-    """
-    audio = np.asarray(request.audio, dtype=np.float32)
-    if getattr(engine, "input_mode", "text_to_speech") == "voice_conversion":
-        output = convert_audio_input(engine, request)
-        if output is None:
-            return False
-        return queue_sfx_audio(
-            engine,
-            output.audio,
-            output.sample_rate,
-            output.label,
-            status_label_key="pipeline.revoicing_label",
-            log_length=request.log_playback,
-            reset_ready_announcement=request.reset_ready_announcement,
-        )
-
-    engine.log(
-        "Audio input was accepted but ignored in text-to-speech-only mode "
-        f"(label={request.label!r}, sample_rate={request.sample_rate}, "
-        f"shape={audio.shape!r})",
-        loglevel="verbose",
-    )
-    return True
-
-
-def convert_audio_input(
-    engine: Celune,
-    request: AudioInputRequest,
-    *,
-    live: bool = False,
-) -> Optional[AudioOutput]:
-    """Run one VC conversion request and return the converted audio output.
-
-    Args:
-        engine: The Celune engine receiving the audio input.
-        request: The submitted audio input request.
-
-    Returns:
-        Optional[AudioOutput]: The converted audio output, or ``None`` when voice conversion is unavailable.
-    """
-    backend = getattr(engine, "vc_backend", None)
-    if backend is None:
-        engine.log(string("pipeline.vc_backend_unconfigured"), "warning")
-        engine.error_callback(string("pipeline.vc_backend_unconfigured"))
-        engine.progress_callback(0, 1)
-        return None
-
-    target_references: tuple[pathlib.Path, ...] = ()
-    current_voice = getattr(engine, "current_voice", None)
-    if isinstance(current_voice, str) and current_voice.strip():
-        loader = default_loader()
-        if loader is not None:
-            try:
-                target_references = (loader.materialize(current_voice, "wav"),)
-            except Exception as e:
-                engine.log(
-                    format_error_message(
-                        string("pipeline.vc_reference_load_failed"),
-                        e,
-                        getattr(engine, "log_level", "info"),
-                    ),
-                    "warning",
-                )
-                target_references = ()
-
-    conversion_request = VoiceConversionRequest(
-        source_audio=normalize_vc_audio(request.audio),
-        sample_rate=request.sample_rate,
-        target_voice=getattr(engine, "current_voice", None),
-        target_character=getattr(engine, "current_character", None),
-        target_references=target_references,
-        label=request.label,
-        pitch_shift=0,
-        f0_condition=(
-            request.f0_condition
-            if isinstance(request.f0_condition, bool)
-            else getattr(engine, "vc_f0_condition", False)
-        ),
-    )
-    converter = getattr(backend, "convert_live", None) if live else None
-    typed_converter = cast(
-        Callable[[VoiceConversionRequest], AudioOutput],
-        converter,
-    )
-    output = (
-        typed_converter(conversion_request)
-        if callable(converter)
-        else backend.convert(conversion_request)
-    )
-    resolved_pitch_shift = (
-        request.pitch_shift
-        if isinstance(request.pitch_shift, int)
-        else getattr(engine, "vc_pitch_shift", 0)
-    )
-    if resolved_pitch_shift == 0:
-        return output
-
-    return AudioOutput(
-        audio=pitch_shift_audio(
-            np.asarray(output.audio, dtype=np.float32),
-            output.sample_rate,
-            resolved_pitch_shift,
-        ),
-        sample_rate=output.sample_rate,
-        label=output.label,
-    )
-
-
-def stop_live_audio_input(engine: Celune) -> None:
-    """Reset a backend's live voice-conversion session when capture stops."""
-    backend = getattr(engine, "vc_backend", None)
-    stop_live = getattr(backend, "stop_live", None)
-    if callable(stop_live):
-        stop_live()
-
-
-def queue_speech(
-    engine: Celune,
-    text: str,
-    save: bool = True,
-    stream_queue: Optional[SpeechStreamQueue] = None,
-    display_text: Optional[str] = None,
-) -> bool:
-    """Queue text for Celune to say and optionally mirror audio chunks.
-
-    Args:
-        engine: The Celune engine that should speak the text.
-        text: The input text to queue for synthesis.
-        save: Whether to save generated output artifacts.
-        stream_queue: Optional queue receiving generated 48 kHz float32 chunks.
-        display_text: Optional text to show in logs instead of the synthesis text.
-
-    Returns:
-        bool: ``True`` when the text was queued successfully, otherwise ``False``.
-
-    Raises:
-        Exception: An exception was caught and subsequently raised to propagate it to Celune.
-    """
-    if not _prepare_speech_readiness(engine):
-        return False
-
-    engine.model_ready.wait()
-    if not _finish_speech_readiness(engine):
-        return False
-
-    return _queue_speech_after_ready(
-        engine,
-        text,
-        save=save,
-        stream_queue=stream_queue,
-        display_text=display_text,
-    )
-
-
-def _prepare_speech_readiness(engine: Celune) -> bool:
-    """Run the pre-wait checks shared by synchronous and async speech queueing."""
-    if getattr(engine, "test_finished", False):
-        return False
-    if engine.is_in_tutorial:
-        engine.log(string("celune.speech_input_disabled_tutorial"), "warning")
-        return False
-
-    if getattr(engine, "sleeping", False):
-        engine.log(
-            string("pipeline.cannot_speak_sleeping", app_name=APP_NAME),
-            "warning",
-        )
-        engine.error_callback(string("celune.app_sleeping", app_name=APP_NAME))
-        engine.progress_callback(0, 1)
-        return False
-
-    if not engine.model_ready.is_set():
-        engine.status_callback(string("status.waiting_for_model"))
-        engine.progress_callback(None, None)
-        engine.log(string("pipeline.speak_waiting_reload"), "info")
-
-    return True
-
-
-def _finish_speech_readiness(engine: Celune) -> bool:
-    """Run the post-wait model checks shared by speech queueing paths."""
-    if not engine.loaded and not getattr(engine.backend, "is_fake", False):
-        engine.log(string("ui.core_engine_not_loaded"), "warning")
-        engine.error_callback(string("pipeline.not_ready_app", app_name=APP_NAME))
-        engine.progress_callback(0, 1)
-        return False
-
-    return True
-
-
-def _queue_speech_after_ready(
-    engine: Celune,
-    text: str,
-    save: bool = True,
-    stream_queue: Optional[SpeechStreamQueue] = None,
-    display_text: Optional[str] = None,
-) -> bool:
-    """Queue one speech request after reload readiness is satisfied."""
-
-    speech_text = normalize_special_characters(text, for_tts=True)
-    preserved_display_text = display_text if display_text is not None else text
-    language_meta = detect_language(
-        speech_text,
-        list(engine.backend.supported_languages),
-    )
-    requested_language = engine.language
-    backend_name = str(getattr(engine.backend, "name", "")).strip().lower()
-    if (
-        not isinstance(requested_language, str)
-        or not requested_language.strip()
-        or requested_language.strip().lower() == "auto"
-    ):
-        # Qwen3 handles automatic language selection internally, so keep the
-        # backend-facing value as "Auto" instead of passing a detected language code.
-        requested_language = (
-            "Auto" if backend_name == "qwen3" else language_meta["language"]
-        )
-
-    if not language_meta["supported"]:
-        # "zh-cn" has to be clipped to just "zh" to be a valid language code
-        try:
-            language = Lang(language_meta["language"][:2]).name
-        except (InvalidLanguageValue, DeprecatedLanguageValue):
-            language = language_meta["language"]
-
-        engine.log(
-            string("pipeline.received_unsupported_language", language=language),
-            "warning",
-        )
-        engine.log(
-            string("pipeline.may_not_say_properly", app_name=APP_NAME), "warning"
-        )
-
-    if is_april_fools() and os.getenv("CELUNE_DISABLE_APRIL_FOOLS") not in {
-        "1",
-        "true",
-        "on",
-        "yes",
-        "enabled",
-    }:
-        engine.log(string("pipeline.april_fools"))
-        speech_text = rng_replace(
-            speech_text,
-            targets=["celune"],
-            replacements=["celine"],
-        )
-
-    if not acquire_pipeline(engine, "speak"):
-        engine.progress_callback(0, 1)
-        return False
-
-    try:
-        if not engine.loaded and not engine.backend.is_fake:
-            engine.log(string("ui.core_engine_not_loaded"), "warning")
-            engine.error_callback(string("pipeline.not_ready_app", app_name=APP_NAME))
-            release_pipeline(engine)
-            engine.progress_callback(0, 1)
-            return False
-
-        engine.cur_state = "generating"
-        with engine.queue_lock:
-            engine._speech_generation = getattr(engine, "_speech_generation", 0) + 1
-            engine.utterance_force_stop.clear()
-            engine.text_queue.put(
-                SpeechRequest(
-                    speech_text,
-                    display_text=preserved_display_text,
-                    language=requested_language,
-                    save=save,
-                    stream_queue=stream_queue,
-                    normalize=engine.use_normalization,
-                    generation=engine.speech_generation,
-                )
-            )
-            engine.log(
-                "[QUEUE] speech "
-                f"generation={engine.speech_generation} text_chars={len(speech_text)} "
-                f"language={requested_language} stream_queue={stream_queue is not None} "
-                f"text_queue={engine.text_queue.qsize()}",
-                loglevel="debug",
-            )
-        engine.status_callback(string("status.generating"))
-        engine.progress_callback(None, None)
-        return True
-    except Exception:
-        release_pipeline(engine)
-        raise
-
-
-async def queue_speech_async(
-    engine: Celune,
-    text: str,
-    save: bool = True,
-    stream_queue: Optional[SpeechStreamQueue] = None,
-    display_text: Optional[str] = None,
-) -> bool:
-    """Queue text for Celune to say without blocking the caller's event loop.
-
-    Args:
-        engine: Runtime that owns the speech queues.
-        text: The text to synthesize.
-        save: Whether the generated utterance should be persisted to disk.
-        stream_queue: Optional queue receiving generated playback chunks.
-        display_text: Optional UI-facing text to associate with the request.
-
-    Returns:
-        bool: ``True`` when the request was queued successfully, otherwise ``False``.
-    """
-    if not _prepare_speech_readiness(engine):
-        return False
-
-    await _run_in_daemon_thread(engine.model_ready.wait)
-
-    if not _finish_speech_readiness(engine):
-        return False
-
-    return _queue_speech_after_ready(
-        engine,
-        text,
-        save=save,
-        stream_queue=stream_queue,
-        display_text=display_text,
-    )
-
-
-def queue_sfx_audio(
-    engine: Celune,
-    audio: AudioChunk,
-    sample_rate: int,
-    label: str,
-    keep: bool = False,
-    volume: float = 1.0,
-    status_label_key: str = "pipeline.playing_label",
-    log_length: bool = True,
-    reset_ready_announcement: bool = True,
-) -> bool:
-    """Queue decoded SFX audio through Celune's playback pipeline.
-
-    Args:
-        engine: The Celune engine that should play the sound.
-        audio: Decoded mono or stereo audio.
-        sample_rate: Source sample rate for the decoded audio.
-        label: Human-readable label for logs and status.
-        keep: Whether to prepend this SFX to the next saved utterance.
-        volume: Gain multiplier applied before the clip is queued for playback.
-        status_label_key: Localization key used for the surfaced playback status.
-        log_length: Whether to log the prepared playback sample rate and length.
-        reset_ready_announcement: Whether this source should trigger a later ready announcement.
-
-    Returns:
-        bool: ``True`` when playback was queued successfully, otherwise ``False``.
-
-    Raises:
-        Exception: Re-raised after releasing the pipeline if SFX playback setup fails.
-    """
-    try:
-        audio = prepare_playback_audio(audio, sample_rate)
-        playback_sample_rate = BASE_SR
-        audio_len = len(audio) / playback_sample_rate
-        if log_length:
-            engine.log(f"{playback_sample_rate} Hz, {_format_stat_duration(audio_len)}")
-
-        if keep:
-            engine.kept_sfx_audio = [chunk.copy() for chunk in split(audio, BASE_SR, 1)]
-
-        source_id = _next_playback_source_id(engine)
-        _register_overlay_playback_state(
-            engine,
-            reset_ready_announcement=reset_ready_announcement,
-        )
-        _register_playback_source(engine, source_id, kind="sfx", base_gain=volume)
-        engine.cur_state = "speaking"
-        playback_generation = getattr(engine, "_playback_generation", 0)
-        _set_playback_source_status(
-            engine,
-            source_id,
-            string(status_label_key, label=label),
-        )
-        # push the smallest possible chunks for responsive stopping
-        for chunk in split(audio, playback_sample_rate, 1):
-            if not _queue_playback_chunk(
-                engine,
-                source_id,
-                chunk,
-                playback_sample_rate,
-                generation=playback_generation,
-            ):
-                _clear_playback_source_status(engine, source_id)
-                return False
-        if not _queue_playback_done(
-            engine,
-            source_id,
-            generation=playback_generation,
-        ):
-            _clear_playback_source_status(engine, source_id)
-            return False
-        return True
-    except Exception:
-        engine.playback_done.set()
-        raise
-
-
-def queue_streaming_sfx_audio(
-    engine: Celune,
-    audio: AudioChunk,
-    sample_rate: int,
-    label: str,
-    *,
-    source_id: Optional[int] = None,
-    generation: Optional[int] = None,
-    volume: float = 1.0,
-    status_label_key: str = "pipeline.playing_label",
-    log_length: bool = False,
-    reset_ready_announcement: bool = False,
-) -> Optional[int]:
-    """Queue one SFX segment onto a persistent playback source.
-
-    Args:
-        engine: The Celune engine that should play the sound.
-        audio: Decoded mono or stereo audio.
-        sample_rate: Source sample rate for the decoded audio.
-        label: Human-readable label for logs and status.
-        source_id: Existing playback source to append to, or ``None`` to create one.
-        generation: Playback generation captured by the producer session.
-        volume: Gain multiplier applied before the clip is queued for playback.
-        status_label_key: Localization key used for the surfaced playback status.
-        log_length: Whether to log the prepared playback sample rate and length.
-        reset_ready_announcement: Whether a newly created source should reset readiness.
-
-    Returns:
-        Optional[int]: The persistent playback source id, or ``None`` when the
-            producer belongs to a cancelled playback generation.
-    """
-    audio = prepare_playback_audio(audio, sample_rate)
-    playback_sample_rate = BASE_SR
-    audio_len = len(audio) / playback_sample_rate
-    if log_length:
-        engine.log(f"{playback_sample_rate} Hz, {_format_stat_duration(audio_len)}")
-
-    active_generation = getattr(engine, "_playback_generation", 0)
-    if generation is not None and generation != active_generation:
-        return None
-    source_generation = active_generation if generation is None else generation
-
-    meta = _playback_source_meta(engine)
-    if source_id is None or source_id not in meta:
-        source_id = _next_playback_source_id(engine)
-        _register_overlay_playback_state(
-            engine,
-            reset_ready_announcement=reset_ready_announcement,
-        )
-        _register_playback_source(engine, source_id, kind="sfx", base_gain=volume)
-        engine.cur_state = "speaking"
-    elif float(meta[source_id].get("generation", 0.0)) != float(active_generation):
-        return None
-
-    _set_playback_source_status(
-        engine,
-        source_id,
-        string(status_label_key, label=label),
-    )
-
-    if len(audio) > 0 and not _queue_playback_chunk(
-        engine,
-        source_id,
-        audio,
-        playback_sample_rate,
-        generation=source_generation,
-    ):
-        return None
-
-    return source_id
-
-
-def finish_streaming_sfx_audio(engine: Celune, source_id: Optional[int]) -> None:
-    """Mark one persistent SFX playback source as complete.
-
-    Args:
-        engine: Runtime that owns the playback queues.
-        source_id: Persistent playback source to finish.
-    """
-    if source_id is None:
-        return
-    source_meta = _playback_source_meta(engine).get(source_id)
-    if not isinstance(source_meta, dict):
-        return
-    _queue_playback_done(
-        engine,
-        source_id,
-        generation=int(float(source_meta.get("generation", 0.0))),
-    )
-
-
-def prepare_playback_audio(
-    audio: AudioChunk,
-    sample_rate: int,
-) -> AudioChunk:
-    """Normalize audio to Celune's shared playback format.
-
-    Args:
-        audio: Decoded mono or stereo audio.
-        sample_rate: Source sample rate for the decoded audio.
-
-    Returns:
-        AudioChunk: Audio resampled into Celune's playback format.
-    """
-    return resample_audio(np.asarray(audio, dtype=np.float32), sample_rate)
-
-
-def play(
-    engine: Celune,
-    sound_path: str,
-    keep: bool = False,
-    volume: float = 1.0,
-    on_started: Optional[Callable[[], None]] = None,
-) -> bool:
-    """Play a sound via Celune's pipeline.
-
-    Args:
-        engine: The Celune engine that should play the sound.
-        sound_path: The path to the audio file to play.
-        keep: Whether to prepend this SFX to the next saved utterance.
-        volume: How loud should the SFX be played at, limited to half of max volume to protect headphone users.
-        on_started: Optional callback invoked after the audio is decoded and immediately before it is queued.
-
-    Returns:
-        bool: ``True`` when playback was queued successfully, otherwise ``False``.
-
-    Raises:
-        Exception: Re-raised after releasing the pipeline if SFX playback setup fails.
-    """
-    downloaded_from_url = _is_youtube_sfx_url(sound_path)
-    if downloaded_from_url:
-        downloaded_info = _download_youtube_sfx(engine, sound_path)
-        if downloaded_info is None:
-            return False
-        downloaded, playback_label = downloaded_info
-        sound_path = str(downloaded)
-    else:
-        playback_label = sound_path
-
-    if not os.path.exists(sound_path):
-        engine.log(
-            string("pipeline.cannot_find_sound", app_name=APP_NAME, path=sound_path),
-            "warning",
-        )
-        return False
-
-    supported_formats = ("wav", "flac", "ogg", "mp3", "aiff")
-
-    if not any(sound_path.endswith(audio_format) for audio_format in supported_formats):
-        engine.log(
-            string("pipeline.sfx_format_unsupported", app_name=APP_NAME),
-            "warning",
-        )
-        engine.log(
-            string(
-                "pipeline.supported_formats",
-                formats=", ".join(supported_formats),
-            ),
-            "warning",
-        )
-        return False
-
-    audio, sr = sf.read(sound_path, dtype="float32")
-
-    if on_started is not None:
-        on_started()
-
-    queued = queue_sfx_audio(
-        engine,
-        np.asarray(audio, dtype=np.float32),
-        sr,
-        playback_label,
-        keep,
-        volume=volume * 0.5,
-    )
-    if queued and downloaded_from_url:
-        engine.status_callback(
-            string("pipeline.playing_label", label=playback_label),
-        )
-    return queued
-
-
-def close(engine: Celune) -> None:
-    """Shut off Celune and exit.
-
-    Args:
-        engine: The Celune engine to shut down.
-    """
-    if not getattr(engine, "test_finished", False):
-        engine.log(string("pipeline.exiting"))
-    engine._exit_requested = True
-    _invalidate_speech_work(engine)
-    close_stream(engine, abort=True)
-
-    engine.text_queue.put(engine.sentinel)
-    engine.audio_queue.put(engine.sentinel)
-
-    if engine.generation_thread is not None:
-        engine.generation_thread.join(timeout=0.5)
-
-    if engine.playback_thread is not None:
-        engine.playback_thread.join(timeout=0.5)
-
-    manager = getattr(engine, "component_locks", None)
-    try:
-        close_stream(engine, abort=True)
-        engine.glow.leave()
-        engine.glow.finished.wait(timeout=5)
-    finally:
-        if manager is not None:
-            manager.release_all()
 
 
 def split_text(engine: Celune, text: str) -> list[str]:
@@ -4477,22 +2082,6 @@ def _finalize_playback_idle(
             )
 
 
-celune_metadata_payload = _celune_metadata_payload
-parse_vorbis_comment_block = _parse_vorbis_comment_block
-flac_metadata_blocks = _flac_metadata_blocks
-write_flac_metadata = _write_flac_metadata
-write_celune_flac = _write_celune_flac
-saved_output_speech_seconds = _saved_output_speech_seconds
-register_playback_source = _register_playback_source
-set_playback_source_status = _set_playback_source_status
-get_current_playback_status = current_playback_status
-queue_playback_chunk = _queue_playback_chunk
-queue_playback_done = _queue_playback_done
-youtube_sfx_title = _youtube_sfx_title
-download_youtube_sfx = _download_youtube_sfx
-finalize_playback_idle = _finalize_playback_idle
-
-
 async def playback_worker_job(engine: Celune) -> None:
     """Receive audio chunks from multiple sources, mix them, and play them.
 
@@ -4958,3 +2547,74 @@ async def playback_worker_job(engine: Celune) -> None:
             await _run_in_daemon_thread(writer.stop)
             input_reader.stop()
             break
+
+
+def _install_pipeline_facade() -> None:
+    """Install the split pipeline modules after their circular imports settle."""
+    from . import conversation, playback, speech
+
+    globals().update(
+        {
+            "conversation": conversation,
+            "playback": playback,
+            "speech": speech,
+            **{
+                value.__name__: value
+                for value in (
+                    _effective_voice_prompt,
+                    _think_persona,
+                    _apply_source_gain,
+                    _clear_playback_source_status,
+                    _dequeue_playback_item,
+                    _download_youtube_sfx,
+                    _flush_buffered_speech_chunks,
+                    _next_playback_source_id,
+                    _notify_caption_timing,
+                    _notify_speech_playback_finished,
+                    _pipeline_cpu_config,
+                    _playback_source_meta,
+                    _playback_source_statuses,
+                    _queue_playback_chunk,
+                    _queue_playback_done,
+                    _register_overlay_playback,
+                    _register_playback_source,
+                    _remember_smart_buffer_speed,
+                    _set_playback_source_status,
+                    _smart_buffer_target_seconds,
+                    _update_playback_progress,
+                    _youtube_sfx_title,
+                    acquire_pipeline,
+                    current_playback_status,
+                    release_pipeline,
+                )
+            },
+            "think": _think_persona,
+        }
+    )
+    playback.install(globals())
+    conversation.install_pipeline(globals())
+    speech.install(globals())
+
+
+_install_pipeline_facade()
+
+
+def install_engine(target):
+    """Install pipeline lifecycle entrypoints on ``Celune``."""
+    install_class_functions(target, {"_stop_pipeline_jobs": _stop_pipeline_jobs})
+
+
+celune_metadata_payload = _celune_metadata_payload
+parse_vorbis_comment_block = _parse_vorbis_comment_block
+flac_metadata_blocks = _flac_metadata_blocks
+write_flac_metadata = _write_flac_metadata
+write_celune_flac = _write_celune_flac
+saved_output_speech_seconds = _saved_output_speech_seconds
+register_playback_source = _register_playback_source
+set_playback_source_status = _set_playback_source_status
+get_current_playback_status = current_playback_status
+queue_playback_chunk = _queue_playback_chunk
+queue_playback_done = _queue_playback_done
+youtube_sfx_title = _youtube_sfx_title
+download_youtube_sfx = _download_youtube_sfx
+finalize_playback_idle = _finalize_playback_idle

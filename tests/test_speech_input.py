@@ -250,6 +250,7 @@ class TestSpeechInput(CeluneTestCase):
                         "name": "Microphone",
                     },
                 ),
+                create=True,
             ),
             mock.patch(
                 "celune.ui.app.create_live_voice_activity_detector",
@@ -370,6 +371,7 @@ class TestSpeechInput(CeluneTestCase):
                         "name": "Microphone",
                     },
                 ),
+                create=True,
             ),
             mock.patch(
                 "celune.ui.app.create_live_voice_activity_detector",
@@ -382,7 +384,7 @@ class TestSpeechInput(CeluneTestCase):
                 create=True,
             ),
             mock.patch(
-                "celune.ui.app.time.monotonic",
+                "celune.ui.capture.time.monotonic",
                 side_effect=lambda: next(
                     monotonic_values, PERSONA_SPEECH_NO_INPUT_TIMEOUT_SECONDS
                 ),

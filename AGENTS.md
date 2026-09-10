@@ -1,4 +1,4 @@
-# AGENTS.md
+# Celune Project Philosophy
 
 ## Project Overview
 
@@ -38,6 +38,14 @@ Prefer reusable variables, constants, helpers, and project abstractions already 
 Do not hardcode strings, colors, ports, paths, app names, status labels, or repeated values when the repository already defines them.
 
 Only hardcode or redefine values when importing the existing value would create a circular import, break architecture, create excessive coupling, or otherwise be impractical.
+
+## Source File Size
+
+Every Python source file, including tests and scripts, must remain at ≤100 KB (less than or equal to 102,400 bytes).
+
+If a file exceeds this limit, split it into focused subpackages or modules, or move cohesive responsibilities into existing smaller matching modules.
+
+Every resulting file must remain within the limit. Do not work around the limit by excluding the affected files from validation.
 
 ## Dependency Management
 

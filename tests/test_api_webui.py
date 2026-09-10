@@ -314,7 +314,7 @@ class TestApiWebUI(CeluneTestCase):
             ),
         )
         with mock.patch(
-            "celune.api.main_window_log_path",
+            "celune.webui.main_window_log_path",
             return_value=mock.Mock(exists=lambda: False),
         ):
             api.bind_celune(celune)
@@ -364,7 +364,7 @@ class TestApiWebUI(CeluneTestCase):
         )
         api.bound_celune = celune
         with (
-            mock.patch("celune.api.persona_talkback_enabled", return_value=True),
+            mock.patch("celune.webactions.persona_talkback_enabled", return_value=True),
             mock.patch(
                 "celune.api.ui_resources.resource_pages",
                 return_value=("VRAM: first",),
@@ -427,7 +427,7 @@ class TestApiWebUI(CeluneTestCase):
             encoding="utf-8",
         )
         api.webui_logs_seeded = False
-        with mock.patch("celune.api.main_window_log_path", return_value=log_path):
+        with mock.patch("celune.webui.main_window_log_path", return_value=log_path):
             api._seed_webui_logs()
 
         assert list(api.webui_log_lines) == [
@@ -666,8 +666,8 @@ class TestApiWebUI(CeluneTestCase):
         )
 
         with (
-            mock.patch("celune.api.persona_enabled", return_value=True),
-            mock.patch("celune.api.persona_talkback_enabled", return_value=True),
+            mock.patch("celune.webui.persona_enabled", return_value=True),
+            mock.patch("celune.webui.persona_talkback_enabled", return_value=True),
         ):
             placeholder = api._webui_input_placeholder(celune, False, True)
 
@@ -691,8 +691,8 @@ class TestApiWebUI(CeluneTestCase):
 
         with (
             mock.patch.object(api.CeluneUI, "_instance", object()),
-            mock.patch("celune.api.persona_enabled", return_value=True),
-            mock.patch("celune.api.persona_talkback_enabled", return_value=True),
+            mock.patch("celune.webui.persona_enabled", return_value=True),
+            mock.patch("celune.webui.persona_talkback_enabled", return_value=True),
             mock.patch(
                 "celune.api.ui_resources.resource_pages",
                 return_value=("VRAM: available",),

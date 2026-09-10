@@ -1,10 +1,12 @@
 # SPDX-License-Identifier: Apache-2.0
 """Core Celune protocols and callback types."""
 
+# pylint: disable=unused-argument,unnecessary-ellipsis
+
 from __future__ import annotations
 
 from pathlib import Path
-from collections.abc import Callable, Iterator
+from collections.abc import Awaitable, Callable, Iterator
 from typing import TYPE_CHECKING, Union, Optional, Protocol
 
 import torch
@@ -22,10 +24,17 @@ if TYPE_CHECKING:
     import sounddevice as sd
 
     from ..audio.dsp import StreamingPedalboardReverb
+    from ..dataclasses.pipeline import AudioOutput
     from .locks import ComponentLockOwner, ComponentBusyResult
     from ..locks import ComponentLockManager
     from ..chroma import AudioRGBGlow
     from .aliases import AudioChunk, AudioChunks
+    from .agent import (
+        AgentClassificationResult,
+        AgentToolSelector,
+        ToolCall,
+        ToolExecutionResult,
+    )
     from ..cevoice import CEVoicePersona
     from ..constants import PipelineStates
     from ..backends.vc import CeluneVCBackend
@@ -34,6 +43,7 @@ if TYPE_CHECKING:
     from ..persona.memory import PersonaMemoryStore
     from ..persona.emotion import PersonaEmotionAnalyzer
     from ..extensions.manager import CeluneExtensionManager
+    from .pipeline import SpeechStreamQueue
 
 
 type GenerationKwarg = Union[torch.Tensor, int, bool, None]
@@ -217,6 +227,120 @@ type VCBackendRecipe = Union[str, type[CeluneVCBackend]]
 type TTSBackendSpec = Union[TTSBackendRecipe, CeluneBackend]
 type VCBackendSpec = Union[VCBackendRecipe, CeluneVCBackend]
 type CoreBackendSpec = Union[TTSBackendSpec, VCBackendSpec]
+
+
+class CeluneConversationSurface:
+    """Typed surface for Persona conversation entrypoints."""
+
+    think: Callable[..., bool]
+    think_async: Callable[..., Awaitable[bool]]
+    _think_worker: Callable[..., None]
+    _wait_for_persona_playback: Callable[..., bool]
+
+
+class CeluneAgentSurface:
+    """Typed surface for agent routing and tool execution entrypoints."""
+
+    _interrupt_active_agent_for_input: Callable[..., bool]
+    classify_input: Callable[..., AgentClassificationResult]
+    route_input: Callable[..., AgentClassificationResult]
+    _log_route_decision: Callable[..., None]
+    agent_needle_ready: bool
+    agent_needle_error: Optional[str]
+    _load_agent_tool_selector: Callable[..., AgentToolSelector]
+    _select_agent_tool: Callable[..., Optional[ToolCall]]
+    _execute_agent_tool: Callable[..., ToolExecutionResult]
+    _run_agent_route: Callable[..., bool]
+    _speak_agent_classification_failure: Callable[..., bool]
+
+
+class CeluneSpeechSurface:
+    """Typed surface for general speech and input entrypoints."""
+
+    say: Callable[..., bool]
+    say_async: Callable[..., Awaitable[bool]]
+    say_stream: Callable[..., Optional[SpeechStreamQueue]]
+    say_stream_async: Callable[..., Awaitable[Optional[SpeechStreamQueue]]]
+    submit_audio: Callable[..., bool]
+
+
+class CeluneVoiceConversionSurface:
+    """Typed surface for voice-conversion entrypoints."""
+
+    convert_audio: Callable[..., Optional[AudioOutput]]
+    convert_live_audio: Callable[..., Optional[AudioOutput]]
+
+
+class CelunePipelineSurface:
+    """Typed surface for pipeline coordination entrypoints."""
+
+    _acquire_pipeline: Callable[..., bool]
+    _release_pipeline: Callable[..., None]
+    _stop_pipeline_jobs: Callable[..., None]
+
+
+class CeluneMethodSurface(
+    CeluneConversationSurface,
+    CeluneAgentSurface,
+    CeluneSpeechSurface,
+    CeluneVoiceConversionSurface,
+    CelunePipelineSurface,
+):
+    """Typed surface for methods installed from split implementation modules."""
+
+    unload_normalizer_state: Callable[..., None]
+    _sleep_config: Callable[..., tuple[bool, int, dict[str, bool]]]
+    sleep_enabled: Callable[..., bool]
+    sleep_timeout_seconds: Callable[..., float]
+    enter_sleep_mode: Callable[..., bool]
+    wake_from_sleep: Callable[..., bool]
+    _start_wake_background_jobs: Callable[..., None]
+    _run_wake_background_jobs: Callable[..., None]
+    set_voices: Callable[..., None]
+    _reset_persona_conversation: Callable[..., None]
+    load_voice_bundle: Callable[..., bool]
+    load_available_voices: Callable[..., bool]
+    set_voice: Callable[..., bool]
+    _prepare_voice_change: Callable[..., bool]
+    set_voice_and_wait: Callable[..., bool]
+    set_voice_async: Callable[..., Awaitable[bool]]
+    _run_voice_reload: Callable[..., None]
+    _clear_voice_reload_guard: Callable[..., None]
+    _voice_switch_succeeded: Callable[..., bool]
+    set_backend: Callable[..., bool]
+    _prepare_backend_reload: Callable[..., bool]
+    set_backend_and_wait: Callable[..., bool]
+    set_backend_async: Callable[..., Awaitable[bool]]
+    _backend_reload_succeeded: Callable[..., bool]
+    set_cevoice: Callable[..., bool]
+    _prepare_cevoice_reload: Callable[..., bool]
+    set_cevoice_and_wait: Callable[..., bool]
+    set_cevoice_async: Callable[..., Awaitable[bool]]
+    _cevoice_reload_succeeded: Callable[..., bool]
+    _speech_playback_active: Callable[..., bool]
+    _any_playback_active: Callable[..., bool]
+    wait_until_idle_async: Callable[..., Awaitable[bool]]
+    setup_extensions: Callable[..., None]
+    log: Callable[..., None]
+    _buffer_startup_log: Callable[..., None]
+    _emit_runtime_banner_line: Callable[..., None]
+    _deliver_startup_log: Callable[..., None]
+    _flush_startup_logs: Callable[..., None]
+    log_dev: Callable[..., None]
+    try_play_signal: Callable[..., bool]
+    _try_play_signal: Callable[..., bool]
+    voice_prompt_supported: Callable[..., bool]
+    effective_voice_prompt: Callable[..., Optional[str]]
+    change_voice: Callable[..., None]
+    force_stop_speech: Callable[..., bool]
+    force_stop_speech_async: Callable[..., Awaitable[bool]]
+    enter_sleep_mode_async: Callable[..., Awaitable[bool]]
+    wake_from_sleep_async: Callable[..., Awaitable[bool]]
+    load: Callable[..., bool]
+    _start_configured_api: Callable[..., None]
+    load_normalizer: Callable[..., None]
+    _warmup: Callable[..., bool]
+    normalize: Callable[..., Optional[str]]
 
 
 class CeluneStateAccessors:
