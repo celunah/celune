@@ -12,7 +12,7 @@ import numpy as np
 from transformers import AutoTokenizer
 from dots_tts.runtime import DotsTtsRuntime
 
-from ...utils import discard, custom_assert
+from ...utils import available, discard, custom_assert
 from ...i18n import string
 from ...typing.backends import _LoguruLogger
 from ...cevoice import CEVoiceLoader, default_loader
@@ -396,6 +396,6 @@ class DotsTtsMF(CeluneBackend[DotsTtsRuntime]):
                         },
                     )
         finally:
-            if stream is not None and hasattr(stream, "close"):
+            if stream is not None and available("close", obj=stream):
                 with contextlib.suppress(Exception):
                     stream.close()

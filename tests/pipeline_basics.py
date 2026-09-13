@@ -13,7 +13,6 @@ from typing import Self, Optional, cast
 from pathlib import Path
 from unittest import mock
 from collections.abc import Iterator
-from importlib.machinery import ModuleSpec
 
 import numpy as np
 import pytest
@@ -820,8 +819,8 @@ class TestPipelineAsync(CeluneAsyncTestCase):
                     "celune.playback.temp_data_dir", return_value=temp_root / "temp"
                 ),
                 mock.patch(
-                    "celune.playback.importlib_util.find_spec",
-                    return_value=ModuleSpec("yt_dlp", loader=None),
+                    "celune.playback.available",
+                    return_value=True,
                 ),
                 mock.patch(
                     "celune.playback._youtube_sfx_title",
@@ -863,8 +862,8 @@ class TestPipelineAsync(CeluneAsyncTestCase):
                     "celune.playback.temp_data_dir", return_value=temp_root / "temp"
                 ),
                 mock.patch(
-                    "celune.playback.importlib_util.find_spec",
-                    return_value=ModuleSpec("yt_dlp", loader=None),
+                    "celune.playback.available",
+                    return_value=True,
                 ),
                 mock.patch(
                     "celune.playback._youtube_sfx_title",
@@ -929,8 +928,8 @@ class TestPipelineAsync(CeluneAsyncTestCase):
                     "celune.playback.temp_data_dir", return_value=temp_root / "temp"
                 ),
                 mock.patch(
-                    "celune.playback.importlib_util.find_spec",
-                    return_value=ModuleSpec("yt_dlp", loader=None),
+                    "celune.playback.available",
+                    return_value=True,
                 ),
                 mock.patch(
                     "celune.playback._youtube_sfx_title",
@@ -970,8 +969,8 @@ class TestPipelineAsync(CeluneAsyncTestCase):
                     "celune.playback.temp_data_dir", return_value=temp_root / "temp"
                 ),
                 mock.patch(
-                    "celune.playback.importlib_util.find_spec",
-                    return_value=ModuleSpec("yt_dlp", loader=None),
+                    "celune.playback.available",
+                    return_value=True,
                 ),
                 mock.patch(
                     "celune.playback._youtube_sfx_title",
@@ -1011,8 +1010,8 @@ class TestPipelineAsync(CeluneAsyncTestCase):
                     "celune.playback.temp_data_dir", return_value=temp_root / "temp"
                 ),
                 mock.patch(
-                    "celune.playback.importlib_util.find_spec",
-                    return_value=ModuleSpec("yt_dlp", loader=None),
+                    "celune.playback.available",
+                    return_value=True,
                 ),
                 mock.patch(
                     "celune.playback._youtube_sfx_title",
@@ -1054,8 +1053,8 @@ class TestPipelineAsync(CeluneAsyncTestCase):
                     "celune.playback.temp_data_dir", return_value=temp_root / "temp"
                 ),
                 mock.patch(
-                    "celune.playback.importlib_util.find_spec",
-                    return_value=ModuleSpec("yt_dlp", loader=None),
+                    "celune.playback.available",
+                    return_value=True,
                 ),
                 mock.patch(
                     "celune.playback._youtube_sfx_title",

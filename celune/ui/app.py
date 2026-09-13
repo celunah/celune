@@ -1135,7 +1135,11 @@ class CeluneUI(App, CeluneUIMethodSurface):
             return
 
         glow = getattr(self.celune, "glow", None)
-        if glow is None or not hasattr(glow, "fatal"):
+        if glow is None:
+            return
+        from ..utils import available
+
+        if not available("fatal", obj=glow):
             return
         original_fatal = glow.fatal
 

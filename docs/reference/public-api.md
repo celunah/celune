@@ -163,6 +163,34 @@ provides `log`, `say`, `think`, `play`, `status`, `set_voice`,
 same operations in a narrower form. Event names and payloads are documented in
 [Extensions](../interfaces/extensions.md).
 
+## Utility namespace checks
+
+`celune.utils.available()` provides one predicate for checking a name in a
+scope, an attribute on an object, or the availability of a module import
+specification. It is useful for optional integration capabilities; it does not
+replace lifecycle flags or required facade assembly checks.
+
+```python
+from celune.utils import available
+
+available("config")
+available("pitch_shift", obj=backend)
+available("silero_vad")
+```
+
+The call shape is:
+
+```text
+available(name, obj=None, scope=None) -> bool
+```
+
+With no object or scope selected, the caller's local, global, and builtin
+namespaces are searched first; if the name is not bound there, an import
+specification is searched without importing the module. Passing `scope`
+restricts the lookup to that explicit name container. Passing `obj` checks the
+named attribute using `hasattr()` semantics. A name bound to `None` is still
+available. `obj` and `scope` are mutually exclusive.
+
 ## CEVOICE calls
 
 The stable pack API is:

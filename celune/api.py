@@ -55,7 +55,7 @@ from .ui import resources as ui_resources
 from .i18n import string
 from .paths import project_root
 from .theme import colors
-from .utils import format_error_message
+from .utils import available, format_error_message
 from .celune import Celune
 from .cevoice import default_loader
 from .speech import (
@@ -1197,7 +1197,7 @@ class _WebUiCommandHost:
         """Set VC talk or sing conditioning through the core state."""
         self.celune.vc_f0_condition = enabled
         backend = getattr(self.celune, "vc_backend", None)
-        if backend is not None and hasattr(backend, "f0_condition"):
+        if backend is not None and available("f0_condition", obj=backend):
             backend.f0_condition = enabled
 
     def set_vc_pitch_shift(self, value: int) -> None:
@@ -1207,7 +1207,7 @@ class _WebUiCommandHost:
         clamped = clamp_vc_pitch_shift(value)
         self.celune.vc_pitch_shift = clamped
         backend = getattr(self.celune, "vc_backend", None)
-        if backend is not None and hasattr(backend, "pitch_shift"):
+        if backend is not None and available("pitch_shift", obj=backend):
             backend.pitch_shift = clamped
 
     def open_settings_menu(self) -> None:

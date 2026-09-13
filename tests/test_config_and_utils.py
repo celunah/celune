@@ -3,6 +3,7 @@
 
 import math
 import datetime
+from types import SimpleNamespace
 from typing import Literal, Optional, cast
 from unittest import mock
 from collections.abc import Mapping
@@ -411,6 +412,32 @@ class TestConfig(CeluneTestCase):
 
 class TestUtils(CeluneTestCase):
     """Tests for lightweight common utility functions."""
+
+    def test_available_checks_namespaces_attributes_and_modules(self) -> None:
+        """Verify the supported name, attribute, and module lookup modes."""
+        local_value = None
+        explicit_namespace = {"explicit_value": None}
+        owner = SimpleNamespace(attribute=None)
+
+        assert local_value is None
+        assert utils.available("local_value")
+        assert utils.available("utils")
+        assert utils.available("len")
+        assert not utils.available("missing_value")
+        assert utils.available("explicit_value", scope=explicit_namespace)
+        assert not utils.available("missing_value", scope=explicit_namespace)
+        assert not utils.available("json", scope=explicit_namespace)
+        assert utils.available("attribute", obj=owner)
+        assert not utils.available("missing_attribute", obj=owner)
+        assert utils.available("json")
+
+        with mock.patch("celune.utils.importlib.util.find_spec", return_value=None):
+            assert not utils.available("missing_module")
+
+    def test_available_rejects_conflicting_lookup_modes(self) -> None:
+        """Verify lookup modes cannot silently override one another."""
+        with pytest.raises(TypeError, match="obj cannot be combined"):
+            utils.available("attribute", SimpleNamespace(), {"attribute"})
 
     def test_special_character_normalization_keeps_default_mode_and_formats_tts(
         self,

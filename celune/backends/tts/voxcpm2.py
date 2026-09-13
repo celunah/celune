@@ -23,7 +23,7 @@ from .base import (
 )
 from ...i18n import string
 from ...paths import huggingface_progress
-from ...utils import custom_assert
+from ...utils import available, custom_assert
 from ...cevoice import CEVoiceLoader, default_loader
 from ...constants import BASE_SR
 from ...typing.aliases import AudioChunk, AudioChunks
@@ -188,7 +188,7 @@ class VoxCPM2(CeluneBackend[VoxCPM]):
             trust_remote_code=True,
         )
         runtime = getattr(model, "tts_model", None)
-        if runtime is None or not hasattr(runtime, "text_tokenizer"):
+        if runtime is None or not available("text_tokenizer", obj=runtime):
             raise RuntimeError("VoxCPM2 did not expose a compatible text tokenizer")
         runtime.text_tokenizer = _VoxCPMTextTokenizer(tokenizer)
 
@@ -330,7 +330,7 @@ class VoxCPM2(CeluneBackend[VoxCPM]):
 
         self._apply_seed()
 
-        if not hasattr(model, "generate_streaming"):
+        if not available("generate_streaming", obj=model):
             version = get_version("voxcpm")
             raise NotImplementedError(
                 f"streaming support not available (requires voxcpm>=1.5.0, installed: {version})"
@@ -437,6 +437,6 @@ class VoxCPM2(CeluneBackend[VoxCPM]):
                     )
 
         finally:
-            if stream is not None and hasattr(stream, "close"):
+            if stream is not None and available("close", obj=stream):
                 with contextlib.suppress(Exception):
                     stream.close()

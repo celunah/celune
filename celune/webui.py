@@ -40,7 +40,7 @@ from .typing.events import EventCallback, EventName
 from .typing.pipeline import SpeechStreamQueue
 from .cedts.ui import UiTimedUpdate, ui_timed_update_channel
 from .theme import colors
-from .utils import format_error_message
+from .utils import available, format_error_message
 from .ui.app import CeluneUI
 from .binding import install_module_functions
 from .constants import BASE_SR
@@ -625,7 +625,7 @@ def _wrap_celune_callbacks(celune: _api.Celune) -> None:
         original_voice_lock_state(locked)
 
     glow = getattr(celune, "glow", None)
-    if glow is not None and hasattr(glow, "fatal"):
+    if glow is not None and available("fatal", obj=glow):
         original_fatal = glow.fatal
 
         def wrapped_fatal() -> None:

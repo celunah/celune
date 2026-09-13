@@ -11,6 +11,7 @@ import torch
 from . import __comment__, __version__, __codename__
 from .i18n import string
 from .utils import (
+    available,
     format_number,
     cuda_architecture,
 )
@@ -85,7 +86,7 @@ def check_supported_backends() -> tuple[str, bool]:
             return "CUDA", True
         return "ZLUDA", True
 
-    if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+    if available("mps", obj=torch.backends) and torch.backends.mps.is_available():
         return "MPS", False
 
     return "CPU", False

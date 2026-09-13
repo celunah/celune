@@ -9,7 +9,7 @@ from collections.abc import Callable, Iterator
 from faster_qwen3_tts import FasterQwen3TTS
 from faster_qwen3_tts import __version__ as qwen3_ver
 
-from ...utils import custom_assert
+from ...utils import available, custom_assert
 from ...i18n import string
 from ...typing.aliases import AudioChunk
 from ...cevoice import CEVoiceLoader, default_loader
@@ -246,6 +246,6 @@ class Qwen3(CeluneBackend[FasterQwen3TTS]):
                     timing = {"first_chunk_time": first_chunk_time}
                 yield audio_chunk, sample_rate, timing
         finally:
-            if stream is not None and hasattr(stream, "close"):
+            if stream is not None and available("close", obj=stream):
                 with contextlib.suppress(Exception):
                     stream.close()

@@ -37,6 +37,7 @@ from .modes import (
 )
 from .paths import temp_data_dir
 from .utils import (
+    available,
     discard,
     format_error_message,
 )
@@ -689,9 +690,9 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
                     resolved_vc_backend,
                     log=self.log_callback,
                 )
-                if hasattr(self.vc_backend, "pitch_shift"):
+                if available("pitch_shift", obj=self.vc_backend):
                     self.vc_backend.pitch_shift = self.vc_pitch_shift
-                if hasattr(self.vc_backend, "f0_condition"):
+                if available("f0_condition", obj=self.vc_backend):
                     self.vc_backend.f0_condition = self.vc_f0_condition
                 self.voice_conversion_backend = self.vc_backend.name
             else:
@@ -1449,9 +1450,9 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
             self._vc_backend_spec,
             log=self.log_callback,
         )
-        if hasattr(candidate_backend, "pitch_shift"):
+        if available("pitch_shift", obj=candidate_backend):
             candidate_backend.pitch_shift = self.vc_pitch_shift
-        if hasattr(candidate_backend, "f0_condition"):
+        if available("f0_condition", obj=candidate_backend):
             candidate_backend.f0_condition = self.vc_f0_condition
         previous_backend = self.vc_backend
         if previous_backend is not None:
@@ -1628,9 +1629,9 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
             snapshot.restorable_vc_backend_spec,
             log=self.log_callback,
         )
-        if hasattr(restored_vc_backend, "pitch_shift"):
+        if available("pitch_shift", obj=restored_vc_backend):
             restored_vc_backend.pitch_shift = self.vc_pitch_shift
-        if hasattr(restored_vc_backend, "f0_condition"):
+        if available("f0_condition", obj=restored_vc_backend):
             restored_vc_backend.f0_condition = self.vc_f0_condition
         if snapshot.loaded:
             restored_vc_backend.preload_models()
@@ -1834,9 +1835,9 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
                 if not self._track_reload_backend(candidate_vc_backend):
                     _close_backend(candidate_vc_backend)
                     return False
-                if hasattr(candidate_vc_backend, "pitch_shift"):
+                if available("pitch_shift", obj=candidate_vc_backend):
                     candidate_vc_backend.pitch_shift = self.vc_pitch_shift
-                if hasattr(candidate_vc_backend, "f0_condition"):
+                if available("f0_condition", obj=candidate_vc_backend):
                     candidate_vc_backend.f0_condition = self.vc_f0_condition
                 if previous_backend is not None:
                     _dispose_backend(previous_backend)

@@ -13,7 +13,6 @@ import subprocess
 import sys
 from collections import deque
 from collections.abc import Mapping
-from importlib import util as importlib_util
 from typing import TYPE_CHECKING, Optional, Union, cast
 from urllib.parse import urlencode, urlparse
 from urllib.request import urlopen
@@ -54,6 +53,7 @@ from .typing.locks import (
 )
 from .typing.pipeline import SpeechStreamQueue
 from .binding import install_class_functions, install_module_functions
+from .utils import available
 
 if TYPE_CHECKING:
     from .celune import Celune
@@ -812,7 +812,7 @@ def _download_youtube_sfx(
 ) -> Optional[tuple[pathlib.Path, str]]:
     """Download one YouTube URL as a temporary WAV file for SFX playback."""
     yt_dlp_module = "yt_dlp"
-    if importlib_util.find_spec(yt_dlp_module) is None:
+    if not available(yt_dlp_module):
         engine.log(string("pipeline.yt_dlp_missing"), "warning")
         engine.error_callback(string("pipeline.yt_dlp_required"))
         return None

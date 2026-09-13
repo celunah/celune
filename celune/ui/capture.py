@@ -693,8 +693,11 @@ def set_vc_f0_condition(self, enabled: bool, announce: bool = True) -> None:
 
     self.celune.vc_f0_condition = enabled
     backend = getattr(self.celune, "vc_backend", None)
-    if backend is not None and hasattr(backend, "f0_condition"):
-        backend.f0_condition = enabled
+    if backend is not None:
+        from ..utils import available
+
+        if available("f0_condition", obj=backend):
+            backend.f0_condition = enabled
     self.refresh_vc_controls()
 
     if announce:
@@ -719,8 +722,11 @@ def set_vc_pitch_shift(self, value: int, announce: bool = True) -> None:
     clamped = _app.clamp_vc_pitch_shift(value)
     self.celune.vc_pitch_shift = clamped
     backend = getattr(self.celune, "vc_backend", None)
-    if backend is not None and hasattr(backend, "pitch_shift"):
-        backend.pitch_shift = clamped
+    if backend is not None:
+        from ..utils import available
+
+        if available("pitch_shift", obj=backend):
+            backend.pitch_shift = clamped
     self.refresh_vc_controls()
 
     if announce:

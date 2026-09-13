@@ -238,6 +238,7 @@ def _clear_border_pulses(self) -> None:
 
 def _refresh_theme_text(self) -> None:
     """Refresh widgets after a runtime theme change."""
+    from ..utils import available
 
     def repaint(widget: _app.Widget) -> None:
         refresh = getattr(widget, "refresh", None)
@@ -256,7 +257,7 @@ def _refresh_theme_text(self) -> None:
         screen = self.screen
     except _app.ScreenStackError:
         screen = None
-    if screen is not None and hasattr(screen, "styles"):
+    if screen is not None and available("styles", obj=screen):
         screen.styles.background = None
         repaint(screen)
     if self.logs is not None:
@@ -295,11 +296,11 @@ def _refresh_theme_text(self) -> None:
     for line in self.header_lines:
         line.styles.border_top = None
         repaint(line)
-    if self.progress_bar is not None and hasattr(self.progress_bar, "styles"):
+    if self.progress_bar is not None and available("styles", obj=self.progress_bar):
         self.progress_bar.styles.color = None
         self.progress_bar.styles.background = None
         repaint(self.progress_bar)
-    if self.caption is not None and hasattr(self.caption, "styles"):
+    if self.caption is not None and available("styles", obj=self.caption):
         self.caption.styles.color = None
         self.caption.styles.background = None
         repaint(self.caption)
@@ -1349,11 +1350,13 @@ def _restore_dunder_stdio(self) -> None:
 
 def _install_low_level_stderr_capture(self) -> None:
     """Capture writes that bypass Python and go straight to stderr."""
+    from ..utils import available
+
     if self._stderr_forward_thread is not None:
         return
 
     stderr_stream = self._old_stderr
-    if stderr_stream is None or not hasattr(stderr_stream, "fileno"):
+    if stderr_stream is None or not available("fileno", obj=stderr_stream):
         return
 
     original_fd_dup: Optional[int] = None
@@ -1432,6 +1435,8 @@ def _forward_low_level_stderr(self) -> None:
 
 def _remove_low_level_stderr_capture(self) -> None:
     """Restore stderr after low-level capture was installed."""
+    from ..utils import available
+
     stderr_stream = self._old_stderr
     original_fd_dup = self._stderr_original_fd_dup
     pipe_write_fd = self._stderr_pipe_write_fd
@@ -1439,7 +1444,7 @@ def _remove_low_level_stderr_capture(self) -> None:
 
     if (
         stderr_stream is not None
-        and hasattr(stderr_stream, "fileno")
+        and available("fileno", obj=stderr_stream)
         and original_fd_dup is not None
     ):
         with contextlib.suppress(OSError, ValueError):
@@ -1512,6 +1517,8 @@ def _cancel_sleep_timer(self) -> None:
 
 def _schedule_sleep_timer(self) -> None:
     """Schedule automatic sleep after the configured idle timeout."""
+    from ..utils import available
+
     if threading.current_thread() is not threading.main_thread():
         self._run_on_ui_thread(self._schedule_sleep_timer)
         return
@@ -1520,7 +1527,7 @@ def _schedule_sleep_timer(self) -> None:
     if (
         self.cur_state == "exiting"
         or not self.celune_ready
-        or not hasattr(self.celune, "sleep_enabled")
+        or not available("sleep_enabled", obj=self.celune)
         or not self.celune.sleep_enabled()
         or self.celune.sleeping
         or self.celune.is_in_tutorial

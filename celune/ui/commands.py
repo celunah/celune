@@ -20,6 +20,7 @@ from ..audio.server import restart_audio_server
 from ..exceptions import InvalidExtensionError
 from ..persona.capabilities import PersonaCapabilities
 from ..utils import (
+    available,
     replace_ipa,
     format_number,
     format_error_message,
@@ -220,7 +221,7 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
 
         ui.celune.vc_f0_condition = enabled
         vc_backend = getattr(ui.celune, "vc_backend", None)
-        if vc_backend is not None and hasattr(vc_backend, "f0_condition"):
+        if vc_backend is not None and available("f0_condition", obj=vc_backend):
             vc_backend.f0_condition = enabled
         refresh_vc_controls()
         ui.safe_log(
@@ -239,7 +240,7 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
         clamped = clamp_vc_pitch_shift(svalue)
         ui.celune.vc_pitch_shift = clamped
         vc_backend = getattr(ui.celune, "vc_backend", None)
-        if vc_backend is not None and hasattr(vc_backend, "pitch_shift"):
+        if vc_backend is not None and available("pitch_shift", obj=vc_backend):
             vc_backend.pitch_shift = clamped
         refresh_vc_controls()
         ui.safe_log(string("commands.vcpitch_set", value=clamped))
@@ -707,7 +708,7 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
             )
             return
 
-        if hasattr(backend, "x_vector_only"):
+        if available("x_vector_only", obj=backend):
             backend.x_vector_only = value == "true"
             state = string(
                 "commands.state_enabled"

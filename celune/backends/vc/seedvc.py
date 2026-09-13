@@ -28,6 +28,7 @@ from ...paths import (
     huggingface_hub_cache_dir,
 )
 from ...typing.aliases import AudioChunk, SeedVCGenerator
+from ...utils import available
 from ...typing.backends import (
     SeedVCModelValue,
     _SeedVCRealtimeModule,
@@ -271,11 +272,7 @@ class CeluneSeedVCBackend(CeluneVCBackend):
                 "seed_vc.realtime",
                 "seed_vc.real_time_gui",
             ):
-                try:
-                    module = importlib.util.find_spec(module_name)
-                except (ImportError, ModuleNotFoundError, ValueError):
-                    module = None
-                if module is not None:
+                if available(module_name):
                     with cls._suppress_native_stdout():
                         imported = __import__(module_name, fromlist=["*"])
                     return cast(_SeedVCRealtimeModule, imported)
