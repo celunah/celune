@@ -103,9 +103,9 @@ Each voice is demonstrated using a short introduction and a longer narration sam
 
 > [!NOTE]
 > Due to limitations of GPT-SoVITS with Celune's calm voice, a demonstration of GPT-SoVITS was not included.
-> 
+>
 > This backend may not work with certain types of low-energy voices and may cause accent drifts if not using Celune's custom [T2S model](https://huggingface.co/lunahr/celune-t2s-en-us/blob/main/celune_t2s_en_US-e15.ckpt).
-> 
+>
 > After downloading, set `gpt_sovits_t2s_weights_path: <path_to_t2s>` in Celune's configuration to fix these problems.
 
 The demonstration lines try to showcase Celune's best, but they may include minor mistakes. This is an inherent limitation with TTS models, and Celune should not be blamed for it.
@@ -207,7 +207,6 @@ Celune has several VRAM presets available. Here are their baseline requirements:
 > - Persona (8-bit)
 > - Normalization on GPU
 > - Upcoming advanced features
-
 
 The desired preset may be set in Celune's configuration file. Refer to `default_config.yaml` for details.
 
@@ -406,8 +405,13 @@ The aforementioned extension defines a basic usage case for Celune extensions.
 Celune exposes a web interface for remote access to Celune. It reuses the Celune API commands to provide an interface for control.
 It can be accessed via `/ui` on Celune's exposed API URL.
 
-> *"Your voice, your way."*
-
-![Celune 88x31 badge](./resources/branding/celune_88x31_206.png "enlightened by Celune")
+## Shortlink
 
 Need a quick and easy shortlink to spread Celune to the public? [Copy link](https://go.lunah.site/celune)
+
+<p align="right">
+  <i>"Your voice, your way."&#x2000;</i>
+  <img src="./resources/branding/celune_88x31_206.png" alt="Celune 88x31 badge" title="enlightened by Celune" width="88" height="31">
+</p>
+
+<img src="https://lunah.site/common/signature.png" alt="- l u n a h - signature footer" title="signature project of - l u n a h -" width="2048" height="128">
