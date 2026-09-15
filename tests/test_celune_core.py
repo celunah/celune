@@ -64,6 +64,27 @@ class TestCeluneAsyncRuntime(CeluneAsyncTestCase):
         celune._hot_reload_backend.assert_called_once_with("mini", "nova")
         assert to_thread.await_count == 3
 
+    async def test_say_async_does_not_stop_active_speech(self) -> None:
+        """Verify a new async speech request does not cancel active playback."""
+        celune = self._make_celune({})
+        celune._speech_playback_active = mock.Mock(return_value=True)
+        celune.force_stop_speech = mock.Mock()
+
+        with mock.patch(
+            "celune.speech.queue_speech_async",
+            new=mock.AsyncMock(return_value=True),
+        ) as queue_speech:
+            assert await celune.say_async("next utterance")
+
+        celune.force_stop_speech.assert_not_called()
+        queue_speech.assert_awaited_once_with(
+            celune,
+            "next utterance",
+            save=True,
+            stream_queue=None,
+            display_text=None,
+        )
+
     def test_set_backend_stops_active_speech_before_starting_reload(self) -> None:
         """Verify backend reload requests invalidate active speech before reloading."""
         celune = self._make_celune({})

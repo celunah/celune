@@ -1156,10 +1156,10 @@ class TestCeluneCore(CeluneTestCase):
         say.assert_called_once_with(i18n.string("agent.classifier_unavailable"))
         self.assertIsNone(celune.agent_runtime.get_active_task("default"))
 
-    def test_think_interrupts_active_agent_and_speech_before_queueing_input(
+    def test_think_interrupts_active_agent_without_stopping_speech(
         self,
     ) -> None:
-        """Invalidate active speech and agent work before accepting new input."""
+        """Preserve active speech while interrupting agent work for new input."""
         celune = self._make_celune({"mode": "converse", "vram": "high"})
         celune.locked = True
         celune.cur_state = "speaking"
@@ -1179,10 +1179,30 @@ class TestCeluneCore(CeluneTestCase):
 
         self.assertTrue(celune.think("Use the safer status check."))
 
-        celune.force_stop_speech.assert_called_once_with()
+        celune.force_stop_speech.assert_not_called()
         self.assertEqual(task.state, AgentTaskState.INTERRUPTED)
         self.assertEqual(
             celune._persona_queue.get_nowait(), "Use the safer status check."
+        )
+
+    def test_say_does_not_stop_active_speech(self) -> None:
+        """Verify a new synchronous speech request does not cancel active playback."""
+        celune = self._make_celune({})
+        celune._speech_playback_active = mock.Mock(return_value=True)
+        celune.force_stop_speech = mock.Mock()
+
+        with mock.patch(
+            "celune.speech.queue_speech", return_value=True
+        ) as queue_speech:
+            self.assertTrue(celune.say("next utterance"))
+
+        celune.force_stop_speech.assert_not_called()
+        queue_speech.assert_called_once_with(
+            celune,
+            "next utterance",
+            save=True,
+            stream_queue=None,
+            display_text=None,
         )
 
     def test_close_cancels_active_agent_before_runtime_teardown(self) -> None:

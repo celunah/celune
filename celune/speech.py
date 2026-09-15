@@ -149,9 +149,6 @@ def say(
         engine.progress_callback(0, 1)
         return False
 
-    if engine._speech_playback_active():
-        engine.force_stop_speech()
-
     return queue_speech(
         engine, text, save=save, stream_queue=None, display_text=display_text
     )
@@ -181,9 +178,6 @@ async def say_async(
         engine.error_callback(string("celune.not_possible"))
         engine.progress_callback(0, 1)
         return False
-
-    if engine._speech_playback_active():
-        engine.force_stop_speech()
 
     return await queue_speech_async(
         engine,

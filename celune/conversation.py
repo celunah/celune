@@ -931,8 +931,6 @@ def think(self: Celune, text: str) -> bool:
         self.log(string("celune.speech_input_disabled_tutorial"), "warning")
         return False
 
-    if self._speech_playback_active():
-        self.force_stop_speech()
     self._interrupt_active_agent_for_input(text)
 
     if self.sleeping:
