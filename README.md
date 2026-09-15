@@ -65,8 +65,6 @@ Please note that Celune 4.3.2 and older are still licensed under the MIT license
 
 Each voice is demonstrated using a short introduction and a longer narration sample to showcase consistency, pacing, and expressiveness.
 
-[//]: # TODO: update the demonstration voice lines
-
 ### Qwen3-TTS
 
 | Voice | Intro | Narration |
@@ -103,10 +101,16 @@ Each voice is demonstrated using a short introduction and a longer narration sam
 | Bold | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/bold_sc_dotstts.wav) | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/bold_lc_dotstts.wav) |
 | Upbeat | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/upbeat_sc_dotstts.wav) | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/upbeat_lc_dotstts.wav) |
 
+### FireRedTTS3
+
+Coming soon
+
+### GPT-SoVITS
+
+Coming soon
+
 > [!NOTE]
-> Due to limitations of GPT-SoVITS with Celune's calm voice, a demonstration of GPT-SoVITS was not included.
->
-> This backend may not work with certain types of low-energy voices and may cause accent drifts if not using Celune's custom [T2S model](https://huggingface.co/lunahr/celune-t2s-en-us/blob/main/celune_t2s_en_US-e15.ckpt).
+> GPT-SoVITS may not work with certain types of low-energy voices by default, and may cause accent drifts if not using Celune's custom [T2S model](https://huggingface.co/lunahr/celune-t2s-en-us/blob/main/celune_t2s_en_US-e15.ckpt).
 >
 > After downloading, set `gpt_sovits_t2s_weights_path: <path_to_t2s>` in Celune's configuration to fix these problems.
 
