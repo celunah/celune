@@ -32,10 +32,12 @@ from celune.theme import colors
 from celune.utils import discard
 from celune.celune import Celune
 from celune.ui.app import (
+    ButtonActions,
     CeluneUI,
     UILogMessage,
     ProgressLabel,
     CeluneLoadingScreen,
+    VoiceButton,
 )
 from tests.support import FakeBackend, CeluneTestCase
 from celune.constants import APP_NAME, COST_EQUIVALENTS, ExitCodes
@@ -1313,7 +1315,10 @@ class TestUIStartup(CeluneTestCase):
         """Verify handled startup failures leave the UI in an error state."""
         ui = CeluneUI()
         ui.input_box = TextArea()
-        ui.style_button = Button("No Voice Set")
+        ui.style_button = VoiceButton(
+            "No Voice Set",
+            actions=ButtonActions(press=False, hold=False),
+        )
         ui.resources = cast(Label, None)
         ui.celune = cast(
             Celune,
@@ -1331,7 +1336,7 @@ class TestUIStartup(CeluneTestCase):
         ui.error.assert_called_once_with(f"{APP_NAME} could not start")
         assert ui.cur_state == "error"
         assert ui.input_box.placeholder == "Please wait"
-        assert ui.style_button.disabled
+        assert ui.style_button.actions == ButtonActions(press=False, hold=False)
         assert not ui._fatal_error_active
 
     def test_load_tts_enters_ui_test_mode_without_error_for_fake_backend(self) -> None:
@@ -1529,7 +1534,10 @@ class TestUIStartup(CeluneTestCase):
         ui.celune_ready = False
         ui.cur_state = "error"
         ui.input_box = TextArea()
-        ui.style_button = Button("No Voice Set")
+        ui.style_button = VoiceButton(
+            "No Voice Set",
+            actions=ButtonActions(press=False, hold=False),
+        )
         ui.resources = cast(Label, None)
         ui.status = Label()
         ui.celune = cast(
@@ -1547,7 +1555,7 @@ class TestUIStartup(CeluneTestCase):
 
         assert ui.cur_state == "error"
         assert ui.input_box.placeholder == "Please wait"
-        assert ui.style_button.disabled
+        assert ui.style_button.actions == ButtonActions(press=False, hold=False)
 
     def test_tts_idle_keeps_controls_locked_while_runtime_is_reloading(self) -> None:
         """Verify idle playback callbacks do not unlock the UI mid-reload."""
@@ -1555,7 +1563,10 @@ class TestUIStartup(CeluneTestCase):
         ui.celune_ready = True
         ui.cur_state = "idle"
         ui.input_box = TextArea()
-        ui.style_button = Button("Balanced")
+        ui.style_button = VoiceButton(
+            "Balanced",
+            actions=ButtonActions(press=False, hold=False),
+        )
         ui.resources = cast(Label, None)
         ui.status = Label()
         ui.change_input_state = mock.Mock()
@@ -1584,7 +1595,10 @@ class TestUIStartup(CeluneTestCase):
         """Verify voice cycling is blocked cleanly when startup left no voices loaded."""
         ui = CeluneUI()
         ui.celune_ready = False
-        ui.style_button = Button("No Voice Set")
+        ui.style_button = VoiceButton(
+            "No Voice Set",
+            actions=ButtonActions(press=False, hold=False),
+        )
         ui.safe_log = mock.Mock()
         ui.change_voice_lock_state = mock.Mock()
         ui.celune = cast(

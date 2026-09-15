@@ -29,8 +29,10 @@ from celune.utils import discard
 from celune.celune import Celune
 from celune.config import Config
 from celune.ui.app import (
+    ButtonActions,
     CeluneUI,
     ProgressLabel,
+    VoiceButton,
 )
 from tests.support import FakeBackend
 from celune.ui.theme import severity_color
@@ -983,7 +985,10 @@ class TestUIStartup(_TestUIStartup):
         """Verify input state updates update with Persona."""
         ui = CeluneUI()
         ui.input_box = TextArea()
-        ui.style_button = Button("Voice")
+        ui.style_button = VoiceButton(
+            "Voice",
+            actions=ButtonActions(press=False, hold=False),
+        )
         ui.resources = cast(Label, None)
         persona_config: Config = {"talkback": True}
         ui.celune = cast(
@@ -995,7 +1000,8 @@ class TestUIStartup(_TestUIStartup):
             ui.change_input_state(locked=True)
 
         assert ui.input_box.placeholder == "Please wait"
-        assert ui.style_button.disabled
+        assert ui.style_button.actions == ButtonActions(press=False, hold=False)
+        assert not ui.style_button.disabled
         available.assert_not_called()
 
         with (
@@ -1005,6 +1011,7 @@ class TestUIStartup(_TestUIStartup):
             ui.change_input_state(locked=False)
 
         assert ui.input_box.placeholder == string("ui.input_placeholder")
+        assert ui.style_button.actions == ButtonActions(press=True, hold=True)
         assert not ui.style_button.disabled
         available.assert_called_once_with()
         thread_cls.return_value.start.assert_called_once()
@@ -1013,7 +1020,10 @@ class TestUIStartup(_TestUIStartup):
         """Verify VC controls appear when the UI unlocks into voice conversion mode."""
         ui = CeluneUI()
         ui.input_box = TextArea()
-        ui.style_button = Button("Voice")
+        ui.style_button = VoiceButton(
+            "Voice",
+            actions=ButtonActions(press=False, hold=False),
+        )
         ui.vc_mode_button = Button(string("ui.vc_mode_talk"))
         ui.vc_pitch_button = Button(string("ui.vc_pitch_button", value="+0"))
         ui.resources = cast(Label, None)
@@ -1043,7 +1053,10 @@ class TestUIStartup(_TestUIStartup):
         """Verify the input placeholder reflects whether Persona actually loaded."""
         ui = CeluneUI()
         ui.input_box = TextArea()
-        ui.style_button = Button("Voice")
+        ui.style_button = VoiceButton(
+            "Voice",
+            actions=ButtonActions(press=False, hold=False),
+        )
         ui.resources = cast(Label, None)
         persona_config: Config = {"enabled": True, "talkback": True}
         ui.celune = cast(
@@ -1079,7 +1092,10 @@ class TestUIStartup(_TestUIStartup):
         """Verify the input placeholder follows VC backend selection."""
         ui = CeluneUI()
         ui.input_box = TextArea()
-        ui.style_button = Button("Voice")
+        ui.style_button = VoiceButton(
+            "Voice",
+            actions=ButtonActions(press=False, hold=False),
+        )
         ui.resources = cast(Label, None)
         ui.celune = cast(
             Celune,

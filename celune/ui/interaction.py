@@ -57,7 +57,7 @@ __all__ = (
     "on_select_menu_widget_confirmed",
     "on_text_area_changed",
     "on_unmount",
-    "on_voice_button_long_pressed",
+    "on_voice_button_held",
     "open_settings_menu",
     "open_voice_menu",
     "process_command",
@@ -842,7 +842,7 @@ def _show_menu(self, menu: _app.SelectMenuWidget, menu_kind: str) -> None:
     self.push_screen(overlay)
 
 
-def on_voice_button_long_pressed(self, event: _app.VoiceButton.LongPressed) -> None:
+def on_voice_button_held(self, event: _app.VoiceButton.Held) -> None:
     """Open voice selection after the held voice button is released."""
     if event.button is self.style_button:
         self.open_voice_menu()
@@ -1068,7 +1068,7 @@ def _submit_text(self, text: str, process_commands: bool = True) -> bool:
         return False
 
     self._cancel_sleep_timer()
-    self.style_button.disabled = True
+    self.style_button.actions = _app.ButtonActions(press=False, hold=False)
     self.input_box.placeholder = _app.string("ui.wait_placeholder")
     self.input_box.load_text("")
     self.update_resources()

@@ -261,11 +261,19 @@ def resolve_log_level(
     return fallback
 
 
-class VoiceButton(Button):
-    """Button with independent click and held-release actions."""
+@dataclass(frozen=True)
+class ButtonActions:
+    """Describe the independent actions currently available on a button."""
 
-    class LongPressed(Message):
-        """Message emitted after the primary mouse button is released."""
+    press: bool = True
+    hold: bool = False
+
+
+class VoiceButton(Button):
+    """Native-looking button with independently gated press and hold actions."""
+
+    class Held(Message):
+        """Message emitted after an enabled hold is released."""
 
         def __init__(self, button: VoiceButton) -> None:
             super().__init__()
@@ -276,23 +284,29 @@ class VoiceButton(Button):
         label: str,
         *,
         widget_id: Optional[str] = None,
-        disabled: bool = False,
-        hold_enabled: bool = False,
+        actions: Optional[ButtonActions] = None,
     ) -> None:
-        super().__init__(label, id=widget_id, disabled=disabled)
+        super().__init__(label, id=widget_id)
         self._hold_seconds = 0.55
         self._hold_timer: Optional[Timer] = None
         self._long_pressed = False
-        self.hold_enabled = hold_enabled
+        self.actions = actions or ButtonActions()
+
+    def press(self) -> VoiceButton:
+        """Perform the configured press action when it is available."""
+        if not self.actions.press:
+            return self
+        super().press()
+        return self
 
     async def _on_mouse_down(self, event: events.MouseDown) -> None:
         """Start the long-press timer for the primary mouse button."""
-        if event.button == 1 and self.hold_enabled:
+        if event.button == 1 and self.actions.hold:
             self._long_pressed = False
             self._stop_hold_timer()
             self._hold_timer = self.set_timer(
                 self._hold_seconds,
-                self._emit_long_pressed,
+                self._emit_held,
             )
         await super()._on_mouse_down(event)
 
@@ -305,12 +319,12 @@ class VoiceButton(Button):
             self.suppress_click()
         await super()._on_mouse_up(event)
         if long_pressed:
-            self.post_message(self.LongPressed(self))
+            self.post_message(self.Held(self))
 
-    def _emit_long_pressed(self) -> None:
-        """Mark a held press without opening its modal before release."""
+    def _emit_held(self) -> None:
+        """Mark an enabled hold without running its action before release."""
         self._hold_timer = None
-        if not self.hold_enabled or not self.is_mouse_over:
+        if not self.actions.hold or not self.is_mouse_over:
             return
         self._long_pressed = True
         self.suppress_click()
@@ -627,7 +641,7 @@ class CeluneUIWidgetState:
 
     logs: Optional[RichLog] = None
     input_box: Optional[TextArea] = None
-    style_button: Optional[Button] = None
+    style_button: Optional[VoiceButton] = None
     vc_mode_button: Optional[Button] = None
     vc_pitch_button: Optional[Button] = None
     status: Optional[Label] = None

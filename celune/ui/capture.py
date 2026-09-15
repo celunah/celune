@@ -444,7 +444,7 @@ def change_voice_lock_state(
     """Set voice-cycle and voice-menu availability independently.
 
     Args:
-        locked: Whether clicking to cycle voices should be disabled.
+        locked: Whether the press action should be unavailable.
         can_open_menu: Whether holding the button can open the voice menu.
             When omitted, the menu follows the click availability.
     """
@@ -452,9 +452,10 @@ def change_voice_lock_state(
         can_open_menu = not locked
 
     def update() -> None:
-        self.style_button.disabled = locked
-        if isinstance(self.style_button, _app.VoiceButton):
-            self.style_button.hold_enabled = can_open_menu
+        self.style_button.actions = _app.ButtonActions(
+            press=not locked,
+            hold=can_open_menu,
+        )
         self.update_resources()
 
     self._run_on_ui_thread(update)
@@ -511,7 +512,10 @@ def change_input_state(self, locked: bool) -> None:
             if locked
             else self._normal_input_placeholder()
         )
-        self.style_button.disabled = locked
+        self.style_button.actions = _app.ButtonActions(
+            press=not locked,
+            hold=not locked,
+        )
         self.refresh_vc_controls()
         self.update_resources()
 
@@ -877,7 +881,10 @@ def _complete_persona_transcription(
     if error is not None or error_already_reported:
         self.safe_status(_app.string("ui.idle_status"))
         if self.style_button is not None:
-            self.style_button.disabled = self._input_locked
+            self.style_button.actions = _app.ButtonActions(
+                press=not self._input_locked,
+                hold=not self._input_locked,
+            )
         self.update_resources()
         return
 
@@ -889,7 +896,10 @@ def _complete_persona_transcription(
         self.safe_log(_app.string("ui.recording_empty"), "warning")
     self.safe_status(_app.string("ui.idle_status"))
     if self.style_button is not None:
-        self.style_button.disabled = self._input_locked
+        self.style_button.actions = _app.ButtonActions(
+            press=not self._input_locked,
+            hold=not self._input_locked,
+        )
     self.update_resources()
 
 

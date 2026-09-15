@@ -18,7 +18,7 @@ import numpy as np
 import pytest
 from textual import events
 from textual.widget import Widget
-from textual.widgets import Button, TextArea
+from textual.widgets import TextArea
 
 from celune import runtime
 from celune.ui import app as ui_app
@@ -26,6 +26,7 @@ from celune.i18n import string
 from celune.agent import AgentTaskState
 from celune.celune import Celune
 from celune.ui.app import (
+    ButtonActions,
     CeluneUI,
     VoiceButton,
 )
@@ -73,9 +74,12 @@ class TestRuntime(CeluneTestCase):
         )
         terminal.flush.assert_called_once_with()
 
-    def test_voice_button_keeps_hold_action_when_cycle_is_disabled(self) -> None:
+    def test_voice_button_actions_keep_menu_when_cycle_is_unavailable(self) -> None:
         """Verify voice cycling and voice-menu availability are independent."""
-        button = VoiceButton("Voice", disabled=True, hold_enabled=True)
+        button = VoiceButton(
+            "Voice",
+            actions=ButtonActions(press=False, hold=True),
+        )
         ui = cast(
             CeluneUI,
             SimpleNamespace(
@@ -91,8 +95,8 @@ class TestRuntime(CeluneTestCase):
             can_open_menu=True,
         )
 
-        assert button.disabled
-        assert button.hold_enabled
+        assert button.actions == ButtonActions(press=False, hold=True)
+        assert not button.disabled
 
         CeluneUI.change_voice_lock_state(
             ui,
@@ -100,12 +104,15 @@ class TestRuntime(CeluneTestCase):
             can_open_menu=False,
         )
 
+        assert button.actions == ButtonActions(press=True, hold=False)
         assert not button.disabled
-        assert not button.hold_enabled
 
     def test_voice_button_long_press_message_waits_for_release(self) -> None:
         """Verify a held voice button posts its modal message after release."""
-        button = VoiceButton("Voice", hold_enabled=True)
+        button = VoiceButton(
+            "Voice",
+            actions=ButtonActions(press=False, hold=True),
+        )
         button._long_pressed = True
         button._stop_hold_timer = mock.Mock()
         button.suppress_click = mock.Mock()
@@ -119,9 +126,20 @@ class TestRuntime(CeluneTestCase):
 
         button.suppress_click.assert_called_once_with()
         button.post_message.assert_called_once()
-        assert isinstance(
-            button.post_message.call_args.args[0], VoiceButton.LongPressed
+        assert isinstance(button.post_message.call_args.args[0], VoiceButton.Held)
+
+    def test_voice_button_press_is_gated_without_disabling_the_button(self) -> None:
+        """Verify an unavailable press action leaves the native button enabled."""
+        button = VoiceButton(
+            "Voice",
+            actions=ButtonActions(press=False, hold=True),
         )
+        button.post_message = mock.Mock()
+
+        button.press()
+
+        assert not button.disabled
+        button.post_message.assert_not_called()
 
     def test_voice_selection_wakes_sleeping_celune_before_loading_voice(self) -> None:
         """Verify choosing a voice from sleep wakes Celune before switching voices."""
@@ -974,7 +992,10 @@ class TestAgentStatusUI(CeluneTestCase):
         ui, _task, _safe_status = self._ui_for_task(AgentTaskState.WORKING)
         ui.celune.cur_state = "stopped"
         ui.input_box = TextArea()
-        ui.style_button = Button("Voice")
+        ui.style_button = VoiceButton(
+            "Voice",
+            actions=ButtonActions(press=False, hold=False),
+        )
         ui.refresh_vc_controls = mock.Mock()
         ui.update_resources = mock.Mock()
         ui.change_input_state(locked=True)

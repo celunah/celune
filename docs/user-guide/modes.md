@@ -34,6 +34,16 @@ streaming chunks, applies the smart buffer and DSP, then sends normalized audio
 to the playback worker. A request can save the final result, expose chunks to a
 Python queue, or stream the result through the REST API.
 
+## Voice button actions
+
+The voice button keeps its two interactions independent through the UI-owned
+`ButtonActions(press=..., hold=...)` capability state. `press` controls cycling
+to the next loaded voice, while `hold` opens the voice selector. These
+capabilities are not represented by Textual's `disabled` state, so the UI can
+set `ButtonActions(press=False, hold=True)` while Celune sleeps. A short press
+then does nothing, while a hold opens the selector; confirming a voice wakes
+Celune before applying the selected voice.
+
 ## Conversation flow
 
 In `converse` mode, typed text is handled by Persona. The response may use the

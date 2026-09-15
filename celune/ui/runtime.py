@@ -894,7 +894,7 @@ def compose() -> _app.ComposeResult:
             yield _app.VoiceButton(
                 _app.string("ui.no_voice_set"),
                 widget_id="style",
-                disabled=True,
+                actions=_app.ButtonActions(press=False, hold=False),
             )
             yield _app.Button(
                 _app.string("ui.vc_mode_talk"), id="vc-mode", disabled=True
@@ -928,7 +928,7 @@ def on_mount(self) -> None:
     self.status = self.query_one("#status", _app.Label)
     self.resources = self.query_one("#resources", _app.Label)
     self.caption = self.query_one("#caption", _app.Label)
-    self.style_button = self.query_one("#style", _app.Button)
+    self.style_button = self.query_one("#style", _app.VoiceButton)
     self.vc_mode_button = self.query_one("#vc-mode", _app.Button)
     self.vc_pitch_button = self.query_one("#vc-pitch", _app.Button)
     self.progress_bar = self.query_one("#progress", _app.ProgressBar)
