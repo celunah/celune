@@ -126,6 +126,7 @@ raise SystemExit(worker.main())
             worker_binary_output = -1
             assert process.stdin is not None
             assert process.stdout is not None
+            assert process.stderr is not None
 
             def receive_worker_message() -> WorkerMessage:
                 """Read one worker packet within a bounded test deadline."""
@@ -232,6 +233,63 @@ raise SystemExit(worker.main())
                     process.stdout.close()
                 if process.stderr is not None:
                     process.stderr.close()
+
+    def test_worker_flushes_redirected_backend_output_before_exit(self) -> None:
+        """Verify redirected backend output is visible before worker shutdown."""
+        child_code = """
+from celune.cedts import worker
+
+
+protocol_stream = worker._detach_protocol_stream()
+print("backend diagnostic")
+protocol_stream.write(b"ready\\n")
+protocol_stream.flush()
+input()
+protocol_stream.close()
+"""
+        process = subprocess.Popen(  # pylint: disable=R1732
+            [sys.executable, "-c", child_code],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        assert process.stdin is not None
+        assert process.stdout is not None
+        assert process.stderr is not None
+        stderr_lines: list[bytes] = []
+
+        def read_stderr() -> None:
+            """Read the child diagnostic without waiting for child exit."""
+            assert process.stderr is not None
+            stderr_lines.append(process.stderr.readline())
+
+        stderr_thread = threading.Thread(target=read_stderr, daemon=True)
+        stderr_thread.start()
+        try:
+            self.assertEqual(process.stdout.readline(), b"ready\n")
+            stderr_thread.join(timeout=5)
+            self.assertFalse(stderr_thread.is_alive())
+            self.assertEqual(
+                [line.rstrip(b"\r\n") for line in stderr_lines],
+                [b"backend diagnostic"],
+            )
+            process.stdin.write(b"\n")
+            process.stdin.flush()
+            process.wait(timeout=10)
+            self.assertEqual(process.returncode, 0)
+        finally:
+            if process.poll() is None:
+                with suppress(Exception):
+                    process.stdin.write(b"\n")
+                    process.stdin.flush()
+                with suppress(subprocess.TimeoutExpired):
+                    process.wait(timeout=2)
+            if process.stdin is not None:
+                process.stdin.close()
+            if process.stdout is not None:
+                process.stdout.close()
+            if process.stderr is not None:
+                process.stderr.close()
 
     def _run_worker_stream_shutdown_policy(
         self, policy: str, *, ignore_cancellation: bool = False

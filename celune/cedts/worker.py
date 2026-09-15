@@ -227,10 +227,15 @@ def _open_binary_streams(args: argparse.Namespace) -> tuple[IO[bytes], IO[bytes]
 
 def _detach_protocol_stream() -> IO[bytes]:
     """Reserve stdout for CEDTS packets and redirect backend output to stderr."""
-    stdout_fd = sys.stdout.fileno()
+    stdout = sys.stdout
+    stdout.flush()
+    stdout_fd = stdout.fileno()
     protocol_fd = os.dup(stdout_fd)
     try:
         os.dup2(sys.stderr.fileno(), stdout_fd)
+        reconfigure = getattr(stdout, "reconfigure", None)
+        if callable(reconfigure):
+            reconfigure(line_buffering=True, write_through=True)
     except Exception:
         os.close(protocol_fd)
         raise

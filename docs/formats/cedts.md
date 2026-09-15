@@ -153,7 +153,10 @@ Worker stderr is retained for failure diagnostics, but CEDTS applies the same
 known-benign runtime-message suppression list used by Celune's local runtime
 log redirect. This keeps isolated workers from reintroducing filtered model,
 Transformers, tqdm, and Triton notices into the UI log; actionable worker
-messages remain visible and retained for error reporting.
+messages remain visible and retained for error reporting. Backend output that
+is redirected from stdout is write-through and line-buffered before backend
+imports begin, so a library's diagnostic is reported during the operation that
+produced it rather than being flushed later when the worker shuts down.
 
 State events use `loading`, `ready`, `processing`, `streaming`, `paused`,
 `cancelling`, `cancelled`, `completed`, `failed`, and `shutdown_requested`.
