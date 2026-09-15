@@ -45,7 +45,7 @@ mode: converse  # speak|converse|agent
 
 Celune is against the stance of "vibe coding" used in development.
 
-None of the 50,000+ lines of code in Celune were created solely using AI. AI tools (e.g. Codex) were only used to assist in faster development, iteration and solving issues.
+None of the 100,000+ lines of code in Celune were created solely using AI. AI tools (e.g. Codex) were only used to assist in faster development, iteration and solving issues.
 
 All decisions and implementations were reviewed, validated, and approved by human developers.
 
@@ -59,11 +59,13 @@ Visit <https://celune.readthedocs.io/en/latest> to view Celune documentation. Th
 
 Celune is licensed under the Apache 2.0 License, but the software may download certain models from [Hugging Face](https://huggingface.co) that are of varying licenses, such as [Apache 2.0](https://www.apache.org/licenses/LICENSE-2.0) (Qwen, etc.), [CC-BY-4.0](https://creativecommons.org/licenses/by/4.0/deed.en) (Pocket TTS), [GPL-3.0](https://opensource.org/license/gpl-3.0) (SeedVC), and MIT (Whisper, Silero VAD, etc.). Users of Celune are expected to read and comply with any applicable license terms for the models they intend to use.
 
-Please note that Celune 4.3.2 and older remain on the Apache 2.0 license.
+Please note that Celune 4.3.2 and older are still licensed under the MIT license.
 
 ## Voices & samples
 
 Each voice is demonstrated using a short introduction and a longer narration sample to showcase consistency, pacing, and expressiveness.
+
+[//]: # TODO: update the demonstration voice lines
 
 ### Qwen3-TTS
 
@@ -143,7 +145,7 @@ For details on voice production, check [VOICES.md](./docs/VOICES.md).
 
 ## System Requirements
 
-Celune requires [Python](https://python.org) 3.12 or 3.13.
+Celune requires [Python](https://python.org) 3.12, 3.13 or 3.14.
 
 Celune also depends on external system dependencies that are not available in `pip`:
 
@@ -197,7 +199,7 @@ Celune has several VRAM presets available. Here are their baseline requirements:
 >
 > - All of the above, and:
 > - VoxCPM2 or dots.tts MF
-> - Persona (4-bit) (certain TTS models may require 16GB of VRAM, use Pocket TTS if uncertain)
+> - Persona (4-bit) (not all models may fit, use Pocket TTS if uncertain)
 >
 > Extra High (16GB VRAM and beyond)
 >
@@ -334,11 +336,11 @@ sudo apt install build-essential
 sudo pacman -S base-devel
 ```
 
-### CUDA Toolkit 12.8 installation
+### CUDA Toolkit installation
 
 This step can be skipped if you are using pre-built PyTorch wheels.
 
-Download and install CUDA Toolkit 12.8 from NVIDIA:
+Download and install CUDA Toolkit from NVIDIA:
 
 <https://developer.nvidia.com/cuda-12-8-0-download-archive>
 
@@ -347,7 +349,7 @@ Make sure to:
 - Select the correct OS and version
 - Install both **CUDA Toolkit** and **NVIDIA drivers** (if not already installed)
 
-Make sure you install version 12.8, as Celune does not work with older or newer versions of the toolkit.
+Celune is expected to work with CUDA Toolkit 12.8. Not all backends are compatible with newer versions.
 
 After installation, verify CUDA:
 
@@ -408,6 +410,8 @@ It can be accessed via `/ui` on Celune's exposed API URL.
 ## Shortlink
 
 Need a quick and easy shortlink to spread Celune to the public? [Copy link](https://go.lunah.site/celune)
+
+---
 
 <p align="right">
   <i>"Your voice, your way."&#x2000;</i>
