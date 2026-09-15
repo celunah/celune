@@ -34,15 +34,21 @@ streaming chunks, applies the smart buffer and DSP, then sends normalized audio
 to the playback worker. A request can save the final result, expose chunks to a
 Python queue, or stream the result through the REST API.
 
-## Voice button actions
+## Button actions
 
-The voice button keeps its two interactions independent through the UI-owned
-`ButtonActions(press=..., hold=...)` capability state. `press` controls cycling
-to the next loaded voice, while `hold` opens the voice selector. These
-capabilities are not represented by Textual's `disabled` state, so the UI can
-set `ButtonActions(press=False, hold=True)` while Celune sleeps. A short press
-then does nothing, while a hold opens the selector; confirming a voice wakes
-Celune before applying the selected voice.
+Every TUI button owns a UI-level `ButtonActions(press=..., hold=...)`
+capability state. `press` is enabled by default and `hold` is optional and
+disabled by default. The UI handles the resulting press and hold events
+separately, so each interaction can run a different operation. When both
+capabilities are false, the button keeps its normal Textual behavior and
+appearance but is rendered with the disabled visual treatment without using
+Textual's `disabled` state.
+
+The voice button uses `press` to cycle to the next loaded voice and `hold` to
+open the voice selector. These capabilities are independent, so the UI can set
+`ButtonActions(press=False, hold=True)` while Celune sleeps. A short press then
+does nothing, while a hold opens the selector; confirming a voice wakes Celune
+before applying the selected voice.
 
 ## Conversation flow
 

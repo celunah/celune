@@ -195,6 +195,11 @@ CELUNE_CSS = """
         tint: transparent;
     }
 
+    Button.-actions-disabled {
+        text-opacity: 0.6;
+        pointer: not-allowed;
+    }
+
     #logs, #controls, #bottom, #header-container, #caption, #progress-container {
         margin-left: 2;
         margin-right: 2;

@@ -26,6 +26,7 @@ from typing import (
     Protocol,
     Never,
     ClassVar,
+    Literal,
     final,
 )
 from pathlib import Path
@@ -38,6 +39,7 @@ from textual.app import (
     App,
     AutopilotCallbackType,
     ComposeResult,
+    RenderableType,
     ReturnType,
     ScreenStackError,
 )
@@ -47,7 +49,13 @@ from textual.timer import Timer
 from textual.widget import Widget
 from textual.message import Message
 from textual.screen import ModalScreen
-from textual.widgets import Label, Button, RichLog, TextArea, ProgressBar
+from textual.widgets import (
+    Label,
+    Button as TextualButton,
+    RichLog,
+    TextArea,
+    ProgressBar,
+)
 from textual.css.query import NoMatches
 from textual.css.types import EdgeStyle
 from textual.containers import Horizontal, Vertical
@@ -269,34 +277,72 @@ class ButtonActions:
     hold: bool = False
 
 
-class VoiceButton(Button):
+class Button(TextualButton):
     """Native-looking button with independently gated press and hold actions."""
 
     class Held(Message):
         """Message emitted after an enabled hold is released."""
 
-        def __init__(self, button: VoiceButton) -> None:
+        def __init__(self, button: Button) -> None:
             super().__init__()
             self.button = button
 
     def __init__(
         self,
-        label: str,
+        label: Optional[str] = None,
+        variant: Literal["default", "error", "primary", "success", "warning"] = (
+            "default"
+        ),
         *,
-        widget_id: Optional[str] = None,
+        # pylint: disable=redefined-builtin
+        name: Optional[str] = None,
+        id: Optional[str] = None,
+        classes: Optional[str] = None,
+        tooltip: Optional[RenderableType] = None,
+        action: Optional[str] = None,
+        compact: bool = False,
+        flat: bool = False,
         actions: Optional[ButtonActions] = None,
     ) -> None:
-        super().__init__(label, id=widget_id)
+        super().__init__(
+            label=label,
+            variant=variant,
+            name=name,
+            id=id,
+            classes=classes,
+            tooltip=tooltip,
+            action=action,
+            compact=compact,
+            flat=flat,
+        )
         self._hold_seconds = 0.55
         self._hold_timer: Optional[Timer] = None
         self._long_pressed = False
+        self._actions = ButtonActions()
         self.actions = actions or ButtonActions()
 
-    def press(self) -> VoiceButton:
+    @property
+    def actions(self) -> ButtonActions:
+        """Return the UI-owned capabilities available on this button."""
+        return self._actions
+
+    @actions.setter
+    def actions(self, value: ButtonActions) -> None:
+        """Update capabilities and their disabled appearance."""
+        self._actions = value
+        self.set_class(not value.press and not value.hold, "-actions-disabled")
+
+    def _clear_focus(self) -> None:
+        """Clear focus after an action so the button does not stay highlighted."""
+        if self.is_attached:
+            self.app.set_focus(None)
+
+    def press(self) -> Button:
         """Perform the configured press action when it is available."""
         if not self.actions.press:
             return self
         super().press()
+        self._clear_focus()
         return self
 
     async def _on_mouse_down(self, event: events.MouseDown) -> None:
@@ -318,6 +364,7 @@ class VoiceButton(Button):
         if long_pressed:
             self.suppress_click()
         await super()._on_mouse_up(event)
+        self._clear_focus()
         if long_pressed:
             self.post_message(self.Held(self))
 
@@ -334,6 +381,10 @@ class VoiceButton(Button):
         if self._hold_timer is not None:
             self._hold_timer.stop()
             self._hold_timer = None
+
+
+class VoiceButton(Button):
+    """Voice selector button retaining a semantic name for the UI state."""
 
 
 class SelectMenuOverlay(ModalScreen[None]):

@@ -19,7 +19,7 @@ import numpy as np
 import pytest
 from textual import events
 from textual.widget import Widget
-from textual.widgets import Label, Button, RichLog, TextArea, ProgressBar
+from textual.widgets import Label, RichLog, TextArea, ProgressBar
 
 from celune.ui import app as ui_app
 from celune.ui import resources as ui_resources
@@ -30,6 +30,7 @@ from celune.celune import Celune
 from celune.config import Config
 from celune.ui.app import (
     ButtonActions,
+    Button,
     CeluneUI,
     ProgressLabel,
     VoiceButton,
@@ -1001,7 +1002,7 @@ class TestUIStartup(_TestUIStartup):
 
         assert ui.input_box.placeholder == "Please wait"
         assert ui.style_button.actions == ButtonActions(press=False, hold=False)
-        assert not ui.style_button.disabled
+        assert ui.style_button.has_class("-actions-disabled")
         available.assert_not_called()
 
         with (
@@ -1012,7 +1013,7 @@ class TestUIStartup(_TestUIStartup):
 
         assert ui.input_box.placeholder == string("ui.input_placeholder")
         assert ui.style_button.actions == ButtonActions(press=True, hold=True)
-        assert not ui.style_button.disabled
+        assert not ui.style_button.has_class("-actions-disabled")
         available.assert_called_once_with()
         thread_cls.return_value.start.assert_called_once()
 
@@ -1045,8 +1046,8 @@ class TestUIStartup(_TestUIStartup):
 
         assert ui.vc_mode_button.display
         assert ui.vc_pitch_button.display
-        assert not ui.vc_mode_button.disabled
-        assert not ui.vc_pitch_button.disabled
+        assert ui.vc_mode_button.actions == ButtonActions(press=True)
+        assert ui.vc_pitch_button.actions == ButtonActions(press=True)
         thread_cls.return_value.start.assert_called_once()
 
     def test_placeholder_uses_loaded_persona_not_runtime_capability(self) -> None:
@@ -1129,8 +1130,8 @@ class TestUIStartup(_TestUIStartup):
 
         assert not ui.vc_mode_button.display
         assert not ui.vc_pitch_button.display
-        assert ui.vc_mode_button.disabled
-        assert ui.vc_pitch_button.disabled
+        assert ui.vc_mode_button.actions == ButtonActions(press=False)
+        assert ui.vc_pitch_button.actions == ButtonActions(press=False)
         ui._cancel_vc_recording.assert_called_once_with(announce=False)
 
     def test_refresh_vc_controls_shows_buttons_in_voice_conversion_mode(
@@ -1157,8 +1158,8 @@ class TestUIStartup(_TestUIStartup):
         assert ui.vc_pitch_button.display
         assert ui.vc_mode_button.label == string("ui.vc_mode_sing")
         assert ui.vc_pitch_button.label == string("ui.vc_pitch_button", value="+3")
-        assert not ui.vc_mode_button.disabled
-        assert not ui.vc_pitch_button.disabled
+        assert ui.vc_mode_button.actions == ButtonActions(press=True)
+        assert ui.vc_pitch_button.actions == ButtonActions(press=True)
         ui._cancel_vc_recording.assert_not_called()
 
     def test_runtime_logger_warning_is_routed_into_ui_logs(self) -> None:

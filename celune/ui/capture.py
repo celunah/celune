@@ -681,8 +681,9 @@ def refresh_vc_controls(self) -> None:
         "ui.vc_pitch_button",
         value=self._format_vc_pitch_shift(pitch_shift),
     )
-    self.vc_mode_button.disabled = (not is_vc_mode) or self._input_locked
-    self.vc_pitch_button.disabled = (not is_vc_mode) or self._input_locked
+    controls_available = is_vc_mode and not self._input_locked
+    self.vc_mode_button.actions = _app.ButtonActions(press=controls_available)
+    self.vc_pitch_button.actions = _app.ButtonActions(press=controls_available)
 
 
 def set_vc_f0_condition(self, enabled: bool, announce: bool = True) -> None:

@@ -893,16 +893,18 @@ def compose() -> _app.ComposeResult:
             )
             yield _app.VoiceButton(
                 _app.string("ui.no_voice_set"),
-                widget_id="style",
+                id="style",
                 actions=_app.ButtonActions(press=False, hold=False),
             )
             yield _app.Button(
-                _app.string("ui.vc_mode_talk"), id="vc-mode", disabled=True
+                _app.string("ui.vc_mode_talk"),
+                id="vc-mode",
+                actions=_app.ButtonActions(press=False),
             )
             yield _app.Button(
                 _app.string("ui.vc_pitch_button", value="+0"),
                 id="vc-pitch",
-                disabled=True,
+                actions=_app.ButtonActions(press=False),
             )
         with _app.Horizontal(id="bottom"):
             yield _app.Label("", id="status")

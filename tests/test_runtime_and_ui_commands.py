@@ -96,7 +96,7 @@ class TestRuntime(CeluneTestCase):
         )
 
         assert button.actions == ButtonActions(press=False, hold=True)
-        assert not button.disabled
+        assert not button.has_class("-actions-disabled")
 
         CeluneUI.change_voice_lock_state(
             ui,
@@ -105,7 +105,7 @@ class TestRuntime(CeluneTestCase):
         )
 
         assert button.actions == ButtonActions(press=True, hold=False)
-        assert not button.disabled
+        assert not button.has_class("-actions-disabled")
 
     def test_voice_button_long_press_message_waits_for_release(self) -> None:
         """Verify a held voice button posts its modal message after release."""
@@ -138,8 +138,43 @@ class TestRuntime(CeluneTestCase):
 
         button.press()
 
-        assert not button.disabled
+        assert not button.has_class("-actions-disabled")
         button.post_message.assert_not_called()
+
+    def test_buttons_use_action_capabilities_and_disabled_appearance(self) -> None:
+        """Verify ordinary buttons default to press-only capabilities."""
+        button = ui_app.Button(
+            "Action",
+            actions=ButtonActions(press=False),
+        )
+
+        assert button.actions == ButtonActions(press=False)
+        assert button.has_class("-actions-disabled")
+
+        button.actions = ButtonActions()
+
+        assert not button.has_class("-actions-disabled")
+
+    def test_button_click_clears_focus_after_release(self) -> None:
+        """Verify clicking a button does not leave its focus highlight latched."""
+
+        class Harness(ui_app.App):
+            """Minimal Textual host for the action button."""
+
+            CSS = ui_app.CELUNE_CSS
+
+            def compose(self) -> ui_app.ComposeResult:
+                """Mount one button for the focus regression test."""
+                yield ui_app.Button("Action", id="action")
+
+        async def run_focus_test() -> None:
+            app = Harness()
+            async with app.run_test(size=(40, 10)) as pilot:
+                await pilot.click("#action")
+                await pilot.pause()
+                assert app.focused is None
+
+        asyncio.run(run_focus_test())
 
     def test_voice_selection_wakes_sleeping_celune_before_loading_voice(self) -> None:
         """Verify choosing a voice from sleep wakes Celune before switching voices."""

@@ -21,7 +21,7 @@ import numpy as np
 import pytest
 from textual import events
 from textual.app import App
-from textual.widgets import Label, Button, Static, RichLog, TextArea, ProgressBar
+from textual.widgets import Label, Static, RichLog, TextArea, ProgressBar
 from textual.containers import Vertical
 
 from celune.ui import app as ui_app
@@ -33,6 +33,7 @@ from celune.utils import discard
 from celune.celune import Celune
 from celune.ui.app import (
     ButtonActions,
+    Button,
     CeluneUI,
     UILogMessage,
     ProgressLabel,
