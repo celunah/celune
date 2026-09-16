@@ -128,6 +128,41 @@ class TestRuntime(CeluneTestCase):
         button.post_message.assert_called_once()
         assert isinstance(button.post_message.call_args.args[0], VoiceButton.Held)
 
+    def test_voice_button_long_press_reaches_voice_handler(self) -> None:
+        """Verify the real hold timer dispatches the voice-specific message."""
+
+        class Harness(ui_app.App[None]):
+            """Minimal Textual host for the voice hold dispatch test."""
+
+            CSS = ui_app.CELUNE_CSS
+
+            def __init__(self) -> None:
+                super().__init__()
+                self.held = 0
+
+            def compose(self) -> ui_app.ComposeResult:
+                """Mount one enabled voice button."""
+                yield VoiceButton(
+                    "Voice",
+                    id="voice",
+                    actions=ButtonActions(press=False, hold=True),
+                )
+
+            def on_voice_button_held(self, _event: VoiceButton.Held) -> None:
+                """Record the message that the application should receive."""
+                self.held += 1
+
+        async def run_hold_test() -> None:
+            app = Harness()
+            async with app.run_test(size=(40, 10)) as pilot:
+                assert await pilot.mouse_down("#voice")
+                await pilot.pause(0.7)
+                assert await pilot.mouse_up("#voice")
+                await pilot.pause()
+                assert app.held == 1
+
+        asyncio.run(run_hold_test())
+
     def test_voice_button_press_is_gated_without_disabling_the_button(self) -> None:
         """Verify an unavailable press action leaves the native button enabled."""
         button = VoiceButton(

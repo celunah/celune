@@ -386,6 +386,9 @@ class Button(TextualButton):
 class VoiceButton(Button):
     """Voice selector button retaining a semantic name for the UI state."""
 
+    class Held(Button.Held):
+        """Message emitted after the voice button's enabled hold is released."""
+
 
 class SelectMenuOverlay(ModalScreen[None]):
     """Center one selection menu over the application content."""
