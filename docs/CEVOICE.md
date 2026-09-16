@@ -1,8 +1,9 @@
 # CEVOICE
 
-`CEVOICE` is Celune's voice-pack container format. The bundled default pack uses
-the `CECHAR` v4 schema. Older `CECHAR` v2/v3 and legacy `CEVOICE` v1 bundles
-remain readable, and `write_cevoice()` remains available for producing those
+`CEVOICE` is Celune's voice-pack container format. The bundled `default.cevoice`
+and `classic.cevoice` packs are the two official Celune variants and use the
+`CECHAR` v4 schema. Older `CECHAR` v2/v3 and legacy `CEVOICE` v1 bundles remain
+readable, and `write_cevoice()` remains available for producing those
 legacy-compatible bundles. Use `write_cechar_v4()` for new v4 archives. A
 `.cevoice` file stores:
 
@@ -220,6 +221,13 @@ At startup, Celune resolves `voice_bundle` from config:
 - `default` becomes `voices/default.cevoice`
 - a bare name such as `my_pack` becomes `voices/my_pack.cevoice`
 - an explicit path is used as-is
+
+The official `default` and `classic` packs are both recognized by their
+content checksums, so both retain Celune's built-in Persona identity behavior.
+When shown in character or voice-pack selectors, they are labeled `Celune
+(default)` and `Celune (classic)` respectively. The variant label is display
+metadata only; both packs still provide the character identity `Celune` to
+Persona and extensions.
 
 The loader parses and validates the bundle, then lazily materializes assets into a temporary directory only when a backend needs a filesystem path.
 

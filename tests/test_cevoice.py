@@ -141,6 +141,10 @@ class TestCEVoice(CeluneTestCase):
         path = loader.materialize("balanced", "wav")
         assert path.read_bytes() == b"wav"
         assert loader.materialize("balanced", "wav") == path
+        with mock.patch.object(
+            cevoice, "bundle_matches_default_pack_checksum", return_value=True
+        ):
+            assert cevoice.bundle_display_name(bundle) == "Fixture (sample)"
 
         magic, version, _ = cevoice.HEADER.unpack(
             self.path.read_bytes()[: cevoice.HEADER.size]
@@ -523,6 +527,30 @@ class TestCEVoice(CeluneTestCase):
             (user_dir / "default.cevoice").read_bytes(),
             b"new-default",
         )
+
+    def test_all_repository_cevoice_packs_are_synced_to_user_data(self) -> None:
+        """Verify repository-provided official packs are available to the loader."""
+        repository_root = self.temp_dir / "repository-root"
+        repository_dir = repository_root / "voices"
+        user_dir = self.temp_dir / "user-voices"
+        repository_dir.mkdir(parents=True)
+        (repository_dir / "default.cevoice").write_bytes(b"default")
+        (repository_dir / "classic.cevoice").write_bytes(b"classic")
+
+        with (
+            mock.patch(
+                "celune.cevoice.project_root",
+                return_value=repository_root,
+            ),
+            mock.patch(
+                "celune.cevoice.voices_data_dir",
+                return_value=user_dir,
+            ),
+        ):
+            assert cevoice.bundled_voices_dir() == user_dir
+
+        assert (user_dir / "default.cevoice").read_bytes() == b"default"
+        assert (user_dir / "classic.cevoice").read_bytes() == b"classic"
 
     def test_missing_selected_and_default_bundles_report_no_compatible_pack(
         self,

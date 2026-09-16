@@ -391,8 +391,8 @@ def _webui_voice_catalog(celune: _api.Celune) -> tuple[tuple[str, str], ...]:
     from .cevoice import (
         CEVoice,
         CEVoiceError,
+        bundle_display_name,
         bundled_voices_dir,
-        bundle_character_name,
     )
 
     try:
@@ -411,9 +411,13 @@ def _webui_voice_catalog(celune: _api.Celune) -> tuple[tuple[str, str], ...]:
             bundle = CEVoice.open(path)
         except (OSError, CEVoiceError):
             continue
-        pack_name = bundle_character_name(bundle) or path.stem
+        pack_name = bundle_display_name(bundle)
         if pack_name in used_pack_names:
-            pack_name = f"{pack_name} ({path.stem})"
+            pack_name = string(
+                "cevoice.official_bundle_label",
+                character=pack_name,
+                variant=path.stem,
+            )
         used_pack_names.add(pack_name)
         for voice_entry in bundle.voice_order:
             value = json.dumps(

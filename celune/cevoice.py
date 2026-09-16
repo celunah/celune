@@ -24,6 +24,7 @@ from typing import Final, Union, BinaryIO, Optional, cast
 import numpy as np
 
 from .exceptions import CEVoiceError
+from .i18n import string
 from .paths import project_root, temp_data_dir, voices_data_dir
 from .typing.cevoice import Manifest, ManifestValue, VoiceManifest
 
@@ -62,7 +63,16 @@ SUPPORTED_PERSONA_FILENAMES: Final[tuple[str, ...]] = (
     "examples.md",
 )
 DEFAULT_CEVOICE_PACK_SHA256: Final[str] = (
-    "e02ceaa77de29e763bfe683db766b3142d0397f52dab7b594a8020285616a41f"
+    "83b2910dada665eb3437467e44c9ddd44e26cc3d4e0e0d7950c3d20b7196f2bf"
+)
+CLASSIC_CEVOICE_PACK_SHA256: Final[str] = (
+    "646d68a70d4402cc5a9f8fdc96c171607d896dfe5424b27748193e3504530023"
+)
+OFFICIAL_CEVOICE_PACK_SHA256S: Final[frozenset[str]] = frozenset(
+    {
+        DEFAULT_CEVOICE_PACK_SHA256,
+        CLASSIC_CEVOICE_PACK_SHA256,
+    }
 )
 
 
@@ -1578,6 +1588,25 @@ def bundle_character_name(bundle: CEVoice) -> Optional[str]:
     return None
 
 
+def bundle_display_name(bundle: CEVoice) -> str:
+    """Return a user-facing name for one CEVOICE/CECHAR package.
+
+    Args:
+        bundle: The CEVOICE/CECHAR package to label.
+
+    Returns:
+        str: The character name with the official bundle variant when applicable.
+    """
+    name = bundle_character_name(bundle) or bundle.path.stem
+    if bundle_matches_default_pack_checksum(bundle.path):
+        return string(
+            "cevoice.official_bundle_label",
+            character=name,
+            variant=bundle.path.stem,
+        )
+    return name
+
+
 def _manifest_text(value: ManifestValue) -> str:
     """Return a manifest value only when it is meaningful text."""
     return value.strip() if isinstance(value, str) and value.strip() else ""
@@ -1668,16 +1697,16 @@ def bundle_sha256(path: Union[str, Path]) -> str:
 
 
 def bundle_matches_default_pack_checksum(path: Union[str, Path]) -> bool:
-    """Return whether one bundle matches Celune's canonical default pack bytes.
+    """Return whether one bundle matches an official Celune pack's bytes.
 
     Args:
         path: The bundle file to compare against Celune's bundled default pack checksum.
 
     Returns:
-        bool: ``True`` when the file checksum matches the canonical default CEVOICE pack.
+        bool: ``True`` when the file checksum matches an official CEVOICE pack.
     """
     try:
-        return bundle_sha256(path) == DEFAULT_CEVOICE_PACK_SHA256
+        return bundle_sha256(path) in OFFICIAL_CEVOICE_PACK_SHA256S
     except OSError:
         return False
 
@@ -1693,15 +1722,15 @@ def bundled_voices_dir() -> Path:
     if not repository_directory.is_dir():
         return user_directory
 
-    repository_default = repository_directory / "default.cevoice"
-    user_default = user_directory / "default.cevoice"
     if user_directory.is_dir():
         try:
-            if repository_default.is_file() and (
-                not user_default.is_file()
-                or bundle_sha256(user_default) != bundle_sha256(repository_default)
-            ):
-                shutil.copy2(repository_default, user_default)
+            for repository_pack in repository_directory.glob("*.cevoice"):
+                user_pack = user_directory / repository_pack.name
+                if repository_pack.is_file() and (
+                    not user_pack.is_file()
+                    or bundle_sha256(user_pack) != bundle_sha256(repository_pack)
+                ):
+                    shutil.copy2(repository_pack, user_pack)
         except OSError:
             pass
         return user_directory
@@ -1849,9 +1878,7 @@ def announce_default_bundle(log: Callable[[str, str], None]) -> Optional[str]:
                 "using default pack instead.",
                 "warning",
             )
-        name = loader.bundle.metadata.get("name", active_bundle_path().stem)
-        if not isinstance(name, str):
-            name = active_bundle_path().stem
+        name = bundle_display_name(loader.bundle)
         log(f"Loading voice pack: {name}", "info")
         _DEFAULT_LOADER_ANNOUNCED = True
         return name

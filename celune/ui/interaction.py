@@ -758,7 +758,7 @@ def open_voice_menu(self) -> None:
         CEVoice,
         CEVoiceError,
         active_bundle_path,
-        bundle_character_name,
+        bundle_display_name,
         bundled_voices_dir,
     )
 
@@ -781,9 +781,13 @@ def open_voice_menu(self) -> None:
         except (OSError, CEVoiceError):
             continue
 
-        pack_name = bundle_character_name(bundle) or path.stem
+        pack_name = bundle_display_name(bundle)
         if pack_name in self._voice_menu_paths:
-            pack_name = f"{pack_name} ({path.stem})"
+            pack_name = _app.string(
+                "cevoice.official_bundle_label",
+                character=pack_name,
+                variant=path.stem,
+            )
         voices = bundle.voice_order
         if not voices:
             continue

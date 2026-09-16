@@ -15,7 +15,7 @@ import torch
 from transformers.modeling_utils import PreTrainedModel
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 
-from .cevoice import announce_default_bundle
+from .cevoice import announce_default_bundle, bundle_display_name, default_loader
 from .backends.tts import CeluneBackend
 from .constants import APP_NAME, NORMALIZER_MODEL_ID
 from .dataclasses.events import ReadyEvent
@@ -131,11 +131,11 @@ def load(self, raise_on_error: bool = False, skip_runtime_check: bool = False) -
         announced_character = announce_default_bundle(self.log)
         character = self.current_character or announced_character
         self.current_character = character
-
-        if self.voice_bundle_is_default:
-            self.log(string("celune.current_character_default", character=character))
-        else:
-            self.log(string("celune.current_character", character=character))
+        loader = default_loader()
+        display_character = (
+            bundle_display_name(loader.bundle) if loader is not None else character
+        )
+        self.log(string("celune.current_character", character=display_character))
 
     if self.backend_mode == "normal":
         self.setup_extensions()

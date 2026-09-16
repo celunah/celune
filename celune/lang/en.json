@@ -158,6 +158,7 @@
     "celune.unknown_voice": "unknown voice: {voice}",
     "celune.voice_loaded": "Voice {voice} loaded.",
     "celune.voice_pack_not_found": "Voice pack not found: {bundle}",
+    "cevoice.official_bundle_label": "{character} ({variant})",
     "celune.voice_switch_timeout": "Timed out while switching voice.",
     "celune.waiting_for_models": "Waiting for models to load...",
     "celune.wake_error": "Wake-up failed.",
