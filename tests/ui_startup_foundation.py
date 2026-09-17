@@ -11,38 +11,38 @@ import asyncio
 import tempfile
 import warnings
 import threading
-from types import SimpleNamespace
-from typing import Optional, cast
 from pathlib import Path
 from unittest import mock
+from types import SimpleNamespace
+from typing import Optional, cast
 from collections.abc import Callable
 
-import numpy as np
 import pytest
+import numpy as np
 from textual import events
 from textual.app import App
-from textual.widgets import Label, Static, RichLog, TextArea, ProgressBar
 from textual.containers import Vertical
+from textual.widgets import Label, Static, RichLog, TextArea, ProgressBar
 
-from celune.ui import app as ui_app
-from celune.ui import terminal as ui_terminal
-from celune.ui import resources as ui_resources
-from celune.i18n import string, tagged_string
-from celune.theme import colors
-from celune.utils import discard
-from celune.celune import Celune
 from celune.ui.app import (
-    ButtonActions,
     Button,
     CeluneUI,
+    VoiceButton,
     UILogMessage,
+    ButtonActions,
     ProgressLabel,
     CeluneLoadingScreen,
-    VoiceButton,
 )
+from celune.theme import colors
+from celune.celune import Celune
+from celune.utils import discard
+from celune.ui import app as ui_app
+from celune.i18n import string, tagged_string
+from celune.ui import terminal as ui_terminal
+from celune.ui import resources as ui_resources
+from celune.ui.headless import CeluneHeadlessUI
 from tests.support import FakeBackend, CeluneTestCase
 from celune.constants import APP_NAME, COST_EQUIVALENTS, ExitCodes
-from celune.ui.headless import CeluneHeadlessUI
 
 
 class TestUIStartup(CeluneTestCase):
@@ -72,6 +72,42 @@ class TestUIStartup(CeluneTestCase):
         )
         assert isinstance(error, SystemExit)
         assert error.code == 4
+
+    def test_linux_terminal_stream_does_not_need_lazy_discard_export(self) -> None:
+        """Verify Linux terminal setup works before deferred UI imports complete."""
+        ui = CeluneUI()
+        output_stream = mock.Mock()
+        fake_stderr = SimpleNamespace(
+            fileno=lambda: 2,
+            encoding="utf-8",
+            errors="strict",
+        )
+        missing_discard = mock.sentinel.missing_discard
+        saved_discard = ui_app.__dict__.pop("discard", missing_discard)
+
+        try:
+            with (
+                mock.patch.object(sys, "__stderr__", fake_stderr),
+                mock.patch("celune.ui.runtime.os.name", "posix"),
+                mock.patch("celune.ui.runtime.os.dup", return_value=17) as dup,
+                mock.patch(
+                    "celune.ui.runtime.os.fdopen", return_value=output_stream
+                ) as fdopen,
+            ):
+                assert ui._prepare_terminal_output_stream() is output_stream
+
+            dup.assert_called_once_with(2)
+            fdopen.assert_called_once_with(
+                17,
+                "w",
+                encoding="utf-8",
+                errors="strict",
+                buffering=1,
+            )
+        finally:
+            ui._terminal_output_stream = None
+            if saved_discard is not missing_discard:
+                ui_app.discard = saved_discard
 
     def test_missing_dependency_startup_waits_for_ctrl_q(self) -> None:
         """Verify missing dependencies remain visible until the user quits."""

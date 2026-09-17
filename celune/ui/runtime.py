@@ -3,21 +3,21 @@
 
 from __future__ import annotations
 
-import asyncio
-import contextlib
-import datetime
-import inspect
-import logging
-import math
 import os
 import re
-import signal
 import sys
-import threading
+import math
 import time
-from collections.abc import Callable
+import signal
+import asyncio
+import inspect
+import logging
+import datetime
+import threading
+import contextlib
 from io import TextIOWrapper
 from typing import Optional, cast
+from collections.abc import Callable
 
 from . import app as _app
 from ..binding import install_class_functions
@@ -799,7 +799,6 @@ def _prepare_terminal_output_stream(self) -> Optional[TextIOWrapper]:
 
     output_fd: Optional[int] = None
     output_stream: Optional[TextIOWrapper] = None
-    _app.discard(output_stream)
     try:
         output_fd = os.dup(cast(Callable[[], int], fileno)())
         output_stream = os.fdopen(
