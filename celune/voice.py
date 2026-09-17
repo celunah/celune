@@ -338,11 +338,15 @@ def _prepare_backend_reload(
     backend_spec: CoreBackendSpec,
 ) -> bool:
     """Prepare runtime state for one backend reload before loading begins."""
-    if self._closed or self.exit_requested:
-        return False
-    if self._reload_pending or self.cur_state == "reloading":
+    with self.say_lock:
+        if self._closed or self.exit_requested:
+            return False
+        reload_already_pending = self._reload_pending or self.cur_state == "reloading"
+
+    if reload_already_pending:
         self.log(string("celune.reload_already_in_progress"), "warning")
         return False
+
     if isinstance(backend_spec, str):
         normalized_backend = backend_spec.strip().lower()
         if normalized_backend not in BACKENDS and normalized_backend not in VC_BACKENDS:
@@ -358,11 +362,21 @@ def _prepare_backend_reload(
             )
             return False
 
+    with self.say_lock:
+        if self._closed or self.exit_requested:
+            return False
+        reload_already_pending = self._reload_pending or self.cur_state == "reloading"
+        if not reload_already_pending:
+            self._reload_pending = True
+            self._model_ready.clear()
+
+    if reload_already_pending:
+        self.log(string("celune.reload_already_in_progress"), "warning")
+        return False
+
     self.change_input_state_callback(locked=True)
     self.change_voice_lock_state_callback(locked=True)
     self.force_stop_speech()
-    self._model_ready.clear()
-    self._reload_pending = True
     self._try_play_signal("working")
     return True
 
@@ -460,7 +474,12 @@ def set_cevoice(self, bundle: Optional[Union[str, Path]]) -> bool:
 
 def _prepare_cevoice_reload(self, bundle: Optional[Union[str, Path]]) -> bool:
     """Prepare runtime state for one CEVOICE reload before loading begins."""
-    if self._reload_pending or self.cur_state == "reloading":
+    with self.say_lock:
+        if self._closed or self.exit_requested:
+            return False
+        reload_already_pending = self._reload_pending or self.cur_state == "reloading"
+
+    if reload_already_pending:
         self.log(string("celune.reload_already_in_progress"), "warning")
         return False
 
@@ -470,11 +489,21 @@ def _prepare_cevoice_reload(self, bundle: Optional[Union[str, Path]]) -> bool:
             self.log(string("celune.voice_pack_not_found", bundle=bundle), "warning")
             return False
 
+    with self.say_lock:
+        if self._closed or self.exit_requested:
+            return False
+        reload_already_pending = self._reload_pending or self.cur_state == "reloading"
+        if not reload_already_pending:
+            self._reload_pending = True
+            self._model_ready.clear()
+
+    if reload_already_pending:
+        self.log(string("celune.reload_already_in_progress"), "warning")
+        return False
+
     self.change_input_state_callback(locked=True)
     self.change_voice_lock_state_callback(locked=True)
     self.force_stop_speech()
-    self._model_ready.clear()
-    self._reload_pending = True
     return True
 
 

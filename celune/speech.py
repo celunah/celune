@@ -37,6 +37,7 @@ from .pipeline import (
 )
 from .playback import (
     acquire_pipeline,
+    acquire_pipeline_result,
     _clear_playback_source_status,
     _download_youtube_sfx,
     _is_youtube_sfx_url,
@@ -394,7 +395,8 @@ def queue_speech(
     if not _prepare_speech_readiness(engine):
         return False
 
-    engine.model_ready.wait()
+    if not _wait_for_model_ready(engine):
+        return False
     if not _finish_speech_readiness(engine):
         return False
 
@@ -424,11 +426,42 @@ def _prepare_speech_readiness(engine: Celune) -> bool:
         engine.progress_callback(0, 1)
         return False
 
+    if _speech_reload_blocks(engine):
+        return False
+
     if not engine.model_ready.is_set():
         engine.status_callback(string("status.waiting_for_model"))
         engine.progress_callback(None, None)
         engine.log(string("pipeline.speak_waiting_reload"), "info")
 
+    return True
+
+
+def _speech_reload_blocks(engine: Celune) -> bool:
+    """Reject speech when model lifecycle work is still in progress."""
+    with engine.say_lock:
+        reload_pending = (
+            bool(getattr(engine, "_reload_pending", False))
+            or getattr(engine, "cur_state", None) == "reloading"
+        )
+    if not reload_pending:
+        return False
+
+    acquisition = acquire_pipeline_result(engine, "speak")
+    if acquisition.acquired:
+        release_pipeline(engine)
+        return False
+    engine.progress_callback(0, 1)
+    return True
+
+
+def _wait_for_model_ready(engine: Celune) -> bool:
+    """Wait for readiness while observing a reload boundary."""
+    while not engine.model_ready.wait(timeout=0.1):
+        if _speech_reload_blocks(engine):
+            return False
+        if engine.exit_requested:
+            return False
     return True
 
 
@@ -564,7 +597,8 @@ async def queue_speech_async(
     if not _prepare_speech_readiness(engine):
         return False
 
-    await _run_in_daemon_thread(engine.model_ready.wait)
+    if not await _run_in_daemon_thread(lambda: _wait_for_model_ready(engine)):
+        return False
 
     if not _finish_speech_readiness(engine):
         return False
