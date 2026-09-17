@@ -1348,6 +1348,60 @@ class TestPipelineAsync(_TestPipelineAsync):
         self.assertEqual(timing_call.args[0], "raw input")
         self.assertEqual(timing_call.args[3], "normalized first normalized second")
 
+    async def test_generation_worker_releases_pipeline_after_backend_error(
+        self,
+    ) -> None:
+        """Verify a failed generation does not block the next utterance."""
+        engine = make_pipeline_engine()
+        engine.backend = SimpleNamespace(
+            generate_stream=mock.Mock(
+                side_effect=RuntimeError(
+                    "Calculated padded input size per channel: (6). "
+                    "Kernel size: (7). Kernel size can't be greater than actual input size"
+                )
+            ),
+            is_fake=False,
+            supported_languages=("en",),
+        )
+        engine.model_lock = threading.Lock()
+        engine.model = mock.Mock()
+        engine.language = "en"
+        engine.chunk_size = 8
+        engine.voice_prompt = None
+        engine.current_voice = "balanced"
+        engine.speed = 1.0
+        engine.can_use_rubberband = False
+        engine.reverb = SimpleNamespace(
+            strength=0.0,
+            reset=mock.Mock(),
+            flush=mock.Mock(return_value=np.zeros((0, 2), dtype=np.float32)),
+        )
+        engine.queue_avail_callback = mock.Mock()
+        engine.caption_timing_callback = mock.Mock()
+        engine.sentinel = PipelineStates.TERMINATE
+        engine.dev = False
+        engine.recently_saved = None
+
+        assert pipeline.acquire_pipeline(cast(Celune, engine), "speak")
+        engine.text_queue.put(pipeline.SpeechRequest("What?", "What?", save=False))
+        engine.text_queue.put(engine.sentinel)
+
+        with mock.patch("celune.pipeline.split_text", return_value=["What?"]):
+            await self._run_generation_worker(cast(Celune, engine))
+
+        assert engine.cur_state == "idle"
+        assert not engine.locked
+        assert engine._pipeline_lock_owner is None
+        assert engine.component_locks.snapshot() == {}
+        assert engine.playback_done.is_set()
+        assert engine.statuses == [
+            ("Your input was too short. Please enter a longer utterance.", "warning")
+        ]
+        assert engine.errors == []
+
+        assert pipeline.acquire_pipeline(cast(Celune, engine), "speak")
+        pipeline.release_pipeline(cast(Celune, engine))
+
     async def test_generation_worker_reloads_language_specific_model_when_needed(
         self,
     ) -> None:

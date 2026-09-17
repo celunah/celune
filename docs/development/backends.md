@@ -114,7 +114,13 @@ constructor before Celune enables Hugging Face offline mode for model loading.
 The worker imports the LuxTTS runtime during its handshake so native runtime
 imports do not occur inside a request thread. Celune's startup warm-up uses a
 full sentence because the upstream LuxTTS vocoder cannot decode the previous
-one-character warm-up input.
+one-character warm-up input. If a backend raises during an utterance, Celune
+reports the generation error and releases the complete speech pipeline lease,
+including its typed TTS, speech-queue, and playback ownership, so a later
+utterance can still be admitted. The known LuxTTS short-input vocoder shape
+failure returns Celune to idle and is presented as a warning asking the user to
+enter a longer utterance; other generation failures retain the normal error
+treatment.
 
 ## Adding a backend
 

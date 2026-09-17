@@ -483,6 +483,7 @@
     "pipeline.flac_save_failed": "Could not save FLAC output.",
     "pipeline.forcefully_stopping_speech": "Forcefully stopping speech.",
     "pipeline.gen_error": "Speech generation failed.",
+    "pipeline.input_too_short": "Your input was too short. Please enter a longer utterance.",
     "pipeline.just_type": "Just type. {choice}",
     "pipeline.may_be_silent": "This utterance may be unexpectedly silent.",
     "pipeline.may_not_say_properly": "{app_name} may not say the input properly.",

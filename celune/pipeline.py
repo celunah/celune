@@ -199,6 +199,16 @@ if TYPE_CHECKING:
     )
 
 
+_SHORT_INPUT_VOCODER_ERROR = (
+    "Calculated padded input size per channel: (6). Kernel size: (7)."
+)
+
+
+def _is_short_input_generation_error(error: BaseException) -> bool:
+    """Return whether a backend rejected the known too-short input shape."""
+    return _SHORT_INPUT_VOCODER_ERROR in str(error)
+
+
 def _stop_pipeline_jobs(self: Celune) -> None:
     """Stop startup pipeline workers after an initialization failure."""
     with self.queue_lock:
@@ -1853,24 +1863,31 @@ def _process_generation_request(engine: Celune, item: SpeechRequest) -> None:
                 release_pipeline(engine)
                 break
 
-            engine.log(
-                format_error_message(
-                    tagged_string("pipeline.gen_error", "GEN ERROR"),
-                    e,
-                    engine.log_level,
-                ),
-                "error",
-            )
+            short_input_error = _is_short_input_generation_error(e)
+            input_too_short_message = string("pipeline.input_too_short")
+            if short_input_error:
+                engine.log(input_too_short_message, "warning")
+            else:
+                engine.log(
+                    format_error_message(
+                        tagged_string("pipeline.gen_error", "GEN ERROR"),
+                        e,
+                        engine.log_level,
+                    ),
+                    "error",
+                )
             if stream_queue is not None:
                 stream_queue.put(e)
                 stream_queue.put(None)
-            engine.cur_state = "error"
-            engine.locked = False
-            engine.playback_done.set()
+            engine.cur_state = "idle" if short_input_error else "error"
+            release_pipeline(engine)
             engine.progress_callback(0, 1)
-            engine.error_callback(
-                string("pipeline.could_not_generate", app_name=APP_NAME)
-            )
+            if short_input_error:
+                engine.status_callback(input_too_short_message, "warning")
+            else:
+                engine.error_callback(
+                    string("pipeline.could_not_generate", app_name=APP_NAME)
+                )
             break
 
 
