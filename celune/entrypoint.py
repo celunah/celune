@@ -1761,6 +1761,8 @@ def main(argv: Optional[list[str]] = None) -> None:
 
         # HACK: tabs are a quick and dirty alignment trick
         # they are not guaranteed to work in all terminals equally well
+        #
+        # please rewrite this soon
         print(string("cli.help_main_usage", program=resolved_argv[0]))
         print()
         print(string("cli.help_available_commands"))

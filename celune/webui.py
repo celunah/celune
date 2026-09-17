@@ -698,7 +698,7 @@ def api_log(action: str, content: str, suffix: str = "") -> None:
     try:
         print(f"[{timestamp}] {action} {preview!r}{suffix}", flush=True)
     except ValueError:
-        # Some embedded launch paths can close stdout while the WebUI stays alive.
+        # Celune has no stdout attached, but WebUI wants to display a message
         pass
 
 

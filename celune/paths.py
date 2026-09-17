@@ -130,8 +130,8 @@ def configure_huggingface_cache_environment() -> None:
     default_hf_home = str(huggingface_home_dir())
     default_hf_hub_cache = str(huggingface_hub_cache_dir())
 
-    # Keep explicit deployment or host overrides, but make Celune's cache
-    # deterministic for source-tree, compiled, and isolated worker processes.
+    # use app-managed HF cache, so you can easily take her runtime data
+    # and apply it elsewhere
     if _HF_HOME_ENV not in os.environ:
         os.environ[_HF_HOME_ENV] = default_hf_home
     if _HF_HUB_CACHE_ENV not in os.environ:

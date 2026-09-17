@@ -1230,10 +1230,6 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
                     self.persona_loading = False
             return
         try:
-            # Persona preloading runs after speech readiness and must not take
-            # ownership of the foreground progress bar. Its transfer events
-            # otherwise arrive after the UI reports idle and can replace the
-            # completed bar with an indeterminate state.
             vision.load(
                 persona_model_id(self.config),
                 persona_quantization(self.config),
@@ -2354,9 +2350,7 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
                 return
             self._closed = True
 
-        # Shutdown must not wait for the reload lock or for a backend response.
-        # Reload workers can be blocked in backend operations while holding that lock, so
-        # abort them before entering any serialized cleanup path.
+        # call this or else you get a zombified Celune that can't proceed with her exit procedures
         self._abort_backend_operations()
         with self._shutdown_runtime_lock():
             self.log(

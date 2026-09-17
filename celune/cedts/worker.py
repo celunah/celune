@@ -57,9 +57,6 @@ from ..backends.environment import BackendManifest, backend_manifest
 from ..dataclasses.pipeline import VoiceConversionRequest
 
 _WORKER_STDERR = sys.stderr
-# Retain recent packet IDs to reject replayed packets without growing state for
-# the lifetime of a long-running worker. IDs outside this replay window may be
-# reused by a peer after the window has elapsed.
 _MESSAGE_ID_REPLAY_WINDOW = 4096
 _CALL_ARGUMENT_FIELDS = {
     "resolve_generation_language": frozenset({"method", "lang"}),
@@ -974,10 +971,7 @@ def main() -> int:
             and response.get("done") is True
         ):
             response = {"ok": False, "cancelled": True, "done": True}
-        # Clear the active marker before publishing the terminal response. The
-        # control loop can receive the next request as soon as that response is
-        # readable, so leaving the marker set until after the send creates a
-        # race where a completed request rejects its successor as active.
+
         with active_request_lock:
             if active_request_id == request_id:
                 active_request_id = None
