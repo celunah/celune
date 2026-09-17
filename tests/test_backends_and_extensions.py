@@ -155,6 +155,16 @@ class TestBackend(CeluneTestCase):
             ],
         )
 
+    def test_luxtts_prepares_runtime_before_worker_requests(self) -> None:
+        """Verify LuxTTS imports its native runtime during worker preparation."""
+        backend = object.__new__(LuxTTS)
+        with mock.patch(
+            "celune.backends.tts.luxtts._load_runtime_class"
+        ) as load_runtime:
+            backend.prepare_model_loading()
+
+        load_runtime.assert_called_once_with()
+
     def test_luxtts_loads_the_runtime_on_cpu(self) -> None:
         """Verify LuxTTS is never initialized with the default CUDA device."""
         backend = object.__new__(LuxTTS)

@@ -111,6 +111,10 @@ PyTorch wheels and adds the upstream Piper wheel page as a `find-links` source
 so the CPU environment can resolve its phonemizer dependency. Preloading also
 caches the `openai/whisper-tiny` transcriber required by the upstream CPU
 constructor before Celune enables Hugging Face offline mode for model loading.
+The worker imports the LuxTTS runtime during its handshake so native runtime
+imports do not occur inside a request thread. Celune's startup warm-up uses a
+full sentence because the upstream LuxTTS vocoder cannot decode the previous
+one-character warm-up input.
 
 ## Adding a backend
 

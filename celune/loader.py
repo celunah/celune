@@ -388,7 +388,7 @@ def _warmup(
     self.log(tagged_string("celune.warmup_start", "WARMUP"))
     self.status_callback(string("status.warming_up"))
     self.progress_callback(None, None)
-    warmup_text = "A"
+    warmup_text = "Hello. I am here, and I am listening carefully."
     self._last_warmup_error = None
     active_backend = backend if backend is not None else self.backend
     active_model = model if model is not None else self.model

@@ -192,6 +192,11 @@ class LuxTTS(CeluneBackend[_LuxTTSModel]):
                 threads=self._threads,
             )
 
+    def prepare_model_loading(self) -> None:
+        """Import LuxTTS before the worker accepts request-thread operations."""
+        with self._suppress_backend_output():
+            _load_runtime_class()
+
     def preload_models(self) -> None:
         """Ensure LuxTTS and its hard-coded Whisper transcriber are cached."""
         super().preload_models()
