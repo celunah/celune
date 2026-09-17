@@ -378,9 +378,6 @@ def _start_vc_recording(self) -> bool:
             blocksize=live_chunk_frames,
         )
 
-        # Publish the recording state before starting the stream. PortAudio
-        # may invoke the callback during ``start()``, and that first buffer
-        # must not be discarded as an inactive recording.
         with self._vc_recording_lock:
             self._vc_recording_stream = stream
             self._vc_recording_chunks = []

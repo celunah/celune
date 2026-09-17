@@ -416,9 +416,7 @@ class BackendEnvironmentManager:
         """Run one uv operation and convert failures into backend errors."""
         assert self.uv_executable is not None
         environment = os.environ.copy()
-        # The compiled launcher and its host environment may carry core Python
-        # or package-manager settings into uv. Those settings can constrain
-        # backend resolution, so the isolated installer must not inherit them.
+
         for variable in tuple(environment):
             if variable.startswith(("PIP_", "UV_")):
                 environment.pop(variable, None)

@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """API layer."""
 
-# Import groups follow Celune's project-specific Ruff ordering.
 # pylint: disable=ungrouped-imports
 
 import os
@@ -111,7 +110,6 @@ from .webui import (
     stream_headers,
 )
 
-# Keep the historical API-module facade for WebUI helpers used by integrations.
 _receive_webui_timed_update = webui._receive_webui_timed_update
 _webui_audio_waveform_options = webui._webui_audio_waveform_options
 _input_update = webui._input_update

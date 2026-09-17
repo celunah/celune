@@ -1,11 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Frontend layer."""
 
-# Import groups follow Celune's project-specific Ruff ordering.
 # pylint: disable=ungrouped-imports
-
-# UI runtime dependencies are declared under TYPE_CHECKING and populated lazily
-# by _load_ui_runtime_dependencies to keep the startup frame lightweight.
 
 from __future__ import annotations
 

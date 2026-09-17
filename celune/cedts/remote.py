@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """Proxy objects for backends running in isolated Python processes."""
 
-# Import groups follow Celune's project-specific Ruff ordering.
 # pylint: disable=ungrouped-imports
 
 import os
@@ -101,9 +100,6 @@ _BACKEND_MODEL_OPERATION_TIMEOUT_SECONDS = 900.0
 _BACKEND_MODEL_LOAD_TIMEOUT_SECONDS = _BACKEND_MODEL_OPERATION_TIMEOUT_SECONDS
 _MAX_RESPONSE_QUEUE_ITEMS = 128
 _MAX_RESPONSE_QUEUE_BYTES = 16 * 1024 * 1024
-# Retain recent packet IDs to reject replayed packets without growing state for
-# the lifetime of a long-running proxy. IDs outside this replay window may be
-# reused by a peer, while active request correlation remains separately tracked.
 _MESSAGE_ID_REPLAY_WINDOW = 4096
 _CANCELLATION_TOMBSTONE_WINDOW = 4096
 _WORKER_ENVIRONMENT_VARIABLES = (
@@ -1134,8 +1130,6 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
                         remaining,
                     )
                 except (OSError, ValueError):
-                    # The direct path is only used before the dispatcher starts;
-                    # Windows subprocess pipes do not support select().
                     ready = [process.stdout]
                 if not ready:
                     raise CEDTSTimeoutError(
@@ -1918,9 +1912,6 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
         """Terminate the worker without waiting for an active generation."""
         self._closing = True
         self._stop_packet_reader()
-        # Wake every CEDTS consumer before terminating the process.  A request
-        # or event waiter may otherwise remain blocked on its condition while
-        # the worker is stuck inside a backend-specific operation.
         self._clear_runtime_state()
         with self._close_lock:
             if self._closed and self._process is None:

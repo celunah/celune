@@ -28,18 +28,21 @@ from .i18n import string
 from .paths import project_root, temp_data_dir, voices_data_dir
 from .typing.cevoice import Manifest, ManifestValue, VoiceManifest
 
-# CECHAR v2/v3 legacy container. Keep these names stable for callers that
-# construct or inspect legacy packs.
+# CECHAR v2 and v3 (Celune v4 format)
+# a voice pack capable of character embodiment
 MAGIC: Final[bytes] = b"CECHAR\0\0"
 VERSION: Final[int] = 3
 FORMAT_NAME: Final[str] = "CECHAR"
 COMPATIBLE_CECHAR_VERSIONS: Final[frozenset[int]] = frozenset({2, 3})
 
 # CEVOICE v1 spec (Celune v3.5 format)
+# a voice-only pack, incompatible with Persona
 LEGACY_MAGIC: Final[bytes] = b"CEVOICE\0"
 LEGACY_VERSION: Final[int] = 1
 LEGACY_FORMAT_NAME: Final[str] = "CEVOICE"
 
+# CECHAR v4
+# an advanced voice pack with compression and binary jump tables
 HEADER = struct.Struct("<8sHI")
 V4_MAGIC: Final[bytes] = b"CECHAR\0"
 V4_VERSION: Final[int] = 4
@@ -62,6 +65,8 @@ SUPPORTED_PERSONA_FILENAMES: Final[tuple[str, ...]] = (
     "boundaries.md",
     "examples.md",
 )
+
+# Celune now provides two unique identities as of her 6-month anniversary
 DEFAULT_CEVOICE_PACK_SHA256: Final[str] = (
     "248cdf3d86a6f814dee1486408d70eef134688f0bc5cd30fe96df977b291b81b"
 )
@@ -70,7 +75,9 @@ CLASSIC_CEVOICE_PACK_SHA256: Final[str] = (
 )
 OFFICIAL_CEVOICE_PACK_SHA256S: Final[frozenset[str]] = frozenset(
     {
+        # natural pack
         DEFAULT_CEVOICE_PACK_SHA256,
+        # OG pack
         CLASSIC_CEVOICE_PACK_SHA256,
     }
 )
