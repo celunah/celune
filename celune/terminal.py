@@ -18,17 +18,17 @@ _TERMINAL_TITLE_CONTROL_RE = re.compile(
 
 RUNTIME_LOG_FILTER_MESSAGES = frozenset(
     {
-        "`torch_dtype` is deprecated! Use `dtype` instead!",
-        "Skipped loading some keys due to shape mismatch:",
+        "`torch_dtype` is deprecated",
+        "Skipped loading some keys due to shape mismatch",
         "cfm loaded",
         "length_regulator loaded",
-        "Removing weight norm...",
+        "Removing weight norm",
         "Loading weights from",
         "Loading Text2Semantic weights from",
         "Loading Text2Semantic Weights from",
         "min value is",
         "max value is",
-        "generation flags are not valid and may be ignored:",
+        "generation flags are not valid and may be ignored",
         "it/s]",
         "s/it]",
         "inputs will be cast",
@@ -37,12 +37,13 @@ RUNTIME_LOG_FILTER_MESSAGES = frozenset(
         "triton not found",
         "A custom logits processor of type",
         "FireRedTTS3 (text front-end) loaded",
-        "with an incorrect regex pattern:",
-    }
-)
-RUNTIME_LOG_FILTER_MULTILINE_MESSAGES = frozenset(
-    {
-        "with an incorrect regex pattern:",
+        "with an incorrect regex pattern",
+        "flash-attn is not installed",
+        "Could not infer sample rate from base model",
+        "Warming up predictor",
+        "Capturing CUDA graph",
+        "CUDA graph captured",
+        "Warming up talker graph",
     }
 )
 

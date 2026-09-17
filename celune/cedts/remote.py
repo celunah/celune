@@ -27,7 +27,6 @@ from ..paths import (
 )
 from ..terminal import (
     RUNTIME_LOG_FILTER_MESSAGES,
-    RUNTIME_LOG_FILTER_MULTILINE_MESSAGES,
 )
 from ..backends.vc.base import CeluneVCBackend
 from ..backends.tts.base import CeluneBackend
@@ -510,10 +509,7 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
                 filtered_message in text
                 for filtered_message in RUNTIME_LOG_FILTER_MESSAGES
             ):
-                filtered_continuation = any(
-                    text.endswith(filtered_message)
-                    for filtered_message in RUNTIME_LOG_FILTER_MULTILINE_MESSAGES
-                )
+                filtered_continuation = text.endswith(":")
                 continue
             if text.startswith("Traceback (most recent call last):"):
                 traceback_active = True
