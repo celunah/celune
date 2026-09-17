@@ -28,6 +28,7 @@ from .extensions.manager import CeluneExtensionManager
 from .i18n import string, tagged_string
 from .paths import project_root
 from .pipeline import force_stop_speech as force_stop_pipeline, play_signal
+from .threads import run_in_daemon_thread
 from .typing.aliases import LogLevel
 from .typing.celune import CoreBackendSpec
 from .utils import format_error_message
@@ -267,17 +268,17 @@ async def set_voice_async(self, name: str, timeout: float = 30.0) -> bool:
     Raises:
         Exception: If the asynchronous reload worker raises unexpectedly.
     """
-    await asyncio.to_thread(self._async_runtime_lock.acquire)
+    await run_in_daemon_thread(self._async_runtime_lock.acquire)
     try:
         with self._voice_reload_guard:
             if self._voice_reload_active:
                 self.log(string("celune.reload_already_in_progress"), "warning")
                 return False
             self._voice_reload_active = True
-        if not await asyncio.to_thread(self._prepare_voice_change, name):
+        if not await run_in_daemon_thread(self._prepare_voice_change, name):
             self._clear_voice_reload_guard()
             return False
-        worker = asyncio.create_task(asyncio.to_thread(self._run_voice_reload, name))
+        worker = asyncio.create_task(run_in_daemon_thread(self._run_voice_reload, name))
         try:
             await asyncio.wait_for(asyncio.shield(worker), timeout=timeout)
         except TimeoutError:
@@ -419,14 +420,17 @@ async def set_backend_async(
     Returns:
         ``True`` when the backend reload completed successfully.
     """
-    await asyncio.to_thread(self._async_runtime_lock.acquire)
+    await run_in_daemon_thread(self._async_runtime_lock.acquire)
     try:
-        if not await asyncio.to_thread(self._prepare_backend_reload, backend_spec):
+        if not await run_in_daemon_thread(
+            self._prepare_backend_reload,
+            backend_spec,
+        ):
             return False
         preferred_voice = self.current_voice
         try:
             await asyncio.wait_for(
-                asyncio.to_thread(
+                run_in_daemon_thread(
                     self._hot_reload_backend,
                     backend_spec,
                     preferred_voice,
@@ -545,13 +549,16 @@ async def set_cevoice_async(
     Returns:
         ``True`` when the CEVOICE reload completed successfully.
     """
-    await asyncio.to_thread(self._async_runtime_lock.acquire)
+    await run_in_daemon_thread(self._async_runtime_lock.acquire)
     try:
-        if not await asyncio.to_thread(self._prepare_cevoice_reload, bundle):
+        if not await run_in_daemon_thread(
+            self._prepare_cevoice_reload,
+            bundle,
+        ):
             return False
         try:
             await asyncio.wait_for(
-                asyncio.to_thread(self._hot_reload_cevoice, bundle, None),
+                run_in_daemon_thread(self._hot_reload_cevoice, bundle, None),
                 timeout=timeout,
             )
         except TimeoutError:
@@ -600,7 +607,7 @@ async def wait_until_idle_async(
     Returns:
         ``True`` when Celune becomes ready before the timeout.
     """
-    ok = await asyncio.to_thread(self._model_ready.wait, timeout)
+    ok = await run_in_daemon_thread(self._model_ready.wait, timeout)
     if not ok:
         self.log(string("celune.ready_wait_timeout"), "warning")
         self.log(string("celune.ready_wait_reason"), "warning")
@@ -615,7 +622,7 @@ async def wait_until_idle_async(
         wait_for_speech = self._speech_playback_active()
 
     if wait_for_speech:
-        ok = await asyncio.to_thread(self._playback_done.wait, timeout)
+        ok = await run_in_daemon_thread(self._playback_done.wait, timeout)
         if not ok:
             self.log(string("celune.playback_idle_timeout"), "warning")
             return False

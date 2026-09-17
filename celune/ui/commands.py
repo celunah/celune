@@ -26,6 +26,7 @@ from ..utils import (
     format_error_message,
 )
 from ..cevoice import active_bundle_path, resolve_bundle_path
+from ..threads import run_in_daemon_thread
 from ..vc import (
     VC_PITCH_SHIFT_MAX,
     VC_PITCH_SHIFT_MIN,
@@ -69,7 +70,7 @@ async def _run_runtime_async_on_loop(
     if callable(async_method):
         method = cast(Callable[..., Awaitable[bool]], async_method)
         return await method(*method_args)
-    return bool(await asyncio.to_thread(getattr(target, sync_name), *method_args))
+    return bool(await run_in_daemon_thread(getattr(target, sync_name), *method_args))
 
 
 def _attachment_source(path: Path) -> str:

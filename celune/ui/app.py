@@ -73,6 +73,7 @@ from ..typing.locks import (
     ComponentLockOwner,
     ComponentLockRequirement,
 )
+from ..threads import run_in_daemon_thread
 from ..typing.ui import CeluneUIMethodSurface
 from ..theme.defaults import default_error_theme_family, default_theme_family
 from ..watchdog import launcher_loss_requested
@@ -1498,17 +1499,17 @@ class CeluneUI(App, CeluneUIMethodSurface):
                 return
 
             if active_bundle_path() == bundle_path:
-                loaded = await asyncio.to_thread(
+                loaded = await run_in_daemon_thread(
                     self.celune.set_voice_and_wait,
                     entry,
                 )
             else:
-                loaded = await asyncio.to_thread(
+                loaded = await run_in_daemon_thread(
                     self.celune.set_cevoice_and_wait,
                     bundle_path,
                 )
                 if loaded:
-                    loaded = await asyncio.to_thread(
+                    loaded = await run_in_daemon_thread(
                         self.celune.set_voice_and_wait,
                         entry,
                     )

@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import contextlib
 import gc
 import os
@@ -28,6 +27,7 @@ from .pipeline import (
     saved_output_speech_seconds,
 )
 from .runtime import log_runtime_banner, validate_runtime
+from .threads import run_in_daemon_thread
 from .typing.celune import Generative, NormalizerTokenizer
 from .utils import (
     custom_assert,
@@ -58,7 +58,7 @@ async def force_stop_speech_async(self) -> bool:
     Returns:
         ``True`` when an active utterance was interrupted.
     """
-    return await asyncio.to_thread(force_stop_pipeline, self)
+    return await run_in_daemon_thread(force_stop_pipeline, self)
 
 
 async def enter_sleep_mode_async(self) -> bool:
@@ -67,9 +67,9 @@ async def enter_sleep_mode_async(self) -> bool:
     Returns:
         ``True`` when Celune enters sleep mode successfully.
     """
-    await asyncio.to_thread(self._async_runtime_lock.acquire)
+    await run_in_daemon_thread(self._async_runtime_lock.acquire)
     try:
-        return await asyncio.to_thread(self.enter_sleep_mode)
+        return await run_in_daemon_thread(self.enter_sleep_mode)
     finally:
         self._async_runtime_lock.release()
 
@@ -80,9 +80,9 @@ async def wake_from_sleep_async(self) -> bool:
     Returns:
         ``True`` when Celune wakes successfully.
     """
-    await asyncio.to_thread(self._async_runtime_lock.acquire)
+    await run_in_daemon_thread(self._async_runtime_lock.acquire)
     try:
-        return await asyncio.to_thread(self.wake_from_sleep)
+        return await run_in_daemon_thread(self.wake_from_sleep)
     finally:
         self._async_runtime_lock.release()
 

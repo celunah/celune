@@ -46,23 +46,28 @@ class TestCeluneAsyncRuntime(CeluneAsyncTestCase):
             self.addCleanup(self._close_celune, celune)
             return celune
 
-    async def test_set_backend_async_waits_for_model_ready_via_to_thread(self) -> None:
-        """Verify async backend switching runs preparation and reload through to_thread."""
+    async def test_set_backend_async_uses_daemon_workers(self) -> None:
+        """Verify async backend switching avoids asyncio's default executor."""
         celune = self._make_celune({})
         celune.loaded = True
         celune._prepare_backend_reload = mock.Mock(return_value=True)
         celune.current_voice = "nova"
         celune._hot_reload_backend = mock.Mock(return_value=True)
         celune._active_runtime_backend_name = mock.Mock(return_value="mini")
-        to_thread = mock.AsyncMock(side_effect=lambda func, *args: func(*args))
+        run_in_daemon_thread = mock.AsyncMock(
+            side_effect=lambda func, *args: func(*args)
+        )
 
-        with mock.patch("celune.voice.asyncio.to_thread", to_thread):
+        with mock.patch(
+            "celune.voice.run_in_daemon_thread",
+            run_in_daemon_thread,
+        ):
             switched = await celune.set_backend_async("mini", timeout=12.0)
 
         assert switched
         celune._prepare_backend_reload.assert_called_once_with("mini")
         celune._hot_reload_backend.assert_called_once_with("mini", "nova")
-        assert to_thread.await_count == 3
+        assert run_in_daemon_thread.await_count == 3
 
     async def test_say_async_does_not_stop_active_speech(self) -> None:
         """Verify a new async speech request does not cancel active playback."""
@@ -103,15 +108,20 @@ class TestCeluneAsyncRuntime(CeluneAsyncTestCase):
         assert started
         assert order == ["stop", "reload"]
 
-    async def test_wake_from_sleep_async_uses_to_thread(self) -> None:
-        """Verify waking from sleep moves the blocking reload path off the event loop."""
+    async def test_wake_from_sleep_async_uses_daemon_workers(self) -> None:
+        """Verify waking avoids the asyncio default executor."""
         celune = self._make_celune({})
         celune.wake_from_sleep = mock.Mock(return_value=True)
-        to_thread = mock.AsyncMock(side_effect=lambda func, *args: func(*args))
+        run_in_daemon_thread = mock.AsyncMock(
+            side_effect=lambda func, *args: func(*args)
+        )
 
-        with mock.patch("celune.loader.asyncio.to_thread", to_thread):
+        with mock.patch(
+            "celune.loader.run_in_daemon_thread",
+            run_in_daemon_thread,
+        ):
             woke = await celune.wake_from_sleep_async()
 
         assert woke
         celune.wake_from_sleep.assert_called_once_with()
-        assert to_thread.await_count == 2
+        assert run_in_daemon_thread.await_count == 2

@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import json
-import asyncio
 import queue
 import threading
 from collections.abc import Callable
@@ -65,6 +64,7 @@ from .typing.agent import (
     ToolCall,
 )
 from .typing.common import JSON, JSONSerializable
+from .threads import run_in_daemon_thread
 from .typing.locks import (
     ComponentLockName,
     ComponentLockOwner,
@@ -965,7 +965,7 @@ async def think_async(self: Celune, text: str) -> bool:
     Returns:
         bool: ``True`` when the response was queued successfully.
     """
-    return await asyncio.to_thread(self.think, text)
+    return await run_in_daemon_thread(self.think, text)
 
 
 def _think_worker(self: Celune) -> None:

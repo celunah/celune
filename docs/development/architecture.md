@@ -96,6 +96,12 @@ dedicated threads or processes. An async-facing method for one of those
 operations does not make the operation native async; it only keeps the caller's
 event loop responsive while the synchronous work runs elsewhere.
 
+Celune-owned async wrappers run blocking callables in daemon threads rather
+than `asyncio`'s default executor. Cancelling an async wrapper cannot safely
+kill arbitrary Python code already executing in a thread, so shutdown first
+signals the owning backend or process through its cancellation hook and then
+allows the daemon worker to be abandoned without delaying process exit.
+
 ## Component locks
 
 Reloads and concurrent operations use named component locks for TTS, VC, audio,
@@ -132,6 +138,7 @@ converge on idempotent teardown. Active live recording is stopped, workers are
 asked to shut down, streams are closed, models release their state, and event
 listeners receive terminal notifications. Pipeline blocking work uses daemon
 threads rather than the event loop's default executor, so a cancelled backend
-operation cannot make `asyncio.run()` wait for the executor's 300-second join
-window during restart. A fatal state can stop generation without pretending
-that the engine is healthy.
+or reload operation cannot make `asyncio.run()` wait for the executor's
+300-second join window during restart. CEDTS backends receive an abort/shutdown
+request before their daemon caller is abandoned. A fatal state can stop
+generation without pretending that the engine is healthy.

@@ -58,6 +58,7 @@ from .exceptions import NotAvailableError
 from .typing.common import JSON, JSONSerializable
 from .typing.aliases import AudioChunk, AudioChunks
 from .typing.pipeline import SpeechStreamQueue
+from .threads import run_in_daemon_thread as _run_in_daemon_thread
 from .dataclasses.pipeline import (
     SpeechTiming,
     PlaybackChunk,
@@ -218,47 +219,6 @@ def _stop_pipeline_jobs(self: Celune) -> None:
 
     if self._playback_thread is not None:
         self._playback_thread.join()
-
-
-async def _run_in_daemon_thread[PipelineResult](
-    function: Callable[[], PipelineResult],
-) -> PipelineResult:
-    """Run one blocking pipeline operation without using asyncio's default executor.
-
-    The pipeline runs in a daemon thread and can therefore outlive a cancelled
-    async task when a backend call does not return promptly. This is deliberate:
-    ``asyncio.run`` waits for its default executor during loop shutdown, while
-    pipeline shutdown already has backend abort and worker-lifetime safeguards.
-
-    Args:
-        function: Zero-argument blocking operation to execute.
-
-    Returns:
-        PipelineResult: The operation's result.
-    """
-    loop = asyncio.get_running_loop()
-    result: asyncio.Future[PipelineResult] = loop.create_future()
-
-    def complete(value: PipelineResult) -> None:
-        if not result.done():
-            result.set_result(value)
-
-    def fail(error: BaseException) -> None:
-        if not result.done():
-            result.set_exception(error)
-
-    def run() -> None:
-        try:
-            value = function()
-        except BaseException as error:
-            with contextlib.suppress(RuntimeError):
-                loop.call_soon_threadsafe(fail, error)
-        else:
-            with contextlib.suppress(RuntimeError):
-                loop.call_soon_threadsafe(complete, value)
-
-    threading.Thread(target=run, daemon=True).start()
-    return await result
 
 
 @dataclass(frozen=True)
