@@ -72,6 +72,7 @@ class VoiceEntryMetadata(TypedDict, total=False):
 
     cfg_scale: float
     reference_text: str
+    gpt_sovits_prompt_text: str
     persona: PersonaMetadata
 
 

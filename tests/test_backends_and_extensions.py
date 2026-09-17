@@ -29,6 +29,7 @@ from celune.exceptions import (
 from celune.celune import Celune
 from celune.utils import discard
 from celune.typing.aliases import AudioChunk
+from celune.typing.common import JSONSerializable
 from celune.paths import huggingface_progress
 from celune.backends.tts.fireredtts3 import (
     FireRedTTS3,
@@ -44,7 +45,11 @@ from celune.dataclasses.pipeline import VoiceConversionRequest
 from celune.extensions.base import CeluneContext, CeluneExtension
 from celune.typing.backends import BackendModel, _SeedVCRealtimeModule
 from celune.backends.tts import BACKEND_MANIFESTS, resolve_backend
-from celune.backends.tts.gpt_sovits import GPTSoVITS, GPTSoVITSPipeline
+from celune.backends.tts.gpt_sovits import (
+    GPTSoVITS,
+    GPTSoVITSPipeline,
+    _GPTSoVITSRuntime,
+)
 from celune.backends.vc import BACKEND_MANIFESTS as VC_BACKEND_MANIFESTS
 
 from .support import (
@@ -412,6 +417,57 @@ class TestBackend(CeluneTestCase):
         assert pipeline.prompt_cache["ref_audio_path"] is None
         assert pipeline.prompt_cache["refer_spec"] == []
         assert pipeline.prompt_cache["prompt_text"] is None
+
+    def test_gpt_sovits_uses_backend_specific_prompt_text_when_present(self) -> None:
+        """Verify long pack transcripts can provide a matching GPT-SoVITS excerpt."""
+        loader = make_voice_loader(
+            "balanced",
+            {
+                "reference_text": "Full pack transcript.",
+                "gpt_sovits_prompt_text": "Matching prompt excerpt.",
+            },
+        )
+        backend = GPTSoVITS.__new__(GPTSoVITS)
+        backend.random_seed = False
+        backend.current_seed = 7
+        backend.variant = "v4"
+        backend._truncated_reference_paths = set()
+        pipeline = SimpleNamespace(prompt_cache={})
+        seen_request: dict[str, JSONSerializable] = {}
+
+        def run_pipeline(
+            _pipeline: GPTSoVITSPipeline,
+            request: dict[str, JSONSerializable],
+        ) -> Iterator[tuple[int, AudioChunk]]:
+            seen_request.update(request)
+            yield 24000, np.zeros(8, dtype=np.float32)
+
+        backend._run_pipeline = mock.Mock(side_effect=run_pipeline)
+        with (
+            mock.patch(
+                "celune.backends.tts.gpt_sovits.default_loader", return_value=loader
+            ),
+            mock.patch.object(
+                backend, "_trim_reference_silence", return_value=Path("reference.wav")
+            ),
+            mock.patch.object(
+                backend, "_truncate_reference", return_value=Path("trimmed.wav")
+            ),
+            mock.patch.object(backend, "_validate_reference_audio"),
+        ):
+            list(
+                backend.generate_stream(
+                    cast(
+                        _GPTSoVITSRuntime,
+                        SimpleNamespace(variant="v4", pipeline=pipeline),
+                    ),
+                    text="hello",
+                    voice="balanced",
+                    language="en",
+                )
+            )
+
+        assert seen_request["prompt_text"] == "Matching prompt excerpt."
 
     def test_base_backend_reports_models(self) -> None:
         """Verify model metadata helpers on a fake backend.
@@ -1695,8 +1751,8 @@ class TestBackend(CeluneTestCase):
             assert model.model.tokenizer is tokenizer
             assert model.model.core.tokenizer is tokenizer
 
-    def test_dotstts_uses_truncated_reference_wav_when_present(self) -> None:
-        """Verify dots.tts passes reference audio through the shared truncation hook."""
+    def test_dotstts_uses_the_complete_reference_wav_when_present(self) -> None:
+        """Verify dots.tts receives complete prompt audio for its prompt-span handling."""
 
         with mock_dotstts_backend() as dotstts_cls:
 
@@ -1727,16 +1783,15 @@ class TestBackend(CeluneTestCase):
                 mock.patch(
                     "celune.backends.tts.dotstts.default_loader", return_value=loader
                 ),
-                mock.patch.object(
-                    dotstts_cls, "_truncate_reference", return_value=Path("trimmed.wav")
-                ),
+                mock.patch.object(dotstts_cls, "_truncate_reference") as truncate,
             ):
                 backend = dotstts_cls(log=lambda _msg, _severity="info": None)
                 model = FakeModel()
                 list(backend.generate_stream(model, text="hello", voice="calm"))
 
             assert model.prompt_text == "Pack reference."
-            assert model.prompt_audio_path == str(Path("trimmed.wav"))
+            assert model.prompt_audio_path == str(Path("calm.wav"))
+            truncate.assert_not_called()
 
     def test_dotstts_falls_back_to_the_active_pack_voice_ids(self) -> None:
         """Verify dots.tts uses the pack voice when the backend default is absent."""

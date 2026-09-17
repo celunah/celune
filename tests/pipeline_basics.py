@@ -18,7 +18,7 @@ import numpy as np
 import pytest
 import numpy.typing as npt
 
-from celune import pipeline
+from celune import conversation as conversation_module, pipeline
 from celune.utils import discard
 from celune.celune import Celune
 from celune.cevoice import (
@@ -34,6 +34,7 @@ from celune.typing.agent import (
 )
 from celune.typing.common import JSON, JSONSerializable
 from celune.typing.aliases import AudioChunk
+from celune.typing.locks import ComponentLockName
 from celune.dataclasses.pipeline import AudioInputRequest
 from celune.persona.capabilities import PersonaCapabilities
 
@@ -448,7 +449,8 @@ class TestPipelineAsync(CeluneAsyncTestCase):
         engine = make_pipeline_engine()
         engine.model_ready.clear()
 
-        def mark_ready() -> bool:
+        def mark_ready(*, timeout: Optional[float]) -> bool:
+            del timeout
             engine.model_ready.set()
             return True
 
@@ -463,7 +465,7 @@ class TestPipelineAsync(CeluneAsyncTestCase):
             )
 
         assert queued
-        engine.model_ready.wait.assert_called_once_with()
+        engine.model_ready.wait.assert_called_once_with(timeout=0.1)
         assert run_in_daemon_thread.await_count == 1
         request = engine.text_queue.get_nowait()
         assert request.text == "hello"
@@ -498,6 +500,41 @@ class TestPipelineAsync(CeluneAsyncTestCase):
         assert request.display_text == "shown"
         assert request.language == "en"
         assert engine.statuses[-1] == ("Generating", "info")
+
+    def test_queue_speech_does_not_admit_work_during_model_reload(self) -> None:
+        """Verify a speech request is rejected at reload admission instead of deadlocking."""
+        engine = make_pipeline_engine()
+        engine._reload_pending = True
+        engine.model_ready.clear()
+
+        queued = pipeline.queue_speech(cast(Celune, engine), "hello")
+
+        assert not queued
+        assert not engine.locked
+        assert engine._last_component_busy is not None
+        assert engine._last_component_busy.components == (
+            ComponentLockName.MODEL_LOADING,
+        )
+
+    def test_persona_wait_does_not_cross_a_model_reload_boundary(self) -> None:
+        """Verify Persona waits for reload completion before changing engine state."""
+        engine = make_pipeline_engine()
+        engine._reload_pending = True
+        wait_calls = 0
+
+        def wait_for_playback(*, timeout: Optional[float]) -> bool:
+            nonlocal wait_calls
+            del timeout
+            wait_calls += 1
+            if wait_calls == 2:
+                engine._reload_pending = False
+                engine.cur_state = "idle"
+            return True
+
+        engine.playback_done.wait = mock.Mock(side_effect=wait_for_playback)
+
+        assert conversation_module._wait_for_persona_playback(cast(Celune, engine))
+        assert wait_calls == 2
 
         engine = make_pipeline_engine()
         engine.use_normalization = True

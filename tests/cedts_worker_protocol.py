@@ -1300,6 +1300,24 @@ raise SystemExit(worker.main())
 
         log.assert_called_once_with("backend message", "info", loglevel="info")
 
+    def test_remote_proxy_suppresses_multiline_tokenizer_warning(self) -> None:
+        """Verify a filtered third-party warning and its continuation stay hidden."""
+        proxy = object.__new__(remote.RemoteBackendProxy)
+        proxy._worker_stderr = deque()
+        proxy._worker_stderr_lock = threading.Lock()
+        log = mock.Mock()
+        stream = io.BytesIO(
+            b"The tokenizer is loading with an incorrect regex pattern:\n"
+            b"https://huggingface.co/mistralai/Mistral-Small-3.1-24B-Instruct-2503/discussions/84\n"
+            b"This will lead to incorrect tokenization. You should set the fix flag.\n"
+            b"tokenizer to fix this issue.\n"
+            b"[info] backend ready\n"
+        )
+
+        proxy._read_worker_logs(stream, log)
+
+        log.assert_called_once_with("backend ready", "info", loglevel="info")
+
     def test_remote_proxy_uses_backend_error_for_unknown_worker_exception_types(
         self,
     ) -> None:

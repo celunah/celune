@@ -1022,7 +1022,13 @@ class GPTSoVITS(CeluneBackend[_GPTSoVITSRuntime]):
         reference_wav = self._truncate_reference(reference_wav)
         self._validate_reference_audio(voice, reference_wav)
         voice_data = loader.bundle.voices[voice]
-        reference_text = str(voice_data["reference_text"]).strip()
+        configured_prompt_text = voice_data.get("gpt_sovits_prompt_text")
+        reference_text = (
+            configured_prompt_text.strip()
+            if isinstance(configured_prompt_text, str)
+            and configured_prompt_text.strip()
+            else str(voice_data["reference_text"]).strip()
+        )
         configured_prompt_language = voice_data.get("gpt_sovits_prompt_language")
         prompt_language = self._prompt_language(
             reference_text,

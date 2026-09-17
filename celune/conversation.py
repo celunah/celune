@@ -1046,6 +1046,8 @@ def _wait_for_persona_playback(self: Celune) -> bool:
     while not self.exit_requested:
         self.playback_done.wait(timeout=0.1)
         with self.say_lock:
+            if self._reload_pending or self.cur_state == "reloading":
+                continue
             if not self.locked and self.cur_state not in {"generating", "speaking"}:
                 return True
     return False

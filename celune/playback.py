@@ -23,6 +23,7 @@ import numpy as np
 from .constants import APP_NAME, BASE_SR, PipelineStates
 from .dataclasses.pipeline import PlaybackChunk, PlaybackSourceDone, SpeechTiming
 from .i18n import string
+from .locks import ComponentLockManager
 from .paths import project_root, running_compiled, temp_data_dir
 from .pipelinecore import (
     _LEGACY_BUFFER_SECONDS,
@@ -144,6 +145,27 @@ def _notify_component_busy(
     engine.error_callback(string("celune.app_busy", app_name=APP_NAME))
 
 
+def _reload_busy_result(
+    requirements: tuple[ComponentLockRequirement, ...],
+    owner: ComponentLockOwner,
+    manager: Optional[ComponentLockManager],
+) -> ComponentLockAcquisition:
+    """Build a typed speech conflict while model lifecycle work is active."""
+    model_owner = (
+        manager.owner_for(ComponentLockName.MODEL_LOADING)
+        if manager is not None
+        else None
+    )
+    return ComponentLockAcquisition(
+        owner,
+        tuple(requirement.component for requirement in requirements),
+        ComponentBusyResult(
+            components=(ComponentLockName.MODEL_LOADING,),
+            owners=((ComponentLockName.MODEL_LOADING, model_owner),),
+        ),
+    )
+
+
 def acquire_pipeline_result(
     engine: Celune,
     action: str,
@@ -159,8 +181,17 @@ def acquire_pipeline_result(
             f"[LOCK] acquire requested by {action}, locked={engine.locked}",
             loglevel="verbose",
         )
-        manager = getattr(engine, "component_locks", None)
-        if engine.locked:
+        manager = cast(
+            Optional[ComponentLockManager],
+            getattr(engine, "component_locks", None),
+        )
+        reload_pending = (
+            bool(getattr(engine, "_reload_pending", False))
+            or getattr(engine, "cur_state", None) == "reloading"
+        )
+        if action == "speak" and reload_pending:
+            acquisition = _reload_busy_result(requirements, resolved_owner, manager)
+        elif engine.locked:
             owners = (
                 tuple(
                     manager.snapshot().get(component)
