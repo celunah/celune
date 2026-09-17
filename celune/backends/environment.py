@@ -196,9 +196,8 @@ BACKEND_MANIFESTS = {
         backend_id="luxtts",
         kind="tts",
         requirements=(
+            *_MAIN_BRANCH_PYTORCH_REQUIREMENTS,
             *_WORKER_HUGGINGFACE_REQUIREMENTS,
-            "torch",
-            "torchaudio",
             "onnxruntime",
             "lhotse",
             "safetensors",
@@ -216,7 +215,7 @@ BACKEND_MANIFESTS = {
         ),
         backend_module="celune.backends.tts.luxtts",
         backend_class="LuxTTS",
-        index_urls=("https://pypi.org/simple",),
+        index_urls=_PYTORCH_INDEX_URLS,
         find_links=("https://k2-fsa.github.io/icefall/piper_phonemize.html",),
     ),
     "seed-vc": BackendManifest(

@@ -296,20 +296,14 @@ class TestBackendEnvironment(CeluneTestCase):
         self.assertIs(result, mock.sentinel.backend)
         constructor.assert_called_once_with(log=log, fatal=fatal, setting=True)
 
-    def test_manifests_use_the_cuda_pytorch_index(self) -> None:
-        """Verify GPU isolated backends use the main branch's CUDA 12.8 stack."""
+    def test_manifests_use_the_main_branch_pytorch_stack(self) -> None:
+        """Verify isolated backends use the main branch's CUDA 12.8 stack."""
         expected_requirements = {
             "torch==2.11.0+cu128",
             "torchaudio==2.11.0+cu128",
             "torchvision==0.26.0+cu128",
         }
-        for backend_id, manifest in BACKEND_MANIFESTS.items():
-            if backend_id == "luxtts":
-                assert (
-                    "https://download.pytorch.org/whl/cu128" not in manifest.index_urls
-                )
-                assert not expected_requirements.intersection(manifest.requirements)
-                continue
+        for manifest in BACKEND_MANIFESTS.values():
             assert "https://download.pytorch.org/whl/cu128" in manifest.index_urls
             assert expected_requirements.issubset(manifest.requirements)
 
@@ -370,7 +364,11 @@ class TestBackendEnvironment(CeluneTestCase):
             "linacodec @ git+https://github.com/ysharma3501/LinaCodec.git"
             in luxtts_requirements
         )
-        assert "torch==2.11.0+cu128" not in luxtts_requirements
+        assert {
+            "torch==2.11.0+cu128",
+            "torchaudio==2.11.0+cu128",
+            "torchvision==0.26.0+cu128",
+        }.issubset(luxtts_requirements)
         assert BACKEND_MANIFESTS["luxtts"].find_links == (
             "https://k2-fsa.github.io/icefall/piper_phonemize.html",
         )
