@@ -36,10 +36,7 @@ def test_select_menu_widget_aligns_values_after_longest_label() -> None:
 def test_configuration_labels_preserve_project_names() -> None:
     """Configuration labels are readable without losing project abbreviations."""
     assert CeluneUI._config_label(("api", "enabled")) == "API enabled"
-    assert (
-        CeluneUI._config_label(("gpt_sovits_t2s_weights_path",))
-        == "GPT-SoVITS T2S weights path"
-    )
+    assert CeluneUI._config_label(("luxtts",)) == "LuxTTS"
     assert CeluneUI._config_label(("persona", "memory", "enabled")) == (
         "Persona memory enabled"
     )

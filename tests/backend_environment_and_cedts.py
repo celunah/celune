@@ -225,7 +225,7 @@ class TestBackendEnvironment(CeluneTestCase):
             "fireredtts3",
             "dotstts",
             "voxcpm2",
-            "gpt-sovits",
+            "luxtts",
             "seed-vc",
         }
 
@@ -243,7 +243,7 @@ class TestBackendEnvironment(CeluneTestCase):
                 "fireredtts3",
                 "dotstts",
                 "voxcpm2",
-                "gpt-sovits",
+                "luxtts",
                 "seed-vc",
             },
         )
@@ -258,7 +258,7 @@ class TestBackendEnvironment(CeluneTestCase):
                 "fireredtts3": "tts",
                 "dotstts": "tts",
                 "voxcpm2": "tts",
-                "gpt-sovits": "tts",
+                "luxtts": "tts",
                 "seed-vc": "vc",
             },
         )
@@ -297,13 +297,19 @@ class TestBackendEnvironment(CeluneTestCase):
         constructor.assert_called_once_with(log=log, fatal=fatal, setting=True)
 
     def test_manifests_use_the_cuda_pytorch_index(self) -> None:
-        """Verify isolated backends use the main branch's CUDA 12.8 stack."""
+        """Verify GPU isolated backends use the main branch's CUDA 12.8 stack."""
         expected_requirements = {
             "torch==2.11.0+cu128",
             "torchaudio==2.11.0+cu128",
             "torchvision==0.26.0+cu128",
         }
-        for manifest in BACKEND_MANIFESTS.values():
+        for backend_id, manifest in BACKEND_MANIFESTS.items():
+            if backend_id == "luxtts":
+                assert (
+                    "https://download.pytorch.org/whl/cu128" not in manifest.index_urls
+                )
+                assert not expected_requirements.intersection(manifest.requirements)
+                continue
             assert "https://download.pytorch.org/whl/cu128" in manifest.index_urls
             assert expected_requirements.issubset(manifest.requirements)
 
@@ -354,10 +360,55 @@ class TestBackendEnvironment(CeluneTestCase):
     def test_backend_dependency_list_matches_main_backend_normalizers(self) -> None:
         """Verify the backend dependency list follows the main branch declarations."""
         assert "WeTextProcessing" not in BACKEND_MANIFESTS["dotstts"].requirements
-        assert "jieba" in BACKEND_MANIFESTS["gpt-sovits"].requirements
-        assert "split-lang" in BACKEND_MANIFESTS["gpt-sovits"].requirements
-        assert "matplotlib" in BACKEND_MANIFESTS["gpt-sovits"].requirements
-        assert "torchcodec" in BACKEND_MANIFESTS["gpt-sovits"].requirements
+        luxtts_requirements = BACKEND_MANIFESTS["luxtts"].requirements
+        assert "onnxruntime" in luxtts_requirements
+        assert (
+            "zipvoice @ git+https://github.com/ysharma3501/LuxTTS.git"
+            in luxtts_requirements
+        )
+        assert (
+            "linacodec @ git+https://github.com/ysharma3501/LinaCodec.git"
+            in luxtts_requirements
+        )
+        assert "torch==2.11.0+cu128" not in luxtts_requirements
+        assert BACKEND_MANIFESTS["luxtts"].find_links == (
+            "https://k2-fsa.github.io/icefall/piper_phonemize.html",
+        )
+
+    def test_manifest_find_links_are_forwarded_to_uv(self) -> None:
+        """Verify a backend can provide wheel links outside package indexes."""
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            manager = BackendEnvironmentManager(root=root, uv_executable="uv")
+            manifest = BackendManifest(
+                "test",
+                "tts",
+                ("demo==1",),
+                "module",
+                "Backend",
+                find_links=("https://example.com/wheels.html",),
+            )
+
+            def fake_run(command: list[str], **_kwargs) -> None:
+                if command[1] == "venv":
+                    backend_environment = manager.environment_for(manifest)
+                    relative_python = backend_environment.python.relative_to(
+                        backend_environment.virtualenv
+                    )
+                    virtualenv_python = Path(command[-1]) / relative_python
+                    virtualenv_python.parent.mkdir(parents=True, exist_ok=True)
+                    virtualenv_python.touch()
+
+            with mock.patch(
+                "celune.backends.environment.subprocess.run", side_effect=fake_run
+            ) as run:
+                manager.ensure(manifest)
+
+            install_command = run.call_args_list[1].args[0]
+            find_links_index = install_command.index("--find-links")
+            assert install_command[find_links_index + 1] == (
+                "https://example.com/wheels.html"
+            )
 
     def test_fingerprint_changes_when_requirements_change(self) -> None:
         """Verify dependency changes select a different environment directory."""

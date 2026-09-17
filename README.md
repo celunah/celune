@@ -105,14 +105,9 @@ Each voice is demonstrated using a short introduction and a longer narration sam
 
 Coming soon
 
-### GPT-SoVITS
+### LuxTTS
 
-Coming soon
-
-> [!NOTE]
-> GPT-SoVITS may not work with certain types of low-energy voices by default, and may cause accent drifts if not using Celune's custom [T2S model](https://huggingface.co/lunahr/celune-t2s-en-us/blob/main/celune_t2s_en_US-e15.ckpt).
->
-> After downloading, set `gpt_sovits_t2s_weights_path: <path_to_t2s>` in Celune's configuration to fix these problems.
+LuxTTS is a lightweight English voice-cloning backend based on [YatharthS/LuxTTS](https://huggingface.co/YatharthS/LuxTTS). It runs in its own CPU-only worker environment, uses the active voice pack's reference WAV, and returns 48 kHz speech.
 
 The demonstration lines try to showcase Celune's best, but they may include minor mistakes. This is an inherent limitation with TTS models, and Celune should not be blamed for it.
 
@@ -162,7 +157,7 @@ Celune also depends on external system dependencies that are not available in `p
 
 Celune requires an RTX 30 series GPU or newer to use most features.
 
-CPU-only execution is only supported with Celune Mini.
+CPU-only execution is supported with Celune Mini and LuxTTS.
 
 Usage of Celune's UI requires an ANSI-capable terminal. Non-compliant terminals can only use the headless (CEF) mode.
 
@@ -186,7 +181,7 @@ Celune has several VRAM presets available. Here are their baseline requirements:
 >
 > This preset supports:
 >
-> - Qwen3-TTS 0.6B / Celune Mini / GPT-SoVITS
+> - Qwen3-TTS 0.6B / Celune Mini / LuxTTS
 > - SeedVC voice changer mode
 > - Normalization on CPU
 >

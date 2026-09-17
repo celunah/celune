@@ -97,9 +97,6 @@ class TestRuntimePath(CeluneTestCase):
             root = Path(temp_dir)
             legacy_directories = {
                 "backends": ("mini", "environment-marker.txt"),
-                "fast_langdetect": ("model-marker.txt",),
-                "gpt_sovits": ("source-marker.txt",),
-                "nltk_data": ("resource-marker.txt",),
             }
             for name, parts in legacy_directories.items():
                 path = root / name / Path(*parts)
@@ -113,9 +110,6 @@ class TestRuntimePath(CeluneTestCase):
             assert (
                 root / "environments" / "mini" / "environment-marker.txt"
             ).read_text(encoding="utf-8") == "backends"
-            for name in ("fast_langdetect", "gpt_sovits", "nltk_data"):
-                assert (root / "runtime" / name).is_dir()
-                assert not (root / name).exists()
 
     def test_huggingface_cache_dirs_live_in_runtime_data(self) -> None:
         """Verify Celune's default Hugging Face caches live under user data."""

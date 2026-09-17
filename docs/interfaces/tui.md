@@ -106,7 +106,7 @@ their full value remains available through the confirmation message.
 Set `SelectMenuOption.explanation` to render a selected-row explanation above
 the footer hints. The configuration manager converts dotted YAML keys to
 human-readable labels, such as `api.enabled` to `API enabled`, while retaining
-names such as API, T2S, GPT-SoVITS, and Persona. Configuration rows use
+names such as API, T2S, LuxTTS, and Persona. Configuration rows use
 field-specific localized explanations describing what each option controls.
 The menu is a centered overlay with the themed rounded border and sizes itself
 to its content, up to the available viewport. Its surrounding layer is

@@ -20,13 +20,18 @@ manager; normal application configuration does not select that path.
 | `fireredtts3` | TTS | `celune.backends.tts.fireredtts3:FireRedTTS3` | FireRedTTS3 source, Transformers 5.6.2, and TorchCodec 0.16.0; BF16 transformer path with PyTorch SDPA and latent streaming. |
 | `dotstts` | TTS | `celune.backends.tts.dotstts:DotsTtsMF` | Celune's `dots.tts` fork; Python 3.12. |
 | `voxcpm2` | TTS | `celune.backends.tts.voxcpm2:VoxCPM2` | `voxcpm>=2.0.0`; Python 3.12. |
-| `gpt-sovits` | TTS | `celune.backends.tts.gpt_sovits:GPTSoVITS` | GPT-SoVITS family dependencies. |
+| `luxtts` | TTS | `celune.backends.tts.luxtts:LuxTTS` | CPU-only ONNX LuxTTS worker, its ZipVoice/LinaCodec VCS dependencies, and English prompt transcription. |
 | `seed-vc` | VC | `celune.backends.vc.seedvc:CeluneSeedVCBackend` | Celune's Seed-VC fork. |
 
-Most workers share a compatibility baseline containing Hugging Face Hub and
+Most GPU workers share a compatibility baseline containing Hugging Face Hub and
 `hf-xet`, Transformers below 5 in the worker environment, Lingua, librosa,
 llvmlite, NumPy/Numba, Pillow, platformdirs, psutil, sounddevice, soundfile,
 and Zstandard, plus the CEDTS-compatible PyTorch 2.11 CUDA 12.8 worker stack.
+LuxTTS shares the non-CUDA baseline but installs CPU PyTorch and ONNX Runtime
+from PyPI, so selecting it does not require CUDA. Its model and reference
+implementation are [YatharthS/LuxTTS](https://huggingface.co/YatharthS/LuxTTS)
+and [LuxTTS](https://github.com/ysharma3501/LuxTTS); those third-party assets
+retain their own Apache-2.0 licensing.
 FireRedTTS3 is intentionally separate from that Hugging Face portion: its
 manifest uses `huggingface-hub>=1.5.0,<2.0.0` and `transformers==5.6.2`, which
 cannot be resolved alongside the shared Hub-below-1 and Transformers-below-5
@@ -93,17 +98,17 @@ truncating the WAV while keeping its full transcript can make the prompt tail
 appear in the response. Use the fork declared by the manifest; the upstream
 package can carry incompatible build requirements.
 
-### GPT-SoVITS
+### LuxTTS
 
-`gpt-sovits` supports the v2 Pro/ProPlus, v4, and v3 family order implemented by
-the current adapter, with language support for Chinese, English, Japanese,
-Korean, and Cantonese. Its source/runtime is installed under Celune's runtime
-data directory and it can use a custom Text2Semantic checkpoint. It usually
-needs a reference of at least three seconds and at most ten seconds and may
-show accent drift; v4 has the least drift in the current implementation. For
-longer CEVOICE references, the pack may provide `gpt_sovits_prompt_text` with
-the transcript matching the excerpt Celune sends to GPT-SoVITS. The output is
-normalized into Celune's playback format.
+`luxtts` adapts the [LuxTTS](https://github.com/ysharma3501/LuxTTS) CPU path
+from the [YatharthS/LuxTTS model card](https://huggingface.co/YatharthS/LuxTTS).
+It supports English voice cloning, uses the active voice's reference WAV, and
+has LuxTTS transcribe the prompt internally. Celune supplies a five-second
+prompt window, asks for the smooth waveform path, and emits one complete 48 kHz
+waveform per request. The backend runs with `device="cpu"` and two ONNX
+threads by default; its isolated manifest deliberately contains no CUDA
+PyTorch wheels and adds the upstream Piper wheel page as a `find-links` source
+so the CPU environment can resolve its phonemizer dependency.
 
 ## Adding a backend
 

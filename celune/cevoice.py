@@ -63,7 +63,7 @@ SUPPORTED_PERSONA_FILENAMES: Final[tuple[str, ...]] = (
     "examples.md",
 )
 DEFAULT_CEVOICE_PACK_SHA256: Final[str] = (
-    "554d682c73cbef86be9ce946de6b98e1545c783d16cadd0c2777de21ee0fd9fe"
+    "248cdf3d86a6f814dee1486408d70eef134688f0bc5cd30fe96df977b291b81b"
 )
 CLASSIC_CEVOICE_PACK_SHA256: Final[str] = (
     "646d68a70d4402cc5a9f8fdc96c171607d896dfe5424b27748193e3504530023"
@@ -971,14 +971,6 @@ def _validate_v4_semantic_metadata(
             raise CEVoiceError(
                 f"voice '{voice}' reference_text must be a non-empty string"
             )
-        gpt_sovits_prompt_text = voice_data.get("gpt_sovits_prompt_text")
-        if gpt_sovits_prompt_text is not None and (
-            not isinstance(gpt_sovits_prompt_text, str)
-            or not gpt_sovits_prompt_text.strip()
-        ):
-            raise CEVoiceError(
-                f"voice '{voice}' gpt_sovits_prompt_text must be a non-empty string"
-            )
         voice_persona = voice_data.get("persona")
         if voice_persona is not None:
             _validate_persona_metadata(voice_persona)
@@ -1224,14 +1216,6 @@ def _validate_metadata(
         ):
             raise CEVoiceError(
                 f"voice '{voice}' reference_text must be a non-empty string"
-            )
-        gpt_sovits_prompt_text = voice_data.get("gpt_sovits_prompt_text")
-        if gpt_sovits_prompt_text is not None and (
-            not isinstance(gpt_sovits_prompt_text, str)
-            or not gpt_sovits_prompt_text.strip()
-        ):
-            raise CEVoiceError(
-                f"voice '{voice}' gpt_sovits_prompt_text must be a non-empty string"
             )
         voice_persona = voice_data.get("persona")
         if voice_persona is not None:

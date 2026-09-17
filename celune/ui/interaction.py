@@ -621,15 +621,14 @@ def _config_autocomplete(
         return (True, False)
 
     candidates: dict[tuple[str, ...], tuple[_app.JSONSerializable, ...]] = {
-        ("backend",): (None, "mini", "qwen3", "dots.tts", "voxcpm2", "seed-vc"),
-        ("gpt_sovits_variant",): (
-            "auto",
-            "v1",
-            "v2",
-            "v2Pro",
-            "v2ProPlus",
-            "v3",
-            "v4",
+        ("backend",): (
+            None,
+            "mini",
+            "qwen3",
+            "luxtts",
+            "dots.tts",
+            "voxcpm2",
+            "seed-vc",
         ),
         ("log_level",): ("info", "verbose", "debug"),
         ("mode",): ("speak", "converse", "agent"),
@@ -644,10 +643,7 @@ def _config_autocomplete(
 def _config_label(path: tuple[str, ...]) -> str:
     """Convert a dotted configuration path into a readable setting label."""
     label = " ".join(path).replace("_", " ")
-    for source, replacement in (
-        ("gpt sovits", "GPT-SoVITS"),
-        ("t2s", "T2S"),
-    ):
+    for source, replacement in (("t2s", "T2S"),):
         label = re.sub(
             rf"\b{re.escape(source)}\b",
             replacement,
@@ -661,7 +657,7 @@ def _config_label(path: tuple[str, ...]) -> str:
         "celune": "Celune",
         "cpu": "CPU",
         "gpu": "GPU",
-        "gpt-sovits": "GPT-SoVITS",
+        "luxtts": "LuxTTS",
         "ipa": "IPA",
         "persona": "Persona",
         "qwen3": "Qwen3",
@@ -682,7 +678,6 @@ def _config_label(path: tuple[str, ...]) -> str:
 def _config_explanation(path: tuple[str, ...]) -> str:
     """Return a localized explanation for one configuration value."""
     aliases: dict[tuple[str, ...], str] = {
-        ("gpt_sovits_t2s_weights_path",): "gpt_weights",
         ("persona", "speech_end_delay_seconds"): "persona.speech_delay",
         (
             "persona",

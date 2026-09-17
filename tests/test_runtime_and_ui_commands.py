@@ -492,8 +492,9 @@ class TestRuntime(CeluneTestCase):
         assert errors == ["No supported backend found"]
         assert states == ["error"]
 
-    def test_validate_runtime_allows_cpu_for_mini_backend(self) -> None:
-        """Verify CPU-only environments remain usable with the mini backend."""
+    @pytest.mark.parametrize("backend_name", ("mini", "luxtts"))
+    def test_validate_runtime_allows_cpu_tts_backends(self, backend_name: str) -> None:
+        """Verify CPU-only environments allow both CPU-capable TTS backends."""
         logs: list[tuple[str, str]] = []
         errors: list[str] = []
         states: list[str] = []
@@ -520,7 +521,7 @@ class TestRuntime(CeluneTestCase):
                 False,
                 lambda exc, dev: str(exc),
                 "info",
-                "mini",
+                backend_name,
             )
 
         assert not errors

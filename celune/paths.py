@@ -21,12 +21,7 @@ _HF_HOME_ENV = "HF_HOME"
 _HF_HUB_CACHE_ENV = "HF_HUB_CACHE"
 _HF_HUB_DISABLE_PROGRESS_BARS_ENV = "HF_HUB_DISABLE_PROGRESS_BARS"
 _HF_PROGRESS_PATCH_LOCK = threading.RLock()
-_LEGACY_APP_DATA_MIGRATIONS = (
-    ("backends", ("environments",)),
-    ("fast_langdetect", ("runtime", "fast_langdetect")),
-    ("gpt_sovits", ("runtime", "gpt_sovits")),
-    ("nltk_data", ("runtime", "nltk_data")),
-)
+_LEGACY_APP_DATA_MIGRATIONS = (("backends", ("environments",)),)
 
 
 def running_compiled() -> bool:

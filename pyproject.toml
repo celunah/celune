@@ -157,28 +157,8 @@ openzl = [
 #     "pocket-tts>=2.1.0",
 # ]
 
-# An experimental Celune backend supporting the entire GPT-SoVITS family: v1, v2/Pro/ProPlus, v3, and v4.
-# Fast, but may not work with certain voices and experiences accent drift to a varying amount, with v4 the least.
-# It does not use a library. Celune reimplements the system directly, using more dependencies.
-# gpt-sovits = [
-#     "cn2an",
-#     "ffmpeg-python",
-#     "g2p-en",
-#     "g2pk2",
-#     "jieba-fast",
-#     "ko-pron",
-#     "opencc",
-#     "peft<0.18.0",
-#     "pypinyin",
-#     "pytorch-lightning>=2.4",
-#     "pyopenjtalk>=0.4.1",
-#     "rotary-embedding-torch",
-#     "split-lang",
-#     "tojyutping",
-#     "torchmetrics<=1.5",
-#     "wordsegment",
-#     "x-transformers",
-# ]
+# LuxTTS is isolated in its CPU-only CEDTS environment; see
+# celune/backends/environment.py for its VCS and ONNX dependencies.
 
 # A voice conversion backend allowing you to speak in your character voices directly. It does not use TTS, using it
 # will disable TTS features.

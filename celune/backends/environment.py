@@ -78,6 +78,7 @@ class BackendManifest:
     python: Optional[str] = None
     runtime: Optional[str] = None
     index_urls: tuple[str, ...] = ()
+    find_links: tuple[str, ...] = ()
     revision: int = 1
 
     def fingerprint(self) -> str:
@@ -191,36 +192,32 @@ BACKEND_MANIFESTS = {
         python="3.12",
         index_urls=_PYTORCH_INDEX_URLS,
     ),
-    "gpt-sovits": BackendManifest(
-        backend_id="gpt-sovits",
+    "luxtts": BackendManifest(
+        backend_id="luxtts",
         kind="tts",
         requirements=(
-            *_MAIN_BRANCH_PYTORCH_REQUIREMENTS,
             *_WORKER_HUGGINGFACE_REQUIREMENTS,
+            "torch",
+            "torchaudio",
+            "onnxruntime",
+            "lhotse",
+            "safetensors",
+            "tensorboard",
+            "vocos",
+            "pydub",
+            "piper-phonemize",
             "cn2an",
-            "ffmpeg-python",
-            "g2p-en",
-            "g2pk2",
             "jieba",
-            "jieba-fast",
-            "ko-pron",
-            "matplotlib",
-            "opencc",
-            "peft<0.18.0",
             "pypinyin",
-            "pytorch-lightning>=2.4",
-            "pyopenjtalk>=0.4.1",
-            "rotary-embedding-torch",
-            "split-lang",
-            "tojyutping",
-            "torchmetrics<=1.5",
-            "torchcodec",
-            "wordsegment",
-            "x-transformers",
+            "inflect",
+            "setuptools<81",
+            "zipvoice @ git+https://github.com/ysharma3501/LuxTTS.git",
+            "linacodec @ git+https://github.com/ysharma3501/LinaCodec.git",
         ),
-        backend_module="celune.backends.tts.gpt_sovits",
-        backend_class="GPTSoVITS",
-        index_urls=_PYTORCH_INDEX_URLS,
+        backend_module="celune.backends.tts.luxtts",
+        backend_class="LuxTTS",
+        index_urls=("https://pypi.org/simple",),
+        find_links=("https://k2-fsa.github.io/icefall/piper_phonemize.html",),
     ),
     "seed-vc": BackendManifest(
         backend_id="seed-vc",
@@ -383,6 +380,12 @@ class BackendEnvironmentManager:
                             for index_url in manifest.index_urls[1:]
                             for item in ("--extra-index-url", index_url)
                         ]
+                    )
+                if manifest.find_links:
+                    install_arguments.extend(
+                        item
+                        for find_link in manifest.find_links
+                        for item in ("--find-links", find_link)
                     )
                 self._run_uv(*install_arguments, *manifest.requirements)
                 metadata = {

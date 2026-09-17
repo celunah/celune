@@ -27,7 +27,7 @@ BACKENDS = {
     "fireredtts3": ("celune.backends.tts.fireredtts3", "FireRedTTS3"),
     "dotstts": ("celune.backends.tts.dotstts", "DotsTtsMF"),
     "voxcpm2": ("celune.backends.tts.voxcpm2", "VoxCPM2"),
-    "gpt-sovits": ("celune.backends.tts.gpt_sovits", "GPTSoVITS"),
+    "luxtts": ("celune.backends.tts.luxtts", "LuxTTS"),
 }
 
 

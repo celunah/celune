@@ -629,7 +629,7 @@ def _doctor_torch_details() -> list[DoctorCheck]:
             "Accelerator backend",
             usable,
             "ROCm detected. CUDA compatibility is required for the main backends.",
-            hint="Use a CUDA-compatible environment or the Mini backend for CPU-only usage.",
+            hint=string("cli.doctor_cpu_backend_hint", app_name=APP_NAME),
         )
         return checks
     elif backend == "MPS":
@@ -638,7 +638,7 @@ def _doctor_torch_details() -> list[DoctorCheck]:
             "Accelerator backend",
             usable,
             "MPS detected. Celune does not support MPS execution.",
-            hint="Use a CUDA-compatible environment or the Mini backend for CPU-only usage.",
+            hint=string("cli.doctor_cpu_backend_hint", app_name=APP_NAME),
         )
         return checks
     else:
@@ -648,7 +648,7 @@ def _doctor_torch_details() -> list[DoctorCheck]:
             usable,
             "No CUDA-capable backend detected.",
             severity="warning",
-            hint=f"{APP_NAME} Mini can run on CPU, but other backends need a CUDA-compatible runtime.",
+            hint=string("cli.doctor_cpu_backend_hint", app_name=APP_NAME),
         )
         return checks
 

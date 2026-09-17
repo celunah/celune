@@ -38,7 +38,7 @@ additional detail is written to the configured runtime logs instead.
 
 In the Textual interface, `/settings` opens the configuration manager. Nested
 YAML values are shown with human-readable labels that preserve names such as
-API, T2S, GPT-SoVITS, and Persona. ENTER writes the edited values to the active
+API, T2S, LuxTTS, and Persona. ENTER writes the edited values to the active
 `config.yaml`, fades the interface through the normal shutdown transition, and
 then requests a silent launcher-managed restart; the terminal title changes to
 `Restarting`. ESC leaves the file unchanged.

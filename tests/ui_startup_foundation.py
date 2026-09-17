@@ -1193,8 +1193,8 @@ class TestUIStartup(CeluneTestCase):
 
         assert not captured
 
-    def test_runtime_log_filters_gpt_sovits_text2semantic_loading(self) -> None:
-        """Verify GPT-SoVITS checkpoint loading chatter stays out of the UI log."""
+    def test_runtime_log_filters_text2semantic_loading(self) -> None:
+        """Verify checkpoint loading chatter stays out of the UI log."""
         stream = mock.Mock()
         stream.isatty.return_value = True
         captured: list[tuple[str, str]] = []

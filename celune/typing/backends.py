@@ -13,7 +13,7 @@ from .common import JSON, JSONSerializable
 from .aliases import AudioChunk
 
 if TYPE_CHECKING:
-    from .aliases import RuntimeValue, SeedVCArgument, SeedVCGenerator
+    from .aliases import SeedVCArgument, SeedVCGenerator
     from ..dataclasses.pipeline import AudioOutput, VoiceConversionRequest
 
 
@@ -100,28 +100,6 @@ class _StreamingSpeechModel(Protocol):  # noqa: PYI046
 
     def reset_states(self) -> None:
         """Reset the detector's internal streaming state."""
-
-
-class GPTSoVITSPipeline(Protocol):
-    """Subset of the official GPT-SoVITS pipeline used by Celune."""
-
-    def run(self, inputs: dict[str, JSONSerializable]) -> Iterator[RuntimeValue]:
-        """Run one GPT-SoVITS request and yield audio tuples.
-
-        Args:
-            inputs: Request dictionary containing text, language, reference audio, prompt metadata, and inference
-                controls.
-
-        Returns:
-            Iterator[RuntimeValue]: GPT-SoVITS sample-rate/audio pairs.
-        """
-
-    def stop(self) -> None:
-        """Stop the active inference operation."""
-
-
-class _GPTSoVITSConfig(Protocol):  # noqa: PYI046
-    """Constructor surface of GPT-SoVITS' ``TTS_Config`` class."""
 
 
 class _SeedVCWrapper(Protocol):  # noqa: PYI046

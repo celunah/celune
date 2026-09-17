@@ -29,8 +29,6 @@ from celune.exceptions import (
 from celune.celune import Celune
 from celune.utils import discard
 from celune.typing.aliases import AudioChunk
-from celune.typing.common import JSONSerializable
-from celune.paths import huggingface_progress
 from celune.backends.tts.fireredtts3 import (
     FireRedTTS3,
     _FireRedIncrementalDecoder,
@@ -38,6 +36,7 @@ from celune.backends.tts.fireredtts3 import (
     _FireRedRedAE,
     _create_firered_model,
 )
+from celune.backends.tts.luxtts import LuxTTS
 from celune.backends.vc import resolve_vc_backend
 from celune.backends.vc.seedvc import CeluneSeedVCBackend
 from celune.extensions.manager import CeluneExtensionManager
@@ -45,11 +44,6 @@ from celune.dataclasses.pipeline import VoiceConversionRequest
 from celune.extensions.base import CeluneContext, CeluneExtension
 from celune.typing.backends import BackendModel, _SeedVCRealtimeModule
 from celune.backends.tts import BACKEND_MANIFESTS, resolve_backend
-from celune.backends.tts.gpt_sovits import (
-    GPTSoVITS,
-    GPTSoVITSPipeline,
-    _GPTSoVITSRuntime,
-)
 from celune.backends.vc import BACKEND_MANIFESTS as VC_BACKEND_MANIFESTS
 
 from .support import (
@@ -66,93 +60,6 @@ from .support import (
 
 class TestBackend(CeluneTestCase):
     """Tests for backend base behavior and backend resolution."""
-
-    def test_gpt_sovits_uses_huggingface_snapshot_paths_for_model_config(self) -> None:
-        """Verify GPT-SoVITS model configuration stays outside its source tree."""
-        with tempfile.TemporaryDirectory() as temp_dir:
-            root = Path(temp_dir) / "source"
-            (root / "GPT_SoVITS/TTS_infer_pack").mkdir(parents=True)
-            (root / "GPT_SoVITS/TTS_infer_pack/TTS.py").touch()
-            snapshot = Path(temp_dir) / "huggingface" / "snapshot"
-            snapshot.mkdir(parents=True)
-
-            backend = GPTSoVITS(
-                log=lambda _msg, _severity="info": None,
-                root=str(root),
-                variant="v4",
-            )
-            backend._model_snapshot = snapshot
-            config = backend._model_config("v4")
-            custom = cast(dict[str, Union[str, bool]], config["custom"])
-
-            assert custom["t2s_weights_path"] == str(snapshot / "s1v3.ckpt")
-            assert custom["vits_weights_path"] == str(
-                snapshot / "gsv-v4-pretrained/s2Gv4.pth"
-            )
-            assert "GPT_SoVITS/pretrained_models" not in str(custom)
-
-    def test_gpt_sovits_uses_custom_t2s_checkpoint_override(self) -> None:
-        """Verify a configured GPT checkpoint replaces only the variant T2S model."""
-        with tempfile.TemporaryDirectory() as temp_dir:
-            root = Path(temp_dir) / "source"
-            (root / "GPT_SoVITS/TTS_infer_pack").mkdir(parents=True)
-            (root / "GPT_SoVITS/TTS_infer_pack/TTS.py").touch()
-            custom_checkpoint = Path(temp_dir) / "custom-e20.ckpt"
-            custom_checkpoint.touch()
-            snapshot = Path(temp_dir) / "huggingface" / "snapshot"
-            for relative_path in (
-                "chinese-hubert-base/config.json",
-                "chinese-roberta-wwm-ext-large/config.json",
-                "gsv-v4-pretrained/s2Gv4.pth",
-                "gsv-v4-pretrained/vocoder.pth",
-            ):
-                target = snapshot / relative_path
-                target.parent.mkdir(parents=True, exist_ok=True)
-                target.touch()
-
-            backend = GPTSoVITS(
-                log=lambda _msg, _severity="info": None,
-                root=str(root),
-                variant="v4",
-                t2s_weights_path=str(custom_checkpoint),
-            )
-            backend._model_snapshot = snapshot
-            config = backend._model_config("v4")
-            custom = cast(dict[str, Union[str, bool]], config["custom"])
-
-            assert custom["t2s_weights_path"] == str(custom_checkpoint)
-            assert custom["vits_weights_path"] == str(
-                snapshot / "gsv-v4-pretrained/s2Gv4.pth"
-            )
-            assert backend._variant_is_available(
-                snapshot,
-                "v4",
-                custom_checkpoint,
-            )
-
-    def test_gpt_sovits_uses_shared_huggingface_progress(self) -> None:
-        """Verify GPT-SoVITS uses the shared Hugging Face progress bridge."""
-        backend = object.__new__(GPTSoVITS)
-        backend._model_snapshot = None
-
-        with (
-            tempfile.TemporaryDirectory() as temp_dir,
-            mock.patch(
-                "celune.backends.tts.gpt_sovits.snapshot_download",
-                return_value=str(Path(temp_dir) / "snapshot"),
-            ),
-            mock.patch(
-                "celune.backends.tts.gpt_sovits.huggingface_hub_cache_dir",
-                return_value=Path(temp_dir),
-            ),
-            mock.patch(
-                "celune.backends.tts.gpt_sovits.huggingface_progress",
-                wraps=huggingface_progress,
-            ) as progress_bridge,
-        ):
-            backend._ensure_model_snapshot()
-
-        progress_bridge.assert_called_once_with(backend.report_progress)
 
     def test_tts_preload_uses_celune_huggingface_cache(self) -> None:
         """Verify generic TTS preloading downloads into Celune's Hub cache."""
@@ -180,99 +87,104 @@ class TestBackend(CeluneTestCase):
             cache_dir=str(Path("C:/celune/huggingface/hub")),
         )
 
-    def test_gpt_sovits_bounds_nltk_downloads_and_restores_socket_timeout(
-        self,
-    ) -> None:
-        """Verify a stalled NLTK download becomes a bounded backend error."""
-        backend = object.__new__(GPTSoVITS)
-        backend._nltk_resources = {"test-resource": ("taggers/test-resource",)}
-        backend._nltk_download_timeout_seconds = 0.25
-        backend.log = mock.Mock()
+    def test_luxtts_requires_the_cpu_snapshot_files(self) -> None:
+        """Verify LuxTTS checks the ONNX files used by its CPU loader."""
+        backend = object.__new__(LuxTTS)
+        with mock.patch(
+            "celune.backends.tts.luxtts.cached_hf_snapshot_path",
+            return_value=(True, "cached"),
+        ) as cached:
+            assert backend.model_is_available_locally("YatharthS/LuxTTS") == (
+                True,
+                "cached",
+            )
 
-        nltk_data = SimpleNamespace(
-            path=[],
-            find=mock.Mock(side_effect=LookupError("missing resource")),
+        cached.assert_called_once_with(
+            "YatharthS/LuxTTS",
+            [
+                "tokens.txt",
+                "text_encoder.onnx",
+                "fm_decoder.onnx",
+                "config.json",
+                "vocoder/config.yaml",
+                "vocoder/vocos.bin",
+            ],
         )
 
-        class FakeNltkModule(ModuleType):
-            """Typed NLTK module stand-in for the bounded download test."""
-
-            data: SimpleNamespace
-            download: mock.Mock
-
-        fake_nltk = FakeNltkModule("nltk")
-        fake_nltk.data = nltk_data
-        fake_nltk.download = mock.Mock(side_effect=TimeoutError("network timeout"))
+    def test_luxtts_loads_the_runtime_on_cpu(self) -> None:
+        """Verify LuxTTS is never initialized with the default CUDA device."""
+        backend = object.__new__(LuxTTS)
+        backend._threads = 2
+        backend._progress_callback = None
+        runtime = mock.Mock()
+        runtime_class = mock.Mock(return_value=runtime)
 
         with (
-            tempfile.TemporaryDirectory() as temp_dir,
-            mock.patch(
-                "celune.backends.tts.gpt_sovits.runtime_data_dir",
-                return_value=Path(temp_dir),
-            ),
-            mock.patch.dict(sys.modules, {"nltk": fake_nltk}),
-            mock.patch(
-                "celune.backends.tts.gpt_sovits.socket.getdefaulttimeout",
-                return_value=None,
+            mock.patch.object(
+                backend,
+                "model_is_available_locally",
+                return_value=(True, "cached"),
             ),
             mock.patch(
-                "celune.backends.tts.gpt_sovits.socket.setdefaulttimeout"
-            ) as setdefaulttimeout,
-            self.assertRaisesRegex(RuntimeError, "network timeout"),
+                "celune.backends.tts.luxtts._load_runtime_class",
+                return_value=runtime_class,
+            ),
         ):
-            backend._ensure_nltk_data()
+            assert backend.load_model("YatharthS/LuxTTS") is runtime
 
-        self.assertEqual(
-            setdefaulttimeout.call_args_list,
-            [mock.call(0.25), mock.call(None)],
+        runtime_class.assert_called_once_with("cached", device="cpu", threads=2)
+
+    def test_luxtts_generates_a_normalized_complete_48khz_chunk(self) -> None:
+        """Verify LuxTTS consumes the pack reference and emits Celune audio."""
+        loader = make_voice_loader(
+            "balanced",
+            {"reference_text": "Pack reference."},
         )
+        backend = LuxTTS.__new__(LuxTTS)
+        backend.random_seed = False
+        backend.current_seed = None
+        backend._truncated_reference_paths = set()
+        model = mock.Mock()
+        prompt = {"prompt_features": torch.zeros(1)}
+        model.encode_prompt.return_value = prompt
+        model.generate_speech.return_value = torch.tensor([-2.0, 0.25, 2.0])
 
-    def test_gpt_sovits_uses_legacy_celune_nltk_data_without_downloading(
-        self,
-    ) -> None:
-        """Verify an existing legacy Celune NLTK directory is reused directly."""
-        backend = object.__new__(GPTSoVITS)
-        backend._nltk_resources = {"test-resource": ("taggers/test-resource",)}
-        backend.log = mock.Mock()
+        with (
+            mock.patch(
+                "celune.backends.tts.luxtts.default_loader", return_value=loader
+            ),
+            mock.patch.object(
+                backend, "_truncate_reference", return_value=Path("reference.wav")
+            ),
+        ):
+            result = list(
+                backend.generate_stream(
+                    model,
+                    text="Hello.",
+                    voice="balanced",
+                )
+            )
 
-        with tempfile.TemporaryDirectory() as temp_dir:
-            celune_data = Path(temp_dir) / "celune"
-            legacy_data_dir = celune_data / "nltk_data"
-            nltk_data = SimpleNamespace(path=[])
-
-            def find(_resource: str) -> object:
-                if str(legacy_data_dir) in nltk_data.path:
-                    return object()
-                raise LookupError("missing resource")
-
-            nltk_data.find = find
-
-            class FakeNltkModule(ModuleType):
-                """Typed NLTK module stand-in for the existing-data test."""
-
-                data: SimpleNamespace
-                download: mock.Mock
-
-            fake_nltk = FakeNltkModule("nltk")
-            fake_nltk.data = nltk_data
-            fake_nltk.download = mock.Mock()
-
-            with (
-                mock.patch(
-                    "celune.backends.tts.gpt_sovits.runtime_data_dir",
-                    return_value=Path(temp_dir) / "runtime",
-                ),
-                mock.patch(
-                    "celune.backends.tts.gpt_sovits.app_data_dir",
-                    return_value=celune_data,
-                ),
-                mock.patch.dict(sys.modules, {"nltk": fake_nltk}),
-                mock.patch.dict(os.environ, {"NLTK_DATA": ""}),
-            ):
-                backend._ensure_nltk_data()
-
-        fake_nltk.download.assert_not_called()
-        backend.log.assert_not_called()
+        model.encode_prompt.assert_called_once_with(
+            "reference.wav",
+            duration=5,
+            rms=0.01,
+        )
+        model.generate_speech.assert_called_once_with(
+            "Hello.",
+            prompt,
+            num_steps=4,
+            guidance_scale=3.0,
+            t_shift=0.5,
+            speed=1.0,
+            return_smooth=True,
+        )
+        audio, sample_rate, timing = result[0]
+        np.testing.assert_allclose(audio, [-1.0, 0.25, 1.0])
+        assert audio.dtype == np.float32
+        assert sample_rate == 48000
+        assert timing is not None
+        assert timing["is_final"] is True
 
     def test_voxcpm2_does_not_forward_transformers_only_arguments(
         self,
@@ -306,168 +218,6 @@ class TestBackend(CeluneTestCase):
                 {"load_denoiser": False, "optimize": False},
                 {"load_denoiser": False, "optimize": False},
             ]
-
-    def test_gpt_sovits_bootstrap_uses_celune_user_data_directory(self) -> None:
-        """Verify missing GPT-SoVITS source is installed below Celune user data."""
-        expected_root = Path("C:/runtime-data") / "gpt_sovits"
-
-        with (
-            mock.patch(
-                "celune.backends.tts.gpt_sovits.runtime_data_dir",
-                return_value=expected_root.parent,
-            ),
-            mock.patch.object(GPTSoVITS, "_candidate_roots", return_value=iter(())),
-            mock.patch.object(
-                GPTSoVITS, "_download_source_tree", return_value=expected_root
-            ) as download,
-        ):
-            assert GPTSoVITS._resolve_root(None) == expected_root
-
-        download.assert_called_once_with(expected_root)
-
-    def test_gpt_sovits_auto_selects_a_streaming_variant(self) -> None:
-        """Verify automatic GPT-SoVITS selection accepts fragment-streaming variants."""
-        backend = GPTSoVITS.__new__(GPTSoVITS)
-        backend._custom_t2s_weights_path = None
-        with tempfile.TemporaryDirectory() as temp_dir:
-            snapshot = Path(temp_dir)
-            for relative_path in (
-                "chinese-hubert-base/config.json",
-                "chinese-roberta-wwm-ext-large/config.json",
-                "s1v3.ckpt",
-                "v2Pro/s2Gv2Pro.pth",
-                "sv/pretrained_eres2netv2w24s4ep4.ckpt",
-                "gsv-v4-pretrained/s2Gv4.pth",
-                "gsv-v4-pretrained/vocoder.pth",
-            ):
-                target = snapshot / relative_path
-                target.parent.mkdir(parents=True, exist_ok=True)
-                target.touch()
-
-            assert backend._select_variant(snapshot, None) == "v2Pro"
-            assert backend._select_variant(snapshot, "v4") == "v4"
-
-    def test_gpt_sovits_converts_integer_pcm_to_float_audio(self) -> None:
-        """Verify GPT-SoVITS int16 PCM is scaled to Celune's float audio range."""
-        pcm = np.array([-32768, 0, 32767], dtype=np.int16)
-
-        audio = GPTSoVITS._to_numpy_audio(pcm)
-
-        np.testing.assert_allclose(audio, [-1.0, 0.0, 32767 / 32768])
-        assert audio.dtype == np.float32
-
-    def test_gpt_sovits_uses_english_for_unambiguous_latin_text(self) -> None:
-        """Verify automatic language selection uses English phonemization for Latin text."""
-        assert GPTSoVITS._resolve_text_language("auto", "Hello, Celune.") == "en"
-        assert GPTSoVITS._resolve_text_language("auto", "Hello, 你好.") == "auto"
-        assert GPTSoVITS._resolve_text_language("ja", "Hello.") == "ja"
-
-    def test_gpt_sovits_rejects_reference_audio_shorter_than_three_seconds(
-        self,
-    ) -> None:
-        """Verify invalid GPT-SoVITS reference duration is rejected before inference."""
-        with tempfile.TemporaryDirectory() as temp_dir:
-            path = Path(temp_dir) / "short.wav"
-            sf.write(path, np.zeros(24000, dtype=np.float32), 24000)
-
-            with pytest.raises(ValueError):
-                GPTSoVITS._validate_reference_audio("calm", path)
-
-    def test_gpt_sovits_trims_quiet_reference_edges(self) -> None:
-        """Verify quiet reference edges are removed while spoken audio is retained."""
-        backend = GPTSoVITS.__new__(GPTSoVITS)
-        backend._truncated_reference_paths = set()
-        with tempfile.TemporaryDirectory() as temp_dir:
-            source = Path(temp_dir) / "calm.wav"
-            audio = np.concatenate(
-                [
-                    np.zeros(12000, dtype=np.float32),
-                    np.full(96000, 0.1, dtype=np.float32),
-                    np.zeros(12000, dtype=np.float32),
-                ]
-            )
-            sf.write(source, audio, 24000)
-
-            trimmed = backend._trim_reference_silence(source)
-
-            assert trimmed != source
-            assert sf.info(trimmed).duration >= 4.0
-            assert sf.info(trimmed).duration < 5.0
-            assert trimmed in backend._truncated_reference_paths
-
-    def test_gpt_sovits_refreshes_prompt_cache_after_voice_change(self) -> None:
-        """Verify a changed voice reference clears official prompt state."""
-        pipeline = SimpleNamespace(
-            prompt_cache={
-                "ref_audio_path": "old.wav",
-                "prompt_semantic": object(),
-                "refer_spec": [object()],
-                "prompt_text": "Old voice.",
-                "prompt_lang": "en",
-            }
-        )
-
-        GPTSoVITS._refresh_prompt_cache(
-            cast(GPTSoVITSPipeline, pipeline),
-            Path("new.wav"),
-            "New voice.",
-            "en",
-        )
-
-        assert pipeline.prompt_cache["ref_audio_path"] is None
-        assert pipeline.prompt_cache["refer_spec"] == []
-        assert pipeline.prompt_cache["prompt_text"] is None
-
-    def test_gpt_sovits_uses_backend_specific_prompt_text_when_present(self) -> None:
-        """Verify long pack transcripts can provide a matching GPT-SoVITS excerpt."""
-        loader = make_voice_loader(
-            "balanced",
-            {
-                "reference_text": "Full pack transcript.",
-                "gpt_sovits_prompt_text": "Matching prompt excerpt.",
-            },
-        )
-        backend = GPTSoVITS.__new__(GPTSoVITS)
-        backend.random_seed = False
-        backend.current_seed = 7
-        backend.variant = "v4"
-        backend._truncated_reference_paths = set()
-        pipeline = SimpleNamespace(prompt_cache={})
-        seen_request: dict[str, JSONSerializable] = {}
-
-        def run_pipeline(
-            _pipeline: GPTSoVITSPipeline,
-            request: dict[str, JSONSerializable],
-        ) -> Iterator[tuple[int, AudioChunk]]:
-            seen_request.update(request)
-            yield 24000, np.zeros(8, dtype=np.float32)
-
-        backend._run_pipeline = mock.Mock(side_effect=run_pipeline)
-        with (
-            mock.patch(
-                "celune.backends.tts.gpt_sovits.default_loader", return_value=loader
-            ),
-            mock.patch.object(
-                backend, "_trim_reference_silence", return_value=Path("reference.wav")
-            ),
-            mock.patch.object(
-                backend, "_truncate_reference", return_value=Path("trimmed.wav")
-            ),
-            mock.patch.object(backend, "_validate_reference_audio"),
-        ):
-            list(
-                backend.generate_stream(
-                    cast(
-                        _GPTSoVITSRuntime,
-                        SimpleNamespace(variant="v4", pipeline=pipeline),
-                    ),
-                    text="hello",
-                    voice="balanced",
-                    language="en",
-                )
-            )
-
-        assert seen_request["prompt_text"] == "Matching prompt excerpt."
 
     def test_base_backend_reports_models(self) -> None:
         """Verify model metadata helpers on a fake backend.
@@ -552,7 +302,7 @@ class TestBackend(CeluneTestCase):
                 string(
                     "celune.unknown_backend",
                     backend="missing",
-                    available="mini, qwen3, fireredtts3, dotstts, voxcpm2, gpt-sovits",
+                    available="mini, qwen3, fireredtts3, dotstts, voxcpm2, luxtts",
                 )
             ),
         ):

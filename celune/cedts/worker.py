@@ -134,11 +134,11 @@ def _voxcpm2_constructor() -> Callable[..., _BackendRuntime]:
     return cast(Callable[..., _BackendRuntime], VoxCPM2)
 
 
-def _gpt_sovits_constructor() -> Callable[..., _BackendRuntime]:
-    """Load the approved GPT-SoVITS backend constructor on demand."""
-    from ..backends.tts.gpt_sovits import GPTSoVITS
+def _luxtts_constructor() -> Callable[..., _BackendRuntime]:
+    """Load the approved LuxTTS backend constructor on demand."""
+    from ..backends.tts.luxtts import LuxTTS
 
-    return cast(Callable[..., _BackendRuntime], GPTSoVITS)
+    return cast(Callable[..., _BackendRuntime], LuxTTS)
 
 
 def _seed_vc_constructor() -> Callable[..., _BackendRuntime]:
@@ -156,7 +156,7 @@ _BACKEND_REGISTRY: Mapping[
     "fireredtts3": ("tts", _fireredtts3_constructor),
     "dotstts": ("tts", _dotstts_constructor),
     "voxcpm2": ("tts", _voxcpm2_constructor),
-    "gpt-sovits": ("tts", _gpt_sovits_constructor),
+    "luxtts": ("tts", _luxtts_constructor),
     "seed-vc": ("vc", _seed_vc_constructor),
 }
 
