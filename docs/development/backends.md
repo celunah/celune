@@ -87,7 +87,10 @@ its dependencies.
 ### dots.tts MF
 
 `dotstts` is a 6.25-chunk-per-second diffusion backend using Celune's fork of
-the upstream package. Use the fork declared by the manifest; the upstream
+the upstream package. It receives the complete reference WAV because the
+runtime identifies and removes its prompt span before yielding generated audio;
+truncating the WAV while keeping its full transcript can make the prompt tail
+appear in the response. Use the fork declared by the manifest; the upstream
 package can carry incompatible build requirements.
 
 ### GPT-SoVITS
@@ -96,9 +99,11 @@ package can carry incompatible build requirements.
 the current adapter, with language support for Chinese, English, Japanese,
 Korean, and Cantonese. Its source/runtime is installed under Celune's runtime
 data directory and it can use a custom Text2Semantic checkpoint. It usually
-needs a reference of at least three seconds and may show accent drift; v4 has
-the least drift in the current implementation. The output is normalized into
-Celune's playback format.
+needs a reference of at least three seconds and at most ten seconds and may
+show accent drift; v4 has the least drift in the current implementation. For
+longer CEVOICE references, the pack may provide `gpt_sovits_prompt_text` with
+the transcript matching the excerpt Celune sends to GPT-SoVITS. The output is
+normalized into Celune's playback format.
 
 ## Adding a backend
 

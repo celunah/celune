@@ -143,6 +143,7 @@ Each voice entry may also include:
 | --- | --- |
 | `cfg_scale` | Optional positive VoxCPM2 classifier-free guidance scale for that voice |
 | `reference_text` | Optional non-empty transcript for the voice's reference audio |
+| `gpt_sovits_prompt_text` | Optional transcript matching the ≤10-second GPT-SoVITS prompt excerpt when `reference_text` is longer |
 | `persona` | Optional style/rule additions layered on the shared Persona metadata |
 
 Supported `persona` fields are:
@@ -197,6 +198,7 @@ Validation rules enforced by Celune:
 - `voices` must be an object
 - `default_voice`, when present, must name a defined voice
 - `voice_order`, when present, must be a duplicate-free list of defined voice names
+- `gpt_sovits_prompt_text`, when present, must be a non-empty string
 - if `voice_order` omits valid voices, Celune appends the missing ones when loading
 - `theme` must be an object when present
 - `theme.background` and `theme.accent` must be `#RRGGBB` hex colors
