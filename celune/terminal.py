@@ -25,7 +25,6 @@ RUNTIME_LOG_FILTER_MESSAGES = frozenset(
         "Removing weight norm",
         "Loading weights from",
         "Loading Text2Semantic weights from",
-        "Loading Text2Semantic Weights from",
         "min value is",
         "max value is",
         "generation flags are not valid and may be ignored",
@@ -44,6 +43,9 @@ RUNTIME_LOG_FILTER_MESSAGES = frozenset(
         "Capturing CUDA graph",
         "CUDA graph captured",
         "Warming up talker graph",
+        "********",
+        "The tokenizer class you load from this checkpoint is",
+        "The class this function is called from",
     }
 )
 
