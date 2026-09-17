@@ -37,6 +37,12 @@ RUNTIME_LOG_FILTER_MESSAGES = frozenset(
         "triton not found",
         "A custom logits processor of type",
         "FireRedTTS3 (text front-end) loaded",
+        "with an incorrect regex pattern:",
+    }
+)
+RUNTIME_LOG_FILTER_MULTILINE_MESSAGES = frozenset(
+    {
+        "with an incorrect regex pattern:",
     }
 )
 

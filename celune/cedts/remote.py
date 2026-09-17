@@ -25,7 +25,10 @@ from ..paths import (
     huggingface_hub_cache_dir,
     project_root,
 )
-from ..terminal import RUNTIME_LOG_FILTER_MESSAGES
+from ..terminal import (
+    RUNTIME_LOG_FILTER_MESSAGES,
+    RUNTIME_LOG_FILTER_MULTILINE_MESSAGES,
+)
 from ..backends.vc.base import CeluneVCBackend
 from ..backends.tts.base import CeluneBackend
 from ..exceptions import (
@@ -491,18 +494,27 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
     ) -> None:
         """Forward worker stderr lines to Celune's logging callback."""
         traceback_active = False
+        filtered_continuation = False
         for line in iter(stream.readline, b""):
             text = line.decode("utf-8", errors="replace").rstrip()
             if not text:
                 continue
             with self._worker_stderr_lock:
                 self._worker_stderr.append(text)
+            severity, explicit, message, loglevel = self._split_worker_log(text)
+            if filtered_continuation:
+                if not explicit:
+                    continue
+                filtered_continuation = False
             if any(
                 filtered_message in text
                 for filtered_message in RUNTIME_LOG_FILTER_MESSAGES
             ):
+                filtered_continuation = any(
+                    text.endswith(filtered_message)
+                    for filtered_message in RUNTIME_LOG_FILTER_MULTILINE_MESSAGES
+                )
                 continue
-            severity, explicit, message, loglevel = self._split_worker_log(text)
             if text.startswith("Traceback (most recent call last):"):
                 traceback_active = True
             if traceback_active and not explicit:
