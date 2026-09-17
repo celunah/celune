@@ -9,10 +9,11 @@ from collections.abc import Mapping, Callable, Iterator, Generator
 
 import numpy as np
 import torch
+from huggingface_hub import snapshot_download
 
 from ...cevoice import CEVoiceLoader, default_loader
 from ...i18n import string
-from ...paths import huggingface_progress
+from ...paths import huggingface_hub_cache_dir, huggingface_progress
 from ...typing.aliases import AudioChunk
 from ...typing.backends import BackendModel
 from ...utils import custom_assert
@@ -26,6 +27,19 @@ from .base import (
 __all__ = ["LuxTTS"]
 
 _LUXTTS_MODEL_ID = "YatharthS/LuxTTS"
+_LUXTTS_TRANSCRIBER_MODEL_ID = "openai/whisper-tiny"
+_LUXTTS_TRANSCRIBER_FILES = [
+    "config.json",
+    "generation_config.json",
+    "merges.txt",
+    "model.safetensors",
+    "normalizer.json",
+    "preprocessor_config.json",
+    "special_tokens_map.json",
+    "tokenizer.json",
+    "tokenizer_config.json",
+    "vocab.json",
+]
 _LUXTTS_SAMPLE_RATE = 48000
 _LUXTTS_PROMPT_DURATION_SECONDS = 5
 _LUXTTS_CPU_THREADS = 2
@@ -176,6 +190,30 @@ class LuxTTS(CeluneBackend[_LuxTTSModel]):
                 target,
                 device="cpu",
                 threads=self._threads,
+            )
+
+    def preload_models(self) -> None:
+        """Ensure LuxTTS and its hard-coded Whisper transcriber are cached."""
+        super().preload_models()
+        available, _ = cached_hf_snapshot_path(
+            _LUXTTS_TRANSCRIBER_MODEL_ID,
+            _LUXTTS_TRANSCRIBER_FILES,
+        )
+        if available:
+            self.log(
+                string("tts.model_available", model_id=_LUXTTS_TRANSCRIBER_MODEL_ID),
+                "info",
+            )
+            return
+
+        self.log(
+            string("tts.model_downloading", model_id=_LUXTTS_TRANSCRIBER_MODEL_ID),
+            "info",
+        )
+        with huggingface_progress(self.report_progress):
+            snapshot_download(
+                repo_id=_LUXTTS_TRANSCRIBER_MODEL_ID,
+                cache_dir=str(huggingface_hub_cache_dir(create=True)),
             )
 
     def generate_stream(

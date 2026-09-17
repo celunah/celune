@@ -108,7 +108,9 @@ prompt window, asks for the smooth waveform path, and emits one complete 48 kHz
 waveform per request. The backend runs with `device="cpu"` and two ONNX
 threads by default; its isolated manifest deliberately contains no CUDA
 PyTorch wheels and adds the upstream Piper wheel page as a `find-links` source
-so the CPU environment can resolve its phonemizer dependency.
+so the CPU environment can resolve its phonemizer dependency. Preloading also
+caches the `openai/whisper-tiny` transcriber required by the upstream CPU
+constructor before Celune enables Hugging Face offline mode for model loading.
 
 ## Adding a backend
 

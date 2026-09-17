@@ -87,6 +87,50 @@ class TestBackend(CeluneTestCase):
             cache_dir=str(Path("C:/celune/huggingface/hub")),
         )
 
+    def test_luxtts_preload_caches_its_whisper_transcriber(self) -> None:
+        """Verify LuxTTS preloading includes its hard-coded Whisper dependency."""
+        backend = object.__new__(LuxTTS)
+        backend.log = mock.Mock()
+        backend._progress_callback = None
+
+        with (
+            mock.patch.object(
+                backend,
+                "model_is_available_locally",
+                return_value=(True, "cached"),
+            ),
+            mock.patch(
+                "celune.backends.tts.luxtts.cached_hf_snapshot_path",
+                return_value=(False, None),
+            ) as cached,
+            mock.patch("celune.backends.tts.luxtts.snapshot_download") as download,
+            mock.patch(
+                "celune.backends.tts.luxtts.huggingface_hub_cache_dir",
+                return_value=Path("C:/celune/huggingface/hub"),
+            ),
+        ):
+            backend.preload_models()
+
+        cached.assert_called_once_with(
+            "openai/whisper-tiny",
+            [
+                "config.json",
+                "generation_config.json",
+                "merges.txt",
+                "model.safetensors",
+                "normalizer.json",
+                "preprocessor_config.json",
+                "special_tokens_map.json",
+                "tokenizer.json",
+                "tokenizer_config.json",
+                "vocab.json",
+            ],
+        )
+        download.assert_called_once_with(
+            repo_id="openai/whisper-tiny",
+            cache_dir=str(Path("C:/celune/huggingface/hub")),
+        )
+
     def test_luxtts_requires_the_cpu_snapshot_files(self) -> None:
         """Verify LuxTTS checks the ONNX files used by its CPU loader."""
         backend = object.__new__(LuxTTS)
