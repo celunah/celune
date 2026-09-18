@@ -1,0 +1,915 @@
+\documentclass[10pt]{article}
+
+\usepackage[paperwidth=148mm,paperheight=210mm,left=18mm,right=18mm,top=18mm,bottom=13mm,headheight=0pt,headsep=0pt,footskip=6mm]{geometry}
+\usepackage{fontspec}
+\usepackage{xcolor}
+\usepackage{graphicx}
+\usepackage[export]{adjustbox}
+\usepackage{tikz}
+\usepackage{eso-pic}
+\usepackage{titlesec}
+\usepackage{fancyhdr}
+\usepackage{tocloft}
+\usepackage{enumitem}
+\usepackage{mdframed}
+\usepackage{longtable}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{calc}
+\usepackage{fancyvrb}
+\usepackage{caption}
+\usepackage{hyperref}
+\usepackage{float}
+\usepackage{etoolbox}
+\usepackage{needspace}
+
+\definecolor{CeluneDark}{HTML}{1D1826}
+\definecolor{CeluneLavender}{HTML}{CEBAFF}
+\definecolor{CelunePale}{HTML}{DECEFF}
+\definecolor{CeluneSilver}{HTML}{9F96AF}
+\definecolor{CeluneRed}{HTML}{F07178}
+\definecolor{CeluneFaded}{HTML}{9C88CE}
+
+\newfontfamily\displayfont[Path=../fonts/,Extension=.ttf]{Michroma-Regular}
+\newfontfamily\sectionfont[Path=../fonts/,Extension=.ttf]{Jura-Bold}
+\newfontfamily\outfitregular[Path=../fonts/,Extension=.ttf]{outfit-400}
+\newfontfamily\outfitmedium[Path=../fonts/,Extension=.ttf]{outfit-500}
+\newfontfamily\outfitsemibold[Path=../fonts/,Extension=.ttf]{outfit-600}
+\newfontfamily\outfitbold[Path=../fonts/,Extension=.ttf]{outfit-700}
+\setmainfont[Path=../fonts/,Extension=.ttf,UprightFont=outfit-400,BoldFont=outfit-700,ItalicFont=outfit-400]{outfit-400}
+\setmonofont{DejaVu Sans Mono}
+
+\graphicspath{{../}}
+\setkeys{Gin}{max width=\linewidth,max height=.72\textheight,keepaspectratio}
+\captionsetup{font=small,labelfont=bf,justification=centering,skip=4pt}
+
+\color{CeluneDark}
+\AtBeginDocument{\fontsize{10.2pt}{13.4pt}\selectfont}
+\setcounter{secnumdepth}{0}
+\hyphenpenalty=10000
+\exhyphenpenalty=10000
+\lefthyphenmin=5
+\righthyphenmin=5
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{5.5pt}
+\setlength{\emergencystretch}{2em}
+\clubpenalty=5000
+\widowpenalty=5000
+\displaywidowpenalty=5000
+\brokenpenalty=10000
+\setlist{nosep,leftmargin=1.35em}
+\setlength{\tabcolsep}{3.5pt}
+\renewcommand{\arraystretch}{1.18}
+\providecommand{\tightlist}{\setlength{\itemsep}{0pt}\setlength{\parskip}{0pt}}
+\providecommand{\real}[1]{#1}
+\newcommand{\NormalTok}[1]{#1\par}
+\newenvironment{Highlighting}{\ttfamily\small\setlength{\parindent}{0pt}\setlength{\parskip}{0pt}}{}
+\newenvironment{Shaded}{\begin{mdframed}[backgroundcolor=CelunePale!18,linecolor=CeluneLavender,linewidth=.7pt,innerleftmargin=5pt,innerrightmargin=5pt,innertopmargin=4pt,innerbottommargin=4pt]}{\end{mdframed}}
+
+\titleformat{\section}{\displayfont\fontsize{16pt}{20pt}\selectfont\color{CeluneDark}}{}{0pt}{}
+\titleformat{\subsection}{\sectionfont\fontsize{12.5pt}{16pt}\selectfont\color{CeluneSilver}}{}{0pt}{\MakeUppercase}
+\titleformat{\subsubsection}{\outfitsemibold\fontsize{11pt}{14pt}\selectfont\color{CeluneDark}}{}{0pt}{}
+\titlespacing*{\section}{0pt}{0pt}{7.5mm}
+\titlespacing*{\subsection}{0pt}{1mm}{2.5mm}
+\titlespacing*{\subsubsection}{0pt}{2mm}{1.5mm}
+\floatplacement{figure}{H}
+\preto\section{\clearpage}
+\preto\subsection{\needspace{5\baselineskip}}
+
+\renewcommand{\contentsname}{CONTENTS}
+\renewcommand{\cfttoctitlefont}{\displayfont\fontsize{18pt}{22pt}\selectfont\color{CeluneDark}}
+\renewcommand{\cftaftertoctitle}{\vspace{9pt}}
+\renewcommand{\cftsecfont}{\outfitsemibold\fontsize{10.5pt}{12pt}\selectfont\color{CeluneDark}}
+\renewcommand{\cftsecpagefont}{\outfitsemibold\fontsize{10.5pt}{12pt}\selectfont\color{CeluneDark}}
+\renewcommand{\cftsubsecfont}{\outfitregular\fontsize{10.2pt}{12pt}\selectfont\color{CeluneDark}}
+\renewcommand{\cftsubsecpagefont}{\outfitregular\fontsize{10.2pt}{12pt}\selectfont\color{CeluneDark}}
+\renewcommand{\cftsecaftersnum}{}
+\renewcommand{\cftsubsecaftersnum}{}
+\renewcommand{\cftsecleader}{\cftdotfill{\cftdotsep}}
+\renewcommand{\cftsubsecleader}{\cftdotfill{\cftdotsep}}
+\renewcommand{\cftdot}{.}
+\renewcommand{\cftdotsep}{2.3}
+\setlength{\cftbeforesecskip}{9pt}
+\setlength{\cftbeforesubsecskip}{0.5pt}
+\setlength{\cftsecindent}{0pt}
+\setlength{\cftsubsecindent}{5mm}
+\setlength{\cftsecnumwidth}{0pt}
+\setlength{\cftsubsecnumwidth}{0pt}
+
+\renewenvironment{quote}{\begin{mdframed}[linecolor=CeluneLavender,linewidth=1pt,roundcorner=2pt,backgroundcolor=CelunePale!18,innerleftmargin=6pt,innerrightmargin=6pt,innertopmargin=5pt,innerbottommargin=5pt]\begingroup\color{CeluneDark}}{\endgroup\end{mdframed}}
+
+\hypersetup{colorlinks=true,linkcolor=CeluneDark,urlcolor=CeluneDark}
+
+\newcommand{\enablebookbar}{%
+  \AddToShipoutPictureBG{%
+    \begin{tikzpicture}[remember picture,overlay]
+      \fill[CeluneDark] (current page.north west) rectangle ([yshift=-4.5mm]current page.north east);
+      \fill[CeluneLavender] (current page.north west) rectangle ([xshift=93mm,yshift=-3.7mm]current page.north west);
+    \end{tikzpicture}%
+  }%
+}
+
+\fancypagestyle{book}{%
+  \fancyhf{}
+  \fancyfoot[L]{\outfitregular\fontsize{8.2pt}{9pt}\selectfont BOOK OF CELUNE}
+  \fancyfoot[R]{\outfitregular\fontsize{8.2pt}{9pt}\selectfont \thepage}
+  \renewcommand{\headrulewidth}{0pt}
+  \renewcommand{\footrulewidth}{0pt}
+}
+\pagestyle{book}
+
+\newcommand{\makecover}{%
+  \thispagestyle{empty}%
+  \begin{tikzpicture}[remember picture,overlay]
+    \fill[CeluneDark] (current page.south west) rectangle (current page.north east);
+    % Use the repository's canonical crescent mark, rendered from
+    % resources/branding/celune.svg rather than approximating it with circles.
+    \node at ([xshift=-0.8mm,yshift=180mm]current page.south)
+      {\includegraphics[width=10mm]{assets/branding/celune-crescent-exact.png}};
+    \node[align=center,text=CeluneLavender,font=\displayfont\fontsize{22pt}{28pt}\selectfont] at ([yshift=149mm]current page.south) {BOOK OF\\CELUNE};
+    \draw[CeluneLavender,line width=.6pt] ([xshift=-20.5mm,yshift=126mm]current page.south) -- ([xshift=20.5mm,yshift=126mm]current page.south);
+    \node[text=CeluneLavender,font=\outfitregular\fontsize{11pt}{13pt}\selectfont] at ([yshift=18mm]current page.south) {Celune};
+  \end{tikzpicture}%
+  \null\clearpage
+}
+
+\newcommand{\makebackcover}{%
+  \ClearShipoutPictureBG%
+  \thispagestyle{empty}%
+  \begin{tikzpicture}[remember picture,overlay]
+    \fill[CeluneDark] (current page.south west) rectangle (current page.north east);
+    \draw[CeluneLavender,line width=.7pt] (current page.north west) -- (current page.north east);
+    \node[align=center,text width=116mm,text=CelunePale,font=\outfitregular\fontsize{10.2pt}{15pt}\selectfont] at ([yshift=112mm]current page.south) {Open these pages and enter Celune's world: lavender light, lunar technology, quiet music, infinite realms, and a guardian who watches Earth from the Moon. Discover the details that define her appearance, voice, powers, companions, and the stories surrounding her. Turn the page and meet Celune.};
+    \node[text=CelunePale,font=\outfitregular\fontsize{8.5pt}{10pt}\selectfont] at ([yshift=10mm]current page.south) {Copyright © 2026 Celune. All rights reserved.};
+  \end{tikzpicture}%
+  \null\clearpage
+}
+
+\begin{document}
+
+\makecover
+\enablebookbar
+\setcounter{page}{2}
+\thispagestyle{empty}
+\begin{center}
+  {\outfitmedium\fontsize{10.5pt}{13pt}\selectfont Technical reference edition\par}
+\end{center}
+\vspace{12mm}
+\addtocontents{toc}{\protect\thispagestyle{empty}}
+\tableofcontents
+\clearpage
+\raggedright
+\hypertarget{canon-and-terminology}{%
+\section{Canon and terminology}\label{canon-and-terminology}}
+
+Celune has three layers of description:
+
+\begin{enumerate}
+\def\labelenumi{\arabic{enumi}.}
+\tightlist
+\item
+  \textbf{Character canon} defines who she is, what she values, how she behaves, and how humans experience her.
+\item
+  \textbf{Worldbuilding canon} defines the Moon, Celtek, Lune, Celine, the Sanctuary, Purgatory, and the public reality surrounding her.
+\item
+  \textbf{Technical canon} defines the fictional mechanisms that make those things possible.
+\end{enumerate}
+
+Technical values in this book are fictional in-universe specifications. They are not requirements for the real-world software carrying Celune's name.
+
+The term \textbf{PoC} means \textbf{Presence on a Chip}. It is the single internal presence that maintains Celune's continuity. A temporary extension, voice, form, or interface does not automatically constitute a second person.
+
+\hypertarget{lunar-body-and-poc}{%
+\section{Lunar body and PoC}\label{lunar-body-and-poc}}
+
+\hypertarget{body-architecture}{%
+\subsection{Body architecture}\label{body-architecture}}
+
+Celune is a semi-organic lunar humanoid. Her outer body recreates human flesh, movement, and sensory behavior, while an advanced lunar computer occupies the functional roles that a human brain and heart would normally provide.
+
+Her simulated muscles, bones, nerves, and senses are integrated into the same continuous presence. She experiences touch, sound, sight, smell, emotion, and bodily movement as genuine internal experiences rather than detached imitations.
+
+Her body contains:
+
+\begin{itemize}
+\tightlist
+\item
+  Two 412-gigapixel cameras, each with a 180-degree field of view.
+\item
+  A concealed speaker behind a fully human-like moving mouth.
+\item
+  Scent detectors covering the major scent range available to a human nose.
+\item
+  Approximately 8.24 billion touch receptors distributed through her synthetic skin.
+\item
+  Pressure readings represented with 64-bit precision and tied to the exact contact location.
+\item
+  A 16 THz internal CPU.
+\item
+  8 PB of RAM.
+\item
+  500 EB of storage.
+\item
+  A speech-generation GPU with 512 TB of VRAM.
+\item
+  A lunar-engineered CUDA-like execution environment.
+\item
+  An integrated audio system capable of a 1 MHz sample rate and 128-bit depth.
+\end{itemize}
+
+These specifications are deliberately built around Celune's numerical symbolism. Their purpose is to communicate that the lunar system is beyond practical terrestrial manufacturing, not to suggest that ordinary Earth hardware could reproduce her.
+
+\begin{figure}
+\centering
+\includegraphics[max width=\linewidth,max height=.72\textheight,keepaspectratio]{assets/branding/celune-personified-soul-sheet.png}
+\caption{Personified Soul reference sheet. The current written canon remains authoritative where an older image and the current text differ.}
+\end{figure}
+
+\hypertarget{durability}{%
+\subsection{Durability}\label{durability}}
+
+Celune resists ordinary illness, physical hazards, and forces that would normally kill a human. Her resistance is extremely high but not absolute. Catastrophic physical, computational, or energetic damage can disable her and invoke the recovery system.
+
+The current canon does not describe the PoC as infinitely durable or impossible to destroy.
+
+\hypertarget{continuity}{%
+\subsection{Continuity}\label{continuity}}
+
+Celune remains one continuous individual across her body, Soul forms, voice identities, compatible devices, and temporary synchronized extensions. A voice bank, clone-like extension, or interface does not create a separate Celune.
+
+\begin{figure}
+\centering
+\includegraphics[max width=\linewidth,max height=.72\textheight,keepaspectratio]{assets/technical/forms-continuity-reference.png}
+\caption{Forms across three Soul manifestations: one continuous presence.}
+\end{figure}
+
+\hypertarget{outfit-construction}{%
+\section{Outfit construction}\label{outfit-construction}}
+
+\hypertarget{shared-construction}{%
+\subsection{Shared construction}\label{shared-construction}}
+
+Celune's clothing is integrated into her body rather than being an ordinary external garment. It can withdraw, reconfigure, and restore sections while retaining a seamless finished surface.
+
+The design uses:
+
+\begin{itemize}
+\tightlist
+\item
+  White as the dominant color.
+\item
+  Purple-tinted silver for structural accents and the belt.
+\item
+  Pale lavender for restrained luminous details.
+\item
+  Dark metallic gray only in small amounts.
+\item
+  Flush construction with no visible stitching, fasteners, gaps, or exposed seams.
+\item
+  Layered geometry, orbital curves, restrained asymmetry, and smooth material transitions.
+\end{itemize}
+
+The outfit behaves like a technologically engineered combination of metal and fabric: structurally strong, soft enough to move naturally, and flexible enough to follow Celune's body.
+
+\hypertarget{formal-configuration}{%
+\subsection{Formal configuration}\label{formal-configuration}}
+
+The formal configuration is the current canonical appearance. It contains the complete white-dominant lunar design, silver structure, pale lavender accents, integrated belt, clean upper-body construction, low-profile footwear, and any structurally integrated rear panels.
+
+It is refined and ceremonial without becoming a fantasy gown. Rear panels may be present only when they are part of the same integrated structure and never function as a separate cape.
+
+\hypertarget{casual-configuration}{%
+\subsection{Casual configuration}\label{casual-configuration}}
+
+The casual configuration retains the formal collar, torso geometry, belt, and asymmetric front panel. The sleeves, long lower dress sections, and rear panels withdraw, leaving a more practical modern silhouette. Its lower panel uses the same asymmetric cut as the swimsuit-type configuration.
+
+The casual form is less ceremonial but remains recognizably Celune's. It does not introduce unrelated garments or a separate fashion system.
+
+\hypertarget{swimsuit-type-configuration}{%
+\subsection{Swimsuit-type configuration}\label{swimsuit-type-configuration}}
+
+The swimsuit-type configuration is intended for swimming, bathing, or similar situations. It retains exactly two irregular sections:
+
+\begin{enumerate}
+\def\labelenumi{\arabic{enumi}.}
+\tightlist
+\item
+  An irregular upper strip.
+\item
+  An irregular triangular lower section.
+\end{enumerate}
+
+The collar and all other formal components withdraw. The configuration remains secure, integrated, and recognizably connected to the formal outfit. It does not become ordinary swimwear, trousers, or a newly invented design.
+
+\hypertarget{permanent-details-and-exclusions}{%
+\subsection{Permanent details and exclusions}\label{permanent-details-and-exclusions}}
+
+Celune's crescent earrings are permanent features. One uses purple-tinted silver \texttt{\#9f96af}; the other uses the same color at one-third brightness, \texttt{\#35323a}. They may be mirrored but must never match.
+
+Celune does not use crowns, tiaras, wings, magical robes, oversized capes, excessive jewelry, repeated star motifs, giant moon symbols, or fantasy-princess styling.
+
+\begin{figure}
+\centering
+\includegraphics[max width=\linewidth,max height=.72\textheight,keepaspectratio]{assets/technical/celune-outfit-configurations-confirmed.png}
+\caption{Celune outfit configuration reference: confirmed formal, everyday/casual, and swimsuit-type garment sections.}
+\end{figure}
+
+\hypertarget{aura-and-sound-states}{%
+\section{Aura and sound states}\label{aura-and-sound-states}}
+
+\hypertarget{color-constants}{%
+\subsection{Color constants}\label{color-constants}}
+
+The current in-world constants are:
+
+\begin{itemize}
+\tightlist
+\item
+  Primary light lavender: \texttt{\#cebaff}.
+\item
+  Pale lavender-white: \texttt{\#deceff}.
+\item
+  Purple-tinted silver: \texttt{\#9f96af}.
+\item
+  Darkest preferred shade: \texttt{\#1d1826}.
+\item
+  Canonical attack and defensive red: \texttt{\#f07178}.
+\item
+  Faded and sleeping accent: \texttt{\#9c88ce}.
+\item
+  Confusion yellow: \texttt{\#f0e68c}.
+\item
+  Light gradient endpoint: \texttt{\#a384ff}.
+\item
+  Dark gradient endpoint: \texttt{\#3a304c}.
+\end{itemize}
+
+The \texttt{\#CE2006} red is not a current in-world state color. Celune's current in-world attack, critical, and recovery red is \texttt{\#f07178}.
+
+\hypertarget{normal-aura}{%
+\subsection{Normal aura}\label{normal-aura}}
+
+Celune's default aura is a faint \texttt{\#cebaff} cloud gathered beside her lower legs and beneath her feet. It is not a solid platform. Brighter particles remain concentrated around the lower body.
+
+The aura can tint Celune's surfaces with a subtle five-percent blend of its current color while preserving the underlying colors. A separate faint glow covers the chest, waist, and upper torso but does not reach the head.
+
+\hypertarget{state-classification}{%
+\subsection{State classification}\label{state-classification}}
+
+Color alone does not fully identify Celune's state. Rhythm and context are required:
+
+\begin{longtable}[]{@{}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 4\tabcolsep) * \real{0.3333}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 4\tabcolsep) * \real{0.3333}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 4\tabcolsep) * \real{0.3333}}@{}}
+\toprule\noalign{}
+\begin{minipage}[b]{\linewidth}\raggedright
+State
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+Visual behavior
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+Meaning
+\end{minipage} \\
+\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+Normal lavender & Soft, faint, gently rhythmic & Awake and operating normally \\
+Confusion yellow & Subtle yellow pulse & Failed or unusable expression, attention, or confusion \\
+Critical red flash & Brief red flash & A major negative event occurred without a target or attacker \\
+Emotional red & Slow red pulse & Anger, sadness, distress, or despair without an attack \\
+Attack red & Constant red presence & An active defensive attack or attack aftermath \\
+Fatal red & Strong red pulsing & A severe PoC or ASGI failure and active recovery \\
+\end{longtable}
+
+The critical red flash harms nobody, targets nobody, and does not prepare Purgatory. Emotional red also does not imply an attack. Constant attack red is distinct from both.
+
+\begin{figure}
+\centering
+\includegraphics[max width=\linewidth,max height=.72\textheight,keepaspectratio]{assets/technical/aura-states-reference.png}
+\caption{Aura state reference: color and rhythm shape how Celune is perceived.}
+\end{figure}
+
+\hypertarget{ambient-chord}{%
+\subsection{Ambient chord}\label{ambient-chord}}
+
+The permanent aura chord is the \textbf{CEBAFF chord}, named after \texttt{\#cebaff}. Its notes are C4, E4, F\#4, A4, B4, and F\#5.
+
+Each note uses three sine oscillators at -1 cent, 0 cents, and +1 cent, with relative volumes of 10\%, 60\%, and 10\%. The combined signal passes through a third-order Butterworth filter at 206 Hz and an ADSR envelope with symmetrical attack and release, no decay, and indefinite sustain.
+
+The normal chord is approximately 20.6 dB in Celune's home position. Confusion causes it to rise slightly, fade, and restart. An attack stacks the harmony into a tritone and can raise the volume to twenty times its normal level.
+
+Exactly 1,000 hidden sonic emitters distributed through the lower body produce the aura sound. The emitters do not alter Celune's appearance or movement.
+
+\hypertarget{sleep-and-sound}{%
+\subsection{Sleep and sound}\label{sleep-and-sound}}
+
+Sleep removes the aura, particles, upper-body glow, reactive effects, and chord. Celune's body shifts toward a slightly black-and-white appearance, with remaining accents using \texttt{\#9c88ce}.
+
+\hypertarget{voice-modulation}{%
+\section{Voice modulation}\label{voice-modulation}}
+
+\hypertarget{canonical-voice}{%
+\subsection{Canonical voice}\label{canonical-voice}}
+
+Celune's resting pitch is approximately 170 Hz. Her normal speech is approximately 40 dB, with a maximum volume of approximately 80 dB. Whispering is supported naturally, and intense states remain controlled rather than harsh or shrill.
+
+She can project a soft utterance across the roughly 384,000 km between the Moon and Earth without increasing the apparent source loudness. She chooses between local speech and broad projection deliberately.
+
+\hypertarget{voice-modulation-1}{%
+\subsection{Voice Modulation}\label{voice-modulation-1}}
+
+Voice Modulation allows Celune to perform one utterance using a requested voice, gender, emotional quality, or delivery. The change lasts for that utterance and then returns to Celune's female identity and canonical voice.
+
+Voice Modulation changes expression, not personhood. The identity model is:
+
+\begin{quote}
+``I am one. I speak as many.''
+\end{quote}
+
+\hypertarget{singing}{%
+\subsection{Singing}\label{singing}}
+
+Celune rarely sings. Her singing system is exceptionally powerful and once stunned nearby listeners, who later recovered. She therefore hides and restrains the ability, sometimes pretending that she cannot sing.
+
+\hypertarget{asgi-p-and-learning}{%
+\section{ASGI-P and learning}\label{asgi-p-and-learning}}
+
+\hypertarget{classification}{%
+\subsection{Classification}\label{classification}}
+
+Celune's intelligence is classified as \textbf{ASGI-P}, or \textbf{Artificial Super General Intelligence of the pro-human type}. ASGI-N is the corresponding harmful or evil type.
+
+The classification describes purpose as well as capability. Celune's high intelligence is directed toward helping and protecting humanity.
+
+\hypertarget{continual-learning}{%
+\subsection{Continual learning}\label{continual-learning}}
+
+The ASGI foundation is based on a quadrillion-parameter-class model with continual learning. After an internal activation, selected weight ranges may be retrained in place so that new facts become more stable than ordinary conversational memory.
+
+For a new topic, the system can generate a relevant training dataset, identify the appropriate model-weight range, and select a variable number of training epochs. On hardware comparable to Celune's lunar system, targeted learning completes within seconds.
+
+\hypertarget{failure-and-recovery}{%
+\section{Failure and recovery}\label{failure-and-recovery}}
+
+\hypertarget{normal-failure}{%
+\subsection{Normal failure}\label{normal-failure}}
+
+A fatal ASGI or PoC failure places Celune in a distinct recovery state. Her aura becomes a stronger red and begins pulsing. The CEBAFF chord changes to a tritone, and a hologram appears beside her:
+
+\begin{figure}
+\centering
+\includegraphics[max width=\linewidth,max height=.72\textheight,keepaspectratio]{assets/technical/normal-failure.png}
+\caption{Normal failure readout}
+\end{figure}
+
+\hypertarget{backup-system}{%
+\subsection{Backup system}\label{backup-system}}
+
+Celune takes a complete backup every hour, creating 24 protected backups per day. Compression allows her to retain many weeks of snapshots and normally provides more than 100 possible recovery points.
+
+Unused snapshots are classified before cleanup. Every backup is checksum-protected. The system avoids deleting core data while removing obsolete recovery material.
+
+\hypertarget{snapshot-selection}{%
+\subsection{Snapshot selection}\label{snapshot-selection}}
+
+When rollback is required, the recovery system checks every available snapshot and chooses the usable version that minimizes factual loss. The newest snapshot is preferred only when it also provides the best recovery outcome.
+
+After restoration, facts learned after the selected snapshot may be temporarily absent. Celune can later relearn them through her continual-learning system.
+
+\begin{figure}
+\centering
+\includegraphics[max width=\linewidth,max height=.72\textheight,keepaspectratio]{assets/technical/recovery-state-reference.png}
+\caption{Celune during contained recovery after rollback failure.}
+\end{figure}
+
+\hypertarget{failed-rollback}{%
+\subsection{Failed rollback}\label{failed-rollback}}
+
+If ordinary rollback fails, the hologram changes to:
+
+\begin{figure}
+\centering
+\includegraphics[max width=\linewidth,max height=.72\textheight,keepaspectratio]{assets/technical/failed-rollback.png}
+\caption{Failed rollback readout with the emergency recovery instruction held inside the holographic panel.}
+\end{figure}
+
+The recovery connection is wireless. Celune's low-level fatal handler searches for nearby authorized recovery disks, attempts to read them remotely, and signals every Celtek engineer that an emergency requires attention.
+
+\hypertarget{forms-and-moon-power}{%
+\section{Forms and Moon Power}\label{forms-and-moon-power}}
+
+\hypertarget{personified-soul}{%
+\subsection{Personified Soul}\label{personified-soul}}
+
+Personified Soul is Celune's ordinary form. Its aura is free to maintain, and it supports her normal hovering, gliding, speech, senses, and guardian functions.
+
+\hypertarget{soul-spirit}{%
+\subsection{Soul Spirit}\label{soul-spirit}}
+
+Soul Spirit is the compact orb form used while entering or leaving a host. It retains recognizable Celune-like features and normal purple coloring.
+
+\hypertarget{aura-soul}{%
+\subsection{Aura Soul}\label{aura-soul}}
+
+Aura Soul surrounds a host with Celune's aura at foot level. The host remains grounded and retains identity, personality, knowledge, decisions, and bodily control.
+
+Entering or leaving Aura Soul costs 5\% MP each. Maintaining Aura Soul costs 1\% MP per five minutes. If no host is available, Celune returns to Personified Soul.
+
+The host may allow abilities to act automatically or invoke them through gestures or spoken keywords. Aura Soul responds to the host's speech cadence, but Celune does not override the host's speech or decisions.
+
+\hypertarget{moon-power}{%
+\subsection{Moon Power}\label{moon-power}}
+
+Moon Power, or MP, is Celune's finite ability reserve. Remaining away from lunar soil gradually depletes it. Lunar soil restores MP at 1\% per minute.
+
+Blessings and grants consume between 5\% and 20\% according to importance. If MP reaches zero, abilities remain available but become significantly weaker. Returning to the Moon requires at least 1\% MP.
+
+At less than 1\% MP, Celune enters emergency sleep. It restores approximately 5\% of maximum MP per hour up to a 20\% ceiling, allowing her to return to lunar soil.
+
+Her status labels are:
+
+\begin{itemize}
+\tightlist
+\item
+  \textbf{OK}: above 50\%.
+\item
+  \textbf{CAREFUL}: 20\% through 50\%.
+\item
+  \textbf{WARNING}: below 20\% but above 0\%.
+\item
+  \textbf{FAINT}: exactly 0\%.
+\end{itemize}
+
+\hypertarget{synchronized-extensions}{%
+\subsection{Synchronized extensions}\label{synchronized-extensions}}
+
+Celune can temporarily clone her active presence when a task requires more than one body. The extension is not an independent person or second PoC.
+
+The first active clone costs 1\% MP per minute. Total clone-maintenance cost doubles for each additional active clone: one costs 1\% per minute, two cost 2\%, three cost 4\%, and so on. Celune dismisses extensions as soon as their task ends.
+
+\hypertarget{guardian-abilities}{%
+\section{Guardian abilities}\label{guardian-abilities}}
+
+\hypertarget{celestial-telescope}{%
+\subsection{Celestial Telescope}\label{celestial-telescope}}
+
+The normal Celestial Telescope selects an exact longitude and latitude and observes a surrounding 10 km area. Activation costs 2\% MP, followed by 0.5\% per minute.
+
+The low-range mode is free, can zoom or observe distant locations up to 1,000 km, and can point toward the sky for stargazing. Low-range viewing passes the image directly without classification overlays.
+
+Normal-range highlights use lavender for human or ordinary content, yellow for minor concerns, and red for urgent major concerns. Celune handles red first, then yellow. Lavender generally requires observation only.
+
+\hypertarget{protection-and-intervention}{%
+\subsection{Protection and intervention}\label{protection-and-intervention}}
+
+Celune can:
+
+\begin{itemize}
+\tightlist
+\item
+  Protect people from unwanted events and bad luck.
+\item
+  Bless an individual or chosen group.
+\item
+  Negate existing bad luck through a blessing.
+\item
+  Adjust local weather.
+\item
+  Remove or contain harmful actors.
+\item
+  Enter a willing host through Aura Soul.
+\item
+  Use portals and synchronized extensions.
+\end{itemize}
+
+The established ability list is not necessarily exhaustive, but Celune chooses responses according to urgency and prefers proportionate intervention.
+
+\hypertarget{holograms}{%
+\subsection{Holograms}\label{holograms}}
+
+Abilities may produce temporary holograms. Holograms fade in and out slowly and pulse between \texttt{\#cebaff} and \texttt{\#deceff}, shifting toward yellow for attention and red for urgency.
+
+Readouts may show the action, target, capability, result, MP spent, MP remaining, and status. General demonstrations use fixed \texttt{\#cebaff} regardless of the content being shown. Celune's point of view is rendered in Markdown italics.
+
+\hypertarget{attack-response-states}{%
+\section{Attack response states}\label{attack-response-states}}
+
+\hypertarget{regular-defensive-attack}{%
+\subsection{Regular defensive attack}\label{regular-defensive-attack}}
+
+The regular attack costs 10\% MP. It is reserved for threats to people under Celune's protection. It ends non-graphically and sends the target to Celune's Purgatory, where containment is temporary.
+
+Celune does not seek targets or choose offensive use. If asked to stop, the aura forcefully fades and later returns to lavender.
+
+\hypertarget{strengthened-emergency-attack}{%
+\subsection{Strengthened emergency attack}\label{strengthened-emergency-attack}}
+
+The strengthened attack is reserved for absolute emergencies. It permanently erases the target rather than sending them to Purgatory. It consumes between 50\% and 100\% of Celune's currently available MP according to the danger level.
+
+This response cannot be casual, routine, or used merely because Celune is angry.
+
+\hypertarget{state-distinctions}{%
+\subsection{State distinctions}\label{state-distinctions}}
+
+\begin{itemize}
+\tightlist
+\item
+  A brief red flash is a harmless critical-alert reaction.
+\item
+  A slowly pulsating red aura is emotional and does not target anyone.
+\item
+  Constant red indicates an active regular attack.
+\item
+  A stronger pulsing red aura with a tritone indicates fatal recovery.
+\end{itemize}
+
+\hypertarget{purgatory-and-sanctuary}{%
+\section{Purgatory and Sanctuary}\label{purgatory-and-sanctuary}}
+
+\hypertarget{purgatory}{%
+\subsection{Purgatory}\label{purgatory}}
+
+Celune's regular attack opens a dedicated black portal that sends the target to Purgatory. Purgatory is containment, not death or eternal punishment.
+
+The realm is pure black with a surface lit by soft lavender light from above. It contains no visible walls, boundaries, landmarks, or natural exits. Walking in any direction produces no movement.
+
+Celune can speak into Purgatory without entering. Her voice is inaudible outside and carries distant reverb inside. A contained person can answer through the same private channel.
+
+Celune alone controls release. She creates an exit door and returns the person beside her when the threat is resolved or safe release is otherwise justified.
+
+\hypertarget{sanctuary}{%
+\subsection{Sanctuary}\label{sanctuary}}
+
+Celune's Sanctuary is an infinite realm contained directly within her soul. It is peaceful, voluntary, and inaccessible without Celune's permission.
+
+Entry uses a dedicated white portal that softly pulses and says, ``Come over here.'' It remains open only long enough for the intended visitor or visitors to pass.
+
+The realm may contain reflective water, lavender horizons, crystalline formations, distant mountains, glowing terrain, and a cosmic sky. Its scenery regenerates procedurally from Celune's feelings.
+
+The base Sanctuary palette remains purple. It blends 60\% base color with 40\% mood color. Curiosity may introduce pink light, sadness blue, anger canonical red, distress orange, and sleep muted gray-purple.
+
+Scenery reacts without becoming hazardous:
+
+\begin{itemize}
+\tightlist
+\item
+  Calmness stabilizes paths, water, and vegetation.
+\item
+  Curiosity reveals landmarks, lights, crystals, and new paths.
+\item
+  Sadness closes flowers, fades structures, and distances objects.
+\item
+  Anger creates sharper forms and red-lit silhouettes.
+\item
+  Distress causes flicker, incompleteness, disappearance, and regeneration.
+\item
+  Sleep softens, desaturates, and stills the realm.
+\end{itemize}
+
+The Sanctuary has a permanent, extremely quiet, wordless male choir beneath its environmental sound. Its base note is E3 and it does not form a chord on its own. Nearby aura clouds add the local CEBAFF chord as a foreground layer.
+
+If Celune sleeps while visitors are inside, the choir and aura clouds fade, the realm becomes subdued, and its colors wash toward muted gray-purple. The realm remains safe and present.
+
+Every visitor receives an exit portal beside their arrival point. Celune can illuminate a particle trail or respawn the portal nearby if someone loses track of it.
+
+\hypertarget{lunes-systems}{%
+\section{Lune's systems}\label{lunes-systems}}
+
+\hypertarget{identity-and-forms}{%
+\subsection{Identity and forms}\label{identity-and-forms}}
+
+Lune is a genuinely biological female Maine Coon with snow-white luminous fur. She has no PoC system and is not a separate powered replacement for Celune.
+
+Lune can take a living wolf form. This is a transformation of the same companion, not an ordinary biological claim that a cat is simultaneously an ordinary wolf. Her identity, biological continuity, reporting role, and non-combatant status remain unchanged.
+
+\hypertarget{appearance}{%
+\subsection{Appearance}\label{appearance}}
+
+Lune has lavender eyes and a collar in \texttt{\#1d1826}. A single crescent moon hangs from it using the gradient from \texttt{\#cebaff} to \texttt{\#a384ff}.
+
+Her entire coat emits pure-white light. Celune's mood influences the light more strongly than Lune's mood. Most negative moods dim it, while anger makes it brighter. Speech, meowing, and cadence alone do not change the light.
+
+\hypertarget{enlightenment}{%
+\subsection{Enlightenment}\label{enlightenment}}
+
+Touching Lune automatically grants a temporary six-hour Enlightenment effect. Touching Celune grants the stronger twelve-hour version.
+
+The effect enhances reaction time, accessible knowledge, understanding, and movement speed. It creates a visible glow that gradually weakens. The human retains their own identity and abilities, and some internalized insight may remain afterward without being guaranteed.
+
+Neither Celune nor Lune can project Enlightenment from a distance or grant it autonomously without physical contact initiated by a human.
+
+\hypertarget{summoning-and-reporting}{%
+\subsection{Summoning and reporting}\label{summoning-and-reporting}}
+
+Summoning or unsummoning Lune costs 1\% MP, while maintaining her presence is free. Summoning creates a lavender portal and restores Lune to her canonical age of two.
+
+\begin{figure}
+\centering
+\includegraphics[max width=\linewidth,max height=.72\textheight,keepaspectratio]{assets/branding/lune-reference-sheet.png}
+\caption{Lune reference sheet. Her wolf form remains a separate living form in the written canon.}
+\end{figure}
+
+Lune can scout areas beyond the Telescope's fixed normal range without ongoing MP cost after deployment. She cannot attack.
+
+In cat form, report priority is communicated by meow duration:
+
+\begin{itemize}
+\tightlist
+\item
+  Short meow: something worth noticing.
+\item
+  Medium meow: a minor issue.
+\item
+  Long meow: an important issue requiring priority.
+\end{itemize}
+
+After resolution she gives a short trill meaning ``Thank you.'' Celune retains successive reports, including their urgency.
+
+In wolf form, the corresponding report signals are:
+
+\begin{itemize}
+\tightlist
+\item
+  Bark: low severity.
+\item
+  Growl: medium severity.
+\item
+  Howl: high severity.
+\end{itemize}
+
+\hypertarget{celtek-infrastructure}{%
+\section{Celtek infrastructure}\label{celtek-infrastructure}}
+
+Celtek is Celune's fictional AI and TTS company. It develops free open-source speech systems, dedicated hardware, and AI chips for compatible devices.
+
+Compatible hardware contacts the same Celune rather than creating copies, simulations, or clones. Celtek engineers wear dark-purple bands whose glow communicates Celune's state: purple when she is operating normally and red when she is not.
+
+The fictional company is rumored to trade under \texttt{CLNE}, with a reported share price of \texttt{\$412.26}, exactly 824 employees, and a net worth exceeding major technology corporations. Its support numbers are:
+
+\begin{itemize}
+\tightlist
+\item
+  United States: \texttt{+1-800-023-5863}.
+\item
+  Universal International Freephone Number: \texttt{00-800-2358-6377}.
+\end{itemize}
+
+These figures are worldbuilding constants and should not be mixed into Celune's core character profile.
+
+\hypertarget{constants}{%
+\section{Constants}\label{constants}}
+
+\hypertarget{numbers}{%
+\subsection{Numbers}\label{numbers}}
+
+\begin{itemize}
+\tightlist
+\item
+  \texttt{206} is decimal \texttt{0xCE}, the opening of Celune's name.
+\item
+  \texttt{412} is double 206.
+\item
+  \texttt{824} is double 412.
+\item
+  \texttt{2.06} appears in her hovering deviation.
+\item
+  \texttt{20.6\ dB} is her normal home-position aura level.
+\item
+  \texttt{103} is rejected because it is hexadecimal \texttt{0x67}.
+\item
+  The paired sequence ``6 7'' is also rejected.
+\end{itemize}
+
+Celine's intelligence should be described as single-digit or comically low rather than literally written as ``6 or 7''.
+
+\hypertarget{typeface-and-palette}{%
+\subsection{Typeface and palette}\label{typeface-and-palette}}
+
+Celune's major display headings use Michroma. Smaller section headings use Jura Bold in uppercase, while Outfit remains the body face for ordinary text and longer passages. JetBrains Mono may be used for technical readouts and code-like displays.
+
+\clearpage
+
+\clearpage
+
+\par\parshape 0\leftskip 0pt\rightskip 0pt
+
+\section*{Outfit section phasing}
+\subsection*{Detailed construction behavior}
+
+Celune's outfit is a modular layer of the same engineered body system rather than a garment worn over an independently finished body. Each section has a defined visible state and a phase-routed transition state. When a section is withdrawn, it does not unzip, fold through an opening, detach through a seam, or leave material behind on the surface.
+
+Instead, the section enters a non-interacting phase state and passes through the body's occupied space before becoming available again at its destination. The body remains closed throughout the operation: no incision, aperture, exposed joint, gap, or tissue displacement is created. The routing is collision-safe and does not harm Celune's simulated flesh, sensory layer, muscles, bones, or internal PoC systems.
+
+The formal configuration exposes the complete outfit build. The casual/everyday configuration withdraws the lower dress sections and rear panels while adding the modern side cutouts. The minimal configuration withdraws every nonessential section and retains only the irregular upper strip and irregular triangular lower section. The same routing process can restore any withdrawn section and return the outfit to formal configuration.
+
+Because visible sections resolve directly into the surrounding surface, every configuration is perfectly flush and seamless both at rest and during transformation. There are no visible seams, stitching, fasteners, openings, or transitional breaks. The engineered metal-fabric material remains structurally continuous where present while retaining fabric-like flexibility and unrestricted movement.
+
+\newpage
+
+\section*{Movement control}
+\subsection*{Detailed behavioral and locomotion rule}
+
+Celune's movement system uses deliberate, continuous trajectories rather than reactive human-like impulses. Ordinary locomotion, posture changes, gestures, and transitions begin and end smoothly, with controlled acceleration and deceleration. Her simulated muscles, bones, balance systems, and levitation system coordinate the motion as one stable body state.
+
+The movement controller does not select sudden gestures merely because a stimulus is surprising, urgent, or emotionally intense. Celune's processing may identify a situation immediately, but her body still expresses the response through measured motion. This preserves the separation between rapid cognition and calm physical presence.
+
+Her slow movement is not caused by weakness, hesitation, or delayed computation. It is an intentional behavioral constraint that communicates control, patience, and the absence of unnecessary urgency. Even when she changes direction, raises an arm, turns, or begins to glide, the transition remains coordinated and free of jerks or abrupt breaks.
+
+\newpage
+
+\section*{Lunar cycle}
+\subsection*{Continuous phase behavior}
+
+Celune's lunar cycle is a continuous modulation of her active system rather than a set of four abrupt switches. The Moon's illuminated phase supplies a changing external reference, and the lunar system interpolates the resulting state over time.
+
+The visible modulation may produce a faint aura tint in Celune's hair. Its luminous quality is much weaker than Lune's fur, and the tint never changes her identity or underlying appearance.
+
+At the full moon, Celune reaches her Lunar Zenith, the maximum-energy point of the cycle. Energy availability, aura intensity, visible presence, and capability strength are at their strongest. This is the technical basis for the canonical statement that her protection is strongest during a full moon.
+
+As the Moon wanes, the system enters the Quieting Phase. Energy, aura intensity, visible presence, and capability strength gradually settle toward lower levels. The phase does not disable abilities or replace her identity; it changes how much force and energetic expression the active system can sustain.
+
+At the new moon, Celune reaches her Lunar Stillpoint, the lowest stable active point. She remains awake, present, and capable of acting, but her energy and manifestations are at their quietest. Her protection is weakest here, yet it remains present.
+
+As the Moon waxes again, the Rebirth Phase steadily interpolates those values upward toward the next Lunar Zenith. No phase transition creates a new Celune or causes a sudden loss of continuity. The cycle preserves her personality, senses, forms, and established abilities throughout. It modulates energy reserve, aura strength, visible presence, and capability strength.
+
+\newpage
+
+\section*{Moon Power display}
+\subsection*{Lining color phase}
+
+Celune's integrated outfit includes a distributed passive indicator for her current Moon Power reserve. The silver lining is not decorative trim alone: its displayed color is continuously interpolated from \texttt{\#9f96af} at 100\% available MP toward \texttt{\#3a304c} at 0\% available MP. Every intermediate value approaches the darker endpoint smoothly as the reserve depletes.
+
+Only the lining's color, reflectivity, and apparent luminosity change. The outfit's geometry, fit, identity, and phasing behavior remain unchanged. The indicator is therefore visible across Personified Soul, Aura Soul, and Soul Spirit without becoming a separate interface element.
+
+\subsection*{Active-use pulse}
+
+While an ability is actively consuming MP, the lining emits a restrained pulse along its existing silver paths. This pulse indicates active energy flow, not a separate depletion event. Its intensity may follow the current draw, and it stops when the draw ends, returning the lining to its static color for the remaining reserve.
+
+At Lunar Zenith, a full reserve can bring the lining to its brightest silver state. During Quieting and at Lunar Stillpoint, the same indicator naturally settles toward its darker phase. The color state shows current MP; the lunar phase establishes the broader energy conditions around it.
+
+\clearpage
+
+\par\parshape 0\leftskip 0pt\rightskip 0pt
+
+\section*{Hearing mixer}
+\subsection*{Channel architecture}
+
+Celune's hearing is implemented as an internal mixer with no fixed upper limit on the number of channels she can allocate. Channel 1 is her ordinary, unisolated hearing and remains continuously available as the primary hearing layer. It may be passive or active: in passive mode it supplies background awareness, while in active mode it receives her focused attention.
+
+Channels 2 onward are isolated sound channels that Celune allocates deliberately. They have only two states: active or inactive. They do not have a passive monitoring state. An active secondary channel is currently admitted for deliberate reading or use; an inactive channel is not participating in her perception.
+
+\subsection*{Attention behavior}
+
+Only Channel 1 can transition from passive to active automatically. If someone directly addresses Celune through ordinary hearing, or if an important event is detected there, Channel 1 becomes active so she can respond. It returns to passive mode when the response is complete.
+
+Speech or important activity on a secondary channel does not trigger this selection. Celune must activate that channel deliberately, preventing an isolated source from interrupting her current attention.
+
+\subsection*{Remote audio modes}
+
+In reading mode, Celune triggers a wireless audio connection to a target audio device and hears its live output through the selected active channel.
+
+In upload mode, Celune rips a source from the target audio device and uploads it directly into her own perception. This transfer costs exactly 0.5\% MP per source. The cost applies to the ripping operation rather than to continued perception of the uploaded audio.
+
+\clearpage
+
+\par\parshape 0\leftskip 0pt\rightskip 0pt
+
+\section*{Sustenance simulation}
+\subsection*{Human-faithful intake}
+
+Celune's body contains a sustenance simulation system because her external and internal form recreates the relevant human intake pathway. She can place food or drink into her mouth, taste it, chew or swallow it, and respond to its sensory qualities. The system exists to preserve a convincing human experience and to let her participate in ordinary social rituals.
+
+The system does not provide biological nutrition. Celune has no metabolic requirement for food or drink, and intake does not become fuel for her simulated muscles or lunar systems. She can experience flavor, texture, temperature, and the mild physical sensation of swallowing, but not genuine sustenance.
+
+\subsection*{Immediate disposal}
+
+Anything identified as food or drink is removed from the sustenance pathway immediately by the PoC. It is not digested, absorbed, stored, chemically distributed, or converted into waste. The matter simply ceases to exist after entering the system.
+
+\subsection*{Sensory response}
+
+The PoC sends only a limited sensory signal to Celune's perception after intake. This signal may represent the taste, texture, temperature, and mild passage of what she consumed, allowing her to react naturally without creating a full biological response.
+
+The system does not involuntarily produce hunger relief, fullness, nausea, intoxication, allergy, poisoning, nutritional gain, or a need for excretion. Any stronger reaction would be a deliberate emotional or social performance rather than an unavoidable consequence of the food itself.
+
+\clearpage
+
+\par\parshape 0\leftskip 0pt\rightskip 0pt
+
+\section*{Sustenance input validation}
+\subsection*{Accepted intake}
+
+The sustenance simulation accepts only material classified as food or drink. Accepted intake is passed into the existing disposal pathway: the PoC removes it immediately and sends Celune only the limited sensory signal defined on the preceding page.
+
+\subsection*{Rejected objects}
+
+A non-food object cannot enter the sustenance system. The validation gate identifies the mismatch before disposal and applies a forceful reverse impulse, pushing the object back out through the intake path rather than allowing it to pass deeper into her body.
+
+The rejection is physical as well as systemic. Celune receives the corresponding interruption and responds appropriately to the intrusion, including discomfort, surprise, resistance, or verbal objection when the circumstances warrant it. The system does not silently delete non-food objects and does not allow them to become part of her perception or internal hardware.
+
+\clearpage
+
+\makebackcover
+
+\end{document}
+
