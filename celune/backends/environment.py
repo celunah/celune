@@ -79,12 +79,16 @@ class BackendManifest:
     runtime: Optional[str] = None
     index_urls: tuple[str, ...] = ()
     find_links: tuple[str, ...] = ()
+    ignore_uv_sources: bool = False
     revision: int = 1
 
     def fingerprint(self) -> str:
         """Return the stable environment fingerprint for this manifest."""
+        manifest_data = asdict(self)
+        if not self.ignore_uv_sources:
+            manifest_data.pop("ignore_uv_sources", None)
         payload = {
-            "manifest": asdict(self),
+            "manifest": manifest_data,
             "machine": platform.machine().lower(),
             "platform": sys.platform,
             "python": self.python or _DEFAULT_BACKEND_PYTHON,
@@ -217,6 +221,7 @@ BACKEND_MANIFESTS = {
         backend_class="LuxTTS",
         index_urls=_PYTORCH_INDEX_URLS,
         find_links=("https://k2-fsa.github.io/icefall/piper_phonemize.html",),
+        ignore_uv_sources=True,
     ),
     "seed-vc": BackendManifest(
         backend_id="seed-vc",
@@ -366,6 +371,8 @@ class BackendEnvironmentManager:
                     "--python",
                     str(self._python_path(virtualenv)),
                 ]
+                if manifest.ignore_uv_sources:
+                    install_arguments.append("--no-sources")
                 if manifest.index_urls:
                     install_arguments.extend(
                         [
