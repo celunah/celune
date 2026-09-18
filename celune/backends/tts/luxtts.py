@@ -1,21 +1,24 @@
 # SPDX-License-Identifier: Apache-2.0
 """LuxTTS backend implementation for Celune."""
 
+import contextlib
+import hashlib
+import math
 import os
 import time
-import math
-import contextlib
+from pathlib import Path
 from types import MethodType
-from typing import ClassVar, Protocol, Union, Optional, cast
-from collections.abc import Mapping, Callable, Iterator, Generator
+from collections.abc import Callable, Generator, Iterator, Mapping
+from typing import ClassVar, Optional, Protocol, Union, cast
 
 import numpy as np
+import soundfile as sf
 import torch
 from huggingface_hub import snapshot_download
 
 from ...cevoice import CEVoiceLoader, default_loader
 from ...i18n import string
-from ...paths import huggingface_hub_cache_dir, huggingface_progress
+from ...paths import huggingface_hub_cache_dir, huggingface_progress, temp_data_dir
 from ...typing.aliases import AudioChunk
 from ...typing.backends import BackendModel
 from ...utils import custom_assert
@@ -44,9 +47,11 @@ _LUXTTS_TRANSCRIBER_FILES = [
 ]
 _LUXTTS_SAMPLE_RATE = 48000
 _LUXTTS_PROMPT_DURATION_SECONDS = 5
+_LUXTTS_PROMPT_TRAILING_SILENCE_SECONDS = 0.2
 _LUXTTS_CPU_THREADS = 2
 _LUXTTS_VOCODER_MIN_FRAMES = 7
 _LUXTTS_VOCODER_TAIL_FRAMES = 15
+_LUXTTS_VOCODER_HOP_LENGTH = 512
 _LuxPromptValue = Union[torch.Tensor, float, int]
 _LuxPrompt = dict[str, _LuxPromptValue]
 
@@ -68,7 +73,7 @@ class _LuxTTSOnnxModel(Protocol):
         prompt_tokens: torch.Tensor,
         prompt_features_len: torch.Tensor,
         speed: torch.Tensor,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+    ) -> torch.Tensor:
         """Build text conditioning for the requested token sequence."""
         raise NotImplementedError("protocol not defined")
 
@@ -82,7 +87,7 @@ class _LuxTTSModel(BackendModel, Protocol):
     def encode_prompt(
         self,
         prompt_audio: str,
-        duration: int = _LUXTTS_PROMPT_DURATION_SECONDS,
+        duration: float = _LUXTTS_PROMPT_DURATION_SECONDS,
         rms: float = 0.01,
     ) -> _LuxPrompt:
         """Encode a reference recording into a LuxTTS prompt."""
@@ -146,7 +151,7 @@ def _install_cpu_duration_correction(model: _LuxTTSModel) -> None:
     if not callable(original_run_text_encoder):
         return
     run_text_encoder = cast(
-        Callable[..., tuple[torch.Tensor, torch.Tensor]],
+        Callable[..., torch.Tensor],
         original_run_text_encoder,
     )
 
@@ -156,7 +161,7 @@ def _install_cpu_duration_correction(model: _LuxTTSModel) -> None:
         prompt_tokens: torch.Tensor,
         prompt_features_len: torch.Tensor,
         speed: torch.Tensor,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+    ) -> torch.Tensor:
         """Use the GPU path's prompt-plus-generated duration calculation."""
         prompt_token_count = int(prompt_tokens.shape[1])
         target_token_count = int(tokens.shape[1])
@@ -185,7 +190,7 @@ def _install_cpu_duration_correction(model: _LuxTTSModel) -> None:
         onnx_frame_ratio = (
             prompt_frame_count
             / prompt_token_count
-            * (prompt_token_count + target_token_count - 1)
+            * (prompt_token_count + target_token_count)
         )
         corrected_speed = onnx_frame_ratio / desired_frame_count
         corrected_speed_tensor = speed.new_tensor(corrected_speed)
@@ -220,11 +225,15 @@ def _install_vocoder_decode_guard(model: _LuxTTSModel) -> None:
         **kwargs: object,
     ) -> torch.Tensor:
         """Decode features after applying LuxTTS's required context padding."""
-        return decode(
+        waveform = decode(
             vocoder_instance,
             _pad_vocoder_features(features_input),
             **kwargs,
         )
+        trim_samples = _LUXTTS_VOCODER_TAIL_FRAMES * _LUXTTS_VOCODER_HOP_LENGTH
+        if waveform.shape[-1] > trim_samples:
+            waveform = waveform[..., :-trim_samples]
+        return waveform
 
     vocoder.decode = MethodType(guarded_decode, vocoder)
 
@@ -267,6 +276,47 @@ class LuxTTS(CeluneBackend[_LuxTTSModel]):
         loader, voice_names = compatible_bundle
         for name in voice_names:
             loader.materialize(name, "wav")
+
+    def _prepare_prompt_reference(self, reference_wav: Path) -> Path:
+        """Add decoder-boundary silence after LuxTTS's prompt window.
+
+        LuxTTS can carry the final words of a prompt into generated speech when
+        the prompt ends directly at the encoder window. Keeping the complete
+        five-second prompt and adding silence after it gives the model a clean
+        acoustic boundary without changing the reference voice.
+        """
+        info = sf.info(reference_wav)
+        sample_rate = int(info.samplerate)
+        prompt_frames = min(
+            int(info.frames),
+            round(sample_rate * _LUXTTS_PROMPT_DURATION_SECONDS),
+        )
+        audio, _ = sf.read(
+            reference_wav,
+            frames=prompt_frames,
+            dtype="float32",
+            always_2d=False,
+        )
+        if audio.ndim > 1:
+            audio = np.mean(audio, axis=1, dtype=np.float32)
+        audio = np.asarray(audio, dtype=np.float32)
+        silence = np.zeros(
+            round(sample_rate * _LUXTTS_PROMPT_TRAILING_SILENCE_SECONDS),
+            dtype=np.float32,
+        )
+        padded_audio = np.concatenate((audio, silence))
+
+        digest = hashlib.sha1(str(reference_wav.resolve()).encode("utf-8")).hexdigest()[
+            :12
+        ]
+        prepared_path = (
+            temp_data_dir(create=True)
+            / f"{reference_wav.stem}-{digest}-luxtts-prompt.wav"
+        )
+        if not prepared_path.exists():
+            sf.write(prepared_path, padded_audio, sample_rate)
+        self._truncated_reference_paths.add(prepared_path)
+        return prepared_path
 
     @property
     def voices(self) -> list[str]:
@@ -400,13 +450,18 @@ class LuxTTS(CeluneBackend[_LuxTTSModel]):
         if not isinstance(voice, str) or voice not in voice_names:
             raise ValueError(f"unknown voice '{voice}' for backend '{self.name}'")
 
-        ref_wav = self._truncate_reference(loader.materialize(voice, "wav"))
+        ref_wav = self._prepare_prompt_reference(
+            self._truncate_reference(loader.materialize(voice, "wav"))
+        )
         self._apply_seed()
         started = time.monotonic()
         with self._suppress_backend_output():
             encoded_prompt = model.encode_prompt(
                 str(ref_wav),
-                duration=_LUXTTS_PROMPT_DURATION_SECONDS,
+                duration=(
+                    _LUXTTS_PROMPT_DURATION_SECONDS
+                    + _LUXTTS_PROMPT_TRAILING_SILENCE_SECONDS
+                ),
                 rms=0.01,
             )
             waveform = model.generate_speech(

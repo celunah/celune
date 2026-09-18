@@ -215,6 +215,11 @@ class TestBackend(CeluneTestCase):
             mock.patch.object(
                 backend, "_truncate_reference", return_value=Path("reference.wav")
             ),
+            mock.patch.object(
+                backend,
+                "_prepare_prompt_reference",
+                return_value=Path("prepared-reference.wav"),
+            ),
         ):
             result = list(
                 backend.generate_stream(
@@ -225,8 +230,8 @@ class TestBackend(CeluneTestCase):
             )
 
         model.encode_prompt.assert_called_once_with(
-            "reference.wav",
-            duration=5,
+            "prepared-reference.wav",
+            duration=5.2,
             rms=0.01,
         )
         model.generate_speech.assert_called_once_with(
@@ -245,24 +250,47 @@ class TestBackend(CeluneTestCase):
         assert timing is not None
         assert timing["is_final"] is True
 
+    def test_luxtts_adds_a_silent_prompt_boundary(self, tmp_path: Path) -> None:
+        """Verify prompt audio keeps five seconds and gains a silent tail."""
+        reference_wav = tmp_path / "reference.wav"
+        sf.write(reference_wav, np.ones(6 * 24_000, dtype=np.float32), 24_000)
+        backend = LuxTTS.__new__(LuxTTS)
+        backend._truncated_reference_paths = set()
+
+        with mock.patch(
+            "celune.backends.tts.luxtts.temp_data_dir", return_value=tmp_path
+        ):
+            prepared = backend._prepare_prompt_reference(reference_wav)
+
+        audio, sample_rate = sf.read(prepared, dtype="float32")
+        assert sample_rate == 24_000
+        assert audio.shape == (int(5.2 * 24_000),)
+        np.testing.assert_allclose(audio[-int(0.2 * 24_000) :], 0.0)
+
     def test_luxtts_guards_vocoder_against_short_feature_sequences(self) -> None:
         """Verify LuxTTS pads decoder context and rejects empty output frames."""
 
         class FakeVocoder:
             """Return decoder inputs so the guard's padding is observable."""
 
+            def __init__(self) -> None:
+                self.input_shape: Optional[tuple[int, ...]] = None
+
             def decode(
                 self, features_input: torch.Tensor, **kwargs: object
             ) -> torch.Tensor:
                 """Return the received features unchanged."""
                 del kwargs
-                return features_input
+                self.input_shape = tuple(features_input.shape)
+                return torch.zeros(1, 1, 10_000)
 
-        model = SimpleNamespace(vocos=FakeVocoder())
+        vocoder = FakeVocoder()
+        model = SimpleNamespace(vocos=vocoder)
         _install_vocoder_decode_guard(cast(_LuxTTSModel, model))
 
-        padded = model.vocos.decode(torch.ones(1, 2, 1))
-        assert padded.shape == (1, 2, 22)
+        decoded = model.vocos.decode(torch.ones(1, 2, 1))
+        assert vocoder.input_shape == (1, 2, 22)
+        assert decoded.shape == (1, 1, 10_000 - 15 * 512)
         with pytest.raises(ValueError, match="LuxTTS produced no acoustic frames"):
             model.vocos.decode(torch.empty(1, 2, 0))
 
@@ -281,11 +309,11 @@ class TestBackend(CeluneTestCase):
                 prompt_tokens: torch.Tensor,
                 prompt_features_len: torch.Tensor,
                 speed: torch.Tensor,
-            ) -> tuple[torch.Tensor, torch.Tensor]:
+            ) -> torch.Tensor:
                 """Record the request and return a placeholder condition."""
                 del tokens, prompt_tokens, prompt_features_len
                 self.speed = speed
-                return torch.zeros(1, 1, 100), torch.zeros(1, 1)
+                return torch.zeros(1, 1, 100)
 
         onnx_model = FakeOnnxModel()
         model = SimpleNamespace(model=onnx_model)
@@ -299,7 +327,7 @@ class TestBackend(CeluneTestCase):
         )
 
         assert onnx_model.speed is not None
-        assert onnx_model.speed.item() == pytest.approx((469 / 90 * 95) / (469 + 25))
+        assert onnx_model.speed.item() == pytest.approx((469 / 90 * 96) / (469 + 25))
 
     def test_voxcpm2_does_not_forward_transformers_only_arguments(
         self,
