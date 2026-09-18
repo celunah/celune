@@ -107,8 +107,9 @@ It supports English voice cloning, uses the active voice's reference WAV, and
 has LuxTTS transcribe the prompt internally. Celune supplies a five-second
 prompt window, requests the native 48 kHz waveform path, and emits one complete
 waveform per request. The adapter adds the decoder look-ahead frames required by
-Vocos and treats empty or too-short acoustic output as a user-facing short-input
-warning. The backend runs with `device="cpu"` and two ONNX
+Vocos, corrects the CPU ONNX duration ratio so short responses retain generated
+frames after prompt removal, and treats empty or too-short acoustic output as a
+user-facing short-input warning. The backend runs with `device="cpu"` and two ONNX
 threads by default; its isolated manifest uses the shared PyTorch 2.11 CUDA
 12.8 stack and adds the upstream Piper wheel page as a `find-links` source so
 the environment can resolve its phonemizer dependency. Its installer also
