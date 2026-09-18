@@ -1348,18 +1348,23 @@ class TestPipelineAsync(_TestPipelineAsync):
         self.assertEqual(timing_call.args[0], "raw input")
         self.assertEqual(timing_call.args[3], "normalized first normalized second")
 
+    @pytest.mark.parametrize(
+        "error_message",
+        (
+            (
+                "Calculated padded input size per channel: (6). "
+                "Kernel size: (7). Kernel size can't be greater than actual input size"
+            ),
+            "min(): Expected reduction dim to be specified for input.numel() == 0",
+        ),
+    )
     async def test_generation_worker_releases_pipeline_after_backend_error(
-        self,
+        self, error_message: str
     ) -> None:
         """Verify a failed generation does not block the next utterance."""
         engine = make_pipeline_engine()
         engine.backend = SimpleNamespace(
-            generate_stream=mock.Mock(
-                side_effect=RuntimeError(
-                    "Calculated padded input size per channel: (6). "
-                    "Kernel size: (7). Kernel size can't be greater than actual input size"
-                )
-            ),
+            generate_stream=mock.Mock(side_effect=RuntimeError(error_message)),
             is_fake=False,
             supported_languages=("en",),
         )

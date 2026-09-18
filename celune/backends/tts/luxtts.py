@@ -4,6 +4,7 @@
 import os
 import time
 import contextlib
+from types import MethodType
 from typing import ClassVar, Protocol, Union, Optional, cast
 from collections.abc import Mapping, Callable, Iterator, Generator
 
@@ -43,12 +44,24 @@ _LUXTTS_TRANSCRIBER_FILES = [
 _LUXTTS_SAMPLE_RATE = 48000
 _LUXTTS_PROMPT_DURATION_SECONDS = 5
 _LUXTTS_CPU_THREADS = 2
+_LUXTTS_VOCODER_MIN_FRAMES = 7
+_LUXTTS_VOCODER_TAIL_FRAMES = 15
 _LuxPromptValue = Union[torch.Tensor, float, int]
 _LuxPrompt = dict[str, _LuxPromptValue]
 
 
+class _LuxTTSVocoder(Protocol):
+    """Subset of the LuxTTS vocoder used by the stability guard."""
+
+    def decode(self, features_input: torch.Tensor, **kwargs: object) -> torch.Tensor:
+        """Decode acoustic features into a waveform."""
+        raise NotImplementedError("protocol not defined")
+
+
 class _LuxTTSModel(BackendModel, Protocol):
     """Subset of LuxTTS required by Celune's adapter."""
+
+    vocos: _LuxTTSVocoder
 
     def encode_prompt(
         self,
@@ -68,7 +81,7 @@ class _LuxTTSModel(BackendModel, Protocol):
         guidance_scale: float = 3.0,
         t_shift: float = 0.5,
         speed: float = 1.0,
-        return_smooth: bool = True,
+        return_smooth: bool = False,
     ) -> torch.Tensor:
         """Generate one waveform from text and an encoded LuxTTS prompt."""
         raise NotImplementedError("protocol not defined")
@@ -79,6 +92,58 @@ def _load_runtime_class() -> Callable[..., _LuxTTSModel]:
     from zipvoice.luxvoice import LuxTTS as RuntimeLuxTTS
 
     return cast(Callable[..., _LuxTTSModel], RuntimeLuxTTS)
+
+
+def _pad_vocoder_features(features: torch.Tensor) -> torch.Tensor:
+    """Add the context frames required by LuxTTS's Vocos decoder.
+
+    LuxTTS removes the reference prompt before decoding. Very short text can
+    therefore leave fewer frames than Vocos's first convolution accepts, and
+    the last generated frames otherwise lack the decoder's look-ahead context.
+
+    Args:
+        features: Acoustic features shaped as ``(batch, channels, frames)``.
+
+    Returns:
+        torch.Tensor: Features with a valid minimum length and decoder tail.
+
+    Raises:
+        ValueError: The model produced no acoustic frames for the input.
+    """
+    frame_count = features.shape[-1]
+    if frame_count == 0:
+        raise ValueError("LuxTTS produced no acoustic frames for the input")
+
+    padding_frames = max(_LUXTTS_VOCODER_MIN_FRAMES - frame_count, 0)
+    padding_frames += _LUXTTS_VOCODER_TAIL_FRAMES
+    tail = features[..., -1:].expand(*features.shape[:-1], padding_frames)
+    return torch.cat((features, tail), dim=-1)
+
+
+def _install_vocoder_decode_guard(model: _LuxTTSModel) -> None:
+    """Protect the isolated LuxTTS Vocos decoder from empty short outputs."""
+    vocoder = getattr(model, "vocos", None)
+    if vocoder is None:
+        return
+
+    original_decode = getattr(type(vocoder), "decode", None)
+    if not callable(original_decode):
+        return
+    decode = cast(Callable[..., torch.Tensor], original_decode)
+
+    def guarded_decode(
+        vocoder_instance: _LuxTTSVocoder,
+        features_input: torch.Tensor,
+        **kwargs: object,
+    ) -> torch.Tensor:
+        """Decode features after applying LuxTTS's required context padding."""
+        return decode(
+            vocoder_instance,
+            _pad_vocoder_features(features_input),
+            **kwargs,
+        )
+
+    vocoder.decode = MethodType(guarded_decode, vocoder)
 
 
 class LuxTTS(CeluneBackend[_LuxTTSModel]):
@@ -186,11 +251,13 @@ class LuxTTS(CeluneBackend[_LuxTTSModel]):
             huggingface_progress(self.report_progress),
             self._suppress_backend_output(),
         ):
-            return runtime_class(
+            model = runtime_class(
                 target,
                 device="cpu",
                 threads=self._threads,
             )
+        _install_vocoder_decode_guard(model)
+        return model
 
     def prepare_model_loading(self) -> None:
         """Import LuxTTS before the worker accepts request-thread operations."""
@@ -265,14 +332,14 @@ class LuxTTS(CeluneBackend[_LuxTTSModel]):
                 guidance_scale=3.0,
                 t_shift=0.5,
                 speed=1.0,
-                return_smooth=True,
+                return_smooth=False,
             )
 
         audio = np.ascontiguousarray(
             np.clip(_to_numpy_audio(waveform), -1.0, 1.0), dtype=np.float32
         )
         if audio.size == 0:
-            return
+            raise ValueError("LuxTTS produced no acoustic frames for the input")
         yield (
             audio,
             _LUXTTS_SAMPLE_RATE,

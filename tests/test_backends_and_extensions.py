@@ -36,7 +36,11 @@ from celune.backends.tts.fireredtts3 import (
     _FireRedRedAE,
     _create_firered_model,
 )
-from celune.backends.tts.luxtts import LuxTTS
+from celune.backends.tts.luxtts import (
+    LuxTTS,
+    _LuxTTSModel,
+    _install_vocoder_decode_guard,
+)
 from celune.backends.vc import resolve_vc_backend
 from celune.backends.vc.seedvc import CeluneSeedVCBackend
 from celune.extensions.manager import CeluneExtensionManager
@@ -231,7 +235,7 @@ class TestBackend(CeluneTestCase):
             guidance_scale=3.0,
             t_shift=0.5,
             speed=1.0,
-            return_smooth=True,
+            return_smooth=False,
         )
         audio, sample_rate, timing = result[0]
         np.testing.assert_allclose(audio, [-1.0, 0.25, 1.0])
@@ -239,6 +243,27 @@ class TestBackend(CeluneTestCase):
         assert sample_rate == 48000
         assert timing is not None
         assert timing["is_final"] is True
+
+    def test_luxtts_guards_vocoder_against_short_feature_sequences(self) -> None:
+        """Verify LuxTTS pads decoder context and rejects empty output frames."""
+
+        class FakeVocoder:
+            """Return decoder inputs so the guard's padding is observable."""
+
+            def decode(
+                self, features_input: torch.Tensor, **kwargs: object
+            ) -> torch.Tensor:
+                """Return the received features unchanged."""
+                del kwargs
+                return features_input
+
+        model = SimpleNamespace(vocos=FakeVocoder())
+        _install_vocoder_decode_guard(cast(_LuxTTSModel, model))
+
+        padded = model.vocos.decode(torch.ones(1, 2, 1))
+        assert padded.shape == (1, 2, 22)
+        with pytest.raises(ValueError, match="LuxTTS produced no acoustic frames"):
+            model.vocos.decode(torch.empty(1, 2, 0))
 
     def test_voxcpm2_does_not_forward_transformers_only_arguments(
         self,

@@ -105,8 +105,10 @@ package can carry incompatible build requirements.
 from the [YatharthS/LuxTTS model card](https://huggingface.co/YatharthS/LuxTTS).
 It supports English voice cloning, uses the active voice's reference WAV, and
 has LuxTTS transcribe the prompt internally. Celune supplies a five-second
-prompt window, asks for the smooth waveform path, and emits one complete 48 kHz
-waveform per request. The backend runs with `device="cpu"` and two ONNX
+prompt window, requests the native 48 kHz waveform path, and emits one complete
+waveform per request. The adapter adds the decoder look-ahead frames required by
+Vocos and treats empty or too-short acoustic output as a user-facing short-input
+warning. The backend runs with `device="cpu"` and two ONNX
 threads by default; its isolated manifest uses the shared PyTorch 2.11 CUDA
 12.8 stack and adds the upstream Piper wheel page as a `find-links` source so
 the environment can resolve its phonemizer dependency. Its installer also
@@ -120,10 +122,10 @@ full sentence because the upstream LuxTTS vocoder cannot decode the previous
 one-character warm-up input. If a backend raises during an utterance, Celune
 reports the generation error and releases the complete speech pipeline lease,
 including its typed TTS, speech-queue, and playback ownership, so a later
-utterance can still be admitted. The known LuxTTS short-input vocoder shape
-failure returns Celune to idle and is presented as a warning asking the user to
-enter a longer utterance; other generation failures retain the normal error
-treatment.
+utterance can still be admitted. The known LuxTTS short-input vocoder shape and
+empty-reduction failures return Celune to idle and are presented as a warning
+asking the user to enter a longer utterance; other generation failures retain
+the normal error treatment.
 
 ## Adding a backend
 
