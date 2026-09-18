@@ -127,6 +127,13 @@ uv run poe test_basic
 The basic task runs the complete `tests/` collection without xdist. Both
 tasks return pytest's exit status and include all selected tests.
 
+GitHub Actions runs `uv run poe test_basic` in the Python checks job. Its
+job-level timeout includes checkout, system packages, dependency installation,
+linting, type checking, and tests. The job allows 30 minutes so a cold uv
+cache, including the CUDA-enabled PyTorch packages, does not cancel the tests
+before they start. Subsequent runs should reuse the uv cache and complete much
+faster.
+
 Platform-specific tests use the shared `tests.platform` skip markers. Linux-only
 tests are skipped on Windows, and Windows-only tests are skipped on Linux;
 Celtest reports those configured skips with `S`. Tests that only model another
