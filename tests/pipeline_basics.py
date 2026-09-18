@@ -281,6 +281,9 @@ class TestPipeline(CeluneTestCase):
         engine = make_pipeline_engine()
         monitor = pipeline._PlaybackContentionMonitor(cast(Celune, engine))
         writer = pipeline._PlaybackWriter(cast(Celune, engine), monitor)
+        pipeline.register_playback_source(cast(Celune, engine), 1, kind="speech")
+        pipeline._playback_source_meta(cast(Celune, engine))[1]["total_frames"] = 8.0
+        engine.caption_progress_callback = mock.Mock()
 
         with mock.patch(
             "celune.pipeline._write_playback_block",
@@ -294,6 +297,11 @@ class TestPipeline(CeluneTestCase):
         assert engine.playback_writer_wait_seconds >= 0.0
         assert engine.playback_writer_gap_seconds == 0.0
         assert engine.playback_writer_write_seconds >= 0.0
+        assert (
+            pipeline._playback_source_meta(cast(Celune, engine))[1]["played_frames"]
+            == 8.0
+        )
+        engine.caption_progress_callback.assert_called_once_with(8.0, 8.0)
         assert not any(
             "[PLAY] playback write" in message for message, _ in engine.messages
         )

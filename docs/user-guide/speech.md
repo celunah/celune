@@ -46,9 +46,11 @@ to a very short fragment because it preserves timbre more consistently. The
 conditioning; use it when identity stability matters more than style transfer.
 
 FireRedTTS3 uses the active reference WAV and its exact `reference_text` for
-zero-shot cloning. It returns a complete 24 kHz waveform after inference, which
-Celune resamples at the common playback boundary. Its Qwen backbone, stop head,
-and RedAE encoder load in BF16; the flow head and decoder remain F32.
+zero-shot cloning and keeps those two prompt spans aligned to prevent reference
+text from leaking into the requested speech. It returns a complete 24 kHz
+waveform after inference, which Celune resamples at the common playback
+boundary. Its Qwen backbone, stop head, and RedAE encoder load in BF16; the
+flow head and decoder remain F32.
 
 VoxCPM2 reads `cfg_scale` from per-voice metadata, with the bundled defaults at
 2.4 for balanced/bold/upbeat and 3.0 for calm. LuxTTS uses the active reference
@@ -83,6 +85,9 @@ int16 payloads are converted using `/32768` when decoded by CEDTS.
 
 Long text is segmented before generation. Smart buffering protects already
 played audio and throttles playback speed only within its configured limits.
+Caption progress follows blocks after they reach the output writer, so captions
+remain synchronized with audible playback even when generation produces chunks
+faster than the sound device consumes them.
 For a caller that needs every chunk, use `say_stream()` and drain the returned
 queue until its terminal sentinel/condition; do not read the internal playback
 queue directly.

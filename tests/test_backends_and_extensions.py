@@ -758,7 +758,7 @@ class TestBackend(CeluneTestCase):
             backend.current_seed = 7
             with mock.patch.object(
                 backend, "_truncate_reference", side_effect=lambda path: path
-            ):
+            ) as truncate_reference:
                 chunks = list(
                     backend.generate_stream(
                         model,
@@ -768,6 +768,8 @@ class TestBackend(CeluneTestCase):
                         chunk_size=1,
                     )
                 )
+
+        truncate_reference.assert_not_called()
 
         assert len(chunks) == 2
         np.testing.assert_array_equal(chunks[0][0], [0.25, -0.5])

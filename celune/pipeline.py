@@ -444,6 +444,17 @@ class _PlaybackWriter:
                 self._decrement_pending(item)
             self._queue.task_done()
 
+    def _record_played_frames(self, item: _PlaybackWriteItem) -> None:
+        """Advance source positions after one mixed block reaches the output."""
+        source_meta = _playback_source_meta(self._engine)
+        for source_id in item.source_ids:
+            metadata = source_meta.get(source_id)
+            if isinstance(metadata, dict):
+                metadata["played_frames"] = float(
+                    metadata.get("played_frames", 0.0)
+                ) + float(len(item.audio))
+        _update_playback_progress(self._engine)
+
     def _run(self) -> None:
         """Consume the output queue until a stop marker is received."""
         _prioritize_playback_thread()
@@ -465,6 +476,7 @@ class _PlaybackWriter:
             failed: Optional[BaseException] = None
             try:
                 underflowed = bool(_write_playback_block(self._engine, item.audio))
+                self._record_played_frames(item)
             except BaseException as error:  # pylint: disable=broad-exception-caught
                 failed = error
                 with self._lock:
@@ -2396,12 +2408,6 @@ async def playback_worker_job(engine: Celune) -> None:
                         np.asarray(block[block_len:], dtype=np.float32),
                         None,
                     )
-
-                source_meta = playback_meta.get(source_id)
-                if isinstance(source_meta, dict):
-                    source_meta["played_frames"] = float(
-                        source_meta.get("played_frames", 0.0)
-                    ) + float(block_len)
 
                 if not source_buffers[source_id]:
                     del source_buffers[source_id]
