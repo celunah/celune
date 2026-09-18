@@ -93,8 +93,17 @@ class TestBackend(CeluneTestCase):
             cache_dir=str(Path("C:/celune/huggingface/hub")),
         )
 
-    def test_luxtts_preload_caches_its_whisper_transcriber(self) -> None:
-        """Verify LuxTTS preloading includes its hard-coded Whisper dependency."""
+    @pytest.mark.parametrize(
+        ("cuda_available", "transcriber_model_id"),
+        (
+            (False, "openai/whisper-tiny"),
+            (True, "openai/whisper-base"),
+        ),
+    )
+    def test_luxtts_preload_caches_its_whisper_transcriber(
+        self, cuda_available: bool, transcriber_model_id: str
+    ) -> None:
+        """Verify LuxTTS preloads the Whisper model for its runtime path."""
         backend = object.__new__(LuxTTS)
         backend.log = mock.Mock()
         backend._progress_callback = None
@@ -104,6 +113,10 @@ class TestBackend(CeluneTestCase):
                 backend,
                 "model_is_available_locally",
                 return_value=(True, "cached"),
+            ),
+            mock.patch(
+                "celune.backends.tts.luxtts.torch.cuda.is_available",
+                return_value=cuda_available,
             ),
             mock.patch(
                 "celune.backends.tts.luxtts.cached_hf_snapshot_path",
@@ -118,7 +131,7 @@ class TestBackend(CeluneTestCase):
             backend.preload_models()
 
         cached.assert_called_once_with(
-            "openai/whisper-tiny",
+            transcriber_model_id,
             [
                 "config.json",
                 "generation_config.json",
@@ -133,17 +146,22 @@ class TestBackend(CeluneTestCase):
             ],
         )
         download.assert_called_once_with(
-            repo_id="openai/whisper-tiny",
+            repo_id=transcriber_model_id,
             cache_dir=str(Path("C:/celune/huggingface/hub")),
         )
 
     def test_luxtts_requires_the_cpu_snapshot_files(self) -> None:
         """Verify LuxTTS checks the ONNX files used by its CPU loader."""
         backend = object.__new__(LuxTTS)
-        with mock.patch(
-            "celune.backends.tts.luxtts.cached_hf_snapshot_path",
-            return_value=(True, "cached"),
-        ) as cached:
+        with (
+            mock.patch(
+                "celune.backends.tts.luxtts.torch.cuda.is_available", return_value=False
+            ),
+            mock.patch(
+                "celune.backends.tts.luxtts.cached_hf_snapshot_path",
+                return_value=(True, "cached"),
+            ) as cached,
+        ):
             assert backend.model_is_available_locally("YatharthS/LuxTTS") == (
                 True,
                 "cached",
@@ -161,6 +179,34 @@ class TestBackend(CeluneTestCase):
             ],
         )
 
+    def test_luxtts_requires_the_gpu_snapshot_files(self) -> None:
+        """Verify LuxTTS checks the native checkpoint for its GPU loader."""
+        backend = object.__new__(LuxTTS)
+        with (
+            mock.patch(
+                "celune.backends.tts.luxtts.torch.cuda.is_available", return_value=True
+            ),
+            mock.patch(
+                "celune.backends.tts.luxtts.cached_hf_snapshot_path",
+                return_value=(True, "cached"),
+            ) as cached,
+        ):
+            assert backend.model_is_available_locally("YatharthS/LuxTTS") == (
+                True,
+                "cached",
+            )
+
+        cached.assert_called_once_with(
+            "YatharthS/LuxTTS",
+            [
+                "tokens.txt",
+                "model.pt",
+                "config.json",
+                "vocoder/config.yaml",
+                "vocoder/vocos.bin",
+            ],
+        )
+
     def test_luxtts_prepares_runtime_before_worker_requests(self) -> None:
         """Verify LuxTTS imports its native runtime during worker preparation."""
         backend = object.__new__(LuxTTS)
@@ -171,8 +217,14 @@ class TestBackend(CeluneTestCase):
 
         load_runtime.assert_called_once_with()
 
-    def test_luxtts_loads_the_runtime_on_cpu(self) -> None:
-        """Verify LuxTTS is never initialized with the default CUDA device."""
+    @pytest.mark.parametrize(
+        ("cuda_available", "expected_device"),
+        ((False, "cpu"), (True, "cuda")),
+    )
+    def test_luxtts_selects_the_available_runtime(
+        self, cuda_available: bool, expected_device: str
+    ) -> None:
+        """Verify LuxTTS uses CUDA when available and CPU otherwise."""
         backend = object.__new__(LuxTTS)
         backend._threads = 2
         backend._progress_callback = None
@@ -186,13 +238,19 @@ class TestBackend(CeluneTestCase):
                 return_value=(True, "cached"),
             ),
             mock.patch(
+                "celune.backends.tts.luxtts.torch.cuda.is_available",
+                return_value=cuda_available,
+            ),
+            mock.patch(
                 "celune.backends.tts.luxtts._load_runtime_class",
                 return_value=runtime_class,
             ),
         ):
             assert backend.load_model("YatharthS/LuxTTS") is runtime
 
-        runtime_class.assert_called_once_with("cached", device="cpu", threads=2)
+        runtime_class.assert_called_once_with(
+            "cached", device=expected_device, threads=2
+        )
 
     def test_luxtts_generates_a_normalized_complete_48khz_chunk(self) -> None:
         """Verify LuxTTS consumes the pack reference and emits Celune audio."""

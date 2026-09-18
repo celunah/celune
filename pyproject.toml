@@ -158,8 +158,9 @@ openzl = [
 #     "pocket-tts>=2.1.0",
 # ]
 
-# LuxTTS is isolated in its CPU-only CEDTS environment; see
-# celune/backends/environment.py for its VCS and ONNX dependencies.
+# LuxTTS is isolated in its CUDA-capable CEDTS environment and falls back to
+# ONNX CPU inference when no CUDA runtime exists; see
+# celune/backends/environment.py for its VCS and runtime dependencies.
 
 # A voice conversion backend allowing you to speak in your character voices directly. It does not use TTS, using it
 # will disable TTS features.

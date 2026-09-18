@@ -32,7 +32,6 @@ from .base import (
 __all__ = ["LuxTTS"]
 
 _LUXTTS_MODEL_ID = "YatharthS/LuxTTS"
-_LUXTTS_TRANSCRIBER_MODEL_ID = "openai/whisper-tiny"
 _LUXTTS_TRANSCRIBER_FILES = [
     "config.json",
     "generation_config.json",
@@ -44,6 +43,23 @@ _LUXTTS_TRANSCRIBER_FILES = [
     "tokenizer.json",
     "tokenizer_config.json",
     "vocab.json",
+]
+_LUXTTS_CPU_TRANSCRIBER_MODEL_ID = "openai/whisper-tiny"
+_LUXTTS_GPU_TRANSCRIBER_MODEL_ID = "openai/whisper-base"
+_LUXTTS_CPU_MODEL_FILES = [
+    "tokens.txt",
+    "text_encoder.onnx",
+    "fm_decoder.onnx",
+    "config.json",
+    "vocoder/config.yaml",
+    "vocoder/vocos.bin",
+]
+_LUXTTS_GPU_MODEL_FILES = [
+    "tokens.txt",
+    "model.pt",
+    "config.json",
+    "vocoder/config.yaml",
+    "vocoder/vocos.bin",
 ]
 _LUXTTS_SAMPLE_RATE = 48000
 _LUXTTS_PROMPT_DURATION_SECONDS = 5
@@ -115,6 +131,18 @@ def _load_runtime_class() -> Callable[..., _LuxTTSModel]:
     from zipvoice.luxvoice import LuxTTS as RuntimeLuxTTS
 
     return cast(Callable[..., _LuxTTSModel], RuntimeLuxTTS)
+
+
+def _runtime_device() -> str:
+    """Select LuxTTS's native GPU path when a usable CUDA runtime exists."""
+    return "cuda" if torch.cuda.is_available() else "cpu"
+
+
+def _transcriber_model_id(device: str) -> str:
+    """Return the Whisper model required by LuxTTS's selected runtime path."""
+    if device == "cuda":
+        return _LUXTTS_GPU_TRANSCRIBER_MODEL_ID
+    return _LUXTTS_CPU_TRANSCRIBER_MODEL_ID
 
 
 def _pad_vocoder_features(
@@ -402,23 +430,22 @@ class LuxTTS(CeluneBackend[_LuxTTSModel]):
     def model_is_available_locally(
         self, model: str, lang: Optional[str] = None
     ) -> tuple[bool, Optional[str]]:
-        """Check for a complete CPU LuxTTS snapshot in Celune's Hub cache."""
+        """Check for the complete LuxTTS snapshot for the selected device."""
         del lang
+        required_files = (
+            _LUXTTS_GPU_MODEL_FILES
+            if _runtime_device() == "cuda"
+            else _LUXTTS_CPU_MODEL_FILES
+        )
         return cached_hf_snapshot_path(
             model,
-            [
-                "tokens.txt",
-                "text_encoder.onnx",
-                "fm_decoder.onnx",
-                "config.json",
-                "vocoder/config.yaml",
-                "vocoder/vocos.bin",
-            ],
+            required_files,
         )
 
     def load_model(self, model_id: str, **kwargs) -> _LuxTTSModel:
-        """Load LuxTTS on CPU from a cached or newly downloaded snapshot."""
+        """Load LuxTTS on CUDA when available, otherwise use its CPU path."""
         del kwargs
+        device = _runtime_device()
         available, snapshot_path = self.model_is_available_locally(model_id)
         target = snapshot_path if available and snapshot_path is not None else model_id
         if not available:
@@ -432,7 +459,7 @@ class LuxTTS(CeluneBackend[_LuxTTSModel]):
         ):
             model = runtime_class(
                 target,
-                device="cpu",
+                device=device,
                 threads=self._threads,
             )
         _install_cpu_duration_correction(model)
@@ -445,26 +472,27 @@ class LuxTTS(CeluneBackend[_LuxTTSModel]):
             _load_runtime_class()
 
     def preload_models(self) -> None:
-        """Ensure LuxTTS and its hard-coded Whisper transcriber are cached."""
+        """Ensure LuxTTS and its selected Whisper transcriber are cached."""
         super().preload_models()
+        transcriber_model_id = _transcriber_model_id(_runtime_device())
         available, _ = cached_hf_snapshot_path(
-            _LUXTTS_TRANSCRIBER_MODEL_ID,
+            transcriber_model_id,
             _LUXTTS_TRANSCRIBER_FILES,
         )
         if available:
             self.log(
-                string("tts.model_available", model_id=_LUXTTS_TRANSCRIBER_MODEL_ID),
+                string("tts.model_available", model_id=transcriber_model_id),
                 "info",
             )
             return
 
         self.log(
-            string("tts.model_downloading", model_id=_LUXTTS_TRANSCRIBER_MODEL_ID),
+            string("tts.model_downloading", model_id=transcriber_model_id),
             "info",
         )
         with huggingface_progress(self.report_progress):
             snapshot_download(
-                repo_id=_LUXTTS_TRANSCRIBER_MODEL_ID,
+                repo_id=transcriber_model_id,
                 cache_dir=str(huggingface_hub_cache_dir(create=True)),
             )
 
