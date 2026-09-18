@@ -17,7 +17,8 @@ jobs:
   python-checks:
     name: Anti AI Slop & Vibe Coding Checks
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # A cold CUDA dependency install can take longer than the test suite itself.
+    timeout-minutes: 30
 
     steps:
       - name: Checkout repository
@@ -28,6 +29,8 @@ jobs:
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
 
       - name: Sync dependencies
         run: python3 scripts/ci_warnings.py -- uv sync --dev --all-extras

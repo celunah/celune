@@ -13,7 +13,7 @@ from .typing.common import JSONSerializable
 OPERATION_MODES: tuple[OperationMode, ...] = ("speak", "converse", "agent")
 _LEGACY_INPUT_MODES = {"text_to_speech", "tts", "voice_conversion", "revoice"}
 
-# Agent mode is now owned by the production AgentRuntime integration.
+# legacy, please remove
 AGENT_MODE_REDIRECT_TARGET: Optional[OperationMode] = None
 
 

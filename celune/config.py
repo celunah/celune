@@ -359,8 +359,7 @@ def resolve_audio_device_with_info(
             if resolved_index is not None:
                 return resolved_index, direct_info
 
-            # PortAudio already resolved this selector successfully, so reuse the
-            # returned device info and avoid a second global device scan.
+            # already got device
             return configured_name, direct_info
 
     hostapis = sd.query_hostapis()

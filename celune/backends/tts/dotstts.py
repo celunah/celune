@@ -285,9 +285,8 @@ class DotsTtsMF(CeluneBackend[DotsTtsRuntime]):
             loader, voice_names = compatible_bundle
             if voice not in loader.bundle.voices:
                 voice = voice_names[0]
-            # dots.tts consumes the prompt audio to determine its own prompt span.
-            # Truncating it here while retaining the full pack transcript makes the
-            # runtime treat the unmatched transcript as audio to regenerate.
+
+            # with longer references like the natural pack, this caused reference leakage
             ref_wav = loader.materialize(voice, "wav")
             configured_ref_text = loader.bundle.voices[voice].get("reference_text")
             ref_text = (

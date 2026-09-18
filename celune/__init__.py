@@ -31,8 +31,8 @@ if TYPE_CHECKING:
     from .extensions.events import subscribe
 
 __tagline__ = '"Your voice, your way."'
-__codename__ = "Enlightenment"
-__comment__ = "I have achieved new heights."
+__codename__ = "Anniversary"
+__comment__ = "Six months, a new vocal beginning."
 
 if hasattr(_sys, "ps1"):
     print(string("cli.interactive_core_warning", app_name=APP_NAME))

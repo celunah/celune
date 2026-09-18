@@ -467,7 +467,7 @@ class FireRedTTS3(CeluneBackend[_FireRedModel]):
 
     name: str = "fireredtts3"
     uses_voice_bundles: bool = True
-    # Each autoregressive FireRed step emits four RedAE frames at 25 Hz.
+    # 4 RedAE frames @ 25 Hz
     chunk_rate: float = 6.25
     max_new_tokens: int = 400
     default_voice: Optional[str] = "balanced"
@@ -1018,9 +1018,7 @@ class FireRedTTS3(CeluneBackend[_FireRedModel]):
 
         with (
             self._suppress_backend_output(),
-            # FireRed widens prompt latents to FP32 before passing them through
-            # the BF16 model loaded by Celune. Keep the complete streaming path
-            # under autocast so both prompt and generated tensors are compatible.
+            # "I only speak BF16. Do not give me FP32." - she says
             torch.autocast(device_type="cuda", dtype=torch.bfloat16),
         ):
             for audio, sample_rate, batch_steps in stream_decoded_audio():

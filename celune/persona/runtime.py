@@ -380,9 +380,6 @@ class PersonaBackend:
                 quantization=self.quantization,
             )
         finally:
-            # Release every request-local tensor before clearing the CUDA allocator.
-            # Assigning None is intentional: discard() only drops its local alias and
-            # cannot clear the references held by this stack frame.
             new_ids = None
             output_ids = None
             model_inputs = None
