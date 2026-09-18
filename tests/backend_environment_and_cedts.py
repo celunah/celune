@@ -369,6 +369,7 @@ class TestBackendEnvironment(CeluneTestCase):
             "torchaudio==2.11.0+cu128",
             "torchvision==0.26.0+cu128",
         }.issubset(luxtts_requirements)
+        assert BACKEND_MANIFESTS["luxtts"].ignore_uv_sources
         assert BACKEND_MANIFESTS["luxtts"].find_links == (
             "https://k2-fsa.github.io/icefall/piper_phonemize.html",
         )
@@ -414,6 +415,19 @@ class TestBackendEnvironment(CeluneTestCase):
         second = BackendManifest("test", "tts", ("demo==2",), "module", "Backend")
         assert first.fingerprint() != second.fingerprint()
 
+    def test_fingerprint_changes_when_uv_sources_are_ignored(self) -> None:
+        """Verify resolver source policy selects a distinct environment."""
+        first = BackendManifest("test", "tts", (), "module", "Backend")
+        second = BackendManifest(
+            "test",
+            "tts",
+            (),
+            "module",
+            "Backend",
+            ignore_uv_sources=True,
+        )
+        assert first.fingerprint() != second.fingerprint()
+
     def test_ensure_installs_backend_requirements_with_dependencies(self) -> None:
         """Verify backend packages are installed with their declared dependencies."""
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -425,6 +439,7 @@ class TestBackendEnvironment(CeluneTestCase):
                 ("wrapper==1",),
                 "module",
                 "Backend",
+                ignore_uv_sources=True,
             )
 
             def fake_run(command: list[str], **_kwargs) -> None:
@@ -445,6 +460,7 @@ class TestBackendEnvironment(CeluneTestCase):
             assert run.call_count == 2
             assert "--no-config" in run.call_args_list[1].args[0]
             assert "--no-cache" in run.call_args_list[1].args[0]
+            assert "--no-sources" in run.call_args_list[1].args[0]
             assert "--no-deps" not in run.call_args_list[1].args[0]
 
     def test_ensure_installs_into_a_temporary_environment_then_publishes_it(

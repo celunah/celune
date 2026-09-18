@@ -109,7 +109,9 @@ prompt window, asks for the smooth waveform path, and emits one complete 48 kHz
 waveform per request. The backend runs with `device="cpu"` and two ONNX
 threads by default; its isolated manifest uses the shared PyTorch 2.11 CUDA
 12.8 stack and adds the upstream Piper wheel page as a `find-links` source so
-the environment can resolve its phonemizer dependency. Preloading also
+the environment can resolve its phonemizer dependency. Its installer also
+passes uv's `--no-sources` option so LinaCodec cannot redirect PyTorch to its
+CUDA 12.6 source override. Preloading also
 caches the `openai/whisper-tiny` transcriber required by the upstream CPU
 constructor before Celune enables Hugging Face offline mode for model loading.
 The worker imports the LuxTTS runtime during its handshake so native runtime
