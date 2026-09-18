@@ -591,6 +591,22 @@ class TestBackendEnvironment(CeluneTestCase):
         assert run.call_args.kwargs["timeout"] == 1.5
         assert "PYTHONHOME" not in run.call_args.kwargs["env"]
 
+    def test_uv_diagnostics_are_decoded_as_utf8(self) -> None:
+        """Verify uv's Unicode resolver diagnostics survive Windows decoding."""
+        manager = BackendEnvironmentManager(uv_executable="uv")
+        diagnostic = "× No solution found\n╰─▶ Because the requirements conflict."
+        with (
+            mock.patch(
+                "celune.backends.environment.subprocess.run",
+                side_effect=subprocess.CalledProcessError(1, "uv", stderr=diagnostic),
+            ) as run,
+            self.assertRaisesRegex(BackendEnvironmentError, "× No solution found"),
+        ):
+            manager._run_uv("pip", "install")
+
+        assert run.call_args.kwargs["encoding"] == "utf-8"
+        assert run.call_args.kwargs["errors"] == "replace"
+
     def test_uv_does_not_inherit_core_package_manager_settings(self) -> None:
         """Verify uv cannot inherit core environment resolution constraints."""
         manager = BackendEnvironmentManager(uv_executable="uv")
