@@ -538,14 +538,20 @@ def _playback_trace(engine: Celune, now: Optional[float] = None) -> None:
 
 def _update_playback_progress(
     engine: Celune,
-    source_buffers: dict[int, deque[tuple[AudioChunk, Optional[SpeechTiming]]]],
+    source_buffers: Optional[
+        Mapping[int, deque[tuple[AudioChunk, Optional[SpeechTiming]]]]
+    ] = None,
 ) -> None:
     """Reflect the active playback source position in the shared progress bar."""
-    if not source_buffers:
+    if source_buffers is not None and not source_buffers:
         return
 
     meta = _playback_source_meta(engine)
-    active_ids = [source_id for source_id in source_buffers if source_id in meta]
+    active_ids = [
+        source_id
+        for source_id in (source_buffers if source_buffers is not None else meta)
+        if source_id in meta
+    ]
     if not active_ids:
         return
 

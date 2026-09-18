@@ -61,7 +61,7 @@ CPU-friendly path and still uses pack reference data for cloning.
 
 `fireredtts3` adapts the FireRedTTS3 base model for zero-shot voice cloning
 across 24 languages and 21 Chinese dialect tags. It consumes the active voice's
-reference WAV and exact `reference_text`, then streams progressive 24 kHz
+complete reference WAV and exact `reference_text`, then streams progressive 24 kHz
 audio chunks to the CEDTS worker. FireRed's autoregressive core emits four
 RedAE frames per generation step; Celune keeps the RedAE decoder's Qwen3 KV
 cache and incrementally overlap-adds its ISTFT frames, forwarding each newly

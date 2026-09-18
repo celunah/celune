@@ -935,7 +935,11 @@ class FireRedTTS3(CeluneBackend[_FireRedModel]):
         if voice not in voice_names:
             raise ValueError(string("celune.unknown_voice", voice=voice))
 
-        reference_wav = self._truncate_reference(loader.materialize(voice, "wav"))
+        # FireRed consumes the prompt transcript together with the complete
+        # reference waveform. Truncating only the waveform leaves part of the
+        # transcript unmatched, so the model can regenerate that prompt text
+        # before it reaches the requested utterance.
+        reference_wav = loader.materialize(voice, "wav")
         reference_text = loader.bundle.voices[voice].get("reference_text")
         if not isinstance(reference_text, str) or not reference_text.strip():
             raise ValueError(string("celune.unknown_voice", voice=voice))
