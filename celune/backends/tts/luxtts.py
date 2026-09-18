@@ -53,6 +53,7 @@ _LUXTTS_VOCODER_MIN_FRAMES = 7
 _LUXTTS_VOCODER_TAIL_FRAMES = 15
 _LUXTTS_VOCODER_TRIM_FRAMES = 2
 _LUXTTS_VOCODER_HOP_LENGTH = 512
+_LUXTTS_VOCODER_SILENCE_FEATURE = "_celune_silence_feature"
 _LuxPromptValue = Union[torch.Tensor, float, int]
 _LuxPrompt = dict[str, _LuxPromptValue]
 
@@ -116,15 +117,22 @@ def _load_runtime_class() -> Callable[..., _LuxTTSModel]:
     return cast(Callable[..., _LuxTTSModel], RuntimeLuxTTS)
 
 
-def _pad_vocoder_features(features: torch.Tensor) -> torch.Tensor:
+def _pad_vocoder_features(
+    features: torch.Tensor,
+    silence_feature: Optional[torch.Tensor] = None,
+) -> torch.Tensor:
     """Add the context frames required by LuxTTS's Vocos decoder.
 
     LuxTTS removes the reference prompt before decoding. Very short text can
     therefore leave fewer frames than Vocos's first convolution accepts, and
     the last generated frames otherwise lack the decoder's look-ahead context.
+    The prompt's trailing-silence feature is used for that context instead of
+    repeating the final generated feature, which could duplicate voiced audio.
 
     Args:
         features: Acoustic features shaped as ``(batch, channels, frames)``.
+        silence_feature: Optional prompt-derived silence feature shaped as
+            ``(batch, channels, 1)``.
 
     Returns:
         torch.Tensor: Features with a valid minimum length and decoder tail.
@@ -138,8 +146,40 @@ def _pad_vocoder_features(features: torch.Tensor) -> torch.Tensor:
 
     padding_frames = max(_LUXTTS_VOCODER_MIN_FRAMES - frame_count, 0)
     padding_frames += _LUXTTS_VOCODER_TAIL_FRAMES
-    tail = features[..., -1:].expand(*features.shape[:-1], padding_frames)
+    if silence_feature is None:
+        silence_feature = torch.zeros_like(features[..., -1:])
+    else:
+        silence_feature = silence_feature.to(
+            device=features.device,
+            dtype=features.dtype,
+        )
+        if silence_feature.shape[0] == 1 and features.shape[0] != 1:
+            silence_feature = silence_feature.expand(features.shape[0], -1, -1)
+        if silence_feature.shape != features[..., -1:].shape:
+            silence_feature = torch.zeros_like(features[..., -1:])
+    tail = silence_feature.expand(*features.shape[:-1], padding_frames)
     return torch.cat((features, tail), dim=-1)
+
+
+def _set_vocoder_silence_feature(
+    model: _LuxTTSModel,
+    encoded_prompt: _LuxPrompt,
+) -> None:
+    """Give the Vocos guard the prompt's final silent acoustic feature."""
+    vocoder = getattr(model, "vocos", None)
+    prompt_features = encoded_prompt.get("prompt_features")
+    if (
+        vocoder is None
+        or not isinstance(prompt_features, torch.Tensor)
+        or prompt_features.ndim != 3
+        or prompt_features.shape[1] == 0
+    ):
+        if vocoder is not None:
+            setattr(vocoder, _LUXTTS_VOCODER_SILENCE_FEATURE, None)
+        return
+
+    silence_feature = prompt_features[:, -1:, :].permute(0, 2, 1)
+    setattr(vocoder, _LUXTTS_VOCODER_SILENCE_FEATURE, silence_feature)
 
 
 def _install_cpu_duration_correction(model: _LuxTTSModel) -> None:
@@ -226,9 +266,14 @@ def _install_vocoder_decode_guard(model: _LuxTTSModel) -> None:
         **kwargs: object,
     ) -> torch.Tensor:
         """Decode features after applying LuxTTS's required context padding."""
+        silence_feature = getattr(
+            vocoder_instance,
+            _LUXTTS_VOCODER_SILENCE_FEATURE,
+            None,
+        )
         waveform = decode(
             vocoder_instance,
-            _pad_vocoder_features(features_input),
+            _pad_vocoder_features(features_input, silence_feature),
             **kwargs,
         )
         trim_samples = _LUXTTS_VOCODER_TRIM_FRAMES * _LUXTTS_VOCODER_HOP_LENGTH
@@ -465,15 +510,23 @@ class LuxTTS(CeluneBackend[_LuxTTSModel]):
                 ),
                 rms=0.01,
             )
-            waveform = model.generate_speech(
-                text,
-                encoded_prompt,
-                num_steps=4,
-                guidance_scale=3.0,
-                t_shift=0.5,
-                speed=1.0,
-                return_smooth=False,
-            )
+            _set_vocoder_silence_feature(model, encoded_prompt)
+            try:
+                waveform = model.generate_speech(
+                    text,
+                    encoded_prompt,
+                    num_steps=4,
+                    guidance_scale=3.0,
+                    t_shift=0.5,
+                    speed=1.0,
+                    return_smooth=False,
+                )
+            finally:
+                setattr(
+                    model.vocos,
+                    _LUXTTS_VOCODER_SILENCE_FEATURE,
+                    None,
+                )
 
         audio = np.ascontiguousarray(
             np.clip(_to_numpy_audio(waveform), -1.0, 1.0), dtype=np.float32
