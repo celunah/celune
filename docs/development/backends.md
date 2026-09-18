@@ -109,8 +109,9 @@ prompt window, requests the native 48 kHz waveform path, and emits one complete
 waveform per request. The adapter adds the decoder look-ahead frames required by
 Vocos, corrects the CPU ONNX duration ratio so short responses retain generated
 frames after prompt removal, adds a short reference boundary to prevent prompt
-tail leakage, and removes only the final two decoder hops so the last phoneme
-is not cut off while the repeated padding remains outside the spoken response.
+tail leakage, uses that boundary's silent acoustic feature for decoder context
+instead of repeating voiced output, and removes only the final two decoder hops
+so the last phoneme is not cut off.
 Empty or too-short acoustic output becomes a user-facing short-input warning.
 The backend runs with `device="cpu"` and two ONNX
 threads by default; its isolated manifest uses the shared PyTorch 2.11 CUDA

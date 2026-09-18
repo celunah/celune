@@ -41,6 +41,7 @@ from celune.backends.tts.luxtts import (
     _LuxTTSModel,
     _install_cpu_duration_correction,
     _install_vocoder_decode_guard,
+    _set_vocoder_silence_feature,
 )
 from celune.backends.vc import resolve_vc_backend
 from celune.backends.vc.seedvc import CeluneSeedVCBackend
@@ -274,6 +275,7 @@ class TestBackend(CeluneTestCase):
             """Return decoder inputs so the guard's padding is observable."""
 
             def __init__(self) -> None:
+                self.input_features: Optional[torch.Tensor] = None
                 self.input_shape: Optional[tuple[int, ...]] = None
 
             def decode(
@@ -281,15 +283,24 @@ class TestBackend(CeluneTestCase):
             ) -> torch.Tensor:
                 """Return the received features unchanged."""
                 del kwargs
+                self.input_features = features_input
                 self.input_shape = tuple(features_input.shape)
                 return torch.zeros(1, 1, 10_000)
 
         vocoder = FakeVocoder()
         model = SimpleNamespace(vocos=vocoder)
+        prompt: dict[str, Union[torch.Tensor, float, int]] = {
+            "prompt_features": torch.full((1, 4, 2), -3.0)
+        }
+        _set_vocoder_silence_feature(cast(_LuxTTSModel, model), prompt)
         _install_vocoder_decode_guard(cast(_LuxTTSModel, model))
 
         decoded = model.vocos.decode(torch.ones(1, 2, 1))
         assert vocoder.input_shape == (1, 2, 22)
+        assert vocoder.input_features is not None
+        torch.testing.assert_close(
+            vocoder.input_features[..., 1:], torch.full((1, 2, 21), -3.0)
+        )
         assert decoded.shape == (1, 1, 10_000 - 2 * 512)
         with pytest.raises(ValueError, match="LuxTTS produced no acoustic frames"):
             model.vocos.decode(torch.empty(1, 2, 0))
