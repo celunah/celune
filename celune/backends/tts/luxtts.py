@@ -51,6 +51,7 @@ _LUXTTS_PROMPT_TRAILING_SILENCE_SECONDS = 0.2
 _LUXTTS_CPU_THREADS = 2
 _LUXTTS_VOCODER_MIN_FRAMES = 7
 _LUXTTS_VOCODER_TAIL_FRAMES = 15
+_LUXTTS_VOCODER_TRIM_FRAMES = 2
 _LUXTTS_VOCODER_HOP_LENGTH = 512
 _LuxPromptValue = Union[torch.Tensor, float, int]
 _LuxPrompt = dict[str, _LuxPromptValue]
@@ -230,7 +231,7 @@ def _install_vocoder_decode_guard(model: _LuxTTSModel) -> None:
             _pad_vocoder_features(features_input),
             **kwargs,
         )
-        trim_samples = _LUXTTS_VOCODER_TAIL_FRAMES * _LUXTTS_VOCODER_HOP_LENGTH
+        trim_samples = _LUXTTS_VOCODER_TRIM_FRAMES * _LUXTTS_VOCODER_HOP_LENGTH
         if waveform.shape[-1] > trim_samples:
             waveform = waveform[..., :-trim_samples]
         return waveform

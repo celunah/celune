@@ -290,7 +290,7 @@ class TestBackend(CeluneTestCase):
 
         decoded = model.vocos.decode(torch.ones(1, 2, 1))
         assert vocoder.input_shape == (1, 2, 22)
-        assert decoded.shape == (1, 1, 10_000 - 15 * 512)
+        assert decoded.shape == (1, 1, 10_000 - 2 * 512)
         with pytest.raises(ValueError, match="LuxTTS produced no acoustic frames"):
             model.vocos.decode(torch.empty(1, 2, 0))
 
