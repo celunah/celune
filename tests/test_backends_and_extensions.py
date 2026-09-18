@@ -39,6 +39,7 @@ from celune.backends.tts.fireredtts3 import (
 from celune.backends.tts.luxtts import (
     LuxTTS,
     _LuxTTSModel,
+    _install_cpu_duration_correction,
     _install_vocoder_decode_guard,
 )
 from celune.backends.vc import resolve_vc_backend
@@ -264,6 +265,41 @@ class TestBackend(CeluneTestCase):
         assert padded.shape == (1, 2, 22)
         with pytest.raises(ValueError, match="LuxTTS produced no acoustic frames"):
             model.vocos.decode(torch.empty(1, 2, 0))
+
+    def test_luxtts_corrects_cpu_duration_ratio(self) -> None:
+        """Verify CPU LuxTTS allocates prompt plus generated frames."""
+
+        class FakeOnnxModel:
+            """Capture the speed passed to the ONNX text encoder."""
+
+            def __init__(self) -> None:
+                self.speed: Optional[torch.Tensor] = None
+
+            def run_text_encoder(
+                self,
+                tokens: torch.Tensor,
+                prompt_tokens: torch.Tensor,
+                prompt_features_len: torch.Tensor,
+                speed: torch.Tensor,
+            ) -> tuple[torch.Tensor, torch.Tensor]:
+                """Record the request and return a placeholder condition."""
+                del tokens, prompt_tokens, prompt_features_len
+                self.speed = speed
+                return torch.zeros(1, 1, 100), torch.zeros(1, 1)
+
+        onnx_model = FakeOnnxModel()
+        model = SimpleNamespace(model=onnx_model)
+        _install_cpu_duration_correction(cast(_LuxTTSModel, model))
+
+        model.model.run_text_encoder(
+            torch.zeros(1, 6, dtype=torch.int64),
+            torch.zeros(1, 90, dtype=torch.int64),
+            torch.tensor(469),
+            torch.tensor(1.3),
+        )
+
+        assert onnx_model.speed is not None
+        assert onnx_model.speed.item() == pytest.approx((469 / 90 * 95) / (469 + 25))
 
     def test_voxcpm2_does_not_forward_transformers_only_arguments(
         self,

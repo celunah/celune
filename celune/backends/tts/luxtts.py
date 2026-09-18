@@ -3,6 +3,7 @@
 
 import os
 import time
+import math
 import contextlib
 from types import MethodType
 from typing import ClassVar, Protocol, Union, Optional, cast
@@ -58,9 +59,24 @@ class _LuxTTSVocoder(Protocol):
         raise NotImplementedError("protocol not defined")
 
 
+class _LuxTTSOnnxModel(Protocol):
+    """Subset of the LuxTTS CPU model used by the duration correction."""
+
+    def run_text_encoder(
+        self,
+        tokens: torch.Tensor,
+        prompt_tokens: torch.Tensor,
+        prompt_features_len: torch.Tensor,
+        speed: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Build text conditioning for the requested token sequence."""
+        raise NotImplementedError("protocol not defined")
+
+
 class _LuxTTSModel(BackendModel, Protocol):
     """Subset of LuxTTS required by Celune's adapter."""
 
+    model: _LuxTTSOnnxModel
     vocos: _LuxTTSVocoder
 
     def encode_prompt(
@@ -118,6 +134,73 @@ def _pad_vocoder_features(features: torch.Tensor) -> torch.Tensor:
     padding_frames += _LUXTTS_VOCODER_TAIL_FRAMES
     tail = features[..., -1:].expand(*features.shape[:-1], padding_frames)
     return torch.cat((features, tail), dim=-1)
+
+
+def _install_cpu_duration_correction(model: _LuxTTSModel) -> None:
+    """Correct the CPU ONNX duration ratio before prompt frames are removed."""
+    onnx_model = getattr(model, "model", None)
+    if onnx_model is None:
+        return
+
+    original_run_text_encoder = getattr(type(onnx_model), "run_text_encoder", None)
+    if not callable(original_run_text_encoder):
+        return
+    run_text_encoder = cast(
+        Callable[..., tuple[torch.Tensor, torch.Tensor]],
+        original_run_text_encoder,
+    )
+
+    def corrected_run_text_encoder(
+        onnx_instance: _LuxTTSOnnxModel,
+        tokens: torch.Tensor,
+        prompt_tokens: torch.Tensor,
+        prompt_features_len: torch.Tensor,
+        speed: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Use the GPU path's prompt-plus-generated duration calculation."""
+        prompt_token_count = int(prompt_tokens.shape[1])
+        target_token_count = int(tokens.shape[1])
+        prompt_frame_count = int(prompt_features_len.item())
+        if (
+            prompt_token_count <= 0
+            or target_token_count <= 0
+            or prompt_frame_count <= 0
+        ):
+            return run_text_encoder(
+                onnx_instance,
+                tokens,
+                prompt_tokens,
+                prompt_features_len,
+                speed,
+            )
+
+        requested_speed = float(speed.item())
+        generated_frame_count = math.ceil(
+            prompt_frame_count
+            / prompt_token_count
+            * target_token_count
+            / requested_speed
+        )
+        desired_frame_count = prompt_frame_count + generated_frame_count
+        onnx_frame_ratio = (
+            prompt_frame_count
+            / prompt_token_count
+            * (prompt_token_count + target_token_count - 1)
+        )
+        corrected_speed = onnx_frame_ratio / desired_frame_count
+        corrected_speed_tensor = speed.new_tensor(corrected_speed)
+        return run_text_encoder(
+            onnx_instance,
+            tokens,
+            prompt_tokens,
+            prompt_features_len,
+            corrected_speed_tensor,
+        )
+
+    onnx_model.run_text_encoder = MethodType(
+        corrected_run_text_encoder,
+        onnx_model,
+    )
 
 
 def _install_vocoder_decode_guard(model: _LuxTTSModel) -> None:
@@ -256,6 +339,7 @@ class LuxTTS(CeluneBackend[_LuxTTSModel]):
                 device="cpu",
                 threads=self._threads,
             )
+        _install_cpu_duration_correction(model)
         _install_vocoder_decode_guard(model)
         return model
 
