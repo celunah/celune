@@ -203,11 +203,19 @@ if TYPE_CHECKING:
 _SHORT_INPUT_VOCODER_ERROR = (
     "Calculated padded input size per channel: (6). Kernel size: (7)."
 )
+_EMPTY_INPUT_VOCODER_ERROR = (
+    "min(): Expected reduction dim to be specified for input.numel() == 0"
+)
 
 
 def _is_short_input_generation_error(error: BaseException) -> bool:
     """Return whether a backend rejected the known too-short input shape."""
-    return _SHORT_INPUT_VOCODER_ERROR in str(error)
+    message = str(error)
+    return (
+        _SHORT_INPUT_VOCODER_ERROR in message
+        or _EMPTY_INPUT_VOCODER_ERROR in message
+        or "LuxTTS produced no acoustic frames" in message
+    )
 
 
 def _stop_pipeline_jobs(self: Celune) -> None:
