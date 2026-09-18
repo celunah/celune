@@ -16,7 +16,7 @@ latency, and reference conditioning.
 | `fireredtts3` | Multilingual zero-shot cloning | 1 complete chunk/request | Supports 24 languages and 21 Chinese dialect tags; uses the active reference WAV and transcript and loads its transformer path in BF16. |
 | `voxcpm2` | High-fidelity multilingual generation | 6.25 chunks/s | Uses reference WAV plus per-voice `cfg_scale`; needs a compiler in some installs. |
 | `dotstts` | Speaker similarity and diffusion quality | 6.25 chunks/s | Uses Celune's forked `dots.tts` package. |
-| `luxtts` | Lightweight CPU voice cloning | 1 complete chunk/request | English LuxTTS/ZipVoice path; uses a five-second reference prompt and returns 48 kHz audio. |
+| `luxtts` | Lightweight CUDA-first voice cloning | 1 complete chunk/request | English LuxTTS/ZipVoice path; uses a five-second reference prompt, returns 48 kHz audio, and falls back to CPU when CUDA is unavailable. |
 
 Backend-specific packages are resolved from Celune's configured application
 environment and imported lazily when the selected backend is needed. Normal

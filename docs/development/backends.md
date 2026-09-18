@@ -20,16 +20,17 @@ manager; normal application configuration does not select that path.
 | `fireredtts3` | TTS | `celune.backends.tts.fireredtts3:FireRedTTS3` | FireRedTTS3 source, Transformers 5.6.2, and TorchCodec 0.16.0; BF16 transformer path with PyTorch SDPA and latent streaming. |
 | `dotstts` | TTS | `celune.backends.tts.dotstts:DotsTtsMF` | Celune's `dots.tts` fork; Python 3.12. |
 | `voxcpm2` | TTS | `celune.backends.tts.voxcpm2:VoxCPM2` | `voxcpm>=2.0.0`; Python 3.12. |
-| `luxtts` | TTS | `celune.backends.tts.luxtts:LuxTTS` | CPU-only ONNX LuxTTS worker, its ZipVoice/LinaCodec VCS dependencies, and English prompt transcription. |
+| `luxtts` | TTS | `celune.backends.tts.luxtts:LuxTTS` | CUDA-first LuxTTS worker with CPU ONNX fallback, its ZipVoice/LinaCodec VCS dependencies, and English prompt transcription. |
 | `seed-vc` | VC | `celune.backends.vc.seedvc:CeluneSeedVCBackend` | Celune's Seed-VC fork. |
 
 Most workers share a compatibility baseline containing Hugging Face Hub and
 `hf-xet`, Transformers below 5 in the worker environment, Lingua, librosa,
 llvmlite, NumPy/Numba, Pillow, platformdirs, psutil, sounddevice, soundfile,
 and Zstandard, plus the CEDTS-compatible PyTorch 2.11 CUDA 12.8 worker stack.
-LuxTTS uses that same pinned PyTorch stack while its inference runtime remains
-configured for `device="cpu"` and uses CPU ONNX Runtime, so selecting it does
-not require CUDA hardware. Its model and reference implementation are
+LuxTTS uses that same pinned PyTorch stack. It selects the native PyTorch
+checkpoint and CUDA runtime when `torch.cuda.is_available()` is true, and uses
+the ONNX CPU path only when no usable CUDA runtime exists. Its model and
+reference implementation are
 [YatharthS/LuxTTS](https://huggingface.co/YatharthS/LuxTTS) and
 [LuxTTS](https://github.com/ysharma3501/LuxTTS); those third-party assets retain
 their own Apache-2.0 licensing.
@@ -101,26 +102,31 @@ package can carry incompatible build requirements.
 
 ### LuxTTS
 
-`luxtts` adapts the [LuxTTS](https://github.com/ysharma3501/LuxTTS) CPU path
-from the [YatharthS/LuxTTS model card](https://huggingface.co/YatharthS/LuxTTS).
-It supports English voice cloning, uses the active voice's reference WAV, and
-has LuxTTS transcribe the prompt internally. Celune supplies a five-second
-prompt window, requests the native 48 kHz waveform path, and emits one complete
-waveform per request. The adapter adds the decoder look-ahead frames required by
+`luxtts` adapts the [LuxTTS](https://github.com/ysharma3501/LuxTTS) native GPU
+path and ONNX CPU fallback from the [YatharthS/LuxTTS model
+card](https://huggingface.co/YatharthS/LuxTTS). It supports English voice
+cloning, uses the active voice's reference WAV, and has LuxTTS transcribe the
+prompt internally. Celune supplies a five-second prompt window, requests the
+native 48 kHz waveform path, and emits one complete waveform per request. The
+installed upstream `generate_speech` API does not expose incremental acoustic
+frames, so this backend cannot provide true model-time streaming yet. The
+adapter adds the decoder look-ahead frames required by
 Vocos, corrects the CPU ONNX duration ratio so short responses retain generated
 frames after prompt removal, adds a short reference boundary to prevent prompt
 tail leakage, uses that boundary's silent acoustic feature for decoder context
 instead of repeating voiced output, and removes only the final two decoder hops
 so the last phoneme is not cut off.
 Empty or too-short acoustic output becomes a user-facing short-input warning.
-The backend runs with `device="cpu"` and two ONNX
-threads by default; its isolated manifest uses the shared PyTorch 2.11 CUDA
-12.8 stack and adds the upstream Piper wheel page as a `find-links` source so
-the environment can resolve its phonemizer dependency. Its installer also
+The backend uses the native GPU model when CUDA is available; its CPU fallback
+uses two ONNX threads by default. Its isolated manifest uses the shared
+PyTorch 2.11 CUDA 12.8 stack and adds the upstream Piper wheel page as a
+`find-links` source so the environment can resolve its phonemizer dependency.
+Its installer also
 passes uv's `--no-sources` option so LinaCodec cannot redirect PyTorch to its
 CUDA 12.6 source override. Preloading also
-caches the `openai/whisper-tiny` transcriber required by the upstream CPU
-constructor before Celune enables Hugging Face offline mode for model loading.
+caches the device-appropriate `openai/whisper-tiny` or
+`openai/whisper-base` transcriber required by the upstream constructor before
+Celune enables Hugging Face offline mode for model loading.
 The worker imports the LuxTTS runtime during its handshake so native runtime
 imports do not occur inside a request thread. Celune's startup warm-up uses a
 full sentence because the upstream LuxTTS vocoder cannot decode the previous
