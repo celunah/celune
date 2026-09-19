@@ -60,7 +60,9 @@ startup or playback state with a later indeterminate update. The WebUI has no
 corresponding progress bar or percentage label. Captions are
 scoped to speech playback and only advance: delayed progress callbacks and late
 word-timing refinement cannot hide words that have already appeared. They fade
-out when speech ends even if an SFX overlay continues. The caption and bar
+out when speech ends even if an SFX overlay continues. A streaming utterance's
+caption progress waits for its final playback marker, so a temporary end of the
+currently buffered chunk cannot make a multi-chunk caption finish early. The caption and bar
 share one reserved line, so the bar is not restored until the caption transition
 completes; the normal bar/readout state is also restored immediately when wake
 begins.

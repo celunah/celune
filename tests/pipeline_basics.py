@@ -301,9 +301,43 @@ class TestPipeline(CeluneTestCase):
             pipeline._playback_source_meta(cast(Celune, engine))[1]["played_frames"]
             == 8.0
         )
-        engine.caption_progress_callback.assert_called_once_with(8.0, 8.0)
+        engine.caption_progress_callback.assert_not_called()
         assert not any(
             "[PLAY] playback write" in message for message, _ in engine.messages
+        )
+
+    def test_caption_progress_waits_for_final_chunk_total(self) -> None:
+        """Verify captions do not finish against a still-growing speech source."""
+        engine = make_pipeline_engine()
+        pipeline.register_playback_source(cast(Celune, engine), 1, kind="speech")
+        source_meta = pipeline._playback_source_meta(cast(Celune, engine))[1]
+        source_meta["total_frames"] = 8.0
+        source_meta["played_frames"] = 8.0
+        engine.caption_progress_callback = mock.Mock()
+
+        pipeline._update_playback_progress(cast(Celune, engine))
+
+        engine.caption_progress_callback.assert_not_called()
+
+        source_meta["total_frames"] = 16.0
+        source_meta["played_frames"] = 8.0
+        engine._playback_progress_last_emit_at = 0.0
+        pipeline._update_playback_progress(cast(Celune, engine))
+
+        engine.caption_progress_callback.assert_not_called()
+
+        source_meta["total_frames_final"] = 1.0
+        engine._playback_progress_last_emit_at = 0.0
+        pipeline._update_playback_progress(cast(Celune, engine))
+
+        engine.caption_progress_callback.assert_called_once_with(8.0, 16.0)
+
+        source_meta["played_frames"] = 16.0
+        engine._playback_progress_last_emit_at = 0.0
+        pipeline._update_playback_progress(cast(Celune, engine))
+
+        assert engine.caption_progress_callback.call_args_list[-1] == mock.call(
+            16.0, 16.0
         )
 
     def test_force_stop_queues_worker_stop_and_invalidates_old_sources(

@@ -369,6 +369,7 @@ def _register_playback_source(
         "current_gain": clipped,
         "total_frames": 0.0,
         "played_frames": 0.0,
+        "total_frames_final": 0.0,
         "generation": float(getattr(engine, "_playback_generation", 0)),
     }
 
@@ -586,6 +587,8 @@ def _update_playback_progress(
     speech_meta = meta.get(max(speech_ids))
     if not isinstance(speech_meta, dict):
         return
+    if float(speech_meta.get("total_frames_final", 0.0)) < 1.0:
+        return
     caption_progress_callback = getattr(engine, "caption_progress_callback", None)
     if callable(caption_progress_callback):
         caption_progress_callback(
@@ -679,6 +682,8 @@ def _queue_playback_done(
             source_meta.get("generation", 0.0)
         ) != float(getattr(engine, "_playback_generation", 0)):
             return False
+        if isinstance(source_meta, dict):
+            source_meta["total_frames_final"] = 1.0
 
     engine.audio_queue.put(
         PlaybackSourceDone(
