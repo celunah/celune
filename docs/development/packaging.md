@@ -32,8 +32,12 @@ script refreshes `resources/vcruntime140.dll` from the configured Visual Studio
 14.44.35112 CRT installation, includes Windows runtime DLLs during Nuitka
 compilation, places that exact DLL beside both release executables, and adds it
 to the update manifest and archive. Linux builds need GCC, `appimagetool`, and
-`zip`, then produce the executable, AppImage, and archive. The scripts stop
-existing Celune processes before replacing build artifacts.
+`zip`, then produce the executable, AppImage, and archive. Before replacing
+Windows build artifacts, the script force-stops existing Celune processes,
+waits up to thirty seconds for their process handles to exit, and retries
+transient locked-file cleanup for up to five seconds. A persistent lock still
+fails the build with the original cleanup error instead of producing a partial
+package.
 
 Typical output files are:
 

@@ -20,14 +20,79 @@ $launcherRes = Join-Path $repoRoot "resources\celune.res"
 $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
 $projectVersion = Select-String -Path (Join-Path $repoRoot "pyproject.toml") -Pattern '^version = "([^"]+)"' | Select-Object -First 1
 $copyrightText = [char]0x00A9 + " celunah - Under Apache 2.0 license."
-$existingProcesses = Get-Process -Name @("celune", "celune-bin") -ErrorAction SilentlyContinue
+$processTerminationTimeoutSeconds = 30
+$artifactRemovalAttempts = 20
+$artifactRemovalDelayMilliseconds = 250
 
 $env:CL = "/O2 /GL /GS /guard:cf /DNDEBUG"
 $env:_CL_ = "/link /LTCG /OPT:REF /OPT:ICF /DYNAMICBASE /NXCOMPAT"
 
-if ($null -ne $existingProcesses) {
+function Wait-CeluneProcessesExit {
+    param(
+        [Parameter(Mandatory = $true)]
+        [int[]]$ProcessIds
+    )
+
+    $deadline = [DateTime]::UtcNow.AddSeconds($processTerminationTimeoutSeconds)
+    while ($true) {
+        $runningProcesses = @(
+            $ProcessIds | ForEach-Object {
+                Get-Process -Id $_ -ErrorAction SilentlyContinue
+            }
+        )
+        if ($runningProcesses.Count -eq 0) {
+            return
+        }
+
+        if ([DateTime]::UtcNow -ge $deadline) {
+            $runningNames = @(
+                $runningProcesses |
+                    Select-Object -ExpandProperty ProcessName |
+                    Sort-Object -Unique
+            ) -join ", "
+            throw "Celune processes did not exit within $processTerminationTimeoutSeconds seconds: $runningNames"
+        }
+
+        Start-Sleep -Milliseconds 100
+    }
+}
+
+function Remove-BuildArtifact {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path
+    )
+
+    if (-not (Test-Path -LiteralPath $Path)) {
+        return
+    }
+
+    for ($attempt = 1; $attempt -le $artifactRemovalAttempts; $attempt++) {
+        try {
+            Remove-Item -LiteralPath $Path -Recurse -Force -ErrorAction Stop
+            return
+        }
+        catch {
+            $isTransientLock =
+                $_.Exception -is [System.IO.IOException] -or
+                $_.Exception -is [System.UnauthorizedAccessException]
+            if (-not $isTransientLock -or $attempt -eq $artifactRemovalAttempts) {
+                throw
+            }
+
+            Start-Sleep -Milliseconds $artifactRemovalDelayMilliseconds
+        }
+    }
+}
+
+$existingProcesses = @(
+    Get-Process -Name @("celune", "celune-bin") -ErrorAction SilentlyContinue
+)
+if ($existingProcesses.Count -gt 0) {
     Write-Host "Celune is already running, terminating before proceeding with build."
+    $existingProcessIds = @($existingProcesses | Select-Object -ExpandProperty Id)
     $existingProcesses | Stop-Process -Force -ErrorAction SilentlyContinue
+    Wait-CeluneProcessesExit -ProcessIds $existingProcessIds
 }
 
 if ($null -eq $projectVersion) {
@@ -78,9 +143,7 @@ $staleBuildArtifacts = @(
     (Join-Path $outputDir "celune-bin.cmd")
 )
 foreach ($stalePath in $staleBuildArtifacts) {
-    if (Test-Path $stalePath) {
-        Remove-Item -LiteralPath $stalePath -Recurse -Force
-    }
+    Remove-BuildArtifact -Path $stalePath
 }
 
 $arguments = @(
@@ -206,12 +269,8 @@ finally {
 }
 
 $buildDir = Join-Path $outputDir "nuitka_main.build"
-if (Test-Path $buildDir) {
-    Remove-Item -LiteralPath $buildDir -Recurse -Force
-}
+Remove-BuildArtifact -Path $buildDir
 
 foreach ($launcherObj in $launcherObjects) {
-    if (Test-Path $launcherObj) {
-        Remove-Item -LiteralPath $launcherObj -Force
-    }
+    Remove-BuildArtifact -Path $launcherObj
 }
