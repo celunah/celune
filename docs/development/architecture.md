@@ -76,7 +76,10 @@ Cancellation travels through the same queue and worker boundary. It does not
 create a second “stop” path that could leave a backend generation alive.
 Playback completion is source-aware: speech completion closes speech captions
 without waiting for unrelated SFX overlays, while the global idle transition
-still waits for every source. Output failures clear the source maps, mark
+still waits for every source and deferred queue-reader handoffs. A completion
+marker retains its idle notification until the final playback stage drains, so
+readiness and speech cannot leave the runtime in a stale speaking state.
+Output failures clear the source maps, mark
 playback complete, and release any held pipeline lease.
 Automatic sleep also waits for every registered playback source, including SFX
 overlays, before unloading runtime state.

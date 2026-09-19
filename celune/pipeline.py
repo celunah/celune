@@ -2106,6 +2106,7 @@ async def playback_worker_job(engine: Celune) -> None:
     last_monitor_at = _monotonic_time()
     buffering_started_at: Optional[float] = None
     rebuffer_wait_started_at: Optional[float] = None
+    pending_idle_marker: Optional[PlaybackSourceDone] = None
 
     def playback_queue_empty() -> bool:
         """Return whether both stages of the playback input queue are empty."""
@@ -2130,9 +2131,42 @@ async def playback_worker_job(engine: Celune) -> None:
         )
         rebuffer_wait_started_at = None
 
+    def playback_is_idle() -> bool:
+        """Return whether every queued playback stage has drained."""
+        return (
+            not source_buffers
+            and not source_done
+            and playback_queue_empty()
+            and engine.text_queue.empty()
+            and writer.pending_seconds <= 0.0
+        )
+
+    def finalize_pending_idle() -> None:
+        """Deliver a deferred idle callback after the final queue stage drains."""
+        nonlocal pending_idle_marker
+        marker = pending_idle_marker
+        if marker is None:
+            return
+        if engine.locked or engine.cur_state in {
+            "error",
+            "reloading",
+            "stopped",
+        }:
+            pending_idle_marker = None
+            return
+        if not playback_is_idle():
+            return
+        pending_idle_marker = None
+        _finalize_playback_idle(
+            engine,
+            saved_path=marker.saved_path,
+            analysis_audio=marker.analysis_audio,
+        )
+
     async def handle_playback_error(error: BaseException) -> None:
         """Report an output failure and clear the playback pipeline."""
-        nonlocal buffered_seconds, buffering_started_at
+        nonlocal buffered_seconds, buffering_started_at, pending_idle_marker
+        pending_idle_marker = None
         finish_rebuffer_wait()
         engine.log(
             format_error_message(
@@ -2162,6 +2196,8 @@ async def playback_worker_job(engine: Celune) -> None:
 
     async def force_stop_playback() -> None:
         nonlocal buffered_seconds, buffering_started_at, stop_cleanup_generation
+        nonlocal pending_idle_marker
+        pending_idle_marker = None
         finish_rebuffer_wait()
         current_generation = getattr(engine, "_playback_generation", 0)
         if stop_cleanup_generation == current_generation:
@@ -2270,7 +2306,12 @@ async def playback_worker_job(engine: Celune) -> None:
         try:
             timeout = (
                 0.01
-                if source_buffers or source_done or writer.pending_seconds > 0.0
+                if (
+                    source_buffers
+                    or source_done
+                    or writer.pending_seconds > 0.0
+                    or pending_idle_marker is not None
+                )
                 else None
             )
             if timeout is None:
@@ -2452,32 +2493,15 @@ async def playback_worker_job(engine: Celune) -> None:
                     if marker.release_pipeline:
                         release_pipeline(
                             engine,
-                            playback_idle=not source_buffers
-                            and playback_queue_empty()
-                            and engine.text_queue.empty()
-                            and writer.pending_seconds <= 0.0,
+                            playback_idle=playback_is_idle(),
                         )
-                    if (
-                        marker.notify_idle
-                        and not source_buffers
-                        and playback_queue_empty()
-                        and engine.text_queue.empty()
-                        and writer.pending_seconds <= 0.0
-                    ):
-                        _finalize_playback_idle(
-                            engine,
-                            saved_path=marker.saved_path,
-                            analysis_audio=marker.analysis_audio,
-                        )
-                    elif (
-                        not source_buffers
-                        and playback_queue_empty()
-                        and engine.text_queue.empty()
-                        and writer.pending_seconds <= 0.0
-                    ):
+                    if marker.notify_idle:
+                        pending_idle_marker = marker
+                    elif playback_is_idle():
                         engine.playback_done.set()
                         _reset_glow_audio_reactivity(engine)
                         engine.progress_callback(1, 1)
+                    finalize_pending_idle()
 
         while True:
             orphaned = [
@@ -2497,33 +2521,17 @@ async def playback_worker_job(engine: Celune) -> None:
                 if marker.release_pipeline:
                     release_pipeline(
                         engine,
-                        playback_idle=not source_buffers
-                        and playback_queue_empty()
-                        and engine.text_queue.empty()
-                        and writer.pending_seconds <= 0.0,
+                        playback_idle=playback_is_idle(),
                     )
-                if (
-                    marker.notify_idle
-                    and not source_buffers
-                    and playback_queue_empty()
-                    and engine.text_queue.empty()
-                    and writer.pending_seconds <= 0.0
-                ):
-                    _finalize_playback_idle(
-                        engine,
-                        saved_path=marker.saved_path,
-                        analysis_audio=marker.analysis_audio,
-                    )
-                elif (
-                    not source_buffers
-                    and playback_queue_empty()
-                    and engine.text_queue.empty()
-                    and writer.pending_seconds <= 0.0
-                ):
+                if marker.notify_idle:
+                    pending_idle_marker = marker
+                elif playback_is_idle():
                     engine.playback_done.set()
                     _reset_glow_audio_reactivity(engine)
                     engine.progress_callback(1, 1)
+                finalize_pending_idle()
 
+        finalize_pending_idle()
         publish_buffered_seconds()
         finish_rebuffer_wait()
         if (
@@ -2537,6 +2545,7 @@ async def playback_worker_job(engine: Celune) -> None:
                 await handle_playback_error(writer_error)
             await _run_in_daemon_thread(writer.stop)
             input_reader.stop()
+            finalize_pending_idle()
             break
 
 

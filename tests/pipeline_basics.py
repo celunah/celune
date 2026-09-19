@@ -4,6 +4,7 @@
 # Import groups follow Celune's project-specific Ruff ordering.
 # pylint: disable=ungrouped-imports
 
+import asyncio
 import sys
 import queue
 import tempfile
@@ -1586,6 +1587,79 @@ class TestPipelineAsync(CeluneAsyncTestCase):
         engine.idle_callback.assert_not_called()
         assert engine.cur_state == "reloading"
         assert engine.playback_done.is_set()
+
+    @pytest.mark.parametrize("source_kind", ["readiness", "speech"])
+    async def test_playback_worker_retries_idle_after_transient_queue_busy(
+        self,
+        source_kind: str,
+    ) -> None:
+        """Verify a transient queue observation cannot discard the idle marker."""
+        engine = make_pipeline_engine()
+        engine.stream = None
+        engine._stream = None
+        engine._current_sr = None
+        engine.current_sr = None
+        engine.dev = False
+        engine.current_voice = "balanced"
+        engine.cur_state = "idle"
+        engine.idle_callback = mock.Mock()
+        engine.sentinel = PipelineStates.TERMINATE
+        engine.force_stop_marker = PipelineStates.UTTERANCE_FORCE_END
+
+        class TransientlyBusyQueue(queue.Queue[object]):
+            """Report two stale busy observations before the queue is idle."""
+
+            busy_observations = 2
+
+            def empty(self) -> bool:
+                """Report stale busy observations before actual queue state."""
+                if self.busy_observations:
+                    self.busy_observations -= 1
+                    return False
+                return super().empty()
+
+        engine.text_queue = TransientlyBusyQueue()
+        engine.audio_queue = queue.Queue()
+
+        if source_kind == "readiness":
+            assert pipeline.play_signal(cast(Celune, engine), "readiness")
+        else:
+            assert pipeline.acquire_pipeline(cast(Celune, engine), "speak")
+            engine.cur_state = "speaking"
+            pipeline.register_playback_source(
+                cast(Celune, engine),
+                1,
+                kind="speech",
+            )
+            pipeline.queue_playback_chunk(
+                cast(Celune, engine),
+                1,
+                np.full((2400, 2), 0.2, dtype=np.float32),
+                48000,
+            )
+            pipeline.queue_playback_done(
+                cast(Celune, engine),
+                1,
+                release_pipeline_when_finished=True,
+            )
+
+        fake_stream = FakeStream()
+
+        with mock.patch("celune.pipeline.sd.OutputStream", return_value=fake_stream):
+            worker_task = asyncio.create_task(
+                self._run_playback_worker(cast(Celune, engine))
+            )
+            try:
+                idle_event = threading.Event()
+                engine.idle_callback.side_effect = idle_event.set
+                assert await asyncio.to_thread(idle_event.wait, 1.0)
+            finally:
+                engine.audio_queue.put(engine.sentinel)
+                await worker_task
+
+        assert engine.cur_state == "idle"
+        assert engine.playback_done.is_set()
+        engine.idle_callback.assert_called_once_with()
 
     async def test_playback_worker_reports_live_audio_progress(self) -> None:
         """Verify playback progress follows audio position without flooding updates."""
