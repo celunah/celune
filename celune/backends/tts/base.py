@@ -28,8 +28,10 @@ from ...i18n import string
 from ...paths import temp_data_dir, huggingface_progress, huggingface_hub_cache_dir
 from ...utils import discard
 from ...cevoice import CEVoiceLoader, default_loader
+from .contracts import ModelContract
+from .contracts import model_contract as resolve_model_contract
 from ...constants import N_A_NUMERIC
-from ...typing.aliases import AudioChunk, LogLevel, RuntimeValue
+from ...typing.aliases import LogLevel, AudioChunk, RuntimeValue
 from ...typing.backends import BackendModel
 
 __all__ = [
@@ -411,6 +413,22 @@ class CeluneBackend[ModelT](ABC):
             return self.model_name
 
         raise ValueError(f"{self.name} does not define a default model")
+
+    def model_contract(self, model_id: str, **kwargs: object) -> ModelContract:
+        """Return the pinned upstream weight contract for one model.
+
+        Args:
+            model_id: The Hugging Face repository identifier to resolve.
+            kwargs: Reserved for backend-specific contract variants.
+
+        Returns:
+            ModelContract: The immutable artifact and tensor inventory contract.
+
+        Raises:
+            ModelContractError: No pinned contract exists for the model.
+        """
+        del kwargs
+        return resolve_model_contract(self.name, model_id)
 
     @property
     def all_model_ids(self) -> list[str]:

@@ -7,17 +7,21 @@ from importlib.metadata import PackageNotFoundError, version
 
 from .base import CeluneBackend
 from ...i18n import string
+from .contracts import MODEL_CONTRACTS, ModelContract, model_contract
 from ..environment import BACKEND_MANIFESTS, BackendManifest, backend_manifest
 from ...typing.backends import BackendModel
 
 __all__ = [
     "BACKENDS",
     "BACKEND_MANIFESTS",
+    "MODEL_CONTRACTS",
     "BackendManifest",
     "BackendModel",
     "CeluneBackend",
+    "ModelContract",
     "backend_manifest",
     "get_version",
+    "model_contract",
     "resolve_backend",
 ]
 

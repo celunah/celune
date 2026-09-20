@@ -4,8 +4,8 @@
 import time
 import tempfile
 import contextlib
-from pathlib import Path
 from typing import Optional, cast
+from pathlib import Path
 from collections.abc import Mapping, Callable, Iterator
 
 import yaml
@@ -13,12 +13,14 @@ import numpy as np
 from pocket_tts import TTSModel
 from huggingface_hub import snapshot_download
 
+from .base import CeluneBackend, cached_hf_snapshot_path
+from ...i18n import string
 from ...paths import temp_data_dir, huggingface_progress, huggingface_hub_cache_dir
 from ...utils import custom_assert
-from ...i18n import string
 from ...cevoice import CEVoiceLoader, default_loader
+from .contracts import ModelContract
+from .contracts import model_contract as resolve_model_contract
 from ...typing.aliases import AudioChunk, AudioChunks
-from .base import CeluneBackend, cached_hf_snapshot_path
 from ...typing.backends import MiniModel, MiniPromptState
 
 
@@ -95,6 +97,15 @@ class Mini(CeluneBackend[TTSModel]):
         )
         assert voice in voice_names
         return self.default_model_id
+
+    def model_contract(self, model_id: str, **kwargs: object) -> ModelContract:
+        """Return the Pocket TTS contract for the requested language variant."""
+        language = cast(Optional[str], kwargs.get("lang", kwargs.get("language", "en")))
+        return resolve_model_contract(
+            self.name,
+            model_id,
+            variant=self._resolve_language_name(language),
+        )
 
     def resolve_generation_language(self, lang: Optional[str]) -> str:
         """Normalize a requested language to one of Pocket TTS's supported variants.

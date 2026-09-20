@@ -35,6 +35,7 @@ own. It is the index to use when a feature needs a precise code entrypoint.
 | Path | Responsibility |
 | --- | --- |
 | `celune/backends/tts/base.py` | TTS backend contract and common model/voice behavior. |
+| `celune/backends/tts/contracts.py` | Pinned TTS model revisions, weight inventories, and validation helpers. |
 | `celune/backends/tts/mini.py` | Pocket TTS adapter. |
 | `celune/backends/tts/qwen3.py` | Qwen3 streaming voice-cloning adapter. |
 | `celune/backends/tts/fireredtts3.py` | FireRedTTS3 CEDTS adapter, source bootstrap, and BF16 loading. |

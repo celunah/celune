@@ -138,6 +138,36 @@ empty-reduction failures return Celune to idle and are presented as a warning
 asking the user to enter a longer utterance; other generation failures retain
 the normal error treatment.
 
+## Model weight contracts
+
+`celune.backends.tts.contracts` records the pinned Hugging Face revision and
+weight inventory for every supported TTS backend. Each safetensors artifact is
+identified by its expected size and SHA-256 digest, then described by its
+tensor count, parameter count, dtype distribution, and canonical tensor
+inventory digest. The inventory digest covers tensor names, shapes, and dtypes;
+it lets a worker reject missing, unexpected, or structurally changed weights
+without embedding a several-thousand-name list in the source tree.
+
+The contract includes the currently supported model variants:
+
+- Pocket TTS uses `lunahr/pocket-tts-ungated`, not the gated upstream
+  repository. Its language variants are separate contracts because the
+  current French `french_24l` artifact has a different tensor inventory from
+  the other selected language artifacts.
+- Qwen3 includes both the 0.6B and 1.7B Base checkpoints and their shared F32
+  speech tokenizer.
+- FireRedTTS3 records the upstream F32 source inventories separately from its
+  runtime dtype rules: the Qwen backbone, stop head, and RedAE encoder are
+  BF16, while the flow and decoder paths remain F32.
+- LuxTTS is represented by its Torch/ONNX/BIN artifacts because its model
+  repository does not use safetensors for the selected runtime path.
+
+`validate_safetensors_artifact` validates a cached artifact without loading
+its tensors into VRAM. `validate_model_state` validates a loaded component's
+exact structural inventory, runtime dtypes, parameter count, and finite values.
+Quantization work must add a post-quantization contract rather than bypassing
+these checks.
+
 ## Adding a backend
 
 1. Implement the existing TTS or VC base contract.

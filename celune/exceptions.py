@@ -158,3 +158,7 @@ class NeedleUnsupportedConverterError(NeedleCheckpointError):
 
 class NeedleSelectionError(ValueError, CeluneError):
     """Needle returned a selection that cannot cross the typed agent boundary."""
+
+
+class ModelContractError(RuntimeError, CeluneError):
+    """A TTS model artifact or loaded state violates its backend contract."""
