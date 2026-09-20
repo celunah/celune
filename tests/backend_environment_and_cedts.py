@@ -25,6 +25,7 @@ from celune.exceptions import (
     CEDTSPayloadError,
     CEDTSTimeoutError,
     CEDTSProtocolError,
+    BackendEnvironmentError,
 )
 from celune.typing.worker import (
     WorkerValue,
@@ -53,15 +54,14 @@ from celune.typing.backends import (
 from celune.backends.environment import (
     BACKEND_MANIFESTS,
     BackendManifest,
-    BackendEnvironmentError,
     BackendEnvironmentManager,
     _exclusive_lock,
     backend_manifest,
 )
 from celune.dataclasses.pipeline import AudioOutput, VoiceConversionRequest
 
-from .backend_processes import ShutdownProcess
 from .support import CeluneTestCase
+from .backend_processes import ShutdownProcess
 
 _ShutdownProcess = ShutdownProcess
 

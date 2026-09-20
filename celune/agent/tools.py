@@ -9,15 +9,15 @@ import time
 import shutil
 import platform
 import subprocess
+from typing import TYPE_CHECKING, Optional, cast
 from pathlib import Path
 from dataclasses import dataclass
 from collections.abc import Mapping, Callable
-from typing import TYPE_CHECKING, Optional, cast
 
 import psutil
 
-from ..typing.modes import OperationMode
-from ..typing.common import JSON, JSONSerializable
+from ..utils import format_error_message
+from ..exceptions import LocalManagementError
 from ..typing.agent import (
     ToolCall,
     AgentTool,
@@ -30,7 +30,8 @@ from ..typing.agent import (
     AgentToolArgumentSchema,
     AgentToolExecutionStatus,
 )
-from ..utils import format_error_message
+from ..typing.modes import OperationMode
+from ..typing.common import JSON, JSONSerializable
 
 if TYPE_CHECKING:
     from ..celune import Celune
@@ -103,25 +104,6 @@ class OfflineToolSpec:
     handler: OfflineToolHandler
     available: bool = True
     end_task_on_success: bool = False
-
-
-class LocalManagementError(RuntimeError):
-    """Describe a typed local-management failure and its exact target."""
-
-    def __init__(
-        self, status: str, message: str, target: Optional[Path] = None
-    ) -> None:
-        super().__init__(message)
-        self.status = status
-        self.target = target
-
-    def to_json(self) -> JSON:
-        """Serialize the failure without exposing an ambiguous target."""
-        return {
-            "result": self.status,
-            "message": str(self),
-            "target": str(self.target) if self.target is not None else None,
-        }
 
 
 class OfflineAgentTool:

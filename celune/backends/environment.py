@@ -18,6 +18,7 @@ from collections.abc import Generator
 
 from ..i18n import string
 from ..paths import backend_environments_dir
+from ..exceptions import BackendEnvironmentError
 
 __all__ = [
     "BACKEND_MANIFESTS",
@@ -95,10 +96,6 @@ class BackendManifest:
         }
         encoded = json.dumps(payload, sort_keys=True).encode("utf-8")
         return hashlib.sha256(encoded).hexdigest()[:16]
-
-
-class BackendEnvironmentError(RuntimeError):
-    """Raised when a backend environment cannot be created or used."""
 
 
 @dataclass(frozen=True)

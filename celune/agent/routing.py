@@ -5,21 +5,16 @@ from __future__ import annotations
 
 import json
 from uuid import uuid4
-from collections.abc import Mapping
 from typing import TYPE_CHECKING, Optional, cast
+from collections.abc import Mapping
 
 from ..i18n import string
-from .runtime import AgentRuntime
-from ..modes import mode_allows_agents
 from ..vram import agent_vram_compatible
-from ..typing.common import JSON, JSONSerializable
-from ..typing.persona import PersonaClientResponse
+from ..modes import mode_allows_agents
+from ..utils import format_error_message
+from .runtime import AgentRuntime
+from ..exceptions import _EmptyClassifierOutput
 from ..conversation import build_agent_classification_request
-from ..typing.locks import (
-    ComponentLockName,
-    ComponentLockOwner,
-    ComponentLockRequirement,
-)
 from ..typing.agent import (
     AgentTask,
     AgentRoute,
@@ -37,14 +32,16 @@ from ..typing.agent import (
     AgentClassificationFailure,
     AgentClassificationFailureKind,
 )
-from ..utils import format_error_message
+from ..typing.locks import (
+    ComponentLockName,
+    ComponentLockOwner,
+    ComponentLockRequirement,
+)
+from ..typing.common import JSON, JSONSerializable
+from ..typing.persona import PersonaClientResponse
 
 if TYPE_CHECKING:
     from ..celune import Celune
-
-
-class _EmptyClassifierOutput(ValueError):
-    """Identify a response that contains an empty structured-output field."""
 
 
 class AgentInputRouter:

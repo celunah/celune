@@ -1,7 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
 """Celune exception classes."""
 
-from typing import Optional, Protocol, Union
+from typing import Union, Optional, Protocol
+from pathlib import Path
+
+from .typing.common import JSON
 
 
 class CeluneError(Exception):
@@ -38,6 +41,29 @@ class BackendError(RuntimeError, CeluneError):
         super().__init__(message)
         self.error_code = error_code
         self.error_type = error_type
+
+
+class BackendEnvironmentError(RuntimeError, CeluneError):
+    """A backend's isolated dependency environment cannot be used."""
+
+
+class LocalManagementError(RuntimeError, CeluneError):
+    """Describe a typed local-management failure and its exact target."""
+
+    def __init__(
+        self, status: str, message: str, target: Optional[Path] = None
+    ) -> None:
+        super().__init__(message)
+        self.status = status
+        self.target = target
+
+    def to_json(self) -> JSON:
+        """Serialize the failure without exposing an ambiguous target."""
+        return {
+            "result": self.status,
+            "message": str(self),
+            "target": str(self.target) if self.target is not None else None,
+        }
 
 
 class CEDTSError(RuntimeError, CeluneError):
@@ -213,3 +239,7 @@ class InvalidCheckpoint(ModelContractError):
         if reason is not None:
             details.append(reason)
         super().__init__(": ".join((details[0], "; ".join(details[1:]))))
+
+
+class _EmptyClassifierOutput(ValueError):
+    """Identify a response that contains an empty structured-output field."""

@@ -8,6 +8,7 @@ own. It is the index to use when a feature needs a precise code entrypoint.
 | Path | Responsibility |
 | --- | --- |
 | `celune/__init__.py` | Lazy package exports and build metadata. |
+| `celune/exceptions.py` | Canonical Celune-owned exception hierarchy and structured failure metadata. |
 | `celune/celune.py` | Singleton engine, lifecycle, backend/voice switching, Persona, agent, and public calls. |
 | `celune/entrypoint.py` | CLI dispatch, startup, doctor, config commands, updates, and headless/interactive handoff. |
 | `main.py` | Lightweight interpreter-safe launcher. |
