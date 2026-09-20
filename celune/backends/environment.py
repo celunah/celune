@@ -18,12 +18,11 @@ from collections.abc import Generator
 
 from ..i18n import string
 from ..paths import backend_environments_dir
-from ..exceptions import BackendEnvironmentError
+from ..exceptions import BackendEnvironmentError as _BackendEnvironmentError
 
 __all__ = [
     "BACKEND_MANIFESTS",
     "BackendEnvironment",
-    "BackendEnvironmentError",
     "BackendEnvironmentManager",
     "BackendManifest",
     "backend_manifest",
@@ -273,7 +272,7 @@ def _exclusive_lock(path: Path, timeout: float) -> Generator[None, None, None]:
         except (BlockingIOError, OSError):
             handle.close()
             if time.monotonic() - started >= timeout:
-                raise BackendEnvironmentError(
+                raise _BackendEnvironmentError(
                     f"Timed out waiting for backend environment lock: {path}"
                 ) from None
             time.sleep(0.1)
@@ -339,7 +338,7 @@ class BackendEnvironmentManager:
             return environment
 
         if self.uv_executable is None:
-            raise BackendEnvironmentError(string("backends.uv_required"))
+            raise _BackendEnvironmentError(string("backends.uv_required"))
 
         lock_path = self.root / manifest.backend_id / ".install.lock"
         with _exclusive_lock(lock_path, self.lock_timeout):
@@ -404,7 +403,7 @@ class BackendEnvironmentManager:
                 shutil.rmtree(temporary_root, ignore_errors=True)
 
         if not environment.is_ready:
-            raise BackendEnvironmentError(
+            raise _BackendEnvironmentError(
                 f"Backend environment was not created: {environment.root}"
             )
         return environment
@@ -456,4 +455,4 @@ class BackendEnvironmentManager:
             message = string("backends.dependencies_install_failed")
             if output:
                 message = f"{message}: {output}"
-            raise BackendEnvironmentError(message) from error
+            raise _BackendEnvironmentError(message) from error

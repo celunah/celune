@@ -17,7 +17,7 @@ from collections.abc import Mapping, Callable
 import psutil
 
 from ..utils import format_error_message
-from ..exceptions import LocalManagementError
+from ..exceptions import LocalManagementError as _LocalManagementError
 from ..typing.agent import (
     ToolCall,
     AgentTool,
@@ -124,7 +124,7 @@ class OfflineAgentTool:
             return _failure(call, self.name, "tool is currently unavailable")
         try:
             output = self._spec.handler(self._engine, call, context)
-        except LocalManagementError as exc:
+        except _LocalManagementError as exc:
             log = getattr(self._engine, "log", None)
             if callable(log):
                 log(
@@ -550,14 +550,14 @@ def _local_path(call: ToolCall, name: str) -> Path:
     raw = _string(call, name)
     path = Path(raw).expanduser()
     if not path.is_absolute():
-        raise LocalManagementError(
+        raise _LocalManagementError(
             "invalid_path",
             "local-management paths must be absolute",
         )
     try:
         return path.resolve(strict=False)
     except OSError as exc:
-        raise LocalManagementError("invalid_path", str(exc), path) from exc
+        raise _LocalManagementError("invalid_path", str(exc), path) from exc
 
 
 def _local_limit(call: ToolCall, name: str, default: int, maximum: int) -> int:
@@ -568,14 +568,14 @@ def _local_limit(call: ToolCall, name: str, default: int, maximum: int) -> int:
     return value
 
 
-def _local_missing(path: Path) -> LocalManagementError:
+def _local_missing(path: Path) -> _LocalManagementError:
     """Build a consistent missing-target error."""
-    return LocalManagementError("missing", "target does not exist", path)
+    return _LocalManagementError("missing", "target does not exist", path)
 
 
-def _local_access(path: Path, error: OSError) -> LocalManagementError:
+def _local_access(path: Path, error: OSError) -> _LocalManagementError:
     """Build a consistent access-denied error."""
-    return LocalManagementError("access_denied", str(error), path)
+    return _LocalManagementError("access_denied", str(error), path)
 
 
 def _local_list_directory(
@@ -587,7 +587,7 @@ def _local_list_directory(
     if not path.exists():
         raise _local_missing(path)
     if not path.is_dir():
-        raise LocalManagementError("invalid_target", "target is not a directory", path)
+        raise _LocalManagementError("invalid_target", "target is not a directory", path)
     try:
         entries = sorted(path.iterdir(), key=lambda item: item.name.casefold())
     except OSError as exc:
@@ -637,10 +637,10 @@ def _local_read_text(_engine: Celune, call: ToolCall, _context: AgentContext) ->
     if not path.exists():
         raise _local_missing(path)
     if not path.is_file():
-        raise LocalManagementError("invalid_target", "target is not a file", path)
+        raise _LocalManagementError("invalid_target", "target is not a file", path)
     try:
         if path.stat().st_size > limit:
-            raise LocalManagementError("too_large", "file exceeds max_bytes", path)
+            raise _LocalManagementError("too_large", "file exceeds max_bytes", path)
         text = path.read_text(encoding="utf-8")
     except OSError as exc:
         raise _local_access(path, exc) from exc
@@ -652,13 +652,13 @@ def _local_write_text(_engine: Celune, call: ToolCall, _context: AgentContext) -
     path = _local_path(call, "path")
     text = _text(call, "text")
     if len(text.encode("utf-8")) > _MAX_LOCAL_READ_BYTES:
-        raise LocalManagementError(
+        raise _LocalManagementError(
             "too_large", "text exceeds the local size limit", path
         )
     if path.exists() and path.is_dir():
-        raise LocalManagementError("invalid_target", "target is a directory", path)
+        raise _LocalManagementError("invalid_target", "target is a directory", path)
     if not path.parent.exists():
-        raise LocalManagementError(
+        raise _LocalManagementError(
             "missing", "parent directory does not exist", path.parent
         )
     try:
@@ -676,11 +676,11 @@ def _local_make_directory(
     if path.exists():
         if path.is_dir():
             return {"result": "success", "path": str(path), "created": False}
-        raise LocalManagementError(
+        raise _LocalManagementError(
             "invalid_target", "target already exists as a file", path
         )
     if not path.parent.exists():
-        raise LocalManagementError(
+        raise _LocalManagementError(
             "missing", "parent directory does not exist", path.parent
         )
     try:
@@ -697,13 +697,13 @@ def _local_copy(_engine: Celune, call: ToolCall, _context: AgentContext) -> JSON
     if not source.exists():
         raise _local_missing(source)
     if not source.is_file():
-        raise LocalManagementError("invalid_target", "source is not a file", source)
+        raise _LocalManagementError("invalid_target", "source is not a file", source)
     if destination.exists():
-        raise LocalManagementError(
+        raise _LocalManagementError(
             "invalid_target", "destination already exists", destination
         )
     if not destination.parent.exists():
-        raise LocalManagementError(
+        raise _LocalManagementError(
             "missing", "destination parent does not exist", destination.parent
         )
     try:
@@ -720,11 +720,11 @@ def _local_move(_engine: Celune, call: ToolCall, _context: AgentContext) -> JSON
     if not source.exists():
         raise _local_missing(source)
     if destination.exists():
-        raise LocalManagementError(
+        raise _LocalManagementError(
             "invalid_target", "destination already exists", destination
         )
     if not destination.parent.exists():
-        raise LocalManagementError(
+        raise _LocalManagementError(
             "missing", "destination parent does not exist", destination.parent
         )
     try:
@@ -762,9 +762,9 @@ def _process_info(pid: int) -> psutil.Process:
         process.status()
         return process
     except psutil.NoSuchProcess as exc:
-        raise LocalManagementError("missing", "process does not exist") from exc
+        raise _LocalManagementError("missing", "process does not exist") from exc
     except psutil.AccessDenied as exc:
-        raise LocalManagementError(
+        raise _LocalManagementError(
             "access_denied", "process information is unavailable"
         ) from exc
 
@@ -776,11 +776,11 @@ def _process_json(process: psutil.Process) -> JSON:
         executable = process.exe()
         status = process.status()
     except psutil.NoSuchProcess as exc:
-        raise LocalManagementError(
+        raise _LocalManagementError(
             "missing", "process exited during inspection"
         ) from exc
     except psutil.AccessDenied as exc:
-        raise LocalManagementError(
+        raise _LocalManagementError(
             "access_denied", "process information is unavailable"
         ) from exc
     return {
@@ -800,7 +800,7 @@ def _local_list_processes(
     for process in psutil.process_iter(["pid", "name", "exe", "status"]):
         try:
             records.append(_process_json(process))
-        except LocalManagementError:
+        except _LocalManagementError:
             continue
         if len(records) >= limit:
             break
@@ -823,13 +823,13 @@ def _local_inspect_process(
     expected_name = _optional_string(call, "expected_name")
     expected_executable = _optional_string(call, "expected_executable")
     if expected_name and str(output["name"]).casefold() != expected_name.casefold():
-        raise LocalManagementError("identity_mismatch", "process name did not match")
+        raise _LocalManagementError("identity_mismatch", "process name did not match")
     if expected_executable:
         actual = str(output["executable"])
         if Path(actual).resolve(strict=False) != Path(
             expected_executable
         ).expanduser().resolve(strict=False):
-            raise LocalManagementError(
+            raise _LocalManagementError(
                 "identity_mismatch", "process executable did not match"
             )
     return {"result": "success", **output}
@@ -860,11 +860,11 @@ def _local_launch_process(
         if candidate.is_absolute() and candidate.exists():
             resolved = str(candidate.resolve(strict=True))
     if resolved is None:
-        raise LocalManagementError("missing", "executable was not found")
+        raise _LocalManagementError("missing", "executable was not found")
     cwd_value = _optional_string(call, "cwd")
     cwd = Path(cwd_value).expanduser().resolve(strict=False) if cwd_value else None
     if cwd is not None and not cwd.is_dir():
-        raise LocalManagementError("invalid_target", "cwd is not a directory", cwd)
+        raise _LocalManagementError("invalid_target", "cwd is not a directory", cwd)
     try:
         # pylint: disable=consider-using-with
         process = subprocess.Popen(
@@ -876,7 +876,7 @@ def _local_launch_process(
             stderr=subprocess.DEVNULL,
         )
     except OSError as exc:
-        raise LocalManagementError("access_denied", str(exc)) from exc
+        raise _LocalManagementError("access_denied", str(exc)) from exc
     return {"result": "success", "pid": process.pid, "executable": resolved}
 
 
@@ -891,16 +891,16 @@ def _local_terminate_process(
     expected_name = _string(call, "expected_name")
     details = _process_json(process)
     if str(details["name"]).casefold() != expected_name.casefold():
-        raise LocalManagementError("identity_mismatch", "process name did not match")
+        raise _LocalManagementError("identity_mismatch", "process name did not match")
     try:
         process.terminate()
         process.wait(timeout=3)
     except psutil.TimeoutExpired as exc:
-        raise LocalManagementError(
+        raise _LocalManagementError(
             "timeout", "process did not terminate in time"
         ) from exc
     except psutil.Error as exc:
-        raise LocalManagementError("access_denied", str(exc)) from exc
+        raise _LocalManagementError("access_denied", str(exc)) from exc
     return {"result": "success", "pid": pid, "terminated": True}
 
 
@@ -932,9 +932,9 @@ def _local_current_working_directory(
     try:
         path = Path.cwd().resolve(strict=True)
     except OSError as exc:
-        raise LocalManagementError("access_denied", str(exc)) from exc
+        raise _LocalManagementError("access_denied", str(exc)) from exc
     if not path.is_dir():
-        raise LocalManagementError(
+        raise _LocalManagementError(
             "invalid_target", "working directory is not a directory", path
         )
     return {"result": "success", "path": str(path), "kind": "directory"}
@@ -947,7 +947,7 @@ def _local_discover_application(
     name = _string(call, "name")
     executable = shutil.which(name)
     if executable is None:
-        raise LocalManagementError("missing", "application executable was not found")
+        raise _LocalManagementError("missing", "application executable was not found")
     return {"result": "success", "name": name, "executable": executable}
 
 
