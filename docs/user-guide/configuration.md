@@ -14,6 +14,7 @@ before the interface opens. `celune config view` prints the active file and
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `backend` | `null` | TTS or VC backend name. `null` lets Celune choose its normal backend. |
+| `quantize` | `false` | Try contract-approved TTS weight-only quantization: INT8 on Ampere and FP8 on sm89 or newer, with BF16 recovery. |
 | `voice_bundle` | `default` | CEVOICE/CECHAR name or path. |
 | `log_level` | `info` | `info`, `verbose`, or `debug`. |
 | `locale` | `null` | Locale override; `null` uses system detection. |
@@ -31,6 +32,23 @@ before the interface opens. `celune config view` prints the active file and
 `backend`, `voice_bundle`, and `mode` are the three settings that most directly
 change runtime behavior. Backend-specific settings should stay in their
 documented namespace instead of being duplicated at the top level.
+
+### TTS quantization
+
+Set `quantize: true` to reduce TTS model VRAM use. Celune selects TorchAO
+weight-only INT8 for Ampere devices before native FP8 support and FP8 for
+Ada-class (`sm89`) and newer devices. The model contracts identify the linear
+attention and feed-forward layers eligible for conversion; embeddings, norms,
+output heads, speaker conditioning, and vocoders remain in BF16 or their
+backend-required dtype.
+
+Quantization is attempted after the model has loaded. If conversion, the
+startup speech probe, or a later speech generation fails, Celune unloads the
+quantized model, disables quantization for that runtime, and reloads the model
+in BF16. If the BF16 reload or its speech probe also fails, startup enters the
+normal fatal state; a failed later-generation recovery transitions the engine
+to the fatal state immediately. With `quantize: false`, TTS keeps its existing
+BF16 loading path.
 
 `log_level` controls exception detail as well as ordinary diagnostics. `info`
 keeps handled failures concise, `verbose` appends the exception message, and

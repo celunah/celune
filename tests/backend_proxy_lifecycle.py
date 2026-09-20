@@ -1462,18 +1462,20 @@ class TestBackendEnvironment(_TestBackendEnvironment):
 
     def test_worker_handshake_negotiates_the_cedts_capabilities(self) -> None:
         """Verify the worker accepts a compatible hello and rejects requirements it lacks."""
+        self.assertEqual(remote.CEDTS_VERSION, (1, 1))
         hello = build_packet(
             "hello",
             "handshake",
             cast(
                 dict[str, WorkerValue],
                 {
-                    "versions": [1],
+                    "versions": [[1, 1]],
                     "capabilities": remote.CORE_CAPABILITIES,
                     "required_capabilities": {"streaming": True},
                 },
             ),
         )
+        self.assertEqual(hello["cedts_version"], [1, 1])
         negotiated = worker._negotiate_hello(hello)
         self.assertEqual(negotiated["streaming"], True)
         self.assertEqual(negotiated["cancellation"], True)
@@ -1484,7 +1486,7 @@ class TestBackendEnvironment(_TestBackendEnvironment):
             cast(
                 dict[str, WorkerValue],
                 {
-                    "versions": [2],
+                    "versions": [[2, 1]],
                     "capabilities": remote.CORE_CAPABILITIES,
                     "required_capabilities": {"streaming": True},
                 },
@@ -1499,7 +1501,7 @@ class TestBackendEnvironment(_TestBackendEnvironment):
             cast(
                 dict[str, WorkerValue],
                 {
-                    "versions": [1],
+                    "versions": [[1, 1]],
                     "capabilities": remote.CORE_CAPABILITIES,
                     "required_capabilities": {"callback": True},
                 },
@@ -1528,7 +1530,7 @@ class TestBackendEnvironment(_TestBackendEnvironment):
             cast(
                 dict[str, WorkerValue],
                 {
-                    "versions": [1],
+                    "versions": [[1, 1]],
                     "capabilities": offered_capabilities,
                 },
             ),
@@ -1624,7 +1626,13 @@ class TestBackendEnvironment(_TestBackendEnvironment):
             build_packet(
                 "hello_ack",
                 "handshake",
-                {"cedts_version": 1, "capabilities": remote.CORE_CAPABILITIES},
+                cast(
+                    dict[str, WorkerValue],
+                    {
+                        "cedts_version": [1, 1],
+                        "capabilities": remote.CORE_CAPABILITIES,
+                    },
+                ),
                 reply_to="hello-id",
             ),
         )
@@ -1658,7 +1666,13 @@ class TestBackendEnvironment(_TestBackendEnvironment):
             build_packet(
                 "hello_ack",
                 "handshake",
-                {"cedts_version": 1, "capabilities": remote.CORE_CAPABILITIES},
+                cast(
+                    dict[str, WorkerValue],
+                    {
+                        "cedts_version": [1, 1],
+                        "capabilities": remote.CORE_CAPABILITIES,
+                    },
+                ),
                 reply_to="hello-id",
             ),
             build_packet("event", "fatal", {"fatal": True}),
@@ -1734,10 +1748,13 @@ class TestBackendEnvironment(_TestBackendEnvironment):
             build_packet(
                 "hello_ack",
                 "handshake",
-                {
-                    "cedts_version": 1,
-                    "capabilities": remote.CORE_CAPABILITIES,
-                },
+                cast(
+                    dict[str, WorkerValue],
+                    {
+                        "cedts_version": [1, 1],
+                        "capabilities": remote.CORE_CAPABILITIES,
+                    },
+                ),
                 reply_to="hello-id",
             ),
         )
@@ -1830,7 +1847,13 @@ class TestBackendEnvironment(_TestBackendEnvironment):
             build_packet(
                 "hello_ack",
                 "handshake",
-                {"cedts_version": 1, "capabilities": small_capabilities},
+                cast(
+                    dict[str, WorkerValue],
+                    {
+                        "cedts_version": [1, 1],
+                        "capabilities": small_capabilities,
+                    },
+                ),
                 reply_to="hello-id",
             ),
         )

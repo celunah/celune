@@ -31,6 +31,8 @@ from ...cevoice import CEVoiceLoader, default_loader
 from .contracts import ModelContract
 from .contracts import model_contract as resolve_model_contract
 from ...constants import N_A_NUMERIC
+from ...exceptions import BackendError
+from .quantization import QuantizationMode, quantization_mode, quantize_component
 from ...typing.aliases import LogLevel, AudioChunk, RuntimeValue
 from ...typing.backends import BackendModel
 
@@ -240,6 +242,7 @@ class CeluneBackend[ModelT](ABC):
         log: Callable[[str, str], None],
         model_name: Optional[str] = None,
         fatal: Optional[Callable[[], None]] = None,
+        quantize: bool = False,
     ) -> None:
         self.model_name: Optional[str]
         if model_name is not None:
@@ -252,6 +255,10 @@ class CeluneBackend[ModelT](ABC):
         self.model: Optional[ModelT] = None
         self.log = log
         self._fatal_callback = fatal
+        self.quantization_requested = quantize
+        self.quantization_mode: Optional[QuantizationMode] = quantization_mode(quantize)
+        self.quantization_active = False
+        self.quantization_attempted = False
         self._progress_callback: Optional[
             Callable[[Optional[float], Optional[float]], None]
         ] = None
@@ -430,6 +437,99 @@ class CeluneBackend[ModelT](ABC):
         del kwargs
         return resolve_model_contract(self.name, model_id)
 
+    def quantization_components(
+        self, model: ModelT, contract: ModelContract
+    ) -> Mapping[str, torch.nn.Module]:
+        """Return loaded module roots corresponding to contract components.
+
+        Backends with wrapper objects override this hook. A single native
+        ``torch.nn.Module`` can use the component itself as its root.
+        """
+        components: dict[str, torch.nn.Module] = {}
+        for component in contract.components:
+            candidates = (
+                getattr(model, component.name, None),
+                getattr(getattr(model, "model", None), component.name, None),
+                model,
+                getattr(model, "model", None),
+            )
+            for candidate in candidates:
+                if isinstance(candidate, torch.nn.Module):
+                    components[component.name] = candidate
+                    break
+        if (
+            len(contract.components) == 1
+            and not components
+            and isinstance(model, torch.nn.Module)
+        ):
+            components[contract.components[0].name] = model
+        return components
+
+    def apply_runtime_quantization(
+        self,
+        model: ModelT,
+        model_id: str,
+        **contract_kwargs: RuntimeValue,
+    ) -> ModelT:
+        """Apply the contract-approved runtime quantization to one model.
+
+        Args:
+            model: Loaded BF16 model instance.
+            model_id: Model identifier used to resolve its pinned contract.
+            contract_kwargs: Backend-specific contract variant selectors.
+
+        Returns:
+            ModelT: The same model after in-place quantization.
+
+        Raises:
+            BackendError: Quantization was requested but no safe conversion
+                could be completed.
+            InvalidCheckpoint: The model state violates its contract.
+        """
+        if not getattr(self, "quantization_requested", False):
+            self.quantization_active = False
+            return model
+
+        selected_mode = quantization_mode(True)
+        self.quantization_attempted = True
+        if selected_mode is None:
+            self.quantization_active = False
+            self.quantization_mode = None
+            return model
+
+        contract = self.model_contract(model_id, **contract_kwargs)
+        components = self.quantization_components(model, contract)
+        converted = 0
+        for component in contract.components:
+            module = components.get(component.name)
+            if module is None or component.quantization is None:
+                continue
+            converted += quantize_component(
+                module,
+                component,
+                mode=selected_mode,
+                backend=self.name,
+            )
+
+        if converted == 0:
+            raise BackendError(
+                f"{self.name} has no contract-approved layers for {selected_mode} quantization",
+                error_code="tts_quantization_empty",
+            )
+        self.quantization_mode = selected_mode
+        self.quantization_active = True
+        return model
+
+    def disable_runtime_quantization(self) -> None:
+        """Disable quantization before a BF16 recovery load."""
+        self.quantization_requested = False
+        self.quantization_mode = None
+        self.quantization_active = False
+
+    def runtime_quantization_active(self) -> bool:
+        """Return whether this backend currently owns a quantized model."""
+        return self.quantization_active
+
     @property
     def all_model_ids(self) -> list[str]:
         """Return every known model identifier for this backend.
@@ -513,7 +613,16 @@ class CeluneBackend[ModelT](ABC):
         if self.model_name is None:
             raise ValueError(f"{self.name} does not have a configured model to load")
 
-        self.model = self.load_model(self.model_name)
+        try:
+            self.model = self.load_model(self.model_name)
+        except Exception:
+            if not getattr(self, "quantization_attempted", False) or not getattr(
+                self, "quantization_requested", False
+            ):
+                raise
+            self.disable_runtime_quantization()
+            self.unload_model()
+            self.model = self.load_model(self.model_name)
         return self.model
 
     def unload_model(self, release_cuda_cache: bool = True) -> None:

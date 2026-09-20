@@ -54,7 +54,7 @@ from .constants import (
     APP_NAME,
     APP_SLUG,
 )
-from .exceptions import NotAvailableError
+from .exceptions import BackendError, NotAvailableError
 from .typing.common import JSON, JSONSerializable
 from .typing.aliases import AudioChunk, AudioChunks
 from .typing.pipeline import SpeechStreamQueue
@@ -1348,6 +1348,42 @@ def play_signal(engine: Celune, signal_type: str) -> bool:
     return False
 
 
+def _recover_quantized_tts(engine: Celune, language: Optional[str]) -> None:
+    """Reload a failed quantized TTS runtime in BF16.
+
+    Args:
+        engine: Celune runtime that owns the active TTS backend.
+        language: Language requested by the failed generation.
+
+    Raises:
+        BackendError: The active voice cannot be resolved or BF16 recovery fails.
+    """
+    backend = engine.backend
+    try:
+        backend.disable_runtime_quantization()
+        backend.unload_model()
+        active_voice = engine.current_voice or backend.default_voice
+        if active_voice is None:
+            raise BackendError(
+                "cannot recover a quantized model without an active voice",
+                error_code="tts_quantization_recovery_failed",
+            )
+        model_id = backend.model_id_for_voice(active_voice)
+        model = backend.load_model(model_id, lang=language)
+        backend.model = model
+        engine.model = model
+        engine.model_name = model_id
+    except Exception as error:
+        engine.fatal()
+        if isinstance(error, BackendError):
+            raise
+        raise BackendError(
+            "quantized TTS recovery failed",
+            error_code="tts_quantization_recovery_failed",
+            error_type=type(error).__name__,
+        ) from error
+
+
 def _process_generation_request(engine: Celune, item: SpeechRequest) -> None:
     """Process one queued speech request on a blocking worker thread."""
     text = item.text
@@ -1838,12 +1874,21 @@ def _process_generation_request(engine: Celune, item: SpeechRequest) -> None:
                 if stream_queue is not None:
                     stream_queue.put(None)
             break
-        except Exception as e:
+        except Exception as original_error:
             if engine.exit_requested:
                 release_pipeline(engine)
                 break
 
-            short_input_error = _is_short_input_generation_error(e)
+            recovery_error: Optional[Exception] = None
+            if getattr(engine.backend, "quantization_active", False):
+                try:
+                    _recover_quantized_tts(engine, request_language)
+                except Exception as caught_recovery_error:
+                    recovery_error = caught_recovery_error
+
+            error = recovery_error or original_error
+
+            short_input_error = _is_short_input_generation_error(error)
             input_too_short_message = string("pipeline.input_too_short")
             if short_input_error:
                 engine.log(input_too_short_message, "warning")
@@ -1851,13 +1896,13 @@ def _process_generation_request(engine: Celune, item: SpeechRequest) -> None:
                 engine.log(
                     format_error_message(
                         tagged_string("pipeline.gen_error", "GEN ERROR"),
-                        e,
+                        error,
                         engine.log_level,
                     ),
                     "error",
                 )
             if stream_queue is not None:
-                stream_queue.put(e)
+                stream_queue.put(error)
                 stream_queue.put(None)
             engine.cur_state = "idle" if short_input_error else "error"
             release_pipeline(engine)

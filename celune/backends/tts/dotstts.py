@@ -80,8 +80,9 @@ class DotsTtsMF(CeluneBackend[DotsTtsRuntime]):
         self,
         log: Callable[[str, str], None],
         fatal: Optional[Callable[[], None]] = None,
+        quantize: bool = False,
     ) -> None:
-        super().__init__(log=log, fatal=fatal)
+        super().__init__(log=log, fatal=fatal, quantize=quantize)
         self._validate_refs()
 
     @staticmethod
@@ -245,6 +246,7 @@ class DotsTtsMF(CeluneBackend[DotsTtsRuntime]):
             )
             self._fix_checkpoint_tokenizer(self.model)
 
+        self.model = self.apply_runtime_quantization(self.model, model_id)
         return self.model
 
     _to_numpy_audio = staticmethod(normalize_streamed_audio)

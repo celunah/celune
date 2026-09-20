@@ -93,7 +93,7 @@ _AUDIO_MEDIA_TYPES = frozenset(
 _CEDTS_AUDIO_PEAK = np.float32(0.95)
 _TENSOR_MEDIA_TYPES = frozenset({"application/x-tensor"})
 _VALID_DTYPES = frozenset({"bool", "float32", "float64", "int8", "int16", "uint8"})
-CEDTS_VERSION = 1
+CEDTS_VERSION = (1, 1)
 CONTROL_PACKET_KINDS = frozenset(
     {
         "hello",
@@ -286,7 +286,7 @@ def build_packet(
     if reply_to is not None and not isinstance(reply_to, str):
         raise _worker_protocol_error("backend_worker_packet_reply_target_is_invalid")
     return {
-        "cedts_version": CEDTS_VERSION,
+        "cedts_version": cast(WorkerValue, list(CEDTS_VERSION)),
         "kind": kind,
         "message_id": message_id or uuid4().hex,
         "reply_to": reply_to,
@@ -1203,9 +1203,7 @@ def _validate_packet(
     operation = packet.get("operation")
     data = packet.get("data")
     if (
-        not isinstance(version, int)
-        or isinstance(version, bool)
-        or version != CEDTS_VERSION
+        not _is_current_version(version)
         or not isinstance(kind, str)
         or kind not in CONTROL_PACKET_KINDS
         or not isinstance(message_id, str)
@@ -1316,8 +1314,18 @@ def _validate_exact_fields(
 
 def _validate_version(value: object) -> None:
     """Validate one negotiated CEDTS version."""
-    if not isinstance(value, int) or isinstance(value, bool) or value != CEDTS_VERSION:
+    if not _is_current_version(value):
         raise _worker_protocol_error("backend_worker_cedts_version_is_invalid")
+
+
+def _is_current_version(value: object) -> bool:
+    """Return whether a JSON version pair matches the current CEDTS version."""
+    return (
+        isinstance(value, list)
+        and len(value) == len(CEDTS_VERSION)
+        and all(isinstance(part, int) and not isinstance(part, bool) for part in value)
+        and tuple(value) == CEDTS_VERSION
+    )
 
 
 def _validate_identifier(value: object, field_name: str) -> None:
@@ -1341,10 +1349,7 @@ def _validate_hello_data(data: dict[str, object]) -> None:
     if (
         not isinstance(versions, list)
         or not versions
-        or any(
-            not isinstance(version, int) or isinstance(version, bool)
-            for version in versions
-        )
+        or any(not _is_current_version(version) for version in versions)
     ):
         raise _worker_protocol_error("cedts_hello_versions_are_invalid")
     _validate_capabilities(data["capabilities"])
@@ -1484,6 +1489,8 @@ def _validate_call_arguments(value: dict[str, object]) -> None:
     if not isinstance(method, str):
         raise _worker_protocol_error("backend_worker_callback_method_is_invalid")
     fields = {
+        "disable_runtime_quantization": {"method"},
+        "runtime_quantization_active": {"method"},
         "resolve_generation_language": {"method", "lang"},
         "should_reload_for_language": {"method", "lang"},
         "convert_live": {"method", "request"},

@@ -106,8 +106,9 @@ class VoxCPM2(CeluneBackend[VoxCPM]):
         self,
         log: Callable[[str, str], None],
         fatal: Optional[Callable[[], None]] = None,
+        quantize: bool = False,
     ) -> None:
-        super().__init__(log=log, fatal=fatal)
+        super().__init__(log=log, fatal=fatal, quantize=quantize)
         self.log = log
         self.optimize_enabled = False
         self._validate_refs()
@@ -257,21 +258,20 @@ class VoxCPM2(CeluneBackend[VoxCPM]):
                     optimize=kwargs.get("optimize", False),
                 )
                 self._install_checkpoint_tokenizer(self.model, path)
-
-            return self.model
-
-        self.log(string("tts.model_download_start"), "info")
-        with (
-            huggingface_progress(self.report_progress),
-            self._suppress_backend_output(),
-        ):
-            self.model = VoxCPM.from_pretrained(
-                model_id,
-                load_denoiser=kwargs.get("load_denoiser", False),
-                optimize=kwargs.get("optimize", False),
-            )
-            _, path = self.model_is_available_locally(model_id)
-            self._install_checkpoint_tokenizer(self.model, path)
+        else:
+            self.log(string("tts.model_download_start"), "info")
+            with (
+                huggingface_progress(self.report_progress),
+                self._suppress_backend_output(),
+            ):
+                self.model = VoxCPM.from_pretrained(
+                    model_id,
+                    load_denoiser=kwargs.get("load_denoiser", False),
+                    optimize=kwargs.get("optimize", False),
+                )
+                _, path = self.model_is_available_locally(model_id)
+                self._install_checkpoint_tokenizer(self.model, path)
+        self.model = self.apply_runtime_quantization(self.model, model_id)
         return self.model
 
     def generate_stream(

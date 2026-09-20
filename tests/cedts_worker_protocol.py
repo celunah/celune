@@ -143,7 +143,7 @@ raise SystemExit(worker.main())
                 cast(
                     dict[str, WorkerValue],
                     {
-                        "versions": [1],
+                        "versions": [[1, 1]],
                         "capabilities": remote.CORE_CAPABILITIES,
                         "required_capabilities": {"streaming": True},
                     },
@@ -392,7 +392,7 @@ raise SystemExit(worker.main())
                     cast(
                         dict[str, WorkerValue],
                         {
-                            "versions": [1],
+                            "versions": [[1, 1]],
                             "capabilities": remote.CORE_CAPABILITIES,
                             "required_capabilities": {"streaming": True},
                         },
@@ -710,7 +710,7 @@ finally:
                     cast(
                         dict[str, WorkerValue],
                         {
-                            "versions": [1],
+                            "versions": [[1, 1]],
                             "capabilities": remote.CORE_CAPABILITIES,
                             "required_capabilities": {"streaming": True},
                         },
@@ -1016,7 +1016,7 @@ raise SystemExit(worker.main())
                     cast(
                         dict[str, WorkerValue],
                         {
-                            "versions": [1],
+                            "versions": [[1, 1]],
                             "capabilities": remote.CORE_CAPABILITIES,
                             "required_capabilities": {"streaming": True},
                         },
@@ -1311,6 +1311,25 @@ raise SystemExit(worker.main())
             b"https://huggingface.co/mistralai/Mistral-Small-3.1-24B-Instruct-2503/discussions/84\n"
             b"This will lead to incorrect tokenization. You should set the fix flag.\n"
             b"tokenizer to fix this issue.\n"
+            b"[info] backend ready\n"
+        )
+
+        proxy._read_worker_logs(stream, log)
+
+        log.assert_called_once_with("backend ready", "info", loglevel="info")
+
+    def test_remote_proxy_suppresses_torchao_windows_worker_warnings(self) -> None:
+        """Verify harmless TorchAO and Windows worker diagnostics stay hidden."""
+        proxy = object.__new__(remote.RemoteBackendProxy)
+        proxy._worker_stderr = deque()
+        proxy._worker_stderr_lock = threading.Lock()
+        log = mock.Mock()
+        stream = io.BytesIO(
+            b"qwen3/torchao/quant_api.py:1745: SyntaxWarning: "
+            b"invalid escape sequence '\\.'\n"
+            b"  * regex for parameter names, must start with `re:`\n"
+            b"W0920 redirects.py:29] NOTE: Redirects are currently not "
+            b"supported in Windows or MacOs.\n"
             b"[info] backend ready\n"
         )
 

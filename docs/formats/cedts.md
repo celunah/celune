@@ -3,7 +3,8 @@
 CEDTS is Celune's private **C**elune **E**xtensible **D**ata **T**ransport
 **S**tandard for isolated backend workers and in-process frontend timed-update
 notifications. It is an implementation contract, not a public network API.
-The current protocol version is `1`.
+The current protocol version is `(1, 1)`, written as `[1, 1]` in JSON. The
+pair is ordered as `(major, minor)`.
 
 The design keeps control frames and binary payloads separate, uses explicit
 lengths, and never relies on backend stdout for protocol data. Worker logs are
@@ -46,7 +47,7 @@ Control packets use these fields:
 
 | Field | Meaning |
 | --- | --- |
-| `cedts_version` | Protocol version, currently `1`. |
+| `cedts_version` | Two-element `[major, minor]` protocol version, currently `[1, 1]`. |
 | `kind` | Packet kind. |
 | `message_id` | Unique ID for a request/event. |
 | `reply_to` | Message ID being answered, when applicable. |
@@ -85,11 +86,13 @@ not expose a second public socket or permit arbitrary frontend commands.
 
 ## Handshake
 
-The worker sends `hello` with version 1, its supported operations, supported
-media types, a `describe` result, and capability flags. The peer replies with
-`hello_ack` containing the negotiated intersection. Limits are negotiated by
-taking the smaller peer limit. Current capability flags cover streaming,
-cancellation, and callbacks; the core callback capability is currently false.
+The worker sends `hello` with `versions: [[1, 1]]`, its supported operations,
+supported media types, a `describe` result, and capability flags. The peer
+replies with `hello_ack` containing the selected `[1, 1]` version and the
+negotiated capability intersection. Limits are negotiated by taking the smaller
+peer limit. Current capability flags cover streaming, cancellation, and
+callbacks; the core callback capability is currently false. Version selection
+currently requires an exact major/minor pair match.
 
 The supported operation names are:
 

@@ -171,8 +171,42 @@ specific tensor is responsible—the tensor name, owning layer, shape, dtype,
 expected dtype, and actual dtype. Contract lookup failures remain
 `ModelContractError` because they indicate a missing Celune contract rather
 than a corrupt checkpoint.
-Quantization work must add a post-quantization contract rather than bypassing
-these checks.
+Each quantizable component also carries a `QuantizationRule`. It lists the
+linear-module suffixes that are safe for weight-only conversion and explicit
+module names that must remain at their contract dtype. The runtime validates
+the BF16 state before conversion and calls `validate_model_state` again with
+`allow_quantized=True` afterward; that mode permits only approved INT8/FP8
+weights and continues checking counts, parameter totals, runtime dtypes for
+other tensors, and finite values. `celune.backends.tts.quantization` selects
+INT8 for Ampere (`sm80`/`sm86`) and FP8 for `sm89` or newer, using TorchAO's
+weight-only configs. It does not quantize embeddings, norms, output heads,
+speaker-conditioning paths, or vocoders. Conversion releases the temporary
+pre-quantization state references before TorchAO replaces weights. When the
+component is on CUDA, Celune stages that component on CPU during conversion,
+then restores it to its original device and clears unreferenced CUDA cache
+blocks, so the runtime retains only the quantized model storage in VRAM.
+Component resolution checks the contract component name on the backend wrapper
+and its nested `model` before falling back to a native root module. This keeps
+TorchAO scoped to the declared component—for example, Pocket TTS's `flow_lm`
+or dots.tts's `core`—instead of quantizing a wrapper that also owns a vocoder
+or speaker encoder.
+
+When importing or using integrations that may load TorchAO, Celune skips only
+the redundant pytree registration for Enum classes that the active PyTorch
+version already supports as opaque compile values. Other TorchAO constant
+registrations remain unchanged, so this compatibility path removes the known
+`register_constant()` deprecation warning without disabling quantization. The
+Transformers imports are also deferred into this boundary because its
+quantizer registry can import TorchAO eagerly. The same boundary covers the
+lazy Qwen3 voice-embedding model used by post-speech voice analysis.
+The isolated worker log bridge also suppresses the known TorchAO invalid-escape
+source warning and PyTorch's Windows/macOS redirect-support note; backend
+tracebacks and actionable errors remain visible.
+
+When quantized loading, the startup speech probe, or a later speech generation
+fails, the backend disables quantization, unloads the model, and reloads the
+same model in BF16. A failed BF16 recovery invokes the fatal engine transition
+immediately.
 
 ## Adding a backend
 

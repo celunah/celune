@@ -616,11 +616,13 @@ class FireRedTTS3(CeluneBackend[_FireRedModel]):
         log: Callable[[str, str], None],
         model_id: Optional[str] = None,
         fatal: Optional[Callable[[], None]] = None,
+        quantize: bool = False,
     ) -> None:
         super().__init__(
             log=log,
             model_name=model_id or self.model_repo,
             fatal=fatal,
+            quantize=quantize,
         )
         self._validate_refs()
 
@@ -913,6 +915,7 @@ class FireRedTTS3(CeluneBackend[_FireRedModel]):
         self.log(string("fireredtts3.finalizing_model"), "info")
         self.report_progress(3, 4)
         model = self._configure_bfloat16(model)
+        model = self.apply_runtime_quantization(model, model_id)
         self.report_progress(4, 4)
         self.log(string("fireredtts3.model_ready"), "info")
         return model

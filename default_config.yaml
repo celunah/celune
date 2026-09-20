@@ -10,6 +10,13 @@
 # seed-vc = VC backend, converts speech rather than generating it
 backend: null
 
+# Runtime TTS weight quantization
+#
+# false = keep loading TTS weights in BF16
+# true = use INT8 on Ampere sm86 and FP8 on Ada sm89 or newer when supported;
+#        loading or warmup failures retry with BF16
+quantize: false
+
 # Qwen3 TTS settings
 #
 # Full reference conditioning preserves the reference prosody and expression.

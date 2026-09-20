@@ -25,6 +25,7 @@ __all__ = [
     "MODEL_CONTRACTS",
     "ModelComponentContract",
     "ModelContract",
+    "QuantizationRule",
     "RuntimeDtypeRule",
     "TensorInventoryContract",
     "WeightArtifactContract",
@@ -63,6 +64,14 @@ class RuntimeDtypeRule:
 
 
 @dataclass(frozen=True)
+class QuantizationRule:
+    """Safe linear-module names for runtime weight quantization."""
+
+    module_suffixes: tuple[str, ...]
+    excluded_module_names: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class ModelComponentContract:
     """Expected state inventory and runtime dtypes for one model component."""
 
@@ -70,6 +79,7 @@ class ModelComponentContract:
     artifact_path: str
     inventory: TensorInventoryContract
     runtime_dtypes: tuple[RuntimeDtypeRule, ...]
+    quantization: Optional[QuantizationRule] = None
 
 
 @dataclass(frozen=True)
@@ -119,6 +129,7 @@ def _component(
     artifact_path: str,
     inventory: TensorInventoryContract,
     *runtime_dtypes: RuntimeDtypeRule,
+    quantization: Optional[QuantizationRule] = None,
 ) -> ModelComponentContract:
     """Build one runtime component declaration."""
     return ModelComponentContract(
@@ -126,7 +137,63 @@ def _component(
         artifact_path=artifact_path,
         inventory=inventory,
         runtime_dtypes=runtime_dtypes,
+        quantization=quantization,
     )
+
+
+_POCKET_QUANTIZATION = QuantizationRule(
+    module_suffixes=("in_proj", "out_proj", "linear1", "linear2"),
+    excluded_module_names=(
+        "conditioner",
+        "decoder",
+        "embedding",
+        "embeddings",
+        "flow_net",
+        "input_linear",
+        "input_proj",
+        "mimi",
+        "norm",
+        "out_eos",
+        "output_projs",
+        "vocoder",
+    ),
+)
+_TRANSFORMER_QUANTIZATION = QuantizationRule(
+    module_suffixes=(
+        "down_proj",
+        "gate_proj",
+        "k_proj",
+        "o_proj",
+        "q_proj",
+        "up_proj",
+        "v_proj",
+    ),
+    excluded_module_names=(
+        "decoder",
+        "embedding",
+        "embeddings",
+        "head",
+        "lm_head",
+        "norm",
+        "output",
+        "speaker",
+        "spk",
+        "tokenizer",
+        "vocoder",
+    ),
+)
+_FIRERED_QUANTIZATION = QuantizationRule(
+    module_suffixes=_TRANSFORMER_QUANTIZATION.module_suffixes,
+    excluded_module_names=_TRANSFORMER_QUANTIZATION.excluded_module_names
+    + (
+        "dit",
+        "dit_head",
+        "patch_encoder",
+        "spk_proj_dit",
+        "spk_proj_llm",
+        "stop_head",
+    ),
+)
 
 
 _POCKET_ENGLISH_INVENTORY = _inventory(
@@ -222,10 +289,11 @@ def _pocket_contract(
         artifacts=(artifact,),
         components=(
             _component(
-                "language_model",
+                "flow_lm",
                 path,
                 inventory,
                 RuntimeDtypeRule("", ("torch.bfloat16",)),
+                quantization=_POCKET_QUANTIZATION,
             ),
         ),
         variant=language_variant,
@@ -306,6 +374,7 @@ _QWEN_CONTRACTS = (
                 "model.safetensors",
                 _QWEN06_INVENTORY,
                 RuntimeDtypeRule("", ("torch.bfloat16",)),
+                quantization=_TRANSFORMER_QUANTIZATION,
             ),
             _component(
                 "speech_tokenizer",
@@ -334,6 +403,7 @@ _QWEN_CONTRACTS = (
                 "model.safetensors",
                 _QWEN17_INVENTORY,
                 RuntimeDtypeRule("", ("torch.bfloat16",)),
+                quantization=_TRANSFORMER_QUANTIZATION,
             ),
             _component(
                 "speech_tokenizer",
@@ -381,6 +451,7 @@ _DOTS_CONTRACT = ModelContract(
             "model.safetensors",
             _DOTS_CORE_INVENTORY,
             RuntimeDtypeRule("", ("torch.bfloat16",)),
+            quantization=_TRANSFORMER_QUANTIZATION,
         ),
         _component(
             "speaker_encoder",
@@ -416,6 +487,7 @@ _VOX_CONTRACT = ModelContract(
             "model.safetensors",
             _VOX_INVENTORY,
             RuntimeDtypeRule("", ("torch.bfloat16",)),
+            quantization=_TRANSFORMER_QUANTIZATION,
         ),
     ),
 )
@@ -451,6 +523,7 @@ _FIRERED_CONTRACT = ModelContract(
             RuntimeDtypeRule("patch_encoder", ("torch.float32",)),
             RuntimeDtypeRule("spk_proj_dit", ("torch.float32",)),
             RuntimeDtypeRule("spk_proj_llm", ("torch.float32",)),
+            quantization=_FIRERED_QUANTIZATION,
         ),
         _component(
             "redae",
@@ -624,6 +697,36 @@ def _dtype_value(dtype: str) -> Union[str, torch.dtype]:
     }.get(dtype, dtype)
 
 
+def _is_quantized_tensor(tensor: torch.Tensor) -> bool:
+    """Return whether a tensor uses a supported quantized representation."""
+    if _dtype_name(tensor.dtype) in {
+        "torch.float8_e4m3fn",
+        "torch.float8_e4m3fnuz",
+        "torch.float8_e5m2",
+        "torch.float8_e5m2fnuz",
+        "torch.int8",
+        "torch.uint8",
+    }:
+        return True
+    return tensor.__class__.__module__.startswith("torchao.")
+
+
+def _allows_quantized_tensor(
+    tensor_name: str,
+    tensor: torch.Tensor,
+    quantization: QuantizationRule,
+) -> bool:
+    """Return whether a tensor is an approved quantized layer parameter."""
+    if not _is_quantized_tensor(tensor) or not tensor_name.endswith(".weight"):
+        return False
+    layer_name = _checkpoint_layer_name(tensor_name)
+    if layer_name.rsplit(".", 1)[-1] not in quantization.module_suffixes:
+        return False
+    return not any(
+        token in layer_name.split(".") for token in quantization.excluded_module_names
+    )
+
+
 def _invalid_state(
     *,
     backend: str,
@@ -662,6 +765,8 @@ def validate_model_state(
     filename: Optional[str] = None,
     path: Optional[str] = None,
     runtime_dtypes: tuple[RuntimeDtypeRule, ...] = (),
+    allow_quantized: bool = False,
+    quantization: Optional[QuantizationRule] = None,
 ) -> None:
     """Validate a loaded model state against one tensor inventory contract.
 
@@ -673,6 +778,9 @@ def validate_model_state(
         filename: Checkpoint filename for diagnostics.
         path: Checkpoint-relative path for diagnostics.
         runtime_dtypes: Optional prefix-specific runtime dtype rules.
+        allow_quantized: Permit approved quantized layer weights while checking
+            the unquantized structure and non-quantized dtypes.
+        quantization: Contract rule that identifies approved quantized layers.
 
     Raises:
         InvalidCheckpoint: The state is structurally incomplete, inconsistent, or invalid.
@@ -688,36 +796,45 @@ def validate_model_state(
             path=checkpoint_path,
             reason=str(exc),
         ) from exc
-    if len(tensors) != contract.tensor_count:
+    quantized_state = bool(
+        allow_quantized
+        and quantization is not None
+        and any(
+            _allows_quantized_tensor(tensor_name, state[tensor_name], quantization)
+            for tensor_name in tensors
+        )
+    )
+    if len(tensors) != contract.tensor_count and not quantized_state:
         raise _invalid_state(
             backend=backend,
             filename=checkpoint_filename,
             path=checkpoint_path,
             reason=f"{name} tensor count mismatch: expected {contract.tensor_count}, got {len(tensors)}",
         )
-    if parameter_count != contract.parameter_count:
+    if parameter_count != contract.parameter_count and not quantized_state:
         raise _invalid_state(
             backend=backend,
             filename=checkpoint_filename,
             path=checkpoint_path,
             reason=f"{name} parameter count mismatch: expected {contract.parameter_count}, got {parameter_count}",
         )
-    expected_counts = dict(contract.dtype_counts)
-    if dict(dtype_counts) != expected_counts:
-        raise _invalid_state(
-            backend=backend,
-            filename=checkpoint_filename,
-            path=checkpoint_path,
-            reason=f"{name} dtype counts mismatch: expected {expected_counts}, got {dict(dtype_counts)}",
-        )
-    inventory_digest = _canonical_inventory(tensors)
-    if inventory_digest != contract.inventory_sha256:
-        raise _invalid_state(
-            backend=backend,
-            filename=checkpoint_filename,
-            path=checkpoint_path,
-            reason=f"{name} tensor inventory mismatch: expected {contract.inventory_sha256}, got {inventory_digest}",
-        )
+    if not allow_quantized:
+        expected_counts = dict(contract.dtype_counts)
+        if dict(dtype_counts) != expected_counts:
+            raise _invalid_state(
+                backend=backend,
+                filename=checkpoint_filename,
+                path=checkpoint_path,
+                reason=f"{name} dtype counts mismatch: expected {expected_counts}, got {dict(dtype_counts)}",
+            )
+        inventory_digest = _canonical_inventory(tensors)
+        if inventory_digest != contract.inventory_sha256:
+            raise _invalid_state(
+                backend=backend,
+                filename=checkpoint_filename,
+                path=checkpoint_path,
+                reason=f"{name} tensor inventory mismatch: expected {contract.inventory_sha256}, got {inventory_digest}",
+            )
 
     for tensor_name, (_shape, dtype) in tensors.items():
         matching_rules = tuple(
@@ -727,7 +844,16 @@ def validate_model_state(
             or tensor_name == rule.prefix
             or tensor_name.startswith(f"{rule.prefix}.")
         )
-        if matching_rules and not any(dtype in rule.dtypes for rule in matching_rules):
+        quantized = bool(
+            allow_quantized
+            and quantization is not None
+            and _allows_quantized_tensor(tensor_name, state[tensor_name], quantization)
+        )
+        if (
+            matching_rules
+            and not quantized
+            and not any(dtype in rule.dtypes for rule in matching_rules)
+        ):
             expected = sorted({item for rule in matching_rules for item in rule.dtypes})
             tensor = state[tensor_name]
             expected_value = _dtype_value(expected[0]) if len(expected) == 1 else None
@@ -743,7 +869,11 @@ def validate_model_state(
                 actual=tensor.dtype,
             )
         tensor = state[tensor_name]
-        if tensor.is_floating_point() and not bool(torch.isfinite(tensor).all()):
+        if (
+            not quantized
+            and tensor.is_floating_point()
+            and not bool(torch.isfinite(tensor).all())
+        ):
             raise _invalid_state(
                 backend=backend,
                 filename=checkpoint_filename,

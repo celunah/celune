@@ -351,7 +351,11 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
             except CEDTSError as error:
                 self._report_transport_error("handshake", error)
                 raise
-            super().__init__(log=log, fatal=fatal)
+            super().__init__(
+                log=log,
+                fatal=fatal,
+                quantize=bool(backend_kwargs.get("quantize", False)),
+            )
             self._start_packet_reader()
             self._load_description()
         except Exception:
@@ -799,7 +803,7 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
 
     def _dispatch_packet(self, packet: WorkerMessage) -> None:
         """Dispatch one validated worker packet to its event or response consumer."""
-        if packet.get("cedts_version") != CEDTS_VERSION:
+        if packet.get("cedts_version") != list(CEDTS_VERSION):
             raise _worker_protocol_error("worker_packet_version_is_unsupported")
         kind = packet.get("kind")
         if kind == "cancel_ack":
@@ -1155,7 +1159,7 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
             except CEDTSError as error:
                 self._report_transport_error(packet_name or "worker response", error)
                 raise
-            if packet.get("cedts_version") != CEDTS_VERSION:
+            if packet.get("cedts_version") != list(CEDTS_VERSION):
                 raise _worker_protocol_error("worker_packet_version_is_unsupported")
             kind = packet.get("kind")
             packet_reply_to = packet.get("reply_to")
@@ -1185,7 +1189,7 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
             cast(
                 dict[str, WorkerValue],
                 {
-                    "versions": [CEDTS_VERSION],
+                    "versions": [list(CEDTS_VERSION)],
                     "capabilities": CORE_CAPABILITIES,
                     "required_capabilities": {
                         "streaming": True,
@@ -1199,7 +1203,7 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
         if (
             hello_ack.get("kind") != "hello_ack"
             or hello_ack.get("reply_to") != hello_id
-            or hello_ack.get("cedts_version") != CEDTS_VERSION
+            or hello_ack.get("cedts_version") != list(CEDTS_VERSION)
         ):
             raise _worker_protocol_error("worker_hello_acknowledgement_is_invalid")
         ack_data = hello_ack.get("data")
@@ -1207,7 +1211,9 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
             raise _worker_protocol_error("worker_hello_acknowledgement_data_is_invalid")
         selected_version = ack_data.get("cedts_version")
         capabilities = ack_data.get("capabilities")
-        if selected_version != CEDTS_VERSION or not isinstance(capabilities, dict):
+        if selected_version != list(CEDTS_VERSION) or not isinstance(
+            capabilities, dict
+        ):
             raise _worker_protocol_error("worker_capabilities_are_incompatible")
         if capabilities.get("streaming") is not True:
             raise _worker_protocol_error("worker_does_not_support_streaming")
@@ -1228,7 +1234,7 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
         if (
             ready.get("kind") != "ready"
             or ready.get("reply_to") != hello_id
-            or ready.get("cedts_version") != CEDTS_VERSION
+            or ready.get("cedts_version") != list(CEDTS_VERSION)
         ):
             raise _worker_protocol_error("worker_ready_packet_is_invalid")
         ready_data = ready.get("data")
@@ -1691,12 +1697,19 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
         **kwargs: BackendArgumentValue,
     ) -> RemoteModelHandle:
         """Load a model in the worker and return an opaque handle."""
+        self.quantization_attempted = getattr(self, "quantization_requested", False)
         value = self._request(
             "load_model",
             response_timeout=_BACKEND_MODEL_LOAD_TIMEOUT_SECONDS,
             model_id=model_id,
             **kwargs,
         )
+        if getattr(self, "quantization_requested", False):
+            self.quantization_active = bool(
+                self._request("call", method="runtime_quantization_active")
+            )
+        else:
+            self.quantization_active = False
         return RemoteModelHandle(cast(int, value))
 
     def preload_models(self) -> None:
@@ -1723,6 +1736,11 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
             return
         self._request("unload_model", release_cuda_cache=release_cuda_cache)
         self.model = None
+
+    def disable_runtime_quantization(self) -> None:
+        """Disable worker-side quantization before a BF16 recovery load."""
+        super().disable_runtime_quantization()
+        self._request("call", method="disable_runtime_quantization")
 
     def generate_stream(
         self,

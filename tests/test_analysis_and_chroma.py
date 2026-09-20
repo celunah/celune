@@ -5,18 +5,46 @@ from pathlib import Path
 from unittest import mock
 
 import torch
-import numpy as np
 import pytest
-from celune.theme.colors import RGB
+import numpy as np
+
 from celune import i18n, analysis
 from celune.chroma import AudioRGBGlow
 from celune.constants import BASE_SR, N_A_NUMERIC
+from celune.theme.colors import RGB
 
 from .support import CeluneTestCase
 
 
 class TestAnalysis(CeluneTestCase):
     """Tests for deterministic analysis helper behavior."""
+
+    def test_embedding_inference_keeps_torchao_compatibility_active(
+        self, capsys
+    ) -> None:
+        """Keep the TorchAO guard active during lazy embedding inference."""
+
+        processor = mock.Mock(return_value={"input_values": torch.zeros(1)})
+
+        def model_call(**_kwargs):
+            __import__("torchao.prototype.mx_formats")
+            return mock.Mock(last_hidden_state=torch.ones(1, 2048))
+
+        with mock.patch.object(
+            analysis,
+            "_load_embedding_model",
+            return_value=(processor, model_call),
+        ):
+            embedding = analysis._compute_qwen3_embedding(
+                np.zeros(160, dtype=np.float32),
+                BASE_SR,
+            )
+
+        assert embedding.shape == (2048,)
+        assert (
+            "Calling register_constant() on Enum subclasses"
+            not in capsys.readouterr().err
+        )
 
     def test_embedding_similarity_and_drift_helpers_validate_inputs(self) -> None:
         """Validate embedding conversion, similarity, and drift helper paths.

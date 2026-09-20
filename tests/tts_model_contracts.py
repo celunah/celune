@@ -7,6 +7,7 @@ import pytest
 from celune.exceptions import InvalidCheckpoint, ModelContractError
 from celune.backends.tts.contracts import (
     MODEL_CONTRACTS,
+    QuantizationRule,
     RuntimeDtypeRule,
     TensorInventoryContract,
     model_contract,
@@ -120,3 +121,44 @@ def test_dtype_failure_reports_structured_checkpoint_context() -> None:
     assert error.dtype == torch.float16
     assert error.expected == torch.bfloat16
     assert error.actual == torch.float16
+
+
+def test_contract_allows_an_approved_quantized_weight() -> None:
+    """Permit a quantized approved layer while retaining contract checks."""
+    tensor = torch.ones((2, 2), dtype=torch.int8)
+    inventory = TensorInventoryContract(
+        tensor_count=1,
+        parameter_count=4,
+        dtype_counts=(("torch.bfloat16", 1),),
+        inventory_sha256="source-inventory",
+    )
+
+    validate_model_state(
+        {"layers.12.self_attn.q_proj.weight": tensor},
+        inventory,
+        name="tts_core",
+        runtime_dtypes=(RuntimeDtypeRule("", ("torch.bfloat16",)),),
+        allow_quantized=True,
+        quantization=QuantizationRule(module_suffixes=("q_proj",)),
+    )
+
+
+def test_contract_rejects_an_unapproved_quantized_weight() -> None:
+    """Keep quantized tensors outside the contract's approved layer set invalid."""
+    tensor = torch.ones((2, 2), dtype=torch.int8)
+    inventory = TensorInventoryContract(
+        tensor_count=1,
+        parameter_count=4,
+        dtype_counts=(("torch.bfloat16", 1),),
+        inventory_sha256="source-inventory",
+    )
+
+    with pytest.raises(InvalidCheckpoint):
+        validate_model_state(
+            {"layers.12.self_attn.q_proj.bias": tensor},
+            inventory,
+            name="tts_core",
+            runtime_dtypes=(RuntimeDtypeRule("", ("torch.bfloat16",)),),
+            allow_quantized=True,
+            quantization=QuantizationRule(module_suffixes=("q_proj",)),
+        )

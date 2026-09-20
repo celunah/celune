@@ -405,15 +405,14 @@ def _warmup(
     if forced_error:
         raise WarmupError("forced warmup failure")
 
-    try:
-        warmup_start = time.perf_counter()
-
+    def run_warmup(candidate_model: Optional[PreTrainedModel]) -> None:
+        """Run one speech probe against a loaded model."""
         with self._model_lock:
-            if active_model is None:
+            if candidate_model is None:
                 raise WarmupError("cannot warm up a null model")
 
             for _, _, _ in active_backend.generate_stream(
-                active_model,
+                candidate_model,
                 text=warmup_text,
                 language=self.language,
                 chunk_size=self.chunk_size,
@@ -421,6 +420,10 @@ def _warmup(
                 voice=active_voice,
             ):
                 pass
+
+    try:
+        warmup_start = time.perf_counter()
+        run_warmup(active_model)
 
         warmup_end = time.perf_counter()
         warmup_took = warmup_end - warmup_start
@@ -431,18 +434,43 @@ def _warmup(
 
         self.progress_callback(1, 1)
         return True
-    except Exception as e:
-        self._last_warmup_error = e
+    except Exception as error:
+        warmup_error = error
+        quantization_recovery_failed = False
+        if active_backend.quantization_active:
+            try:
+                active_backend.disable_runtime_quantization()
+                active_backend.unload_model()
+                if active_voice is None:
+                    raise WarmupError(
+                        "cannot recover a quantized model without a voice"
+                    ) from error
+                fallback_model = active_backend.load_model(
+                    active_backend.model_id_for_voice(active_voice),
+                    lang=self.language,
+                )
+                active_backend.model = fallback_model
+                active_model = cast(PreTrainedModel, fallback_model)
+                run_warmup(active_model)
+                if active_backend is self.backend:
+                    self.model = active_model
+                self._last_warmup_error = None
+                self.progress_callback(1, 1)
+                return True
+            except Exception as fallback_error:
+                warmup_error = fallback_error
+                quantization_recovery_failed = True
+        self._last_warmup_error = warmup_error
         self.log(
             format_error_message(
                 tagged_string("celune.warmup_error", "WARMUP ERROR"),
-                e,
+                warmup_error,
                 self.log_level,
             ),
             "error",
         )
         self.progress_callback(0, 1)
-        if fatal_on_failure:
+        if fatal_on_failure or quantization_recovery_failed:
             self.fatal()
             self.error_callback(string("celune.warmup_failed_app", app_name=APP_NAME))
         return False

@@ -780,7 +780,7 @@ class TestBackendEnvironment(CeluneTestCase):
             return len(payload).to_bytes(4, "big") + payload
 
         nested_packet = (
-            b'{"cedts_version":1,"kind":"request","message_id":"nested",'
+            b'{"cedts_version":[1,1],"kind":"request","message_id":"nested",'
             b'"reply_to":null,"operation":"describe","data":{"arguments":'
             + b'{"value":'
             + b"[" * 65
@@ -789,7 +789,7 @@ class TestBackendEnvironment(CeluneTestCase):
             + b"}}}"
         )
         oversized_collection = {
-            "cedts_version": 1,
+            "cedts_version": [1, 1],
             "kind": "request",
             "message_id": "collection",
             "reply_to": None,
@@ -797,7 +797,7 @@ class TestBackendEnvironment(CeluneTestCase):
             "data": {"arguments": {"value": list(range(1025))}},
         }
         unknown_packet_field = {
-            "cedts_version": 1,
+            "cedts_version": [1, 1],
             "kind": "request",
             "message_id": "unknown-field",
             "reply_to": None,
@@ -815,7 +815,7 @@ class TestBackendEnvironment(CeluneTestCase):
 
         oversized_string = json.dumps(
             {
-                "cedts_version": 1,
+                "cedts_version": [1, 1],
                 "kind": "request",
                 "message_id": "string",
                 "reply_to": None,
@@ -859,6 +859,21 @@ class TestBackendEnvironment(CeluneTestCase):
                 io.BytesIO(),
             )
 
+    def test_protocol_accepts_runtime_quantization_callbacks(self) -> None:
+        """Verify quantization control callbacks pass the parent packet validator."""
+        for method in (
+            "runtime_quantization_active",
+            "disable_runtime_quantization",
+        ):
+            with self.subTest(method=method):
+                arguments = cast(dict[str, WorkerValue], {"method": method})
+                packet = build_packet(
+                    "request",
+                    "call",
+                    {"arguments": arguments},
+                )
+                send_message(io.BytesIO(), packet)
+
     def test_worker_request_validation_normalizes_malformed_arguments(self) -> None:
         """Verify non-object and invalid operation arguments become protocol errors."""
         backend = cast(_BackendRuntime, object())
@@ -889,7 +904,7 @@ class TestBackendEnvironment(CeluneTestCase):
                 cast(
                     dict[str, WorkerValue],
                     {
-                        "versions": [1],
+                        "versions": [[1, 1]],
                         "capabilities": remote.CORE_CAPABILITIES,
                         "unexpected": True,
                     },

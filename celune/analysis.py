@@ -5,8 +5,8 @@ import pathlib
 import warnings
 import contextlib
 from pathlib import Path
-from collections.abc import Callable
 from typing import Optional, cast
+from collections.abc import Callable
 
 import torch
 import librosa
@@ -17,17 +17,17 @@ from matplotlib import pyplot as plt
 from matplotlib import colors as mcolors
 from matplotlib.projections import PolarAxes
 from matplotlib import rcParams, font_manager
-from transformers import AutoModel, AutoProcessor
 
-from .i18n import string
-from .paths import huggingface_progress
-from .typing.aliases import AudioChunk
 from .cevoice import ManifestValue, default_loader
+from .compat import torchao_compatibility
 from .constants import (
     N_A_NUMERIC,
     VOICE_EMBEDDING_MODEL,
     remote_code_model_revision,
 )
+from .i18n import string
+from .paths import huggingface_progress
+from .typing.aliases import AudioChunk
 from .typing.analysis import (
     TextConfig,
     VoiceMatch,
@@ -361,23 +361,26 @@ def _load_embedding_model(
 
     if _EMBEDDING_MODEL is None or _EMBEDDING_PROCESSOR is None:
         revision = remote_code_model_revision(VOICE_EMBEDDING_MODEL)
-        with huggingface_progress(progress_callback):
-            _EMBEDDING_PROCESSOR = cast(
-                EmbeddingProcessor,
-                AutoProcessor.from_pretrained(
-                    VOICE_EMBEDDING_MODEL,
-                    trust_remote_code=True,
-                    revision=revision,
-                ),
-            )
-            _EMBEDDING_MODEL = cast(
-                EmbeddingModel,
-                AutoModel.from_pretrained(
-                    VOICE_EMBEDDING_MODEL,
-                    trust_remote_code=True,
-                    revision=revision,
-                ),
-            )
+        with torchao_compatibility():
+            from transformers import AutoModel, AutoProcessor
+
+            with huggingface_progress(progress_callback):
+                _EMBEDDING_PROCESSOR = cast(
+                    EmbeddingProcessor,
+                    AutoProcessor.from_pretrained(
+                        VOICE_EMBEDDING_MODEL,
+                        trust_remote_code=True,
+                        revision=revision,
+                    ),
+                )
+                _EMBEDDING_MODEL = cast(
+                    EmbeddingModel,
+                    AutoModel.from_pretrained(
+                        VOICE_EMBEDDING_MODEL,
+                        trust_remote_code=True,
+                        revision=revision,
+                    ),
+                )
         _EMBEDDING_MODEL.eval()
         with contextlib.suppress(AttributeError):
             _EMBEDDING_MODEL.to(torch.device("cpu"))
@@ -393,15 +396,16 @@ def _compute_qwen3_embedding(
     ] = None,
 ) -> npt.NDArray[np.float32]:
     """Compute a Qwen3 ECAPA-TDNN speaker embedding for a mono waveform."""
-    processor, model = _load_embedding_model(progress_callback)
-    inputs = processor(y, sampling_rate=sr)
-    inputs = {
-        key: value.to("cpu") if isinstance(value, torch.Tensor) else value
-        for key, value in inputs.items()
-    }
+    with torchao_compatibility():
+        processor, model = _load_embedding_model(progress_callback)
+        inputs = processor(y, sampling_rate=sr)
+        inputs = {
+            key: value.to("cpu") if isinstance(value, torch.Tensor) else value
+            for key, value in inputs.items()
+        }
 
-    with torch.no_grad():
-        output = model(**inputs).last_hidden_state
+        with torch.no_grad():
+            output = model(**inputs).last_hidden_state
 
     return _embedding_tensor_to_numpy(output)
 

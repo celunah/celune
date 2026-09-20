@@ -58,6 +58,10 @@ _MAIN_BRANCH_PYTORCH_REQUIREMENTS = (
     "torchaudio==2.11.0+cu128",
     "torchvision==0.26.0+cu128",
 )
+_TTS_PYTORCH_REQUIREMENTS = (
+    *_MAIN_BRANCH_PYTORCH_REQUIREMENTS,
+    "torchao==0.17.0",
+)
 _PYTORCH_INDEX_URLS = (
     "https://pypi.org/simple",
     "https://download.pytorch.org/whl/cu128",
@@ -132,7 +136,7 @@ BACKEND_MANIFESTS = {
         backend_id="mini",
         kind="tts",
         requirements=(
-            *_MAIN_BRANCH_PYTORCH_REQUIREMENTS,
+            *_TTS_PYTORCH_REQUIREMENTS,
             *_WORKER_HUGGINGFACE_REQUIREMENTS,
             "pocket-tts>=2.1.0",
         ),
@@ -144,7 +148,7 @@ BACKEND_MANIFESTS = {
         backend_id="qwen3",
         kind="tts",
         requirements=(
-            *_MAIN_BRANCH_PYTORCH_REQUIREMENTS,
+            *_TTS_PYTORCH_REQUIREMENTS,
             *_WORKER_HUGGINGFACE_REQUIREMENTS,
             "faster-qwen3-tts>=0.2.4",
         ),
@@ -156,7 +160,7 @@ BACKEND_MANIFESTS = {
         backend_id="fireredtts3",
         kind="tts",
         requirements=(
-            *_MAIN_BRANCH_PYTORCH_REQUIREMENTS,
+            *_TTS_PYTORCH_REQUIREMENTS,
             *_FIRERED_WORKER_HUGGINGFACE_REQUIREMENTS,
             "einops==0.8.2",
             "regex",
@@ -170,7 +174,7 @@ BACKEND_MANIFESTS = {
         backend_id="dotstts",
         kind="tts",
         requirements=(
-            *_MAIN_BRANCH_PYTORCH_REQUIREMENTS,
+            *_TTS_PYTORCH_REQUIREMENTS,
             *_WORKER_HUGGINGFACE_REQUIREMENTS,
             "dots.tts @ git+https://github.com/celunah/dots.tts",
         ),
@@ -183,7 +187,7 @@ BACKEND_MANIFESTS = {
         backend_id="voxcpm2",
         kind="tts",
         requirements=(
-            *_MAIN_BRANCH_PYTORCH_REQUIREMENTS,
+            *_TTS_PYTORCH_REQUIREMENTS,
             *_WORKER_HUGGINGFACE_REQUIREMENTS,
             "voxcpm>=2.0.0",
         ),

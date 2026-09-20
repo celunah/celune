@@ -44,8 +44,9 @@ class Mini(CeluneBackend[TTSModel]):
         self,
         log: Callable[[str, str], None],
         fatal: Optional[Callable[[], None]] = None,
+        quantize: bool = False,
     ) -> None:
-        super().__init__(log=log, fatal=fatal)
+        super().__init__(log=log, fatal=fatal, quantize=quantize)
         self._validate_refs()
         self._voice_states: dict[str, MiniPromptState] = {}
         self._generated_config_path: Optional[Path] = None
@@ -340,6 +341,11 @@ class Mini(CeluneBackend[TTSModel]):
         # set during the initial load_model() call
         self.model = TTSModel.load_model(
             config=generated_config_path, temp=0.15, lsd_decode_steps=8
+        )
+        self.model = self.apply_runtime_quantization(
+            self.model,
+            model_id,
+            lang=requested_language,
         )
         self._loaded_language = requested_language
         self._voice_states.clear()

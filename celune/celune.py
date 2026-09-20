@@ -571,7 +571,11 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
         if tts_backend is None:
             tts_backend = preset.default_backend
 
-        backend_kwargs: dict[str, Optional[Union[bool, str]]] = {}
+        backend_kwargs: dict[str, Optional[Union[bool, str]]] = {
+            "quantize": config_bool(config, "CELUNE_TTS_QUANTIZE", "quantize"),
+        }
+        if isinstance(tts_backend, CeluneBackend):
+            tts_backend.quantization_requested = bool(backend_kwargs["quantize"])
         if isinstance(tts_backend, CeluneBackend):
             if not backend_allowed(config, tts_backend.name):
                 raise BackendError(
@@ -1473,7 +1477,13 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
         backend_spec: Union[str, CeluneBackend, type[CeluneBackend]],
     ) -> dict[str, JSONSerializable]:
         """Return constructor kwargs needed to instantiate one backend specification."""
-        backend_kwargs: dict[str, JSONSerializable] = {}
+        backend_kwargs: dict[str, JSONSerializable] = {
+            "quantize": config_bool(
+                self.config,
+                "CELUNE_TTS_QUANTIZE",
+                "quantize",
+            ),
+        }
         raw_name = getattr(backend_spec, "name", None)
         backend_name = (
             backend_spec.strip().lower()
@@ -1483,7 +1493,8 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
             else None
         )
         if isinstance(backend_spec, CeluneBackend):
-            return backend_kwargs
+            backend_spec.quantization_requested = bool(backend_kwargs["quantize"])
+            return {}
 
         if backend_name == "qwen3":
             preset = resolve_vram_preset(self.config)
@@ -1655,7 +1666,20 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
     ) -> tuple[Optional[PreTrainedModel], str]:
         """Load the TTS runtime for one backend and voice without disturbing the previous runtime."""
         model_name = backend.model_id_for_voice(voice)
-        model = cast(PreTrainedModel, backend.load_model(model_name))
+        try:
+            model = cast(PreTrainedModel, backend.load_model(model_name))
+        except Exception:
+            if not backend.quantization_requested:
+                raise
+            backend.disable_runtime_quantization()
+            backend.unload_model()
+            try:
+                model = cast(PreTrainedModel, backend.load_model(model_name))
+            except Exception:
+                fatal = getattr(backend, "_fatal_callback", None)
+                if callable(fatal):
+                    fatal()
+                raise
         backend.model = model
         return model, model_name
 
@@ -1767,6 +1791,9 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
                     voice=candidate_voice,
                 ):
                     self._raise_warmup_error("warmup failed after backend reload")
+                candidate_model = cast(
+                    Optional[PreTrainedModel], candidate_backend.model
+                )
 
                 self.backend = candidate_backend
                 self.vc_backend = None
