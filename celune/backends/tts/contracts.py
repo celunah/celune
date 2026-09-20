@@ -19,7 +19,7 @@ from collections.abc import Mapping
 
 import torch
 
-from ...exceptions import ModelContractError
+from ...exceptions import InvalidCheckpoint, ModelContractError
 
 __all__ = [
     "MODEL_CONTRACTS",
@@ -549,12 +549,9 @@ def model_contract(
 def _sha256(path: Path) -> str:
     """Return the SHA-256 digest of one local weight artifact."""
     digest = hashlib.sha256()
-    try:
-        with path.open("rb") as handle:
-            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-                digest.update(chunk)
-    except OSError as exc:
-        raise ModelContractError(f"model artifact could not be read: {path}") from exc
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
     return digest.hexdigest()
 
 
@@ -605,11 +602,65 @@ def _inventory_from_state(
     return tensors, dtype_counts, parameter_count
 
 
+def _checkpoint_layer_name(tensor_name: str) -> str:
+    """Return the owning layer name for a tensor parameter name."""
+    for suffix in (".weight", ".bias"):
+        if tensor_name.endswith(suffix):
+            return tensor_name[: -len(suffix)]
+    return tensor_name
+
+
+def _dtype_value(dtype: str) -> Union[str, torch.dtype]:
+    """Return a PyTorch dtype for a contract dtype spelling when available."""
+    return {
+        "torch.bfloat16": torch.bfloat16,
+        "torch.float16": torch.float16,
+        "torch.float32": torch.float32,
+        "torch.float64": torch.float64,
+        "torch.int64": torch.int64,
+        "torch.int32": torch.int32,
+        "torch.int8": torch.int8,
+        "torch.uint8": torch.uint8,
+    }.get(dtype, dtype)
+
+
+def _invalid_state(
+    *,
+    backend: str,
+    filename: str,
+    path: str,
+    reason: str,
+    tensor_name: Optional[str] = None,
+    shape: Optional[tuple[int, ...]] = None,
+    dtype: Optional[Union[str, torch.dtype]] = None,
+    expected: Optional[Union[str, torch.dtype]] = None,
+    actual: Optional[Union[str, torch.dtype]] = None,
+) -> InvalidCheckpoint:
+    """Build a structured checkpoint failure for a loaded model state."""
+    return InvalidCheckpoint(
+        backend=backend,
+        filename=filename,
+        path=path,
+        tensor_name=tensor_name,
+        layer_name=(
+            _checkpoint_layer_name(tensor_name) if tensor_name is not None else None
+        ),
+        shape=shape,
+        dtype=dtype,
+        expected=expected,
+        actual=actual,
+        reason=reason,
+    )
+
+
 def validate_model_state(
     state: Mapping[str, torch.Tensor],
     contract: TensorInventoryContract,
     *,
     name: str,
+    backend: str = "unknown",
+    filename: Optional[str] = None,
+    path: Optional[str] = None,
     runtime_dtypes: tuple[RuntimeDtypeRule, ...] = (),
 ) -> None:
     """Validate a loaded model state against one tensor inventory contract.
@@ -618,29 +669,54 @@ def validate_model_state(
         state: State dictionary from the loaded backend component.
         contract: Expected tensor inventory derived from the pinned artifact.
         name: Diagnostic component name.
+        backend: Celune backend identifier.
+        filename: Checkpoint filename for diagnostics.
+        path: Checkpoint-relative path for diagnostics.
         runtime_dtypes: Optional prefix-specific runtime dtype rules.
 
     Raises:
-        ModelContractError: The state is structurally incomplete, inconsistent, or invalid.
+        InvalidCheckpoint: The state is structurally incomplete, inconsistent, or invalid.
     """
-    tensors, dtype_counts, parameter_count = _inventory_from_state(state)
+    checkpoint_filename = filename or "model.safetensors"
+    checkpoint_path = path or name
+    try:
+        tensors, dtype_counts, parameter_count = _inventory_from_state(state)
+    except ModelContractError as exc:
+        raise _invalid_state(
+            backend=backend,
+            filename=checkpoint_filename,
+            path=checkpoint_path,
+            reason=str(exc),
+        ) from exc
     if len(tensors) != contract.tensor_count:
-        raise ModelContractError(
-            f"{name} tensor count mismatch: expected {contract.tensor_count}, got {len(tensors)}"
+        raise _invalid_state(
+            backend=backend,
+            filename=checkpoint_filename,
+            path=checkpoint_path,
+            reason=f"{name} tensor count mismatch: expected {contract.tensor_count}, got {len(tensors)}",
         )
     if parameter_count != contract.parameter_count:
-        raise ModelContractError(
-            f"{name} parameter count mismatch: expected {contract.parameter_count}, got {parameter_count}"
+        raise _invalid_state(
+            backend=backend,
+            filename=checkpoint_filename,
+            path=checkpoint_path,
+            reason=f"{name} parameter count mismatch: expected {contract.parameter_count}, got {parameter_count}",
         )
     expected_counts = dict(contract.dtype_counts)
     if dict(dtype_counts) != expected_counts:
-        raise ModelContractError(
-            f"{name} dtype counts mismatch: expected {expected_counts}, got {dict(dtype_counts)}"
+        raise _invalid_state(
+            backend=backend,
+            filename=checkpoint_filename,
+            path=checkpoint_path,
+            reason=f"{name} dtype counts mismatch: expected {expected_counts}, got {dict(dtype_counts)}",
         )
     inventory_digest = _canonical_inventory(tensors)
     if inventory_digest != contract.inventory_sha256:
-        raise ModelContractError(
-            f"{name} tensor inventory mismatch: expected {contract.inventory_sha256}, got {inventory_digest}"
+        raise _invalid_state(
+            backend=backend,
+            filename=checkpoint_filename,
+            path=checkpoint_path,
+            reason=f"{name} tensor inventory mismatch: expected {contract.inventory_sha256}, got {inventory_digest}",
         )
 
     for tensor_name, (_shape, dtype) in tensors.items():
@@ -653,54 +729,104 @@ def validate_model_state(
         )
         if matching_rules and not any(dtype in rule.dtypes for rule in matching_rules):
             expected = sorted({item for rule in matching_rules for item in rule.dtypes})
-            raise ModelContractError(
-                f"{name} tensor {tensor_name} has dtype {dtype}; expected one of {expected}"
+            tensor = state[tensor_name]
+            expected_value = _dtype_value(expected[0]) if len(expected) == 1 else None
+            raise _invalid_state(
+                backend=backend,
+                filename=checkpoint_filename,
+                path=checkpoint_path,
+                reason=f"{name} tensor has dtype {dtype}; expected one of {expected}",
+                tensor_name=tensor_name,
+                shape=tensors[tensor_name][0],
+                dtype=tensor.dtype,
+                expected=expected_value,
+                actual=tensor.dtype,
             )
         tensor = state[tensor_name]
         if tensor.is_floating_point() and not bool(torch.isfinite(tensor).all()):
-            raise ModelContractError(
-                f"{name} tensor {tensor_name} contains non-finite values"
+            raise _invalid_state(
+                backend=backend,
+                filename=checkpoint_filename,
+                path=checkpoint_path,
+                reason=f"{name} tensor contains non-finite values",
+                tensor_name=tensor_name,
+                shape=tensors[tensor_name][0],
+                dtype=tensor.dtype,
+                actual=tensor.dtype,
             )
 
 
 def validate_safetensors_artifact(
     root: Union[str, Path],
     artifact: WeightArtifactContract,
+    *,
+    backend: str = "unknown",
 ) -> None:
     """Validate one local safetensors artifact and its header inventory.
 
     Args:
         root: Root directory of the local model snapshot.
         artifact: Expected artifact metadata.
+        backend: Celune backend identifier.
 
     Raises:
-        ModelContractError: The artifact is missing, changed, unreadable, or structurally invalid.
+        InvalidCheckpoint: The artifact is missing, changed, unreadable, or structurally invalid.
     """
     path = Path(root) / artifact.path
+    filename = Path(artifact.path).name
     if not path.is_file():
-        raise ModelContractError(f"model artifact is missing: {artifact.path}")
-    if path.stat().st_size != artifact.size:
-        raise ModelContractError(
-            f"model artifact size mismatch for {artifact.path}: expected {artifact.size}, got {path.stat().st_size}"
+        raise InvalidCheckpoint(
+            backend=backend,
+            filename=filename,
+            path=artifact.path,
+            reason="model artifact is missing",
         )
-    if _sha256(path) != artifact.sha256:
-        raise ModelContractError(f"model artifact checksum mismatch: {artifact.path}")
+    try:
+        size = path.stat().st_size
+        if size != artifact.size:
+            raise InvalidCheckpoint(
+                backend=backend,
+                filename=filename,
+                path=artifact.path,
+                reason=f"model artifact size mismatch: expected {artifact.size}, got {size}",
+            )
+        digest = _sha256(path)
+    except InvalidCheckpoint:
+        raise
+    except OSError as exc:
+        raise InvalidCheckpoint(
+            backend=backend,
+            filename=filename,
+            path=artifact.path,
+            reason="model artifact could not be read",
+        ) from exc
+    if digest != artifact.sha256:
+        raise InvalidCheckpoint(
+            backend=backend,
+            filename=filename,
+            path=artifact.path,
+            reason="model artifact checksum mismatch",
+        )
     if artifact.inventory is None:
         return
 
     try:
         tensors = _read_safetensors_inventory(path)
-    except ModelContractError:
-        raise
     except Exception as exc:
-        raise ModelContractError(
-            f"model artifact could not be parsed: {artifact.path}"
+        raise InvalidCheckpoint(
+            backend=backend,
+            filename=filename,
+            path=artifact.path,
+            reason="model artifact could not be parsed",
         ) from exc
 
     actual = _inventory_from_header(tensors)
     if actual != artifact.inventory:
-        raise ModelContractError(
-            f"model artifact tensor inventory mismatch: {artifact.path}"
+        raise InvalidCheckpoint(
+            backend=backend,
+            filename=filename,
+            path=artifact.path,
+            reason="model artifact tensor inventory mismatch",
         )
 
 

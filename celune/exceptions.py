@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Celune exception classes."""
 
-from typing import Optional
+from typing import Optional, Protocol, Union
 
 
 class CeluneError(Exception):
@@ -162,3 +162,54 @@ class NeedleSelectionError(ValueError, CeluneError):
 
 class ModelContractError(RuntimeError, CeluneError):
     """A TTS model artifact or loaded state violates its backend contract."""
+
+
+class _CheckpointDType(Protocol):
+    """A dtype-like value that can be rendered in checkpoint diagnostics."""
+
+    def __str__(self) -> str:
+        """Return the display name of the dtype."""
+
+
+class InvalidCheckpoint(ModelContractError):
+    """A checkpoint failed a backend model contract validation."""
+
+    def __init__(
+        self,
+        *,
+        backend: str,
+        filename: str,
+        path: str,
+        tensor_name: Optional[str] = None,
+        layer_name: Optional[str] = None,
+        shape: Optional[tuple[int, ...]] = None,
+        dtype: Optional[Union[str, _CheckpointDType]] = None,
+        expected: Optional[Union[str, _CheckpointDType]] = None,
+        actual: Optional[Union[str, _CheckpointDType]] = None,
+        reason: Optional[str] = None,
+    ) -> None:
+        self.backend = backend
+        self.filename = filename
+        self.path = path
+        self.tensor_name = tensor_name
+        self.layer_name = layer_name
+        self.shape = shape
+        self.dtype = dtype
+        self.expected = expected
+        self.actual = actual
+        self.reason = reason
+
+        details = [f"{backend} checkpoint contract failed: {filename} ({path})"]
+        if tensor_name is not None:
+            details.append(f"tensor={tensor_name}")
+        if layer_name is not None:
+            details.append(f"layer={layer_name}")
+        if shape is not None:
+            details.append(f"shape={shape}")
+        if dtype is not None:
+            details.append(f"dtype={dtype}")
+        if expected is not None or actual is not None:
+            details.append(f"expected={expected}, actual={actual}")
+        if reason is not None:
+            details.append(reason)
+        super().__init__(": ".join((details[0], "; ".join(details[1:]))))

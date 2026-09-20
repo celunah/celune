@@ -4,7 +4,7 @@
 import torch
 import pytest
 
-from celune.exceptions import ModelContractError
+from celune.exceptions import InvalidCheckpoint, ModelContractError
 from celune.backends.tts.contracts import (
     MODEL_CONTRACTS,
     RuntimeDtypeRule,
@@ -75,3 +75,48 @@ def test_loaded_state_is_checked_against_the_exact_inventory() -> None:
             inventory,
             name="test",
         )
+
+
+def test_dtype_failure_reports_structured_checkpoint_context() -> None:
+    """Report the backend, tensor, layer, shape, and dtype mismatch."""
+    tensor = torch.ones((2, 2), dtype=torch.float16)
+    inventory = TensorInventoryContract(
+        tensor_count=1,
+        parameter_count=4,
+        dtype_counts=(("torch.float16", 1),),
+        inventory_sha256=_canonical_inventory(
+            {
+                "layers.12.self_attn.q_proj.weight": (
+                    (2, 2),
+                    "torch.float16",
+                )
+            }
+        ),
+    )
+
+    with pytest.raises(InvalidCheckpoint) as caught:
+        validate_model_state(
+            {"layers.12.self_attn.q_proj.weight": tensor},
+            inventory,
+            name="tts_core",
+            backend="fireredtts3",
+            filename="model.safetensors",
+            path="fireredtts3_base/model.safetensors",
+            runtime_dtypes=(
+                RuntimeDtypeRule(
+                    "layers.12.self_attn.q_proj",
+                    ("torch.bfloat16",),
+                ),
+            ),
+        )
+
+    error = caught.value
+    assert error.backend == "fireredtts3"
+    assert error.filename == "model.safetensors"
+    assert error.path == "fireredtts3_base/model.safetensors"
+    assert error.tensor_name == "layers.12.self_attn.q_proj.weight"
+    assert error.layer_name == "layers.12.self_attn.q_proj"
+    assert error.shape == (2, 2)
+    assert error.dtype == torch.float16
+    assert error.expected == torch.bfloat16
+    assert error.actual == torch.float16

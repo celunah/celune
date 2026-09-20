@@ -165,6 +165,12 @@ The contract includes the currently supported model variants:
 `validate_safetensors_artifact` validates a cached artifact without loading
 its tensors into VRAM. `validate_model_state` validates a loaded component's
 exact structural inventory, runtime dtypes, parameter count, and finite values.
+Both validators raise `celune.exceptions.InvalidCheckpoint` on failure. The
+exception exposes the backend, checkpoint filename and path, and—when a
+specific tensor is responsible—the tensor name, owning layer, shape, dtype,
+expected dtype, and actual dtype. Contract lookup failures remain
+`ModelContractError` because they indicate a missing Celune contract rather
+than a corrupt checkpoint.
 Quantization work must add a post-quantization contract rather than bypassing
 these checks.
 
