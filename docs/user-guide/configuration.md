@@ -3,9 +3,11 @@
 Celune loads YAML configuration from the user application-data directory. The
 `configure.py` setup helper creates `config.yaml` from the repository's
 `default_config.yaml`; if setup was skipped, the first launch creates it
-instead. Celune then merges newly introduced defaults into an existing file
-without discarding the user's values. `celune config view` prints the active
-file and `celune config edit` opens it in the system editor.
+instead. On startup, Celune synchronizes an existing file with the current
+default schema: known user values are preserved, new defaults are added, and
+obsolete options are removed recursively. The synchronized file is written
+before the interface opens. `celune config view` prints the active file and
+`celune config edit` opens it in the system editor.
 
 ## Core settings
 

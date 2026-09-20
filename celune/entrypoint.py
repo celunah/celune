@@ -1418,7 +1418,7 @@ def start(
         if config_updated:
             with open(active_config_path, "w", encoding="utf-8") as cfg:
                 runtime.yaml.safe_dump(config, cfg, sort_keys=False)
-            print(string("cli.config_updated_defaults", app_name=APP_NAME))
+            print(string("cli.config_updated", app_name=APP_NAME))
 
         active_log_level = normalize_log_level(
             log_level if log_level is not None else config_log_level(config)

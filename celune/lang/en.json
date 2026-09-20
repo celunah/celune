@@ -195,7 +195,7 @@
     "cli.config_created": "{app_name} configuration has been created.",
     "cli.config_description": "View or edit {app_name}'s configuration.",
     "cli.config_not_created": "{app_name} configuration has not been created yet.",
-    "cli.config_updated_defaults": "{app_name} configuration has been updated with new defaults.",
+    "cli.config_updated": "{app_name} configuration has been updated.",
     "config.audio_device_multiple": "the specified {device_kind} device name has multiple matches for '{device_name}':",
     "config.audio_device_select": "please specify one of the above devices, then restart {app_name}",
     "config.audio_device_kind_input": "input",

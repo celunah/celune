@@ -409,6 +409,31 @@ class TestConfig(CeluneTestCase):
         assert not changed
         assert merged == {"api": False}
 
+    def test_merge_missing_defaults_removes_unknown_schema_keys(self) -> None:
+        """Verify removed configuration options are pruned at the schema boundary."""
+        current: Mapping[str, JSONSerializable] = {
+            "backend": "mini",
+            "gpt_sovits_root": "C:/old-runtime",
+            "gpt_sovits_variant": "v4",
+            "gpt_sovits_t2s_weights_path": "C:/old-weights.pth",
+            "persona": {
+                "context_size": 8192,
+                "removed_option": True,
+            },
+        }
+        defaults: JSON = {
+            "backend": None,
+            "persona": {"context_size": 4096},
+        }
+
+        merged, changed = config.merge_missing_defaults(current, defaults)
+
+        assert changed
+        assert merged == {"backend": "mini", "persona": {"context_size": 8192}}
+        assert current["gpt_sovits_root"] == "C:/old-runtime"
+        assert current["gpt_sovits_variant"] == "v4"
+        assert current["gpt_sovits_t2s_weights_path"] == "C:/old-weights.pth"
+
 
 class TestUtils(CeluneTestCase):
     """Tests for lightweight common utility functions."""
