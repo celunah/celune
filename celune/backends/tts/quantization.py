@@ -134,15 +134,6 @@ def _release_quantization_temporaries() -> None:
             torch.cuda.empty_cache()
 
 
-def _module_device(module: nn.Module) -> Optional[torch.device]:
-    """Return the device of the first parameter or buffer in one component."""
-    for parameter in module.parameters():
-        return parameter.device
-    for buffer in module.buffers():
-        return buffer.device
-    return None
-
-
 def quantize_component(
     module: nn.Module,
     component: ModelComponentContract,
@@ -153,7 +144,8 @@ def quantize_component(
     """Quantize approved linear layers and validate the resulting state.
 
     Args:
-        module: Loaded model component whose parameters are already on device.
+        module: Loaded model component whose parameters are already on the
+            inference device.
         component: Contract describing the component and its safe layers.
         mode: Weight-only format selected for the active GPU.
         backend: Celune backend identifier used in diagnostics.
@@ -180,11 +172,7 @@ def quantize_component(
     )
     quantize, int8_config, fp8_config = _torchao_api()
     config = _quantization_config(mode, int8_config, fp8_config)
-    original_device = _module_device(module)
-
     try:
-        if original_device is not None and original_device.type == "cuda":
-            module.to(device=torch.device("cpu"))
         try:
             quantize(
                 module,
@@ -225,7 +213,4 @@ def quantize_component(
         )
         return converted
     finally:
-        if original_device is not None and original_device.type == "cuda":
-            with contextlib.suppress(Exception):
-                module.to(device=original_device)
         _release_quantization_temporaries()

@@ -212,8 +212,8 @@ def test_quantization_releases_source_state_before_torchao() -> None:
         assert quantize_component(module, component, mode="int8", backend="test") == 1
 
 
-def test_quantization_stages_cuda_components_on_cpu() -> None:
-    """Keep TorchAO's transient replacement storage out of GPU memory."""
+def test_quantization_does_not_move_components_between_devices() -> None:
+    """Keep TorchAO in place so live CUDA models are not duplicated by staging."""
     module = nn.Module()
     module.q_proj = nn.Linear(4, 4, dtype=torch.bfloat16)
     state = module.state_dict()
@@ -243,10 +243,6 @@ def test_quantization_stages_cuda_components_on_cpu() -> None:
         )
 
     with (
-        patch(
-            "celune.backends.tts.quantization._module_device",
-            return_value=torch.device("cuda"),
-        ),
         patch.object(module, "to", side_effect=track_move),
         patch(
             "celune.backends.tts.quantization._torchao_api",
@@ -255,4 +251,4 @@ def test_quantization_stages_cuda_components_on_cpu() -> None:
     ):
         assert quantize_component(module, component, mode="int8", backend="test") == 1
 
-    assert moves == [torch.device("cpu"), torch.device("cuda")]
+    assert not moves

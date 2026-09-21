@@ -181,10 +181,12 @@ other tensors, and finite values. `celune.backends.tts.quantization` selects
 INT8 for Ampere (`sm80`/`sm86`) and FP8 for `sm89` or newer, using TorchAO's
 weight-only configs. It does not quantize embeddings, norms, output heads,
 speaker-conditioning paths, or vocoders. Conversion releases the temporary
-pre-quantization state references before TorchAO replaces weights. When the
-component is on CUDA, Celune stages that component on CPU during conversion,
-then restores it to its original device and clears unreferenced CUDA cache
-blocks, so the runtime retains only the quantized model storage in VRAM.
+pre-quantization state references before TorchAO replaces weights. Quantization
+is performed in place on the model's current device; Celune never stages a
+live CUDA component on CPU and back to CUDA, avoiding a second full device
+allocation during backend loading. After conversion it clears unreferenced
+CUDA cache blocks, so the runtime retains only the quantized model storage in
+VRAM.
 Component resolution checks the contract component name on the backend wrapper
 and its nested `model` before falling back to a native root module. This keeps
 TorchAO scoped to the declared component—for example, Pocket TTS's `flow_lm`
