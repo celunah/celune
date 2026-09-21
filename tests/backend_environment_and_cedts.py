@@ -859,6 +859,32 @@ class TestBackendEnvironment(CeluneTestCase):
                 io.BytesIO(),
             )
 
+    def test_worker_accepts_vram_report_callback(self) -> None:
+        """Verify worker dispatch accepts the VRAM diagnostics callback."""
+
+        class FakeBackend:
+            """Backend stand-in for VRAM callback dispatch."""
+
+            def vram_report(self) -> dict[str, WorkerValue]:
+                """Return a minimal JSON-compatible VRAM report."""
+                return {"process_scope": "worker"}
+
+        backend = cast(_BackendRuntime, FakeBackend())
+        response, next_model_id = worker._run_request(
+            backend,
+            {
+                "operation": "call",
+                "arguments": {"method": "vram_report"},
+            },
+            {},
+            1,
+            io.BytesIO(),
+        )
+
+        self.assertTrue(response["ok"])
+        self.assertEqual(response["value"], {"process_scope": "worker"})
+        self.assertEqual(next_model_id, 1)
+
     def test_protocol_accepts_runtime_quantization_callbacks(self) -> None:
         """Verify quantization control callbacks pass the parent packet validator."""
         for method in (
