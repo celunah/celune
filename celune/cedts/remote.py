@@ -50,6 +50,7 @@ from ..typing.worker import (
     WorkerPayloadDescriptor,
 )
 from ..typing.aliases import LogLevel, LogCallback
+from ..typing.common import JSON
 from ..utils import format_error_message
 from .protocol import (
     CEDTS_VERSION,
@@ -1742,6 +1743,12 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
         super().disable_runtime_quantization()
         self._request("call", method="disable_runtime_quantization")
 
+    def vram_report(self) -> JSON:
+        """Return the worker process and backend model CUDA memory report."""
+        report = cast(JSON, self._request("call", method="vram_report"))
+        report["process_scope"] = "worker"
+        return report
+
     def generate_stream(
         self,
         model: RemoteModelHandle,
@@ -1995,6 +2002,10 @@ class RemoteVCBackendProxy(CeluneVCBackend):
     def stop_live(self) -> None:
         """Reset the isolated backend's live conversion session."""
         self._worker._request("call", method="stop_live")
+
+    def vram_report(self) -> JSON:
+        """Return the voice-conversion worker's CUDA memory report."""
+        return self._worker.vram_report()
 
     def close(self) -> None:
         """Stop the voice-conversion worker process."""

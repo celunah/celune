@@ -25,6 +25,7 @@ from ..utils import (
     format_number,
     format_error_message,
 )
+from ..vram import format_vram_bytes, runtime_vram_report, vram_report_int
 from ..cevoice import active_bundle_path, resolve_bundle_path
 from ..threads import run_in_daemon_thread
 from ..vc import (
@@ -281,9 +282,50 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
         ui.safe_log(string("commands.help_tutorial", app_name=APP_NAME))
         ui.safe_log(string("commands.help_stop"))
         ui.safe_log(string("commands.help_restart_audio"))
+        ui.safe_log(string("commands.help_vram"))
         ui.safe_log(string("commands.help_settings"))
         ui.safe_log(string("commands.help_exit", app_name=APP_NAME))
         ui.safe_log(string("commands.help_help"))
+        return
+    if command == "vram":
+        report = runtime_vram_report(ui.celune)
+        if report.get("available") is not True:
+            ui.safe_log(string("commands.vram_unavailable"), "warning")
+            return
+
+        ui.safe_log(string("commands.vram_header"))
+        ui.safe_log(
+            string(
+                "commands.vram_process",
+                allocated=format_vram_bytes(vram_report_int(report, "allocated_bytes")),
+                reserved=format_vram_bytes(vram_report_int(report, "reserved_bytes")),
+                peak=format_vram_bytes(vram_report_int(report, "peak_allocated_bytes")),
+            )
+        )
+        components = report.get("components")
+        if not isinstance(components, list):
+            return
+        for component in components:
+            if not isinstance(component, dict):
+                continue
+            name = component.get("name")
+            if not isinstance(name, str):
+                continue
+            if component.get("available") is not True:
+                ui.safe_log(string("commands.vram_component_unavailable", name=name))
+                continue
+            if component.get("loaded") is not True:
+                ui.safe_log(string("commands.vram_component_not_loaded", name=name))
+                continue
+            ui.safe_log(
+                string(
+                    "commands.vram_component",
+                    name=name,
+                    usage=format_vram_bytes(vram_report_int(component, "tensor_bytes")),
+                    tensors=vram_report_int(component, "tensor_count"),
+                )
+            )
+        ui.safe_log(string("commands.vram_note"))
         return
     if command == "settings":
         open_settings = getattr(ui, "open_settings_menu", None)

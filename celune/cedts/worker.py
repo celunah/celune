@@ -61,6 +61,7 @@ _MESSAGE_ID_REPLAY_WINDOW = 4096
 _CALL_ARGUMENT_FIELDS = {
     "disable_runtime_quantization": frozenset({"method"}),
     "runtime_quantization_active": frozenset({"method"}),
+    "vram_report": frozenset({"method"}),
     "resolve_generation_language": frozenset({"method", "lang"}),
     "should_reload_for_language": frozenset({"method", "lang"}),
     "convert_live": frozenset({"method", "request"}),

@@ -1491,6 +1491,7 @@ def _validate_call_arguments(value: dict[str, object]) -> None:
     fields = {
         "disable_runtime_quantization": {"method"},
         "runtime_quantization_active": {"method"},
+        "vram_report": {"method"},
         "resolve_generation_language": {"method", "lang"},
         "should_reload_for_language": {"method", "lang"},
         "convert_live": {"method", "request"},

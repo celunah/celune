@@ -864,6 +864,7 @@ class TestBackendEnvironment(CeluneTestCase):
         for method in (
             "runtime_quantization_active",
             "disable_runtime_quantization",
+            "vram_report",
         ):
             with self.subTest(method=method):
                 arguments = cast(dict[str, WorkerValue], {"method": method})

@@ -1,15 +1,16 @@
 # SPDX-License-Identifier: Apache-2.0
-"""VRAM preset resolution helpers for Celune."""
+"""VRAM preset resolution and runtime accounting helpers for Celune."""
 
 import math
-from typing import Optional, cast
 from dataclasses import dataclass
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
+from typing import Optional, cast
 
 import torch
+from torch import nn
 
 from .constants import TIERS, VRAM_REQUIREMENTS
-from .typing.common import VramTier, JSONSerializable
+from .typing.common import JSON, JSONSerializable, VramTier
 
 QWEN3_0_6B_MODEL = "Qwen/Qwen3-TTS-12Hz-0.6B-Base"
 QWEN3_1_7B_MODEL = "Qwen/Qwen3-TTS-12Hz-1.7B-Base"
@@ -242,3 +243,245 @@ def agent_vram_compatible(
 ) -> bool:
     """Return whether the resolved VRAM preset supports agent mode."""
     return resolve_vram_preset(config).tier == "xhigh"
+
+
+def _iter_cuda_tensors(
+    value: object,
+    seen: set[int],
+    *,
+    depth: int = 0,
+) -> Iterator[torch.Tensor]:
+    """Yield CUDA tensors retained by one runtime object."""
+    if depth > 8:
+        return
+
+    if isinstance(value, torch.Tensor):
+        if value.device.type == "cuda":
+            yield value
+        return
+
+    value_id = id(value)
+    if value_id in seen:
+        return
+    seen.add(value_id)
+
+    if isinstance(value, nn.Module):
+        for tensor in value.parameters(recurse=True):
+            if tensor.device.type == "cuda":
+                yield tensor
+        for tensor in value.buffers(recurse=True):
+            if tensor.device.type == "cuda":
+                yield tensor
+        attributes = vars(value)
+        for name, attribute in attributes.items():
+            if name in {"_parameters", "_buffers", "_modules"}:
+                continue
+            yield from _iter_cuda_tensors(attribute, seen, depth=depth + 1)
+        return
+
+    if isinstance(value, Mapping):
+        for item in value.values():
+            yield from _iter_cuda_tensors(item, seen, depth=depth + 1)
+        return
+
+    if isinstance(value, (list, tuple, set, frozenset)):
+        for item in value:
+            yield from _iter_cuda_tensors(item, seen, depth=depth + 1)
+        return
+
+    attributes = getattr(value, "__dict__", None)
+    if isinstance(attributes, dict):
+        for attribute in attributes.values():
+            yield from _iter_cuda_tensors(attribute, seen, depth=depth + 1)
+
+
+def _tensor_storage_size(tensor: torch.Tensor) -> tuple[int, int]:
+    """Return one tensor's storage pointer and allocated byte count."""
+    try:
+        storage = tensor.untyped_storage()
+        return storage.data_ptr(), storage.nbytes()
+    except (AttributeError, RuntimeError, TypeError):
+        return tensor.data_ptr(), tensor.numel() * tensor.element_size()
+
+
+def vram_report_int(
+    report: Mapping[str, JSONSerializable],
+    key: str,
+) -> int:
+    """Return one integer field from a JSON-shaped VRAM report."""
+    value = report.get(key)
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    return 0
+
+
+def cuda_component_usage(name: str, value: object) -> JSON:
+    """Return the resident CUDA tensor footprint of one runtime component.
+
+    Args:
+        name: Display name of the component being measured.
+        value: Runtime object that owns the component's tensors.
+
+    Returns:
+        JSON: Component name, load state, tensor count, and deduplicated storage bytes.
+    """
+    storage_keys: set[tuple[str, Optional[int], int, int]] = set()
+    tensor_bytes = 0
+    tensor_count = 0
+    for tensor in _iter_cuda_tensors(value, set()):
+        pointer, size = _tensor_storage_size(tensor)
+        key = (tensor.device.type, tensor.device.index, pointer, size)
+        if key in storage_keys:
+            continue
+        storage_keys.add(key)
+        tensor_bytes += size
+        tensor_count += 1
+
+    return {
+        "name": name,
+        "loaded": value is not None,
+        "available": True,
+        "tensor_bytes": tensor_bytes,
+        "tensor_count": tensor_count,
+    }
+
+
+def cuda_process_memory() -> JSON:
+    """Return allocated, reserved, and peak CUDA memory for this process."""
+    if not torch.cuda.is_available():
+        return {
+            "available": False,
+            "allocated_bytes": 0,
+            "reserved_bytes": 0,
+            "peak_allocated_bytes": 0,
+            "device_count": 0,
+        }
+
+    allocated = 0
+    reserved = 0
+    peak_allocated = 0
+    device_count = torch.cuda.device_count()
+    for device_index in range(device_count):
+        allocated += torch.cuda.memory_allocated(device_index)
+        reserved += torch.cuda.memory_reserved(device_index)
+        peak_allocated += torch.cuda.max_memory_allocated(device_index)
+
+    return {
+        "available": True,
+        "allocated_bytes": allocated,
+        "reserved_bytes": reserved,
+        "peak_allocated_bytes": peak_allocated,
+        "device_count": device_count,
+    }
+
+
+def backend_vram_report(name: str, model: object) -> JSON:
+    """Return one backend component and its owning process memory report."""
+    process = cuda_process_memory()
+    return {
+        "component": cuda_component_usage(name, model),
+        "process_available": process["available"],
+        "process_allocated_bytes": process["allocated_bytes"],
+        "process_reserved_bytes": process["reserved_bytes"],
+        "process_peak_allocated_bytes": process["peak_allocated_bytes"],
+        "process_scope": "main",
+    }
+
+
+def _backend_report(backend: object, name: str) -> JSON:
+    """Return a backend-owned report, including reports from isolated workers."""
+    report_method = getattr(backend, "vram_report", None)
+    if callable(report_method):
+        try:
+            report = report_method()
+        except Exception:
+            return {
+                "component": {
+                    "name": name,
+                    "loaded": getattr(backend, "model", None) is not None,
+                    "available": False,
+                    "tensor_bytes": 0,
+                    "tensor_count": 0,
+                }
+            }
+        if isinstance(report, dict):
+            component = report.get("component")
+            if isinstance(component, dict):
+                component["name"] = name
+            return cast(JSON, report)
+
+    return backend_vram_report(name, getattr(backend, "model", None))
+
+
+def runtime_vram_report(runtime: object) -> JSON:
+    """Return process and per-component CUDA usage for an active Celune runtime.
+
+    Args:
+        runtime: Celune runtime object whose active components should be measured.
+
+    Returns:
+        JSON: Aggregate CUDA memory and component-level resident tensor usage.
+    """
+    process = cuda_process_memory()
+    allocated = cast(int, process["allocated_bytes"])
+    reserved = cast(int, process["reserved_bytes"])
+    peak_allocated = cast(int, process["peak_allocated_bytes"])
+    available = cast(bool, process["available"])
+    components: list[JSONSerializable] = []
+    seen_backends: set[int] = set()
+
+    for category, backend in (
+        ("tts", getattr(runtime, "backend", None)),
+        ("vc", getattr(runtime, "vc_backend", None)),
+    ):
+        if backend is None or id(backend) in seen_backends:
+            continue
+        seen_backends.add(id(backend))
+        backend_name = str(getattr(backend, "name", category))
+        report = _backend_report(backend, f"{category}/{backend_name}")
+        component = report.get("component")
+        if isinstance(component, dict):
+            components.append(cast(JSONSerializable, component))
+        if report.get("process_scope") == "worker":
+            available = available or report.get("process_available") is True
+            allocated += vram_report_int(report, "process_allocated_bytes")
+            reserved += vram_report_int(report, "process_reserved_bytes")
+            peak_allocated += vram_report_int(report, "process_peak_allocated_bytes")
+
+    vision = getattr(runtime, "vision", None)
+    persona_runtime = getattr(vision, "runtime", None)
+    persona_backend = getattr(persona_runtime, "backend", None)
+    persona_model = getattr(persona_backend, "model", None)
+    if persona_model is not None:
+        components.append(cuda_component_usage("persona", persona_model))
+
+    normalizer = getattr(runtime, "llm", None)
+    if normalizer is not None:
+        components.append(cuda_component_usage("normalizer", normalizer))
+
+    selector = getattr(runtime, "_agent_needle_selector", None)
+    agent_handler = getattr(selector, "handler", None)
+    agent_model = getattr(agent_handler, "model", None)
+    if agent_model is not None:
+        components.append(cuda_component_usage("agent", agent_model))
+
+    return {
+        "available": available,
+        "allocated_bytes": allocated,
+        "reserved_bytes": reserved,
+        "peak_allocated_bytes": peak_allocated,
+        "device_count": cast(int, process["device_count"]),
+        "components": components,
+    }
+
+
+def format_vram_bytes(value: int) -> str:
+    """Format a byte count using binary units for compact UI diagnostics."""
+    amount = float(max(0, value))
+    for unit in ("B", "KiB", "MiB", "GiB", "TiB"):
+        if amount < 1024 or unit == "TiB":
+            if unit == "B":
+                return f"{int(amount)} {unit}"
+            return f"{amount:.2f} {unit}"
+        amount /= 1024
+    return f"{amount:.2f} TiB"

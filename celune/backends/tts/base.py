@@ -32,9 +32,11 @@ from .contracts import ModelContract
 from .contracts import model_contract as resolve_model_contract
 from ...constants import N_A_NUMERIC
 from ...exceptions import BackendError
+from ...typing.common import JSON
 from .quantization import QuantizationMode, quantization_mode, quantize_component
 from ...typing.aliases import LogLevel, AudioChunk, RuntimeValue
 from ...typing.backends import BackendModel
+from ...vram import backend_vram_report
 
 __all__ = [
     "BackendModel",
@@ -658,6 +660,10 @@ class CeluneBackend[ModelT](ABC):
             with contextlib.suppress(OSError):
                 truncated_path.unlink(missing_ok=True)
         self._truncated_reference_paths.clear()
+
+    def vram_report(self) -> JSON:
+        """Return the backend model's CUDA footprint and process memory."""
+        return backend_vram_report(self.name, self.model)
 
     def preload_models(self) -> None:
         """Ensure all required models are available locally."""

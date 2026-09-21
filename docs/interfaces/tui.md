@@ -196,11 +196,20 @@ Commands are entered in the input box and start with `/`.
 | <code>/seed NUMBER&#124;random</code> | Set a backend seed or restore random seeds. |
 | `/tutorial` | Play the four bundled tutorial clips and demonstrate `/help`. |
 | `/stop` | Stop current speech. |
+| `/vram` | Report process CUDA allocation and the resident tensor footprint of active components. |
 | `/exit` | Exit the application. |
 
 `/help` hides commands that the current backend cannot use, so the list is a
 capability report rather than a fixed promise. Unknown commands are logged as a
 warning and do not terminate the runtime.
+
+`/vram` reports `allocated`, `reserved`, and peak CUDA memory. Its component
+lines count resident CUDA tensor storage for TTS, voice conversion, Persona,
+the normalizer, and the agent when they are loaded. Worker-backed TTS and VC
+backends report their memory from their own CEDTS processes, so their process
+allocations are included in the total. Runtime workspaces, caches, and
+temporary tensors are included in process totals but cannot be attributed to a
+single component.
 
 ## Themes and lighting
 

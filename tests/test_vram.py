@@ -3,8 +3,17 @@
 
 from unittest import mock
 
+import torch
+from torch import nn
+
 from celune.typing.common import Config
-from celune.vram import backend_allowed, resolve_vram_preset, resolve_backend_name
+from celune.vram import (
+    backend_allowed,
+    cuda_component_usage,
+    format_vram_bytes,
+    resolve_backend_name,
+    resolve_vram_preset,
+)
 
 from .support import CeluneTestCase
 
@@ -55,3 +64,16 @@ class TestVram(CeluneTestCase):
             assert resolve_backend_name(config, "voxcpm2") == "voxcpm2"
             assert backend_allowed(config, "dotstts")
             assert backend_allowed(config, "voxcpm2")
+
+    def test_component_usage_excludes_cpu_tensors(self) -> None:
+        """Verify component accounting reports only resident CUDA storage."""
+        report = cuda_component_usage("test", nn.Linear(4, 4, dtype=torch.float32))
+
+        assert report["loaded"] is True
+        assert report["tensor_bytes"] == 0
+        assert report["tensor_count"] == 0
+
+    def test_format_vram_bytes_uses_binary_units(self) -> None:
+        """Verify the diagnostic formatter keeps byte units readable."""
+        assert format_vram_bytes(0) == "0 B"
+        assert format_vram_bytes(1024**3) == "1.00 GiB"
