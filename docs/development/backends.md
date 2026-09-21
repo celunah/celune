@@ -179,14 +179,16 @@ the BF16 state before conversion and calls `validate_model_state` again with
 weights and continues checking counts, parameter totals, runtime dtypes for
 other tensors, and finite values. `celune.backends.tts.quantization` selects
 INT8 for Ampere (`sm80`/`sm86`) and FP8 for `sm89` or newer, using TorchAO's
-weight-only configs. It does not quantize embeddings, norms, output heads,
-speaker-conditioning paths, or vocoders. Conversion releases the temporary
-pre-quantization state references before TorchAO replaces weights. Quantization
-is performed in place on the model's current device; Celune never stages a
-live CUDA component on CPU and back to CUDA, avoiding a second full device
-allocation during backend loading. After conversion it clears unreferenced
-CUDA cache blocks, so the runtime retains only the quantized model storage in
-VRAM.
+version-2 weight-only configs. It does not quantize embeddings, norms, output
+heads, speaker-conditioning paths, or vocoders. Conversion releases the
+temporary pre-quantization state references before TorchAO replaces weights.
+The heavy VoxCPM2, dots.tts, and FireRedTTS3 loaders construct the model on
+CPU, quantize the contract-approved components there, and transfer the single
+resulting model to CUDA once. This prevents the full BF16 model and its
+quantized replacement from overlapping in VRAM during conversion. The lighter
+backends retain their existing load order. After conversion Celune clears
+unreferenced CUDA cache blocks, so the runtime retains only the quantized model
+storage and backend-required unquantized components in VRAM.
 Component resolution checks the contract component name on the backend wrapper
 and its nested `model` before falling back to a native root module. This keeps
 TorchAO scoped to the declared component—for example, Pocket TTS's `flow_lm`

@@ -1,19 +1,18 @@
 # SPDX-License-Identifier: Apache-2.0
 """Contract-driven runtime weight quantization for TTS models."""
 
-import contextlib
 import gc
 import importlib
-from collections.abc import Callable
+import contextlib
 from typing import Literal, Optional, Protocol, cast
+from collections.abc import Callable
 
 import torch
 from torch import nn
 
 from ...compat import torchao_compatibility
+from .contracts import QuantizationRule, ModelComponentContract, validate_model_state
 from ...exceptions import BackendError
-from .contracts import ModelComponentContract, QuantizationRule
-from .contracts import validate_model_state
 
 __all__ = [
     "QuantizationMode",
@@ -96,16 +95,28 @@ def _torchao_api() -> tuple[
     """Load the TorchAO APIs lazily inside the selected backend environment."""
     try:
         quantization = _import_torchao_quantization()
+
+        int8_factory = cast(
+            Callable[..., _QuantizationConfig],
+            quantization.Int8WeightOnlyConfig,
+        )
+        fp8_factory = cast(
+            Callable[..., _QuantizationConfig],
+            quantization.Float8WeightOnlyConfig,
+        )
+
+        def int8_config() -> _QuantizationConfig:
+            """Build the current TorchAO INT8 configuration."""
+            return int8_factory(version=2)
+
+        def fp8_config() -> _QuantizationConfig:
+            """Build the current TorchAO FP8 configuration."""
+            return fp8_factory(version=2)
+
         return (
             cast(Callable[..., None], quantization.quantize_),
-            cast(
-                Callable[[], _QuantizationConfig],
-                quantization.Int8WeightOnlyConfig,
-            ),
-            cast(
-                Callable[[], _QuantizationConfig],
-                quantization.Float8WeightOnlyConfig,
-            ),
+            int8_config,
+            fp8_config,
         )
     except (ImportError, AttributeError) as exc:
         raise BackendError(

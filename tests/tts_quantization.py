@@ -7,6 +7,7 @@ from unittest.mock import patch
 import torch
 from torch import nn
 
+from tests.support import FakeBackend
 from celune.backends.tts.contracts import (
     ModelContract,
     QuantizationRule,
@@ -21,7 +22,6 @@ from celune.backends.tts.quantization import (
     quantization_mode,
     quantize_component,
 )
-from tests.support import FakeBackend
 
 
 def test_torchao_import_skips_native_enum_registration(capsys) -> None:
@@ -32,6 +32,14 @@ def test_torchao_import_skips_native_enum_registration(capsys) -> None:
     assert (
         "Calling register_constant() on Enum subclasses" not in capsys.readouterr().err
     )
+
+
+def test_torchao_uses_version_two_weight_only_configs() -> None:
+    """Use TorchAO's current INT8 and FP8 configuration formats."""
+    _quantize, int8_config, fp8_config = _torchao_api()
+
+    assert getattr(int8_config(), "version", None) == 2
+    assert getattr(fp8_config(), "version", None) == 2
 
 
 def test_quantization_mode_selects_int8_for_sm86() -> None:

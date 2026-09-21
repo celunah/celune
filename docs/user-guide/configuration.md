@@ -42,14 +42,16 @@ attention and feed-forward layers eligible for conversion; embeddings, norms,
 output heads, speaker conditioning, and vocoders remain in BF16 or their
 backend-required dtype.
 
-Quantization is attempted after the model has loaded and is applied in place
-on the model's current device, avoiding a second full CUDA model allocation.
-If conversion, startup speech probing, or later speech generation fails,
-Celune unloads the quantized model, disables quantization for that runtime, and
-reloads the model in BF16. If the BF16 reload or its speech probe also fails,
-startup enters the normal fatal state; a failed later-generation recovery
-transitions the engine to the fatal state immediately. With `quantize: false`,
-TTS keeps its existing BF16 loading path.
+For VoxCPM2, dots.tts, and FireRedTTS3, Celune quantizes the model on CPU
+before transferring it to CUDA. This prevents the full BF16 model and its
+quantized replacement from overlapping in VRAM during conversion. The lighter
+backends retain their existing loading path. If conversion, startup speech
+probing, or later speech generation fails, Celune unloads the quantized model,
+disables quantization for that runtime, and reloads the model in BF16. If the
+BF16 reload or its speech probe also fails, startup enters the normal fatal
+state; a failed later-generation recovery transitions the engine to the fatal
+state immediately. With `quantize: false`, TTS keeps its existing BF16 loading
+path.
 
 `log_level` controls exception detail as well as ordinary diagnostics. `info`
 keeps handled failures concise, `verbose` appends the exception message, and

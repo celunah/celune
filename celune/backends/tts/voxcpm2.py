@@ -4,10 +4,11 @@
 import os
 import time
 import contextlib
-from typing import Optional
+from typing import Union, Optional
 from collections.abc import Mapping, Callable, Iterator, Generator
 
 import numpy as np
+import torch
 from voxcpm import VoxCPM
 from transformers import AutoTokenizer
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
@@ -228,6 +229,15 @@ class VoxCPM2(CeluneBackend[VoxCPM]):
             VoxCPM: The loaded VoxCPM2 model instance.
         """
         available, path = self.model_is_available_locally(model_id)
+        quantize_on_cpu = getattr(self, "quantization_mode", None) is not None
+        optimize = bool(kwargs.get("optimize", False))
+        load_optimize = optimize and not quantize_on_cpu
+        load_kwargs: dict[str, Union[bool, str]] = {
+            "load_denoiser": kwargs.get("load_denoiser", False),
+            "optimize": load_optimize,
+        }
+        if quantize_on_cpu:
+            load_kwargs["device"] = "cpu"
 
         # NOTE:
         # this may cause errors in internal ops when switching backends
@@ -254,8 +264,7 @@ class VoxCPM2(CeluneBackend[VoxCPM]):
             ):
                 self.model = VoxCPM.from_pretrained(
                     path,
-                    load_denoiser=kwargs.get("load_denoiser", False),
-                    optimize=kwargs.get("optimize", False),
+                    **load_kwargs,
                 )
                 self._install_checkpoint_tokenizer(self.model, path)
         else:
@@ -266,13 +275,38 @@ class VoxCPM2(CeluneBackend[VoxCPM]):
             ):
                 self.model = VoxCPM.from_pretrained(
                     model_id,
-                    load_denoiser=kwargs.get("load_denoiser", False),
-                    optimize=kwargs.get("optimize", False),
+                    **load_kwargs,
                 )
                 _, path = self.model_is_available_locally(model_id)
                 self._install_checkpoint_tokenizer(self.model, path)
         self.model = self.apply_runtime_quantization(self.model, model_id)
+        if quantize_on_cpu:
+            self._move_quantized_runtime_to_cuda(self.model)
+            if optimize:
+                self.model.tts_model.optimize()
+                self.model.tts_model.generate(
+                    target_text="Hello, this is the first test sentence.",
+                    max_len=10,
+                )
         return self.model
+
+    @staticmethod
+    def _move_quantized_runtime_to_cuda(model: VoxCPM) -> None:
+        """Move a CPU-quantized VoxCPM runtime to CUDA and rebuild its caches."""
+        runtime = model.tts_model
+        runtime.to(torch.device("cuda"))
+        runtime.device = "cuda"
+        runtime.config.device = "cuda"
+        for language_model in (runtime.base_lm, runtime.residual_lm):
+            cache = language_model.kv_cache
+            if cache is None:
+                continue
+            language_model.setup_cache(
+                1,
+                cache.max_length,
+                torch.device("cuda"),
+                torch.bfloat16,
+            )
 
     def generate_stream(
         self, model: VoxCPM, **kwargs

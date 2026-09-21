@@ -10,8 +10,8 @@ import tempfile
 import threading
 import contextlib
 import urllib.request
-from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar, Optional, Protocol, cast
+from pathlib import Path
 from collections.abc import Callable, Iterator, Generator
 
 import numpy as np
@@ -28,15 +28,15 @@ from .base import (
     local_hf_offline_mode,
     cached_hf_snapshot_path,
 )
+from ...i18n import string
 from ...paths import (
     runtime_data_dir,
     huggingface_progress,
     huggingface_hub_cache_dir,
 )
-from ...i18n import string
+from ...cevoice import CEVoiceLoader, default_loader
 from ...typing.aliases import AudioChunk
 from ...typing.backends import BackendModel
-from ...cevoice import CEVoiceLoader, default_loader
 
 __all__ = ["FireRedTTS3"]
 
@@ -294,13 +294,23 @@ def _create_firered_model(
     report_progress: Optional[
         Callable[[Optional[float], Optional[float]], None]
     ] = None,
+    cpu_first: bool = False,
 ) -> _FireRedModel:
-    """Construct FireRedTTS3 with Celune's supported attention path."""
-    from transformers import Qwen3Config
+    """Construct FireRedTTS3 with Celune's supported attention path.
 
+    Args:
+        model_root: Local FireRedTTS3 model directory.
+        log: Optional callback for model-loading progress messages.
+        report_progress: Optional callback for model-loading progress values.
+        cpu_first: Load model components on CPU for pre-CUDA quantization.
+
+    Returns:
+        _FireRedModel: The loaded FireRedTTS3 model.
+    """
+    from transformers import Qwen3Config
     from fireredtts3.llm import fireredtts3_base
-    from fireredtts3.redae import redae as redae_module
     from fireredtts3.core import FireRedTTS3 as FireRedTTS3Model
+    from fireredtts3.redae import redae as redae_module
 
     def announce(message_key: str, step: int) -> None:
         """Publish one visible model-construction stage."""
@@ -424,6 +434,50 @@ def _create_firered_model(
                     latents_gen = torch.cat([latents_gen, one_latents], dim=1)
                     yield one_latents
 
+    class CpuFirstFireRedTTS3(FireRedTTS3Model):
+        """Load FireRedTTS3 components on CPU before quantization."""
+
+        def __init__(
+            self,
+            pretrained_model_dir: str,
+            use_fasttext: bool = True,
+            use_llm_tn: bool = False,
+            use_wetext: bool = True,
+            tn_api_url: Optional[str] = None,
+            tn_api_key: Optional[str] = None,
+            tn_model: Optional[str] = None,
+            tn_kwargs: Optional[dict] = None,
+        ) -> None:
+            self.device = torch.device("cpu")
+            redae_model_dir = os.path.join(pretrained_model_dir, "redae")
+            assert os.path.exists(redae_model_dir), f"{redae_model_dir} not found"
+            self.redae = BFloat16RedAE.from_pretrained(redae_model_dir)
+            tts_model_dir = os.path.join(
+                pretrained_model_dir,
+                "fireredtts3_base",
+            )
+            assert os.path.exists(tts_model_dir), f"{tts_model_dir} not found"
+            self.tts_core = BFloat16FireRedTTS3BaseCore.from_pretrained(tts_model_dir)
+            text_tok_dir = os.path.join(pretrained_model_dir, "text_tokenizer")
+            assert os.path.exists(text_tok_dir), f"{text_tok_dir} not found"
+            self.text_tokenizer = fireredtts3_base.load_text_tokenizer(text_tok_dir)
+            spk_ckpt_path = os.path.join(
+                pretrained_model_dir,
+                "campp/campplus_voxceleb.bin",
+            )
+            assert os.path.exists(spk_ckpt_path), f"{spk_ckpt_path} not found"
+            self.spk_extractor = fireredtts3_base.CamppEmbedding(spk_ckpt_path)
+            self.spk_extractor.eval()
+            self._init_frontend(
+                use_fasttext=use_fasttext,
+                use_llm_tn=use_llm_tn,
+                use_wetext=use_wetext,
+                tn_api_url=tn_api_url,
+                tn_api_key=tn_api_key,
+                tn_model=tn_model,
+                tn_kwargs=tn_kwargs,
+            )
+
     original_attention = fireredtts3_base.Qwen3_1_7B_ConfigDict["attn_implementation"]
     original_redae = fireredtts3_base.RedAE
     original_core = fireredtts3_base.FireRedTTS3BaseCore
@@ -444,9 +498,10 @@ def _create_firered_model(
     redae_module.Qwen3Config = sdpa_qwen3_config
     try:
         announce("fireredtts3.model_loading", 0)
+        model_class = CpuFirstFireRedTTS3 if cpu_first else FireRedTTS3Model
         return cast(
             _FireRedModel,
-            FireRedTTS3Model(
+            model_class(
                 model_root,
                 use_fasttext=False,
                 use_llm_tn=False,
@@ -794,10 +849,9 @@ class FireRedTTS3(CeluneBackend[_FireRedModel]):
     def _preload_source_modules() -> None:
         """Import FireRedTTS3 dependencies before the CEDTS read loop starts."""
         from transformers import Qwen3Config
-
         from fireredtts3.llm import fireredtts3_base
-        from fireredtts3.redae import redae as redae_module
         from fireredtts3.core import FireRedTTS3 as FireRedTTS3Model
+        from fireredtts3.redae import redae as redae_module
 
         _ = (Qwen3Config, fireredtts3_base, FireRedTTS3Model, redae_module)
 
@@ -818,6 +872,16 @@ class FireRedTTS3(CeluneBackend[_FireRedModel]):
                     f"FireRedTTS3 did not expose the expected {component_name} module"
                 )
             to(dtype=torch.bfloat16)
+        return model
+
+    @staticmethod
+    def _move_quantized_model_to_cuda(model: _FireRedModel) -> _FireRedModel:
+        """Move a CPU-quantized FireRedTTS3 model to CUDA exactly once."""
+        device = torch.device("cuda")
+        model.redae.to(device)
+        model.tts_core.to(device)
+        model.spk_extractor.to(device)
+        model.device = device
         return model
 
     @staticmethod
@@ -911,11 +975,14 @@ class FireRedTTS3(CeluneBackend[_FireRedModel]):
                 path,
                 log=self.log,
                 report_progress=self.report_progress,
+                cpu_first=getattr(self, "quantization_mode", None) is not None,
             )
         self.log(string("fireredtts3.finalizing_model"), "info")
         self.report_progress(3, 4)
         model = self._configure_bfloat16(model)
         model = self.apply_runtime_quantization(model, model_id)
+        if getattr(self, "quantization_mode", None) is not None:
+            model = self._move_quantized_model_to_cuda(model)
         self.report_progress(4, 4)
         self.log(string("fireredtts3.model_ready"), "info")
         return model
