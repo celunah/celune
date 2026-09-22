@@ -658,7 +658,7 @@ class TestUICommand(CeluneTestCase):
         assert self.logs == [
             ("--- Memory usage statistics ---", "info"),
             (
-                "Normalizer: 32.00 MiB/32.00 MiB/32.00 MiB (cpu)",
+                "Normalizer: 32.00 MiB/-/- (cpu)",
                 "info",
             ),
             ("Legend: allocated memory, reserved memory, peak memory", "info"),

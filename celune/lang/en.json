@@ -395,6 +395,7 @@
     "commands.vram_header": "--- Memory usage statistics ---",
     "commands.vram_language_model": "Language model",
     "commands.vram_legend": "Legend: allocated memory, reserved memory, peak memory",
+    "commands.vram_not_applicable": "-",
     "commands.vram_normalizer": "Normalizer",
     "commands.vram_speech_input": "Speech input ({backend})",
     "commands.vram_text_to_speech": "Text to speech ({backend})",

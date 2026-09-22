@@ -90,6 +90,23 @@ def _vram_component_label(name: str) -> str:
     return name
 
 
+def _vram_memory_values(
+    allocated: int,
+    reserved: int,
+    peak: int,
+) -> tuple[str, str, str]:
+    """Format one component's memory values for the VRAM report."""
+    allocated_value = format_vram_bytes(allocated)
+    if allocated == reserved == peak:
+        not_applicable = string("commands.vram_not_applicable")
+        return allocated_value, not_applicable, not_applicable
+    return (
+        allocated_value,
+        format_vram_bytes(reserved),
+        format_vram_bytes(peak),
+    )
+
+
 def _attachment_source(path: Path) -> str:
     """Return a Persona-friendly attachment source string for one local file."""
     resolved = path.resolve()
@@ -342,13 +359,18 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
                     string("commands.vram_component_unavailable", name=padded_name)
                 )
                 continue
+            allocated_value, reserved_value, peak_value = _vram_memory_values(
+                allocated,
+                reserved,
+                peak,
+            )
             ui.safe_log(
                 string(
                     "commands.vram_component",
                     name=padded_name,
-                    allocated=format_vram_bytes(allocated),
-                    reserved=format_vram_bytes(reserved),
-                    peak=format_vram_bytes(peak),
+                    allocated=allocated_value,
+                    reserved=reserved_value,
+                    peak=peak_value,
                     device=device,
                 )
             )

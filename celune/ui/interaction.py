@@ -1247,6 +1247,7 @@ def on_key(self, event: _app.events.Key) -> None:
 
         if event.key == "ctrl+j" and self._submit_text(self.input_box.text):
             event.prevent_default()
+            event.stop()
 
 
 def on_button_pressed(self, event: _app.Button.Pressed) -> None:

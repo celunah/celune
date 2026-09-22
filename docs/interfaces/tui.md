@@ -206,6 +206,8 @@ warning and do not terminate the runtime.
 `/vram` reports each currently loaded component as
 `allocated/reserved/peak (device)`. It includes TTS, voice conversion, Persona,
 the normalizer, and the agent whether their tensors are on CUDA or the CPU.
+When all three values are identical, the reserved and peak positions are shown
+as `-` because those per-component allocator statistics are not applicable.
 For CUDA components, allocated memory is the component's resident tensor
 storage; reserved and peak memory are the allocator totals from the owning
 process because PyTorch does not attribute those values to individual model
