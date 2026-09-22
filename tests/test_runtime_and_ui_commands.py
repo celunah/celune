@@ -635,6 +635,35 @@ class TestUICommand(CeluneTestCase):
             ),
         ]
 
+    def test_vram_command_omits_cpu_only_components(self) -> None:
+        """Verify /vram omits loaded components without CUDA tensor storage."""
+        report = {
+            "available": True,
+            "allocated_bytes": 2 * 1024**3,
+            "reserved_bytes": 3 * 1024**3,
+            "peak_allocated_bytes": 4 * 1024**3,
+            "components": [
+                {
+                    "name": "normalizer",
+                    "loaded": True,
+                    "available": True,
+                    "tensor_bytes": 0,
+                    "tensor_count": 0,
+                }
+            ],
+        }
+        with mock.patch("celune.ui.commands.runtime_vram_report", return_value=report):
+            self._process_command("vram", [])
+
+        assert self.logs == [
+            ("--- CUDA memory ---", "info"),
+            (
+                "Process total: 2.00 GiB allocated, 3.00 GiB reserved, 4.00 GiB peak",
+                "info",
+            ),
+            ("Allocated and reserved include runtime workspaces and caches.", "info"),
+        ]
+
     def test_common_commands_update_state_and_validate_inputs(self) -> None:
         """Verify prompt, speed, and reverb command paths.
 

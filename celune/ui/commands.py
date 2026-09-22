@@ -317,12 +317,16 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
             if component.get("loaded") is not True:
                 ui.safe_log(string("commands.vram_component_not_loaded", name=name))
                 continue
+            tensor_bytes = vram_report_int(component, "tensor_bytes")
+            tensor_count = vram_report_int(component, "tensor_count")
+            if tensor_bytes == 0 and tensor_count == 0:
+                continue
             ui.safe_log(
                 string(
                     "commands.vram_component",
                     name=name,
-                    usage=format_vram_bytes(vram_report_int(component, "tensor_bytes")),
-                    tensors=vram_report_int(component, "tensor_count"),
+                    usage=format_vram_bytes(tensor_bytes),
+                    tensors=tensor_count,
                 )
             )
         ui.safe_log(string("commands.vram_note"))

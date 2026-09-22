@@ -209,7 +209,8 @@ the normalizer, and the agent when they are loaded. Worker-backed TTS and VC
 backends report their memory from their own CEDTS processes, so their process
 allocations are included in the total. Runtime workspaces, caches, and
 temporary tensors are included in process totals but cannot be attributed to a
-single component.
+single component. Loaded components with no CUDA tensor storage, such as a
+CPU-resident normalizer, are omitted from the component lines.
 
 ## Themes and lighting
 
