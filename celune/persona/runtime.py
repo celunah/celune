@@ -10,7 +10,6 @@ from typing import Union, Optional, cast
 from collections.abc import Mapping, Sequence, Generator
 
 import torch
-from transformers.tokenization_utils_base import BatchEncoding
 from transformers import (
     AutoConfig,
     AutoProcessor,
@@ -20,19 +19,22 @@ from transformers import (
     StoppingCriteriaList,
     Qwen3VLForConditionalGeneration,
 )
+from transformers.cache_utils import Cache
+from transformers.configuration_utils import PreTrainedConfig
+from transformers.tokenization_utils_base import BatchEncoding
 
 from ..i18n import string
 from ..vram import resolve_vram_preset
-from ..typing.common import JSONSerializable
-from .capabilities import PersonaCapabilities
+from .cache import create_quantized_kv_cache
 from ..utils import normalize_special_characters
-from ..dataclasses.persona import ChatMessage, GenerateRequest, GenerateResponse
 from ..constants import (
     N_A_STR,
     PERSONA_CONTEXT_SPACE,
     PERSONA_DEFAULT_MODEL_ID,
     remote_code_model_revision,
 )
+from .capabilities import PersonaCapabilities
+from ..typing.common import JSONSerializable
 from ..typing.persona import (
     Role,
     ContentItem,
@@ -50,8 +52,19 @@ from ..typing.persona import (
     VisionProcessorOutput,
     ModelGenerateKwargValue,
 )
+from ..dataclasses.persona import ChatMessage, GenerateRequest, GenerateResponse
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _quantize_kv_cache_enabled(
+    config: Optional[Mapping[str, JSONSerializable]],
+) -> bool:
+    """Return whether Persona cache quantization is enabled by configuration."""
+    if config is None:
+        return True
+    value = config.get("quantize_kv_cache")
+    return value is not False
 
 
 class _PersonaCancellationCriteria(StoppingCriteria):
@@ -317,11 +330,18 @@ class PersonaBackend:
             return False
         return self.supports_vision or _processor_supports_vision(processor)
 
-    def generate(self, request: GenerateRequest) -> GenerateResponse:
+    def generate(
+        self,
+        request: GenerateRequest,
+        *,
+        quantize_kv_cache: bool = True,
+    ) -> GenerateResponse:
         """Generate a persona-formatted response.
 
         Args:
             request: The request to be processed by Persona.
+            quantize_kv_cache: Whether to use the selected INT8 or FP8 cache on
+                supported CUDA devices.
 
         Returns:
             GenerateResponse: A response generated from Persona.
@@ -342,31 +362,66 @@ class PersonaBackend:
         model_inputs = None
         output_ids = None
         new_ids = None
+        generation_cache: Optional[Cache] = None
+        generation_kwargs: dict[str, ModelGenerateKwargValue] = {}
         try:
             inputs = self._build_inputs(message_dicts, request.context_space)
             model_inputs = {
                 key: cast(torch.Tensor, value) for key, value in dict(inputs).items()
             }
-            generation_kwargs: dict[str, ModelGenerateKwargValue] = {
-                "cache_implementation": "dynamic",
-                "stopping_criteria": StoppingCriteriaList(
-                    [_PersonaCancellationCriteria(self._generation_cancelled)]
-                ),
-            }
+            input_ids = model_inputs.get("input_ids")
+            model_config = getattr(model, "config", None)
+            if isinstance(input_ids, torch.Tensor) and isinstance(
+                model_config, PreTrainedConfig
+            ):
+                with contextlib.suppress(RuntimeError, TypeError, ValueError):
+                    generation_cache = create_quantized_kv_cache(
+                        config=model_config,
+                        device=input_ids.device,
+                        enabled=quantize_kv_cache,
+                    )
+
+            generation_kwargs["stopping_criteria"] = StoppingCriteriaList(
+                [_PersonaCancellationCriteria(self._generation_cancelled)]
+            )
+            if generation_cache is not None:
+                generation_kwargs["past_key_values"] = generation_cache
+            else:
+                generation_kwargs["cache_implementation"] = "dynamic"
             pad_token_id = tokenizer.eos_token_id
             if pad_token_id is not None:
                 generation_kwargs["pad_token_id"] = pad_token_id
 
             with torch.inference_mode():
-                output_ids = model.generate(
-                    **model_inputs,
-                    max_new_tokens=request.max_new_tokens,
-                    do_sample=request.temperature > 0,
-                    temperature=request.temperature,
-                    top_p=request.top_p,
-                    repetition_penalty=request.repetition_penalty,
-                    **generation_kwargs,
-                )
+                try:
+                    output_ids = model.generate(
+                        **model_inputs,
+                        max_new_tokens=request.max_new_tokens,
+                        do_sample=request.temperature > 0,
+                        temperature=request.temperature,
+                        top_p=request.top_p,
+                        repetition_penalty=request.repetition_penalty,
+                        **generation_kwargs,
+                    )
+                except Exception:
+                    if generation_cache is None:
+                        raise
+                    _LOGGER.debug(
+                        "Persona quantized KV cache failed; retrying dynamic cache",
+                        exc_info=True,
+                    )
+                    generation_cache = None
+                    generation_kwargs.pop("past_key_values", None)
+                    generation_kwargs["cache_implementation"] = "dynamic"
+                    output_ids = model.generate(
+                        **model_inputs,
+                        max_new_tokens=request.max_new_tokens,
+                        do_sample=request.temperature > 0,
+                        temperature=request.temperature,
+                        top_p=request.top_p,
+                        repetition_penalty=request.repetition_penalty,
+                        **generation_kwargs,
+                    )
 
             input_length = cast(torch.Tensor, inputs["input_ids"]).shape[1]
             new_ids = output_ids[0, input_length:]
@@ -384,6 +439,8 @@ class PersonaBackend:
             output_ids = None
             model_inputs = None
             inputs = None
+            generation_cache = None
+            generation_kwargs.clear()
             gc.collect()
             if torch.cuda.is_available():
                 with contextlib.suppress(Exception):
@@ -550,7 +607,10 @@ class PersonaRuntime:
         with self.lock:
             self.backend._reset_generation_cancellation()
             self.backend.load(model_id, quantization)
-            return self.backend.generate(request)
+            return self.backend.generate(
+                request,
+                quantize_kv_cache=_quantize_kv_cache_enabled(self.config),
+            )
 
     def interrupt(self) -> None:
         """Request cancellation of an active Persona generation."""

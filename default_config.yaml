@@ -17,6 +17,12 @@ backend: null
 #        loading or warmup failures retry with BF16
 quantize: false
 
+# Persona KV-cache quantization
+#
+# true = store the long-lived KV-cache prefix in INT8 on Ampere or FP8 on sm89+
+# false = keep Persona's dynamic KV cache in its model compute dtype
+quantize_kv_cache: true
+
 # Qwen3 TTS settings
 #
 # Full reference conditioning preserves the reference prosody and expression.

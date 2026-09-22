@@ -479,6 +479,46 @@ class TestBackend(CeluneTestCase):
             assert runtime.device == "cuda"
             assert runtime.config.device == "cuda"
 
+    def test_voxcpm2_releases_unused_static_cache_capacity(self) -> None:
+        """Bound both private VoxCPM caches before the runtime is used."""
+        with mock_voxcpm_backend() as voxcpm2_cls:
+            cache = SimpleNamespace(
+                max_length=8192,
+                kv_cache=torch.zeros(2, 1, 1, 1, 8192, 1),
+            )
+            base_lm = SimpleNamespace(
+                kv_cache=cache,
+                setup_cache=mock.Mock(),
+            )
+            residual_lm = SimpleNamespace(
+                kv_cache=SimpleNamespace(
+                    max_length=8192,
+                    kv_cache=torch.zeros(2, 1, 1, 1, 8192, 1),
+                ),
+                setup_cache=mock.Mock(),
+            )
+            model = SimpleNamespace(
+                tts_model=SimpleNamespace(
+                    base_lm=base_lm,
+                    residual_lm=residual_lm,
+                )
+            )
+
+            voxcpm2_cls._resize_runtime_caches(model)
+
+            base_lm.setup_cache.assert_called_once_with(
+                1,
+                2048,
+                cache.kv_cache.device,
+                cache.kv_cache.dtype,
+            )
+            residual_lm.setup_cache.assert_called_once_with(
+                1,
+                2048,
+                residual_lm.kv_cache.kv_cache.device,
+                residual_lm.kv_cache.kv_cache.dtype,
+            )
+
     def test_base_backend_reports_models(self) -> None:
         """Verify model metadata helpers on a fake backend.
 

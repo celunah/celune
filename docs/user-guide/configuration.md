@@ -15,6 +15,7 @@ before the interface opens. `celune config view` prints the active file and
 | --- | --- | --- |
 | `backend` | `null` | TTS or VC backend name. `null` lets Celune choose its normal backend. |
 | `quantize` | `false` | Try contract-approved TTS weight-only quantization: INT8 on Ampere and FP8 on sm89 or newer, with BF16 recovery. |
+| `quantize_kv_cache` | `true` | Store Persona's attention-cache prefix in INT8 on Ampere or FP8 on `sm89+`; use `false` for the normal dynamic cache. |
 | `voice_bundle` | `default` | CEVOICE/CECHAR name or path. |
 | `log_level` | `info` | `info`, `verbose`, or `debug`. |
 | `locale` | `null` | Locale override; `null` uses system detection. |
@@ -204,6 +205,15 @@ Persona request, `compact_at` documents the context percentage at which
 history should be compacted, and `max_turns: null` leaves the turn count
 unbounded unless the memory settings impose a shorter history.
 
+Persona generation uses the configured `quantize_kv_cache` policy on CUDA. The
+quantized cache keeps a short BF16 tail for recent tokens and stores older
+keys and values with one scale per token. INT8 is selected for Ampere GPUs;
+FP8 is selected for `sm89` and newer GPUs. The cache is dequantized only for
+the attention operation, so the model still computes attention in its normal
+dtype. Unsupported cache layouts, unavailable FP8 support, or a cache
+runtime failure fall back to the regular dynamic cache for that request.
+The cache is request-scoped and is released when generation finishes.
+
 ## Agent settings
 
 ```yaml
@@ -222,7 +232,7 @@ agent routing and classification requests use a separate 8192-token ceiling,
 even when the task context is configured higher, to limit transient KV-cache
 allocation. Routing prompts contain only the current input and active task
 metadata; they do not retain conversational history. Persona generation
-requests use the dynamic generation cache and release unused CUDA allocator
+requests use the configured KV-cache policy and release unused CUDA allocator
 blocks after each response.
 
 Persona is independent of TTS backend selection. The model registry in

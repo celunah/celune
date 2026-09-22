@@ -207,6 +207,24 @@ The isolated worker log bridge also suppresses the known TorchAO invalid-escape
 source warning and PyTorch's Windows/macOS redirect-support note; backend
 tracebacks and actionable errors remain visible.
 
+Persona attention caches have a separate core-owned policy because TorchAO's
+weight-only APIs do not quantize runtime K/V activations. With
+`quantize_kv_cache: true`, the Transformers cache stores older full-attention
+keys and values as INT8 on Ampere or FP8 on `sm89+`, with a short BF16 tail for
+recent tokens. It dequantizes the compact prefix only for each attention
+operation and falls back to the normal dynamic cache if the model layout or
+runtime does not support the custom cache. The cache object is request-scoped;
+the generation cleanup path drops it before releasing allocator blocks.
+
+VoxCPM2 does not expose a Transformers cache boundary. Its two private static
+MiniCPM caches are therefore bounded at the adapter boundary to 2048 positions
+before the model is used, and are rebuilt at that capacity when a CPU-quantized
+runtime moves to CUDA. This removes the unused 8192-position resident
+allocation without modifying the isolated upstream package. The cap is sized
+for Celune's ten-second reference limit and 512-step speech chunks; extending
+those limits requires revisiting the adapter cap and checking the model's
+position budget.
+
 When quantized loading, the startup speech probe, or a later speech generation
 fails, the backend disables quantization, unloads the model, and reloads the
 same model in BF16. A failed BF16 recovery invokes the fatal engine transition

@@ -59,6 +59,7 @@ own. It is the index to use when a feature needs a precise code entrypoint.
 | --- | --- |
 | `celune/cevoice.py` | CEVOICE/CECHAR readers, writers, validation, lazy asset materialization, and pack selection. |
 | `celune/persona/runtime.py` | Model loading, quantization, generation, and context capacity. |
+| `celune/persona/cache.py` | Device-aware INT8/FP8 Persona KV-cache storage and dynamic-cache fallback boundary. |
 | `celune/persona/impl.py` | Configured Persona client and engine integration. |
 | `celune/persona/asr.py` | Whisper transcription, timestamps, and speech-input lifecycle. |
 | `celune/persona/capabilities.py` | Text/vision/upload/emotion capability detection. |

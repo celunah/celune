@@ -3,21 +3,22 @@
 
 import contextlib
 from types import SimpleNamespace
-from typing import Optional, Union, cast
+from typing import Union, Optional, cast
 from unittest import mock
+
 import pytest
 
 from celune.i18n import string
 from celune.utils import discard
-from celune.typing.common import JSON
 from celune.persona import impl, runtime
-from celune.typing.aliases import RecordedKwargValue
 from celune.constants import (
     PERSONA_MODELS,
     PERSONA_DEFAULT_MODEL_ID,
     persona_model_tier,
     remote_code_model_revision,
 )
+from celune.typing.common import JSON
+from celune.typing.aliases import RecordedKwargValue
 
 from .support import CeluneTestCase
 
@@ -562,6 +563,51 @@ class TestPersonaApi(CeluneTestCase):
         self.assertTrue(
             criterion(runtime.torch.tensor([[1]]), runtime.torch.tensor([])).item()
         )
+
+    def test_generation_retries_with_dynamic_cache_after_quantized_cache_failure(
+        self,
+    ) -> None:
+        """Fall back to a regular cache when compact cache execution fails."""
+
+        class _FailOnceModel(_FakeGenerativeModel):
+            """Fail once to exercise the cache recovery path."""
+
+            def __init__(self) -> None:
+                super().__init__()
+                self.config = runtime.PreTrainedConfig()
+
+            def generate(self, **kwargs) -> runtime.torch.Tensor:
+                """Raise once, then return a short synthetic completion."""
+                self.calls.append(dict(kwargs))
+                if len(self.calls) == 1:
+                    raise RuntimeError("test cache failure")
+                return runtime.torch.tensor([[1, 2, 3]], dtype=runtime.torch.long)
+
+        backend = runtime.PersonaBackend()
+        backend.processor = cast(runtime.PersonaProcessor, _FakeProcessor())
+        backend.tokenizer = cast(runtime.PersonaTokenizer, _FakeTokenizer())
+        model = _FailOnceModel()
+        backend.model = cast(runtime.PersonaModel, model)
+        backend.model_id = "fixture/model"
+
+        with (
+            mock.patch.object(
+                backend,
+                "_build_inputs",
+                return_value={"input_ids": runtime.torch.tensor([[1, 2]])},
+            ),
+            mock.patch.object(
+                runtime,
+                "create_quantized_kv_cache",
+                return_value=mock.Mock(),
+            ),
+        ):
+            response = backend.generate(runtime.GenerateRequest(user="hello"))
+
+        assert response.text == "decoded"
+        assert "past_key_values" in model.calls[0]
+        assert model.calls[1]["cache_implementation"] == "dynamic"
+        assert "past_key_values" not in model.calls[1]
 
     def test_persona_client_routes_backend_output_to_verbose_logs(self) -> None:
         """Verify Persona backend stdout/stderr is captured into verbose logs."""

@@ -29,6 +29,8 @@ from ...cevoice import CEVoiceLoader, default_loader
 from ...constants import BASE_SR
 from ...typing.aliases import AudioChunk, AudioChunks
 
+_VOXCPM_RUNTIME_KV_CACHE_LENGTH = 2048
+
 
 class _VoxCPMTextTokenizer:
     """Adapt the checkpoint tokenizer to VoxCPM2's list-returning interface."""
@@ -279,6 +281,7 @@ class VoxCPM2(CeluneBackend[VoxCPM]):
                 )
                 _, path = self.model_is_available_locally(model_id)
                 self._install_checkpoint_tokenizer(self.model, path)
+        self._resize_runtime_caches(self.model)
         self.model = self.apply_runtime_quantization(self.model, model_id)
         if quantize_on_cpu:
             self._move_quantized_runtime_to_cuda(self.model)
@@ -291,7 +294,36 @@ class VoxCPM2(CeluneBackend[VoxCPM]):
         return self.model
 
     @staticmethod
-    def _move_quantized_runtime_to_cuda(model: VoxCPM) -> None:
+    def _runtime_cache_length(max_length: int) -> int:
+        """Bound VoxCPM's static cache to the supported generation envelope."""
+        return min(max_length, _VOXCPM_RUNTIME_KV_CACHE_LENGTH)
+
+    @classmethod
+    def _resize_runtime_caches(cls, model: VoxCPM) -> None:
+        """Release VoxCPM's oversized load-time caches before inference."""
+        runtime = getattr(model, "tts_model", None)
+        if runtime is None:
+            return
+        for language_model in (runtime.base_lm, runtime.residual_lm):
+            cache = language_model.kv_cache
+            if cache is None:
+                continue
+            max_length = getattr(cache, "max_length", None)
+            if not isinstance(max_length, int) or max_length <= 0:
+                continue
+            target_length = cls._runtime_cache_length(max_length)
+            if target_length == max_length:
+                continue
+            storage = cache.kv_cache
+            language_model.setup_cache(
+                1,
+                target_length,
+                storage.device,
+                storage.dtype,
+            )
+
+    @classmethod
+    def _move_quantized_runtime_to_cuda(cls, model: VoxCPM) -> None:
         """Move a CPU-quantized VoxCPM runtime to CUDA and rebuild its caches."""
         runtime = model.tts_model
         runtime.to(torch.device("cuda"))
@@ -303,7 +335,7 @@ class VoxCPM2(CeluneBackend[VoxCPM]):
                 continue
             language_model.setup_cache(
                 1,
-                cache.max_length,
+                cls._runtime_cache_length(cache.max_length),
                 torch.device("cuda"),
                 torch.bfloat16,
             )
