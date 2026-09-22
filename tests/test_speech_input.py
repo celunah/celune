@@ -3,18 +3,19 @@
 
 from types import SimpleNamespace
 from typing import Optional, cast
-from collections.abc import Callable
 from unittest import mock
+from collections.abc import Callable
 
 import numpy as np
 import pytest
 from textual import events
-from celune.ui.app import ButtonActions, CeluneUI
-from celune.typing.persona import _WhisperProcessor
+
+from celune.ui.app import CeluneUI, ButtonActions
 from celune.persona.asr import (
     PERSONA_SPEECH_NO_INPUT_TIMEOUT_SECONDS,
     WhisperTranscriber,
 )
+from celune.typing.persona import _WhisperProcessor
 
 from .support import CeluneTestCase
 
@@ -264,6 +265,7 @@ class TestSpeechInput(CeluneTestCase):
             ),
         ):
             assert ui._start_persona_recording()
+            assert ui._speech_transcriber is transcriber
             worker = ui._persona_recording_worker
 
             if captured_callback is None:

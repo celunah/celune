@@ -4,15 +4,15 @@
 from __future__ import annotations
 
 import threading
-from dataclasses import dataclass
-from collections.abc import Mapping, Sequence, Callable
 from typing import TYPE_CHECKING, Union, Optional, cast
+from dataclasses import dataclass
+from collections.abc import Mapping, Callable, Sequence
 
-import torch
 import numpy as np
+import torch
 
-from ..audio.dsp import resample_audio
 from ..paths import huggingface_progress
+from ..audio.dsp import resample_audio
 from ..typing.aliases import AudioChunk
 from ..typing.persona import (
     WhisperScalar,
@@ -73,7 +73,23 @@ class WhisperTranscriber:
         self._dtype: Optional[DType] = None
         self._is_multilingual = True
         self._load_lock = threading.Lock()
+        self._inference_lock = threading.Lock()
         self._progress_callback = progress_callback
+
+    @property
+    def loaded_model(self) -> Optional[_WhisperModel]:
+        """Return the loaded Whisper model, if speech recognition initialized it."""
+        return self._model
+
+    def unload(self) -> None:
+        """Release the Whisper model and its processor from this transcriber."""
+        with self._inference_lock, self._load_lock:
+            self._model = None
+            self._processor = None
+            self._device = None
+            self._dtype = None
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
     def _load_model(self) -> None:
         """Load the configured Whisper processor and model once."""
@@ -120,6 +136,16 @@ class WhisperTranscriber:
             self._dtype = torch.bfloat16
 
     def _decode(
+        self,
+        audio: AudioChunk,
+        sample_rate: int,
+        return_segments: bool = False,
+    ) -> Union[str, tuple[WhisperSegment, ...]]:
+        """Serialize one Whisper inference and decode its result."""
+        with self._inference_lock:
+            return self._decode_unlocked(audio, sample_rate, return_segments)
+
+    def _decode_unlocked(
         self,
         audio: AudioChunk,
         sample_rate: int,

@@ -1762,25 +1762,21 @@ def tts_caption_timing(
 
     def analyze() -> None:
         try:
-            transcriber = (
-                self._caption_transcriber or self._persona_recording_transcriber
-            )
+            transcriber = self._speech_transcriber
             if transcriber is None:
                 if self.celune is None or not _app.persona_enabled(self.celune.config):
                     return
-                model_id = getattr(self, "_persona_speech_model_id", None)
-                language_getter = getattr(self, "_persona_speech_language", None)
-                if not callable(model_id) or not callable(language_getter):
+                get_transcriber = getattr(
+                    self,
+                    "_get_persona_speech_transcriber",
+                    None,
+                )
+                if not callable(get_transcriber):
                     return
-                model_id_getter = cast(Callable[[], str], model_id)
-                language_value_getter = cast(
-                    Callable[[], Optional[str]], language_getter
+                transcriber = cast(
+                    _app.WhisperTranscriber,
+                    get_transcriber(),
                 )
-                transcriber = _app.WhisperTranscriber(
-                    model_id_getter(),
-                    language=language_value_getter(),
-                )
-                self._caption_transcriber = transcriber
             segments = transcriber.transcribe_segments(audio_copy, sample_rate)
             word_timings = self._caption_word_timing_ranges(
                 self._caption_words,

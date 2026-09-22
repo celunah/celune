@@ -82,6 +82,9 @@ available. The checkpoint is validated and prepared in an isolated cache; a
 legacy JAX/Flax `needle.pkl` is not accepted as a normal production artifact.
 Needle may select only registered schemas, and the runtime validates names,
 argument types, approval state, and availability before execution.
+The loader instantiates the model in the dtype declared by its validated
+checkpoint before placing it on the selected device, avoiding an intermediate
+FP32 copy for BF16 checkpoints.
 
 ## User steering and approvals
 

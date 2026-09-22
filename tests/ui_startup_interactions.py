@@ -29,16 +29,17 @@ from celune.utils import discard
 from celune.celune import Celune
 from celune.config import Config
 from celune.ui.app import (
-    ButtonActions,
     Button,
     CeluneUI,
-    ProgressLabel,
     VoiceButton,
+    ButtonActions,
+    ProgressLabel,
 )
 from tests.support import FakeBackend
 from celune.ui.theme import severity_color
 from celune.persona.asr import WhisperWord, WhisperSegment
 from celune.typing.common import JSONSerializable
+
 from .ui_startup_foundation import TestUIStartup as _TestUIStartup
 
 
@@ -1597,6 +1598,7 @@ class TestUIStartup(_TestUIStartup):
             )
 
         transcriber_type.assert_called_once_with("test/whisper", language=None)
+        assert ui._speech_transcriber is transcriber
 
     def test_speech_caption_timing_refinement_does_not_hide_words(self) -> None:
         """Verify late word timings cannot regress an already rendered caption."""

@@ -2,15 +2,15 @@
 """VRAM preset resolution and runtime accounting helpers for Celune."""
 
 import math
-from dataclasses import dataclass
-from collections.abc import Iterator, Mapping
 from typing import Optional, cast
+from dataclasses import dataclass
+from collections.abc import Mapping, Iterator
 
 import torch
 from torch import nn
 
 from .constants import TIERS, VRAM_REQUIREMENTS
-from .typing.common import JSON, JSONSerializable, VramTier
+from .typing.common import JSON, VramTier, JSONSerializable
 
 QWEN3_0_6B_MODEL = "Qwen/Qwen3-TTS-12Hz-0.6B-Base"
 QWEN3_1_7B_MODEL = "Qwen/Qwen3-TTS-12Hz-1.7B-Base"
@@ -433,11 +433,16 @@ def _backend_report(backend: object, name: str) -> JSON:
     return backend_vram_report(name, getattr(backend, "model", None))
 
 
-def runtime_vram_report(runtime: object) -> JSON:
+def runtime_vram_report(
+    runtime: object,
+    extra_components: Optional[Mapping[str, object]] = None,
+) -> JSON:
     """Return process and per-component memory usage for an active runtime.
 
     Args:
         runtime: Celune runtime object whose active components should be measured.
+        extra_components: Additional main-process component names and tensor-owning
+            runtime objects to include in the report.
 
     Returns:
         JSON: Aggregate allocator memory and component-level memory usage.
@@ -490,6 +495,11 @@ def runtime_vram_report(runtime: object) -> JSON:
     agent_model = getattr(agent_handler, "model", None)
     if agent_model is not None:
         components.append(component_memory_usage("agent", agent_model, process))
+
+    if extra_components is not None:
+        for name, value in extra_components.items():
+            if value is not None:
+                components.append(component_memory_usage(name, value, process))
 
     return {
         "available": True,

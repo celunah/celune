@@ -205,7 +205,9 @@ warning and do not terminate the runtime.
 
 `/vram` reports each currently loaded component as
 `allocated/reserved/peak (device)`. It includes TTS, voice conversion, Persona,
-the normalizer, and the agent whether their tensors are on CUDA or the CPU.
+speech input, the normalizer, and the agent whether their tensors are on CUDA or
+the CPU. Persona recording and playback captions share one Whisper model, so
+speech input appears at most once in the report.
 When all three values are identical, the reserved and peak positions are shown
 as `-` because those per-component allocator statistics are not applicable.
 For CUDA components, allocated memory is the component's resident tensor

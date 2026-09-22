@@ -6,33 +6,33 @@ from __future__ import annotations
 import os
 import asyncio
 import threading
+from typing import TYPE_CHECKING, Optional, cast
 from pathlib import Path
 from urllib.parse import urlparse
 from collections.abc import Callable, Awaitable
-from typing import TYPE_CHECKING, Optional, cast
 
 import soundfile as sf
 
+from ..vc import (
+    VC_PITCH_SHIFT_MAX,
+    VC_PITCH_SHIFT_MIN,
+    clamp_vc_pitch_shift,
+)
 from ..i18n import string, tagged_string
+from ..vram import vram_report_int, format_vram_bytes, runtime_vram_report
 from ..paths import project_root
-from ..constants import APP_NAME
-from ..audio.server import restart_audio_server
-from ..exceptions import InvalidExtensionError
-from ..persona.capabilities import PersonaCapabilities
 from ..utils import (
     available,
     replace_ipa,
     format_number,
     format_error_message,
 )
-from ..vram import format_vram_bytes, runtime_vram_report, vram_report_int
 from ..cevoice import active_bundle_path, resolve_bundle_path
 from ..threads import run_in_daemon_thread
-from ..vc import (
-    VC_PITCH_SHIFT_MAX,
-    VC_PITCH_SHIFT_MIN,
-    clamp_vc_pitch_shift,
-)
+from ..constants import APP_NAME
+from ..exceptions import InvalidExtensionError
+from ..audio.server import restart_audio_server
+from ..persona.capabilities import PersonaCapabilities
 
 if TYPE_CHECKING:
     from .app import CeluneUI
@@ -80,6 +80,8 @@ def _vram_component_label(name: str) -> str:
     if category == "tts" and separator:
         return string("commands.vram_text_to_speech", backend=backend)
     if category == "vc" and separator:
+        return string("commands.vram_speech_input", backend=backend)
+    if category == "speech" and separator:
         return string("commands.vram_speech_input", backend=backend)
     if name == "persona":
         return string("commands.vram_language_model")
@@ -321,7 +323,12 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
         ui.safe_log(string("commands.help_help"))
         return
     if command == "vram":
-        report = runtime_vram_report(ui.celune)
+        speech_transcriber = getattr(ui, "_speech_transcriber", None)
+        speech_model = getattr(speech_transcriber, "loaded_model", None)
+        report = runtime_vram_report(
+            ui.celune,
+            {"speech/whisper": speech_model},
+        )
         ui.safe_log(string("commands.vram_header"))
         components = report.get("components")
         entries: list[tuple[str, bool, int, int, int, str]] = []

@@ -12,19 +12,17 @@ import os
 import re
 import json
 from uuid import uuid4
-from pathlib import Path
 from typing import Union, Optional, cast
+from pathlib import Path
 from collections.abc import Mapping, Sequence
 
 import torch
-from safetensors.torch import load_file
-from huggingface_hub import hf_hub_download
 from sentencepiece import SentencePieceProcessor
+from huggingface_hub import hf_hub_download
+from safetensors.torch import load_file
 
-from ...typing.common import JSONSerializable
-from ...paths import huggingface_hub_cache_dir
-from ...exceptions import NeedleSelectionError
 from .models import NeedleModel, NeedleConfig
+from ...paths import huggingface_hub_cache_dir
 from .checkpoints import (
     NEEDLE_MODEL_ID,
     NEEDLE_CONFIG_FILE,
@@ -34,8 +32,10 @@ from .checkpoints import (
     NEEDLE_TOKENIZER_FILE,
     NeedlePickleConverter,
     NeedlePreparedCheckpoint,
+    _expected_dtype,
     prepare_needle_checkpoint,
 )
+from ...exceptions import NeedleSelectionError
 from ...typing.agent import (
     ToolCall,
     AgentTool,
@@ -52,6 +52,7 @@ from ...typing.agent import (
     AgentToolArgumentSchema,
     NeedleToolParameterSpec,
 )
+from ...typing.common import JSONSerializable
 
 NEEDLE_TOOL_CALL_TOKEN_ID = 4
 NEEDLE_TOOLS_TOKEN_ID = 5
@@ -276,7 +277,7 @@ class NeedleHandler:
         selected_device = torch.device(
             device or ("cuda" if torch.cuda.is_available() else "cpu")
         )
-        model = NeedleModel(config)
+        model = NeedleModel(config).to(dtype=_expected_dtype(config_data))
         normalized_state = cast(
             dict[str, torch.Tensor],
             torch.load(converted_path, map_location="cpu", weights_only=True),
