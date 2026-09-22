@@ -614,8 +614,10 @@ class TestUICommand(CeluneTestCase):
                     "name": "tts/qwen3",
                     "loaded": True,
                     "available": True,
-                    "tensor_bytes": 1024**3,
-                    "tensor_count": 12,
+                    "device": "cuda:0",
+                    "allocated_bytes": 1024**3,
+                    "reserved_bytes": 3 * 1024**3,
+                    "peak_allocated_bytes": 4 * 1024**3,
                 }
             ],
         }
@@ -623,20 +625,16 @@ class TestUICommand(CeluneTestCase):
             self._process_command("vram", [])
 
         assert self.logs == [
-            ("--- CUDA memory ---", "info"),
+            ("--- Memory usage statistics ---", "info"),
             (
-                "Process total: 2.00 GiB allocated, 3.00 GiB reserved, 4.00 GiB peak",
+                "Text to speech (qwen3): 1.00 GiB/3.00 GiB/4.00 GiB (cuda:0)",
                 "info",
             ),
-            ("tts/qwen3: 1.00 GiB in 12 CUDA tensor storages", "info"),
-            (
-                "Allocated and reserved include runtime workspaces and caches.",
-                "info",
-            ),
+            ("Legend: allocated memory, reserved memory, peak memory", "info"),
         ]
 
-    def test_vram_command_omits_cpu_only_components(self) -> None:
-        """Verify /vram omits loaded components without CUDA tensor storage."""
+    def test_vram_command_reports_cpu_only_components(self) -> None:
+        """Verify /vram reports loaded components on the CPU."""
         report = {
             "available": True,
             "allocated_bytes": 2 * 1024**3,
@@ -647,8 +645,10 @@ class TestUICommand(CeluneTestCase):
                     "name": "normalizer",
                     "loaded": True,
                     "available": True,
-                    "tensor_bytes": 0,
-                    "tensor_count": 0,
+                    "device": "cpu",
+                    "allocated_bytes": 32 * 1024**2,
+                    "reserved_bytes": 32 * 1024**2,
+                    "peak_allocated_bytes": 32 * 1024**2,
                 }
             ],
         }
@@ -656,12 +656,12 @@ class TestUICommand(CeluneTestCase):
             self._process_command("vram", [])
 
         assert self.logs == [
-            ("--- CUDA memory ---", "info"),
+            ("--- Memory usage statistics ---", "info"),
             (
-                "Process total: 2.00 GiB allocated, 3.00 GiB reserved, 4.00 GiB peak",
+                "Normalizer: 32.00 MiB/32.00 MiB/32.00 MiB (cpu)",
                 "info",
             ),
-            ("Allocated and reserved include runtime workspaces and caches.", "info"),
+            ("Legend: allocated memory, reserved memory, peak memory", "info"),
         ]
 
     def test_common_commands_update_state_and_validate_inputs(self) -> None:

@@ -662,7 +662,7 @@ class CeluneBackend[ModelT](ABC):
         self._truncated_reference_paths.clear()
 
     def vram_report(self) -> JSON:
-        """Return the backend model's CUDA footprint and process memory."""
+        """Return the backend model's memory footprint and process memory."""
         return backend_vram_report(self.name, self.model)
 
     def preload_models(self) -> None:

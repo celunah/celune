@@ -67,7 +67,7 @@ class CeluneVCBackend(ABC):
         """
 
     def vram_report(self) -> JSON:
-        """Return the voice-conversion model's CUDA footprint and process memory."""
+        """Return the voice-conversion model's memory footprint and process memory."""
         return backend_vram_report(self.name, getattr(self, "model", None))
 
     @abstractmethod

@@ -1744,7 +1744,7 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
         self._request("call", method="disable_runtime_quantization")
 
     def vram_report(self) -> JSON:
-        """Return the worker process and backend model CUDA memory report."""
+        """Return the worker process and backend model memory report."""
         report = cast(JSON, self._request("call", method="vram_report"))
         report["process_scope"] = "worker"
         return report
@@ -2004,7 +2004,7 @@ class RemoteVCBackendProxy(CeluneVCBackend):
         self._worker._request("call", method="stop_live")
 
     def vram_report(self) -> JSON:
-        """Return the voice-conversion worker's CUDA memory report."""
+        """Return the voice-conversion worker's memory report."""
         return self._worker.vram_report()
 
     def close(self) -> None:

@@ -196,21 +196,23 @@ Commands are entered in the input box and start with `/`.
 | <code>/seed NUMBER&#124;random</code> | Set a backend seed or restore random seeds. |
 | `/tutorial` | Play the four bundled tutorial clips and demonstrate `/help`. |
 | `/stop` | Stop current speech. |
-| `/vram` | Report process CUDA allocation and the resident tensor footprint of active components. |
+| `/vram` | Report allocated, reserved, and peak memory for each active component. |
 | `/exit` | Exit the application. |
 
 `/help` hides commands that the current backend cannot use, so the list is a
 capability report rather than a fixed promise. Unknown commands are logged as a
 warning and do not terminate the runtime.
 
-`/vram` reports `allocated`, `reserved`, and peak CUDA memory. Its component
-lines count resident CUDA tensor storage for TTS, voice conversion, Persona,
-the normalizer, and the agent when they are loaded. Worker-backed TTS and VC
-backends report their memory from their own CEDTS processes, so their process
-allocations are included in the total. Runtime workspaces, caches, and
-temporary tensors are included in process totals but cannot be attributed to a
-single component. Loaded components with no CUDA tensor storage, such as a
-CPU-resident normalizer, are omitted from the component lines.
+`/vram` reports each currently loaded component as
+`allocated/reserved/peak (device)`. It includes TTS, voice conversion, Persona,
+the normalizer, and the agent whether their tensors are on CUDA or the CPU.
+For CUDA components, allocated memory is the component's resident tensor
+storage; reserved and peak memory are the allocator totals from the owning
+process because PyTorch does not attribute those values to individual model
+objects. For CPU components, all three values are the component's resident
+tensor storage because the CPU allocator has no corresponding per-component
+reserved or peak counters. Worker-backed TTS and VC backends report from their
+own CEDTS processes.
 
 ## Themes and lighting
 

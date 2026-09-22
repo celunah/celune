@@ -245,19 +245,18 @@ def agent_vram_compatible(
     return resolve_vram_preset(config).tier == "xhigh"
 
 
-def _iter_cuda_tensors(
+def _iter_component_tensors(
     value: object,
     seen: set[int],
     *,
     depth: int = 0,
 ) -> Iterator[torch.Tensor]:
-    """Yield CUDA tensors retained by one runtime object."""
+    """Yield tensors retained by one runtime object."""
     if depth > 8:
         return
 
     if isinstance(value, torch.Tensor):
-        if value.device.type == "cuda":
-            yield value
+        yield value
         return
 
     value_id = id(value)
@@ -266,33 +265,29 @@ def _iter_cuda_tensors(
     seen.add(value_id)
 
     if isinstance(value, nn.Module):
-        for tensor in value.parameters(recurse=True):
-            if tensor.device.type == "cuda":
-                yield tensor
-        for tensor in value.buffers(recurse=True):
-            if tensor.device.type == "cuda":
-                yield tensor
+        yield from value.parameters(recurse=True)
+        yield from value.buffers(recurse=True)
         attributes = vars(value)
         for name, attribute in attributes.items():
             if name in {"_parameters", "_buffers", "_modules"}:
                 continue
-            yield from _iter_cuda_tensors(attribute, seen, depth=depth + 1)
+            yield from _iter_component_tensors(attribute, seen, depth=depth + 1)
         return
 
     if isinstance(value, Mapping):
         for item in value.values():
-            yield from _iter_cuda_tensors(item, seen, depth=depth + 1)
+            yield from _iter_component_tensors(item, seen, depth=depth + 1)
         return
 
     if isinstance(value, (list, tuple, set, frozenset)):
         for item in value:
-            yield from _iter_cuda_tensors(item, seen, depth=depth + 1)
+            yield from _iter_component_tensors(item, seen, depth=depth + 1)
         return
 
     attributes = getattr(value, "__dict__", None)
     if isinstance(attributes, dict):
         for attribute in attributes.values():
-            yield from _iter_cuda_tensors(attribute, seen, depth=depth + 1)
+            yield from _iter_component_tensors(attribute, seen, depth=depth + 1)
 
 
 def _tensor_storage_size(tensor: torch.Tensor) -> tuple[int, int]:
@@ -315,33 +310,55 @@ def vram_report_int(
     return 0
 
 
-def cuda_component_usage(name: str, value: object) -> JSON:
-    """Return the resident CUDA tensor footprint of one runtime component.
+def component_memory_usage(
+    name: str,
+    value: object,
+    process: Optional[Mapping[str, JSONSerializable]] = None,
+) -> JSON:
+    """Return memory statistics for one runtime component.
 
     Args:
         name: Display name of the component being measured.
         value: Runtime object that owns the component's tensors.
+        process: Owning process CUDA allocator statistics, when available.
 
     Returns:
-        JSON: Component name, load state, tensor count, and deduplicated storage bytes.
+        JSON: Component name, load state, device, and memory statistics.
     """
     storage_keys: set[tuple[str, Optional[int], int, int]] = set()
+    devices: set[str] = set()
     tensor_bytes = 0
     tensor_count = 0
-    for tensor in _iter_cuda_tensors(value, set()):
+    for tensor in _iter_component_tensors(value, set()):
         pointer, size = _tensor_storage_size(tensor)
         key = (tensor.device.type, tensor.device.index, pointer, size)
         if key in storage_keys:
             continue
         storage_keys.add(key)
+        devices.add(str(tensor.device))
         tensor_bytes += size
         tensor_count += 1
+
+    if not devices:
+        device = getattr(value, "device", None)
+        device_name = str(device) if isinstance(device, torch.device) else "unknown"
+        devices.add(device_name)
+    device_name = ",".join(sorted(devices))
+
+    reserved_bytes = tensor_bytes
+    peak_allocated_bytes = tensor_bytes
+    if any(device.startswith("cuda") for device in devices) and process is not None:
+        reserved_bytes = vram_report_int(process, "reserved_bytes")
+        peak_allocated_bytes = vram_report_int(process, "peak_allocated_bytes")
 
     return {
         "name": name,
         "loaded": value is not None,
         "available": True,
-        "tensor_bytes": tensor_bytes,
+        "device": device_name,
+        "allocated_bytes": tensor_bytes,
+        "reserved_bytes": reserved_bytes,
+        "peak_allocated_bytes": peak_allocated_bytes,
         "tensor_count": tensor_count,
     }
 
@@ -379,7 +396,7 @@ def backend_vram_report(name: str, model: object) -> JSON:
     """Return one backend component and its owning process memory report."""
     process = cuda_process_memory()
     return {
-        "component": cuda_component_usage(name, model),
+        "component": component_memory_usage(name, model, process),
         "process_available": process["available"],
         "process_allocated_bytes": process["allocated_bytes"],
         "process_reserved_bytes": process["reserved_bytes"],
@@ -400,7 +417,10 @@ def _backend_report(backend: object, name: str) -> JSON:
                     "name": name,
                     "loaded": getattr(backend, "model", None) is not None,
                     "available": False,
-                    "tensor_bytes": 0,
+                    "device": "unknown",
+                    "allocated_bytes": 0,
+                    "reserved_bytes": 0,
+                    "peak_allocated_bytes": 0,
                     "tensor_count": 0,
                 }
             }
@@ -414,19 +434,19 @@ def _backend_report(backend: object, name: str) -> JSON:
 
 
 def runtime_vram_report(runtime: object) -> JSON:
-    """Return process and per-component CUDA usage for an active Celune runtime.
+    """Return process and per-component memory usage for an active runtime.
 
     Args:
         runtime: Celune runtime object whose active components should be measured.
 
     Returns:
-        JSON: Aggregate CUDA memory and component-level resident tensor usage.
+        JSON: Aggregate allocator memory and component-level memory usage.
     """
     process = cuda_process_memory()
     allocated = cast(int, process["allocated_bytes"])
     reserved = cast(int, process["reserved_bytes"])
     peak_allocated = cast(int, process["peak_allocated_bytes"])
-    available = cast(bool, process["available"])
+    cuda_available = cast(bool, process["available"])
     components: list[JSONSerializable] = []
     seen_backends: set[int] = set()
 
@@ -443,7 +463,7 @@ def runtime_vram_report(runtime: object) -> JSON:
         if isinstance(component, dict):
             components.append(cast(JSONSerializable, component))
         if report.get("process_scope") == "worker":
-            available = available or report.get("process_available") is True
+            cuda_available = cuda_available or report.get("process_available") is True
             allocated += vram_report_int(report, "process_allocated_bytes")
             reserved += vram_report_int(report, "process_reserved_bytes")
             peak_allocated += vram_report_int(report, "process_peak_allocated_bytes")
@@ -453,20 +473,27 @@ def runtime_vram_report(runtime: object) -> JSON:
     persona_backend = getattr(persona_runtime, "backend", None)
     persona_model = getattr(persona_backend, "model", None)
     if persona_model is not None:
-        components.append(cuda_component_usage("persona", persona_model))
+        components.append(component_memory_usage("persona", persona_model, process))
 
     normalizer = getattr(runtime, "llm", None)
     if normalizer is not None:
-        components.append(cuda_component_usage("normalizer", normalizer))
+        components.append(
+            component_memory_usage(
+                "normalizer",
+                (normalizer, getattr(runtime, "tokenizer", None)),
+                process,
+            )
+        )
 
     selector = getattr(runtime, "_agent_needle_selector", None)
     agent_handler = getattr(selector, "handler", None)
     agent_model = getattr(agent_handler, "model", None)
     if agent_model is not None:
-        components.append(cuda_component_usage("agent", agent_model))
+        components.append(component_memory_usage("agent", agent_model, process))
 
     return {
-        "available": available,
+        "available": True,
+        "cuda_available": cuda_available,
         "allocated_bytes": allocated,
         "reserved_bytes": reserved,
         "peak_allocated_bytes": peak_allocated,

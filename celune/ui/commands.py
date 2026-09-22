@@ -74,6 +74,22 @@ async def _run_runtime_async_on_loop(
     return bool(await run_in_daemon_thread(getattr(target, sync_name), *method_args))
 
 
+def _vram_component_label(name: str) -> str:
+    """Return the localized display label for one runtime component."""
+    category, separator, backend = name.partition("/")
+    if category == "tts" and separator:
+        return string("commands.vram_text_to_speech", backend=backend)
+    if category == "vc" and separator:
+        return string("commands.vram_speech_input", backend=backend)
+    if name == "persona":
+        return string("commands.vram_language_model")
+    if name == "normalizer":
+        return string("commands.vram_normalizer")
+    if name == "agent":
+        return string("commands.vram_agent")
+    return name
+
+
 def _attachment_source(path: Path) -> str:
     """Return a Persona-friendly attachment source string for one local file."""
     resolved = path.resolve()
@@ -289,47 +305,54 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
         return
     if command == "vram":
         report = runtime_vram_report(ui.celune)
-        if report.get("available") is not True:
-            ui.safe_log(string("commands.vram_unavailable"), "warning")
-            return
-
         ui.safe_log(string("commands.vram_header"))
-        ui.safe_log(
-            string(
-                "commands.vram_process",
-                allocated=format_vram_bytes(vram_report_int(report, "allocated_bytes")),
-                reserved=format_vram_bytes(vram_report_int(report, "reserved_bytes")),
-                peak=format_vram_bytes(vram_report_int(report, "peak_allocated_bytes")),
-            )
-        )
         components = report.get("components")
-        if not isinstance(components, list):
-            return
-        for component in components:
-            if not isinstance(component, dict):
-                continue
-            name = component.get("name")
-            if not isinstance(name, str):
-                continue
-            if component.get("available") is not True:
-                ui.safe_log(string("commands.vram_component_unavailable", name=name))
-                continue
-            if component.get("loaded") is not True:
-                ui.safe_log(string("commands.vram_component_not_loaded", name=name))
-                continue
-            tensor_bytes = vram_report_int(component, "tensor_bytes")
-            tensor_count = vram_report_int(component, "tensor_count")
-            if tensor_bytes == 0 and tensor_count == 0:
+        entries: list[tuple[str, bool, int, int, int, str]] = []
+        if isinstance(components, list):
+            for component in components:
+                if not isinstance(component, dict):
+                    continue
+                raw_name = component.get("name")
+                if not isinstance(raw_name, str) or component.get("loaded") is not True:
+                    continue
+                name = _vram_component_label(raw_name)
+                component_available = component.get("available") is True
+                device_value = component.get("device")
+                device = (
+                    device_value
+                    if isinstance(device_value, str)
+                    else string("commands.vram_device_unknown")
+                )
+                entries.append(
+                    (
+                        name,
+                        component_available,
+                        vram_report_int(component, "allocated_bytes"),
+                        vram_report_int(component, "reserved_bytes"),
+                        vram_report_int(component, "peak_allocated_bytes"),
+                        device,
+                    )
+                )
+
+        label_width = max((len(f"{name}:") for name, *_ in entries), default=0)
+        for name, component_available, allocated, reserved, peak, device in entries:
+            padded_name = f"{name}:".ljust(label_width)
+            if not component_available:
+                ui.safe_log(
+                    string("commands.vram_component_unavailable", name=padded_name)
+                )
                 continue
             ui.safe_log(
                 string(
                     "commands.vram_component",
-                    name=name,
-                    usage=format_vram_bytes(tensor_bytes),
-                    tensors=tensor_count,
+                    name=padded_name,
+                    allocated=format_vram_bytes(allocated),
+                    reserved=format_vram_bytes(reserved),
+                    peak=format_vram_bytes(peak),
+                    device=device,
                 )
             )
-        ui.safe_log(string("commands.vram_note"))
+        ui.safe_log(string("commands.vram_legend"))
         return
     if command == "settings":
         open_settings = getattr(ui, "open_settings_menu", None)
