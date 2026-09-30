@@ -127,11 +127,13 @@ Celune comes with three default packs, containing both newer and older revisions
 
 The packs are:
 
-| Pack               | File                  | Released     | Description                                                                         |
-|--------------------|-----------------------|--------------|-------------------------------------------------------------------------------------|
-| Classic            | classic.cevoice       | Mar 19, 2026 | Classic Celune voices from her initial inception.                                   |
-| Natural            | default_sep19.cevoice | Sep 19, 2026 | Celune's 6-month anniversary voices.                                                |
-| Classic Remastered | default.cevoice       | Sep 30, 2026 | New and improved voices that sound natural, and maintain Celune's classic identity. |
+| Pack               | File                  | Released      | Description                                                                         |
+|--------------------|-----------------------|---------------|-------------------------------------------------------------------------------------|
+| Classic            | classic.cevoice       | Mar 19, 2026* | Classic Celune voices from her initial inception.                                   |
+| Natural            | default_sep19.cevoice | Sep 19, 2026  | Celune's 6-month anniversary voices.                                                |
+| Classic Remastered | default.cevoice       | Sep 30, 2026  | New and improved voices that sound natural, and maintain Celune's classic identity. |
+
+<sub><sup>*Based on Celune's voice debut date. Pack support was released May 16, 2026.</sup></sub>
 
 Browse the `demos` directory for demonstration content from the current version of Celune, as well as any past releases.
 
