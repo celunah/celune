@@ -2147,12 +2147,10 @@ async def playback_worker_job(engine: Celune) -> None:
         marker = pending_idle_marker
         if marker is None:
             return
-        if engine.locked or engine.cur_state in {
-            "error",
-            "reloading",
-            "stopped",
-        }:
+        if engine.cur_state in {"error", "reloading", "stopped"}:
             pending_idle_marker = None
+            return
+        if engine.locked:
             return
         if not playback_is_idle():
             return
