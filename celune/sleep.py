@@ -123,11 +123,25 @@ def enter_sleep_mode(self) -> bool:
         return False
 
     with self.say_lock:
+        playback_active = self._any_playback_active()
         if (
             self.locked
-            or self.cur_state in {"generating", "speaking", "reloading"}
-            or self._any_playback_active()
+            or self.cur_state
+            in {
+                "generating",
+                "speaking",
+                "reloading",
+            }
+            or playback_active
         ):
+            self.log(
+                "[SLEEP] enter deferred "
+                f"locked={self.locked} state={self.cur_state} "
+                f"playback_active={playback_active} "
+                f"playback_sources={len(self._playback_source_meta)} "
+                f"playback_done={self.playback_done.is_set()}",
+                loglevel="debug",
+            )
             return False
         self.sleeping = True
         self.loaded = False

@@ -2107,6 +2107,9 @@ async def playback_worker_job(engine: Celune) -> None:
     buffering_started_at: Optional[float] = None
     rebuffer_wait_started_at: Optional[float] = None
     pending_idle_marker: Optional[PlaybackSourceDone] = None
+    last_idle_wait_state: Optional[tuple[int, bool, int, int, int, int, int, bool]] = (
+        None
+    )
 
     def playback_queue_empty() -> bool:
         """Return whether both stages of the playback input queue are empty."""
@@ -2143,18 +2146,45 @@ async def playback_worker_job(engine: Celune) -> None:
 
     def finalize_pending_idle() -> None:
         """Deliver a deferred idle callback after the final queue stage drains."""
-        nonlocal pending_idle_marker
+        nonlocal last_idle_wait_state, pending_idle_marker
         marker = pending_idle_marker
         if marker is None:
             return
         if engine.cur_state in {"error", "reloading", "stopped"}:
             pending_idle_marker = None
+            last_idle_wait_state = None
             return
-        if engine.locked:
-            return
-        if not playback_is_idle():
+        if engine.locked or not playback_is_idle():
+            wait_state = (
+                marker.source_id,
+                engine.locked,
+                len(source_buffers),
+                len(source_done),
+                input_reader.qsize(),
+                engine.audio_queue.qsize(),
+                engine.text_queue.qsize(),
+                writer.pending_seconds > 0.0,
+            )
+            if wait_state != last_idle_wait_state:
+                engine.log(
+                    "[IDLE] completion deferred "
+                    f"source={marker.source_id} locked={engine.locked} "
+                    f"source_buffers={len(source_buffers)} "
+                    f"source_done={len(source_done)} "
+                    f"reader_queue={input_reader.qsize()} "
+                    f"audio_queue={engine.audio_queue.qsize()} "
+                    f"text_queue={engine.text_queue.qsize()} "
+                    f"writer_pending={writer.pending_seconds:.3f}s",
+                    loglevel="debug",
+                )
+                last_idle_wait_state = wait_state
             return
         pending_idle_marker = None
+        last_idle_wait_state = None
+        engine.log(
+            f"[IDLE] playback complete source={marker.source_id}",
+            loglevel="debug",
+        )
         _finalize_playback_idle(
             engine,
             saved_path=marker.saved_path,
