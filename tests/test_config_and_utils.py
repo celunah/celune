@@ -4,13 +4,17 @@
 import math
 import datetime
 from unittest import mock
+from types import SimpleNamespace
 from collections.abc import Mapping
 from typing import Literal, Optional, cast
+
 import pytest
-from celune import config, utils
+
+from celune import utils, config
 from celune.typing.common import JSON, JSONSerializable
 
 from .support import CeluneTestCase
+from .platform import WINDOWS_ONLY
 
 
 class TestConfig(CeluneTestCase):
@@ -61,33 +65,34 @@ class TestConfig(CeluneTestCase):
         assert config.config_audio_device({"device": 3}, "device") == 3
         assert config.config_audio_device({"device": True}, "device") is None
 
+    @WINDOWS_ONLY
     def test_config_audio_device_appends_windows_hostapi_from_audio_api(self) -> None:
         """Verify Windows audio config auto-appends the selected host API."""
-        with mock.patch("celune.config.os.name", "nt"):
-            assert (
-                config.config_audio_device(
-                    {"device": "Razer Kraken V4 - Chat", "audio_api": "wasapi"},
-                    "device",
-                )
-                == "Razer Kraken V4 - Chat, Windows WASAPI"
+        assert (
+            config.config_audio_device(
+                {"device": "Razer Kraken V4 - Chat", "audio_api": "wasapi"},
+                "device",
             )
+            == "Razer Kraken V4 - Chat, Windows WASAPI"
+        )
 
+    @WINDOWS_ONLY
     def test_config_audio_device_preserves_explicit_windows_hostapi_suffix(
         self,
     ) -> None:
         """Verify an explicit Windows host API suffix is kept stable."""
-        with mock.patch("celune.config.os.name", "nt"):
-            assert (
-                config.config_audio_device(
-                    {
-                        "device": "Razer Kraken V4 - Chat, Windows DirectSound",
-                        "audio_api": "wasapi",
-                    },
-                    "device",
-                )
-                == "Razer Kraken V4 - Chat, Windows DirectSound"
+        assert (
+            config.config_audio_device(
+                {
+                    "device": "Razer Kraken V4 - Chat, Windows DirectSound",
+                    "audio_api": "wasapi",
+                },
+                "device",
             )
+            == "Razer Kraken V4 - Chat, Windows DirectSound"
+        )
 
+    @WINDOWS_ONLY
     def test_config_audio_api_accepts_supported_windows_hostapis(self) -> None:
         """Verify Windows host API config only accepts supported values."""
         assert config.config_audio_api({}) is None
@@ -183,6 +188,7 @@ class TestConfig(CeluneTestCase):
 
         assert resolved == 0
 
+    @WINDOWS_ONLY
     def test_resolve_audio_device_filters_windows_hostapi_matches(self) -> None:
         """Verify Windows host API config resolves ambiguous device names cleanly."""
         devices = [
@@ -202,7 +208,6 @@ class TestConfig(CeluneTestCase):
         hostapis = [{"name": "Windows DirectSound"}, {"name": "Windows WASAPI"}]
 
         with (
-            mock.patch("celune.config.os.name", "nt"),
             mock.patch("sounddevice.query_devices", return_value=devices),
             mock.patch("sounddevice.query_hostapis", return_value=hostapis),
         ):
@@ -217,6 +222,7 @@ class TestConfig(CeluneTestCase):
 
         assert resolved == 1
 
+    @WINDOWS_ONLY
     def test_resolve_audio_device_returns_exact_index_after_direct_query_on_windows(
         self,
     ) -> None:
@@ -239,7 +245,6 @@ class TestConfig(CeluneTestCase):
         hostapis = [{"name": "Windows DirectSound"}, {"name": "Windows WASAPI"}]
 
         with (
-            mock.patch("celune.config.os.name", "nt"),
             mock.patch(
                 "sounddevice.query_devices",
                 side_effect=[direct_info, devices],
@@ -257,6 +262,7 @@ class TestConfig(CeluneTestCase):
 
         assert resolved == 1
 
+    @WINDOWS_ONLY
     def test_resolve_audio_device_accepts_sequence_results_from_sounddevice(
         self,
     ) -> None:
@@ -282,7 +288,6 @@ class TestConfig(CeluneTestCase):
         )
 
         with (
-            mock.patch("celune.config.os.name", "nt"),
             mock.patch(
                 "sounddevice.query_devices",
                 side_effect=[direct_info, devices],
@@ -300,6 +305,7 @@ class TestConfig(CeluneTestCase):
 
         assert resolved == 1
 
+    @WINDOWS_ONLY
     def test_resolve_audio_device_accepts_appended_windows_hostapi_selector(
         self,
     ) -> None:
@@ -321,7 +327,6 @@ class TestConfig(CeluneTestCase):
         hostapis = [{"name": "Windows DirectSound"}, {"name": "Windows WASAPI"}]
 
         with (
-            mock.patch("celune.config.os.name", "nt"),
             mock.patch("sounddevice.query_devices", return_value=devices),
             mock.patch("sounddevice.query_hostapis", return_value=hostapis),
         ):
@@ -337,13 +342,13 @@ class TestConfig(CeluneTestCase):
 
         assert resolved == 1
 
+    @WINDOWS_ONLY
     def test_format_audio_device_name_appends_windows_hostapi(self) -> None:
         """Verify runtime labels show the Windows host API when available."""
-        with mock.patch("celune.config.os.name", "nt"):
-            label = config.format_audio_device_name(
-                {"name": "Microphone", "hostapi": 1},
-                [{"name": "MME"}, {"name": "Windows WASAPI"}],
-            )
+        label = config.format_audio_device_name(
+            {"name": "Microphone", "hostapi": 1},
+            [{"name": "MME"}, {"name": "Windows WASAPI"}],
+        )
 
         assert label == "Microphone, Windows WASAPI"
 
@@ -404,9 +409,60 @@ class TestConfig(CeluneTestCase):
         assert not changed
         assert merged == {"api": False}
 
+    def test_merge_missing_defaults_removes_unknown_schema_keys(self) -> None:
+        """Verify removed configuration options are pruned at the schema boundary."""
+        current: Mapping[str, JSONSerializable] = {
+            "backend": "mini",
+            "gpt_sovits_root": "C:/old-runtime",
+            "gpt_sovits_variant": "v4",
+            "gpt_sovits_t2s_weights_path": "C:/old-weights.pth",
+            "persona": {
+                "context_size": 8192,
+                "removed_option": True,
+            },
+        }
+        defaults: JSON = {
+            "backend": None,
+            "persona": {"context_size": 4096},
+        }
+
+        merged, changed = config.merge_missing_defaults(current, defaults)
+
+        assert changed
+        assert merged == {"backend": "mini", "persona": {"context_size": 8192}}
+        assert current["gpt_sovits_root"] == "C:/old-runtime"
+        assert current["gpt_sovits_variant"] == "v4"
+        assert current["gpt_sovits_t2s_weights_path"] == "C:/old-weights.pth"
+
 
 class TestUtils(CeluneTestCase):
     """Tests for lightweight common utility functions."""
+
+    def test_available_checks_namespaces_attributes_and_modules(self) -> None:
+        """Verify the supported name, attribute, and module lookup modes."""
+        local_value = None
+        explicit_namespace = {"explicit_value": None}
+        owner = SimpleNamespace(attribute=None)
+
+        assert local_value is None
+        assert utils.available("local_value")
+        assert utils.available("utils")
+        assert utils.available("len")
+        assert not utils.available("missing_value")
+        assert utils.available("explicit_value", scope=explicit_namespace)
+        assert not utils.available("missing_value", scope=explicit_namespace)
+        assert not utils.available("json", scope=explicit_namespace)
+        assert utils.available("attribute", obj=owner)
+        assert not utils.available("missing_attribute", obj=owner)
+        assert utils.available("json")
+
+        with mock.patch("celune.utils.importlib.util.find_spec", return_value=None):
+            assert not utils.available("missing_module")
+
+    def test_available_rejects_conflicting_lookup_modes(self) -> None:
+        """Verify lookup modes cannot silently override one another."""
+        with pytest.raises(TypeError, match="obj cannot be combined"):
+            utils.available("attribute", SimpleNamespace(), {"attribute"})
 
     def test_special_character_normalization_keeps_default_mode_and_formats_tts(
         self,
@@ -498,19 +554,15 @@ class TestUtils(CeluneTestCase):
             AssertionError: Utility behavior changes unexpectedly.
         """
         utils.custom_assert(True, RuntimeError("unused"))
-        assert True
 
         with pytest.raises(RuntimeError, match="failed"):
             utils.custom_assert(False, RuntimeError("failed"))
-            assert False
 
         with pytest.raises(AssertionError):
             utils.custom_assert(False, None)
-            assert False
 
         with pytest.raises(TypeError):
             utils.custom_assert(False, "invalid")  # type: ignore[arg-type]
-            assert False
 
         result = utils.detect_language("Hello, how are you today?", ["en"])
         assert result["language"] == "en"

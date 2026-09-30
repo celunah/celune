@@ -1,35 +1,18 @@
-"""Celune Pytest hooks, handlers, and worker isolation."""
+"""Celune pytest configuration and worker isolation."""
 # SPDX-License-Identifier: Apache-2.0
 
 import atexit
 import os
 import shutil
-import sys
 import tempfile
-from collections.abc import Generator, Iterator
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Literal, Optional, TypedDict, Union
+from typing import Literal, Optional, Union
 
 import pytest
 
 
-class CollectionError(TypedDict):
-    """A collection error type."""
-
-    nodeid: str
-    details: str
-
-
-class TestFailure(TypedDict):
-    """A test execution failure type."""
-
-    nodeid: str
-    phase: str
-    details: str
-
-
-collection_errors: list[CollectionError] = []
-test_failures: list[TestFailure] = []
+pytest_plugins = ("tests.celtest",)
 
 
 def _configure_worker_data_root() -> None:
@@ -73,29 +56,6 @@ def pytest_configure(config: pytest.Config) -> None:
     _configure_worker_data_root()
 
 
-def pytest_collectreport(report: pytest.CollectReport) -> None:
-    """Pytest collection report hook."""
-    if report.failed:
-        collection_errors.append(
-            {
-                "nodeid": report.nodeid,
-                "details": str(report.longrepr),
-            }
-        )
-
-
-def pytest_runtest_logreport(report: pytest.TestReport) -> None:
-    """Track setup, call, and teardown failures from normal test execution."""
-    if report.failed:
-        test_failures.append(
-            {
-                "nodeid": report.nodeid,
-                "phase": report.when,
-                "details": str(report.longrepr),
-            }
-        )
-
-
 @pytest.fixture(autouse=True)
 def celune_test_context(
     request: pytest.FixtureRequest,
@@ -103,61 +63,3 @@ def celune_test_context(
     """Celune's test context."""
     del request
     yield
-
-
-def truecolor_separator(
-    text: str,
-    r: int,
-    g: int,
-    b: int,
-    sep: str = "=",
-) -> str:
-    """Return a centered True Color terminal separator."""
-    width = shutil.get_terminal_size(fallback=(80, 24)).columns
-    content = f" {text} "
-    remaining = max(0, width - len(content))
-    left = remaining // 2
-    right = remaining - left
-    color = f"\033[38;2;{r};{g};{b}m"
-    reset = "\033[0m"
-    return f"{color}{sep * left}{content}{sep * right}{reset}"
-
-
-@pytest.hookimpl(wrapper=True, tryfirst=True)
-def pytest_sessionfinish(
-    session: pytest.Session,
-    exitstatus: pytest.ExitCode,
-) -> Generator:
-    """Pytest session finish hook."""
-    yield
-
-    if not collection_errors and not test_failures:
-        return
-
-    terminalreporter = session.config.pluginmanager.get_plugin("terminalreporter")
-
-    if terminalreporter is not None:
-        terminalreporter.write_line(
-            truecolor_separator("test failure hint", 206, 186, 255)
-        )
-        if collection_errors:
-            terminalreporter.write_line(
-                f"Collection failures recorded: {len(collection_errors)}"
-            )
-        if test_failures:
-            terminalreporter.write_line(f"Test failures recorded: {len(test_failures)}")
-            first_failure = test_failures[0]
-            terminalreporter.write_line(
-                "Run the first failing test directly with: `"
-                f"uv run pytest {first_failure['nodeid']} -vv"
-                "`."
-            )
-        else:
-            terminalreporter.write_line(
-                "Run collection diagnostics with: `uv run pytest --collect-only -vv`."
-            )
-        terminalreporter.write_line(
-            "If it still fails, inspect the first traceback and verify the test environment."
-        )
-
-    sys.exit(exitstatus)

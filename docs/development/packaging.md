@@ -15,14 +15,29 @@ powershell -ExecutionPolicy Bypass -File scripts\build_nuitka.ps1
 bash scripts/build_nuitka.sh
 ```
 
+## Python build target
+
+Celune source installations support Python 3.12 through 3.14. Compiled
+artifacts use Python 3.13 deliberately so v4 and v5 releases share one
+CPython ABI. Both build scripts pin the Nuitka invocation to Python 3.13.
+
+The compiled build remains a deployment build rather than a fully standalone
+bundle, so its `.venv` must use the matching Python 3.13 runtime. Python 3.14
+remains available for source development and source-based launches; a Python
+3.14 `.venv` cannot run the compiled 3.13 executable.
+
 Windows builds use Nuitka, Visual Studio C++ tools, the launcher C sources,
 the project icon/resource, and `scripts/write_update_manifest.py`. The Windows
 script refreshes `resources/vcruntime140.dll` from the configured Visual Studio
 14.44.35112 CRT installation, includes Windows runtime DLLs during Nuitka
 compilation, places that exact DLL beside both release executables, and adds it
 to the update manifest and archive. Linux builds need GCC, `appimagetool`, and
-`zip`, then produce the executable, AppImage, and archive. The scripts stop
-existing Celune processes before replacing build artifacts.
+`zip`, then produce the executable, AppImage, and archive. Before replacing
+Windows build artifacts, the script force-stops existing Celune processes,
+waits up to thirty seconds for their process handles to exit, and retries
+transient locked-file cleanup for up to five seconds. A persistent lock still
+fails the build with the original cleanup error instead of producing a partial
+package.
 
 Typical output files are:
 

@@ -28,10 +28,7 @@ __all__ = [
     "backend_manifest",
 ]
 
-_WORKER_HUGGINGFACE_REQUIREMENTS = (
-    "huggingface-hub>=0.36,<1.0.0",
-    "hf-xet",
-    "transformers>=4.56,<5.0.0",
+_WORKER_SHARED_REQUIREMENTS = (
     "lingua-language-detector>=2.2.0,<3.0.0",
     "librosa==0.11.0",
     "llvmlite==0.47.0",
@@ -43,6 +40,18 @@ _WORKER_HUGGINGFACE_REQUIREMENTS = (
     "sounddevice",
     "soundfile",
     "zstandard",
+)
+_WORKER_HUGGINGFACE_REQUIREMENTS = (
+    "huggingface-hub>=0.36,<1.0.0",
+    "hf-xet",
+    "transformers>=4.56,<5.0.0",
+    *_WORKER_SHARED_REQUIREMENTS,
+)
+_FIRERED_WORKER_HUGGINGFACE_REQUIREMENTS = (
+    "huggingface-hub>=1.5.0,<2.0.0",
+    "hf-xet",
+    "transformers==5.6.2",
+    *_WORKER_SHARED_REQUIREMENTS,
 )
 _MAIN_BRANCH_PYTORCH_REQUIREMENTS = (
     "torch==2.11.0+cu128",
@@ -69,12 +78,17 @@ class BackendManifest:
     python: Optional[str] = None
     runtime: Optional[str] = None
     index_urls: tuple[str, ...] = ()
+    find_links: tuple[str, ...] = ()
+    ignore_uv_sources: bool = False
     revision: int = 1
 
     def fingerprint(self) -> str:
         """Return the stable environment fingerprint for this manifest."""
+        manifest_data = asdict(self)
+        if not self.ignore_uv_sources:
+            manifest_data.pop("ignore_uv_sources", None)
         payload = {
-            "manifest": asdict(self),
+            "manifest": manifest_data,
             "machine": platform.machine().lower(),
             "platform": sys.platform,
             "python": self.python or _DEFAULT_BACKEND_PYTHON,
@@ -142,6 +156,20 @@ BACKEND_MANIFESTS = {
         backend_class="Qwen3",
         index_urls=_PYTORCH_INDEX_URLS,
     ),
+    "fireredtts3": BackendManifest(
+        backend_id="fireredtts3",
+        kind="tts",
+        requirements=(
+            *_MAIN_BRANCH_PYTORCH_REQUIREMENTS,
+            *_FIRERED_WORKER_HUGGINGFACE_REQUIREMENTS,
+            "einops==0.8.2",
+            "regex",
+            "torchcodec==0.16.0",
+        ),
+        backend_module="celune.backends.tts.fireredtts3",
+        backend_class="FireRedTTS3",
+        index_urls=_PYTORCH_INDEX_URLS,
+    ),
     "dotstts": BackendManifest(
         backend_id="dotstts",
         kind="tts",
@@ -168,36 +196,32 @@ BACKEND_MANIFESTS = {
         python="3.12",
         index_urls=_PYTORCH_INDEX_URLS,
     ),
-    "gpt-sovits": BackendManifest(
-        backend_id="gpt-sovits",
+    "luxtts": BackendManifest(
+        backend_id="luxtts",
         kind="tts",
         requirements=(
             *_MAIN_BRANCH_PYTORCH_REQUIREMENTS,
             *_WORKER_HUGGINGFACE_REQUIREMENTS,
+            "onnxruntime",
+            "lhotse",
+            "safetensors",
+            "tensorboard",
+            "vocos",
+            "pydub",
+            "piper-phonemize",
             "cn2an",
-            "ffmpeg-python",
-            "g2p-en",
-            "g2pk2",
             "jieba",
-            "jieba-fast",
-            "ko-pron",
-            "matplotlib",
-            "opencc",
-            "peft<0.18.0",
             "pypinyin",
-            "pytorch-lightning>=2.4",
-            "pyopenjtalk>=0.4.1",
-            "rotary-embedding-torch",
-            "split-lang",
-            "tojyutping",
-            "torchmetrics<=1.5",
-            "torchcodec",
-            "wordsegment",
-            "x-transformers",
+            "inflect",
+            "setuptools<81",
+            "zipvoice @ git+https://github.com/ysharma3501/LuxTTS.git",
+            "linacodec @ git+https://github.com/ysharma3501/LinaCodec.git",
         ),
-        backend_module="celune.backends.tts.gpt_sovits",
-        backend_class="GPTSoVITS",
+        backend_module="celune.backends.tts.luxtts",
+        backend_class="LuxTTS",
         index_urls=_PYTORCH_INDEX_URLS,
+        find_links=("https://k2-fsa.github.io/icefall/piper_phonemize.html",),
+        ignore_uv_sources=True,
     ),
     "seed-vc": BackendManifest(
         backend_id="seed-vc",
@@ -347,6 +371,8 @@ class BackendEnvironmentManager:
                     "--python",
                     str(self._python_path(virtualenv)),
                 ]
+                if manifest.ignore_uv_sources:
+                    install_arguments.append("--no-sources")
                 if manifest.index_urls:
                     install_arguments.extend(
                         [
@@ -360,6 +386,12 @@ class BackendEnvironmentManager:
                             for index_url in manifest.index_urls[1:]
                             for item in ("--extra-index-url", index_url)
                         ]
+                    )
+                if manifest.find_links:
+                    install_arguments.extend(
+                        item
+                        for find_link in manifest.find_links
+                        for item in ("--find-links", find_link)
                     )
                 self._run_uv(*install_arguments, *manifest.requirements)
                 metadata = {
@@ -391,9 +423,7 @@ class BackendEnvironmentManager:
         """Run one uv operation and convert failures into backend errors."""
         assert self.uv_executable is not None
         environment = os.environ.copy()
-        # The compiled launcher and its host environment may carry core Python
-        # or package-manager settings into uv. Those settings can constrain
-        # backend resolution, so the isolated installer must not inherit them.
+
         for variable in tuple(environment):
             if variable.startswith(("PIP_", "UV_")):
                 environment.pop(variable, None)
@@ -411,6 +441,8 @@ class BackendEnvironmentManager:
                 check=True,
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=self.uv_timeout,
                 env=environment,
             )

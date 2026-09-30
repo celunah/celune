@@ -60,13 +60,52 @@ status and diagnostic text stays in the loading screen or main log.
 2. The engine validates the current mode and component locks.
 3. Text is normalized/segmented and placed in the bounded text queue.
 4. The backend generates chunks, locally or through a CEDTS worker.
-5. The smart buffer decides when to start and how to protect playback.
+5. The smart buffer and contention monitor decide when to start and how much
+   output reserve to maintain.
 6. Audio is resampled/normalized, optionally pitch-shifted or reverberated.
-7. The audio worker writes to the sounddevice stream and emits lifecycle events.
+7. A persistent playback input reader feeds the mixer, and a persistent audio
+   writer drains mixed blocks to the sounddevice stream. The mixer yields
+   briefly after each submitted block so the writer can keep its reserve moving
+   during CPU contention. Playback traces are sampled rather than written for
+   every block, separating bounded-queue backpressure, per-source generation
+   gaps, writer scheduling gaps, stream-write duration, and adaptive rebuffer
+   waiting without adding file I/O to the audio clock. The writer tracks pending
+   reserve in audio frames, so a drained output queue reaches an exact zero for
+   completion and idle transitions.
 8. The final 48 kHz stereo FLAC is saved when requested.
 
 Cancellation travels through the same queue and worker boundary. It does not
 create a second “stop” path that could leave a backend generation alive.
+Playback completion is source-aware: speech completion closes speech captions
+without waiting for unrelated SFX overlays, while the global idle transition
+still waits for every source and deferred queue-reader handoffs. A completion
+marker retains its idle notification until the final playback stage drains, so
+readiness and speech cannot leave the runtime in a stale speaking state.
+Output failures clear the source maps, mark
+playback complete, and release any held pipeline lease.
+Automatic sleep also waits for every registered playback source, including SFX
+overlays, before unloading runtime state.
+
+## Async coordination and blocking boundaries
+
+The API task WebSocket uses an `asyncio.Queue` owned by its event loop. Core
+callbacks may publish from generation or playback threads through a
+thread-safe loop callback, while WebSocket send and receive tasks remain native
+async workers. The UI GPU sampler follows the same boundary: its
+`nvidia-smi` query uses an asyncio subprocess task, while synchronous footer
+renderers read the latest cached sample.
+
+Model inference, audio devices, voice conversion, Persona transcription, VAD,
+CEDTS IPC, and other blocking or native operations remain on their
+dedicated threads or processes. An async-facing method for one of those
+operations does not make the operation native async; it only keeps the caller's
+event loop responsive while the synchronous work runs elsewhere.
+
+Celune-owned async wrappers run blocking callables in daemon threads rather
+than `asyncio`'s default executor. Cancelling an async wrapper cannot safely
+kill arbitrary Python code already executing in a thread, so shutdown first
+signals the owning backend or process through its cancellation hook and then
+allows the daemon worker to be abandoned without delaying process exit.
 
 ## Component locks
 
@@ -104,6 +143,7 @@ converge on idempotent teardown. Active live recording is stopped, workers are
 asked to shut down, streams are closed, models release their state, and event
 listeners receive terminal notifications. Pipeline blocking work uses daemon
 threads rather than the event loop's default executor, so a cancelled backend
-operation cannot make `asyncio.run()` wait for the executor's 300-second join
-window during restart. A fatal state can stop generation without pretending
-that the engine is healthy.
+or reload operation cannot make `asyncio.run()` wait for the executor's
+300-second join window during restart. CEDTS backends receive an abort/shutdown
+request before their daemon caller is abandoned. A fatal state can stop
+generation without pretending that the engine is healthy.

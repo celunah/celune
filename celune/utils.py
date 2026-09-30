@@ -7,12 +7,13 @@ import math
 import time
 import random
 import inspect
+import importlib.util
 import datetime
 import traceback
 import subprocess
 import multiprocessing
 from pathlib import Path
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Container
 from typing import Any, Union, TextIO, Literal, Optional, overload
 
 import psutil
@@ -844,3 +845,53 @@ def _normalize_tts_token(match: re.Match[str]) -> str:
     if not is_technical:
         return token
     return token.replace("_", " underscore ").replace(".", " dot ")
+
+
+def available(
+    name: str,
+    obj: Optional[object] = None,
+    scope: Optional[Container[str]] = None,
+) -> bool:
+    """Check whether a name, object attribute, or module is available.
+
+    Args:
+        name: The variable or module name to check, or the attribute name when ``obj`` is provided.
+        obj: An object whose attribute named ``name`` should be checked. Attribute access follows ``hasattr()``
+            semantics and may evaluate descriptors.
+        scope: An explicit namespace to search for ``name``. When omitted, the caller's local, global, and builtin
+            namespaces are searched before checking for a module import specification.
+
+    Returns:
+        bool: Whether the requested name, attribute, or module import specification exists.
+
+    Raises:
+        TypeError: Both ``obj`` and ``scope`` are provided.
+    """
+    if obj is not None and scope is not None:
+        raise TypeError("obj cannot be combined with scope")
+
+    if obj is not None:
+        return hasattr(obj, name)
+
+    if scope is not None:
+        return name in scope
+
+    frame = inspect.currentframe()
+    try:
+        if frame is None or frame.f_back is None:
+            return False
+
+        caller = frame.f_back
+        if (
+            name in caller.f_locals
+            or name in caller.f_globals
+            or name in caller.f_builtins
+        ):
+            return True
+
+        try:
+            return importlib.util.find_spec(name) is not None
+        except (ImportError, ValueError):
+            return False
+    finally:
+        del frame

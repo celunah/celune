@@ -450,13 +450,17 @@ class FakeStream:
         """Record stream closure."""
         self.closed = True
 
-    def write(self, audio: npt.NDArray[np.float32]) -> None:
+    def write(self, audio: npt.NDArray[np.float32]) -> bool:
         """Record one written audio chunk.
 
         Args:
             audio: The audio chunk written by the caller.
+
+        Returns:
+            bool: ``False`` because the fake stream never underflows.
         """
         self.written.append(audio)
+        return False
 
 
 def make_pipeline_engine() -> SimpleNamespace:
@@ -501,6 +505,16 @@ def make_pipeline_engine() -> SimpleNamespace:
     engine._audio_unavailable = False
     engine.smart_buffer_generation_speed = None
     engine.smart_buffer_target_seconds = 0.0
+    engine.playback_buffer_seconds = 0.0
+    engine.playback_contention_level = 0.0
+    engine.playback_underflows = 0
+    engine.playback_queue_wait_seconds = 0.0
+    engine.playback_generation_gap_seconds = 0.0
+    engine.playback_writer_wait_seconds = 0.0
+    engine.playback_writer_gap_seconds = 0.0
+    engine.playback_writer_write_seconds = 0.0
+    engine.playback_rebuffer_wait_seconds = 0.0
+    engine._playback_trace_last_logged_at = 0.0
     engine.total_generated_speech_seconds = 0.0
     engine.historical_generated_speech_seconds = 0.0
     engine.text_queue = queue.Queue()
@@ -513,6 +527,7 @@ def make_pipeline_engine() -> SimpleNamespace:
     engine.utterance_force_stop = threading.Event()
     engine.speech_generation = 0
     engine._playback_generation = 0
+    engine._playback_chunk_last_queued_at = {}
     engine.kept_sfx_audio = None
     engine.force_stop_marker = PipelineStates.UTTERANCE_FORCE_END
     engine.log = lambda msg, severity="info", **kwargs: messages.append((msg, severity))

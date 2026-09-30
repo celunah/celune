@@ -3,9 +3,11 @@
 Celune loads YAML configuration from the user application-data directory. The
 `configure.py` setup helper creates `config.yaml` from the repository's
 `default_config.yaml`; if setup was skipped, the first launch creates it
-instead. Celune then merges newly introduced defaults into an existing file
-without discarding the user's values. `celune config view` prints the active
-file and `celune config edit` opens it in the system editor.
+instead. On startup, Celune synchronizes an existing file with the current
+default schema: known user values are preserved, new defaults are added, and
+obsolete options are removed recursively. The synchronized file is written
+before the interface opens. `celune config view` prints the active file and
+`celune config edit` opens it in the system editor.
 
 ## Core settings
 
@@ -38,17 +40,80 @@ additional detail is written to the configured runtime logs instead.
 
 In the Textual interface, `/settings` opens the configuration manager. Nested
 YAML values are shown with human-readable labels that preserve names such as
-API, T2S, GPT-SoVITS, and Persona. ENTER writes the edited values to the active
+API, T2S, LuxTTS, and Persona. ENTER writes the edited values to the active
 `config.yaml`, fades the interface through the normal shutdown transition, and
 then requests a silent launcher-managed restart; the terminal title changes to
 `Restarting`. ESC leaves the file unchanged.
+
+## YouTube downloads
+
+Celune uses `yt-dlp` for YouTube URLs supplied to audio playback and upgrades
+it with the default EJS support group. YouTube extraction may also need a
+supported JavaScript runtime; configure its executable when it is not on
+`PATH`. These values are passed to the downloader only for YouTube playback.
+
+```yaml
+youtube:
+  cookies_file: null
+  cookies_from_browser: null
+  po_token: null
+  player_client: null
+  js_runtimes: null
+  remote_components: null
+  extractor_args: []
+```
+
+| Key | Values | Purpose |
+| --- | --- | --- |
+| `youtube.cookies_file` | Path or `null` | Netscape-format cookies file. |
+| `youtube.cookies_from_browser` | Browser selector or `null` | Read cookies from a local browser, for example `chrome` or `edge`. |
+| `youtube.po_token` | Token spec or list | Passes one or more `yt-dlp` PO-token specs, such as `web.gvs+TOKEN`. |
+| `youtube.player_client` | Client name or list | Selects YouTube clients such as `web_embedded`. |
+| `youtube.js_runtimes` | Runtime spec or list | Enables runtimes such as `deno` or `node:C:/path/node.exe`. |
+| `youtube.remote_components` | Component or list | Allows components such as `ejs:npm` when supported by the runtime. |
+| `youtube.extractor_args` | List of `IE_KEY:ARGS` values | Supplies advanced `yt-dlp` extractor arguments. |
+
+Use either `cookies_file` or `cookies_from_browser`; when both are present,
+Celune uses `cookies_file`. Keep cookie files and PO tokens private. Browser
+cookies can expire or rotate, and using an account with `yt-dlp` may trigger
+provider security checks. PO tokens are client- and session-specific, so
+refresh them when YouTube rejects an otherwise valid media URL.
+
+For current runtime and token requirements, see the upstream [`yt-dlp` EJS
+guide](https://github.com/yt-dlp/yt-dlp/wiki/EJS) and [PO-token
+guide](https://github.com/yt-dlp/yt-dlp/wiki/PO-Token-Guide).
 
 ## Speech buffering and playback
 
 Smart buffering starts playback after a minimum amount of audio, adapts the
 playback speed while generation catches up, and protects already-buffered audio
-from aggressive changes. Playback CPU protection is an engine-owned policy and
-is not user-configurable.
+from aggressive changes. Playback also uses a persistent output writer and an
+adaptive reserve. The reserve starts at 2 seconds and can grow to 30 seconds
+when Celune detects high system/process CPU usage, delayed scheduling, slow
+output writes, or a PortAudio underflow. The output stream requests high
+latency device buffering to add a second hardware-side reserve; this may add
+latency but prevents short CPU spikes from becoming audible gaps.
+
+Playback contention is an engine-owned policy and is not user-configurable. A
+persistent queue reader and output writer keep queue waits and stream writes
+off the mixer polling path; the mixer yields briefly between blocks so the
+writer can continue draining during CPU spikes. Debug timing traces are
+sampled at a low rate instead of being written for every block.
+
+The `Celune.playback_buffer_seconds`, `Celune.playback_contention_level`, and
+`Celune.playback_underflows` properties expose live diagnostics for integrations
+and troubleshooting. Stage timing properties identify where contention is being
+felt: `playback_queue_wait_seconds` measures producer backpressure,
+`playback_generation_gap_seconds` measures per-source chunk gaps,
+`playback_writer_wait_seconds` measures application-side writer delay,
+`playback_writer_gap_seconds` measures gaps between output writes,
+`playback_writer_write_seconds` measures the stream call, and
+`playback_rebuffer_wait_seconds` measures cumulative reserve-gate waiting.
+Debug traces include these values as `queue_wait`, `generation_gap`,
+`rebuffer_wait`, `writer_wait`, `writer_gap`, and `writer_write` fields. A large
+queue or generation gap points upstream; a large writer wait or writer gap
+points to thread scheduling; a large writer-write value points to the audio
+device or driver.
 
 Runtime speech controls are also exposed as `/speed`, `/reverb`, `/seed`, and
 Python properties on `Celune`. The command values are deliberately narrower

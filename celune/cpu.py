@@ -100,8 +100,7 @@ def required_cpu_features(machine: Optional[str] = None) -> tuple[str, ...]:
     if resolved_machine != "x86_64":
         return ()
 
-    # Pedalboard's native builds use AVX on x86. NumPy supplies the
-    # x86-64-v2 baseline shared by Celune and its backend workers.
+    # you must have these CPU features, or you get illegal instructions instead of speech
     required = set(_X86_64_V2_FEATURES)
     required.add("avx")
     return tuple(feature for feature in _FEATURE_ORDER if feature in required)

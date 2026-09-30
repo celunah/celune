@@ -140,6 +140,19 @@ class TestComponentLocks:
         assert not engine.locked
         assert engine.component_locks.snapshot() == {}
 
+    def test_speech_admission_reports_model_reload_as_busy(self) -> None:
+        """Speech cannot claim the pipeline while model lifecycle work is active."""
+        engine = cast(Celune, make_pipeline_engine())
+        engine._reload_pending = True
+
+        acquisition = pipeline.acquire_pipeline_result(engine, "speak")
+
+        assert not acquisition.acquired
+        assert acquisition.busy is not None
+        assert acquisition.busy.components == (ComponentLockName.MODEL_LOADING,)
+        assert not engine.locked
+        assert engine._last_component_busy == acquisition.busy
+
     def test_agent_run_returns_typed_busy_output_without_advancing_task(self) -> None:
         """An occupied agent component prevents duplicate execution safely."""
         manager = ComponentLockManager()

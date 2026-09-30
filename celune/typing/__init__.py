@@ -106,6 +106,7 @@ if TYPE_CHECKING:
         JSONSerializable,
         VideoMetadataScalar,
     )
+    from .api import WebUiUnset, WEBUI_UNSET
     from .worker import (
         WorkerValue,
         WorkerMessage,
@@ -322,11 +323,14 @@ _MODULE_EXPORTS = {
     "WorkerRequest": "worker",
     "WorkerResponse": "worker",
     "WorkerValue": "worker",
+    "WebUiUnset": "api",
+    "WEBUI_UNSET": "api",
 }
 
 __all__ = [
     "JSON",
     "RGB",
+    "WEBUI_UNSET",
     "AgentAbortReason",
     "AgentApprovalDecision",
     "AgentApprovalRequest",
@@ -464,6 +468,7 @@ __all__ = [
     "VoiceMatch",
     "VramTier",
     "WaitUntilReadyCallable",
+    "WebUiUnset",
     "WorkerArguments",
     "WorkerMessage",
     "WorkerMessageValue",

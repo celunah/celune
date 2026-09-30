@@ -364,8 +364,7 @@ def resolve_audio_device_with_info(
             if resolved_index is not None:
                 return resolved_index, direct_info
 
-            # PortAudio already resolved this selector successfully, so reuse the
-            # returned device info and avoid a second global device scan.
+            # already got device
             return configured_name, direct_info
 
     if sd is None:
@@ -441,7 +440,7 @@ def merge_missing_defaults(
     config: Optional[Mapping[str, JSONSerializable]],
     defaults: Mapping[str, JSONSerializable],
 ) -> tuple[Config, bool]:
-    """Fill missing configuration fields from defaults without overriding users.
+    """Synchronize a user configuration with the current default schema.
 
     Args:
         config: Loaded user configuration, or ``None`` for an empty config.
@@ -450,8 +449,15 @@ def merge_missing_defaults(
     Returns:
         tuple[Config, bool]: The merged configuration and whether any fields were added.
     """
-    merged: Config = dict(deepcopy(config)) if config is not None else {}
+    merged: Config = {}
     changed = False
+
+    if config is not None:
+        for key, current_value in config.items():
+            if key not in defaults:
+                changed = True
+                continue
+            merged[key] = deepcopy(current_value)
 
     for key, default_value in defaults.items():
         if key not in merged:

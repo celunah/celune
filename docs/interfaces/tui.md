@@ -37,6 +37,11 @@ timed status, theme, marquee, and resource-page updates through the CEDTS
 frontend channel so the browser does not maintain an independent timer state;
 browser polling is only a reconnect fallback.
 
+Tutorial text typing runs as a native Textual async worker, so its delays and
+input updates do not create a basic worker thread. Tutorial audio preparation
+and playback remain thread-backed because file metadata and audio submission
+are synchronous operations.
+
 When Celune requests an exit, including a settings-confirmed restart, the
 mounted Textual screen fades out as one surface, hides any mounted scrollbars,
 paints a final fully transparent frame, and only then does Textual unmount it.
@@ -49,7 +54,18 @@ The TUI playback bar has a separate progress readout. During active audio
 playback it shows elapsed time as `MM:SS`; during loading and other determinate
 operations it shows a right-aligned percentage. When progress is indeterminate
 or unavailable, the readout is hidden and the bar expands into its space. The
-WebUI has no corresponding progress bar or percentage label.
+Background Persona, normalizer, and Whisper model loads do not publish
+transfer callbacks to this foreground bar, so it cannot replace a completed
+startup or playback state with a later indeterminate update. The WebUI has no
+corresponding progress bar or percentage label. Captions are
+scoped to speech playback and only advance: delayed progress callbacks and late
+word-timing refinement cannot hide words that have already appeared. They fade
+out when speech ends even if an SFX overlay continues. A streaming utterance's
+caption progress waits for its final playback marker, so a temporary end of the
+currently buffered chunk cannot make a multi-chunk caption finish early. The caption and bar
+share one reserved line, so the bar is not restored until the caption transition
+completes; the normal bar/readout state is also restored immediately when wake
+begins.
 
 ## Value-aware selection menus
 
@@ -92,7 +108,7 @@ their full value remains available through the confirmation message.
 Set `SelectMenuOption.explanation` to render a selected-row explanation above
 the footer hints. The configuration manager converts dotted YAML keys to
 human-readable labels, such as `api.enabled` to `API enabled`, while retaining
-names such as API, T2S, GPT-SoVITS, and Persona. Configuration rows use
+names such as API, T2S, LuxTTS, and Persona. Configuration rows use
 field-specific localized explanations describing what each option controls.
 The menu is a centered overlay with the themed rounded border and sizes itself
 to its content, up to the available viewport. Its surrounding layer is
@@ -174,7 +190,7 @@ Commands are entered in the input box and start with `/`.
 | <code>/vcmode talk&#124;sing</code> | Select ordinary speech or F0-conditioned singing. |
 | <code>/vcpitch SEMITONES&#124;clear</code> | Set -12 through +12 semitones or reset to 0. |
 | <code>/xvectoronly true&#124;false</code> | Toggle Qwen3 identity-only cloning. Qwen3 only. |
-| `/play PATH [VOLUME]` | Play a local/remote sound effect. |
+| `/play PATH [VOLUME]` | Play a local/remote sound effect. Remote playback reports its playing status as soon as the audio is ready to queue. |
 | `/attach FILE...` | Add vision attachments; `/attach clear` removes them. |
 | `/say TEXT` | Send a direct Persona/vision prompt when vision is available. |
 | <code>/seed NUMBER&#124;random</code> | Set a backend seed or restore random seeds. |

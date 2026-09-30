@@ -56,8 +56,7 @@ PERSONA_MEMORY_EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 # this model is used to infer conversation emotion and derive Persona's target response mood
 PERSONA_EMOTION_MODEL = "lunahr/emotispace-128"
 
-# Persona receives a smaller ordinary conversation context while agent tasks
-# reserve the larger context needed for planning and tool-result history.
+# agents use more context than plain Persona
 PERSONA_CONTEXT_SPACE = 8192
 PERSONA_COMPACT_AT = 75
 AGENT_CONTEXT_SPACE = 32768
@@ -67,7 +66,6 @@ AGENT_COMPACT_AT = 75
 AGENT_MAX_LOOPS = 20
 
 
-# These models are available to Persona, with exact revisions for each variant.
 class PersonaModelRevisions(TypedDict):
     """Pinned Hugging Face revisions for one Persona model family."""
 
@@ -84,6 +82,7 @@ class PersonaModelDefinition(TypedDict):
     revisions: PersonaModelRevisions
 
 
+# known supported Persona and agent models
 PERSONA_DEFAULT_MODEL_ID = "Qwen/Qwen3-VL-4B-Instruct"
 PERSONA_MODELS: tuple[PersonaModelDefinition, ...] = (
     {

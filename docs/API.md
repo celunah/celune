@@ -105,6 +105,9 @@ Response:
 - `409 application/json` when Celune is busy.
 - `503 application/json` when Celune is unavailable.
 
+Submitting another request does not cancel speech that is already playing. An
+explicit `/stop` command or speech-job cancellation is required to interrupt it.
+
 ## Speak (Synchronous)
 
 Use `/v1/speak` when the client wants the generated audio on the same request.
@@ -138,6 +141,10 @@ Response:
 
 - `200 audio/flac` when speech is generated.
 - `409 application/json` when Celune is busy or unavailable.
+
+Submitting another speech request does not cancel speech that is already
+playing; the request receives the busy response until the shared pipeline is
+available.
 
 ## Speak (Asynchronous)
 

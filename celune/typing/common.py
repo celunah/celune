@@ -19,3 +19,9 @@ type Config = dict[str, JSONSerializable]
 type TerminalConfig = Mapping[str, JSONSerializable]
 type VramTier = Literal["low", "medium", "high", "xhigh"]
 type VideoMetadataScalar = Optional[Union[bool, int, float, str]]
+
+
+class Sentinel:
+    """Generic sentinel type."""
+
+    __slots__ = ()

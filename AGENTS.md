@@ -1,4 +1,4 @@
-# AGENTS.md
+# Celune Project Philosophy
 
 ## Project Overview
 
@@ -38,6 +38,14 @@ Prefer reusable variables, constants, helpers, and project abstractions already 
 Do not hardcode strings, colors, ports, paths, app names, status labels, or repeated values when the repository already defines them.
 
 Only hardcode or redefine values when importing the existing value would create a circular import, break architecture, create excessive coupling, or otherwise be impractical.
+
+## Source File Size
+
+Every Python source file, including tests and scripts, must remain at ≤100 KB (less than or equal to 102,400 bytes).
+
+If a file exceeds this limit, split it into focused subpackages or modules, or move cohesive responsibilities into existing smaller matching modules.
+
+Every resulting file must remain within the limit. Do not work around the limit by excluding the affected files from validation.
 
 ## Dependency Management
 
@@ -81,7 +89,7 @@ If for any reason any `uv` command exits with `Access is denied.` or `Permission
 
 Do not modify the execution environment to work around failures.
 
-To satisfy CI, prefer solutions that work on both Linux and Windows. When platform-specific code cannot be avoided, make sure CI only checks or runs it on the supported platform.
+To satisfy CI, prefer solutions that work on both Linux and Windows. When platform-specific code cannot be avoided, guard it at runtime and make the guard static-analysis-safe: do not directly reference APIs that are absent from another supported platform's type surface. Use guarded attribute lookup with an appropriate cast, or an equivalent portable abstraction, so CI can analyze the module on every supported platform.
 
 Before CI, format the repository with `uv run ruff format .`.
 
@@ -134,9 +142,19 @@ This process may leave some formatting inaccuracies, run `uv run ruff format .` 
 
 Immediately document every new or changed behavior you write. This includes public calls, configuration keys, CLI or slash commands, API endpoints, events, backend capabilities, file formats, standards, and user-visible workflows. Update the appropriate `docs/` page and `mkdocs.yml` navigation in the same task before considering the implementation complete; do not defer documentation to a later pass.
 
-Additionally, perform all actions listed in the `Import Ordering` section below.
+Always perform all actions listed in the `Import Ordering` section at the end of a given task.
 
 Make sure to remove all `__pycache__` directories. Celune code is compiled and does not use said cache files.
+
+## Testing Discipline
+
+Write only the minimal set of assertions needed to verify intended behavior.
+Keep assertions focused on public behavior and essential state transitions.
+
+Never add assertions for removed, deprecated, or superseded behavior merely
+because it existed previously. Update or remove obsolete assertions instead.
+
+Avoid repetitive defensive `assert not` checks and duplicate coverage.
 
 ## Import Ordering
 

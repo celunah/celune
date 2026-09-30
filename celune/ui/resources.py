@@ -3,10 +3,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 import shutil
 import datetime
-import threading
+import contextlib
 import subprocess
 from typing import TYPE_CHECKING, Optional
 from decimal import ROUND_HALF_UP, Decimal
@@ -23,9 +24,13 @@ if TYPE_CHECKING:
     from ..celune import Celune
 
 _NVIDIA_SMI: Optional[str] = shutil.which("nvidia-smi")
-_NVIDIA_SMI_THREAD: Optional[threading.Thread] = None
+_NVIDIA_SMI_TASKS: dict[
+    asyncio.AbstractEventLoop,
+    asyncio.Task[None],
+] = {}
 _NVIDIA_SMI_USAGE: Optional[int] = None
 NVIDIA_SMI_TIMEOUT_SECONDS = 2.0
+NVIDIA_SMI_POLL_INTERVAL_SECONDS = 1.0
 FOOTER_ROTATE_SECONDS = 2.06
 RESOURCE_PAGE_CACHE_SECONDS = 0.25
 _RESOURCE_PAGE_CACHE: Optional[
@@ -123,31 +128,53 @@ def format_vram() -> str:
     return f"VRAM: {avail / 1024**3:.2f}/{total / 1024**3:.2f} GB available"
 
 
-def _query_gpu_usage() -> Optional[int]:
-    """Read one GPU utilization sample with a bounded subprocess lifetime."""
+async def _terminate_gpu_process(process: asyncio.subprocess.Process) -> None:
+    """Terminate one timed-out GPU query and drain its subprocess pipes."""
+    if process.returncode is None:
+        with contextlib.suppress(OSError, ProcessLookupError):
+            process.kill()
+    with contextlib.suppress(OSError, subprocess.SubprocessError):
+        await process.communicate()
+
+
+async def _query_gpu_usage() -> Optional[int]:
+    """Read one GPU utilization sample through an async subprocess."""
     if not _NVIDIA_SMI:
         return None
 
+    process: Optional[asyncio.subprocess.Process] = None
     try:
-        result = subprocess.run(
-            [
-                _NVIDIA_SMI,
-                "--query-gpu=utilization.gpu",
-                "--format=csv,noheader,nounits",
-            ],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            text=True,
-            check=False,
+        process = await asyncio.create_subprocess_exec(
+            _NVIDIA_SMI,
+            "--query-gpu=utilization.gpu",
+            "--format=csv,noheader,nounits",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        stdout, _ = await asyncio.wait_for(
+            process.communicate(),
             timeout=NVIDIA_SMI_TIMEOUT_SECONDS,
         )
-    except (OSError, subprocess.SubprocessError):
+    except TimeoutError:
+        if process is not None:
+            await _terminate_gpu_process(process)
+        return None
+    except (OSError, ValueError, subprocess.SubprocessError):
+        if process is not None:
+            await _terminate_gpu_process(process)
+        return None
+    except asyncio.CancelledError:
+        if process is not None:
+            await _terminate_gpu_process(process)
+        raise
+
+    if process.returncode != 0:
         return None
 
-    if result.returncode != 0:
+    if not isinstance(stdout, bytes):
         return None
 
-    first_line = result.stdout.strip().splitlines()[0:1]
+    first_line = stdout.decode(errors="replace").strip().splitlines()[0:1]
     if not first_line:
         return None
 
@@ -157,34 +184,69 @@ def _query_gpu_usage() -> Optional[int]:
         return None
 
 
-def _update_gpu_usage() -> None:
-    """Update the cached GPU utilization from a worker thread."""
+async def _update_gpu_usage() -> None:
+    """Update the cached GPU utilization from the current event loop."""
     global _NVIDIA_SMI_USAGE
-    _NVIDIA_SMI_USAGE = _query_gpu_usage()
+    _NVIDIA_SMI_USAGE = await _query_gpu_usage()
+
+
+async def _gpu_usage_worker() -> None:
+    """Continuously sample GPU utilization without blocking the event loop."""
+    while True:
+        await _update_gpu_usage()
+        await asyncio.sleep(NVIDIA_SMI_POLL_INTERVAL_SECONDS)
+
+
+def start_gpu_usage_worker() -> None:
+    """Start one native async GPU sampler on the current event loop."""
+    if not _NVIDIA_SMI:
+        return
+
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+
+    current = _NVIDIA_SMI_TASKS.get(loop)
+    if current is not None and not current.done():
+        return
+
+    task = loop.create_task(_gpu_usage_worker(), name="celune-nvidia-smi")
+    _NVIDIA_SMI_TASKS[loop] = task
+
+    def clear_task(completed: asyncio.Task[None]) -> None:
+        """Forget one completed sampler and consume unexpected task errors."""
+        if _NVIDIA_SMI_TASKS.get(loop) is completed:
+            _NVIDIA_SMI_TASKS.pop(loop, None)
+        with contextlib.suppress(asyncio.CancelledError):
+            completed.exception()
+
+    task.add_done_callback(clear_task)
+
+
+def stop_gpu_usage_worker() -> None:
+    """Cancel the native async GPU sampler on the current event loop."""
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+
+    task = _NVIDIA_SMI_TASKS.pop(loop, None)
+    if task is not None:
+        task.cancel()
 
 
 def gpu_usage() -> Optional[int]:
-    """Return cached GPU utilization while sampling asynchronously.
+    """Return the latest cached GPU utilization sample.
+
+    The owning UI or API event loop starts the native async sampler with
+    :func:`start_gpu_usage_worker`.
 
     Returns:
         Optional[int]: The GPU utilization, or ``None`` if unavailable.
     """
-    global _NVIDIA_SMI_THREAD
-
     if not _NVIDIA_SMI:
         return None
-
-    thread = _NVIDIA_SMI_THREAD
-    if thread is not None and thread.is_alive():
-        return _NVIDIA_SMI_USAGE
-
-    _NVIDIA_SMI_THREAD = threading.Thread(
-        target=_update_gpu_usage,
-        name="celune-nvidia-smi",
-        daemon=True,
-    )
-    _NVIDIA_SMI_THREAD.start()
-
     return _NVIDIA_SMI_USAGE
 
 

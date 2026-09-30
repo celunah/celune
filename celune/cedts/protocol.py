@@ -631,9 +631,7 @@ def send_payloads(
             stream.write(payload_id)
             stream.write(payload.data)
             stream.flush()
-        # A zero-sized frame is the mandatory boundary for this control packet.
-        # It lets the receiver distinguish an intentional no-payload message from
-        # an undeclared frame on the separate binary channel.
+
         stream.write(_FRAME_HEADER.pack(0))
         stream.flush()
     except (OSError, ValueError) as error:

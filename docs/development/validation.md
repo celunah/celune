@@ -21,7 +21,9 @@ The CI workflow then checks formatting, Pylint, Pyrefly, docstring coverage,
 unit tests, import smoke tests, and Windows/Linux launcher builds. It installs
 core dependencies with `uv sync --dev --all-extras` on Linux and
 `uv sync --dev --extra api` on Windows, then uses the project's warning wrapper
-for CI annotations.
+for CI annotations. The wrapper ignores Celtest status and summary lines, so
+descriptions containing warning-related words do not become false-positive
+GitHub warning annotations, including the final `warnings N` summary.
 
 Do not infer success from a reduced test collection. If a native DLL, CUDA,
 PortAudio, SciPy, safetensors, or cache permission failure prevents collection,

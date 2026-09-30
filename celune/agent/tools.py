@@ -884,7 +884,6 @@ def _local_launch_process(
     if cwd is not None and not cwd.is_dir():
         raise LocalManagementError("invalid_target", "cwd is not a directory", cwd)
     try:
-        # Popen must remain alive so the caller can inspect or terminate it later.
         # pylint: disable=consider-using-with
         process = subprocess.Popen(
             [resolved, *_argument_list(call, "arguments")],

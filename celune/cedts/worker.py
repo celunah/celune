@@ -14,23 +14,8 @@ from contextlib import suppress
 from collections import OrderedDict
 from collections.abc import Mapping, Callable
 
-from ..exceptions import (
-    CEDTSError,
-    CEDTSEOFError,
-    CEDTSStreamError,
-    CEDTSPayloadError,
-    CEDTSProtocolError,
-)
-from ..backends.environment import BackendManifest, backend_manifest
-from ..typing.common import JSONSerializable
-from ..typing.worker import (
-    WorkerValue,
-    WorkerMessage,
-    WorkerRequest,
-    WorkerResponse,
-    WorkerPayloadDescriptor,
-)
-from ..typing.aliases import LogLevel
+from ..paths import configure_numba_cache
+from ..cevoice import select_voice_bundle
 from .protocol import (
     CEDTS_VERSION,
     WORKER_CAPABILITIES,
@@ -46,20 +31,32 @@ from .protocol import (
     receive_payloads,
     limits_from_capabilities,
 )
+from ..exceptions import (
+    CEDTSError,
+    CEDTSEOFError,
+    CEDTSStreamError,
+    CEDTSPayloadError,
+    CEDTSProtocolError,
+)
+from ..typing.common import JSONSerializable
+from ..typing.worker import (
+    WorkerValue,
+    WorkerMessage,
+    WorkerRequest,
+    WorkerResponse,
+    WorkerPayloadDescriptor,
+)
+from ..typing.aliases import LogLevel
 from ..typing.backends import (
     BackendModel,
     BackendArguments,
     BackendDescription,
     _BackendRuntime,
 )
+from ..backends.environment import BackendManifest, backend_manifest
 from ..dataclasses.pipeline import VoiceConversionRequest
-from ..paths import configure_numba_cache
-from ..cevoice import select_voice_bundle
 
 _WORKER_STDERR = sys.stderr
-# Retain recent packet IDs to reject replayed packets without growing state for
-# the lifetime of a long-running worker. IDs outside this replay window may be
-# reused by a peer after the window has elapsed.
 _MESSAGE_ID_REPLAY_WINDOW = 4096
 _CALL_ARGUMENT_FIELDS = {
     "resolve_generation_language": frozenset({"method", "lang"}),
@@ -113,6 +110,13 @@ def _qwen3_constructor() -> Callable[..., _BackendRuntime]:
     return cast(Callable[..., _BackendRuntime], Qwen3)
 
 
+def _fireredtts3_constructor() -> Callable[..., _BackendRuntime]:
+    """Load the approved FireRedTTS3 backend constructor on demand."""
+    from ..backends.tts.fireredtts3 import FireRedTTS3
+
+    return cast(Callable[..., _BackendRuntime], FireRedTTS3)
+
+
 def _dotstts_constructor() -> Callable[..., _BackendRuntime]:
     """Load the approved DotsTTS backend constructor on demand."""
     from ..backends.tts.dotstts import DotsTtsMF
@@ -127,11 +131,11 @@ def _voxcpm2_constructor() -> Callable[..., _BackendRuntime]:
     return cast(Callable[..., _BackendRuntime], VoxCPM2)
 
 
-def _gpt_sovits_constructor() -> Callable[..., _BackendRuntime]:
-    """Load the approved GPT-SoVITS backend constructor on demand."""
-    from ..backends.tts.gpt_sovits import GPTSoVITS
+def _luxtts_constructor() -> Callable[..., _BackendRuntime]:
+    """Load the approved LuxTTS backend constructor on demand."""
+    from ..backends.tts.luxtts import LuxTTS
 
-    return cast(Callable[..., _BackendRuntime], GPTSoVITS)
+    return cast(Callable[..., _BackendRuntime], LuxTTS)
 
 
 def _seed_vc_constructor() -> Callable[..., _BackendRuntime]:
@@ -146,9 +150,10 @@ _BACKEND_REGISTRY: Mapping[
 ] = {
     "mini": ("tts", _mini_constructor),
     "qwen3": ("tts", _qwen3_constructor),
+    "fireredtts3": ("tts", _fireredtts3_constructor),
     "dotstts": ("tts", _dotstts_constructor),
     "voxcpm2": ("tts", _voxcpm2_constructor),
-    "gpt-sovits": ("tts", _gpt_sovits_constructor),
+    "luxtts": ("tts", _luxtts_constructor),
     "seed-vc": ("vc", _seed_vc_constructor),
 }
 
@@ -219,10 +224,15 @@ def _open_binary_streams(args: argparse.Namespace) -> tuple[IO[bytes], IO[bytes]
 
 def _detach_protocol_stream() -> IO[bytes]:
     """Reserve stdout for CEDTS packets and redirect backend output to stderr."""
-    stdout_fd = sys.stdout.fileno()
+    stdout = sys.stdout
+    stdout.flush()
+    stdout_fd = stdout.fileno()
     protocol_fd = os.dup(stdout_fd)
     try:
         os.dup2(sys.stderr.fileno(), stdout_fd)
+        reconfigure = getattr(stdout, "reconfigure", None)
+        if callable(reconfigure):
+            reconfigure(line_buffering=True, write_through=True)
     except Exception:
         os.close(protocol_fd)
         raise
@@ -961,10 +971,7 @@ def main() -> int:
             and response.get("done") is True
         ):
             response = {"ok": False, "cancelled": True, "done": True}
-        # Clear the active marker before publishing the terminal response. The
-        # control loop can receive the next request as soon as that response is
-        # readable, so leaving the marker set until after the send creates a
-        # race where a completed request rejects its successor as active.
+
         with active_request_lock:
             if active_request_id == request_id:
                 active_request_id = None

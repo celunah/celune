@@ -1,6 +1,6 @@
 [project]
 name = "celune"
-version = "5.0.0"
+version = "5.0.3"
 description = "Real-time AI TTS character engine for all use cases"
 readme = "README.md"
 requires-python = ">=3.12,<3.15"
@@ -56,7 +56,8 @@ dependencies = [
     # Used to detect language of input.
     "lingua-language-detector>=2.2.0,<3.0.0",
     "iso639-lang>=2.0.0,<3.0.0",
-    "yt-dlp",
+    # She can also play literal [music].
+    "yt-dlp[default]>=2026.08.19",
 ]
 
 [project.urls]
@@ -157,28 +158,9 @@ openzl = [
 #     "pocket-tts>=2.1.0",
 # ]
 
-# An experimental Celune backend supporting the entire GPT-SoVITS family: v1, v2/Pro/ProPlus, v3, and v4.
-# Fast, but may not work with certain voices and experiences accent drift to a varying amount, with v4 the least.
-# It does not use a library. Celune reimplements the system directly, using more dependencies.
-# gpt-sovits = [
-#     "cn2an",
-#     "ffmpeg-python",
-#     "g2p-en",
-#     "g2pk2",
-#     "jieba-fast",
-#     "ko-pron",
-#     "opencc",
-#     "peft<0.18.0",
-#     "pypinyin",
-#     "pytorch-lightning>=2.4",
-#     "pyopenjtalk>=0.4.1",
-#     "rotary-embedding-torch",
-#     "split-lang",
-#     "tojyutping",
-#     "torchmetrics<=1.5",
-#     "wordsegment",
-#     "x-transformers",
-# ]
+# LuxTTS is isolated in its CUDA-capable CEDTS environment and falls back to
+# ONNX CPU inference when no CUDA runtime exists; see
+# celune/backends/environment.py for its VCS and runtime dependencies.
 
 # A voice conversion backend allowing you to speak in your character voices directly. It does not use TTS, using it
 # will disable TTS features.
@@ -195,6 +177,9 @@ live-vc-ai = [
 
 # CI specific options
 # Don't touch it, unless you want SLOP!
+[tool.celtest]
+display_name = "Celune"
+
 [tool.pytest.ini_options]
 filterwarnings = [
      # 'silero-vad' uses old legacy PyTorch JIT syntax:
@@ -261,8 +246,6 @@ ignore-paths=[
 max-line-length = 120
 
 [tool.pylint.similarities]
-# Keep duplicate-code focused on substantial copied blocks; short overlaps are
-# expected in mirrored UI adapters, exports, and test fixtures.
 min-similarity-lines = 20
 
 
@@ -287,22 +270,22 @@ min-severity = "warn"
 
 [tool.poe.tasks]
 start = "python main.py"
-test_mt = "pytest -v tests -n 3 --dist loadfile"
-test = "pytest -v tests"
+test = "pytest -v tests -n 2 --dist loadfile"
+test_basic = "pytest -v tests"
 test_changed = "pytest -v tests --testmon"
 types = "pyrefly check"
 ruff = "ruff check"
 format = "ruff format --check"
-lint_mt = "pylint -j 0 celune tests main.py"
-lint = "pylint celune tests main.py"
+lint = "pylint -j 4 celune tests main.py"
+lint_basic = "pylint celune tests main.py"
 lines = "pygount --format=summary"
 
 [tool.poe.tasks.ci]
-sequence = ["ruff", "format", "lint_mt", "types", "test_mt"]
+sequence = ["ruff", "format", "lint", "types", "test_basic"]
 ignore_fail = "return_non_zero"
 
 [tool.poe.tasks.ci_basic]
-sequence = ["ruff", "format", "lint", "types", "test"]
+sequence = ["ruff", "format", "lint_basic", "types", "test_basic"]
 ignore_fail = "return_non_zero"
 
 [tool.poe.tasks.build]

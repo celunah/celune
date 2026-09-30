@@ -5,16 +5,18 @@ from unittest import mock
 
 from scripts import run_ci
 
+from .platform import LINUX_ONLY, WINDOWS_ONLY
+
 
 class TestRunCi:
     """Verify CI process cleanup behavior."""
 
+    @WINDOWS_ONLY
     def test_windows_start_keeps_console_interrupts_on_runner(self) -> None:
         """Verify the child is not isolated from the runner's console group."""
         process = mock.Mock()
 
         with (
-            mock.patch.object(run_ci.os, "name", "nt"),
             mock.patch.object(
                 run_ci.subprocess, "Popen", return_value=process
             ) as popen,
@@ -24,6 +26,7 @@ class TestRunCi:
 
         popen.assert_called_once_with(run_ci.POE_COMMAND, text=True)
 
+    @WINDOWS_ONLY
     def test_windows_cleanup_kills_tree_after_wrapper_exits(self) -> None:
         """Verify fallback cleanup still runs when the wrapper has exited."""
         process = mock.Mock()
@@ -31,7 +34,6 @@ class TestRunCi:
         process.poll.return_value = 0
 
         with (
-            mock.patch.object(run_ci.os, "name", "nt"),
             mock.patch.object(run_ci, "_close_windows_job", return_value=False),
             mock.patch.object(run_ci.subprocess, "run") as taskkill,
             mock.patch.object(run_ci.subprocess, "CREATE_NO_WINDOW", 0, create=True),
@@ -48,13 +50,13 @@ class TestRunCi:
         process.kill.assert_called_once_with()
         process.wait.assert_called_once_with(timeout=run_ci.GRACE_PERIOD)
 
+    @LINUX_ONLY
     def test_posix_cleanup_uses_immediate_process_group_kill(self) -> None:
         """Verify POSIX cleanup does not let Poe advance to another task."""
         process = mock.Mock()
         process.pid = 1234
 
         with (
-            mock.patch.object(run_ci.os, "name", "posix"),
             mock.patch.object(
                 run_ci.os, "getpgid", return_value=5678, create=True
             ) as getpgid,

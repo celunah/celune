@@ -3,22 +3,12 @@
 # of certain backends
 #
 # qwen3 = faster, less expressive
+# luxtts = CPU-capable English voice cloning
 # dotstts = slower, very high quality
 # voxcpm2 = slower, high quality
 # mini = much faster, and just as good
 # seed-vc = VC backend, converts speech rather than generating it
 backend: null
-
-# GPT-SoVITS settings
-#
-# Celune downloads the official GPT-SoVITS source into its user-data directory
-# when this is blank. Set this only to use an existing source checkout.
-gpt_sovits_root: null
-# auto prefers v2ProPlus, then v4, v2Pro, v3, v2, and v1 when their assets exist
-gpt_sovits_variant: auto
-# optional absolute path to a custom GPT/text-to-semantic checkpoint
-# the selected variant still supplies the SoVITS/vocoder checkpoint
-gpt_sovits_t2s_weights_path: null
 
 # Qwen3 TTS settings
 #
@@ -75,6 +65,26 @@ headless_nocolor: false
 # CEVOICE packs can define how the app theme looks like
 # the default uses #CEBAFF accent and #1D1826 background colors
 theme: dark
+
+# YouTube download settings
+#
+# yt-dlp uses these optional values when playing YouTube URLs as SFX. Keep
+# cookies and PO tokens private; they are passed to yt-dlp but never logged.
+youtube:
+  # Netscape-format cookie file. Use either cookies_file or cookies_from_browser.
+  cookies_file: null
+  # Browser selector such as chrome, edge, firefox, or chrome:Profile Name.
+  cookies_from_browser: null
+  # One value or a list such as web.gvs+TOKEN and web.player+TOKEN.
+  po_token: null
+  # One client or a list such as web_embedded or android_vr.
+  player_client: null
+  # One runtime or a list such as deno or node:C:/Program Files/nodejs/node.exe.
+  js_runtimes: null
+  # For example ejs:npm when using Deno or Bun.
+  remote_components: null
+  # Additional yt-dlp extractor arguments, each as IE_KEY:ARGS.
+  extractor_args: []
 
 # CeluneNorm settings
 #

@@ -283,7 +283,7 @@ class TestEngineEventIntegration(CeluneTestCase):
         events: list[VoiceChangedEvent] = []
         celune._event_dispatcher.subscribe("voice_changed", events.append)
 
-        with mock.patch("celune.celune.play_signal", return_value=False):
+        with mock.patch("celune.voice.play_signal", return_value=False):
             celune.change_voice("bold")
 
         assert len(events) == 1
@@ -314,9 +314,9 @@ class TestEngineEventIntegration(CeluneTestCase):
         second_loader = mock.Mock(bundle=second_bundle)
 
         with (
-            mock.patch("celune.celune.select_voice_bundle"),
+            mock.patch("celune.voice.select_voice_bundle"),
             mock.patch(
-                "celune.celune.default_loader",
+                "celune.voice.default_loader",
                 side_effect=[
                     None,
                     first_loader,

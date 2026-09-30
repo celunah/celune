@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """Proxy objects for backends running in isolated Python processes."""
 
-# Import groups follow Celune's project-specific Ruff ordering.
 # pylint: disable=ungrouped-imports
 
 import os
@@ -25,7 +24,9 @@ from ..paths import (
     huggingface_hub_cache_dir,
     project_root,
 )
-from ..terminal import RUNTIME_LOG_FILTER_MESSAGES
+from ..terminal import (
+    RUNTIME_LOG_FILTER_MESSAGES,
+)
 from ..backends.vc.base import CeluneVCBackend
 from ..backends.tts.base import CeluneBackend
 from ..exceptions import (
@@ -99,9 +100,6 @@ _BACKEND_MODEL_OPERATION_TIMEOUT_SECONDS = 900.0
 _BACKEND_MODEL_LOAD_TIMEOUT_SECONDS = _BACKEND_MODEL_OPERATION_TIMEOUT_SECONDS
 _MAX_RESPONSE_QUEUE_ITEMS = 128
 _MAX_RESPONSE_QUEUE_BYTES = 16 * 1024 * 1024
-# Retain recent packet IDs to reject replayed packets without growing state for
-# the lifetime of a long-running proxy. IDs outside this replay window may be
-# reused by a peer, while active request correlation remains separately tracked.
 _MESSAGE_ID_REPLAY_WINDOW = 4096
 _CANCELLATION_TOMBSTONE_WINDOW = 4096
 _WORKER_ENVIRONMENT_VARIABLES = (
@@ -141,8 +139,6 @@ _WORKER_ENVIRONMENT_VARIABLES = (
     "HF_HOME",
     "HF_HUB_CACHE",
     "HF_HUB_DISABLE_PROGRESS_BARS",
-    "GPT_SOVITS_ROOT",
-    "NLTK_DATA",
     "OMP_NUM_THREADS",
     "MKL_NUM_THREADS",
     "OPENBLAS_NUM_THREADS",
@@ -318,6 +314,9 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
         self._stderr_thread: Optional[threading.Thread] = None
         self._worker_stderr: deque[str] = deque(maxlen=200)
         self._worker_stderr_lock = threading.Lock()
+        self._transport_error_lock = threading.Lock()
+        self._reported_transport_errors: set[int] = set()
+        self._active_transport_operation: Optional[str] = None
         self._stream_active = threading.Event()
         self._active_request_lock = threading.Lock()
         self._active_request_id: Optional[str] = None
@@ -347,7 +346,11 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
         environment = self._environment_manager.ensure(manifest)
         try:
             self._start_worker(environment, log, backend_kwargs)
-            self._handshake()
+            try:
+                self._handshake()
+            except CEDTSError as error:
+                self._report_transport_error("handshake", error)
+                raise
             super().__init__(log=log, fatal=fatal)
             self._start_packet_reader()
             self._load_description()
@@ -484,18 +487,24 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
     ) -> None:
         """Forward worker stderr lines to Celune's logging callback."""
         traceback_active = False
+        filtered_continuation = False
         for line in iter(stream.readline, b""):
             text = line.decode("utf-8", errors="replace").rstrip()
             if not text:
                 continue
             with self._worker_stderr_lock:
                 self._worker_stderr.append(text)
+            severity, explicit, message, loglevel = self._split_worker_log(text)
+            if filtered_continuation:
+                if not explicit:
+                    continue
+                filtered_continuation = False
             if any(
                 filtered_message in text
                 for filtered_message in RUNTIME_LOG_FILTER_MESSAGES
             ):
+                filtered_continuation = text.endswith(":")
                 continue
-            severity, explicit, message, loglevel = self._split_worker_log(text)
             if text.startswith("Traceback (most recent call last):"):
                 traceback_active = True
             if traceback_active and not explicit:
@@ -542,6 +551,30 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
         with self._worker_stderr_lock:
             recent_lines = list(self._worker_stderr)[-20:]
         return "\n".join(recent_lines)
+
+    def _report_transport_error(self, operation: str, error: CEDTSError) -> None:
+        """Report one CEDTS transport failure to Celune immediately."""
+        transport_error_lock = getattr(self, "_transport_error_lock", None)
+        if transport_error_lock is None:
+            transport_error_lock = threading.Lock()
+            self._transport_error_lock = transport_error_lock
+        reported_errors = getattr(self, "_reported_transport_errors", None)
+        if reported_errors is None:
+            reported_errors = set()
+            self._reported_transport_errors = reported_errors
+        with transport_error_lock:
+            error_id = id(error)
+            if error_id in reported_errors:
+                return
+            reported_errors.add(error_id)
+        log_callback = getattr(self, "_log_callback", None)
+        if callable(log_callback):
+            with suppress(Exception):
+                _emit_log(
+                    cast(Callable[..., None], log_callback),
+                    f"[IPC] CEDTS transport error operation={operation}: {error}",
+                    "error",
+                )
 
     def _abort_after_reader_failure(self) -> None:
         """Terminate a worker after its response stream becomes undecodable."""
@@ -729,18 +762,29 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
                             self._response_condition.notify_all()
                         with self._event_condition:
                             self._event_condition.notify_all()
-                        log_callback = getattr(self, "_log_callback", None)
-                        if callable(log_callback):
-                            with suppress(Exception):
-                                _emit_log(
-                                    cast(Callable[..., None], log_callback),
-                                    format_error_message(
-                                        "[IPC] worker packet reader failed",
-                                        error,
-                                        getattr(self, "log_level", "info"),
-                                    ),
-                                    "error",
+                        if isinstance(error, CEDTSError):
+                            self._report_transport_error(
+                                getattr(
+                                    self,
+                                    "_active_transport_operation",
+                                    None,
                                 )
+                                or "worker packet reader",
+                                error,
+                            )
+                        else:
+                            log_callback = getattr(self, "_log_callback", None)
+                            if callable(log_callback):
+                                with suppress(Exception):
+                                    _emit_log(
+                                        cast(Callable[..., None], log_callback),
+                                        format_error_message(
+                                            "[IPC] worker packet reader failed",
+                                            error,
+                                            getattr(self, "log_level", "info"),
+                                        ),
+                                        "error",
+                                    )
                         threading.Thread(
                             target=self._abort_after_reader_failure,
                             name="celune-worker-reader-abort",
@@ -1086,8 +1130,6 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
                         remaining,
                     )
                 except (OSError, ValueError):
-                    # The direct path is only used before the dispatcher starts;
-                    # Windows subprocess pipes do not support select().
                     ready = [process.stdout]
                 if not ready:
                     raise CEDTSTimeoutError(
@@ -1100,9 +1142,18 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
             except CEDTSProtocolError as error:
                 detail = self._worker_error_detail()
                 if detail:
-                    raise _worker_protocol_error(
+                    detailed_error = _worker_protocol_error(
                         "error_with_detail", error=str(error), detail=detail
-                    ) from error
+                    )
+                    self._report_transport_error(
+                        packet_name or "worker response",
+                        detailed_error,
+                    )
+                    raise detailed_error from error
+                self._report_transport_error(packet_name or "worker response", error)
+                raise
+            except CEDTSError as error:
+                self._report_transport_error(packet_name or "worker response", error)
                 raise
             if packet.get("cedts_version") != CEDTS_VERSION:
                 raise _worker_protocol_error("worker_packet_version_is_unsupported")
@@ -1271,6 +1322,7 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
             raise RuntimeError("backend worker protocol streams are unavailable")
         self._ensure_cancellation_state()
         with self._protocol_lock:
+            self._active_transport_operation = operation
             _emit_log(
                 self._log_callback,
                 f"[IPC] send operation={operation} arguments={tuple(arguments)}",
@@ -1302,15 +1354,29 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
                             timeout=response_timeout,
                             packet_name=operation,
                         )
+                except CEDTSTimeoutError as error:
+                    self._report_transport_error(operation, error)
+                    with suppress(Exception):
+                        self.abort()
+                    raise
+                except CEDTSError as error:
+                    self._report_transport_error(operation, error)
+                    raise
                 except TimeoutError as error:
                     if response_timeout is None:
                         raise
                     with suppress(Exception):
                         self.abort()
-                    raise CEDTSTimeoutError(operation, response_timeout) from error
+                    timeout_error = CEDTSTimeoutError(operation, response_timeout)
+                    self._report_transport_error(operation, timeout_error)
+                    raise timeout_error from error
+            except CEDTSError as error:
+                self._report_transport_error(operation, error)
+                raise
             finally:
                 with self._response_condition:
                     self._pending_reply_ids.discard(request_id)
+                self._active_transport_operation = None
         if not response.get("ok", False):
             raise _worker_exception(
                 response.get("error_type"),
@@ -1387,7 +1453,9 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
                     with self._active_request_lock:
                         state.cancel_packet_id = sent_cancel_packet_id
                         self._sync_active_cancellation_fields(state)
-            except (BrokenPipeError, OSError, CEDTSError):
+            except (BrokenPipeError, OSError, CEDTSError) as error:
+                if isinstance(error, CEDTSError):
+                    self._report_transport_error("cancel", error)
                 with self._active_request_lock:
                     state.cancel_sent = False
                     self._sync_active_cancellation_fields(state)
@@ -1419,6 +1487,7 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
             raise RuntimeError("backend worker protocol streams are unavailable")
         self._ensure_cancellation_state()
         with self._protocol_lock:
+            self._active_transport_operation = operation
             if not hasattr(self, "_stream_active"):
                 self._stream_active = threading.Event()
             self._stream_active.set()
@@ -1438,9 +1507,16 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
                     {"arguments": arguments},
                     message_id=request_id,
                 )
+            except CEDTSError as error:
+                self._report_transport_error(operation, error)
+                with self._response_condition:
+                    self._pending_reply_ids.discard(request_id)
+                self._active_transport_operation = None
+                raise
             except Exception:
                 with self._response_condition:
                     self._pending_reply_ids.discard(request_id)
+                self._active_transport_operation = None
                 raise
             if sent_request_id != request_id:
                 with self._response_condition:
@@ -1463,6 +1539,12 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
                 while True:
                     try:
                         response = self._read_stream_frame(process, request_id)
+                    except CEDTSError as error:
+                        self._report_transport_error(operation, error)
+                        with self._active_request_lock:
+                            self._mark_request_terminal_locked(request_id)
+                        completed = True
+                        raise
                     except Exception:
                         with self._active_request_lock:
                             self._mark_request_terminal_locked(request_id)
@@ -1519,6 +1601,7 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
                         and state.cancel_ack_event.is_set()
                     ):
                         self._terminal_cancellation_states.pop(request_id, None)
+                self._active_transport_operation = None
                 with self._response_condition:
                     self._pending_reply_ids.discard(request_id)
                     self._clear_response_queue_locked(request_id)
@@ -1556,7 +1639,10 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
                     timeout=remaining,
                     packet_name="generate_stream",
                 )
-            except (EOFError, TimeoutError, CEDTSError, OSError, ValueError):
+            except CEDTSError as error:
+                self._report_transport_error("stream cleanup", error)
+                return False
+            except (EOFError, TimeoutError, OSError, ValueError):
                 return False
             if response.get("done", False) or not response.get("ok", True):
                 return True
@@ -1779,7 +1865,9 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
                             "shutdown",
                             {"active_job_policy": "cancel"},
                         )
-                    except (BrokenPipeError, OSError, CEDTSError):
+                    except (BrokenPipeError, OSError, CEDTSError) as error:
+                        if isinstance(error, CEDTSError):
+                            self._report_transport_error("shutdown", error)
                         with self._response_condition:
                             if shutdown_id is not None:
                                 self._pending_reply_ids.discard(shutdown_id)
@@ -1798,6 +1886,8 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
                             TimeoutError,
                             CEDTSError,
                         ) as error:
+                            if isinstance(error, CEDTSError):
+                                self._report_transport_error("shutdown", error)
                             shutdown_failure = error
                         with self._response_condition:
                             self._pending_reply_ids.discard(shutdown_id)
@@ -1822,9 +1912,6 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
         """Terminate the worker without waiting for an active generation."""
         self._closing = True
         self._stop_packet_reader()
-        # Wake every CEDTS consumer before terminating the process.  A request
-        # or event waiter may otherwise remain blocked on its condition while
-        # the worker is stuck inside a backend-specific operation.
         self._clear_runtime_state()
         with self._close_lock:
             if self._closed and self._process is None:

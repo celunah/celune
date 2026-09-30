@@ -14,7 +14,7 @@ from ..modes import mode_allows_agents
 from ..vram import agent_vram_compatible
 from ..typing.common import JSON, JSONSerializable
 from ..typing.persona import PersonaClientResponse
-from ..pipeline import build_agent_classification_request
+from ..conversation import build_agent_classification_request
 from ..typing.locks import (
     ComponentLockName,
     ComponentLockOwner,

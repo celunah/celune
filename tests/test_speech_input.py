@@ -9,7 +9,7 @@ from unittest import mock
 import numpy as np
 import pytest
 from textual import events
-from celune.ui.app import CeluneUI
+from celune.ui.app import ButtonActions, CeluneUI
 from celune.typing.persona import _WhisperProcessor
 from celune.persona.asr import (
     PERSONA_SPEECH_NO_INPUT_TIMEOUT_SECONDS,
@@ -166,7 +166,7 @@ class TestSpeechInput(CeluneTestCase):
         ui = CeluneUI()
         ui.cur_state = "idle"
         ui.input_box = SimpleNamespace(text="", placeholder="", load_text=mock.Mock())
-        ui.style_button = SimpleNamespace(disabled=False)
+        ui.style_button = SimpleNamespace(actions=ButtonActions())
         ui.safe_log = mock.Mock()
         ui.safe_status = mock.Mock()
         ui.update_resources = mock.Mock()
@@ -250,6 +250,7 @@ class TestSpeechInput(CeluneTestCase):
                         "name": "Microphone",
                     },
                 ),
+                create=True,
             ),
             mock.patch(
                 "celune.ui.app.create_live_voice_activity_detector",
@@ -286,7 +287,7 @@ class TestSpeechInput(CeluneTestCase):
         ui = CeluneUI()
         ui.cur_state = "idle"
         ui.input_box = SimpleNamespace(text="", placeholder="", load_text=mock.Mock())
-        ui.style_button = SimpleNamespace(disabled=False)
+        ui.style_button = SimpleNamespace(actions=ButtonActions())
         ui.safe_log = mock.Mock()
         ui.safe_status = mock.Mock()
         ui.update_resources = mock.Mock()
@@ -370,6 +371,7 @@ class TestSpeechInput(CeluneTestCase):
                         "name": "Microphone",
                     },
                 ),
+                create=True,
             ),
             mock.patch(
                 "celune.ui.app.create_live_voice_activity_detector",
@@ -382,7 +384,7 @@ class TestSpeechInput(CeluneTestCase):
                 create=True,
             ),
             mock.patch(
-                "celune.ui.app.time.monotonic",
+                "celune.ui.capture.time.monotonic",
                 side_effect=lambda: next(
                     monotonic_values, PERSONA_SPEECH_NO_INPUT_TIMEOUT_SECONDS
                 ),
@@ -412,7 +414,7 @@ class TestSpeechInput(CeluneTestCase):
         ui.safe_log = mock.Mock()
         ui.safe_status = mock.Mock()
         ui.update_resources = mock.Mock()
-        ui.style_button = SimpleNamespace(disabled=False)
+        ui.style_button = SimpleNamespace(actions=ButtonActions())
 
         ui._complete_persona_transcription(
             "",

@@ -260,10 +260,7 @@ class SelectMenuWidget(Widget):
 
     def _visible_option_indices(self) -> tuple[int, ...]:
         """Return the option window that fits while keeping the footer visible."""
-        # ``content_region.height`` can describe the current rendered content
-        # while Textual is settling an auto-sized, scrollable widget. Using it
-        # here creates a feedback loop where the second render may decide that
-        # only the selected row fits. The screen is the stable viewport.
+        # "Do not eat my rows!" - she says
         try:
             screen_height = self.screen.size.height
         except NoScreen:

@@ -131,6 +131,15 @@ call a backend's generator directly from application code.
 | `play_audio(audio, sample_rate, label="uploaded SFX", keep=False) -> bool` | Queue decoded SFX data. |
 | `speed` | Get/set playback speed. |
 | `reverb.strength` | Get/set DSP reverb strength from 0 through 1. |
+| `playback_buffer_seconds` | Read the application-side seconds currently reserved for output. |
+| `playback_contention_level` | Read smoothed output contention from 0 through 1. |
+| `playback_underflows` | Read the cumulative PortAudio output-underflow count for this runtime. |
+| `playback_queue_wait_seconds` | Read the latest time spent waiting to enqueue a chunk into the bounded playback queue. |
+| `playback_generation_gap_seconds` | Read the latest time since the previous chunk from the same source was enqueued. |
+| `playback_writer_wait_seconds` | Read the latest time a mixed block waited for the output writer thread. |
+| `playback_writer_gap_seconds` | Read the latest gap between the previous write finishing and this write starting. |
+| `playback_writer_write_seconds` | Read the latest time spent inside the output stream write. |
+| `playback_rebuffer_wait_seconds` | Read cumulative time spent waiting for the adaptive reserve target. |
 | `vc_pitch_shift`, `vc_f0_condition` | Read/write VC controls. |
 
 Arrays passed to audio calls should be numeric mono/stereo data; Celune converts
@@ -153,6 +162,34 @@ provides `log`, `say`, `think`, `play`, `status`, `set_voice`,
 `with_backend`, and `with_cevoice`; the `CeluneContext` object contains the
 same operations in a narrower form. Event names and payloads are documented in
 [Extensions](../interfaces/extensions.md).
+
+## Utility namespace checks
+
+`celune.utils.available()` provides one predicate for checking a name in a
+scope, an attribute on an object, or the availability of a module import
+specification. It is useful for optional integration capabilities; it does not
+replace lifecycle flags or required facade assembly checks.
+
+```python
+from celune.utils import available
+
+available("config")
+available("pitch_shift", obj=backend)
+available("silero_vad")
+```
+
+The call shape is:
+
+```text
+available(name, obj=None, scope=None) -> bool
+```
+
+With no object or scope selected, the caller's local, global, and builtin
+namespaces are searched first; if the name is not bound there, an import
+specification is searched without importing the module. Passing `scope`
+restricts the lookup to that explicit name container. Passing `obj` checks the
+named attribute using `hasattr()` semantics. A name bound to `None` is still
+available. `obj` and `scope` are mutually exclusive.
 
 ## CEVOICE calls
 

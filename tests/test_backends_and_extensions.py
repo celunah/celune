@@ -10,35 +10,47 @@ import textwrap
 import importlib
 import threading
 import contextlib
-from types import ModuleType, SimpleNamespace
-from typing import Union, Optional, cast
 from pathlib import Path
 from unittest import mock
+from typing import Union, Optional, cast
+from types import ModuleType, SimpleNamespace
 from collections.abc import Iterator, Generator
 
-import numpy as np
 import torch
 import pytest
+import numpy as np
 import soundfile as sf
 
 from celune.i18n import string
-from celune.utils import discard
-from celune.paths import huggingface_progress
-from celune.celune import Celune
 from celune.exceptions import (
     InvalidExtensionError,
     ExtensionAlreadyRegisteredError,
 )
-from celune.backends.vc import BACKEND_MANIFESTS as VC_BACKEND_MANIFESTS
-from celune.backends.vc import resolve_vc_backend
-from celune.backends.tts import BACKEND_MANIFESTS, resolve_backend
+from celune.celune import Celune
+from celune.utils import discard
 from celune.typing.aliases import AudioChunk
-from celune.extensions.base import CeluneContext, CeluneExtension
-from celune.typing.backends import BackendModel, _SeedVCRealtimeModule
+from celune.backends.tts.fireredtts3 import (
+    FireRedTTS3,
+    _FireRedIncrementalDecoder,
+    _FireRedModel,
+    _FireRedRedAE,
+    _create_firered_model,
+)
+from celune.backends.tts.luxtts import (
+    LuxTTS,
+    _LuxTTSModel,
+    _install_cpu_duration_correction,
+    _install_vocoder_decode_guard,
+    _set_vocoder_silence_feature,
+)
+from celune.backends.vc import resolve_vc_backend
 from celune.backends.vc.seedvc import CeluneSeedVCBackend
 from celune.extensions.manager import CeluneExtensionManager
 from celune.dataclasses.pipeline import VoiceConversionRequest
-from celune.backends.tts.gpt_sovits import GPTSoVITS, GPTSoVITSPipeline
+from celune.extensions.base import CeluneContext, CeluneExtension
+from celune.typing.backends import BackendModel, _SeedVCRealtimeModule
+from celune.backends.tts import BACKEND_MANIFESTS, resolve_backend
+from celune.backends.vc import BACKEND_MANIFESTS as VC_BACKEND_MANIFESTS
 
 from .support import (
     FakeBackend,
@@ -54,93 +66,6 @@ from .support import (
 
 class TestBackend(CeluneTestCase):
     """Tests for backend base behavior and backend resolution."""
-
-    def test_gpt_sovits_uses_huggingface_snapshot_paths_for_model_config(self) -> None:
-        """Verify GPT-SoVITS model configuration stays outside its source tree."""
-        with tempfile.TemporaryDirectory() as temp_dir:
-            root = Path(temp_dir) / "source"
-            (root / "GPT_SoVITS/TTS_infer_pack").mkdir(parents=True)
-            (root / "GPT_SoVITS/TTS_infer_pack/TTS.py").touch()
-            snapshot = Path(temp_dir) / "huggingface" / "snapshot"
-            snapshot.mkdir(parents=True)
-
-            backend = GPTSoVITS(
-                log=lambda _msg, _severity="info": None,
-                root=str(root),
-                variant="v4",
-            )
-            backend._model_snapshot = snapshot
-            config = backend._model_config("v4")
-            custom = cast(dict[str, Union[str, bool]], config["custom"])
-
-            assert custom["t2s_weights_path"] == str(snapshot / "s1v3.ckpt")
-            assert custom["vits_weights_path"] == str(
-                snapshot / "gsv-v4-pretrained/s2Gv4.pth"
-            )
-            assert "GPT_SoVITS/pretrained_models" not in str(custom)
-
-    def test_gpt_sovits_uses_custom_t2s_checkpoint_override(self) -> None:
-        """Verify a configured GPT checkpoint replaces only the variant T2S model."""
-        with tempfile.TemporaryDirectory() as temp_dir:
-            root = Path(temp_dir) / "source"
-            (root / "GPT_SoVITS/TTS_infer_pack").mkdir(parents=True)
-            (root / "GPT_SoVITS/TTS_infer_pack/TTS.py").touch()
-            custom_checkpoint = Path(temp_dir) / "custom-e20.ckpt"
-            custom_checkpoint.touch()
-            snapshot = Path(temp_dir) / "huggingface" / "snapshot"
-            for relative_path in (
-                "chinese-hubert-base/config.json",
-                "chinese-roberta-wwm-ext-large/config.json",
-                "gsv-v4-pretrained/s2Gv4.pth",
-                "gsv-v4-pretrained/vocoder.pth",
-            ):
-                target = snapshot / relative_path
-                target.parent.mkdir(parents=True, exist_ok=True)
-                target.touch()
-
-            backend = GPTSoVITS(
-                log=lambda _msg, _severity="info": None,
-                root=str(root),
-                variant="v4",
-                t2s_weights_path=str(custom_checkpoint),
-            )
-            backend._model_snapshot = snapshot
-            config = backend._model_config("v4")
-            custom = cast(dict[str, Union[str, bool]], config["custom"])
-
-            assert custom["t2s_weights_path"] == str(custom_checkpoint)
-            assert custom["vits_weights_path"] == str(
-                snapshot / "gsv-v4-pretrained/s2Gv4.pth"
-            )
-            assert backend._variant_is_available(
-                snapshot,
-                "v4",
-                custom_checkpoint,
-            )
-
-    def test_gpt_sovits_uses_shared_huggingface_progress(self) -> None:
-        """Verify GPT-SoVITS uses the shared Hugging Face progress bridge."""
-        backend = object.__new__(GPTSoVITS)
-        backend._model_snapshot = None
-
-        with (
-            tempfile.TemporaryDirectory() as temp_dir,
-            mock.patch(
-                "celune.backends.tts.gpt_sovits.snapshot_download",
-                return_value=str(Path(temp_dir) / "snapshot"),
-            ),
-            mock.patch(
-                "celune.backends.tts.gpt_sovits.huggingface_hub_cache_dir",
-                return_value=Path(temp_dir),
-            ),
-            mock.patch(
-                "celune.backends.tts.gpt_sovits.huggingface_progress",
-                wraps=huggingface_progress,
-            ) as progress_bridge,
-        ):
-            backend._ensure_model_snapshot()
-
-        progress_bridge.assert_called_once_with(backend.report_progress)
 
     def test_tts_preload_uses_celune_huggingface_cache(self) -> None:
         """Verify generic TTS preloading downloads into Celune's Hub cache."""
@@ -168,99 +93,310 @@ class TestBackend(CeluneTestCase):
             cache_dir=str(Path("C:/celune/huggingface/hub")),
         )
 
-    def test_gpt_sovits_bounds_nltk_downloads_and_restores_socket_timeout(
-        self,
+    @pytest.mark.parametrize(
+        ("cuda_available", "transcriber_model_id"),
+        (
+            (False, "openai/whisper-tiny"),
+            (True, "openai/whisper-base"),
+        ),
+    )
+    def test_luxtts_preload_caches_its_whisper_transcriber(
+        self, cuda_available: bool, transcriber_model_id: str
     ) -> None:
-        """Verify a stalled NLTK download becomes a bounded backend error."""
-        backend = object.__new__(GPTSoVITS)
-        backend._nltk_resources = {"test-resource": ("taggers/test-resource",)}
-        backend._nltk_download_timeout_seconds = 0.25
+        """Verify LuxTTS preloads the Whisper model for its runtime path."""
+        backend = object.__new__(LuxTTS)
         backend.log = mock.Mock()
-
-        nltk_data = SimpleNamespace(
-            path=[],
-            find=mock.Mock(side_effect=LookupError("missing resource")),
-        )
-
-        class FakeNltkModule(ModuleType):
-            """Typed NLTK module stand-in for the bounded download test."""
-
-            data: SimpleNamespace
-            download: mock.Mock
-
-        fake_nltk = FakeNltkModule("nltk")
-        fake_nltk.data = nltk_data
-        fake_nltk.download = mock.Mock(side_effect=TimeoutError("network timeout"))
+        backend._progress_callback = None
 
         with (
-            tempfile.TemporaryDirectory() as temp_dir,
-            mock.patch(
-                "celune.backends.tts.gpt_sovits.runtime_data_dir",
-                return_value=Path(temp_dir),
-            ),
-            mock.patch.dict(sys.modules, {"nltk": fake_nltk}),
-            mock.patch(
-                "celune.backends.tts.gpt_sovits.socket.getdefaulttimeout",
-                return_value=None,
+            mock.patch.object(
+                backend,
+                "model_is_available_locally",
+                return_value=(True, "cached"),
             ),
             mock.patch(
-                "celune.backends.tts.gpt_sovits.socket.setdefaulttimeout"
-            ) as setdefaulttimeout,
-            self.assertRaisesRegex(RuntimeError, "network timeout"),
+                "celune.backends.tts.luxtts.torch.cuda.is_available",
+                return_value=cuda_available,
+            ),
+            mock.patch(
+                "celune.backends.tts.luxtts.cached_hf_snapshot_path",
+                return_value=(False, None),
+            ) as cached,
+            mock.patch("celune.backends.tts.luxtts.snapshot_download") as download,
+            mock.patch(
+                "celune.backends.tts.luxtts.huggingface_hub_cache_dir",
+                return_value=Path("C:/celune/huggingface/hub"),
+            ),
         ):
-            backend._ensure_nltk_data()
+            backend.preload_models()
 
-        self.assertEqual(
-            setdefaulttimeout.call_args_list,
-            [mock.call(0.25), mock.call(None)],
+        cached.assert_called_once_with(
+            transcriber_model_id,
+            [
+                "config.json",
+                "generation_config.json",
+                "merges.txt",
+                "model.safetensors",
+                "normalizer.json",
+                "preprocessor_config.json",
+                "special_tokens_map.json",
+                "tokenizer.json",
+                "tokenizer_config.json",
+                "vocab.json",
+            ],
+        )
+        download.assert_called_once_with(
+            repo_id=transcriber_model_id,
+            cache_dir=str(Path("C:/celune/huggingface/hub")),
         )
 
-    def test_gpt_sovits_uses_legacy_celune_nltk_data_without_downloading(
-        self,
+    def test_luxtts_requires_the_cpu_snapshot_files(self) -> None:
+        """Verify LuxTTS checks the ONNX files used by its CPU loader."""
+        backend = object.__new__(LuxTTS)
+        with (
+            mock.patch(
+                "celune.backends.tts.luxtts.torch.cuda.is_available", return_value=False
+            ),
+            mock.patch(
+                "celune.backends.tts.luxtts.cached_hf_snapshot_path",
+                return_value=(True, "cached"),
+            ) as cached,
+        ):
+            assert backend.model_is_available_locally("YatharthS/LuxTTS") == (
+                True,
+                "cached",
+            )
+
+        cached.assert_called_once_with(
+            "YatharthS/LuxTTS",
+            [
+                "tokens.txt",
+                "text_encoder.onnx",
+                "fm_decoder.onnx",
+                "config.json",
+                "vocoder/config.yaml",
+                "vocoder/vocos.bin",
+            ],
+        )
+
+    def test_luxtts_requires_the_gpu_snapshot_files(self) -> None:
+        """Verify LuxTTS checks the native checkpoint for its GPU loader."""
+        backend = object.__new__(LuxTTS)
+        with (
+            mock.patch(
+                "celune.backends.tts.luxtts.torch.cuda.is_available", return_value=True
+            ),
+            mock.patch(
+                "celune.backends.tts.luxtts.cached_hf_snapshot_path",
+                return_value=(True, "cached"),
+            ) as cached,
+        ):
+            assert backend.model_is_available_locally("YatharthS/LuxTTS") == (
+                True,
+                "cached",
+            )
+
+        cached.assert_called_once_with(
+            "YatharthS/LuxTTS",
+            [
+                "tokens.txt",
+                "model.pt",
+                "config.json",
+                "vocoder/config.yaml",
+                "vocoder/vocos.bin",
+            ],
+        )
+
+    def test_luxtts_prepares_runtime_before_worker_requests(self) -> None:
+        """Verify LuxTTS imports its native runtime during worker preparation."""
+        backend = object.__new__(LuxTTS)
+        with mock.patch(
+            "celune.backends.tts.luxtts._load_runtime_class"
+        ) as load_runtime:
+            backend.prepare_model_loading()
+
+        load_runtime.assert_called_once_with()
+
+    @pytest.mark.parametrize(
+        ("cuda_available", "expected_device"),
+        ((False, "cpu"), (True, "cuda")),
+    )
+    def test_luxtts_selects_the_available_runtime(
+        self, cuda_available: bool, expected_device: str
     ) -> None:
-        """Verify an existing legacy Celune NLTK directory is reused directly."""
-        backend = object.__new__(GPTSoVITS)
-        backend._nltk_resources = {"test-resource": ("taggers/test-resource",)}
-        backend.log = mock.Mock()
+        """Verify LuxTTS uses CUDA when available and CPU otherwise."""
+        backend = object.__new__(LuxTTS)
+        backend._threads = 2
+        backend._progress_callback = None
+        runtime = mock.Mock()
+        runtime_class = mock.Mock(return_value=runtime)
 
-        with tempfile.TemporaryDirectory() as temp_dir:
-            celune_data = Path(temp_dir) / "celune"
-            legacy_data_dir = celune_data / "nltk_data"
-            nltk_data = SimpleNamespace(path=[])
+        with (
+            mock.patch.object(
+                backend,
+                "model_is_available_locally",
+                return_value=(True, "cached"),
+            ),
+            mock.patch(
+                "celune.backends.tts.luxtts.torch.cuda.is_available",
+                return_value=cuda_available,
+            ),
+            mock.patch(
+                "celune.backends.tts.luxtts._load_runtime_class",
+                return_value=runtime_class,
+            ),
+        ):
+            assert backend.load_model("YatharthS/LuxTTS") is runtime
 
-            def find(_resource: str) -> object:
-                if str(legacy_data_dir) in nltk_data.path:
-                    return object()
-                raise LookupError("missing resource")
+        runtime_class.assert_called_once_with(
+            "cached", device=expected_device, threads=2
+        )
 
-            nltk_data.find = find
+    def test_luxtts_generates_a_normalized_complete_48khz_chunk(self) -> None:
+        """Verify LuxTTS consumes the pack reference and emits Celune audio."""
+        loader = make_voice_loader(
+            "balanced",
+            {"reference_text": "Pack reference."},
+        )
+        backend = LuxTTS.__new__(LuxTTS)
+        backend.random_seed = False
+        backend.current_seed = None
+        backend._truncated_reference_paths = set()
+        model = mock.Mock()
+        prompt = {"prompt_features": torch.zeros(1)}
+        model.encode_prompt.return_value = prompt
+        model.generate_speech.return_value = torch.tensor([-2.0, 0.25, 2.0])
 
-            class FakeNltkModule(ModuleType):
-                """Typed NLTK module stand-in for the existing-data test."""
+        with (
+            mock.patch(
+                "celune.backends.tts.luxtts.default_loader", return_value=loader
+            ),
+            mock.patch.object(
+                backend, "_truncate_reference", return_value=Path("reference.wav")
+            ),
+            mock.patch.object(
+                backend,
+                "_prepare_prompt_reference",
+                return_value=Path("prepared-reference.wav"),
+            ),
+        ):
+            result = list(
+                backend.generate_stream(
+                    model,
+                    text="Hello.",
+                    voice="balanced",
+                )
+            )
 
-                data: SimpleNamespace
-                download: mock.Mock
+        model.encode_prompt.assert_called_once_with(
+            "prepared-reference.wav",
+            duration=5.2,
+            rms=0.01,
+        )
+        model.generate_speech.assert_called_once_with(
+            "Hello.",
+            prompt,
+            num_steps=4,
+            guidance_scale=3.0,
+            t_shift=0.5,
+            speed=1.0,
+            return_smooth=False,
+        )
+        audio, sample_rate, timing = result[0]
+        np.testing.assert_allclose(audio, [-1.0, 0.25, 1.0])
+        assert audio.dtype == np.float32
+        assert sample_rate == 48000
+        assert timing is not None
+        assert timing["is_final"] is True
 
-            fake_nltk = FakeNltkModule("nltk")
-            fake_nltk.data = nltk_data
-            fake_nltk.download = mock.Mock()
+    def test_luxtts_adds_a_silent_prompt_boundary(self, tmp_path: Path) -> None:
+        """Verify prompt audio keeps five seconds and gains a silent tail."""
+        reference_wav = tmp_path / "reference.wav"
+        sf.write(reference_wav, np.ones(6 * 24_000, dtype=np.float32), 24_000)
+        backend = LuxTTS.__new__(LuxTTS)
+        backend._truncated_reference_paths = set()
 
-            with (
-                mock.patch(
-                    "celune.backends.tts.gpt_sovits.runtime_data_dir",
-                    return_value=Path(temp_dir) / "runtime",
-                ),
-                mock.patch(
-                    "celune.backends.tts.gpt_sovits.app_data_dir",
-                    return_value=celune_data,
-                ),
-                mock.patch.dict(sys.modules, {"nltk": fake_nltk}),
-                mock.patch.dict(os.environ, {"NLTK_DATA": ""}),
-            ):
-                backend._ensure_nltk_data()
+        with mock.patch(
+            "celune.backends.tts.luxtts.temp_data_dir", return_value=tmp_path
+        ):
+            prepared = backend._prepare_prompt_reference(reference_wav)
 
-        fake_nltk.download.assert_not_called()
-        backend.log.assert_not_called()
+        audio, sample_rate = sf.read(prepared, dtype="float32")
+        assert sample_rate == 24_000
+        assert audio.shape == (int(5.2 * 24_000),)
+        np.testing.assert_allclose(audio[-int(0.2 * 24_000) :], 0.0)
+
+    def test_luxtts_guards_vocoder_against_short_feature_sequences(self) -> None:
+        """Verify LuxTTS pads decoder context and rejects empty output frames."""
+
+        class FakeVocoder:
+            """Return decoder inputs so the guard's padding is observable."""
+
+            def __init__(self) -> None:
+                self.input_features: Optional[torch.Tensor] = None
+                self.input_shape: Optional[tuple[int, ...]] = None
+
+            def decode(
+                self, features_input: torch.Tensor, **kwargs: object
+            ) -> torch.Tensor:
+                """Return the received features unchanged."""
+                del kwargs
+                self.input_features = features_input
+                self.input_shape = tuple(features_input.shape)
+                return torch.zeros(1, 1, 10_000)
+
+        vocoder = FakeVocoder()
+        model = SimpleNamespace(vocos=vocoder)
+        prompt: dict[str, Union[torch.Tensor, float, int]] = {
+            "prompt_features": torch.full((1, 4, 2), -3.0)
+        }
+        _set_vocoder_silence_feature(cast(_LuxTTSModel, model), prompt)
+        _install_vocoder_decode_guard(cast(_LuxTTSModel, model))
+
+        decoded = model.vocos.decode(torch.ones(1, 2, 1))
+        assert vocoder.input_shape == (1, 2, 22)
+        assert vocoder.input_features is not None
+        torch.testing.assert_close(
+            vocoder.input_features[..., 1:], torch.full((1, 2, 21), -3.0)
+        )
+        assert decoded.shape == (1, 1, 10_000 - 2 * 512)
+        with pytest.raises(ValueError, match="LuxTTS produced no acoustic frames"):
+            model.vocos.decode(torch.empty(1, 2, 0))
+
+    def test_luxtts_corrects_cpu_duration_ratio(self) -> None:
+        """Verify CPU LuxTTS allocates prompt plus generated frames."""
+
+        class FakeOnnxModel:
+            """Capture the speed passed to the ONNX text encoder."""
+
+            def __init__(self) -> None:
+                self.speed: Optional[torch.Tensor] = None
+
+            def run_text_encoder(
+                self,
+                tokens: torch.Tensor,
+                prompt_tokens: torch.Tensor,
+                prompt_features_len: torch.Tensor,
+                speed: torch.Tensor,
+            ) -> torch.Tensor:
+                """Record the request and return a placeholder condition."""
+                del tokens, prompt_tokens, prompt_features_len
+                self.speed = speed
+                return torch.zeros(1, 1, 100)
+
+        onnx_model = FakeOnnxModel()
+        model = SimpleNamespace(model=onnx_model)
+        _install_cpu_duration_correction(cast(_LuxTTSModel, model))
+
+        model.model.run_text_encoder(
+            torch.zeros(1, 6, dtype=torch.int64),
+            torch.zeros(1, 90, dtype=torch.int64),
+            torch.tensor(469),
+            torch.tensor(1.3),
+        )
+
+        assert onnx_model.speed is not None
+        assert onnx_model.speed.item() == pytest.approx((469 / 90 * 96) / (469 + 25))
 
     def test_voxcpm2_does_not_forward_transformers_only_arguments(
         self,
@@ -294,117 +430,6 @@ class TestBackend(CeluneTestCase):
                 {"load_denoiser": False, "optimize": False},
                 {"load_denoiser": False, "optimize": False},
             ]
-
-    def test_gpt_sovits_bootstrap_uses_celune_user_data_directory(self) -> None:
-        """Verify missing GPT-SoVITS source is installed below Celune user data."""
-        expected_root = Path("C:/runtime-data") / "gpt_sovits"
-
-        with (
-            mock.patch(
-                "celune.backends.tts.gpt_sovits.runtime_data_dir",
-                return_value=expected_root.parent,
-            ),
-            mock.patch.object(GPTSoVITS, "_candidate_roots", return_value=iter(())),
-            mock.patch.object(
-                GPTSoVITS, "_download_source_tree", return_value=expected_root
-            ) as download,
-        ):
-            assert GPTSoVITS._resolve_root(None) == expected_root
-
-        download.assert_called_once_with(expected_root)
-
-    def test_gpt_sovits_auto_selects_a_streaming_variant(self) -> None:
-        """Verify automatic GPT-SoVITS selection accepts fragment-streaming variants."""
-        backend = GPTSoVITS.__new__(GPTSoVITS)
-        backend._custom_t2s_weights_path = None
-        with tempfile.TemporaryDirectory() as temp_dir:
-            snapshot = Path(temp_dir)
-            for relative_path in (
-                "chinese-hubert-base/config.json",
-                "chinese-roberta-wwm-ext-large/config.json",
-                "s1v3.ckpt",
-                "v2Pro/s2Gv2Pro.pth",
-                "sv/pretrained_eres2netv2w24s4ep4.ckpt",
-                "gsv-v4-pretrained/s2Gv4.pth",
-                "gsv-v4-pretrained/vocoder.pth",
-            ):
-                target = snapshot / relative_path
-                target.parent.mkdir(parents=True, exist_ok=True)
-                target.touch()
-
-            assert backend._select_variant(snapshot, None) == "v2Pro"
-            assert backend._select_variant(snapshot, "v4") == "v4"
-
-    def test_gpt_sovits_converts_integer_pcm_to_float_audio(self) -> None:
-        """Verify GPT-SoVITS int16 PCM is scaled to Celune's float audio range."""
-        pcm = np.array([-32768, 0, 32767], dtype=np.int16)
-
-        audio = GPTSoVITS._to_numpy_audio(pcm)
-
-        np.testing.assert_allclose(audio, [-1.0, 0.0, 32767 / 32768])
-        assert audio.dtype == np.float32
-
-    def test_gpt_sovits_uses_english_for_unambiguous_latin_text(self) -> None:
-        """Verify automatic language selection uses English phonemization for Latin text."""
-        assert GPTSoVITS._resolve_text_language("auto", "Hello, Celune.") == "en"
-        assert GPTSoVITS._resolve_text_language("auto", "Hello, 你好.") == "auto"
-        assert GPTSoVITS._resolve_text_language("ja", "Hello.") == "ja"
-
-    def test_gpt_sovits_rejects_reference_audio_shorter_than_three_seconds(
-        self,
-    ) -> None:
-        """Verify invalid GPT-SoVITS reference duration is rejected before inference."""
-        with tempfile.TemporaryDirectory() as temp_dir:
-            path = Path(temp_dir) / "short.wav"
-            sf.write(path, np.zeros(24000, dtype=np.float32), 24000)
-
-            with pytest.raises(ValueError):
-                GPTSoVITS._validate_reference_audio("calm", path)
-
-    def test_gpt_sovits_trims_quiet_reference_edges(self) -> None:
-        """Verify quiet reference edges are removed while spoken audio is retained."""
-        backend = GPTSoVITS.__new__(GPTSoVITS)
-        backend._truncated_reference_paths = set()
-        with tempfile.TemporaryDirectory() as temp_dir:
-            source = Path(temp_dir) / "calm.wav"
-            audio = np.concatenate(
-                [
-                    np.zeros(12000, dtype=np.float32),
-                    np.full(96000, 0.1, dtype=np.float32),
-                    np.zeros(12000, dtype=np.float32),
-                ]
-            )
-            sf.write(source, audio, 24000)
-
-            trimmed = backend._trim_reference_silence(source)
-
-            assert trimmed != source
-            assert sf.info(trimmed).duration >= 4.0
-            assert sf.info(trimmed).duration < 5.0
-            assert trimmed in backend._truncated_reference_paths
-
-    def test_gpt_sovits_refreshes_prompt_cache_after_voice_change(self) -> None:
-        """Verify a changed voice reference clears official prompt state."""
-        pipeline = SimpleNamespace(
-            prompt_cache={
-                "ref_audio_path": "old.wav",
-                "prompt_semantic": object(),
-                "refer_spec": [object()],
-                "prompt_text": "Old voice.",
-                "prompt_lang": "en",
-            }
-        )
-
-        GPTSoVITS._refresh_prompt_cache(
-            cast(GPTSoVITSPipeline, pipeline),
-            Path("new.wav"),
-            "New voice.",
-            "en",
-        )
-
-        assert pipeline.prompt_cache["ref_audio_path"] is None
-        assert pipeline.prompt_cache["refer_spec"] == []
-        assert pipeline.prompt_cache["prompt_text"] is None
 
     def test_base_backend_reports_models(self) -> None:
         """Verify model metadata helpers on a fake backend.
@@ -489,13 +514,360 @@ class TestBackend(CeluneTestCase):
                 string(
                     "celune.unknown_backend",
                     backend="missing",
-                    available="mini, qwen3, dotstts, voxcpm2, gpt-sovits",
+                    available="mini, qwen3, fireredtts3, dotstts, voxcpm2, luxtts",
                 )
             ),
         ):
             resolve_backend("missing")
         with pytest.raises(TypeError, match="backend_name"):
             resolve_backend(123)  # type: ignore[arg-type]
+
+    def test_fireredtts3_normalizes_supported_language_tags(self) -> None:
+        """Verify Celune language identifiers become FireRedTTS3 language tags."""
+        backend = object.__new__(FireRedTTS3)
+
+        assert backend.resolve_generation_language("en-US") == "English"
+        assert backend.resolve_generation_language("zh-sichuan") == "ZH_Sichuan"
+        assert backend.resolve_generation_language("auto") is None
+
+    def test_fireredtts3_loads_memory_heavy_components_in_bfloat16(self) -> None:
+        """Verify the backend applies BF16 to the intended FireRedTTS3 components."""
+        model = SimpleNamespace(
+            tts_core=SimpleNamespace(
+                backbone_llm=mock.Mock(),
+                stop_head=mock.Mock(),
+            ),
+            redae=SimpleNamespace(encoder=mock.Mock()),
+        )
+
+        FireRedTTS3._configure_bfloat16(cast(_FireRedModel, model))
+
+        model.tts_core.backbone_llm.to.assert_called_once_with(dtype=torch.bfloat16)
+        model.tts_core.stop_head.to.assert_called_once_with(dtype=torch.bfloat16)
+        model.redae.encoder.to.assert_called_once_with(dtype=torch.bfloat16)
+
+    def test_fireredtts3_preloads_source_modules_before_cedts_readiness(self) -> None:
+        """Verify FireRedTTS3 primes source imports before the worker read loop."""
+        backend = object.__new__(FireRedTTS3)
+        source_root = Path("source-root")
+
+        with (
+            mock.patch.object(
+                backend, "_ensure_source_root", return_value=source_root
+            ) as ensure_source_root,
+            mock.patch.object(
+                backend,
+                "_source_context",
+                return_value=contextlib.nullcontext(),
+            ) as source_context,
+            mock.patch.object(backend, "_preload_source_modules") as preload,
+        ):
+            backend.prepare_model_loading()
+
+        ensure_source_root.assert_called_once_with()
+        source_context.assert_called_once_with(source_root)
+        preload.assert_called_once_with()
+
+    def test_fireredtts3_uses_sdpa_without_flash_attention(self) -> None:
+        """Verify FireRedTTS3 selects PyTorch SDPA instead of flash-attn."""
+
+        redae_load_kwargs: dict[str, object] = {}
+        core_load_kwargs: dict[str, object] = {}
+        qwen_config_kwargs: dict[str, object] = {}
+
+        class FakePackageModule(ModuleType):
+            """Minimal fake FireRedTTS3 package module."""
+
+            llm: ModuleType
+            redae: ModuleType
+
+        class FakeRedaePackageModule(ModuleType):
+            """Minimal fake FireRedTTS3 RedAE package module."""
+
+            redae: ModuleType
+
+        class FakeQwen3Config:
+            """Minimal fake Qwen3 configuration."""
+
+            def __init__(self, **kwargs: object) -> None:
+                qwen_config_kwargs.update(kwargs)
+
+        class FakeLlmModule(ModuleType):
+            """Minimal fake FireRedTTS3 LLM package module."""
+
+            fireredtts3_base: ModuleType
+
+        class FakeBaseModule(ModuleType):
+            """Minimal fake FireRedTTS3 base module."""
+
+            Qwen3_1_7B_ConfigDict: dict[str, str]
+            RedAE: type["FakeRedAE"]
+            FireRedTTS3BaseCore: type["FakeFireRedTTS3BaseCore"]
+
+        class FakeRedaeModule(ModuleType):
+            """Minimal fake FireRedTTS3 RedAE module."""
+
+            RedAE: type["FakeRedAE"]
+            Qwen3Config: type[FakeQwen3Config]
+
+        class FakeRedAE:
+            """Minimal fake RedAE model class."""
+
+            @classmethod
+            def from_pretrained(
+                cls, pretrained_model_dir: str, **kwargs: object
+            ) -> "FakeRedAE":
+                """Record the loader arguments and return a fake model."""
+                del pretrained_model_dir
+                redae_load_kwargs.update(kwargs)
+                return cls()
+
+        class FakeFireRedTTS3BaseCore:
+            """Minimal fake FireRedTTS3 transformer class."""
+
+            @classmethod
+            def from_pretrained(
+                cls, pretrained_model_dir: str, **kwargs: object
+            ) -> "FakeFireRedTTS3BaseCore":
+                """Record the loader arguments and return a fake model."""
+                del pretrained_model_dir
+                core_load_kwargs.update(kwargs)
+                return cls()
+
+        class FakeCoreModule(ModuleType):
+            """Minimal fake FireRedTTS3 core module."""
+
+            FireRedTTS3: mock.Mock
+
+        fake_package = FakePackageModule("fireredtts3")
+        fake_llm = FakeLlmModule("fireredtts3.llm")
+        fake_base = FakeBaseModule("fireredtts3.llm.fireredtts3_base")
+        fake_core = FakeCoreModule("fireredtts3.core")
+        fake_redae_package = FakeRedaePackageModule("fireredtts3.redae")
+        fake_redae = FakeRedaeModule("fireredtts3.redae.redae")
+        fake_config = {"attn_implementation": "flash_attention_2"}
+        fake_base.RedAE = FakeRedAE
+        fake_base.FireRedTTS3BaseCore = FakeFireRedTTS3BaseCore
+        fake_redae.RedAE = FakeRedAE
+        fake_redae.Qwen3Config = FakeQwen3Config
+
+        def construct_firered_model(*_args: object, **_kwargs: object) -> object:
+            """Exercise the patched FireRedTTS3 construction dependencies."""
+            fake_base.RedAE.from_pretrained("redae")
+            fake_base.FireRedTTS3BaseCore.from_pretrained("core")
+            fake_redae.Qwen3Config(attn_implementation="flash_attention_2")
+            return mock.sentinel.model
+
+        fire_red_constructor = mock.Mock(side_effect=construct_firered_model)
+        fake_base.Qwen3_1_7B_ConfigDict = fake_config
+        fake_llm.fireredtts3_base = fake_base
+        fake_core.FireRedTTS3 = fire_red_constructor
+        fake_package.llm = fake_llm
+        fake_package.redae = fake_redae_package
+        fake_redae_package.redae = fake_redae
+        stage_messages: list[tuple[str, str]] = []
+        stage_progress: list[tuple[Optional[float], Optional[float]]] = []
+
+        with mock.patch.dict(
+            sys.modules,
+            {
+                "fireredtts3": fake_package,
+                "fireredtts3.llm": fake_llm,
+                "fireredtts3.llm.fireredtts3_base": fake_base,
+                "fireredtts3.core": fake_core,
+                "fireredtts3.redae": fake_redae_package,
+                "fireredtts3.redae.redae": fake_redae,
+            },
+        ):
+            result = _create_firered_model(
+                "model-root",
+                log=lambda message, severity: stage_messages.append(
+                    (message, severity)
+                ),
+                report_progress=lambda progress, total: stage_progress.append(
+                    (progress, total)
+                ),
+            )
+
+        assert result is mock.sentinel.model
+        assert fake_config["attn_implementation"] == "flash_attention_2"
+        assert redae_load_kwargs == {"dtype": torch.bfloat16}
+        assert core_load_kwargs == {"dtype": torch.bfloat16}
+        assert qwen_config_kwargs["attn_implementation"] == "sdpa"
+        assert [message for message, _severity in stage_messages] == [
+            string("fireredtts3.model_loading"),
+            string("fireredtts3.loading_redae"),
+            string("fireredtts3.redae_loaded"),
+            string("fireredtts3.loading_core"),
+            string("fireredtts3.core_loaded"),
+        ]
+        assert all(severity == "info" for _message, severity in stage_messages)
+        assert stage_progress == [(0, 4), (1, 4), (2, 4), (2, 4), (3, 4)]
+        fire_red_constructor.assert_called_once_with(
+            "model-root",
+            use_fasttext=False,
+            use_llm_tn=False,
+            use_wetext=False,
+        )
+
+    def test_fireredtts3_streams_cedts_audio_chunks(self) -> None:
+        """Verify FireRedTTS3 decodes and yields progressive CEDTS chunks."""
+        loader = make_voice_loader(
+            "balanced",
+            {"reference_text": "Reference prompt."},
+        )
+        model = mock.Mock()
+        model.device = torch.device("cpu")
+        model.redae.sample_rate = 24000
+        model.redae.downsample_rate = 960
+        model.redae.pad_to_multiple_of.side_effect = lambda audio, _multiple: audio
+        model.redae.encode.return_value = torch.zeros(1, 4, 64)
+        model.spk_extractor.forward.return_value = torch.zeros(1, 512)
+        model._tokenize_text.return_value = torch.ones(1, 2, dtype=torch.long)
+        model.tts_core.patch_size = 4
+        model.tts_core.generate_stream.return_value = iter(
+            [
+                torch.zeros(1, 4, 64, dtype=torch.bfloat16),
+                torch.zeros(1, 4, 64, dtype=torch.bfloat16),
+            ]
+        )
+        incremental_decoder = mock.Mock()
+        incremental_decoder.push.side_effect = [
+            (None, 0),
+            (np.array([0.25, -0.5], dtype=np.float32), 0),
+            (np.array([0.75, -1.0], dtype=np.float32), 0),
+        ]
+        incremental_decoder.finish.return_value = (None, 0)
+        with (
+            mock.patch(
+                "celune.backends.tts.fireredtts3.default_loader",
+                return_value=loader,
+            ),
+            mock.patch(
+                "celune.backends.tts.fireredtts3.torchaudio.load",
+                return_value=(torch.zeros(1, 0), 24000),
+            ),
+            mock.patch("celune.backends.tts.fireredtts3.torch.autocast") as autocast,
+            mock.patch(
+                "celune.backends.tts.fireredtts3._FireRedIncrementalDecoder",
+                return_value=incremental_decoder,
+            ),
+        ):
+            backend = FireRedTTS3(log=lambda _msg, _severity="info": None)
+            backend.random_seed = False
+            backend.current_seed = 7
+            with mock.patch.object(
+                backend, "_truncate_reference", side_effect=lambda path: path
+            ) as truncate_reference:
+                chunks = list(
+                    backend.generate_stream(
+                        model,
+                        text="Hello.",
+                        language="en",
+                        voice="balanced",
+                        chunk_size=1,
+                    )
+                )
+
+        truncate_reference.assert_not_called()
+
+        assert len(chunks) == 2
+        np.testing.assert_array_equal(chunks[0][0], [0.25, -0.5])
+        np.testing.assert_array_equal(chunks[1][0], [0.75, -1.0])
+        assert all(audio.dtype == np.float32 for audio, _sr, _timing in chunks)
+        assert all(sample_rate == 24000 for _audio, sample_rate, _timing in chunks)
+        assert chunks[0][2] is not None
+        assert chunks[0][2]["is_final"] is False
+        assert chunks[1][2] is not None
+        assert chunks[1][2]["is_final"] is True
+        assert model._tokenize_text.call_args.args == (
+            "<|English|><|sot|>Reference prompt.Hello.<|eot|>",
+        )
+        assert model.tts_core.generate_stream.call_args.kwargs["n_timesteps"] == 10
+        assert incremental_decoder.push.call_count == 3
+        incremental_decoder.finish.assert_called_once_with()
+        assert not model.redae.decode.called
+        assert not model.generate.called
+        autocast.assert_called_once_with(device_type="cuda", dtype=torch.bfloat16)
+
+    def test_fireredtts3_incremental_decoder_reuses_qwen_cache(self) -> None:
+        """Verify RedAE decoding reuses KV state and flushes the ISTFT tail."""
+
+        class FakeProjection:
+            """Produce latent embeddings for the decoder fixture."""
+
+            def __call__(self, latents: torch.Tensor) -> torch.Tensor:
+                """Expand each latent into the decoder's two hidden frames."""
+                return torch.zeros(latents.shape[0], latents.shape[1] * 2, 2)
+
+        class FakeOutputProjection:
+            """Produce a deterministic two-sided spectral projection."""
+
+            def __call__(self, hidden: torch.Tensor) -> torch.Tensor:
+                """Return zero magnitude and phase logits for stable unit audio."""
+                return torch.zeros(hidden.shape[0], hidden.shape[1], 6)
+
+        class FakeQwen:
+            """Record cache handoff between incremental decoder calls."""
+
+            config = SimpleNamespace(hidden_size=2)
+
+            def __init__(self) -> None:
+                self.seen_caches: list[Optional[SimpleNamespace]] = []
+                self.returned_caches: list[SimpleNamespace] = []
+
+            def __call__(
+                self,
+                *,
+                inputs_embeds: torch.Tensor,
+                attention_mask: Optional[torch.Tensor],
+                past_key_values: Optional[SimpleNamespace],
+                use_cache: bool,
+            ) -> SimpleNamespace:
+                """Return hidden states and a new cache marker."""
+                del attention_mask
+                assert use_cache
+                cache = SimpleNamespace()
+                self.seen_caches.append(past_key_values)
+                self.returned_caches.append(cache)
+                return SimpleNamespace(
+                    last_hidden_state=inputs_embeds,
+                    past_key_values=cache,
+                )
+
+        qwen = FakeQwen()
+        decoder = SimpleNamespace(
+            in_proj=FakeProjection(),
+            qwen3=qwen,
+            istft_head=SimpleNamespace(
+                out=FakeOutputProjection(),
+                istft=SimpleNamespace(
+                    window=torch.ones(4),
+                    n_fft=4,
+                    hop_length=2,
+                ),
+            ),
+        )
+        redae = cast(
+            _FireRedRedAE,
+            SimpleNamespace(decoder=decoder),
+        )
+        incremental = _FireRedIncrementalDecoder(redae)
+
+        prompt_audio, prompt_start = incremental.push(torch.zeros(1, 1, 1))
+        generated_audio, generated_start = incremental.push(torch.zeros(1, 1, 1))
+        tail_audio, tail_start = incremental.finish()
+
+        assert prompt_audio is not None
+        assert prompt_start == 0
+        assert generated_audio is not None
+        assert generated_start == 3
+        assert tail_audio is not None
+        assert tail_start == 7
+        generated = np.concatenate([generated_audio[1:], tail_audio])
+        assert generated.shape == (4,)
+        assert np.isfinite(generated).all()
+        assert qwen.seen_caches == [None, qwen.returned_caches[0]]
 
     def test_resolve_vc_backend_accepts_instance_type_and_rejects_unknown(self) -> None:
         """Verify supported VC backend specifications and invalid input failures."""
@@ -1343,8 +1715,8 @@ class TestBackend(CeluneTestCase):
             assert model.model.tokenizer is tokenizer
             assert model.model.core.tokenizer is tokenizer
 
-    def test_dotstts_uses_truncated_reference_wav_when_present(self) -> None:
-        """Verify dots.tts passes reference audio through the shared truncation hook."""
+    def test_dotstts_uses_the_complete_reference_wav_when_present(self) -> None:
+        """Verify dots.tts receives complete prompt audio for its prompt-span handling."""
 
         with mock_dotstts_backend() as dotstts_cls:
 
@@ -1375,16 +1747,15 @@ class TestBackend(CeluneTestCase):
                 mock.patch(
                     "celune.backends.tts.dotstts.default_loader", return_value=loader
                 ),
-                mock.patch.object(
-                    dotstts_cls, "_truncate_reference", return_value=Path("trimmed.wav")
-                ),
+                mock.patch.object(dotstts_cls, "_truncate_reference") as truncate,
             ):
                 backend = dotstts_cls(log=lambda _msg, _severity="info": None)
                 model = FakeModel()
                 list(backend.generate_stream(model, text="hello", voice="calm"))
 
             assert model.prompt_text == "Pack reference."
-            assert model.prompt_audio_path == str(Path("trimmed.wav"))
+            assert model.prompt_audio_path == str(Path("calm.wav"))
+            truncate.assert_not_called()
 
     def test_dotstts_falls_back_to_the_active_pack_voice_ids(self) -> None:
         """Verify dots.tts uses the pack voice when the backend default is absent."""

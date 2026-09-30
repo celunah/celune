@@ -153,7 +153,12 @@ Worker stderr is retained for failure diagnostics, but CEDTS applies the same
 known-benign runtime-message suppression list used by Celune's local runtime
 log redirect. This keeps isolated workers from reintroducing filtered model,
 Transformers, tqdm, and Triton notices into the UI log; actionable worker
-messages remain visible and retained for error reporting.
+messages remain visible and retained for error reporting. Known multiline
+diagnostics are suppressed as a block, including their unprefixed continuation
+lines. Backend output that is redirected from stdout is write-through and
+line-buffered before backend imports begin, so a library's diagnostic is
+reported during the operation that produced it rather than being flushed later
+when the worker shuts down.
 
 State events use `loading`, `ready`, `processing`, `streaming`, `paused`,
 `cancelling`, `cancelled`, `completed`, `failed`, and `shutdown_requested`.
@@ -163,6 +168,12 @@ Cancellation is cooperative: the core requests it, the worker acknowledges it,
 and the backend decides how quickly to release the current operation. A fatal
 protocol error tears down the worker rather than trying to reuse a stream with
 unknown framing state.
+
+If a CEDTS stream reaches EOF or reports another transport, protocol, or
+payload failure, the proxy stores the typed error, wakes the active request
+waiter, and emits the failure through Celune's log callback immediately. The
+worker is then torn down; the caller does not wait for the operation's normal
+timeout boundary.
 
 ## Errors and implementation API
 

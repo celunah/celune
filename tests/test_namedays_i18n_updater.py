@@ -15,6 +15,7 @@ import pytest
 from celune import i18n, updater, namedays
 
 from .support import CeluneTestCase
+from .platform import LINUX_ONLY
 
 
 class TestNameDay(CeluneTestCase):
@@ -189,6 +190,7 @@ class TestUpdater(CeluneTestCase):
                 updater._extract_artifact_root(zip_path, destination)
             self.assertFalse((root / "escape.txt").exists())
 
+    @LINUX_ONLY
     def test_extract_artifact_rejects_existing_symlink_escape(self) -> None:
         """Reject a member whose destination path traverses an existing symlink."""
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -197,10 +199,7 @@ class TestUpdater(CeluneTestCase):
             outside = root / "outside"
             destination.mkdir()
             outside.mkdir()
-            try:
-                (destination / "release").symlink_to(outside, target_is_directory=True)
-            except (NotImplementedError, OSError):
-                self.skipTest("symbolic links are not supported")
+            (destination / "release").symlink_to(outside, target_is_directory=True)
 
             zip_path = root / "artifact.zip"
             with zipfile.ZipFile(zip_path, "w") as archive:
@@ -210,6 +209,7 @@ class TestUpdater(CeluneTestCase):
                 updater._extract_artifact_root(zip_path, destination)
             self.assertFalse((outside / "escaped.txt").exists())
 
+    @LINUX_ONLY
     def test_zip_safety_errors_use_localized_messages(self) -> None:
         """Verify ZIP safety failures resolve their user-facing messages through i18n."""
         symlink = zipfile.ZipInfo("release/link")
@@ -247,10 +247,7 @@ class TestUpdater(CeluneTestCase):
             outside = root / "outside"
             destination.mkdir()
             outside.mkdir()
-            try:
-                (destination / "release").symlink_to(outside, target_is_directory=True)
-            except (NotImplementedError, OSError):
-                self.skipTest("symbolic links are not supported")
+            (destination / "release").symlink_to(outside, target_is_directory=True)
 
             member = zipfile.ZipInfo("release/file.txt")
             with (

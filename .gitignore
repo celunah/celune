@@ -230,3 +230,4 @@ outputs/
 bin/
 voices/**/*.cevoice
 !voices/default.cevoice
+!voices/classic.cevoice

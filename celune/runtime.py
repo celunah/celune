@@ -11,6 +11,7 @@ import torch
 from . import __comment__, __version__, __codename__
 from .i18n import string
 from .utils import (
+    available,
     format_number,
     cuda_architecture,
 )
@@ -85,7 +86,7 @@ def check_supported_backends() -> tuple[str, bool]:
             return "CUDA", True
         return "ZLUDA", True
 
-    if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+    if available("mps", obj=torch.backends) and torch.backends.mps.is_available():
         return "MPS", False
 
     return "CPU", False
@@ -167,9 +168,12 @@ def validate_runtime(
     else:
         log(f"Current system supports {backend} execution.", "info")
 
-    allow_cpu_mini = backend == "CPU" and backend_name.strip().lower() == "mini"
-    if allow_cpu_mini:
-        log(string("runtime.mini_startup", app_name=APP_NAME), "info")
+    allow_cpu_backend = backend == "CPU" and backend_name.strip().lower() in {
+        "mini",
+        "luxtts",
+    }
+    if allow_cpu_backend:
+        log(string("runtime.cpu_backend_startup", app_name=APP_NAME), "info")
         usable = True
 
     if not usable:
@@ -178,7 +182,7 @@ def validate_runtime(
         error(string("runtime.no_supported_backend"))
         return False
 
-    if allow_cpu_mini:
+    if allow_cpu_backend:
         if glow_connect_failed:
             log(
                 string("runtime.openrgb_unavailable"),

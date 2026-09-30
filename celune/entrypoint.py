@@ -654,7 +654,7 @@ def _doctor_torch_details() -> list[DoctorCheck]:
             "Accelerator backend",
             usable,
             "ROCm detected. CUDA compatibility is required for the main backends.",
-            hint="Use a CUDA-compatible environment or the Mini backend for CPU-only usage.",
+            hint=string("cli.doctor_cpu_backend_hint", app_name=APP_NAME),
         )
         return checks
     elif backend == "MPS":
@@ -663,7 +663,7 @@ def _doctor_torch_details() -> list[DoctorCheck]:
             "Accelerator backend",
             usable,
             "MPS detected. Celune does not support MPS execution.",
-            hint="Use a CUDA-compatible environment or the Mini backend for CPU-only usage.",
+            hint=string("cli.doctor_cpu_backend_hint", app_name=APP_NAME),
         )
         return checks
     else:
@@ -673,7 +673,7 @@ def _doctor_torch_details() -> list[DoctorCheck]:
             usable,
             "No CUDA-capable backend detected.",
             severity="warning",
-            hint=f"{APP_NAME} Mini can run on CPU, but other backends need a CUDA-compatible runtime.",
+            hint=string("cli.doctor_cpu_backend_hint", app_name=APP_NAME),
         )
         return checks
 
@@ -1446,7 +1446,7 @@ def start(
         if config_updated:
             with open(active_config_path, "w", encoding="utf-8") as cfg:
                 runtime.yaml.safe_dump(config, cfg, sort_keys=False)
-            print(string("cli.config_updated_defaults", app_name=APP_NAME))
+            print(string("cli.config_updated", app_name=APP_NAME))
 
         active_log_level = normalize_log_level(
             log_level if log_level is not None else config_log_level(config)
@@ -1791,6 +1791,8 @@ def main(argv: Optional[list[str]] = None) -> None:
 
         # HACK: tabs are a quick and dirty alignment trick
         # they are not guaranteed to work in all terminals equally well
+        #
+        # please rewrite this soon
         print(string("cli.help_main_usage", program=resolved_argv[0]))
         print()
         print(string("cli.help_available_commands"))

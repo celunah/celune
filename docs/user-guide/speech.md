@@ -13,9 +13,10 @@ latency, and reference conditioning.
 | --- | --- | ---: | --- |
 | `qwen3` | Fast expressive cloning | 12.5 chunks/s | Supports Chinese, English, Japanese, Korean, German, French, Russian, Portuguese, Spanish, and Italian. |
 | `mini` | Small and CPU-friendly | 12.5 chunks/s | Pocket TTS; English, French, German, Italian, Portuguese, and Spanish. |
+| `fireredtts3` | Multilingual zero-shot cloning | 1 complete chunk/request | Supports 24 languages and 21 Chinese dialect tags; uses the active reference WAV and transcript and loads its transformer path in BF16. |
 | `voxcpm2` | High-fidelity multilingual generation | 6.25 chunks/s | Uses reference WAV plus per-voice `cfg_scale`; needs a compiler in some installs. |
 | `dotstts` | Speaker similarity and diffusion quality | 6.25 chunks/s | Uses Celune's forked `dots.tts` package. |
-| `gpt-sovits` | GPT-SoVITS family compatibility | 6.25 chunks/s | Supports Chinese, English, Japanese, Korean, and Cantonese variants; may exhibit accent drift. |
+| `luxtts` | Lightweight CUDA-first voice cloning | 1 complete chunk/request | English LuxTTS/ZipVoice path; uses a five-second reference prompt, returns 48 kHz audio, and falls back to CPU when CUDA is unavailable. |
 
 Backend-specific packages are resolved from Celune's configured application
 environment and imported lazily when the selected backend is needed. Normal
@@ -44,9 +45,17 @@ to a very short fragment because it preserves timbre more consistently. The
 `qwen3_x_vector_only` option can lock speaker identity while reducing expressive
 conditioning; use it when identity stability matters more than style transfer.
 
+FireRedTTS3 uses the active reference WAV and its exact `reference_text` for
+zero-shot cloning and keeps those two prompt spans aligned to prevent reference
+text from leaking into the requested speech. It returns a complete 24 kHz
+waveform after inference, which Celune resamples at the common playback
+boundary. Its Qwen backbone, stop head, and RedAE encoder load in BF16; the
+flow head and decoder remain F32.
+
 VoxCPM2 reads `cfg_scale` from per-voice metadata, with the bundled defaults at
-2.4 for balanced/bold/upbeat and 3.0 for calm. GPT-SoVITS uses longer reference
-audio and has family-specific preprocessing requirements.
+2.4 for balanced/bold/upbeat and 3.0 for calm. LuxTTS uses the active reference
+WAV and transcribes its five-second prompt internally; it is the CPU-capable
+English cloning alternative for systems without CUDA.
 
 ## Playback controls
 
@@ -76,6 +85,9 @@ int16 payloads are converted using `/32768` when decoded by CEDTS.
 
 Long text is segmented before generation. Smart buffering protects already
 played audio and throttles playback speed only within its configured limits.
+Caption progress follows blocks after they reach the output writer, so captions
+remain synchronized with audible playback even when generation produces chunks
+faster than the sound device consumes them.
 For a caller that needs every chunk, use `say_stream()` and drain the returned
 queue until its terminal sentinel/condition; do not read the internal playback
 queue directly.

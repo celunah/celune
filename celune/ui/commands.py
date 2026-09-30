@@ -20,11 +20,13 @@ from ..audio.server import restart_audio_server
 from ..exceptions import InvalidExtensionError
 from ..persona.capabilities import PersonaCapabilities
 from ..utils import (
+    available,
     replace_ipa,
     format_number,
     format_error_message,
 )
 from ..cevoice import active_bundle_path, resolve_bundle_path
+from ..threads import run_in_daemon_thread
 from ..vc import (
     VC_PITCH_SHIFT_MAX,
     VC_PITCH_SHIFT_MIN,
@@ -68,7 +70,7 @@ async def _run_runtime_async_on_loop(
     if callable(async_method):
         method = cast(Callable[..., Awaitable[bool]], async_method)
         return await method(*method_args)
-    return bool(await asyncio.to_thread(getattr(target, sync_name), *method_args))
+    return bool(await run_in_daemon_thread(getattr(target, sync_name), *method_args))
 
 
 def _attachment_source(path: Path) -> str:
@@ -119,14 +121,15 @@ def tutorial(ui: CeluneUI) -> None:
         ui.safe_log(string("commands.no_tutorial_assets"), "warning")
         return
 
+    def send_help() -> None:
+        """Submit the tutorial help command after its typing animation."""
+        ui.type_and_send("/help", process_commands=True)
+
     clips = (
         (assets / "tutorial1.wav", None),
         (assets / "tutorial2.wav", lambda: ui.pulse_border("#input")),
         (assets / "tutorial3.wav", lambda: ui.pulse_border("#style")),
-        (
-            assets / "tutorial4.wav",
-            lambda: ui.type_and_send("/help", process_commands=True),
-        ),
+        (assets / "tutorial4.wav", send_help),
     )
 
     ui.begin_tutorial()
@@ -219,7 +222,7 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
 
         ui.celune.vc_f0_condition = enabled
         vc_backend = getattr(ui.celune, "vc_backend", None)
-        if vc_backend is not None and hasattr(vc_backend, "f0_condition"):
+        if vc_backend is not None and available("f0_condition", obj=vc_backend):
             vc_backend.f0_condition = enabled
         refresh_vc_controls()
         ui.safe_log(
@@ -238,7 +241,7 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
         clamped = clamp_vc_pitch_shift(svalue)
         ui.celune.vc_pitch_shift = clamped
         vc_backend = getattr(ui.celune, "vc_backend", None)
-        if vc_backend is not None and hasattr(vc_backend, "pitch_shift"):
+        if vc_backend is not None and available("pitch_shift", obj=vc_backend):
             vc_backend.pitch_shift = clamped
         refresh_vc_controls()
         ui.safe_log(string("commands.vcpitch_set", value=clamped))
@@ -706,7 +709,7 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
             )
             return
 
-        if hasattr(backend, "x_vector_only"):
+        if available("x_vector_only", obj=backend):
             backend.x_vector_only = value == "true"
             state = string(
                 "commands.state_enabled"
@@ -736,16 +739,27 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
 
             def worker() -> None:
                 try:
-                    if not ui.celune.play(args[0], volume=volume):
-                        return
-                    if args[0].startswith("https://"):
-                        ui.safe_log(
-                            string(
-                                "commands.playing_youtube_audio",
-                                volume=format_number(volume * 100),
+                    is_youtube = args[0].startswith("https://")
+
+                    def report_playback_started() -> None:
+                        if is_youtube:
+                            ui.safe_log(
+                                string(
+                                    "commands.playing_youtube_audio",
+                                    volume=format_number(volume * 100),
+                                )
                             )
-                        )
-                    else:
+
+                    if is_youtube:
+                        if not ui.celune.play(
+                            args[0],
+                            volume=volume,
+                            on_started=report_playback_started,
+                        ):
+                            return
+                    elif not ui.celune.play(args[0], volume=volume):
+                        return
+                    if not is_youtube:
                         ui.safe_log(
                             string(
                                 "commands.playing_audio",
