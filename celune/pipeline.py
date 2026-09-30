@@ -7,28 +7,39 @@ import os
 import re
 import json
 import time
-import ctypes
 import queue
-import random
+import ctypes
 import asyncio
 import pathlib
+import random
 import datetime
-import contextlib
 import threading
-from typing import TYPE_CHECKING, Optional, cast
+import contextlib
+
 from collections import deque
 from dataclasses import dataclass, replace
+from typing import TYPE_CHECKING, Optional, cast
 from collections.abc import Mapping, Callable  # pylint: disable=ungrouped-imports
 
-import numpy as np
-import psutil
 import torch
+import psutil
+import numpy as np
 import soundfile as sf
 import sounddevice as sd
 import pyrubberband as rb
 
 from . import __version__
 from .i18n import string, tagged_string
+from .config import resolve_audio_device
+from .analysis import analyze_voice_audio
+from .exceptions import NotAvailableError
+from .binding import install_class_functions
+from .typing.pipeline import SpeechStreamQueue
+from .typing.common import JSON, JSONSerializable
+from .typing.aliases import AudioChunk, AudioChunks
+from .conversation import _effective_voice_prompt, _think_persona
+from .threads import run_in_daemon_thread as _run_in_daemon_thread
+
 from .paths import (
     outputs_dir,
 )
@@ -38,50 +49,6 @@ from .utils import (
     format_number,
     format_error_message,
 )
-from .config import resolve_audio_device
-from .analysis import analyze_voice_audio
-from .audio.dsp import (
-    soften,
-    to_48khz,
-    error_signal,
-    working_signal,
-    sleeping_signal,
-    readiness_signal,
-    is_silent_utterance,
-)
-from .constants import (
-    BASE_SR,
-    APP_NAME,
-    APP_SLUG,
-)
-from .exceptions import NotAvailableError
-from .typing.common import JSON, JSONSerializable
-from .typing.aliases import AudioChunk, AudioChunks
-from .typing.pipeline import SpeechStreamQueue
-from .threads import run_in_daemon_thread as _run_in_daemon_thread
-from .dataclasses.pipeline import (
-    SpeechTiming,
-    PlaybackChunk,
-    SpeechRequest,
-    PlaybackSourceDone,
-)
-from .binding import install_class_functions
-from .pipelinecore import (
-    _PIPELINE_CPU_YIELD_SECONDS,
-    _PLAYBACK_BUFFER_CRITICAL_MAX_SECONDS,
-    _PLAYBACK_BUFFER_MAX_SECONDS,
-    _PLAYBACK_BUFFER_MIN_SECONDS,
-    _PLAYBACK_BUFFER_STARTUP_GRACE_SECONDS,
-    _PLAYBACK_CONTENTION_CPU_CRITICAL,
-    _PLAYBACK_CONTENTION_CPU_START,
-    _PLAYBACK_CONTENTION_LAG_CRITICAL_SECONDS,
-    _PLAYBACK_CONTENTION_LAG_START_SECONDS,
-    _PLAYBACK_CONTENTION_SAMPLE_SECONDS,
-    _PLAYBACK_CONTENTION_STABLE_DECAY,
-    _PLAYBACK_CONTENTION_REBUFFER_LEVEL,
-    _monotonic_time,
-)
-from .conversation import _effective_voice_prompt, _think_persona
 from .playback import (
     _apply_source_gain,
     _clear_playback_source_status,
@@ -108,25 +75,44 @@ from .playback import (
     release_pipeline,
 )
 
+from .audio.dsp import (
+    soften,
+    to_48khz,
+    error_signal,
+    working_signal,
+    sleeping_signal,
+    readiness_signal,
+    is_silent_utterance,
+)
+from .constants import (
+    BASE_SR,
+    APP_NAME,
+    APP_SLUG,
+)
+from .pipelinecore import (
+    _PIPELINE_CPU_YIELD_SECONDS,
+    _PLAYBACK_BUFFER_CRITICAL_MAX_SECONDS,
+    _PLAYBACK_BUFFER_MAX_SECONDS,
+    _PLAYBACK_BUFFER_MIN_SECONDS,
+    _PLAYBACK_BUFFER_STARTUP_GRACE_SECONDS,
+    _PLAYBACK_CONTENTION_CPU_CRITICAL,
+    _PLAYBACK_CONTENTION_CPU_START,
+    _PLAYBACK_CONTENTION_LAG_CRITICAL_SECONDS,
+    _PLAYBACK_CONTENTION_LAG_START_SECONDS,
+    _PLAYBACK_CONTENTION_SAMPLE_SECONDS,
+    _PLAYBACK_CONTENTION_STABLE_DECAY,
+    _PLAYBACK_CONTENTION_REBUFFER_LEVEL,
+    _monotonic_time,
+)
+from .dataclasses.pipeline import (
+    SpeechTiming,
+    PlaybackChunk,
+    SpeechRequest,
+    PlaybackSourceDone,
+)
+
 if TYPE_CHECKING:
     from .celune import Celune
-    from .conversation import (
-        _extract_persona_text,
-        _persona_manifest_files,
-        _persona_memory_store,
-        build_agent_classification_request,
-        build_persona_character_card,
-        build_persona_context,
-        build_persona_messages,
-        build_persona_request,
-        think,
-    )
-    from .playback import (
-        _config_lines,
-        _config_text,
-        _notify_component_busy,
-        acquire_pipeline_result,
-    )
     from .speech import (
         close,
         convert_audio_input,
@@ -142,6 +128,23 @@ if TYPE_CHECKING:
         say,
         say_async,
         stop_live_audio_input,
+    )
+    from .playback import (
+        _config_lines,
+        _config_text,
+        _notify_component_busy,
+        acquire_pipeline_result,
+    )
+    from .conversation import (
+        _extract_persona_text,
+        _persona_manifest_files,
+        _persona_memory_store,
+        build_agent_classification_request,
+        build_persona_character_card,
+        build_persona_context,
+        build_persona_messages,
+        build_persona_request,
+        think,
     )
 
     _PIPELINE_TYPE_EXPORTS = (
@@ -400,7 +403,7 @@ class _PlaybackWriter:
         self._queue: queue.Queue[Optional[_PlaybackWriteItem]] = queue.Queue()
         self._thread: Optional[threading.Thread] = None
         self._lock = threading.Lock()
-        self._pending_seconds = 0.0
+        self._pending_frames = 0
         self._pending_sources: dict[int, int] = {}
         self._error: Optional[BaseException] = None
         self._last_write_finished_at: Optional[float] = None
@@ -422,9 +425,9 @@ class _PlaybackWriter:
     def _decrement_pending(self, item: _PlaybackWriteItem) -> None:
         """Remove one completed or discarded item from reserve accounting."""
         with self._lock:
-            self._pending_seconds = max(
-                0.0,
-                self._pending_seconds - item.duration_seconds,
+            self._pending_frames = max(
+                0,
+                self._pending_frames - len(item.audio),
             )
             for source_id in item.source_ids:
                 count = self._pending_sources.get(source_id, 0) - 1
@@ -507,7 +510,7 @@ class _PlaybackWriter:
             if self._error is not None:
                 raise self._error
             duration_seconds = len(audio) / BASE_SR
-            self._pending_seconds += duration_seconds
+            self._pending_frames += len(audio)
             for source_id in source_ids:
                 self._pending_sources[source_id] = (
                     self._pending_sources.get(source_id, 0) + 1
@@ -548,7 +551,7 @@ class _PlaybackWriter:
     def pending_seconds(self) -> float:
         """Return the seconds queued for the output writer."""
         with self._lock:
-            return self._pending_seconds
+            return self._pending_frames / BASE_SR
 
     @property
     def error(self) -> Optional[BaseException]:
@@ -2174,7 +2177,7 @@ async def playback_worker_job(engine: Celune) -> None:
                     f"reader_queue={input_reader.qsize()} "
                     f"audio_queue={engine.audio_queue.qsize()} "
                     f"text_queue={engine.text_queue.qsize()} "
-                    f"writer_pending={writer.pending_seconds:.3f}s",
+                    f"writer_pending={writer.pending_seconds:.6f}s",
                     loglevel="debug",
                 )
                 last_idle_wait_state = wait_state
