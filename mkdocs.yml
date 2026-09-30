@@ -67,12 +67,12 @@ nav:
   - Reference:
       - Python API: reference/public-api.md
       - Source map: reference/source-map.md
+      - Voice samples: development/samples.md
       - Voice design: VOICES.md
       - Gallery: GALLERY.md
   - Dev:
       - Architecture: development/architecture.md
       - Backends: development/backends.md
-      - Speech samples: development/samples.md
       - Docs standard: development/documentation.md
       - Testing: development/testing.md
       - Voice and pack design: development/voice-analysis.md

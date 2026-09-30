@@ -229,6 +229,34 @@ h6,
   background-color: rgba(206, 186, 255, 0.08);
 }
 
+.voice-sample-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr));
+  gap: 1rem;
+  margin: 1rem 0 2rem;
+}
+
+.voice-sample-card {
+  background-color: var(--celune-surface);
+  border: 1px solid var(--celune-accent);
+  border-radius: 0.35rem;
+  padding: 1rem;
+}
+
+.voice-sample-card h4 {
+  margin-top: 0;
+}
+
+.voice-sample-card p {
+  margin-bottom: 0.35rem;
+}
+
+.voice-sample-player {
+  display: block;
+  max-width: 100%;
+  width: 100%;
+}
+
 .md-typeset blockquote,
 .admonition,
 details {
