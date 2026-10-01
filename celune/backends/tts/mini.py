@@ -5,9 +5,8 @@ import time
 import inspect
 import tempfile
 import contextlib
-
-from pathlib import Path
 from typing import Optional, cast
+from pathlib import Path
 from collections.abc import Mapping, Callable, Iterator
 
 import yaml
@@ -17,11 +16,11 @@ from huggingface_hub import snapshot_download
 
 from .base import CeluneBackend, cached_hf_snapshot_path
 from ...i18n import string
+from ...paths import temp_data_dir, huggingface_progress, huggingface_hub_cache_dir
 from ...utils import custom_assert
 from ...cevoice import CEVoiceLoader, default_loader
 from ...typing.aliases import AudioChunk, AudioChunks
 from ...typing.backends import MiniModel, MiniPromptState
-from ...paths import temp_data_dir, huggingface_progress, huggingface_hub_cache_dir
 
 
 class Mini(CeluneBackend[TTSModel]):
@@ -210,7 +209,14 @@ class Mini(CeluneBackend[TTSModel]):
         template_path = self._resolve_template_config_path(lang)
         language_dir = self._resolve_snapshot_language_dir(snapshot_path, lang)
         model_path = language_dir / "model.safetensors"
-        tokenizer_path = language_dir / "tokenizer.model"
+        tokenizer_json_path = language_dir / "tokenizer.json"
+        tokenizer_model_path = language_dir / "tokenizer.model"
+        if tokenizer_json_path.is_file():
+            tokenizer_path = tokenizer_json_path
+            tokenizer_kind = "tokenizers"
+        else:
+            tokenizer_path = tokenizer_model_path
+            tokenizer_kind = "sentencepiece"
 
         if not model_path.exists():
             raise FileNotFoundError(
@@ -226,7 +232,9 @@ class Mini(CeluneBackend[TTSModel]):
 
         config["weights_path"] = str(model_path)
         config["weights_path_without_voice_cloning"] = str(model_path)
-        config["flow_lm"]["lookup_table"]["tokenizer_path"] = str(tokenizer_path)
+        lookup_table = config["flow_lm"]["lookup_table"]
+        lookup_table["tokenizer"] = tokenizer_kind
+        lookup_table["tokenizer_path"] = str(tokenizer_path)
 
         temp_dir = Path(
             tempfile.mkdtemp(
@@ -280,13 +288,17 @@ class Mini(CeluneBackend[TTSModel]):
         """
         model_name = self._resolve_language_name(lang)
 
-        return cached_hf_snapshot_path(
-            model,
-            [
-                f"languages/{model_name}*/model.safetensors",
-                f"languages/{model_name}*/tokenizer.model",
-            ],
-        )
+        for tokenizer_filename in ("tokenizer.json", "tokenizer.model"):
+            available, snapshot_path = cached_hf_snapshot_path(
+                model,
+                [
+                    f"languages/{model_name}*/model.safetensors",
+                    f"languages/{model_name}*/{tokenizer_filename}",
+                ],
+            )
+            if available:
+                return available, snapshot_path
+        return False, None
 
     def should_reload_for_language(self, lang: Optional[str]) -> bool:
         """Return whether the loaded Pocket TTS language differs from ``lang``.

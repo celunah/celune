@@ -255,6 +255,28 @@ def format_error_message(
     return format_error_message_helper(message, error, log_level)
 
 
+def concise_error_message(message: str) -> str:
+    """Remove traceback frames from startup text while retaining its final error."""
+    _, separator, traceback_text = message.partition(
+        "Traceback (most recent call last):"
+    )
+    if not separator:
+        return message
+
+    final_line = next(
+        (
+            line.strip()
+            for line in reversed(traceback_text.splitlines())
+            if line.strip()
+        ),
+        "",
+    )
+    _, separator, detail = final_line.partition(": ")
+    if separator and detail:
+        return detail
+    return final_line or message
+
+
 def resolve_log_level(
     value: Union[LogLevel, bool, None],
     fallback: LogLevel,

@@ -1599,7 +1599,7 @@ def _show_loading_error(
     def update() -> None:
         if self._loading_screen is not None:
             self._loading_screen.show_error(
-                message,
+                _app.concise_error_message(message),
                 status_message=status_message,
                 footer_message=footer_message,
             )
