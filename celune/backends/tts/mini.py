@@ -4,6 +4,7 @@
 import time
 import tempfile
 import contextlib
+
 from pathlib import Path
 from typing import Optional, cast
 from collections.abc import Mapping, Callable, Iterator
@@ -13,13 +14,13 @@ import numpy as np
 from pocket_tts import TTSModel
 from huggingface_hub import snapshot_download
 
-from ...paths import temp_data_dir, huggingface_progress, huggingface_hub_cache_dir
-from ...utils import custom_assert
+from .base import CeluneBackend, cached_hf_snapshot_path
 from ...i18n import string
+from ...utils import custom_assert
 from ...cevoice import CEVoiceLoader, default_loader
 from ...typing.aliases import AudioChunk, AudioChunks
-from .base import CeluneBackend, cached_hf_snapshot_path
 from ...typing.backends import MiniModel, MiniPromptState
+from ...paths import temp_data_dir, huggingface_progress, huggingface_hub_cache_dir
 
 
 class Mini(CeluneBackend[TTSModel]):
@@ -325,10 +326,9 @@ class Mini(CeluneBackend[TTSModel]):
             snapshot_path, requested_language
         )
         self._generated_config_path = generated_config_path
-        # too bad we can't change LSD steps for Pocket TTS per utterance since they fixed the value to be
-        # set during the initial load_model() call
+        # Pocket TTS fixes sampler decode steps during the initial model load.
         self.model = TTSModel.load_model(
-            config=generated_config_path, temp=0.15, lsd_decode_steps=8
+            config=generated_config_path, temp=0.15, sampler_decode_steps=8
         )
         self._loaded_language = requested_language
         self._voice_states.clear()

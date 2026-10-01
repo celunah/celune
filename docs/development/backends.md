@@ -15,7 +15,7 @@ manager; normal application configuration does not select that path.
 
 | ID | Kind | Worker | Extra requirements |
 | --- | --- | --- | --- |
-| `mini` | TTS | `celune.backends.tts.mini:Mini` | `pocket-tts>=2.1.0` |
+| `mini` | TTS | `celune.backends.tts.mini:Mini` | `pocket-tts>=3.0.1` |
 | `qwen3` | TTS | `celune.backends.tts.qwen3:Qwen3` | `faster-qwen3-tts>=0.2.4` |
 | `fireredtts3` | TTS | `celune.backends.tts.fireredtts3:FireRedTTS3` | FireRedTTS3 source, Transformers 5.6.2, and TorchCodec 0.16.0; BF16 transformer path with PyTorch SDPA and latent streaming. |
 | `dotstts` | TTS | `celune.backends.tts.dotstts:DotsTtsMF` | Celune's `dots.tts` fork; Python 3.12. |
@@ -53,9 +53,10 @@ stability over full reference expressiveness.
 
 ### Mini
 
-`mini` adapts Pocket TTS, streams at 12.5 chunks per second, and supports
-English, French, German, Italian, Portuguese, and Spanish. It is the supported
-CPU-friendly path and still uses pack reference data for cloning.
+`mini` adapts Pocket TTS 3.0.1 or newer, streams at 12.5 chunks per second, and
+supports English, French, German, Italian, Portuguese, and Spanish. Celune sets
+`sampler_decode_steps` to 8 during model loading. It is the supported CPU-friendly
+path and still uses pack reference data for cloning.
 
 ### FireRedTTS3
 

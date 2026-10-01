@@ -10,11 +10,13 @@ import hashlib
 import platform
 import importlib
 import subprocess
-from typing import Optional
+
 from pathlib import Path
-from contextlib import suppress, contextmanager
-from dataclasses import asdict, dataclass
+from typing import Optional
 from collections.abc import Generator
+
+from dataclasses import asdict, dataclass
+from contextlib import suppress, contextmanager
 
 from ..i18n import string
 from ..paths import backend_environments_dir
@@ -138,7 +140,7 @@ BACKEND_MANIFESTS = {
         requirements=(
             *_MAIN_BRANCH_PYTORCH_REQUIREMENTS,
             *_WORKER_HUGGINGFACE_REQUIREMENTS,
-            "pocket-tts>=2.1.0",
+            "pocket-tts>=3.0.1",
         ),
         backend_module="celune.backends.tts.mini",
         backend_class="Mini",
