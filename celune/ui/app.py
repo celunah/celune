@@ -271,6 +271,10 @@ def concise_error_message(message: str) -> str:
         ),
         "",
     )
+    _, separator, detail = final_line.partition("): ")
+    if separator and detail:
+        return detail
+
     _, separator, detail = final_line.partition(": ")
     if separator and detail:
         return detail
