@@ -2,6 +2,7 @@
 """Pocket TTS backend implementation for Celune."""
 
 import time
+import inspect
 import tempfile
 import contextlib
 
@@ -326,10 +327,15 @@ class Mini(CeluneBackend[TTSModel]):
             snapshot_path, requested_language
         )
         self._generated_config_path = generated_config_path
-        # Pocket TTS fixes sampler decode steps during the initial model load.
-        self.model = TTSModel.load_model(
-            config=generated_config_path, temp=0.15, sampler_decode_steps=8
-        )
+        load_model_parameters = inspect.signature(TTSModel.load_model).parameters
+        if "sampler_decode_steps" in load_model_parameters:
+            self.model = TTSModel.load_model(
+                config=generated_config_path, temp=0.15, sampler_decode_steps=8
+            )
+        else:
+            self.model = TTSModel.load_model(
+                config=generated_config_path, temp=0.15, lsd_decode_steps=8
+            )
         self._loaded_language = requested_language
         self._voice_states.clear()
         return self.model

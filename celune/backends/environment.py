@@ -140,7 +140,7 @@ BACKEND_MANIFESTS = {
         requirements=(
             *_MAIN_BRANCH_PYTORCH_REQUIREMENTS,
             *_WORKER_HUGGINGFACE_REQUIREMENTS,
-            "pocket-tts>=3.0.1",
+            "pocket-tts>=2.1.0,!=3.0.0",
         ),
         backend_module="celune.backends.tts.mini",
         backend_class="Mini",
