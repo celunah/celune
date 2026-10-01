@@ -68,9 +68,11 @@ uv run python main.py doctor
 ```
 
 If the loading screen changes to the red `Failed to start` state, read the
-diagnostic shown there. Celune remains open so the error can be read; press
-`CTRL+Q` to close it. A missing required dependency returns exit code `4` to
-the launcher, which can then report or repair the environment.
+diagnostic shown there. When engine initialization returns a failure without
+raising an exception, Celune shows the most recent error-level startup log
+instead of only the generic startup message. Celune remains open so the error
+can be read; press `CTRL+Q` to close it. A missing required dependency returns
+exit code `4` to the launcher, which can then report or repair the environment.
 
 Then inspect the application log and traceback path reported by the runtime.
 Do not delete a backend environment while it is running. If an environment is

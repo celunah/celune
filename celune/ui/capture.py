@@ -3,14 +3,14 @@
 
 from __future__ import annotations
 
-import contextlib
-import queue as queue_module
 import re
-import threading
 import time
-from collections.abc import Callable
-from typing import Optional, Union, cast
+import queue as queue_module
+import threading
+import contextlib
 from uuid import uuid4
+from typing import Union, Optional, cast
+from collections.abc import Callable
 
 from textual.color import Color
 
@@ -606,6 +606,8 @@ def safe_log(
         self.log_history.append((msg, severity))
     self._persist_log_entry(msg, severity)
     if loglevel == "info" and self._loading_screen is not None:
+        if severity == "error":
+            self._latest_startup_error = msg
         self._run_on_ui_thread(lambda: self._update_loading_log(msg))
     if self.logs is None:
         return
