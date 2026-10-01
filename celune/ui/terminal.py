@@ -4,6 +4,7 @@
 import re
 import sys
 import logging
+
 from typing import Literal, Optional
 from dataclasses import dataclass, replace
 from collections.abc import Callable, Collection, Mapping
@@ -16,6 +17,7 @@ from textual.widget import Widget
 from textual.message import Message
 from textual.events import Click, Key, Leave, MouseMove
 
+from ..terminal import _infer_log_severity
 from ..typing.common import JSONSerializable
 
 
@@ -612,6 +614,11 @@ class SelectMenuWidget(Widget):
 class LogRedirect:
     """Redirect logs to the logger."""
 
+    @staticmethod
+    def _severity_for_message(message: str, default_severity: str) -> str:
+        """Infer log severity from one redirected text line."""
+        return _infer_log_severity(message, default_severity)
+
     def __init__(
         self,
         stdout,
@@ -638,34 +645,6 @@ class LogRedirect:
         return any(
             filtered_message in message for filtered_message in self.filter_messages
         )
-
-    @staticmethod
-    def _severity_for_message(message: str, default_severity: str) -> str:
-        """Infer log severity from one redirected text line."""
-        lowered = message.casefold()
-
-        if "[error]" in lowered:
-            return "error"
-        if "[warning]" in lowered:
-            return "warning"
-        if "traceback (most recent call last):" in lowered:
-            return "error"
-        if re.search(
-            r"\b(?:error|exception|fatal(?: error)?)\b",
-            lowered,
-        ):
-            return "error"
-        if re.search(
-            (
-                r"\b(?:warning|futurewarning|deprecationwarning|"
-                r"pendingdeprecationwarning|runtimewarning|resourcewarning|"
-                r"userwarning|syntaxwarning|importwarning|unicodewarning|"
-                r"byteswarning)\b"
-            ),
-            lowered,
-        ):
-            return "warning"
-        return default_severity
 
     def write(self, text: str) -> None:
         """Write text to the logger.

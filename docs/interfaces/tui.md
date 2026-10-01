@@ -151,6 +151,9 @@ reconciles retained history with the rendered entries, so messages are not lost
 if a repaint or loading transition overlaps delivery. Switching themes repaints
 existing entries with the selected severity colors. The same entries are also
 appended to Celune's persisted `celune.log` file for troubleshooting.
+Captured stdout and stderr lines are classified from explicit severity tags,
+warning or exception markers, and deprecation notices before falling back to
+the stream's default severity.
 
 ## Startup failures
 
