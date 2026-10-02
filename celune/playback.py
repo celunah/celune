@@ -3,58 +3,66 @@
 
 from __future__ import annotations
 
-import contextlib
-import inspect
-import json
 import os
-import pathlib
-import queue
-import subprocess
 import sys
-from collections import deque
-from collections.abc import Mapping
-from typing import TYPE_CHECKING, Optional, Union, cast
-from urllib.parse import urlencode, urlparse
-from urllib.request import urlopen
+import json
+import math
+import queue
+import inspect
+import pathlib
+import contextlib
+import subprocess
 from uuid import uuid4
+from typing import TYPE_CHECKING, Union, Optional, cast
+from collections import deque
+from urllib.parse import urlparse, urlencode
+from urllib.request import urlopen
+from collections.abc import Mapping  # pylint: disable=ungrouped-imports
 
 import numpy as np
 
-from .constants import APP_NAME, BASE_SR, PipelineStates
-from .dataclasses.pipeline import PlaybackChunk, PlaybackSourceDone, SpeechTiming
 from .i18n import string
 from .locks import ComponentLockManager
-from .paths import project_root, running_compiled, temp_data_dir
+from .paths import project_root, temp_data_dir, running_compiled
+from .utils import available
+from .binding import install_class_functions, install_module_functions
+from .constants import BASE_SR, APP_NAME, PipelineStates
 from .pipelinecore import (
-    _LEGACY_BUFFER_SECONDS,
-    _MAX_YOUTUBE_DOWNLOAD_RETRIES,
-    _PIPELINE_CPU_MAX_BUFFER_SECONDS,
-    _PIPELINE_CPU_MAX_DRAIN_ITEMS,
-    _PIPELINE_CPU_YIELD_SECONDS,
-    _PLAYBACK_TRACE_INTERVAL_SECONDS,
-    _SFX_DUCK_FADE_SECONDS,
     _SFX_DUCK_GAIN,
-    _SMART_BUFFER_COMPLETE_BELOW_SPEED,
+    _LEGACY_BUFFER_SECONDS,
+    _SFX_DUCK_FADE_SECONDS,
+    _SMART_BUFFER_SMOOTHING,
     _SMART_BUFFER_MAX_SECONDS,
     _SMART_BUFFER_MIN_SECONDS,
+    _PIPELINE_CPU_YIELD_SECONDS,
+    _SMART_BUFFER_REALTIME_SPEED,
+    _MAX_YOUTUBE_DOWNLOAD_RETRIES,
+    _PIPELINE_CPU_MAX_DRAIN_ITEMS,
+    _PIPELINE_CPU_MAX_BUFFER_SECONDS,
+    _PLAYBACK_TRACE_INTERVAL_SECONDS,
+    _SMART_BUFFER_COMPLETE_BELOW_SPEED,
     _SMART_BUFFER_MIN_SPEED_SAMPLE_SECONDS,
     _SMART_BUFFER_PROTECTED_PLAYBACK_SECONDS,
-    _SMART_BUFFER_REALTIME_SPEED,
-    _SMART_BUFFER_SMOOTHING,
     _monotonic_time,
 )
-from .typing.aliases import AudioChunk, AudioChunks
-from .typing.common import JSONSerializable
 from .typing.locks import (
-    ComponentBusyResult,
-    ComponentLockAcquisition,
     ComponentLockName,
     ComponentLockOwner,
+    ComponentBusyResult,
+    ComponentLockAcquisition,
     ComponentLockRequirement,
 )
+from .typing.celune import ChunkCaptionTimingCallback
+from .typing.common import JSONSerializable
+from .typing.aliases import AudioChunk, AudioChunks
 from .typing.pipeline import SpeechStreamQueue
-from .binding import install_class_functions, install_module_functions
-from .utils import available
+from .dataclasses.pipeline import (
+    SpeechTiming,
+    PlaybackChunk,
+    PlaybackSourceDone,
+    CaptionPlaybackState,
+    CaptionPlaybackSegment,
+)
 
 if TYPE_CHECKING:
     from .celune import Celune
@@ -63,6 +71,7 @@ __all__ = (
     "_acquire_pipeline",
     "_active_speech_source_ids",
     "_apply_source_gain",
+    "_caption_chunk_word_ranges",
     "_clear_playback_source_status",
     "_component_busy_message",
     "_config_float",
@@ -79,11 +88,13 @@ __all__ = (
     "_notify_speech_playback_finished",
     "_pipeline_cpu_config",
     "_pipeline_requirements",
+    "_playback_caption_states",
     "_playback_source_meta",
     "_playback_source_statuses",
     "_playback_trace",
     "_queue_playback_chunk",
     "_queue_playback_done",
+    "_record_caption_playback_segment",
     "_register_overlay_playback",
     "_register_overlay_playback_state",
     "_register_playback_source",
@@ -354,12 +365,53 @@ def _playback_source_meta(
     return meta
 
 
+def _playback_caption_states(engine: Celune) -> dict[int, CaptionPlaybackState]:
+    """Return per-source caption frame ranges used during streamed playback."""
+    states = getattr(engine, "_playback_caption_states", None)
+    if isinstance(states, dict):
+        return states
+
+    states = {}
+    engine._playback_caption_states = states
+    return states
+
+
+def _caption_chunk_word_ranges(
+    display_text: str,
+    chunks: list[str],
+) -> tuple[tuple[int, int], ...]:
+    """Map ordered synthesis chunks onto stable display-caption word ranges."""
+    display_word_count = len(display_text.split())
+    chunk_word_counts = [len(chunk.split()) for chunk in chunks]
+    total_speech_words = sum(chunk_word_counts)
+    if display_word_count <= 0 or total_speech_words <= 0:
+        return tuple((0, 0) for _chunk in chunks)
+
+    ranges: list[tuple[int, int]] = []
+    previous_end = 0
+    accumulated_words = 0
+    for index, chunk_word_count in enumerate(chunk_word_counts):
+        accumulated_words += chunk_word_count
+        if index == len(chunk_word_counts) - 1:
+            word_end = display_word_count
+        else:
+            word_end = round(
+                accumulated_words * display_word_count / total_speech_words
+            )
+        word_end = max(previous_end, min(display_word_count, word_end))
+        ranges.append((previous_end, word_end))
+        previous_end = word_end
+
+    return tuple(ranges)
+
+
 def _register_playback_source(
     engine: Celune,
     source_id: int,
     *,
     kind: str,
     base_gain: float = 1.0,
+    caption_word_total: int = 0,
 ) -> None:
     """Register one playback source for status and gain management."""
     clipped = float(np.clip(base_gain, 0.0, 1.0))
@@ -372,6 +424,37 @@ def _register_playback_source(
         "total_frames_final": 0.0,
         "generation": float(getattr(engine, "_playback_generation", 0)),
     }
+    if kind == "speech" and caption_word_total > 0:
+        _playback_caption_states(engine)[source_id] = CaptionPlaybackState(
+            total_words=caption_word_total
+        )
+
+
+def _record_caption_playback_segment(
+    engine: Celune,
+    source_id: int,
+    start_frame: int,
+    end_frame: int,
+    word_start: int,
+    word_end: int,
+    timing_words: tuple[str, ...] = (),
+) -> None:
+    """Record the exact queued audio span produced for one text chunk."""
+    states = _playback_caption_states(engine)
+    state = states.get(source_id)
+    if state is None or end_frame <= start_frame or word_end <= word_start:
+        return
+
+    with engine.queue_lock:
+        state.segments.append(
+            CaptionPlaybackSegment(
+                start_frame=start_frame,
+                end_frame=end_frame,
+                word_start=word_start,
+                word_end=word_end,
+                timing_words=timing_words,
+            )
+        )
 
 
 def _set_playback_source_status(engine: Celune, source_id: int, status: str) -> None:
@@ -388,6 +471,76 @@ def _clear_playback_source_status(engine: Celune, source_id: int) -> None:
     if statuses:
         engine.status_callback(next(reversed(statuses.values())))
     _playback_source_meta(engine).pop(source_id, None)
+    _playback_caption_states(engine).pop(source_id, None)
+    if getattr(engine, "_caption_source_id", None) == source_id:
+        engine._caption_source_id = None
+
+
+def _notify_caption_progress(
+    engine: Celune,
+    progress: Optional[float],
+    total: Optional[float],
+    visible_words: Optional[int] = None,
+) -> None:
+    """Notify caption consumers while preserving legacy two-argument callbacks."""
+    callback = getattr(engine, "caption_progress_callback", None)
+    if not callable(callback):
+        return
+    if visible_words is None:
+        callback(progress, total)
+        return
+
+    try:
+        parameters = tuple(inspect.signature(callback).parameters.values())
+    except (TypeError, ValueError):
+        callback(progress, total)
+        return
+
+    positional_count = sum(
+        parameter.kind
+        in {
+            inspect.Parameter.POSITIONAL_ONLY,
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+        }
+        for parameter in parameters
+    )
+    if positional_count >= 3 or any(
+        parameter.kind == inspect.Parameter.VAR_POSITIONAL for parameter in parameters
+    ):
+        callback(progress, total, visible_words)
+        return
+    if any(
+        parameter.name == "visible_words"
+        and parameter.kind == inspect.Parameter.KEYWORD_ONLY
+        for parameter in parameters
+    ):
+        callback(progress, total, visible_words=visible_words)
+        return
+    callback(progress, total)
+
+
+def _caption_words_at_frame(
+    state: CaptionPlaybackState,
+    played_frames: float,
+) -> int:
+    """Return monotonically revealed caption words for the current audio frame."""
+    visible_words = 0
+    for segment in state.segments:
+        if played_frames < segment.start_frame:
+            break
+        if played_frames >= segment.end_frame:
+            visible_words = segment.word_end
+            continue
+
+        segment_frames = segment.end_frame - segment.start_frame
+        segment_words = segment.word_end - segment.word_start
+        elapsed_frames = max(0.0, played_frames - segment.start_frame)
+        visible_words = segment.word_start + math.ceil(
+            elapsed_frames * segment_words / segment_frames
+        )
+        break
+
+    return min(state.total_words, max(0, visible_words))
 
 
 def _notify_speech_playback_finished(engine: Celune, source_id: int) -> None:
@@ -395,11 +548,12 @@ def _notify_speech_playback_finished(engine: Celune, source_id: int) -> None:
     source_meta = _playback_source_meta(engine).get(source_id)
     if not isinstance(source_meta, dict) or source_meta.get("kind") != "speech":
         return
+    caption_source_id = getattr(engine, "_caption_source_id", None)
+    if caption_source_id is not None and caption_source_id != source_id:
+        return
 
-    caption_progress_callback = getattr(engine, "caption_progress_callback", None)
-    if callable(caption_progress_callback):
-        total_frames = max(1.0, float(source_meta.get("total_frames", 0.0)))
-        caption_progress_callback(total_frames, total_frames)
+    total_frames = max(1.0, float(source_meta.get("total_frames", 0.0)))
+    _notify_caption_progress(engine, total_frames, total_frames)
 
 
 def _queue_playback_chunk(
@@ -584,18 +738,45 @@ def _update_playback_progress(
     ]
     if not speech_ids:
         return
-    speech_meta = meta.get(max(speech_ids))
+    caption_source_id = getattr(engine, "_caption_source_id", None)
+    if caption_source_id is not None:
+        if caption_source_id not in speech_ids:
+            return
+        speech_source_id = caption_source_id
+    else:
+        speech_source_id = max(speech_ids)
+    speech_meta = meta.get(speech_source_id)
     if not isinstance(speech_meta, dict):
         return
-    if float(speech_meta.get("total_frames_final", 0.0)) < 1.0:
-        return
-    caption_progress_callback = getattr(engine, "caption_progress_callback", None)
-    if callable(caption_progress_callback):
-        caption_progress_callback(
-            min(
-                float(speech_meta.get("played_frames", 0.0)),
-                float(speech_meta.get("total_frames", 0.0)),
-            ),
+    with engine.queue_lock:
+        caption_state = _playback_caption_states(engine).get(speech_source_id)
+        caption_segments = (
+            None if caption_state is None else tuple(caption_state.segments)
+        )
+    speech_played_frames = min(
+        float(speech_meta.get("played_frames", 0.0)),
+        float(speech_meta.get("total_frames", 0.0)),
+    )
+    if caption_state is not None and caption_segments:
+        snapshot = CaptionPlaybackState(
+            total_words=caption_state.total_words,
+            segments=list(caption_segments),
+        )
+        visible_words = _caption_words_at_frame(
+            snapshot,
+            speech_played_frames,
+        )
+        visible_words = min(visible_words, max(0, caption_state.total_words - 1))
+        _notify_caption_progress(
+            engine,
+            speech_played_frames,
+            float(speech_meta.get("total_frames", 0.0)),
+            visible_words,
+        )
+    elif float(speech_meta.get("total_frames_final", 0.0)) >= 1.0:
+        _notify_caption_progress(
+            engine,
+            speech_played_frames,
             float(speech_meta.get("total_frames", 0.0)),
         )
 
@@ -743,6 +924,7 @@ def _flush_buffered_speech_chunks(
     if not pushed_audio:
         caption_callback = getattr(engine, "caption_callback", None)
         if caption_text is not None and callable(caption_callback):
+            engine._caption_source_id = source_id
             caption_callback(caption_text)
         _set_playback_source_status(engine, source_id, string("status.speaking"))
         engine.cur_state = "speaking"
@@ -758,6 +940,7 @@ def _notify_caption_timing(
     audio: AudioChunk,
     sample_rate: int,
     timing_text: str,
+    caption_segments: Optional[tuple[CaptionPlaybackSegment, ...]] = None,
 ) -> None:
     """Send display and synthesis text to caption timing callbacks compatibly."""
     caption_timing_callback = getattr(engine, "caption_timing_callback", None)
@@ -771,6 +954,21 @@ def _notify_caption_timing(
     except (TypeError, ValueError):
         parameters = ()
 
+    positional_count = sum(
+        parameter.kind
+        in {
+            inspect.Parameter.POSITIONAL_ONLY,
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+        }
+        for parameter in parameters
+    )
+    supports_caption_segments = (
+        any(
+            parameter.kind == inspect.Parameter.VAR_POSITIONAL
+            for parameter in parameters
+        )
+        or positional_count >= 5
+    )
     supports_timing_text = (
         not parameters
         or any(
@@ -787,10 +985,19 @@ def _notify_caption_timing(
         )
         >= 4
     )
-    if supports_timing_text:
+    if supports_caption_segments and caption_segments is not None:
+        callback = cast(ChunkCaptionTimingCallback, caption_timing_callback)
+        callback(
+            caption,
+            audio,
+            sample_rate,
+            timing_text,
+            caption_segments,
+        )
+    elif supports_timing_text:
         caption_timing_callback(caption, audio, sample_rate, timing_text)
-        return
-    caption_timing_callback(caption, audio, sample_rate)
+    else:
+        caption_timing_callback(caption, audio, sample_rate)
 
 
 def _youtube_sfx_temp_path() -> pathlib.Path:

@@ -4,9 +4,9 @@
 # Import groups follow Celune's project-specific Ruff ordering.
 # pylint: disable=ungrouped-imports
 
-import asyncio
 import sys
 import queue
+import asyncio
 import tempfile
 import threading
 from types import TracebackType, SimpleNamespace
@@ -19,7 +19,8 @@ import numpy as np
 import pytest
 import numpy.typing as npt
 
-from celune import conversation as conversation_module, pipeline
+from celune import pipeline
+from celune import conversation as conversation_module
 from celune.utils import discard
 from celune.celune import Celune
 from celune.cevoice import (
@@ -33,9 +34,9 @@ from celune.typing.agent import (
     AgentContext,
     AgentRequest,
 )
+from celune.typing.locks import ComponentLockName
 from celune.typing.common import JSON, JSONSerializable
 from celune.typing.aliases import AudioChunk
-from celune.typing.locks import ComponentLockName
 from celune.dataclasses.pipeline import AudioInputRequest
 from celune.persona.capabilities import PersonaCapabilities
 
@@ -340,6 +341,72 @@ class TestPipeline(CeluneTestCase):
         assert engine.caption_progress_callback.call_args_list[-1] == mock.call(
             16.0, 16.0
         )
+
+    def test_caption_chunk_ranges_follow_source_text_chunks(self) -> None:
+        """Verify source chunk boundaries map to stable display word ranges."""
+        assert pipeline._caption_chunk_word_ranges(
+            "one two three four", ["one two", "three four"]
+        ) == ((0, 2), (2, 4))
+
+        assert pipeline._caption_chunk_word_ranges(
+            "one two three", ["one", "two three"]
+        ) == ((0, 1), (1, 3))
+
+    def test_chunk_caption_progress_uses_played_text_ranges(self) -> None:
+        """Verify caption word progress follows queued text-chunk frame spans."""
+        engine = make_pipeline_engine()
+        pipeline.register_playback_source(
+            cast(Celune, engine),
+            1,
+            kind="speech",
+            caption_word_total=4,
+        )
+        pipeline._record_caption_playback_segment(
+            cast(Celune, engine), 1, 0, 100, 0, 2, ("one", "two")
+        )
+        pipeline._record_caption_playback_segment(
+            cast(Celune, engine), 1, 100, 400, 2, 4, ("three", "four")
+        )
+        source_meta = pipeline._playback_source_meta(cast(Celune, engine))[1]
+        source_meta["total_frames"] = 400.0
+        source_meta["played_frames"] = 50.0
+        engine._caption_source_id = 1
+        engine.progress_callback = mock.Mock()
+        engine.caption_progress_callback = mock.Mock()
+
+        pipeline._update_playback_progress(cast(Celune, engine))
+
+        engine.caption_progress_callback.assert_called_once_with(50.0, 400.0, 1)
+
+        source_meta["total_frames"] = 600.0
+        source_meta["played_frames"] = 250.0
+        engine._playback_progress_last_emit_at = 0.0
+        pipeline._update_playback_progress(cast(Celune, engine))
+
+        assert engine.caption_progress_callback.call_args_list[-1] == mock.call(
+            250.0, 600.0, 3
+        )
+
+    def test_stale_speech_completion_cannot_finish_new_caption(self) -> None:
+        """Verify completion from an older source cannot close the active caption."""
+        engine = make_pipeline_engine()
+        pipeline.register_playback_source(cast(Celune, engine), 1, kind="speech")
+        pipeline.register_playback_source(
+            cast(Celune, engine),
+            2,
+            kind="speech",
+            caption_word_total=5,
+        )
+        engine._caption_source_id = 2
+        engine.caption_progress_callback = mock.Mock()
+
+        pipeline._notify_speech_playback_finished(cast(Celune, engine), 1)
+
+        engine.caption_progress_callback.assert_not_called()
+
+        pipeline._notify_speech_playback_finished(cast(Celune, engine), 2)
+
+        engine.caption_progress_callback.assert_called_once_with(1.0, 1.0)
 
     def test_force_stop_queues_worker_stop_and_invalidates_old_sources(
         self,

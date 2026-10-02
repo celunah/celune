@@ -103,7 +103,10 @@ def _reset_playback_widgets(self) -> None:
 
 
 def safe_caption_progress(
-    self, progress: Optional[float], total: Optional[float] = None
+    self,
+    progress: Optional[float],
+    total: Optional[float] = None,
+    visible_words: Optional[int] = None,
 ) -> None:
     """Update the active caption from speech-only playback progress."""
     if self.cur_state == "exiting" or not self._caption_active:
@@ -112,24 +115,48 @@ def safe_caption_progress(
     def update_caption() -> None:
         if not self._caption_active or total is None or total <= 0:
             return
-        current = 0.0 if progress is None else progress
-        fraction = max(0.0, min(1.0, current / total))
+        caption_visible_words = visible_words
+        if caption_visible_words is None:
+            current = 0.0 if progress is None else progress
+            fraction = max(0.0, min(1.0, current / total))
+        else:
+            self._caption_segmented_progress = True
+            self._caption_played_frames = max(
+                self._caption_played_frames,
+                0.0 if progress is None else progress,
+            )
+            if self._caption_word_timings and self._caption_sample_rate > 0:
+                elapsed = self._caption_played_frames / self._caption_sample_rate
+                caption_visible_words = max(
+                    caption_visible_words,
+                    self._caption_visible_words,
+                    sum(start <= elapsed for start, _end in self._caption_word_timings),
+                )
+            caption_visible_words = min(
+                max(0, len(self._caption_words) - 1),
+                caption_visible_words,
+            )
+            fraction = max(
+                0.0,
+                min(1.0, caption_visible_words / max(len(self._caption_words), 1)),
+            )
         if fraction < self._caption_progress:
             return
         caption_finished = fraction >= 1.0
         self._caption_progress = fraction
-        visible_sentence, visible_words = self._caption_words_for_progress(
-            self._caption_progress
+        visible_sentence, caption_visible_words = self._caption_words_for_progress(
+            self._caption_progress,
+            caption_visible_words,
         )
         rendered_text = " ".join(visible_sentence)
         if (
-            visible_words == self._caption_visible_words
+            caption_visible_words == self._caption_visible_words
             and rendered_text == self._caption_rendered_text
         ):
             if caption_finished:
                 self._hide_caption_widgets()
             return
-        self._caption_visible_words = visible_words
+        self._caption_visible_words = caption_visible_words
         self._caption_rendered_text = rendered_text
         if self.caption is not None:
             self.caption.update(rendered_text)
@@ -195,9 +222,12 @@ def _clear_caption_state(self) -> None:
     self._caption_sentences = ()
     self._caption_word_timings = ()
     self._caption_audio_duration = 0.0
+    self._caption_sample_rate = 0
+    self._caption_played_frames = 0.0
     self._caption_rendered_text = ""
     self._caption_visible_words = 0
     self._caption_progress = 0.0
+    self._caption_segmented_progress = False
 
 
 def _show_caption_widgets(self) -> None:
@@ -315,9 +345,12 @@ def tts_caption(self, caption: Optional[str]) -> None:
         self._caption_sentences = sentences
         self._caption_word_timings = ()
         self._caption_audio_duration = 0.0
+        self._caption_sample_rate = 0
+        self._caption_played_frames = 0.0
         self._caption_rendered_text = ""
         self._caption_visible_words = 0
         self._caption_progress = 0.0
+        self._caption_segmented_progress = False
         self._caption_active = True
         self._caption_transitioning = False
         if self.caption is not None:

@@ -16,11 +16,14 @@ import datetime
 import threading
 import contextlib
 from io import TextIOWrapper
-from typing import Optional, cast
+from typing import TYPE_CHECKING, Optional, cast
 from collections.abc import Callable
 
 from . import app as _app
 from ..binding import install_class_functions
+
+if TYPE_CHECKING:
+    from ..dataclasses.pipeline import CaptionPlaybackSegment
 
 __all__ = (
     "_agent_status_text",
@@ -30,6 +33,8 @@ __all__ = (
     "_bind_agent_events",
     "_bind_runtime_callbacks",
     "_cancel_sleep_timer",
+    "_caption_chunk_word_timing_ranges",
+    "_caption_timing_ranges_from_words",
     "_caption_word_timing_ranges",
     "_caption_words_for_progress",
     "_chain_runtime_callback",
@@ -1705,13 +1710,28 @@ def _caption_word_timing_ranges(
     if not words or not segments or audio_duration <= 0.0:
         return ()
 
-    whisper_words = [
-        word
+    whisper_words = tuple(
+        (word.text, word.start, word.end)
         for segment in segments
         for word in segment.words
         if word.text and word.end >= word.start
-    ]
-    if not whisper_words:
+    )
+    return _caption_timing_ranges_from_words(
+        words,
+        whisper_words,
+        audio_duration,
+        timing_words,
+    )
+
+
+def _caption_timing_ranges_from_words(
+    words: tuple[str, ...],
+    whisper_words: tuple[tuple[str, float, float], ...],
+    audio_duration: float,
+    timing_words: Optional[tuple[str, ...]] = None,
+) -> tuple[tuple[float, float], ...]:
+    """Align one local caption word range to its local transcript words."""
+    if not words or not whisper_words or audio_duration <= 0.0:
         return ()
 
     def normalize(value: str) -> str:
@@ -1719,7 +1739,7 @@ def _caption_word_timing_ranges(
 
     matching_words = timing_words if timing_words else words
     caption_keys = [normalize(word) for word in matching_words]
-    whisper_keys = [normalize(word.text) for word in whisper_words]
+    whisper_keys = [normalize(word[0]) for word in whisper_words]
     assigned: list[Optional[int]] = [None] * len(matching_words)
     whisper_index = 0
     for caption_index, caption_key in enumerate(caption_keys):
@@ -1741,9 +1761,9 @@ def _caption_word_timing_ranges(
                 index * (len(whisper_words) - 1) / max(len(matching_words) - 1, 1)
             )
         assigned_index = max(0, min(len(whisper_words) - 1, assigned_index))
-        word = whisper_words[assigned_index]
-        start = max(0.0, min(audio_duration, word.start))
-        end = max(start, min(audio_duration, word.end))
+        _text, word_start, word_end = whisper_words[assigned_index]
+        start = max(0.0, min(audio_duration, word_start))
+        end = max(start, min(audio_duration, word_end))
         timing_ranges.append((start, end))
 
     previous_end = 0.0
@@ -1774,12 +1794,87 @@ def _caption_word_timing_ranges(
     return tuple(displayed_ranges)
 
 
+def _caption_chunk_word_timing_ranges(
+    words: tuple[str, ...],
+    segments: tuple[_app.WhisperSegment, ...],
+    audio_duration: float,
+    sample_rate: int,
+    caption_segments: tuple[CaptionPlaybackSegment, ...],
+) -> tuple[tuple[float, float], ...]:
+    """Align each displayed word range against only its matching audio chunk."""
+    if not words or not caption_segments or sample_rate <= 0:
+        return ()
+
+    timings: list[Optional[tuple[float, float]]] = [None] * len(words)
+    for caption_segment in caption_segments:
+        word_start = max(0, min(len(words), caption_segment.word_start))
+        word_end = max(word_start, min(len(words), caption_segment.word_end))
+        if word_start >= word_end:
+            continue
+
+        start_time = max(0.0, caption_segment.start_frame / sample_rate)
+        end_time = min(audio_duration, caption_segment.end_frame / sample_rate)
+        chunk_duration = max(0.0, end_time - start_time)
+        if chunk_duration <= 0.0:
+            continue
+
+        local_whisper_words = tuple(
+            (
+                word.text,
+                max(0.0, word.start - start_time),
+                min(chunk_duration, word.end - start_time),
+            )
+            for segment in segments
+            for word in segment.words
+            if word.text
+            and word.end >= start_time
+            and word.start <= end_time
+            and start_time <= (word.start + word.end) / 2 < end_time
+        )
+        local_words = words[word_start:word_end]
+        local_timings = _caption_timing_ranges_from_words(
+            local_words,
+            local_whisper_words,
+            chunk_duration,
+            caption_segment.timing_words,
+        )
+        if not local_timings:
+            local_word_count = len(local_words)
+            local_timings = tuple(
+                (
+                    chunk_duration * index / local_word_count,
+                    chunk_duration * (index + 1) / local_word_count,
+                )
+                for index in range(local_word_count)
+            )
+
+        for index, (start, end) in enumerate(local_timings, word_start):
+            timings[index] = (start_time + start, start_time + end)
+
+    normalized: list[tuple[float, float]] = []
+    previous_end = 0.0
+    word_count = max(1, len(words))
+    for index, timing in enumerate(timings):
+        if timing is None:
+            start = audio_duration * index / word_count
+            end = audio_duration * (index + 1) / word_count
+        else:
+            start, end = timing
+        start = max(previous_end, 0.0, min(audio_duration, start))
+        end = max(start, min(audio_duration, end))
+        normalized.append((start, end))
+        previous_end = end
+
+    return tuple(normalized)
+
+
 def tts_caption_timing(
     self,
     caption: str,
     audio: _app.AudioChunk,
     sample_rate: int,
     timing_text: Optional[str] = None,
+    caption_segments: Optional[tuple[CaptionPlaybackSegment, ...]] = None,
 ) -> None:
     """Refine displayed caption timing from normalized speech timestamps."""
     if (
@@ -1818,12 +1913,21 @@ def tts_caption_timing(
                 )
                 self._caption_transcriber = transcriber
             segments = transcriber.transcribe_segments(audio_copy, sample_rate)
-            word_timings = self._caption_word_timing_ranges(
-                self._caption_words,
-                segments,
-                duration,
-                timing_words,
-            )
+            if caption_segments is None:
+                word_timings = self._caption_word_timing_ranges(
+                    self._caption_words,
+                    segments,
+                    duration,
+                    timing_words,
+                )
+            else:
+                word_timings = self._caption_chunk_word_timing_ranges(
+                    self._caption_words,
+                    segments,
+                    duration,
+                    sample_rate,
+                    caption_segments,
+                )
         except Exception as error:
             self.safe_log(
                 _app.format_error_message(
@@ -1849,9 +1953,29 @@ def tts_caption_timing(
                 return
             self._caption_word_timings = word_timings
             self._caption_audio_duration = duration
-            visible_sentence, visible_words = self._caption_words_for_progress(
-                self._caption_progress
-            )
+            self._caption_sample_rate = sample_rate
+            if self._caption_segmented_progress:
+                elapsed = self._caption_played_frames / max(sample_rate, 1)
+                visible_words = max(
+                    self._caption_visible_words,
+                    sum(start <= elapsed for start, _end in word_timings),
+                )
+                visible_words = min(
+                    max(0, len(self._caption_words) - 1),
+                    visible_words,
+                )
+                self._caption_progress = max(
+                    self._caption_progress,
+                    visible_words / max(len(self._caption_words), 1),
+                )
+                visible_sentence, visible_words = self._caption_words_for_progress(
+                    self._caption_progress,
+                    visible_words,
+                )
+            else:
+                visible_sentence, visible_words = self._caption_words_for_progress(
+                    self._caption_progress
+                )
             rendered_text = " ".join(visible_sentence)
             self._caption_visible_words = visible_words
             self._caption_rendered_text = rendered_text
@@ -1867,8 +1991,24 @@ def tts_caption_timing(
 def _caption_words_for_progress(
     self,
     fraction: float,
+    visible_words: Optional[int] = None,
 ) -> tuple[tuple[str, ...], int]:
     """Return the current sentence words and total revealed word count."""
+    if visible_words is not None:
+        revealed_words = min(
+            len(self._caption_words),
+            max(self._caption_visible_words, visible_words),
+        )
+        remaining_words = revealed_words
+        for sentence in self._caption_sentences:
+            if remaining_words <= len(sentence):
+                return sentence[:remaining_words], revealed_words
+            remaining_words -= len(sentence)
+        return (
+            self._caption_sentences[-1] if self._caption_sentences else (),
+            revealed_words,
+        )
+
     if (
         self._caption_word_timings
         and len(self._caption_word_timings) == len(self._caption_words)

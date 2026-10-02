@@ -87,7 +87,11 @@ Long text is segmented before generation. Smart buffering protects already
 played audio and throttles playback speed only within its configured limits.
 Caption progress follows blocks after they reach the output writer, so captions
 remain synchronized with audible playback even when generation produces chunks
-faster than the sound device consumes them.
+faster than the sound device consumes them. For multi-chunk speech, each
+generated text chunk is aligned to its own audio frame range. Whisper word
+timings are matched inside that range, preventing a missed word in one chunk
+from shifting later caption text; when those timings are unavailable, words
+advance proportionally within the played chunk.
 For a caller that needs every chunk, use `say_stream()` and drain the returned
 queue until its terminal sentinel/condition; do not read the internal playback
 queue directly.

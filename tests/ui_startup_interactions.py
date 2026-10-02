@@ -29,16 +29,18 @@ from celune.utils import discard
 from celune.celune import Celune
 from celune.config import Config
 from celune.ui.app import (
-    ButtonActions,
     Button,
     CeluneUI,
-    ProgressLabel,
     VoiceButton,
+    ButtonActions,
+    ProgressLabel,
 )
 from tests.support import FakeBackend
 from celune.ui.theme import severity_color
 from celune.persona.asr import WhisperWord, WhisperSegment
 from celune.typing.common import JSONSerializable
+from celune.dataclasses.pipeline import CaptionPlaybackSegment
+
 from .ui_startup_foundation import TestUIStartup as _TestUIStartup
 
 
@@ -1527,6 +1529,67 @@ class TestUIStartup(_TestUIStartup):
         )
 
         assert len(fewer_timing_words) == 3
+
+    def test_chunk_caption_timing_resets_alignment_for_each_chunk(self) -> None:
+        """Verify one chunk's transcript mismatch cannot shift later caption words."""
+        segments = (
+            WhisperSegment(
+                text="noise one two three four",
+                start=0.0,
+                end=2.0,
+                words=(
+                    WhisperWord("noise", 0.0, 0.2),
+                    WhisperWord("one", 0.3, 0.6),
+                    WhisperWord("two", 0.7, 0.9),
+                    WhisperWord("three", 1.2, 1.5),
+                    WhisperWord("four", 1.6, 1.9),
+                ),
+            ),
+        )
+        caption_segments = (
+            CaptionPlaybackSegment(0, 48000, 0, 2, ("one", "two")),
+            CaptionPlaybackSegment(48000, 96000, 2, 4, ("three", "four")),
+        )
+
+        timings = CeluneUI._caption_chunk_word_timing_ranges(
+            ("One", "two", "three", "four"),
+            segments,
+            2.0,
+            48000,
+            caption_segments,
+        )
+
+        assert timings == (
+            (0.3, 0.6),
+            (0.7, 0.9),
+            (1.2, 1.5),
+            (1.6, 1.9),
+        )
+
+    def test_chunk_caption_progress_does_not_regress_on_stale_updates(self) -> None:
+        """Verify chunk progress reveals stable word counts and ignores stale counts."""
+        ui = CeluneUI()
+
+        class FakeCaption:
+            """Small caption widget test double."""
+
+            def __init__(self) -> None:
+                self.display = False
+                self.styles = SimpleNamespace(opacity=1.0, height=0)
+                self.rendered = ""
+
+            def update(self, value: str) -> None:
+                """Capture visible caption words."""
+                self.rendered = value
+
+        ui.caption = cast(Label, FakeCaption())
+        ui.tts_caption("One two three four")
+
+        ui.safe_caption_progress(50.0, 400.0, 2)
+        assert cast(FakeCaption, ui.caption).rendered == "One two"
+
+        ui.safe_caption_progress(250.0, 600.0, 1)
+        assert cast(FakeCaption, ui.caption).rendered == "One two"
 
     def test_caption_transcriber_does_not_publish_progress_to_playback_bar(
         self,

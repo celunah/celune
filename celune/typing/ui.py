@@ -110,6 +110,7 @@ class CeluneUIMethodSurface:
     _reveal_main_ui: Callable[..., None]
     _dismiss_loading_screen: Callable[..., None]
     _caption_word_timing_ranges: Callable[..., tuple[tuple[float, float], ...]]
+    _caption_chunk_word_timing_ranges: Callable[..., tuple[tuple[float, float], ...]]
     tts_caption_timing: Callable[..., None]
     _caption_words_for_progress: Callable[..., tuple[tuple[str, ...], int]]
     safe_progress: Callable[..., None]

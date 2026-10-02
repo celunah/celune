@@ -3,48 +3,49 @@
 
 from __future__ import annotations
 
-import asyncio
-import contextlib
-import datetime
-import inspect
 import io
 import re
 import time
-from collections.abc import Callable, Iterator
+import asyncio
+import inspect
+import datetime
+import contextlib
 from html import escape
-from typing import Optional, Union, cast
+from typing import Union, Optional, cast
+from collections.abc import Callable, Iterator
 
+import numpy as np  # pylint: disable=ungrouped-imports
 import gradio as gr
-import numpy as np
-import numpy.typing as npt
 import soundfile as sf
+import numpy.typing as npt
 from fastapi import HTTPException
 
 from . import api as _api
 from .ui import resources as ui_resources
-from .constants import APP_NAME
-from .dataclasses.events import (
-    AgentApprovalRequestedEvent,
-    AgentChoiceRequestedEvent,
-    AgentTaskFinishedEvent,
-    AgentTaskStateChangedEvent,
-)
-from .extensions.events import EventDispatcher
 from .i18n import string
 from .paths import main_window_log_path
-from .persona.impl import persona_enabled, persona_talkback_enabled
-from .playback import current_playback_status
-from .typing.aliases import AudioChunk, AudioChunks, LogLevel
-from .typing.api import TaskStatus, WebUiUpdate
-from .typing.events import EventCallback, EventName
-from .typing.pipeline import SpeechStreamQueue
-from .cedts.ui import UiTimedUpdate, ui_timed_update_channel
 from .theme import colors
 from .utils import available, format_error_message
 from .ui.app import CeluneUI
 from .binding import install_module_functions
-from .constants import BASE_SR
-from .typing.api import WebUiUnset as _WebUiUnset, WEBUI_UNSET as _WEBUI_UNSET
+from .cedts.ui import UiTimedUpdate, ui_timed_update_channel
+from .playback import current_playback_status
+from .constants import BASE_SR, APP_NAME
+from .typing.api import WEBUI_UNSET as _WEBUI_UNSET
+from .typing.api import TaskStatus, WebUiUpdate
+from .typing.api import WebUiUnset as _WebUiUnset
+from .persona.impl import persona_enabled, persona_talkback_enabled
+from .typing.events import EventName, EventCallback
+from .typing.aliases import LogLevel, AudioChunk, AudioChunks
+from .typing.pipeline import SpeechStreamQueue
+from .extensions.events import EventDispatcher
+from .dataclasses.events import (
+    AgentTaskFinishedEvent,
+    AgentChoiceRequestedEvent,
+    AgentTaskStateChangedEvent,
+    AgentApprovalRequestedEvent,
+)
+from .dataclasses.pipeline import CaptionPlaybackSegment
 
 __all__ = (
     "_append_webui_error",
@@ -569,8 +570,16 @@ def _wrap_celune_callbacks(celune: _api.Celune) -> None:
     def wrapped_caption_progress(
         progress: Optional[float],
         total: Optional[float],
+        visible_words: Optional[int] = None,
     ) -> None:
-        if total is not None and total > 0:
+        if visible_words is not None:
+            total_words = len(_api.webui_caption_text.split())
+            if total_words > 0:
+                _api.webui_caption_progress = max(
+                    0.0,
+                    min(1.0, visible_words / total_words),
+                )
+        elif total is not None and total > 0:
             _api.webui_caption_progress = max(0.0, min(1.0, (progress or 0.0) / total))
         original_caption_progress(progress, total)
 
@@ -590,17 +599,39 @@ def _wrap_celune_callbacks(celune: _api.Celune) -> None:
         audio: AudioChunk,
         sample_rate: int,
         timing_text: Optional[str] = None,
+        caption_segments: Optional[tuple[CaptionPlaybackSegment, ...]] = None,
     ) -> None:
         _api.webui_caption_active = True
         _api.webui_caption_text = caption
         _api.webui_caption_progress = 0.0
         try:
             signature = inspect.signature(original_caption_timing)
-            signature.bind(caption, audio, sample_rate, timing_text)
         except (TypeError, ValueError):
             original_caption_timing(caption, audio, sample_rate)
+            return
+        try:
+            signature.bind(
+                caption,
+                audio,
+                sample_rate,
+                timing_text,
+                caption_segments,
+            )
+        except TypeError:
+            try:
+                signature.bind(caption, audio, sample_rate, timing_text)
+            except TypeError:
+                original_caption_timing(caption, audio, sample_rate)
+            else:
+                original_caption_timing(caption, audio, sample_rate, timing_text)
         else:
-            original_caption_timing(caption, audio, sample_rate, timing_text)
+            original_caption_timing(
+                caption,
+                audio,
+                sample_rate,
+                timing_text,
+                caption_segments,
+            )
 
     def wrapped_voice_changed(name: str) -> None:
         _append_webui_log(string("webui.voice_changed", voice=name))

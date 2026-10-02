@@ -5,9 +5,9 @@ from __future__ import annotations
 
 import time
 import queue
-from pathlib import Path
-from dataclasses import dataclass
 from typing import Union, Optional
+from pathlib import Path
+from dataclasses import field, dataclass
 
 import numpy as np
 import numpy.typing as npt
@@ -95,6 +95,25 @@ class PlaybackSourceDone:
     saved_path: Optional[str] = None
     analysis_audio: Optional[AudioChunk] = None
     generation: int = 0
+
+
+@dataclass(frozen=True)
+class CaptionPlaybackSegment:
+    """Map one generated text chunk onto its queued playback frames."""
+
+    start_frame: int
+    end_frame: int
+    word_start: int
+    word_end: int
+    timing_words: tuple[str, ...] = ()
+
+
+@dataclass
+class CaptionPlaybackState:
+    """Track caption words across the completed chunks of one speech source."""
+
+    total_words: int
+    segments: list[CaptionPlaybackSegment] = field(default_factory=list)
 
 
 @dataclass

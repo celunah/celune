@@ -9,37 +9,26 @@ import json
 import time
 import queue
 import ctypes
+import random
 import asyncio
 import pathlib
-import random
 import datetime
 import threading
 import contextlib
-
-from collections import deque
-from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Optional, cast
+from collections import deque
+from dataclasses import replace, dataclass
 from collections.abc import Mapping, Callable  # pylint: disable=ungrouped-imports
 
+import numpy as np
 import torch
 import psutil
-import numpy as np
 import soundfile as sf
 import sounddevice as sd
 import pyrubberband as rb
 
 from . import __version__
 from .i18n import string, tagged_string
-from .config import resolve_audio_device
-from .analysis import analyze_voice_audio
-from .exceptions import NotAvailableError
-from .binding import install_class_functions
-from .typing.pipeline import SpeechStreamQueue
-from .typing.common import JSON, JSONSerializable
-from .typing.aliases import AudioChunk, AudioChunks
-from .conversation import _effective_voice_prompt, _think_persona
-from .threads import run_in_daemon_thread as _run_in_daemon_thread
-
 from .paths import (
     outputs_dir,
 )
@@ -49,32 +38,38 @@ from .utils import (
     format_number,
     format_error_message,
 )
+from .config import resolve_audio_device
+from .binding import install_class_functions
+from .threads import run_in_daemon_thread as _run_in_daemon_thread
+from .analysis import analyze_voice_audio
 from .playback import (
-    _apply_source_gain,
-    _clear_playback_source_status,
-    _dequeue_playback_item,
-    _download_youtube_sfx,
-    _flush_buffered_speech_chunks,
-    _next_playback_source_id,
-    _notify_caption_timing,
-    _notify_speech_playback_finished,
-    _pipeline_cpu_config,
-    _playback_source_meta,
-    _playback_source_statuses,
-    _queue_playback_chunk,
-    _queue_playback_done,
-    _register_overlay_playback,
-    _register_playback_source,
-    _remember_smart_buffer_speed,
-    _set_playback_source_status,
-    _smart_buffer_target_seconds,
-    _update_playback_progress,
-    _youtube_sfx_title,
     acquire_pipeline,
-    current_playback_status,
     release_pipeline,
+    _apply_source_gain,
+    _youtube_sfx_title,
+    _pipeline_cpu_config,
+    _queue_playback_done,
+    _download_youtube_sfx,
+    _playback_source_meta,
+    _queue_playback_chunk,
+    _dequeue_playback_item,
+    _notify_caption_timing,
+    current_playback_status,
+    _next_playback_source_id,
+    _playback_caption_states,
+    _playback_source_statuses,
+    _register_playback_source,
+    _update_playback_progress,
+    _caption_chunk_word_ranges,
+    _register_overlay_playback,
+    _set_playback_source_status,
+    _remember_smart_buffer_speed,
+    _smart_buffer_target_seconds,
+    _clear_playback_source_status,
+    _flush_buffered_speech_chunks,
+    _notify_speech_playback_finished,
+    _record_caption_playback_segment,
 )
-
 from .audio.dsp import (
     soften,
     to_48khz,
@@ -89,21 +84,26 @@ from .constants import (
     APP_NAME,
     APP_SLUG,
 )
+from .exceptions import NotAvailableError
+from .conversation import _think_persona, _effective_voice_prompt
 from .pipelinecore import (
     _PIPELINE_CPU_YIELD_SECONDS,
-    _PLAYBACK_BUFFER_CRITICAL_MAX_SECONDS,
     _PLAYBACK_BUFFER_MAX_SECONDS,
     _PLAYBACK_BUFFER_MIN_SECONDS,
-    _PLAYBACK_BUFFER_STARTUP_GRACE_SECONDS,
-    _PLAYBACK_CONTENTION_CPU_CRITICAL,
     _PLAYBACK_CONTENTION_CPU_START,
-    _PLAYBACK_CONTENTION_LAG_CRITICAL_SECONDS,
-    _PLAYBACK_CONTENTION_LAG_START_SECONDS,
-    _PLAYBACK_CONTENTION_SAMPLE_SECONDS,
+    _PLAYBACK_CONTENTION_CPU_CRITICAL,
     _PLAYBACK_CONTENTION_STABLE_DECAY,
     _PLAYBACK_CONTENTION_REBUFFER_LEVEL,
+    _PLAYBACK_CONTENTION_SAMPLE_SECONDS,
+    _PLAYBACK_BUFFER_CRITICAL_MAX_SECONDS,
+    _PLAYBACK_BUFFER_STARTUP_GRACE_SECONDS,
+    _PLAYBACK_CONTENTION_LAG_START_SECONDS,
+    _PLAYBACK_CONTENTION_LAG_CRITICAL_SECONDS,
     _monotonic_time,
 )
+from .typing.common import JSON, JSONSerializable
+from .typing.aliases import AudioChunk, AudioChunks
+from .typing.pipeline import SpeechStreamQueue
 from .dataclasses.pipeline import (
     SpeechTiming,
     PlaybackChunk,
@@ -114,37 +114,37 @@ from .dataclasses.pipeline import (
 if TYPE_CHECKING:
     from .celune import Celune
     from .speech import (
-        close,
-        convert_audio_input,
-        deliver_persona_response,
-        finish_streaming_sfx_audio,
-        handle_audio_input,
-        play,
-        prepare_playback_audio,
-        queue_sfx_audio,
-        queue_speech,
-        queue_speech_async,
-        queue_streaming_sfx_audio,
         say,
+        play,
+        close,
         say_async,
+        queue_speech,
+        queue_sfx_audio,
+        handle_audio_input,
+        queue_speech_async,
+        convert_audio_input,
         stop_live_audio_input,
+        prepare_playback_audio,
+        deliver_persona_response,
+        queue_streaming_sfx_audio,
+        finish_streaming_sfx_audio,
     )
     from .playback import (
-        _config_lines,
         _config_text,
+        _config_lines,
         _notify_component_busy,
         acquire_pipeline_result,
     )
     from .conversation import (
-        _extract_persona_text,
-        _persona_manifest_files,
-        _persona_memory_store,
-        build_agent_classification_request,
-        build_persona_character_card,
-        build_persona_context,
-        build_persona_messages,
-        build_persona_request,
         think,
+        _extract_persona_text,
+        _persona_memory_store,
+        build_persona_context,
+        build_persona_request,
+        build_persona_messages,
+        _persona_manifest_files,
+        build_persona_character_card,
+        build_agent_classification_request,
     )
 
     _PIPELINE_TYPE_EXPORTS = (
@@ -1427,7 +1427,14 @@ def _process_generation_request(engine: Celune, item: SpeechRequest) -> None:
             generated_text_parts: list[str] = []
             request_generation = item.generation
             source_id = _next_playback_source_id(engine)
-            _register_playback_source(engine, source_id, kind="speech")
+            caption_word_total = len(display_text.split())
+            _register_playback_source(
+                engine,
+                source_id,
+                kind="speech",
+                caption_word_total=(caption_word_total if len(chunks) > 1 else 0),
+            )
+            caption_word_ranges = _caption_chunk_word_ranges(display_text, chunks)
 
             for chunk_index, chunk_text in enumerate(chunks):
                 if engine.exit_requested:
@@ -1435,6 +1442,16 @@ def _process_generation_request(engine: Celune, item: SpeechRequest) -> None:
 
                 if engine.utterance_force_stop.is_set():
                     break
+
+                chunk_word_start, chunk_word_end = caption_word_ranges[chunk_index]
+                chunk_start_frames = 0
+                if source_id in _playback_caption_states(engine):
+                    with engine.queue_lock:
+                        source_meta = _playback_source_meta(engine).get(source_id)
+                        if isinstance(source_meta, dict):
+                            chunk_start_frames = int(
+                                float(source_meta.get("total_frames", 0.0))
+                            )
 
                 if item.normalize:
                     engine.status_callback(string("status.normalizing"))
@@ -1638,6 +1655,40 @@ def _process_generation_request(engine: Celune, item: SpeechRequest) -> None:
                             "warning",
                         )
 
+                if (
+                    not engine.exit_requested
+                    and not engine.utterance_force_stop.is_set()
+                    and request_generation
+                    == getattr(engine, "_speech_generation", request_generation)
+                ):
+                    pushed_audio = _flush_buffered_speech_chunks(
+                        engine,
+                        source_id,
+                        buffer,
+                        speech_timing,
+                        pushed_audio,
+                        stream_queue,
+                        caption_text=display_text,
+                    )
+                    buffered_speech_len = 0.0
+                    if source_id in _playback_caption_states(engine):
+                        with engine.queue_lock:
+                            source_meta = _playback_source_meta(engine).get(source_id)
+                            chunk_end_frames = (
+                                int(float(source_meta.get("total_frames", 0.0)))
+                                if isinstance(source_meta, dict)
+                                else chunk_start_frames
+                            )
+                        _record_caption_playback_segment(
+                            engine,
+                            source_id,
+                            chunk_start_frames,
+                            chunk_end_frames,
+                            chunk_word_start,
+                            chunk_word_end,
+                            tuple(chunk_text.split()),
+                        )
+
             timing_text = (
                 " ".join(generated_text_parts) if generated_text_parts else text
             )
@@ -1758,12 +1809,18 @@ def _process_generation_request(engine: Celune, item: SpeechRequest) -> None:
                     engine.log(string("pipeline.may_be_silent"), "warning")
 
                 if full_audio_array is not None:
+                    caption_state = _playback_caption_states(engine).get(source_id)
+                    caption_segments = None
+                    if caption_state is not None:
+                        with engine.queue_lock:
+                            caption_segments = tuple(caption_state.segments)
                     _notify_caption_timing(
                         engine,
                         display_text,
                         full_audio_array,
                         BASE_SR,
                         timing_text,
+                        caption_segments,
                     )
 
                 engine.total_generated_speech_seconds += speech_len
@@ -2222,6 +2279,8 @@ async def playback_worker_job(engine: Celune) -> None:
             _notify_speech_playback_finished(engine, source_id)
         _playback_source_statuses(engine).clear()
         _playback_source_meta(engine).clear()
+        _playback_caption_states(engine).clear()
+        engine._caption_source_id = None
         engine.playback_done.set()
         release_pipeline(engine)
 
@@ -2242,6 +2301,8 @@ async def playback_worker_job(engine: Celune) -> None:
         publish_buffered_seconds()
         _playback_source_statuses(engine).clear()
         _playback_source_meta(engine).clear()
+        _playback_caption_states(engine).clear()
+        engine._caption_source_id = None
         _reset_glow_audio_reactivity(engine)
         await _run_in_daemon_thread(lambda: close_stream(engine, True))
         engine.playback_done.set()
@@ -2433,6 +2494,8 @@ async def playback_worker_job(engine: Celune) -> None:
                 finish_rebuffer_wait()
                 _playback_source_statuses(engine).clear()
                 _playback_source_meta(engine).clear()
+                _playback_caption_states(engine).clear()
+                engine._caption_source_id = None
                 release_pipeline(engine)
                 if engine.cur_state not in {"error", "stopped"} and not getattr(
                     engine, "test_finished", False
@@ -2582,7 +2645,7 @@ async def playback_worker_job(engine: Celune) -> None:
 
 def _install_pipeline_facade() -> None:
     """Install the split pipeline modules after their circular imports settle."""
-    from . import conversation, playback, speech
+    from . import speech, playback, conversation
 
     globals().update(
         {

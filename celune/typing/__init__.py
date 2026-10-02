@@ -10,6 +10,7 @@ if TYPE_CHECKING:
         CeluneTextualUI,
         CeluneHeadlessBaseUI,
     )
+    from .api import WEBUI_UNSET, WebUiUnset
     from .agent import (
         ToolCall,
         AgentTask,
@@ -96,6 +97,10 @@ if TYPE_CHECKING:
         CaptionTimingCallback,
         QueueAvailableCallback,
         VoiceLockStateCallback,
+        CaptionProgressCallback,
+        CaptionTimingCallbackType,
+        ChunkCaptionTimingCallback,
+        ChunkCaptionProgressCallback,
     )
     from .common import (
         RGB,
@@ -106,7 +111,6 @@ if TYPE_CHECKING:
         JSONSerializable,
         VideoMetadataScalar,
     )
-    from .api import WebUiUnset, WEBUI_UNSET
     from .worker import (
         WorkerValue,
         WorkerMessage,
@@ -233,6 +237,10 @@ _MODULE_EXPORTS = {
     "CallerInfo": "utils",
     "CaptionCallback": "celune",
     "CaptionTimingCallback": "celune",
+    "CaptionTimingCallbackType": "celune",
+    "ChunkCaptionTimingCallback": "celune",
+    "CaptionProgressCallback": "celune",
+    "ChunkCaptionProgressCallback": "celune",
     "CeluneBaseUI": "ui",
     "CeluneHeadlessBaseUI": "ui",
     "CeluneTextualUI": "ui",
@@ -386,12 +394,16 @@ __all__ = [
     "BackendModel",
     "CallerInfo",
     "CaptionCallback",
+    "CaptionProgressCallback",
     "CaptionTimingCallback",
+    "CaptionTimingCallbackType",
     "CeluneBaseUI",
     "CeluneHeadlessBaseUI",
     "CeluneTextualUI",
     "ChatMessagePayload",
     "ChatTemplateRenderer",
+    "ChunkCaptionProgressCallback",
+    "ChunkCaptionTimingCallback",
     "ComponentBusyResult",
     "ComponentLockAcquisition",
     "ComponentLockName",
