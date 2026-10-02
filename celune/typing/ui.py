@@ -7,22 +7,22 @@ from __future__ import annotations
 
 import queue as queue_module
 import threading
-from collections.abc import Callable, Iterator
 from io import TextIOWrapper
 from typing import TYPE_CHECKING, Optional, Protocol
+from collections.abc import Callable, Iterator
 
 if TYPE_CHECKING:
     import numpy as np
-    import numpy.typing as npt
     import sounddevice as sd
-    from textual.app import ComposeResult, ReturnType
+    import numpy.typing as npt
+    from textual.app import ReturnType, ComposeResult
     from textual.color import Color
 
     from .agent import AgentTask
-    from ..celune import Celune
     from ..locks import ComponentLockLease
-    from .aliases import AudioChunk, LogLevel
     from .common import JSONSerializable
+    from ..celune import Celune
+    from .aliases import LogLevel, AudioChunk
 
 
 class CeluneBaseUI(Protocol):
@@ -104,8 +104,10 @@ class CeluneUIMethodSurface:
     _enter_sleep_mode: Callable[..., None]
     start_background_init: Callable[..., None]
     _show_loading_screen: Callable[..., None]
+    _enable_loading_ui_reveal: Callable[..., None]
     _update_loading_log: Callable[..., None]
     _show_loading_error: Callable[..., None]
+    _reveal_main_ui: Callable[..., None]
     _dismiss_loading_screen: Callable[..., None]
     _caption_word_timing_ranges: Callable[..., tuple[tuple[float, float], ...]]
     tts_caption_timing: Callable[..., None]

@@ -765,6 +765,8 @@ class CeluneUIBindingState:
     style_index: int = 0
     cur_state: str = "active"
     startup_error_exit_code: Optional[int] = None
+    loading_ui_reveal_available: bool = False
+    loading_ui_revealed: bool = False
     consume_on_boundary: bool = False
     suppress_input_change: bool = False
     resource_page: int = 0
@@ -977,6 +979,10 @@ class CeluneUI(App, CeluneUIMethodSurface):
     _startup_error_exit_code = _forward_ui_property(
         "_binding_state", "startup_error_exit_code"
     )
+    _loading_ui_reveal_available = _forward_ui_property(
+        "_binding_state", "loading_ui_reveal_available"
+    )
+    _loading_ui_revealed = _forward_ui_property("_binding_state", "loading_ui_revealed")
     consume_on_boundary = _forward_ui_property("_binding_state", "consume_on_boundary")
     _suppress_input_change = _forward_ui_property(
         "_binding_state", "suppress_input_change"

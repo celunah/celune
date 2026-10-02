@@ -18,6 +18,14 @@ post-frame worker and report failures on the loading overlay.
 | `CTRL+Q` | Fade out the UI, then shut down through the graceful teardown path. |
 | `CTRL+T` | Toggle dark/light themes and persist the selection. |
 | `CTRL+R` | Wake from sleep, start/stop Persona speech capture, or start/stop live VC capture depending on mode. |
+| `ESC` during startup | Reveal the main interface when the loading footer offers this action. |
+
+After the core is attached to the UI and startup reporting is ready, the loading
+screen adds `ESC reveal UI` to its footer. Press `ESC` to show the main interface
+while voice-runtime initialization continues; input and voice controls stay
+locked until startup finishes. Any later startup error is written to the main log
+instead of bringing the loading overlay back. Before that point, the loading
+screen only offers `CTRL+Q` to quit.
 
 The style button cycles the active voice on a normal click. Hold it to open
 `Select voice` after releasing the button, including while Celune is sleeping;
@@ -157,17 +165,18 @@ the stream's default severity.
 
 ## Startup failures
 
-If early initialization fails, the loading overlay remains visible as an error
-report. Its heading reads `Early initialization failed`, the initialization
-error remains in the diagnostic area, the spinner is removed, and the overlay
-says `Celune can't continue.` The lower-left status identifies the cause, such
+If initialization fails before the core is attached, the loading overlay remains
+visible as an error report. Its heading reads `Early initialization failed`, the
+initialization error remains in the diagnostic area, the spinner is removed, and
+the overlay says `Celune can't continue.` The lower-left status identifies the cause, such
 as `Missing dependency: dateutil`; no further startup progress is pending. The
 UI switches to the red error theme and catches early startup exceptions,
 including missing dependencies, without leaving a worker traceback on the
 terminal. The terminal title changes to an error state with a concise cause.
 Press `CTRL+Q` on this screen to close the application; a missing-dependency
 failure then returns exit code `4` to the launcher, while other early startup
-failures return the general failure code.
+failures return the general failure code. After core attachment, press `ESC` to
+reveal the main UI and inspect its log if a later initialization step fails.
 Fatal Textual callback failures also set a nonzero UI return code, which the
 entrypoint passes to the outer launcher so its failure diagnostics remain
 visible instead of returning to the shell over the traceback.

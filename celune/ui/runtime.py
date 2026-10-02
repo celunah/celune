@@ -37,6 +37,7 @@ __all__ = (
     "_clear_border_pulses",
     "_dismiss_loading_screen",
     "_emit_startup_diagnostic",
+    "_enable_loading_ui_reveal",
     "_ensure_startup_error_themes_registered",
     "_ensure_themes_registered",
     "_enter_sleep_mode",
@@ -67,6 +68,7 @@ __all__ = (
     "_render_status_text",
     "_restore_dunder_stdio",
     "_restore_progress_bar",
+    "_reveal_main_ui",
     "_run_on_ui_thread",
     "_runtime_theme_name",
     "_schedule_sleep_timer",
@@ -1122,6 +1124,7 @@ def attach_celune(self, celune: _app.Celune) -> None:
         )
         self._runtime_intervals_started = True
     self.update_resources()
+    self._enable_loading_ui_reveal()
     self.call_after_refresh(self.start_background_init)
 
 
@@ -1571,6 +1574,14 @@ def _show_loading_screen(self) -> None:
     self._loading_screen.display = True
 
 
+def _enable_loading_ui_reveal(self) -> None:
+    """Enable early UI reveal after the core and runtime reporting are attached."""
+    if self._loading_screen is None:
+        return
+    self._loading_ui_reveal_available = True
+    self._loading_screen.set_reveal_available(True)
+
+
 def _update_loading_log(self, message: str) -> None:
     """Forward one useful startup log line to the loading screen.
 
@@ -1598,6 +1609,10 @@ def _show_loading_error(
 
     def update() -> None:
         if self._loading_screen is not None:
+            if self._loading_ui_revealed:
+                if self._latest_startup_error != message:
+                    self.safe_log(message, "error")
+                return
             self._loading_screen.show_error(
                 _app.concise_error_message(message),
                 status_message=status_message,
@@ -1607,8 +1622,29 @@ def _show_loading_error(
     self._run_on_ui_thread(update)
 
 
-def _dismiss_loading_screen(self) -> None:
-    """Fade out and remove the startup screen after successful loading."""
+def _reveal_main_ui(self) -> None:
+    """Hide the loading overlay early and reveal the initialized interface."""
+    if not self._loading_ui_reveal_available or self._loading_ui_revealed:
+        return
+    if not self.celune_ready:
+        self.change_input_state(locked=True)
+        self.change_voice_lock_state(locked=True)
+    self._dismiss_loading_screen(early=True)
+
+
+def _dismiss_loading_screen(self, *, early: bool = False) -> None:
+    """Fade out and remove the startup overlay.
+
+    Args:
+        early: Whether the user requested the reveal before startup completed.
+    """
+    if self._loading_ui_revealed and not early:
+        return
+    if early:
+        self._loading_ui_revealed = True
+    self._loading_ui_reveal_available = False
+    if self._loading_screen is not None:
+        self._loading_screen.set_reveal_available(False)
 
     def dismiss() -> None:
         overlay = self._loading_screen

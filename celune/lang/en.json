@@ -557,6 +557,7 @@
     "ui.input_placeholder": "Enter text to speak here",
     "ui.invalid_theme_defaulting_dark": "Invalid theme, defaulting to dark",
     "ui.loading_quit": "CTRL+Q to quit",
+    "ui.loading_quit_reveal": "CTRL+Q exit • ESC reveal UI",
     "ui.loading_starting": "Starting {app_name}",
     "ui.loading_cannot_continue": "{app_name} can't continue.",
     "ui.loading_wait": "Please wait...",
