@@ -8,10 +8,12 @@ import sys
 import json
 import math
 import queue
+import re
 import inspect
 import pathlib
 import contextlib
 import subprocess
+from difflib import SequenceMatcher
 from uuid import uuid4
 from typing import TYPE_CHECKING, Union, Optional, cast
 from collections import deque
@@ -381,24 +383,51 @@ def _caption_chunk_word_ranges(
     chunks: list[str],
 ) -> tuple[tuple[int, int], ...]:
     """Map ordered synthesis chunks onto stable display-caption word ranges."""
-    display_word_count = len(display_text.split())
-    chunk_word_counts = [len(chunk.split()) for chunk in chunks]
-    total_speech_words = sum(chunk_word_counts)
-    if display_word_count <= 0 or total_speech_words <= 0:
+    display_words = display_text.split()
+    speech_words = [word for chunk in chunks for word in chunk.split()]
+    if not display_words or not speech_words:
         return tuple((0, 0) for _chunk in chunks)
+
+    def normalize_word(word: str) -> str:
+        return re.sub(r"[^\w]+", "", word.casefold())
+
+    matcher = SequenceMatcher(
+        a=[normalize_word(word) for word in speech_words],
+        b=[normalize_word(word) for word in display_words],
+    )
+    speech_to_display = [0] * (len(speech_words) + 1)
+    for (
+        operation,
+        speech_start,
+        speech_end,
+        display_start,
+        display_end,
+    ) in matcher.get_opcodes():
+        speech_span = speech_end - speech_start
+        display_span = display_end - display_start
+        if operation == "equal":
+            for offset in range(speech_span + 1):
+                speech_to_display[speech_start + offset] = display_start + offset
+        elif speech_span:
+            for offset in range(speech_span + 1):
+                speech_to_display[speech_start + offset] = display_start + round(
+                    offset * display_span / speech_span
+                )
+        else:
+            speech_to_display[speech_start] = display_end
 
     ranges: list[tuple[int, int]] = []
     previous_end = 0
-    accumulated_words = 0
-    for index, chunk_word_count in enumerate(chunk_word_counts):
-        accumulated_words += chunk_word_count
-        if index == len(chunk_word_counts) - 1:
-            word_end = display_word_count
+    speech_word_end = 0
+    for index, chunk in enumerate(chunks):
+        speech_word_end += len(chunk.split())
+        if index == len(chunks) - 1:
+            word_end = len(display_words)
+        elif speech_word_end < len(speech_to_display):
+            word_end = speech_to_display[speech_word_end]
         else:
-            word_end = round(
-                accumulated_words * display_word_count / total_speech_words
-            )
-        word_end = max(previous_end, min(display_word_count, word_end))
+            word_end = len(display_words)
+        word_end = max(previous_end, min(len(display_words), word_end))
         ranges.append((previous_end, word_end))
         previous_end = word_end
 

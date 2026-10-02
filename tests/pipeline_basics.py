@@ -352,6 +352,11 @@ class TestPipeline(CeluneTestCase):
             "one two three", ["one", "two three"]
         ) == ((0, 1), (1, 3))
 
+        assert pipeline._caption_chunk_word_ranges(
+            "Read foo_bar items and wait.",
+            ["Read foo underscore bar items", "and wait."],
+        ) == ((0, 3), (3, 5))
+
     def test_chunk_caption_progress_uses_played_text_ranges(self) -> None:
         """Verify caption word progress follows queued text-chunk frame spans."""
         engine = make_pipeline_engine()
