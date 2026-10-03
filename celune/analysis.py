@@ -10,9 +10,9 @@ from typing import Optional, cast
 from collections.abc import Callable
 
 import torch
-import numpy as np
 import librosa
 import matplotlib
+import numpy as np
 import numpy.typing as npt
 from matplotlib import pyplot as plt
 from matplotlib import colors as mcolors
@@ -20,16 +20,13 @@ from matplotlib.projections import PolarAxes
 from matplotlib import rcParams, font_manager
 from transformers import AutoModel, AutoProcessor
 
-from .i18n import string
-from .utils import run_async
-from .paths import huggingface_progress
-from .typing.aliases import AudioChunk
-from .cevoice import ManifestValue, default_loader
 from .constants import (
     N_A_NUMERIC,
     VOICE_EMBEDDING_MODEL,
     remote_code_model_revision,
 )
+from .i18n import string
+from .utils import run_async
 from .typing.analysis import (
     TextConfig,
     VoiceMatch,
@@ -38,6 +35,9 @@ from .typing.analysis import (
     EmbeddingPayload,
     EmbeddingProcessor,
 )
+from .typing.aliases import AudioChunk
+from .paths import huggingface_progress
+from .cevoice import ManifestValue, default_loader
 
 matplotlib.use("Agg")
 
