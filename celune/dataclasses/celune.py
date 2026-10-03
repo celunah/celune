@@ -36,7 +36,6 @@ from ..typing.celune import (
     QueueAvailableCallback,
     VoiceLockStateCallback,
     CaptionProgressCallback,
-    CaptionTimingCallbackType,
 )
 from ..typing.common import JSON, JSONSerializable
 from ..typing.aliases import LogLevel, AudioChunks
@@ -59,7 +58,6 @@ class CeluneCallbackState:
     progress_callback: ProgressCallback
     caption_progress_callback: CaptionProgressCallback
     caption_callback: CaptionCallback
-    caption_timing_callback: CaptionTimingCallbackType
 
 
 @dataclass
@@ -258,12 +256,6 @@ CELUNE_FORWARDED_PROPERTIES = (
         "caption_callback",
         "_callbacks",
         "caption_callback",
-        reject_duplicate=True,
-    ),
-    ForwardedPropertySpec(
-        "caption_timing_callback",
-        "_callbacks",
-        "caption_timing_callback",
         reject_duplicate=True,
     ),
     ForwardedPropertySpec("config", "_backend_state", "config"),

@@ -9,34 +9,34 @@ import queue
 import asyncio
 import tempfile
 import threading
-from types import TracebackType, SimpleNamespace
-from typing import Self, Optional, cast
 from pathlib import Path
 from unittest import mock
 from collections.abc import Iterator
+from typing import Self, Optional, cast
+from types import TracebackType, SimpleNamespace
 
-import numpy as np
 import pytest
+import numpy as np
 import numpy.typing as npt
 
 from celune import pipeline
-from celune import conversation as conversation_module
-from celune.utils import discard
-from celune.celune import Celune
 from celune.cevoice import (
     CEVoicePersona,
     PersonaIdentity,
     PersonaStyleValues,
 )
-from celune.constants import PipelineStates
+from celune.celune import Celune
+from celune.utils import discard
 from celune.typing.agent import (
     AgentTask,
     AgentContext,
     AgentRequest,
 )
-from celune.typing.locks import ComponentLockName
-from celune.typing.common import JSON, JSONSerializable
+from celune.constants import PipelineStates
 from celune.typing.aliases import AudioChunk
+from celune.typing.locks import ComponentLockName
+from celune import conversation as conversation_module
+from celune.typing.common import JSON, JSONSerializable
 from celune.dataclasses.pipeline import AudioInputRequest
 from celune.persona.capabilities import PersonaCapabilities
 
@@ -357,8 +357,8 @@ class TestPipeline(CeluneTestCase):
             ["Read foo underscore bar items", "and wait."],
         ) == ((0, 3), (3, 5))
 
-    def test_chunk_caption_progress_uses_played_text_ranges(self) -> None:
-        """Verify caption word progress follows queued text-chunk frame spans."""
+    def test_chunk_caption_progress_uses_aligned_word_frame_boundaries(self) -> None:
+        """Verify aligned word starts determine visible caption progress."""
         engine = make_pipeline_engine()
         pipeline.register_playback_source(
             cast(Celune, engine),
@@ -367,7 +367,14 @@ class TestPipeline(CeluneTestCase):
             caption_word_total=4,
         )
         pipeline._record_caption_playback_segment(
-            cast(Celune, engine), 1, 0, 100, 0, 2, ("one", "two")
+            cast(Celune, engine),
+            1,
+            0,
+            100,
+            0,
+            2,
+            ("one", "two"),
+            word_start_frames=(60, 90),
         )
         pipeline._record_caption_playback_segment(
             cast(Celune, engine), 1, 100, 400, 2, 4, ("three", "four")
@@ -381,7 +388,7 @@ class TestPipeline(CeluneTestCase):
 
         pipeline._update_playback_progress(cast(Celune, engine))
 
-        engine.caption_progress_callback.assert_called_once_with(50.0, 400.0, 1)
+        engine.caption_progress_callback.assert_called_once_with(50.0, 400.0, 0)
 
         source_meta["total_frames"] = 600.0
         source_meta["played_frames"] = 250.0
@@ -1263,7 +1270,10 @@ class TestPipelineAsync(CeluneAsyncTestCase):
                 """
                 return b'{"title":"Fixture Video Title"}'
 
-        with mock.patch("celune.playback.urlopen", return_value=FakeResponse()):
+        with mock.patch(
+            "celune.playback.urllib.request.urlopen",
+            return_value=FakeResponse(),
+        ):
             title = pipeline.youtube_sfx_title("https://youtu.be/demo")
 
         assert title == "Fixture Video Title"
@@ -1659,6 +1669,61 @@ class TestPipelineAsync(CeluneAsyncTestCase):
         engine.idle_callback.assert_not_called()
         assert engine.cur_state == "reloading"
         assert engine.playback_done.is_set()
+
+    async def test_playback_worker_waits_for_registered_caption_source_before_idle(
+        self,
+    ) -> None:
+        """Keep an idle marker pending while caption alignment has not queued audio."""
+        engine = make_pipeline_engine()
+        engine.stream = None
+        engine._stream = None
+        engine._current_sr = None
+        engine.current_sr = None
+        engine.dev = False
+        engine.cur_state = "speaking"
+        engine.idle_callback = mock.Mock()
+        engine.glow = SimpleNamespace(schedule=mock.Mock())
+        engine.text_queue = queue.Queue()
+        engine.audio_queue = queue.Queue()
+        engine.sentinel = PipelineStates.TERMINATE
+        engine.force_stop_marker = PipelineStates.UTTERANCE_FORCE_END
+        engine.playback_done.clear()
+        deferred_idle = threading.Event()
+        idle_complete = threading.Event()
+
+        def observe_log(message: str, *args: str, **kwargs: str) -> None:
+            del args, kwargs
+            if "[IDLE] completion deferred" in message:
+                deferred_idle.set()
+
+        engine.log = mock.Mock(side_effect=observe_log)
+        engine.idle_callback.side_effect = idle_complete.set
+        pipeline.register_playback_source(cast(Celune, engine), 1, kind="sfx")
+        pipeline.queue_playback_done(cast(Celune, engine), 1)
+        pipeline.register_playback_source(
+            cast(Celune, engine),
+            2,
+            kind="speech",
+            async_caption_audio=True,
+        )
+
+        worker_task = asyncio.create_task(
+            self._run_playback_worker(cast(Celune, engine))
+        )
+        try:
+            assert await asyncio.to_thread(deferred_idle.wait, 1.0)
+            engine.idle_callback.assert_not_called()
+            assert not engine.playback_done.is_set()
+
+            pipeline.queue_playback_done(cast(Celune, engine), 2)
+            assert await asyncio.to_thread(idle_complete.wait, 1.0)
+        finally:
+            engine.audio_queue.put(engine.sentinel)
+            await worker_task
+
+        assert engine.cur_state == "idle"
+        assert engine.playback_done.is_set()
+        engine.idle_callback.assert_called_once_with()
 
     @pytest.mark.parametrize("source_kind", ["readiness", "speech"])
     async def test_playback_worker_retries_idle_after_transient_queue_busy(

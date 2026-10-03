@@ -830,7 +830,6 @@ class TestUIStartup(CeluneTestCase):
                 change_voice_lock_state_callback=None,
                 progress_callback=None,
                 caption_callback=None,
-                caption_timing_callback=None,
                 close=lambda: None,
                 glow=SimpleNamespace(fatal=lambda: None),
             ),

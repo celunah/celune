@@ -1539,7 +1539,6 @@ def start(
                     progress_callback=ui.safe_progress,
                     caption_progress_callback=ui.safe_caption_progress,
                     caption_callback=ui.tts_caption,
-                    caption_timing_callback=ui.tts_caption_timing,
                     log_level=active_log_level,
                     config=config,
                     startup_callback=_print_startup_diagnostic,

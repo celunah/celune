@@ -853,12 +853,7 @@ class CeluneUIInteractionState:
     caption_text: str = ""
     caption_words: tuple[str, ...] = ()
     caption_sentences: tuple[tuple[str, ...], ...] = ()
-    caption_word_timings: tuple[tuple[float, float], ...] = ()
-    caption_audio_duration: float = 0.0
-    caption_sample_rate: int = 0
-    caption_played_frames: float = 0.0
     caption_rendered_text: str = ""
-    caption_transcriber: Optional[WhisperTranscriber] = None
     caption_visible_words: int = 0
     caption_progress: float = 0.0
     caption_segmented_progress: bool = False
@@ -1156,23 +1151,8 @@ class CeluneUI(App, CeluneUIMethodSurface):
     _caption_text = _forward_ui_property("_interaction_state", "caption_text")
     _caption_words = _forward_ui_property("_interaction_state", "caption_words")
     _caption_sentences = _forward_ui_property("_interaction_state", "caption_sentences")
-    _caption_word_timings = _forward_ui_property(
-        "_interaction_state", "caption_word_timings"
-    )
-    _caption_audio_duration = _forward_ui_property(
-        "_interaction_state", "caption_audio_duration"
-    )
-    _caption_sample_rate = _forward_ui_property(
-        "_interaction_state", "caption_sample_rate"
-    )
-    _caption_played_frames = _forward_ui_property(
-        "_interaction_state", "caption_played_frames"
-    )
     _caption_rendered_text = _forward_ui_property(
         "_interaction_state", "caption_rendered_text"
-    )
-    _caption_transcriber = _forward_ui_property(
-        "_interaction_state", "caption_transcriber"
     )
     _caption_visible_words = _forward_ui_property(
         "_interaction_state", "caption_visible_words"

@@ -7,7 +7,6 @@ import io
 import re
 import time
 import asyncio
-import inspect
 import datetime
 import contextlib
 from html import escape
@@ -36,7 +35,7 @@ from .typing.api import TaskStatus, WebUiUpdate
 from .typing.api import WebUiUnset as _WebUiUnset
 from .persona.impl import persona_enabled, persona_talkback_enabled
 from .typing.events import EventName, EventCallback
-from .typing.aliases import LogLevel, AudioChunk, AudioChunks
+from .typing.aliases import LogLevel, AudioChunks
 from .typing.pipeline import SpeechStreamQueue
 from .extensions.events import EventDispatcher
 from .dataclasses.events import (
@@ -45,7 +44,6 @@ from .dataclasses.events import (
     AgentTaskStateChangedEvent,
     AgentApprovalRequestedEvent,
 )
-from .dataclasses.pipeline import CaptionPlaybackSegment
 
 __all__ = (
     "_append_webui_error",
@@ -502,10 +500,6 @@ def _wrap_celune_callbacks(celune: _api.Celune) -> None:
         Callable[[Optional[str]], None],
         getattr(celune, "caption_callback", lambda _caption: None),
     )
-    original_caption_timing = cast(
-        Callable[..., None],
-        getattr(celune, "caption_timing_callback", lambda *_args: None),
-    )
     original_voice_changed = celune.voice_changed_callback
     original_input_state = celune.change_input_state_callback
     original_voice_lock_state = celune.change_voice_lock_state_callback
@@ -594,45 +588,6 @@ def _wrap_celune_callbacks(celune: _api.Celune) -> None:
             _api.webui_caption_progress = 0.0
         original_caption(caption)
 
-    def wrapped_caption_timing(
-        caption: str,
-        audio: AudioChunk,
-        sample_rate: int,
-        timing_text: Optional[str] = None,
-        caption_segments: Optional[tuple[CaptionPlaybackSegment, ...]] = None,
-    ) -> None:
-        _api.webui_caption_active = True
-        _api.webui_caption_text = caption
-        _api.webui_caption_progress = 0.0
-        try:
-            signature = inspect.signature(original_caption_timing)
-        except (TypeError, ValueError):
-            original_caption_timing(caption, audio, sample_rate)
-            return
-        try:
-            signature.bind(
-                caption,
-                audio,
-                sample_rate,
-                timing_text,
-                caption_segments,
-            )
-        except TypeError:
-            try:
-                signature.bind(caption, audio, sample_rate, timing_text)
-            except TypeError:
-                original_caption_timing(caption, audio, sample_rate)
-            else:
-                original_caption_timing(caption, audio, sample_rate, timing_text)
-        else:
-            original_caption_timing(
-                caption,
-                audio,
-                sample_rate,
-                timing_text,
-                caption_segments,
-            )
-
     def wrapped_voice_changed(name: str) -> None:
         _append_webui_log(string("webui.voice_changed", voice=name))
         original_voice_changed(name)
@@ -673,7 +628,6 @@ def _wrap_celune_callbacks(celune: _api.Celune) -> None:
     celune.progress_callback = wrapped_progress
     celune.caption_progress_callback = wrapped_caption_progress
     celune.caption_callback = wrapped_caption
-    celune.caption_timing_callback = wrapped_caption_timing
     celune.voice_changed_callback = wrapped_voice_changed
     celune.change_input_state_callback = wrapped_input_state
     celune.change_voice_lock_state_callback = wrapped_voice_lock_state

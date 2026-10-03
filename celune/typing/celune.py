@@ -32,7 +32,7 @@ if TYPE_CHECKING:
     from .locks import ComponentLockOwner, ComponentBusyResult
     from ..locks import ComponentLockManager
     from ..chroma import AudioRGBGlow
-    from .aliases import AudioChunk, AudioChunks
+    from .aliases import AudioChunks
     from ..cevoice import CEVoicePersona
     from .pipeline import SpeechStreamQueue
     from ..audio.dsp import StreamingPedalboardReverb
@@ -46,7 +46,6 @@ if TYPE_CHECKING:
     from ..dataclasses.pipeline import (
         AudioOutput,
         CaptionPlaybackState,
-        CaptionPlaybackSegment,
     )
 
 
@@ -224,38 +223,6 @@ class CaptionCallback(Protocol):
         raise NotImplementedError("protocol not defined")
 
 
-class CaptionTimingCallback(Protocol):
-    """Callback receiving generated speech for optional caption timing."""
-
-    def __call__(
-        self,
-        caption: str,
-        audio: AudioChunk,
-        sample_rate: int,
-        timing_text: Optional[str] = None,
-    ) -> None:
-        """Analyze generated speech to refine caption timing."""
-        raise NotImplementedError("protocol not defined")
-
-
-class ChunkCaptionTimingCallback(Protocol):
-    """Callback refining speech caption timing within generated text chunks."""
-
-    def __call__(
-        self,
-        caption: str,
-        audio: AudioChunk,
-        sample_rate: int,
-        timing_text: Optional[str] = None,
-        caption_segments: Optional[tuple[CaptionPlaybackSegment, ...]] = None,
-    ) -> None:
-        """Analyze speech with its chunk-to-caption ranges."""
-        raise NotImplementedError("protocol not defined")
-
-
-CaptionTimingCallbackType = Union[CaptionTimingCallback, ChunkCaptionTimingCallback]
-
-
 type ErrorCallback = Callable[[str], None]
 type IdleCallback = Callable[[], None]
 type QueueAvailableCallback = Callable[[], None]
@@ -395,7 +362,6 @@ class CeluneStateAccessors:
     progress_callback: ProgressCallback
     caption_progress_callback: CaptionProgressCallback
     caption_callback: CaptionCallback
-    caption_timing_callback: CaptionTimingCallbackType
     config: Config
     backend_mode: BackendMode
     _backend_spec: Optional[TTSBackendRecipe]

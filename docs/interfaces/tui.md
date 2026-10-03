@@ -70,11 +70,14 @@ scoped to speech playback and only advance: delayed progress callbacks and late
 word-timing refinement cannot hide words that have already appeared. They fade
 out when speech ends even if an SFX overlay continues. A streaming utterance's
 caption follows the frame ranges produced by each text chunk, so a growing audio
-total cannot move its progress backward or shift later words. Whisper alignment
-is matched within each chunk, and chunk boundaries align synthesis tokens to
-display words so TTS normalization does not shift later captions. A recognition
-mismatch stays within its chunk. If word timing is unavailable, the caption
-advances proportionally within the chunk's played audio. A single-chunk caption
+total cannot move its progress backward or shift later words. When enabled, a
+background worker matches IPA forced alignments from the Sadda acoustic model
+within each chunk. Generation can continue while alignment is pending, and the
+worker queues aligned audio chunks and completion markers in order. Chunk
+boundaries map synthesis tokens to display words so TTS normalization does not
+shift later captions. If an alignment fails, Celune clears the caption and
+suppresses it for the rest of that utterance. Captions stay hidden when disabled
+or unavailable, while speech playback continues. A single-chunk caption
 waits for its final playback marker before it can finish. The caption and bar
 share one reserved line, so the bar is not restored until the caption transition
 completes; the normal bar/readout state is also restored immediately when wake

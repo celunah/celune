@@ -40,9 +40,10 @@ Persona speech capture. Whisper uses the configured
 speech model, automatic language detection by default, a five-second no-input
 timeout, and a 1.5-second speech-end delay.
 
-The transcriber exposes segment and word timestamps so the UI can display
-captions and word-level progress. Input is resampled to the runtime's audio
-invariants before transcription.
+The transcriber exposes segment and word timestamps for the voice-input
+workflow. Input is resampled to the runtime's audio invariants before
+transcription. Speech captions use the separate IPA aligner documented in
+[speech](speech.md).
 
 ## Attachments
 

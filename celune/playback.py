@@ -4,31 +4,26 @@
 from __future__ import annotations
 
 import os
+import re
 import sys
 import json
 import math
+import uuid
 import queue
-import re
 import inspect
 import pathlib
 import contextlib
 import subprocess
-from difflib import SequenceMatcher
-from uuid import uuid4
-from typing import TYPE_CHECKING, Union, Optional, cast
+import urllib.parse
+import urllib.request
+import collections.abc
 from collections import deque
-from urllib.parse import urlparse, urlencode
-from urllib.request import urlopen
-from collections.abc import Mapping  # pylint: disable=ungrouped-imports
+from difflib import SequenceMatcher
+from typing import TYPE_CHECKING, Union, Optional, cast
 
 import numpy as np
 
 from .i18n import string
-from .locks import ComponentLockManager
-from .paths import project_root, temp_data_dir, running_compiled
-from .utils import available
-from .binding import install_class_functions, install_module_functions
-from .constants import BASE_SR, APP_NAME, PipelineStates
 from .pipelinecore import (
     _SFX_DUCK_GAIN,
     _LEGACY_BUFFER_SECONDS,
@@ -54,10 +49,7 @@ from .typing.locks import (
     ComponentLockAcquisition,
     ComponentLockRequirement,
 )
-from .typing.celune import ChunkCaptionTimingCallback
-from .typing.common import JSONSerializable
-from .typing.aliases import AudioChunk, AudioChunks
-from .typing.pipeline import SpeechStreamQueue
+from .utils import available
 from .dataclasses.pipeline import (
     SpeechTiming,
     PlaybackChunk,
@@ -65,6 +57,14 @@ from .dataclasses.pipeline import (
     CaptionPlaybackState,
     CaptionPlaybackSegment,
 )
+from .locks import ComponentLockManager
+from .typing.common import JSONSerializable
+from .typing.pipeline import SpeechStreamQueue
+from .typing.aliases import AudioChunk, AudioChunks
+from .constants import BASE_SR, APP_NAME, PipelineStates
+from .paths import project_root, temp_data_dir, running_compiled
+from .binding import install_class_functions, install_module_functions
+
 
 if TYPE_CHECKING:
     from .celune import Celune
@@ -85,7 +85,6 @@ __all__ = (
     "_flush_buffered_speech_chunks",
     "_is_youtube_sfx_url",
     "_next_playback_source_id",
-    "_notify_caption_timing",
     "_notify_component_busy",
     "_notify_speech_playback_finished",
     "_pipeline_cpu_config",
@@ -186,7 +185,7 @@ def acquire_pipeline_result(
 ) -> ComponentLockAcquisition:
     """Atomically claim the legacy pipeline and typed component resources."""
     resolved_owner = owner or ComponentLockOwner(
-        operation_id=f"pipeline:{action}:{uuid4().hex}",
+        operation_id=f"pipeline:{action}:{uuid.uuid4().hex}",
     )
     requirements = _pipeline_requirements(action)
     with engine.say_lock:
@@ -441,6 +440,7 @@ def _register_playback_source(
     kind: str,
     base_gain: float = 1.0,
     caption_word_total: int = 0,
+    async_caption_audio: bool = False,
 ) -> None:
     """Register one playback source for status and gain management."""
     clipped = float(np.clip(base_gain, 0.0, 1.0))
@@ -452,6 +452,7 @@ def _register_playback_source(
         "played_frames": 0.0,
         "total_frames_final": 0.0,
         "generation": float(getattr(engine, "_playback_generation", 0)),
+        "async_caption_audio": "true" if async_caption_audio else "",
     }
     if kind == "speech" and caption_word_total > 0:
         _playback_caption_states(engine)[source_id] = CaptionPlaybackState(
@@ -467,6 +468,7 @@ def _record_caption_playback_segment(
     word_start: int,
     word_end: int,
     timing_words: tuple[str, ...] = (),
+    word_start_frames: tuple[int, ...] = (),
 ) -> None:
     """Record the exact queued audio span produced for one text chunk."""
     states = _playback_caption_states(engine)
@@ -482,6 +484,7 @@ def _record_caption_playback_segment(
                 word_start=word_start,
                 word_end=word_end,
                 timing_words=timing_words,
+                word_start_frames=word_start_frames,
             )
         )
 
@@ -564,9 +567,15 @@ def _caption_words_at_frame(
         segment_frames = segment.end_frame - segment.start_frame
         segment_words = segment.word_end - segment.word_start
         elapsed_frames = max(0.0, played_frames - segment.start_frame)
-        visible_words = segment.word_start + math.ceil(
-            elapsed_frames * segment_words / segment_frames
-        )
+        if len(segment.word_start_frames) == segment_words:
+            visible_words = segment.word_start + sum(
+                elapsed_frames >= start_frame
+                for start_frame in segment.word_start_frames
+            )
+        else:
+            visible_words = segment.word_start + math.ceil(
+                elapsed_frames * segment_words / segment_frames
+            )
         break
 
     return min(state.total_words, max(0, visible_words))
@@ -602,15 +611,18 @@ def _queue_playback_chunk(
         if expected_generation != active_playback_generation:
             return False
 
+        meta = _playback_source_meta(engine).get(source_id)
         active_generation = getattr(engine, "_active_speech_generation", None)
-        if active_generation is not None and (
-            active_generation
+        if (
+            active_generation is not None
+            and active_generation
             != getattr(engine, "_speech_generation", active_generation)
-            or engine.utterance_force_stop.is_set()
+            and (not isinstance(meta, dict) or not meta.get("async_caption_audio"))
         ):
             return False
+        if engine.utterance_force_stop.is_set():
+            return False
 
-        meta = _playback_source_meta(engine).get(source_id)
         if isinstance(meta, dict):
             if float(meta.get("generation", 0.0)) != float(
                 getattr(engine, "_playback_generation", 0)
@@ -723,7 +735,7 @@ def _playback_trace(engine: Celune, now: Optional[float] = None) -> None:
 def _update_playback_progress(
     engine: Celune,
     source_buffers: Optional[
-        Mapping[int, deque[tuple[AudioChunk, Optional[SpeechTiming]]]]
+        collections.abc.Mapping[int, deque[tuple[AudioChunk, Optional[SpeechTiming]]]]
     ] = None,
 ) -> None:
     """Reflect the active playback source position in the shared progress bar."""
@@ -879,15 +891,21 @@ def _queue_playback_done(
         if expected_generation != active_playback_generation:
             return False
 
+        source_meta = _playback_source_meta(engine).get(source_id)
         active_generation = getattr(engine, "_active_speech_generation", None)
-        if active_generation is not None and (
-            active_generation
+        if (
+            active_generation is not None
+            and active_generation
             != getattr(engine, "_speech_generation", active_generation)
-            or engine.utterance_force_stop.is_set()
+            and (
+                not isinstance(source_meta, dict)
+                or not source_meta.get("async_caption_audio")
+            )
         ):
             return False
+        if engine.utterance_force_stop.is_set():
+            return False
 
-        source_meta = _playback_source_meta(engine).get(source_id)
         if isinstance(source_meta, dict) and float(
             source_meta.get("generation", 0.0)
         ) != float(getattr(engine, "_playback_generation", 0)):
@@ -963,72 +981,6 @@ def _flush_buffered_speech_chunks(
     return pushed_audio
 
 
-def _notify_caption_timing(
-    engine: Celune,
-    caption: str,
-    audio: AudioChunk,
-    sample_rate: int,
-    timing_text: str,
-    caption_segments: Optional[tuple[CaptionPlaybackSegment, ...]] = None,
-) -> None:
-    """Send display and synthesis text to caption timing callbacks compatibly."""
-    caption_timing_callback = getattr(engine, "caption_timing_callback", None)
-    if not callable(caption_timing_callback):
-        return
-
-    try:
-        parameters = tuple(
-            inspect.signature(caption_timing_callback).parameters.values()
-        )
-    except (TypeError, ValueError):
-        parameters = ()
-
-    positional_count = sum(
-        parameter.kind
-        in {
-            inspect.Parameter.POSITIONAL_ONLY,
-            inspect.Parameter.POSITIONAL_OR_KEYWORD,
-        }
-        for parameter in parameters
-    )
-    supports_caption_segments = (
-        any(
-            parameter.kind == inspect.Parameter.VAR_POSITIONAL
-            for parameter in parameters
-        )
-        or positional_count >= 5
-    )
-    supports_timing_text = (
-        not parameters
-        or any(
-            parameter.kind == inspect.Parameter.VAR_POSITIONAL
-            for parameter in parameters
-        )
-        or sum(
-            parameter.kind
-            in {
-                inspect.Parameter.POSITIONAL_ONLY,
-                inspect.Parameter.POSITIONAL_OR_KEYWORD,
-            }
-            for parameter in parameters
-        )
-        >= 4
-    )
-    if supports_caption_segments and caption_segments is not None:
-        callback = cast(ChunkCaptionTimingCallback, caption_timing_callback)
-        callback(
-            caption,
-            audio,
-            sample_rate,
-            timing_text,
-            caption_segments,
-        )
-    elif supports_timing_text:
-        caption_timing_callback(caption, audio, sample_rate, timing_text)
-    else:
-        caption_timing_callback(caption, audio, sample_rate)
-
-
 def _youtube_sfx_temp_path() -> pathlib.Path:
     """Return the fixed temporary WAV path used for URL-backed SFX playback."""
     return temp_data_dir(create=True) / "temporary_audio.wav"
@@ -1036,7 +988,7 @@ def _youtube_sfx_temp_path() -> pathlib.Path:
 
 def _is_youtube_sfx_url(value: str) -> bool:
     """Return whether ``value`` looks like a supported YouTube URL."""
-    parsed = urlparse(value.strip())
+    parsed = urllib.parse.urlparse(value.strip())
     if parsed.scheme not in {"http", "https"}:
         return False
     host = (parsed.netloc or "").lower().removeprefix("www.")
@@ -1045,11 +997,11 @@ def _is_youtube_sfx_url(value: str) -> bool:
 
 def _youtube_sfx_title(url: str) -> str:
     """Return a friendly title for one YouTube URL when available."""
-    query = urlencode({"url": url, "format": "json"})
+    query = urllib.parse.urlencode({"url": url, "format": "json"})
     endpoint = f"https://www.youtube.com/oembed?{query}"
     # noinspection PyBroadException
     try:
-        with urlopen(endpoint, timeout=5) as response:
+        with urllib.request.urlopen(endpoint, timeout=5) as response:
             payload = json.loads(response.read().decode("utf-8"))
     except Exception:
         return "YouTube audio"
@@ -1233,7 +1185,7 @@ def _youtube_download_options(engine: Celune) -> list[str]:
 
 
 def _config_float(
-    source: Mapping[str, JSONSerializable], key: str, default: float
+    source: collections.abc.Mapping[str, JSONSerializable], key: str, default: float
 ) -> float:
     """Read one numeric config field as a float with a fallback."""
     value = source.get(key)
@@ -1253,7 +1205,7 @@ def _config_float(
 
 
 def _safe_config_int(
-    source: Mapping[str, JSONSerializable], key: str, default: int
+    source: collections.abc.Mapping[str, JSONSerializable], key: str, default: int
 ) -> int:
     """Read a bounded integer configuration value without raising on bad input."""
     value = _config_float(source, key, float(default))

@@ -106,6 +106,7 @@ class CaptionPlaybackSegment:
     word_start: int
     word_end: int
     timing_words: tuple[str, ...] = ()
+    word_start_frames: tuple[int, ...] = ()
 
 
 @dataclass

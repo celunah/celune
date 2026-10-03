@@ -5,18 +5,18 @@ from __future__ import annotations
 
 import re
 import time
-import queue as queue_module
 import threading
 import contextlib
 from uuid import uuid4
-from typing import Union, Optional, cast
+import queue as queue_module
 from collections.abc import Callable
+from typing import Union, Optional, cast
 
 from textual.color import Color
 
 from . import app as _app
-from ..binding import install_class_functions
 from .constants import _CAPTION_FADE_SECONDS
+from ..binding import install_class_functions
 
 __all__ = (
     "_acquire_recording_component_lease",
@@ -121,17 +121,6 @@ def safe_caption_progress(
             fraction = max(0.0, min(1.0, current / total))
         else:
             self._caption_segmented_progress = True
-            self._caption_played_frames = max(
-                self._caption_played_frames,
-                0.0 if progress is None else progress,
-            )
-            if self._caption_word_timings and self._caption_sample_rate > 0:
-                elapsed = self._caption_played_frames / self._caption_sample_rate
-                caption_visible_words = max(
-                    caption_visible_words,
-                    self._caption_visible_words,
-                    sum(start <= elapsed for start, _end in self._caption_word_timings),
-                )
             caption_visible_words = min(
                 max(0, len(self._caption_words) - 1),
                 caption_visible_words,
@@ -220,10 +209,6 @@ def _clear_caption_state(self) -> None:
     self._caption_text = ""
     self._caption_words = ()
     self._caption_sentences = ()
-    self._caption_word_timings = ()
-    self._caption_audio_duration = 0.0
-    self._caption_sample_rate = 0
-    self._caption_played_frames = 0.0
     self._caption_rendered_text = ""
     self._caption_visible_words = 0
     self._caption_progress = 0.0
@@ -317,12 +302,13 @@ def _hide_caption_widgets(self) -> None:
 
 
 def tts_caption(self, caption: Optional[str]) -> None:
-    """Show a speech caption and reveal its words with played-audio progress."""
-    if (
-        self.cur_state == "exiting"
-        or getattr(self.celune, "test_finished", False)
-        or not caption
-    ):
+    """Show a speech caption or clear it when alignment is unavailable."""
+    if self.cur_state == "exiting" or getattr(self.celune, "test_finished", False):
+        return
+    if caption is None:
+        self._run_on_ui_thread(self._reset_playback_widgets)
+        return
+    if not caption:
         return
 
     sentences = tuple(
@@ -343,10 +329,6 @@ def tts_caption(self, caption: Optional[str]) -> None:
         self._caption_text = caption
         self._caption_words = words
         self._caption_sentences = sentences
-        self._caption_word_timings = ()
-        self._caption_audio_duration = 0.0
-        self._caption_sample_rate = 0
-        self._caption_played_frames = 0.0
         self._caption_rendered_text = ""
         self._caption_visible_words = 0
         self._caption_progress = 0.0

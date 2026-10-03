@@ -23,7 +23,7 @@ def _get_revision() -> str:
 
 
 REVISION = _get_revision()
-VERSION = "5.0.2"
+VERSION = "5.0.4"
 DEVELOPMENT = False
 
 if REVISION:
