@@ -43,16 +43,6 @@ from .utils import (
 )
 from .chroma import AudioRGBGlow
 from .config import Config, config_bool, config_value, normalize_log_level
-from .speech import (
-    play as play_pipeline,
-)
-from .speech import (
-    close as close_pipeline,
-)
-from .speech import (
-    queue_sfx_audio,
-    stop_live_audio_input,
-)
 from .cevoice import (
     CEVoicePersona,
     default_loader,
@@ -71,6 +61,7 @@ from .pipeline import (
     playback_worker_job,
     generation_worker_job,
 )
+from . import speech as speech_module
 from .constants import (
     APP_NAME,
     AGENT_MAX_LOOPS,
@@ -155,6 +146,11 @@ from .dataclasses.properties import (
     bind_constant_properties,
     bind_forwarded_properties,
 )
+
+play_pipeline = speech_module.play
+close_pipeline = speech_module.close
+queue_sfx_audio = speech_module.queue_sfx_audio
+stop_live_audio_input = speech_module.stop_live_audio_input
 
 
 def _config_str(value: JSONSerializable) -> Optional[str]:
