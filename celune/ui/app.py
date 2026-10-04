@@ -255,6 +255,32 @@ def format_error_message(
     return format_error_message_helper(message, error, log_level)
 
 
+def concise_error_message(message: str) -> str:
+    """Remove traceback frames from startup text while retaining its final error."""
+    _, separator, traceback_text = message.partition(
+        "Traceback (most recent call last):"
+    )
+    if not separator:
+        return message
+
+    final_line = next(
+        (
+            line.strip()
+            for line in reversed(traceback_text.splitlines())
+            if line.strip()
+        ),
+        "",
+    )
+    _, separator, detail = final_line.partition("): ")
+    if separator and detail:
+        return detail
+
+    _, separator, detail = final_line.partition(": ")
+    if separator and detail:
+        return detail
+    return final_line or message
+
+
 def resolve_log_level(
     value: Union[LogLevel, bool, None],
     fallback: LogLevel,
@@ -739,6 +765,8 @@ class CeluneUIBindingState:
     style_index: int = 0
     cur_state: str = "active"
     startup_error_exit_code: Optional[int] = None
+    loading_ui_reveal_available: bool = False
+    loading_ui_revealed: bool = False
     consume_on_boundary: bool = False
     suppress_input_change: bool = False
     resource_page: int = 0
@@ -771,6 +799,7 @@ class CeluneUILogCaptureState:
     stderr_original_fd_dup: Optional[int] = None
     stderr_forward_thread: Optional[threading.Thread] = None
     warnings_capture_enabled: bool = False
+    latest_startup_error: Optional[str] = None
     log_file_path: Path = field(default_factory=Path)
     log_file_initialized: bool = False
 
@@ -824,11 +853,10 @@ class CeluneUIInteractionState:
     caption_text: str = ""
     caption_words: tuple[str, ...] = ()
     caption_sentences: tuple[tuple[str, ...], ...] = ()
-    caption_word_timings: tuple[tuple[float, float], ...] = ()
-    caption_audio_duration: float = 0.0
     caption_rendered_text: str = ""
     caption_visible_words: int = 0
     caption_progress: float = 0.0
+    caption_segmented_progress: bool = False
     caption_active: bool = False
     caption_transitioning: bool = False
     caption_transition_token: int = 0
@@ -949,6 +977,10 @@ class CeluneUI(App, CeluneUIMethodSurface):
     _startup_error_exit_code = _forward_ui_property(
         "_binding_state", "startup_error_exit_code"
     )
+    _loading_ui_reveal_available = _forward_ui_property(
+        "_binding_state", "loading_ui_reveal_available"
+    )
+    _loading_ui_revealed = _forward_ui_property("_binding_state", "loading_ui_revealed")
     consume_on_boundary = _forward_ui_property("_binding_state", "consume_on_boundary")
     _suppress_input_change = _forward_ui_property(
         "_binding_state", "suppress_input_change"
@@ -969,6 +1001,9 @@ class CeluneUI(App, CeluneUIMethodSurface):
     _log_stderr = _forward_ui_property("_log_capture_state", "log_stderr")
     _runtime_log_capture_enabled = _forward_ui_property(
         "_log_capture_state", "runtime_log_capture_enabled"
+    )
+    _latest_startup_error = _forward_ui_property(
+        "_log_capture_state", "latest_startup_error"
     )
     _runtime_redirect_handler = _forward_ui_property(
         "_log_capture_state", "runtime_redirect_handler"
@@ -1116,12 +1151,6 @@ class CeluneUI(App, CeluneUIMethodSurface):
     _caption_text = _forward_ui_property("_interaction_state", "caption_text")
     _caption_words = _forward_ui_property("_interaction_state", "caption_words")
     _caption_sentences = _forward_ui_property("_interaction_state", "caption_sentences")
-    _caption_word_timings = _forward_ui_property(
-        "_interaction_state", "caption_word_timings"
-    )
-    _caption_audio_duration = _forward_ui_property(
-        "_interaction_state", "caption_audio_duration"
-    )
     _caption_rendered_text = _forward_ui_property(
         "_interaction_state", "caption_rendered_text"
     )
@@ -1129,6 +1158,9 @@ class CeluneUI(App, CeluneUIMethodSurface):
         "_interaction_state", "caption_visible_words"
     )
     _caption_progress = _forward_ui_property("_interaction_state", "caption_progress")
+    _caption_segmented_progress = _forward_ui_property(
+        "_interaction_state", "caption_segmented_progress"
+    )
     _caption_active = _forward_ui_property("_interaction_state", "caption_active")
     _caption_transitioning = _forward_ui_property(
         "_interaction_state", "caption_transitioning"
@@ -1360,6 +1392,7 @@ class CeluneUI(App, CeluneUIMethodSurface):
     @work(thread=True, exclusive=True)
     def load_tts(self) -> None:
         """Load the app runtime."""
+        self._latest_startup_error = None
         try:
             if self.celune.load():
                 self.celune_styles = self.celune.voices
@@ -1413,14 +1446,13 @@ class CeluneUI(App, CeluneUIMethodSurface):
                 self.cur_state = "error"
                 self.change_input_state(locked=True)
                 self.change_voice_lock_state(locked=True)
+                failure_message = self._latest_startup_error or string(
+                    "ui.app_could_not_start",
+                    app_name=APP_NAME,
+                )
                 self.error(string("ui.app_could_not_start", app_name=APP_NAME))
-                self._show_loading_error(
-                    string("ui.app_could_not_start", app_name=APP_NAME)
-                )
-                self._finish_test_startup(
-                    False,
-                    string("ui.app_could_not_start", app_name=APP_NAME),
-                )
+                self._show_loading_error(failure_message)
+                self._finish_test_startup(False, failure_message)
         except Exception as e:
             self.cur_state = "error"
             error_message = format_error_message(

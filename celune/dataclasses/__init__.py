@@ -29,6 +29,8 @@ if TYPE_CHECKING:
         SpeechRequest,
         AudioInputRequest,
         PlaybackSourceDone,
+        CaptionPlaybackState,
+        CaptionPlaybackSegment,
         VoiceConversionRequest,
     )
     from .extensions import CeluneContext
@@ -54,6 +56,8 @@ _MODULE_EXPORTS = {
     "CeluneVoiceState": "celune",
     "AudioOutput": "pipeline",
     "AudioInputRequest": "pipeline",
+    "CaptionPlaybackSegment": "pipeline",
+    "CaptionPlaybackState": "pipeline",
     "ChatMessage": "persona",
     "ConstantPropertySpec": "properties",
     "ForwardedPropertySpec": "properties",
@@ -76,6 +80,8 @@ __all__ = [
     "CELUNE_FORWARDED_PROPERTIES",
     "AudioInputRequest",
     "AudioOutput",
+    "CaptionPlaybackSegment",
+    "CaptionPlaybackState",
     "CeluneAudioState",
     "CeluneBackendState",
     "CeluneCallbackState",

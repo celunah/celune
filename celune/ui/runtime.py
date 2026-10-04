@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import os
-import re
 import sys
 import math
 import time
@@ -30,13 +29,13 @@ __all__ = (
     "_bind_agent_events",
     "_bind_runtime_callbacks",
     "_cancel_sleep_timer",
-    "_caption_word_timing_ranges",
     "_caption_words_for_progress",
     "_chain_runtime_callback",
     "_check_launcher_loss",
     "_clear_border_pulses",
     "_dismiss_loading_screen",
     "_emit_startup_diagnostic",
+    "_enable_loading_ui_reveal",
     "_ensure_startup_error_themes_registered",
     "_ensure_themes_registered",
     "_enter_sleep_mode",
@@ -67,6 +66,7 @@ __all__ = (
     "_render_status_text",
     "_restore_dunder_stdio",
     "_restore_progress_bar",
+    "_reveal_main_ui",
     "_run_on_ui_thread",
     "_runtime_theme_name",
     "_schedule_sleep_timer",
@@ -94,7 +94,6 @@ __all__ = (
     "run",
     "safe_progress",
     "start_background_init",
-    "tts_caption_timing",
     "update_resources",
 )
 
@@ -323,7 +322,6 @@ def _bind_runtime_callbacks(self) -> None:
         ("progress_callback", self.safe_progress),
         ("caption_progress_callback", self.safe_caption_progress),
         ("caption_callback", self.tts_caption),
-        ("caption_timing_callback", self.tts_caption_timing),
     )
     for attribute, callback in callbacks:
         self._chain_runtime_callback(attribute, callback)
@@ -1122,6 +1120,7 @@ def attach_celune(self, celune: _app.Celune) -> None:
         )
         self._runtime_intervals_started = True
     self.update_resources()
+    self._enable_loading_ui_reveal()
     self.call_after_refresh(self.start_background_init)
 
 
@@ -1571,6 +1570,14 @@ def _show_loading_screen(self) -> None:
     self._loading_screen.display = True
 
 
+def _enable_loading_ui_reveal(self) -> None:
+    """Enable early UI reveal after the core and runtime reporting are attached."""
+    if self._loading_screen is None:
+        return
+    self._loading_ui_reveal_available = True
+    self._loading_screen.set_reveal_available(True)
+
+
 def _update_loading_log(self, message: str) -> None:
     """Forward one useful startup log line to the loading screen.
 
@@ -1598,8 +1605,12 @@ def _show_loading_error(
 
     def update() -> None:
         if self._loading_screen is not None:
+            if self._loading_ui_revealed:
+                if self._latest_startup_error != message:
+                    self.safe_log(message, "error")
+                return
             self._loading_screen.show_error(
-                message,
+                _app.concise_error_message(message),
                 status_message=status_message,
                 footer_message=footer_message,
             )
@@ -1607,8 +1618,29 @@ def _show_loading_error(
     self._run_on_ui_thread(update)
 
 
-def _dismiss_loading_screen(self) -> None:
-    """Fade out and remove the startup screen after successful loading."""
+def _reveal_main_ui(self) -> None:
+    """Hide the loading overlay early and reveal the initialized interface."""
+    if not self._loading_ui_reveal_available or self._loading_ui_revealed:
+        return
+    if not self.celune_ready:
+        self.change_input_state(locked=True)
+        self.change_voice_lock_state(locked=True)
+    self._dismiss_loading_screen(early=True)
+
+
+def _dismiss_loading_screen(self, *, early: bool = False) -> None:
+    """Fade out and remove the startup overlay.
+
+    Args:
+        early: Whether the user requested the reveal before startup completed.
+    """
+    if self._loading_ui_revealed and not early:
+        return
+    if early:
+        self._loading_ui_revealed = True
+    self._loading_ui_reveal_available = False
+    if self._loading_screen is not None:
+        self._loading_screen.set_reveal_available(False)
 
     def dismiss() -> None:
         overlay = self._loading_screen
@@ -1659,186 +1691,17 @@ def _dismiss_loading_screen(self) -> None:
     self._run_on_ui_thread(dismiss)
 
 
-def _caption_word_timing_ranges(
-    words: tuple[str, ...],
-    segments: tuple[_app.WhisperSegment, ...],
-    audio_duration: float,
-    timing_words: Optional[tuple[str, ...]] = None,
-) -> tuple[tuple[float, float], ...]:
-    """Map normalized speech timestamps onto displayed caption words."""
-    if not words or not segments or audio_duration <= 0.0:
-        return ()
-
-    whisper_words = [
-        word
-        for segment in segments
-        for word in segment.words
-        if word.text and word.end >= word.start
-    ]
-    if not whisper_words:
-        return ()
-
-    def normalize(value: str) -> str:
-        return re.sub(r"[^\w]+", "", value.casefold())
-
-    matching_words = timing_words if timing_words else words
-    caption_keys = [normalize(word) for word in matching_words]
-    whisper_keys = [normalize(word.text) for word in whisper_words]
-    assigned: list[Optional[int]] = [None] * len(matching_words)
-    whisper_index = 0
-    for caption_index, caption_key in enumerate(caption_keys):
-        if not caption_key:
-            continue
-        for candidate in range(
-            whisper_index,
-            min(len(whisper_words), whisper_index + 5),
-        ):
-            if caption_key == whisper_keys[candidate]:
-                assigned[caption_index] = candidate
-                whisper_index = candidate + 1
-                break
-
-    timing_ranges: list[tuple[float, float]] = []
-    for index, assigned_index in enumerate(assigned):
-        if assigned_index is None:
-            assigned_index = round(
-                index * (len(whisper_words) - 1) / max(len(matching_words) - 1, 1)
-            )
-        assigned_index = max(0, min(len(whisper_words) - 1, assigned_index))
-        word = whisper_words[assigned_index]
-        start = max(0.0, min(audio_duration, word.start))
-        end = max(start, min(audio_duration, word.end))
-        timing_ranges.append((start, end))
-
-    previous_end = 0.0
-    normalized_ranges: list[tuple[float, float]] = []
-    for start, end in timing_ranges:
-        start = max(previous_end, start)
-        end = max(start, end)
-        normalized_ranges.append((start, end))
-        previous_end = end
-    if len(matching_words) == len(words):
-        return tuple(normalized_ranges)
-
-    displayed_ranges: list[tuple[float, float]] = []
-    for index in range(len(words)):
-        start_index = min(
-            len(normalized_ranges) - 1,
-            math.floor(index * len(normalized_ranges) / len(words)),
-        )
-        end_index = math.ceil((index + 1) * len(normalized_ranges) / len(words))
-        end_index = max(start_index + 1, end_index)
-        end_index = min(end_index, len(normalized_ranges))
-        displayed_ranges.append(
-            (
-                normalized_ranges[start_index][0],
-                normalized_ranges[end_index - 1][1],
-            )
-        )
-    return tuple(displayed_ranges)
-
-
-def tts_caption_timing(
-    self,
-    caption: str,
-    audio: _app.AudioChunk,
-    sample_rate: int,
-    timing_text: Optional[str] = None,
-) -> None:
-    """Refine displayed caption timing from normalized speech timestamps."""
-    if (
-        self.cur_state == "exiting"
-        or getattr(self.celune, "test_finished", False)
-        or not caption
-        or len(audio) <= 0
-    ):
-        return
-
-    audio_copy = _app.np.asarray(audio, dtype=_app.np.float32).copy()
-    token = self._caption_transition_token
-    duration = len(audio_copy) / max(sample_rate, 1)
-    normalized_timing_text = timing_text if timing_text is not None else caption
-    timing_words = tuple(normalized_timing_text.split())
-
-    def analyze() -> None:
-        try:
-            transcriber = self._speech_transcriber
-            if transcriber is None:
-                if self.celune is None or not _app.persona_enabled(self.celune.config):
-                    return
-                get_transcriber = getattr(
-                    self,
-                    "_get_persona_speech_transcriber",
-                    None,
-                )
-                if not callable(get_transcriber):
-                    return
-                transcriber = cast(
-                    _app.WhisperTranscriber,
-                    get_transcriber(),
-                )
-            segments = transcriber.transcribe_segments(audio_copy, sample_rate)
-            word_timings = self._caption_word_timing_ranges(
-                self._caption_words,
-                segments,
-                duration,
-                timing_words,
-            )
-        except Exception as error:
-            self.safe_log(
-                _app.format_error_message(
-                    _app.string("ui.caption_transcription_failed"),
-                    error,
-                    _app.resolve_log_level(
-                        getattr(self.celune, "log_level", None),
-                        self._startup_log_level,
-                    ),
-                ),
-                "warning",
-            )
-            return
-        if not word_timings:
-            return
-
-        def update() -> None:
-            if (
-                token != self._caption_transition_token
-                or not self._caption_active
-                or caption != self._caption_text
-            ):
-                return
-            self._caption_word_timings = word_timings
-            self._caption_audio_duration = duration
-            visible_sentence, visible_words = self._caption_words_for_progress(
-                self._caption_progress
-            )
-            rendered_text = " ".join(visible_sentence)
-            self._caption_visible_words = visible_words
-            self._caption_rendered_text = rendered_text
-            if self.caption is not None:
-                self.caption.update(rendered_text)
-
-        with contextlib.suppress(LookupError, RuntimeError, _app.ScreenStackError):
-            self._run_on_ui_thread(update)
-
-    threading.Thread(target=analyze, daemon=True).start()
-
-
 def _caption_words_for_progress(
     self,
     fraction: float,
+    visible_words: Optional[int] = None,
 ) -> tuple[tuple[str, ...], int]:
     """Return the current sentence words and total revealed word count."""
-    if (
-        self._caption_word_timings
-        and len(self._caption_word_timings) == len(self._caption_words)
-        and self._caption_audio_duration > 0.0
-    ):
-        elapsed = fraction * self._caption_audio_duration
-        revealed_words = sum(
-            elapsed >= start for start, _end in self._caption_word_timings
+    if visible_words is not None:
+        revealed_words = min(
+            len(self._caption_words),
+            max(self._caption_visible_words, visible_words),
         )
-        revealed_words = max(self._caption_visible_words, revealed_words)
         remaining_words = revealed_words
         for sentence in self._caption_sentences:
             if remaining_words <= len(sentence):

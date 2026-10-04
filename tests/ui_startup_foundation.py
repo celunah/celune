@@ -11,19 +11,26 @@ import asyncio
 import tempfile
 import warnings
 import threading
-from pathlib import Path
-from unittest import mock
 from types import SimpleNamespace
 from typing import Optional, cast
+from pathlib import Path
+from unittest import mock
 from collections.abc import Callable
 
-import pytest
 import numpy as np
+import pytest
 from textual import events
 from textual.app import App
-from textual.containers import Vertical
 from textual.widgets import Label, Static, RichLog, TextArea, ProgressBar
+from textual.containers import Vertical
 
+from celune.ui import app as ui_app
+from celune.ui import terminal as ui_terminal
+from celune.ui import resources as ui_resources
+from celune.i18n import string, tagged_string
+from celune.theme import colors
+from celune.utils import discard
+from celune.celune import Celune
 from celune.ui.app import (
     Button,
     CeluneUI,
@@ -33,16 +40,9 @@ from celune.ui.app import (
     ProgressLabel,
     CeluneLoadingScreen,
 )
-from celune.theme import colors
-from celune.celune import Celune
-from celune.utils import discard
-from celune.ui import app as ui_app
-from celune.i18n import string, tagged_string
-from celune.ui import terminal as ui_terminal
-from celune.ui import resources as ui_resources
-from celune.ui.headless import CeluneHeadlessUI
 from tests.support import FakeBackend, CeluneTestCase
 from celune.constants import APP_NAME, COST_EQUIVALENTS, ExitCodes
+from celune.ui.headless import CeluneHeadlessUI
 
 
 class TestUIStartup(CeluneTestCase):
@@ -830,7 +830,6 @@ class TestUIStartup(CeluneTestCase):
                 change_voice_lock_state_callback=None,
                 progress_callback=None,
                 caption_callback=None,
-                caption_timing_callback=None,
                 close=lambda: None,
                 glow=SimpleNamespace(fatal=lambda: None),
             ),

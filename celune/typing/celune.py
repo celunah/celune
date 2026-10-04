@@ -5,17 +5,17 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-from collections.abc import Awaitable, Callable, Iterator
 from typing import TYPE_CHECKING, Union, Optional, Protocol
+from pathlib import Path
+from collections.abc import Callable, Iterator, Awaitable
 
 import torch
 from transformers.modeling_utils import PreTrainedModel
 from transformers.tokenization_utils_base import BatchEncoding, PreTrainedTokenizerBase
 
-from .aliases import LogLevel
 from .modes import BackendMode, OperationMode
 from .common import JSON, Config, JSONSerializable
+from .aliases import LogLevel
 
 if TYPE_CHECKING:
     import queue
@@ -23,19 +23,19 @@ if TYPE_CHECKING:
 
     import sounddevice as sd
 
-    from ..audio.dsp import StreamingPedalboardReverb
-    from ..dataclasses.pipeline import AudioOutput
+    from .agent import (
+        ToolCall,
+        AgentToolSelector,
+        ToolExecutionResult,
+        AgentClassificationResult,
+    )
     from .locks import ComponentLockOwner, ComponentBusyResult
     from ..locks import ComponentLockManager
     from ..chroma import AudioRGBGlow
-    from .aliases import AudioChunk, AudioChunks
-    from .agent import (
-        AgentClassificationResult,
-        AgentToolSelector,
-        ToolCall,
-        ToolExecutionResult,
-    )
+    from .aliases import AudioChunks
     from ..cevoice import CEVoicePersona
+    from .pipeline import SpeechStreamQueue
+    from ..audio.dsp import StreamingPedalboardReverb
     from ..constants import PipelineStates
     from ..backends.vc import CeluneVCBackend
     from ..backends.tts import BackendModel, CeluneBackend
@@ -43,7 +43,10 @@ if TYPE_CHECKING:
     from ..persona.memory import PersonaMemoryStore
     from ..persona.emotion import PersonaEmotionAnalyzer
     from ..extensions.manager import CeluneExtensionManager
-    from .pipeline import SpeechStreamQueue
+    from ..dataclasses.pipeline import (
+        AudioOutput,
+        CaptionPlaybackState,
+    )
 
 
 type GenerationKwarg = Union[torch.Tensor, int, bool, None]
@@ -196,25 +199,27 @@ class ProgressCallback(Protocol):
         raise NotImplementedError("protocol not defined")
 
 
+class ChunkCaptionProgressCallback(Protocol):
+    """Callback accepting playback progress and an optional revealed-word count."""
+
+    def __call__(
+        self,
+        progress: Optional[float],
+        total: Optional[float],
+        visible_words: Optional[int] = None,
+    ) -> None:
+        """Handle caption progress for chunk-aligned speech."""
+        raise NotImplementedError("protocol not defined")
+
+
+CaptionProgressCallback = Union[ProgressCallback, ChunkCaptionProgressCallback]
+
+
 class CaptionCallback(Protocol):
     """Callback accepting the active speech caption, or ``None`` when finished."""
 
     def __call__(self, caption: Optional[str]) -> None:
         """Handle a speech caption lifecycle update."""
-        raise NotImplementedError("protocol not defined")
-
-
-class CaptionTimingCallback(Protocol):
-    """Callback receiving generated speech for optional caption timing."""
-
-    def __call__(
-        self,
-        caption: str,
-        audio: AudioChunk,
-        sample_rate: int,
-        timing_text: Optional[str] = None,
-    ) -> None:
-        """Analyze generated speech to refine caption timing."""
         raise NotImplementedError("protocol not defined")
 
 
@@ -355,9 +360,8 @@ class CeluneStateAccessors:
     change_input_state_callback: InputStateCallback
     change_voice_lock_state_callback: VoiceLockStateCallback
     progress_callback: ProgressCallback
-    caption_progress_callback: ProgressCallback
+    caption_progress_callback: CaptionProgressCallback
     caption_callback: CaptionCallback
-    caption_timing_callback: CaptionTimingCallback
     config: Config
     backend_mode: BackendMode
     _backend_spec: Optional[TTSBackendRecipe]
@@ -406,6 +410,8 @@ class CeluneStateAccessors:
     _next_playback_source_id: int
     _playback_source_statuses: dict[int, str]
     _playback_source_meta: dict[int, dict[str, Union[str, float]]]
+    _playback_caption_states: dict[int, CaptionPlaybackState]
+    _caption_source_id: Optional[int]
     _playback_chunk_last_queued_at: dict[int, float]
     _playback_trace_last_logged_at: float
     _playback_progress_last_emit_at: float

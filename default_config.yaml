@@ -105,6 +105,10 @@ youtube:
 # it may however lose a letter occasionally or mix up short sequences
 use_normalizer: false
 
+# IPA forced alignment for word-level speech caption timing.
+# Requires the `captions` optional dependency and the espeak-ng executable.
+captions: false
+
 # IPA auto-conversion
 # Celune can auto-convert IPA strings into English-like approximations
 # if you want to try speaking the IPA raw, disable this feature

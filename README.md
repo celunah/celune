@@ -72,67 +72,31 @@ license terms for the models they intend to use.
 
 Please note that Celune 4.3.2 and older are still licensed under the MIT license.
 
-## Voices & samples
+## Voices and samples
 
-Each voice is demonstrated using a short introduction and a longer narration sample to showcase consistency, pacing,
-and expressiveness.
+Listen to the complete [voice sample gallery](https://celune.readthedocs.io/en/latest/development/samples/), with native audio players for the current and historical recordings. The page also documents the sample text, generation metadata, and model settings.
 
-### Qwen3-TTS
+The current FLAC recordings use the Classic Remastered voice pack. Historical WAV recordings remain available for comparison with earlier voices and backend revisions.
 
-| Voice | Intro | Narration |
-|---|---|---|
-| Balanced | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/balanced_sc_qwen.wav) | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/balanced_lc_qwen.wav) |
-| Calm | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/calm_sc_qwen.wav) | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/calm_lc_qwen.wav) |
-| Bold | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/bold_sc_qwen.wav) | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/bold_lc_qwen.wav) |
-| Upbeat | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/upbeat_sc_qwen.wav) | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/upbeat_lc_qwen.wav) |
+## Voice packs
 
-### VoxCPM2
+Celune comes with three default packs, containing both newer and older revisions of her mainline voice.
 
-| Voice | Intro | Narration |
-|---|---|---|
-| Balanced | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/balanced_sc_voxcpm2.wav) | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/balanced_lc_voxcpm2.wav) |
-| Calm | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/calm_sc_voxcpm2.wav) | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/calm_lc_voxcpm2.wav) |
-| Bold | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/bold_sc_voxcpm2.wav) | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/bold_lc_voxcpm2.wav) |
-| Upbeat | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/upbeat_sc_voxcpm2.wav) | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/upbeat_lc_voxcpm2.wav) |
+The packs are:
 
-### Celune Mini (Pocket TTS)
+| Pack               | File                  | Released      | Description                                                                         |
+|--------------------|-----------------------|---------------|-------------------------------------------------------------------------------------|
+| Classic            | classic.cevoice       | Mar 19, 2026* | Classic Celune voices from her initial inception.                                   |
+| Natural            | default_sep19.cevoice | Sep 19, 2026  | Celune's 6-month anniversary voices.                                                |
+| Classic Remastered | default.cevoice       | Sep 30, 2026  | New and improved voices that sound natural, and maintain Celune's classic identity. |
 
-| Voice | Intro | Narration |
-|---|---|---|
-| Balanced | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/balanced_sc_mini.wav) | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/balanced_lc_mini.wav) |
-| Calm | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/calm_sc_mini.wav) | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/calm_lc_mini.wav) |
-| Bold | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/bold_sc_mini.wav) | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/bold_lc_mini.wav) |
-| Upbeat | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/upbeat_sc_mini.wav) | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/upbeat_lc_mini.wav) |
-
-### dots.tts
-
-| Voice | Intro | Narration |
-|---|---|---|
-| Balanced | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/balanced_sc_dotstts.wav) | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/balanced_lc_dotstts.wav) |
-| Calm | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/calm_sc_dotstts.wav) | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/calm_lc_dotstts.wav) |
-| Bold | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/bold_sc_dotstts.wav) | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/bold_lc_dotstts.wav) |
-| Upbeat | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/upbeat_sc_dotstts.wav) | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/upbeat_lc_dotstts.wav) |
-
-### FireRedTTS3
-
-Coming soon
-
-### LuxTTS
-
-LuxTTS is a lightweight English voice-cloning backend based on [YatharthS/LuxTTS](https://huggingface.co/YatharthS/LuxTTS).
-It runs in its own CPU-only worker environment, uses the active voice pack's reference WAV, and returns 48 kHz speech.
-
-The demonstration lines try to showcase Celune's best, but they may include minor mistakes.
-This is an inherent limitation with TTS models, and Celune should not be blamed for it.
-
-These examples were recorded with the default voice pack, which contains canonical Celune voices.
-Other voice packs may be created and installed by the end user, allowing for other characters to speak through Celune.
+<sub><sup>*Based on Celune's voice debut date. Pack support was released May 16, 2026.</sup></sub>
 
 Browse the `demos` directory for demonstration content from the current version of Celune, as well as any past releases.
 
 > [!CAUTION]
 > Do not use markup or unknown tags (e.g. `<...>`).
-> They may be interpreted as control sequences and break speech output.
+> They may be interpreted as control sequences and cause unexpected vocalizations.
 > Refer to the model's known tags before including them.
 >
 > Do not mix multiple languages in one sentence.
@@ -163,7 +127,7 @@ Celune requires [Python](https://python.org) 3.12, 3.13 or 3.14.
 
 Celune also depends on external system dependencies that are not available in `pip`:
 
-- **CUDA Toolkit 12.8** - only if not using pre-built PyTorch wheels
+- **CUDA Toolkit 12.8 (or 13.0)** - only if not using pre-built PyTorch wheels
 - **SoX (Sound eXchange)** - required for audio processing
 - **Rubber Band library** - required to control Celune's speed
 - **OpenRGB** - required to glow compatible devices
@@ -213,7 +177,7 @@ Celune has several VRAM presets available. Here are their baseline requirements:
 > This preset supports:
 >
 > - All of the above, and:
-> - VoxCPM2 or dots.tts MF
+> - High-end TTS backends, such as VoxCPM2 or dots.tts MF
 > - Persona (4-bit) (not all models may fit, use Pocket TTS if uncertain)
 >
 > Extra High (16GB VRAM and beyond)
@@ -222,6 +186,7 @@ Celune has several VRAM presets available. Here are their baseline requirements:
 >
 > - All of the above, and:
 > - Persona (8-bit)
+> - Agentic features
 > - Normalization on GPU
 > - Upcoming advanced features
 
@@ -360,16 +325,17 @@ sudo pacman -S base-devel
 
 This step can be skipped if you are using pre-built PyTorch wheels.
 
-Download and install CUDA Toolkit from NVIDIA:
+Download and install CUDA Toolkit 12.8 or 13.0 from NVIDIA:
 
-<https://developer.nvidia.com/cuda-12-8-0-download-archive>
+- <https://developer.nvidia.com/cuda-12-8-0-download-archive>
+- <https://developer.nvidia.com/cuda-13-0-0-download-archive>
 
 Make sure to:
 
 - Select the correct OS and version
 - Install both **CUDA Toolkit** and **NVIDIA drivers** (if not already installed)
 
-Celune is expected to work with CUDA Toolkit 12.8. Not all backends are compatible with newer versions.
+Celune is expected to work with CUDA Toolkit 12.8 or 13.0. Not all backends are compatible with newer versions.
 
 After installation, verify CUDA:
 

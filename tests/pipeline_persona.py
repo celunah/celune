@@ -46,12 +46,10 @@ from celune.typing.aliases import AudioChunk
 from celune.persona.prompts import PersonaPromptBuilder, render_markdown_subsection
 from celune.persona.capabilities import PersonaCapabilities
 
-from .support import (
-    make_pipeline_engine,
-)
+from .support import make_pipeline_engine
 from .platform import LINUX_ONLY, WINDOWS_ONLY
-from .test_persona_memory import StubEmbeddingMemoryStore
 from .pipeline_basics import TestPipelineAsync as _TestPipelineAsync
+from .test_persona_memory import StubEmbeddingMemoryStore
 
 
 @pytest.mark.anyio
@@ -1268,22 +1266,40 @@ class TestPipelineAsync(_TestPipelineAsync):
         assert "<behavior>" in second_system
         assert second_messages[-1] == {"role": "user", "content": "And now?"}
 
-    async def test_generation_worker_normalizes_each_split_chunk(self) -> None:
-        """Verify normalization happens after splitting and before generation.
+    async def test_caption_alignment_does_not_block_the_next_request(self) -> None:
+        """Verify new speech generation starts while prior IPA alignment is pending.
 
         Raises:
             AssertionError: Chunk normalization behavior changes unexpectedly.
         """
         engine = make_pipeline_engine()
+        engine.config = {"captions": True}
+        engine.log_level = "debug"
         generated_texts: list[str] = []
         events: list[str] = []
+        alignment_started = threading.Event()
+        alignment_finished = threading.Event()
+        release_alignment = threading.Event()
+        alignment_timed_out = False
+        generated_during_alignment = False
 
         def generate_stream(
             model: mock.Mock, **kwargs: JSONSerializable
         ) -> Iterator[tuple[AudioChunk, int, Optional[dict]]]:
+            nonlocal generated_during_alignment
             discard(model)
             text = cast(str, kwargs["text"])
             events.append(f"generate:{text}")
+            if text == "followup":
+                assert alignment_started.wait(timeout=2.0)
+                assert not alignment_finished.is_set()
+                assert not alignment_timed_out
+                celune = cast(Celune, engine)
+                assert not celune.locked
+                assert pipeline.acquire_pipeline(celune, "caption alignment test")
+                pipeline.release_pipeline(celune, playback_idle=False)
+                generated_during_alignment = True
+                release_alignment.set()
             generated_texts.append(text)
             yield np.ones((8, 2), dtype=np.float32) * 0.01, 48000, None
 
@@ -1308,23 +1324,58 @@ class TestPipelineAsync(_TestPipelineAsync):
             flush=mock.Mock(return_value=np.zeros((0, 2), dtype=np.float32)),
         )
         engine.queue_avail_callback = mock.Mock()
-        engine.caption_timing_callback = mock.Mock()
         engine.sentinel = PipelineStates.TERMINATE
         engine.exit_requested = False
         engine.dev = False
         engine.recently_saved = None
         engine.normalize = mock.Mock(side_effect=normalize)
 
+        def align_words(
+            audio: np.ndarray,
+            sample_rate: int,
+            transcript: str,
+            language: Optional[str],
+        ) -> tuple[tuple[float, float], ...]:
+            nonlocal alignment_timed_out
+            events.append(f"align:{transcript}:flushes={flush_mock.call_count}")
+            alignment_started.set()
+            assert audio.ndim == 1
+            assert sample_rate == 48000
+            assert language == "Auto"
+            if not release_alignment.wait(timeout=5.0):
+                alignment_timed_out = True
+                raise AssertionError("next request did not start during alignment")
+            alignment_finished.set()
+            duration = len(audio) / sample_rate
+            word_count = len(transcript.split())
+            return tuple(
+                (duration * index / word_count, duration * (index + 1) / word_count)
+                for index in range(word_count)
+            )
+
+        flush_mock = mock.Mock(wraps=pipeline._flush_buffered_speech_chunks)
+
         engine.text_queue.put(
             pipeline.SpeechRequest("raw input", "raw input", save=True, normalize=True)
+        )
+        engine.text_queue.put(
+            pipeline.SpeechRequest("follow-up", "followup", save=False)
         )
         engine.text_queue.put(engine.sentinel)
 
         with (
-            mock.patch("celune.pipeline.split_text", return_value=["first", "second"]),
+            mock.patch(
+                "celune.pipeline.split_text",
+                side_effect=[["first", "second"], ["followup"]],
+            ),
             mock.patch("celune.pipeline.is_silent_utterance", return_value=(False, 0)),
             mock.patch("celune.pipeline.os.path.exists", return_value=True),
             mock.patch("celune.pipeline._write_celune_flac"),
+            mock.patch(
+                "celune.captions.get_caption_aligner",
+                return_value=SimpleNamespace(align_words=align_words),
+            ),
+            mock.patch("celune.pipeline._flush_buffered_speech_chunks", new=flush_mock),
         ):
             await self._run_generation_worker(cast(Celune, engine))
 
@@ -1332,21 +1383,19 @@ class TestPipelineAsync(_TestPipelineAsync):
             engine.normalize.call_args_list,
             [mock.call("first"), mock.call("second")],
         )
-        self.assertEqual(generated_texts, ["normalized first", "normalized second"])
         self.assertEqual(
-            events,
-            [
-                "normalize:first",
-                "generate:normalized first",
-                "normalize:second",
-                "generate:normalized second",
-            ],
+            generated_texts,
+            ["normalized first", "normalized second", "followup"],
         )
-        engine.caption_timing_callback.assert_called_once()
-        timing_call = engine.caption_timing_callback.call_args
-        assert timing_call is not None
-        self.assertEqual(timing_call.args[0], "raw input")
-        self.assertEqual(timing_call.args[3], "normalized first normalized second")
+        self.assertTrue(generated_during_alignment)
+        self.assertFalse(alignment_timed_out)
+        self.assertIn("align:normalized first:flushes=0", events)
+        self.assertIn("align:normalized second:flushes=0", events)
+        caption_states = pipeline._playback_caption_states(cast(Celune, engine))
+        caption_state = next(iter(caption_states.values()))
+        self.assertEqual(len(caption_state.segments), 2)
+        self.assertEqual(caption_state.segments[0].word_start_frames, (0,))
+        self.assertEqual(caption_state.segments[1].word_start_frames, (0,))
 
     @pytest.mark.parametrize(
         "error_message",
@@ -1382,7 +1431,6 @@ class TestPipelineAsync(_TestPipelineAsync):
             flush=mock.Mock(return_value=np.zeros((0, 2), dtype=np.float32)),
         )
         engine.queue_avail_callback = mock.Mock()
-        engine.caption_timing_callback = mock.Mock()
         engine.sentinel = PipelineStates.TERMINATE
         engine.dev = False
         engine.recently_saved = None

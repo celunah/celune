@@ -25,6 +25,7 @@ before the interface opens. `celune config view` prints the active file and
 | `headless_nocolor` | `false` | Suppress color in headless output. |
 | `theme` | `dark` | `dark` or `light`; a pack can supply its own accent colors. |
 | `use_normalizer` | `false` | Enable the optional text normalizer. |
+| `captions` | `false` | Enable IPA forced alignment for speech caption timing. |
 | `ipa` | `false` | Enable IPA-oriented text handling where supported. |
 | `audio_api` | `null` | Explicit sounddevice host API. |
 | `input_device` | `null` | Input device index/name. |
@@ -140,6 +141,30 @@ device or driver.
 Runtime speech controls are also exposed as `/speed`, `/reverb`, `/seed`, and
 Python properties on `Celune`. The command values are deliberately narrower
 than the Python values; see [Text UI](../interfaces/tui.md).
+
+## Speech captions
+
+```yaml
+captions: true
+```
+
+When enabled, Celune uses Sadda's `sadda-speech/wav2vec2-espeak-ctc` model to
+align generated speech words through eSpeak IPA phonemes. The acoustic model and
+ONNX Runtime extra are optional. On Windows, install the Python dependencies
+with:
+
+```powershell
+uv sync --dev --extra api --extra captions
+```
+
+Also install the `espeak-ng` executable and make it available on `PATH`. Celune
+downloads the `sadda-speech/wav2vec2-espeak-ctc` acoustic model from Hugging Face
+on first alignment; the model is licensed Apache-2.0. A background worker aligns
+each generated text chunk and releases its audio with the word timings in
+order. The generation worker can continue and accept another speech request
+while alignment is pending. Captions are hidden when `captions` is false or a
+chunk cannot be aligned; speech playback continues. With `captions: false`,
+Celune does not load or download the alignment model.
 
 ## Sleep and model lifecycle
 

@@ -5,10 +5,10 @@ from __future__ import annotations
 
 from typing import Optional
 
-from textual.widget import Widget
-from textual.widgets import Static
 from textual.app import ComposeResult
 from textual.timer import Timer
+from textual.widget import Widget
+from textual.widgets import Static
 from textual.css.query import NoMatches
 from textual.containers import Center, Vertical, Horizontal
 
@@ -39,6 +39,7 @@ class CeluneLoadingScreen(Widget):
         self._latest_log_message = string("ui.loading_waiting_for_log")
         self._wait_message = string("ui.loading_wait")
         self._footer_message = string("ui.loading_starting", app_name=APP_NAME)
+        self._reveal_available = False
         self._spinner_timer: Optional[Timer] = None
         self._failed = False
 
@@ -89,10 +90,28 @@ class CeluneLoadingScreen(Widget):
                 markup=False,
             )
             yield Static(
-                string("ui.loading_quit"),
+                self._quit_message(),
                 id="loading-footer-quit",
                 markup=False,
             )
+
+    def _quit_message(self) -> str:
+        """Return the footer hint for the currently available key actions."""
+        if self._reveal_available:
+            return string("ui.loading_quit_reveal")
+        return string("ui.loading_quit")
+
+    def set_reveal_available(self, available: bool) -> None:
+        """Update whether Escape can reveal the main interface during startup.
+
+        Args:
+            available: Whether the initialized core can report to the main UI.
+        """
+        self._reveal_available = available
+        try:
+            self.query_one("#loading-footer-quit", Static).update(self._quit_message())
+        except NoMatches:
+            pass
 
     def on_mount(self) -> None:
         """Start the loading spinner after the overlay is mounted."""

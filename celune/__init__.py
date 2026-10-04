@@ -15,13 +15,13 @@ instances can exhaust GPU resources and is not a supported usage pattern.
 """
 
 import sys as _sys
-from collections.abc import Callable
 from typing import TYPE_CHECKING, Union
+from collections.abc import Callable
 
-from .constants import APP_NAME
-from ._version import REVISION, __version__
 from .i18n import string
 from .paths import configure_huggingface_cache_environment
+from ._version import REVISION, __version__
+from .constants import APP_NAME
 
 configure_huggingface_cache_environment()
 
@@ -31,8 +31,8 @@ if TYPE_CHECKING:
     from .extensions.events import subscribe
 
 __tagline__ = '"Your voice, your way."'
-__codename__ = "Anniversary"
-__comment__ = "Six months, a new vocal beginning."
+__codename__ = "Enlightenment"
+__comment__ = "I have achieved new heights."
 
 if hasattr(_sys, "ps1"):
     print(string("cli.interactive_core_warning", app_name=APP_NAME))

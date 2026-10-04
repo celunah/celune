@@ -17,6 +17,7 @@ custom CEVOICE/CECHAR voice-pack format and CEDTS isolated-worker protocol.
 | Change runtime behavior | [Configuration](user-guide/configuration.md) |
 | Speak, converse, or use the agent | [Modes](user-guide/modes.md) |
 | Call Celune from another program | [REST API](API.md) or [Python API](reference/public-api.md) |
+| Listen to current and historical voices | [Voice samples](development/samples.md) |
 | Build a voice pack or character | [CEVOICE/CECHAR](CEVOICE.md) |
 | Add a plugin-like extension | [Extensions](interfaces/extensions.md) |
 | Work on a backend or worker | [Architecture](development/architecture.md), [Backends](development/backends.md), and [CEDTS](formats/cedts.md) |

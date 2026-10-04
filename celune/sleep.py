@@ -3,20 +3,20 @@
 
 from __future__ import annotations
 
-import contextlib
 import gc
 import threading
+import contextlib
 
 import torch
 
 from . import celune as _core
+from .i18n import string, tagged_string
+from .utils import format_error_message
 from .config import config_value
+from .binding import install_class_functions
 from .constants import APP_NAME
 from .exceptions import NotAvailableError
-from .i18n import string, tagged_string
 from .persona.impl import persona_enabled
-from .utils import format_error_message
-from .binding import install_class_functions
 
 __all__ = (
     "_run_wake_background_jobs",
@@ -123,11 +123,25 @@ def enter_sleep_mode(self) -> bool:
         return False
 
     with self.say_lock:
+        playback_active = self._any_playback_active()
         if (
             self.locked
-            or self.cur_state in {"generating", "speaking", "reloading"}
-            or self._any_playback_active()
+            or self.cur_state
+            in {
+                "generating",
+                "speaking",
+                "reloading",
+            }
+            or playback_active
         ):
+            self.log(
+                "[SLEEP] enter deferred "
+                f"locked={self.locked} state={self.cur_state} "
+                f"playback_active={playback_active} "
+                f"playback_sources={len(self._playback_source_meta)} "
+                f"playback_done={self.playback_done.is_set()}",
+                loglevel="debug",
+            )
             return False
         self.sleeping = True
         self.loaded = False

@@ -17,41 +17,14 @@ from collections import OrderedDict, deque
 from dataclasses import dataclass
 from collections.abc import Callable, Iterator
 
-from ..cevoice import active_bundle_path
 from ..paths import (
-    configure_numba_cache,
-    huggingface_home_dir,
-    huggingface_hub_cache_dir,
     project_root,
+    huggingface_home_dir,
+    configure_numba_cache,
+    huggingface_hub_cache_dir,
 )
-from ..terminal import (
-    RUNTIME_LOG_FILTER_MESSAGES,
-)
-from ..backends.vc.base import CeluneVCBackend
-from ..backends.tts.base import CeluneBackend
-from ..exceptions import (
-    CEDTSError,
-    BackendError,
-    CEDTSEOFError,
-    CEDTSStreamError,
-    CEDTSPayloadError,
-    CEDTSTimeoutError,
-    CEDTSProtocolError,
-)
-from ..backends.environment import (
-    BackendManifest,
-    BackendEnvironment,
-    BackendEnvironmentManager,
-)
-from ..typing.worker import (
-    WorkerValue,
-    WorkerMessage,
-    WorkerResponse,
-    WorkerPayloadDescriptor,
-)
-from ..typing.aliases import LogLevel, LogCallback
-from ..typing.common import JSON
 from ..utils import format_error_message
+from ..cevoice import active_bundle_path
 from .protocol import (
     CEDTS_VERSION,
     CORE_CAPABILITIES,
@@ -66,11 +39,39 @@ from .protocol import (
     receive_payloads,
     limits_from_capabilities,
 )
+from ..terminal import (
+    RUNTIME_LOG_FILTER_MESSAGES,
+    _infer_log_severity,
+)
+from ..exceptions import (
+    CEDTSError,
+    BackendError,
+    CEDTSEOFError,
+    CEDTSStreamError,
+    CEDTSPayloadError,
+    CEDTSTimeoutError,
+    CEDTSProtocolError,
+)
+from ..typing.common import JSON
+from ..typing.worker import (
+    WorkerValue,
+    WorkerMessage,
+    WorkerResponse,
+    WorkerPayloadDescriptor,
+)
+from ..typing.aliases import LogLevel, LogCallback
 from ..typing.backends import (
     BackendArguments,
     BackendGeneration,
     BackendDescription,
     BackendArgumentValue,
+)
+from ..backends.vc.base import CeluneVCBackend
+from ..backends.tts.base import CeluneBackend
+from ..backends.environment import (
+    BackendManifest,
+    BackendEnvironment,
+    BackendEnvironmentManager,
 )
 from ..dataclasses.pipeline import AudioOutput, VoiceConversionRequest
 
@@ -542,7 +543,8 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
                     and message.startswith(" ")
                 ):
                     return severity, True, message[1:], first
-        return "info", False, text, "info"
+        severity = _infer_log_severity(text, "info")
+        return severity, False, text, "info"
 
     @staticmethod
     def _is_traceback_exception_line(text: str) -> bool:

@@ -67,6 +67,7 @@ nav:
   - Reference:
       - Python API: reference/public-api.md
       - Source map: reference/source-map.md
+      - Voice samples: development/samples.md
       - Voice design: VOICES.md
       - Gallery: GALLERY.md
   - Dev:

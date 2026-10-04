@@ -69,7 +69,9 @@ status and diagnostic text stays in the loading screen or main log.
    during CPU contention. Playback traces are sampled rather than written for
    every block, separating bounded-queue backpressure, per-source generation
    gaps, writer scheduling gaps, stream-write duration, and adaptive rebuffer
-   waiting without adding file I/O to the audio clock.
+   waiting without adding file I/O to the audio clock. The writer tracks pending
+   reserve in audio frames, so a drained output queue reaches an exact zero for
+   completion and idle transitions.
 8. The final 48 kHz stereo FLAC is saved when requested.
 
 Cancellation travels through the same queue and worker boundary. It does not

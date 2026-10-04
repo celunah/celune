@@ -9,30 +9,29 @@ import shutil
 import datetime
 import platform
 import warnings
-import importlib
-import importlib.util
 import contextlib
 import subprocess
+import importlib.util
+from types import ModuleType, SimpleNamespace
+from typing import TYPE_CHECKING, Optional
 from pathlib import Path
 from dataclasses import dataclass
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Optional
-from types import ModuleType, SimpleNamespace
 
-from celune.i18n import string
-from celune.typing.common import Config
-from celune.terminal import set_terminal_title
-from celune.updater import apply_update_and_restart
 from celune import REVISION, __tagline__, __version__
-from celune.config import config_log_level, normalize_log_level
-from celune.watchdog import start_watchdog, launcher_loss_requested
-from celune.constants import APP_NAME, APP_SLUG, NVIDIA_DEVICE_KEYWORDS, ExitCodes
+from celune.i18n import string
 from celune.paths import (
     project_root,
     running_compiled,
     migrate_legacy_app_data,
     configure_huggingface_runtime,
 )
+from celune.config import config_log_level, normalize_log_level
+from celune.updater import apply_update_and_restart
+from celune.terminal import set_terminal_title
+from celune.watchdog import start_watchdog, launcher_loss_requested
+from celune.constants import APP_NAME, APP_SLUG, NVIDIA_DEVICE_KEYWORDS, ExitCodes
+from celune.typing.common import Config
 
 if TYPE_CHECKING:
     from celune.celune import Celune
@@ -1540,7 +1539,6 @@ def start(
                     progress_callback=ui.safe_progress,
                     caption_progress_callback=ui.safe_caption_progress,
                     caption_callback=ui.tts_caption,
-                    caption_timing_callback=ui.tts_caption_timing,
                     log_level=active_log_level,
                     config=config,
                     startup_callback=_print_startup_diagnostic,
@@ -1759,19 +1757,38 @@ def main(argv: Optional[list[str]] = None) -> None:
             print(string("cli.help_description"))
             sys.exit(EXIT_CODES.EXIT_UNKNOWN_ARGS.value)
 
-        # HACK: tabs are a quick and dirty alignment trick
-        # they are not guaranteed to work in all terminals equally well
-        #
-        # please rewrite this soon
         print(string("cli.help_main_usage", program=resolved_argv[0]))
         print()
         print(string("cli.help_available_commands"))
-        print(string("cli.help_start", app_name=APP_NAME))
-        print(string("cli.help_test"))
-        print(string("cli.help_config", app_name=APP_NAME))
-        print(string("cli.help_doctor", app_name=APP_NAME))
-        print(string("cli.help_help"))
-        print(string("cli.help_version", app_name=APP_NAME))
+        command_help = (
+            (
+                string("cli.help_start_command"),
+                string("cli.start_description", app_name=APP_NAME),
+            ),
+            (
+                string("cli.help_test_command"),
+                string("cli.help_test_description"),
+            ),
+            (
+                string("cli.help_config_command"),
+                string("cli.config_description", app_name=APP_NAME),
+            ),
+            (
+                string("cli.help_doctor_command"),
+                string("cli.help_doctor_description", app_name=APP_NAME),
+            ),
+            (
+                string("cli.help_help_command"),
+                string("cli.help_description"),
+            ),
+            (
+                string("cli.help_version_command"),
+                string("cli.version_description", app_name=APP_NAME),
+            ),
+        )
+        command_column = max(len(command) for command, _ in command_help) + 2
+        for command, description in command_help:
+            print(f"{command:<{command_column}}{description}")
         print()
         print(string("cli.help_parameter_note", program=resolved_argv[0]))
         print(string("cli.help_subcommand_note", program=resolved_argv[0]))

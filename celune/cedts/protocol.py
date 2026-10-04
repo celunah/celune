@@ -12,6 +12,7 @@ from collections.abc import Mapping, Sequence
 
 import numpy as np
 
+from ..i18n import string
 from ..exceptions import (
     CEDTSError,
     CEDTSEOFError,
@@ -19,7 +20,6 @@ from ..exceptions import (
     CEDTSPayloadError,
     CEDTSProtocolError,
 )
-from ..i18n import string
 from ..typing.common import JSONSerializable
 from ..typing.worker import (
     WorkerValue,
@@ -1202,9 +1202,15 @@ def _validate_packet(
     reply_to = packet.get("reply_to")
     operation = packet.get("operation")
     data = packet.get("data")
+    if not _is_current_version(version):
+        raise _worker_protocol_error(
+            "backend_worker_packet_envelope_is_invalid",
+            field="cedts_version",
+            received=repr(version)[:48],
+            expected=repr(list(CEDTS_VERSION)),
+        )
     if (
-        not _is_current_version(version)
-        or not isinstance(kind, str)
+        not isinstance(kind, str)
         or kind not in CONTROL_PACKET_KINDS
         or not isinstance(message_id, str)
         or not message_id

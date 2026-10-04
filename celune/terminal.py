@@ -1,11 +1,11 @@
 # SPDX-License-Identifier: Apache-2.0
 """Terminal handling helpers for Celune."""
 
-import ctypes
 import re
 import sys
-from collections.abc import Callable
+import ctypes
 from typing import IO, Optional, cast
+from collections.abc import Callable
 
 from .i18n import string
 
@@ -51,6 +51,44 @@ RUNTIME_LOG_FILTER_MESSAGES = frozenset(
         "The class this function is called from",
     }
 )
+
+
+def _infer_log_severity(message: str, default_severity: str) -> str:
+    """Infer severity from message content before using its stream default."""
+    lowered = message.casefold()
+
+    level_match = re.search(
+        r"\[(?P<bracket>info|notice|warn(?:ing)?|error|critical|fatal)\]"
+        r"|(?:^|\s)(?P<plain>info|notice|warn(?:ing)?|error|critical|fatal)"
+        r"(?:\s*:|\s+-)",
+        lowered,
+    )
+    if level_match is not None:
+        level = level_match.group("bracket") or level_match.group("plain")
+        if level in {"error", "critical", "fatal"}:
+            return "error"
+        if level in {"warn", "warning"}:
+            return "warning"
+        return "info"
+
+    if "traceback (most recent call last):" in lowered:
+        return "error"
+    if re.search(
+        r"\b[a-z_][a-z0-9_.]*(?:error|exception):",
+        lowered,
+    ) or re.search(r"\b(?:error|exception|fatal(?: error)?)\b", lowered):
+        return "error"
+    if re.search(
+        (
+            r"\b(?:warn(?:ing)?|futurewarning|deprecationwarning|"
+            r"pendingdeprecationwarning|runtimewarning|resourcewarning|"
+            r"userwarning|syntaxwarning|importwarning|unicodewarning|byteswarning|"
+            r"deprecated|deprecation)\b"
+        ),
+        lowered,
+    ):
+        return "warning"
+    return default_severity
 
 
 def supports_ansi(stream: Optional[IO[str]] = None) -> bool:

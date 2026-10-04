@@ -37,12 +37,22 @@ from .modes import (
 )
 from .paths import temp_data_dir
 from .utils import (
-    available,
     discard,
+    available,
     format_error_message,
 )
 from .chroma import AudioRGBGlow
 from .config import Config, config_bool, config_value, normalize_log_level
+from .speech import (
+    play as play_pipeline,
+)
+from .speech import (
+    close as close_pipeline,
+)
+from .speech import (
+    queue_sfx_audio,
+    stop_live_audio_input,
+)
 from .cevoice import (
     CEVoicePersona,
     default_loader,
@@ -55,17 +65,11 @@ from .cevoice import (
     bundle_matches_default_pack_checksum,
 )
 from .pipeline import (
+    split_text,
     clear_queue,
     close_stream,
-    generation_worker_job,
     playback_worker_job,
-    split_text,
-)
-from .speech import (
-    play as play_pipeline,
-    close as close_pipeline,
-    queue_sfx_audio,
-    stop_live_audio_input,
+    generation_worker_job,
 )
 from .constants import (
     APP_NAME,
@@ -117,15 +121,14 @@ from .typing.celune import (
     ProgressCallback,
     ReleasableObject,
     InputStateCallback,
-    CeluneStateAccessors,
     CeluneMethodSurface,
-    CaptionTimingCallback,
+    CeluneStateAccessors,
     VoiceLockStateCallback,
     _BundleWithPath,
 )
 from .typing.common import JSON, JSONSerializable
 from .typing.events import EventName, EventPayload
-from .typing.aliases import LogLevel, AudioChunk
+from .typing.aliases import LogLevel
 from .persona.emotion import PersonaEmotionAnalyzer
 from .typing.backends import BackendModel
 from .extensions.events import EventDispatcher
@@ -414,7 +417,6 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
         progress_callback: Optional[ProgressCallback] = None,
         caption_progress_callback: Optional[ProgressCallback] = None,
         caption_callback: Optional[CaptionCallback] = None,
-        caption_timing_callback: Optional[CaptionTimingCallback] = None,
         log_level: LogLevel = "info",
         agent_tool_selector: Optional[AgentToolSelector] = None,
         backend_mode: BackendMode = "normal",
@@ -452,9 +454,6 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
                 caption_progress_callback or self._noop_progress
             ),
             caption_callback=(caption_callback or self._noop_caption),
-            caption_timing_callback=(
-                caption_timing_callback or self._noop_caption_timing
-            ),
         )
         self._event_dispatcher = EventDispatcher(
             log_warning=self.log,
@@ -985,15 +984,6 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
     @staticmethod
     def _noop_caption(caption: Optional[str]) -> None:
         """Discard a speech caption update."""
-
-    @staticmethod
-    def _noop_caption_timing(
-        caption: str,
-        audio: AudioChunk,
-        sample_rate: int,
-        timing_text: Optional[str] = None,
-    ) -> None:
-        """Discard generated speech caption timing input."""
 
     def _enter_fatal_error_state(self) -> None:
         """Mark the runtime as unrecoverably failed before fatal handlers run."""
@@ -2481,14 +2471,24 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
 def _install_celune_methods() -> None:
     """Install split engine methods after the concrete class exists."""
     from . import (
-        conversation,
-        loader as loader_methods,
-        pipeline as pipeline_methods,
-        playback as playback_methods,
+        vc as vc_methods,
+    )
+    from . import (
         sleep,
         speech,
-        vc as vc_methods,
+        conversation,
+    )
+    from . import (
         voice as voice_methods,
+    )
+    from . import (
+        loader as loader_methods,
+    )
+    from . import (
+        pipeline as pipeline_methods,
+    )
+    from . import (
+        playback as playback_methods,
     )
     from .agent import core as agent_methods
 

@@ -1,0 +1,528 @@
+{
+  "generated_on": "2026-09-30",
+  "voice_pack": "voices/default.cevoice",
+  "voice_pack_sha256": "73f4bb6479ba679f91dc2416254d506207dc302c7982feeb6c2a802391193336",
+  "generation": "direct cached model inference in existing isolated environments",
+  "seed": 1234,
+  "output": {
+    "format": "FLAC",
+    "subtype": "PCM_24",
+    "sample_rate": 48000,
+    "channels": 1,
+    "resampling": "scipy.signal.resample_poly",
+    "peak_limit": 0.98,
+    "playback_dsp": false
+  },
+  "texts": {
+    "sc": "Hi, I'm Celune. A familiar voice, a little curiosity, and a story waiting to be told. Let's see where it takes us.",
+    "lc": "The last train left the station just as the evening rain began. Beneath the old glass roof, a girl unfolded a map she had found inside a library book. Someone had drawn a small blue star beside a street that did not appear on any other map. She smiled, tucked the paper into her coat, and stepped outside. The city smelled of wet stone and fresh bread. Somewhere beyond the river, a clock struck seven. There was still time to find the street, and perhaps, if she was lucky, to discover why someone had marked it."
+  },
+  "voices": {
+    "balanced": {
+      "assets": {
+        "pt": "balanced.pt",
+        "wav": "balanced.wav"
+      },
+      "cfg_scale": 2.4,
+      "reference_text": "I feel like something good is about to happen. Really, it's just bound to come.",
+      "reference_sha256": "59971b8e82faac21d2beca8b75f3c85b695056ebe2f318301f5045fbdde4dc37"
+    },
+    "bold": {
+      "assets": {
+        "pt": "bold.pt",
+        "wav": "bold.wav"
+      },
+      "cfg_scale": 2.4,
+      "reference_text": "Wait, what the hell just happened? Why?",
+      "reference_sha256": "3a4ee53aae650c9f08478afdd22ef15dfe029dac5cb1542efe672993121afa8c"
+    },
+    "calm": {
+      "assets": {
+        "pt": "calm.pt",
+        "wav": "calm.wav"
+      },
+      "cfg_scale": 3.0,
+      "reference_text": "There are moments in life which need... just a little bit of calmness, right?",
+      "reference_sha256": "7c151f9cc98e71882f6a7b0ec7634610cf858afa1301a6b16d641cf1da030f16"
+    },
+    "upbeat": {
+      "assets": {
+        "pt": "upbeat.pt",
+        "wav": "upbeat.wav"
+      },
+      "cfg_scale": 2.4,
+      "reference_text": "Now that is what I call \"funny\".",
+      "reference_sha256": "937eff9d4b5873bd3dd1f3566de2687236ce791502939d30a8f34f693999580b"
+    }
+  },
+  "models": {
+    "qwen": {
+      "repo": "Qwen/Qwen3-TTS-12Hz-1.7B-Base",
+      "snapshot": "fd4b254389122332181a7c3db7f27e918eec64e3",
+      "settings": {
+        "dtype": "bfloat16",
+        "attention": "sdpa",
+        "xvec_only": false,
+        "max_new_tokens": 2048,
+        "temperature": 0.9,
+        "top_k": 50,
+        "top_p": 1.0,
+        "repetition_penalty": 1.05
+      }
+    },
+    "voxcpm2": {
+      "repo": "openbmb/VoxCPM2",
+      "snapshot": "bffb3df5a29440629464e5e839f4d214c8714c3d",
+      "settings": {
+        "inference_timesteps": 4,
+        "max_len": 2048,
+        "load_denoiser": false,
+        "optimize": false,
+        "cfg_value": "voice pack cfg_scale"
+      }
+    },
+    "mini": {
+      "repo": "lunahr/pocket-tts-ungated",
+      "snapshot": "d03cd73415a8d46d8eb115c7b524aebb0a729f4a",
+      "settings": {
+        "temp": 0.15,
+        "lsd_decode_steps": 8,
+        "device": "cpu"
+      }
+    },
+    "dotstts": {
+      "repo": "rednote-hilab/dots.tts-mf",
+      "snapshot": "c28105adc8228143392b4e346994ff613ee48a06",
+      "settings": {
+        "precision": "bfloat16",
+        "max_generate_length": 512,
+        "optimize": false,
+        "speaker_scale": 1.5,
+        "ode_method": "euler",
+        "num_steps": 4,
+        "normalize_text": false
+      }
+    },
+    "fireredtts3": {
+      "repo": "FireRedTeam/FireRedTTS3",
+      "snapshot": "dcf1bdcd1b8b25b382fa84c3e34eb82e3054a610",
+      "settings": {
+        "dtype": "bfloat16",
+        "attention": "sdpa",
+        "n_timesteps": 10,
+        "inference_cfg": 2.0,
+        "stop_threshold": 0.5,
+        "decoder": "incremental RedAE",
+        "language": "English"
+      }
+    },
+    "luxtts": {
+      "repo": "YatharthS/LuxTTS",
+      "snapshot": "527f245a276a0eb42ea103a7a512bcfd771eb9b6",
+      "settings": {
+        "device": "cuda",
+        "num_steps": 4,
+        "guidance_scale": 3.0,
+        "t_shift": 0.5,
+        "speed": 1.0,
+        "return_smooth": false,
+        "prompt_duration": "full reference plus trailing silence",
+        "prompt_text": "voice pack reference_text",
+        "prompt_trailing_silence_seconds": 0.5,
+        "prompt_rms": 0.01
+      }
+    }
+  },
+  "verification": {
+    "recognizer": "openai/whisper-base",
+    "name_substitutions": "Phonetic substitutions for Celune are not failures.",
+    "note": "Word similarity measures ASR agreement, not perceptual voice quality."
+  },
+  "samples": {
+    "balanced_lc_dotstts.flac": {
+      "sha256": "bc84b3582def8d1682bab68a5c94fedc4708106b74716ce07ae7db71cbdb411e",
+      "duration_seconds": 30.56,
+      "peak": 0.83972,
+      "rms": 0.12736,
+      "transcript": "The last train left the station just as the evening rain began. Beneath the old glass roof, a girl unfolded a map she had found inside a library book. Someone had drawn a small blue star beside a street that did not appear on any other map. She smiled, tucked the paper into her coat and stepped outside. The city smelled of wet stone and fresh bread. Somewhere beyond the river, a clock struck seven. There was still time to find the street, and perhaps, if she was lucky, to discover why someone had marked it.",
+      "word_similarity": 1.0
+    },
+    "balanced_lc_fireredtts3.flac": {
+      "sha256": "0f2751901bea5c9b2f2ef6e38230a96e3065a42cb24076fac35e8c320070e8bd",
+      "duration_seconds": 31.52,
+      "peak": 0.98,
+      "rms": 0.0797,
+      "transcript": "The last train left the station just as the evening rain began. Beneath the old glass roof, a girl unfolded a map she had found inside a library book. Someone had drawn a small blue star beside a street that did not appear on any other map. She smiled, tucked the paper into her coat, and stepped outside. The city smelled of wet stone and fresh bread. Somewhere beyond the river, a clock struck seven. There was still time to find the street, and perhaps, if she was lucky, to discover why someone had marked it.",
+      "word_similarity": 1.0
+    },
+    "balanced_lc_luxtts.flac": {
+      "sha256": "131f0750d53d022f96ab5b07f28d5473a2556017a2efc9a510bb11e7d7740b65",
+      "duration_seconds": 31.243,
+      "peak": 0.98,
+      "rms": 0.19974,
+      "transcript": "The last train left the station just as the evening rain began. Beneath the old glass roof, a girl unfolded a map she had found inside a library book. Someone had drawn a small blue star beside a street that did not appear on any other map. She smiled, tucked the paper into her coat, and stepped outside. The city smelled of wet stone and fresh bread. Somewhere beyond the river, a clock struck seven. There was still time to find the street, and perhaps, if she was lucky, to discover why someone had marked it.",
+      "word_similarity": 1.0
+    },
+    "balanced_lc_mini.flac": {
+      "sha256": "037f0b80268027e0ffa2355c184e54a3dcc27f3436efe15db1e23ff64977d7c7",
+      "duration_seconds": 31.36,
+      "peak": 0.59411,
+      "rms": 0.08708,
+      "transcript": "The last train left the station just as the evening rain began. Beneath the old glass roof, a girl unfolded a map she had found inside a library book. Someone had drawn a small blue star beside a street that did not appear on any other map. She smiled, tucked the paper into her coat, and stepped outside. The city smelled of wet stone and fresh bread. Somewhere beyond the river, a clock struck seven. There was still time to find the street, and perhaps, if she was lucky, to discover why someone had marked it.",
+      "word_similarity": 1.0
+    },
+    "balanced_lc_qwen.flac": {
+      "sha256": "5d2589b3a672571ead4654e1bb670cf9d47a6920fe96328daf8562007612335c",
+      "duration_seconds": 30.48,
+      "peak": 0.64877,
+      "rms": 0.10334,
+      "transcript": "The last train left the station just as the evening rain began. Beneath the old glass roof, a girl unfolded a map she had found inside a library book. Someone had drawn a small blue star beside a street that did not appear on any other map. She smiled, tucked the paper into her coat, and stepped outside. The city smelled of wet stone and fresh bread. Somewhere beyond the river, a clock struck seven. There was still time to find the street, and perhaps if she was lucky, to discover why someone had marked it.",
+      "word_similarity": 1.0
+    },
+    "balanced_lc_voxcpm2.flac": {
+      "sha256": "09e0415be588c360862d280bc9a776e4b74da0c182d0a209dd6f38fbfa1fb620",
+      "duration_seconds": 35.04,
+      "peak": 0.98,
+      "rms": 0.10319,
+      "transcript": "The last train left the station just as the evening rain began. Beneath the old glass roof, a girl unfolded a map she had found inside a library book. Someone had drawn a small blue star beside a street that did not appear on any other map. She smiled, tucked the paper into her coat and stepped outside. The city smelled of wet stone and fresh bread. Somewhere beyond the river, a clock struck seven. There was still time to find the street, and perhaps, if she was lucky, to discover why someone had marked it.",
+      "word_similarity": 1.0
+    },
+    "balanced_sc_dotstts.flac": {
+      "sha256": "3cf3086c921b08c2319f95ed4e44a97e04f46dcfeb89f6424df044c90a77d590",
+      "duration_seconds": 8.96,
+      "peak": 0.61242,
+      "rms": 0.12205,
+      "transcript": "Hi, I'm Saloon, a familiar voice, a little curiosity, and a story waiting to be told. Let's see where it takes us.",
+      "word_similarity": 1.0
+    },
+    "balanced_sc_fireredtts3.flac": {
+      "sha256": "16029d5ad004df7d0232b7cea74dff54241459d4868fefd1226d2046097d0231",
+      "duration_seconds": 8.96,
+      "peak": 0.80147,
+      "rms": 0.10753,
+      "transcript": "Hi, I'm Saloon, a familiar voice, a little curiosity, and a story waiting to be told. Let's see where it takes us.",
+      "word_similarity": 1.0
+    },
+    "balanced_sc_luxtts.flac": {
+      "sha256": "5dc547ac51ba67cb7c2763528ccdc0f23fbc94a8d13cf0a325ef007737f670c4",
+      "duration_seconds": 7.317,
+      "peak": 0.78187,
+      "rms": 0.13902,
+      "transcript": "Hi, I'm Saloon. A familiar voice, a little curiosity, and a story waiting to be told. Let's see where it takes us.",
+      "word_similarity": 1.0
+    },
+    "balanced_sc_mini.flac": {
+      "sha256": "3386460278e7ae68604d974ec974a00f39c8cf2b1b2aaa56ce3707e959a9440b",
+      "duration_seconds": 9.36,
+      "peak": 0.42105,
+      "rms": 0.09048,
+      "transcript": "Hi, I'm Saloon. A familiar voice, a little curiosity, and a story waiting to be told. Let's see where it takes us.",
+      "word_similarity": 1.0
+    },
+    "balanced_sc_qwen.flac": {
+      "sha256": "5062dd1ffc8a3e0e3f1f167b494f456757c26d65a98af1ba4e679bcbe784f70e",
+      "duration_seconds": 9.12,
+      "peak": 0.75314,
+      "rms": 0.11672,
+      "transcript": "Hi, I'm Saloon, a familiar voice, a little curiosity and a story waiting to be told. Let's see where it takes us.",
+      "word_similarity": 1.0
+    },
+    "balanced_sc_voxcpm2.flac": {
+      "sha256": "a28a627c4a56e763fc7fb3f762d62d122df41f85894ba1b6307c0c2ec7cd30fc",
+      "duration_seconds": 8.32,
+      "peak": 0.94663,
+      "rms": 0.10475,
+      "transcript": "Hi, I'm Saloon, a familiar voice, a little curiosity, and a story waiting to be told. Let's see where it takes us.",
+      "word_similarity": 1.0
+    },
+    "bold_lc_dotstts.flac": {
+      "sha256": "c0f5c6358e7cf11a4cd09eb9d4b45264c2fe64d043598f49dfd28d3835341aa2",
+      "duration_seconds": 32.96,
+      "peak": 0.98,
+      "rms": 0.20606,
+      "transcript": "The last train left the station just as the evening rain began. Beneath the old glass roof, a girl unfolded a map she had found inside a library book. Someone had drawn a small blue star beside a street that did not appear on any other map. She smiled, tucked the paper into her coat and stepped outside. The city smelled of wet stone and fresh bread. Somewhere beyond the river, a clock struck seven. There was still time to find the street, and perhaps, if she was lucky, to discover why someone had marked it.",
+      "word_similarity": 1.0
+    },
+    "bold_lc_fireredtts3.flac": {
+      "sha256": "242f4bc173b1c44bd6aec3cb92829a3d4ad8035b5886a9a1bae8ba76ab64f0d3",
+      "duration_seconds": 32.8,
+      "peak": 0.98,
+      "rms": 0.15689,
+      "transcript": "The last train left the station just as the evening rain began. Beneath the old glass roof, a girl unfolded a map she had found inside a library book. Someone had drawn a small blue star beside a street that did not appear on any other map. She smiled, tucked the paper into her coat, and stepped outside. The city smelled of wet stone and fresh bread. Somewhere beyond the river, a clock struck seven. There was still time to find the street, and perhaps, if she was lucky, to discover why someone had marked it.",
+      "word_similarity": 1.0
+    },
+    "bold_lc_luxtts.flac": {
+      "sha256": "5348a493babac432e4b0813229860a2a09348d3ee6ea0e6cbbfdf08a63bd4e1d",
+      "duration_seconds": 48.715,
+      "peak": 0.98,
+      "rms": 0.13486,
+      "transcript": "The last train left the station just as the evening rain began. Beneath the old glass roof, a girl unfolded a map she had found in inside a library book. Someone had drawn a small blue star beside a street that did not appear on any other map. She smiled, tucked the paper into her coat, and stepped outside. The city smelled of wet stone and fresh bread. Somewhere beyond the river, a clock struck seven. There was still time to find the street, and perhaps, if she was lucky, to discover why someone had marked it.",
+      "word_similarity": 0.995
+    },
+    "bold_lc_mini.flac": {
+      "sha256": "674c80dca9433173a8277ce77b0f00a5f8a677142ca4cb9bbf22996c02a446d2",
+      "duration_seconds": 33.2,
+      "peak": 0.89132,
+      "rms": 0.12927,
+      "transcript": "The last train left the station just as the evening rain began. Beneath the old glass roof, a girl unfolded a map she had found inside a library book. Someone had drawn a small blue star beside a street that did not appear on any other map. She smiled, tucked the paper into her coat, and stepped outside. The city smelled of wet stone and fresh bread. Somewhere beyond the river, a clock struck seven. There was still time to find the street, and perhaps, if she was lucky, to discover why someone had marked it.",
+      "word_similarity": 1.0
+    },
+    "bold_lc_qwen.flac": {
+      "sha256": "ea9d7f9534843a26ddc7948a12344cd65e521c18a1ecd00940c1b31189438ada",
+      "duration_seconds": 27.6,
+      "peak": 0.91063,
+      "rms": 0.14997,
+      "transcript": "The last train left the station just as the evening rain began. Beneath the old glass roof, a girl unfolded a map she had found inside a library book. Someone had drawn a small blue star beside a street that did not appear on any other map. She smiled, tucked the paper into her coat, and stepped outside. The city smelled of wet stone and fresh bread. Somewhere beyond the river, a clock struck seven. There was still time to find the street, and perhaps if she was lucky to discover why someone had marked it.",
+      "word_similarity": 1.0
+    },
+    "bold_lc_voxcpm2.flac": {
+      "sha256": "294ebbf521058cef133944d67633d528d25a1729e43e97eb26bbe46c902cca4b",
+      "duration_seconds": 33.12,
+      "peak": 0.93353,
+      "rms": 0.1302,
+      "transcript": "The last train left the station just as the evening rain began. Beneath the old glass roof, a girl unfolded a map she had found inside a library book. Someone had drawn a small blue star beside a street that did not appear on any other map. She smiled, tucked the paper into her coat and stepped outside. The city smelled of wet stone and fresh bread. Somewhere beyond the river, a clock struck seven. There was still time to find the street and perhaps if she was lucky to discover why someone had marked it.",
+      "word_similarity": 1.0
+    },
+    "bold_sc_dotstts.flac": {
+      "sha256": "4ff3479fc944b9a90711763578e9391838958c17fa3c95eb96c3ced5abf32e9b",
+      "duration_seconds": 10.56,
+      "peak": 0.98,
+      "rms": 0.1848,
+      "transcript": "Hi, I'm Saloon, a familiar voice, a little curiosity, and a story waiting to be told. Let's see where it takes us.",
+      "word_similarity": 1.0
+    },
+    "bold_sc_fireredtts3.flac": {
+      "sha256": "527549790919bc2b8cd2a3a696c38b483f161ed957106042042678a064603ac2",
+      "duration_seconds": 8.96,
+      "peak": 0.98,
+      "rms": 0.15722,
+      "transcript": "Hi, I'm Saloon, a familiar voice, a little curiosity, and a story waiting to be told. Let's see where it takes us.",
+      "word_similarity": 1.0
+    },
+    "bold_sc_luxtts.flac": {
+      "sha256": "15d2a6b9a3f64686d6f4eb60eee82ea3448435409f4e2897dc6444d7ee6fe8cc",
+      "duration_seconds": 11.349,
+      "peak": 0.92196,
+      "rms": 0.15066,
+      "transcript": "Hi, I'm Saloon. A familiar voice, a little curiosity, and a story waiting to be told. Let's see where it takes us.",
+      "word_similarity": 1.0
+    },
+    "bold_sc_mini.flac": {
+      "sha256": "e1c4d885082ac89d427a18a8a503215b05d3f1ce80efe5c9068287727dcf0030",
+      "duration_seconds": 9.12,
+      "peak": 0.78155,
+      "rms": 0.13331,
+      "transcript": "Hi, I'm Saloon. A familiar voice, a little curiosity, and a story waiting to be told. Let's see where it takes us.",
+      "word_similarity": 1.0
+    },
+    "bold_sc_qwen.flac": {
+      "sha256": "0a5d08af00497ccf9cd94cd02825cbae26001c6f2956e041a0776bc7ec756325",
+      "duration_seconds": 8.16,
+      "peak": 0.89682,
+      "rms": 0.14795,
+      "transcript": "Hi, I'm Saloon, a familiar voice, a little curiosity, and a story waiting to be told. Let's see where it takes us.",
+      "word_similarity": 1.0
+    },
+    "bold_sc_voxcpm2.flac": {
+      "sha256": "d599477f6daa38d0e4af25d2bc6bfc9b55659d2075e53976289d9a958576c731",
+      "duration_seconds": 7.04,
+      "peak": 0.98,
+      "rms": 0.15876,
+      "transcript": "Hi, I'm Saloon, a familiar voice, a little curiosity, and a story waiting to be told. Let's see where it takes us.",
+      "word_similarity": 1.0
+    },
+    "calm_lc_dotstts.flac": {
+      "sha256": "27e101e20e13c8e8a5d7ff3a40d4d7ac4c07505446191aa83421a8ec183013c3",
+      "duration_seconds": 33.92,
+      "peak": 0.60951,
+      "rms": 0.09679,
+      "transcript": "The last train left the station just as the evening rain began. Beneath the old glass roof, a girl unfolded a map she had found inside a library book. Someone had drawn a small blue star beside a street that did not appear on any other map. She smiled, tucked the paper into her coat and stepped outside. The city smelled of wet stone and fresh bread. Somewhere beyond the river, a clock struck seven. There was still time to find the street, and perhaps, if she was lucky, to discover why someone had marked it.",
+      "word_similarity": 1.0
+    },
+    "calm_lc_fireredtts3.flac": {
+      "sha256": "39090ad1d3a663b2383411f674079eeb91e95cfb34976cb6a4831a101c682cd9",
+      "duration_seconds": 34.08,
+      "peak": 0.85961,
+      "rms": 0.0812,
+      "transcript": "The last train left the station just as the evening rain began. Beneath the old glass roof, a girl unfolded a map she had found inside a library book. Someone had drawn a small blue star beside a street that did not appear on any other map. She smiled, tucked the paper into her coat and stepped outside. The city smelled of wet stone and fresh bread. Somewhere beyond the river, a clock struck seven. There was still time to find the street, and perhaps if she was lucky to discover why someone had marked it.",
+      "word_similarity": 1.0
+    },
+    "calm_lc_luxtts.flac": {
+      "sha256": "3a84a1a38115266656b8d11f257d8abe252b49671c802331c85e3961de8d5951",
+      "duration_seconds": 39.115,
+      "peak": 0.87036,
+      "rms": 0.14018,
+      "transcript": "The last train left the station just as the evening rain began. Beneath the old glass roof, a girl unfolded a map she had found inside a library book. Someone had drawn a small blue star beside a street that did not appear on any other map. She smiled, tucked the paper into her coat and stepped outside. The city smelled of wet stone and fresh bread. Somewhere beyond the river, a clock struck seven. There was still time to find the street, and perhaps, if she was lucky, to discover why someone had marked it.",
+      "word_similarity": 1.0
+    },
+    "calm_lc_mini.flac": {
+      "sha256": "9418dedeeb8ca65ea6470647403f38d73cc5f08c87be8f96bb2346c7f0b36ac4",
+      "duration_seconds": 36.32,
+      "peak": 0.42807,
+      "rms": 0.06474,
+      "transcript": "The last train left the station just as the evening rain began. Beneath the old glass roof, a girl unfolded a map she had found inside a library book. Someone had drawn a small blue star beside a street that did not appear on any other map. She smiled, tucked the paper into her coat and stepped outside. The city smelled of wet stone and fresh bread. Somewhere beyond the river, a clock struck seven. There was still time to find the street, and perhaps, if she was lucky, to discover why someone had marked it.",
+      "word_similarity": 1.0
+    },
+    "calm_lc_qwen.flac": {
+      "sha256": "f38fd561be0d7b1b7de88016c77c7657b8cebc5541b132f50a2546e6739ec165",
+      "duration_seconds": 32.96,
+      "peak": 0.57111,
+      "rms": 0.09529,
+      "transcript": "The last train left the station just as the evening rain began. Beneath the old glass roof, a girl unfolded a map she had found inside a library book. Someone had drawn a small blue star beside a street that did not appear on any other map. She smiled, tucked the paper into her coat, and stepped outside. The city smelled of wet stone and fresh bread. Somewhere beyond the river, a clock struck seven. There was still time to find the street, and perhaps if she was lucky, to discover why someone had marked it.",
+      "word_similarity": 1.0
+    },
+    "calm_lc_voxcpm2.flac": {
+      "sha256": "abdaf5e8e415facb5d6f8a4aa3c8d1b872ec3451a14924287677bd0c546e6553",
+      "duration_seconds": 32.32,
+      "peak": 0.98,
+      "rms": 0.29672,
+      "transcript": "The last train left the station just as the evening rain began. Beneath the old glass roof, a girl unfolded a map she had found inside a library book. Someone had drawn a small blue star beside a street that did not appear on any other map. She smiled, tucked the paper into her coat, and stepped outside. The city smelled of wet stone and fresh bread. Somewhere beyond the river, a clock struck seven. There was still time to find the street, and perhaps if she was lucky to discover why someone had marked it.",
+      "word_similarity": 1.0
+    },
+    "calm_sc_dotstts.flac": {
+      "sha256": "14b0c605af466c3dc77f6ef2afa5b4a3349302c758e5303f2f6f562a37f677c6",
+      "duration_seconds": 10.24,
+      "peak": 0.57314,
+      "rms": 0.07326,
+      "transcript": "Hi, I'm Saloon, a familiar voice, a little curiosity and a story waiting to be told. Let's see where it takes us.",
+      "word_similarity": 1.0
+    },
+    "calm_sc_fireredtts3.flac": {
+      "sha256": "37bd31e4d1de5794ba6194e2682627885d011dbb6aa8ddaa688852dbd0a5a424",
+      "duration_seconds": 8.8,
+      "peak": 0.69732,
+      "rms": 0.09163,
+      "transcript": "Hi, I'm Saloon, a familiar voice, a little curiosity and a story waiting to be told. Let's see where it takes us.",
+      "word_similarity": 1.0
+    },
+    "calm_sc_luxtts.flac": {
+      "sha256": "4fab1b603ee4794fdf2fd365ea81b70726977b1ed571f2916ac1edf509e7266e",
+      "duration_seconds": 9.131,
+      "peak": 0.7379,
+      "rms": 0.10642,
+      "transcript": "Hi, I'm Saloon. A familiar voice, a little curiosity, and a story waiting to be told. Let's see where it takes us.",
+      "word_similarity": 1.0
+    },
+    "calm_sc_mini.flac": {
+      "sha256": "221cc8067260783d6edfefcf81ea39421acd1eb6db630e9d943022a5fc1911ae",
+      "duration_seconds": 11.12,
+      "peak": 0.39567,
+      "rms": 0.06689,
+      "transcript": "Hi, I'm Saloon. A familiar voice, a little curiosity, and a story waiting to be told. Let's see where it takes us.",
+      "word_similarity": 1.0
+    },
+    "calm_sc_qwen.flac": {
+      "sha256": "da294ad6e2310be6c9b5bfe88eabb051179ef869378eec0b2cd662f15056bded",
+      "duration_seconds": 8.88,
+      "peak": 0.50417,
+      "rms": 0.09411,
+      "transcript": "Hi, I'm Saloon, a familiar voice, a little curiosity and a story waiting to be told. Let's see where it takes us.",
+      "word_similarity": 1.0
+    },
+    "calm_sc_voxcpm2.flac": {
+      "sha256": "f6029cac6a18e45fecbba8b378122df7201336954e932c7165fd7587716eb539",
+      "duration_seconds": 7.04,
+      "peak": 0.92535,
+      "rms": 0.12488,
+      "transcript": "Hi, I'm Saloon, a familiar voice, a little curiosity, and a story waiting to be told. Let's see where it takes us.",
+      "word_similarity": 1.0
+    },
+    "upbeat_lc_dotstts.flac": {
+      "sha256": "eb6ab052c767da673497f6afb3df1e6400e47bce8a4c8727b26a12bc9b304650",
+      "duration_seconds": 30.08,
+      "peak": 0.98,
+      "rms": 0.11998,
+      "transcript": "The last train left the station just as the evening rain began. Beneath the old glass roof, a girl unfolded a map she had found inside a library book. Someone had drawn a small blue star beside a street that did not appear on any other map. She smiled, tucked the paper into her coat, and stepped outside. The city smelled of wet stone and fresh bread. Somewhere beyond the river, a clock struck seven. There was still time to to find the street and perhaps if she was lucky to discover why someone had marked it.",
+      "word_similarity": 0.995
+    },
+    "upbeat_lc_fireredtts3.flac": {
+      "sha256": "7bd42bddd19e52e88553e83c3b9aaf4350b78d49eb9a346bfddba3a85bb96953",
+      "duration_seconds": 31.52,
+      "peak": 0.98,
+      "rms": 0.0836,
+      "transcript": "The last train left the station just as the evening rain began. Beneath the old glass roof, a girl unfolded a map she had found inside a library book. Someone had drawn a small blue star beside a street that did not appear on any other map. She smiled, tucked the paper into her coat and stepped outside. The city smelled of wet stone and fresh bread. Somewhere beyond the river, a clock struck seven. There was still time to find the street and perhaps if she was lucky to discover why someone had marked it.",
+      "word_similarity": 1.0
+    },
+    "upbeat_lc_luxtts.flac": {
+      "sha256": "da32da61491a97c005c039c7ec8e128868d11197217e07ab015ccb77950f59d0",
+      "duration_seconds": 58.123,
+      "peak": 0.80419,
+      "rms": 0.07724,
+      "recognizer": "openai/whisper-large-v3-turbo",
+      "transcript": "The last train left the station just as the evening rain began. Beneath the old glass roof, a girl unfolded a map she had found inside a library book. Someone had drawn a small blue star beside a street that did not appear on any other map. She smiled, tucked the paper into her coat, and stepped outside The city smelled of wet stone and fresh bread Somewhere beyond the river, a clock struck There was still time to find the street and perhaps, if she was lucky, to discover why someone had marked it.",
+      "word_similarity": 0.995
+    },
+    "upbeat_lc_mini.flac": {
+      "sha256": "421bfd90d04b64cbbb1b541336e08aa2dcb5bd8b0456659f35826416a25a5faf",
+      "duration_seconds": 33.2,
+      "peak": 0.78145,
+      "rms": 0.08529,
+      "transcript": "The last train left the station just as the evening rain began. Beneath the old glass roof, a girl unfolded a map she had found inside a library book. Someone had drawn a small blue star beside a street that did not appear on any other map. She smiled, tucked the paper into her coat, and stepped outside. The city smelled of wet stone and fresh bread. Somewhere beyond the river, a clock struck seven. There was still time to find the street, and perhaps, if she was lucky, to discover why someone had marked it.",
+      "word_similarity": 1.0
+    },
+    "upbeat_lc_qwen.flac": {
+      "sha256": "521a25b01235950934541aa7659ce35379ff7c6c9009b9c29a269e9b0725923b",
+      "duration_seconds": 29.44,
+      "peak": 0.76993,
+      "rms": 0.11031,
+      "transcript": "The last train left the station just as the evening rain began. Beneath the old glass roof, a girl unfolded a map she had found inside a library book. Someone had drawn a small blue star beside a street that did not appear on any other map. She smiled, tucked the paper into her coat and stepped outside. The city smelled of wet stone and fresh bread. Somewhere beyond the river, a clock struck seven. There was still time to find the street, and perhaps if she was lucky to discover why someone had marked it.",
+      "word_similarity": 1.0
+    },
+    "upbeat_lc_voxcpm2.flac": {
+      "sha256": "1a365d4652df38432cc712917a5d538757f9e1fecadf763b72425e2ea7de60d2",
+      "duration_seconds": 32.0,
+      "peak": 0.97394,
+      "rms": 0.09037,
+      "transcript": "The last train left the station just as the evening rain began. Beneath the old glass roof, a girl unfolded a map she had found inside a library book. Someone had drawn a small blue star beside a street that did not appear on any other map. She smiled, tucked the paper into her coat and stepped outside. The city smelled of wet stone and fresh bread. Somewhere beyond the river, a clock struck seven. There was still time to find the street, and perhaps if she was lucky to discover why someone had marked it.",
+      "word_similarity": 1.0
+    },
+    "upbeat_sc_dotstts.flac": {
+      "sha256": "d7a6a30bae673dc3cf3b39ae498725b60fed5c8b76cdc61fe711ad3fbd34fe58",
+      "duration_seconds": 8.48,
+      "peak": 0.82356,
+      "rms": 0.10055,
+      "transcript": "Hi, I'm Saloon, a familiar voice, a little curiosity, and a story waiting to be told. Let's see where it takes us.",
+      "word_similarity": 1.0
+    },
+    "upbeat_sc_fireredtts3.flac": {
+      "sha256": "290e4d5b5439782bde9192045b717e2b47219e2131defa458d1ad429d35a95a6",
+      "duration_seconds": 8.8,
+      "peak": 0.9268,
+      "rms": 0.11165,
+      "transcript": "Hi, I'm Saloon, a familiar voice, a little curiosity and a story waiting to be told. Let's see where it takes us.",
+      "word_similarity": 1.0
+    },
+    "upbeat_sc_luxtts.flac": {
+      "sha256": "28d6e47dccb9d960bc0944fdd59d6da3f5613b33bcafdae53c9bb0a8c3c24d9c",
+      "duration_seconds": 13.525,
+      "peak": 0.94258,
+      "rms": 0.10951,
+      "transcript": "Hi, I'm Saloon. A familiar voice, a little curiosity, and a story waiting to be told. Let's see where it takes us.",
+      "word_similarity": 1.0
+    },
+    "upbeat_sc_mini.flac": {
+      "sha256": "a46fd9fa2f03620fed8fd9dc69b0063a79a0452e79e7f70c80d8fa1f7000943b",
+      "duration_seconds": 9.28,
+      "peak": 0.71667,
+      "rms": 0.07947,
+      "transcript": "Hi, I'm Saloon. A familiar voice, a little curiosity, and a story waiting to be told. Let's see where it takes us.",
+      "word_similarity": 1.0
+    },
+    "upbeat_sc_qwen.flac": {
+      "sha256": "8ab786ff2d4c9ccc8ef82cbe761a2cbd9e64f6e140890589deb5c7ca68ac92c4",
+      "duration_seconds": 8.4,
+      "peak": 0.64904,
+      "rms": 0.10446,
+      "transcript": "Hi, I'm Saloon, a familiar voice, a little curiosity, and a story waiting to be told. Let's see where it takes us.",
+      "word_similarity": 1.0
+    },
+    "upbeat_sc_voxcpm2.flac": {
+      "sha256": "a297fa21622e76e5e5bec7415e8c0325ffc3cd7cd7ec09984dbba12bd2f2cc1c",
+      "duration_seconds": 7.2,
+      "peak": 0.98,
+      "rms": 0.10525,
+      "transcript": "Hi, I'm Saloon, a familiar voice, a little curiosity and a story waiting to be told. Let's see where it takes us.",
+      "word_similarity": 1.0
+    }
+  }
+}

@@ -185,6 +185,9 @@ The transport defines these exception categories:
 `CEDTSError`, `CEDTSStreamError`, `CEDTSEOFError`, `CEDTSTimeoutError`,
 `CEDTSProtocolError`, and `CEDTSPayloadError`.
 
+Packet envelope version mismatches include the received and expected versions
+in the protocol error so stale peers can be identified without a traceback.
+
 The implementation lives in `celune.cedts.protocol` and is used by
 `celune.cedts.worker` and `celune.cedts.remote`. Backend authors should
 use the existing encoders/decoders and typed descriptors rather than creating
