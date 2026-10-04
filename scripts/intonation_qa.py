@@ -77,7 +77,13 @@ def inspect(audio: Path, ref_audio: Path, percentiles: float) -> DualIntonation:
     span_semitones = 12 * np.log2(ph / pl)
     ref_span_semitones = 12 * np.log2(rph / rpl)
 
-    return (pl, ph, span_semitones, median, pitch_step), (rpl, rph, ref_span_semitones, ref_median, ref_pitch_step)
+    return (pl, ph, span_semitones, median, pitch_step), (
+        rpl,
+        rph,
+        ref_span_semitones,
+        ref_median,
+        ref_pitch_step,
+    )
 
 
 def smooth_f0(
@@ -104,7 +110,7 @@ def smooth_f0(
         padded = np.pad(run, (half, half), mode="edge")
 
         for i in range(len(run)):
-            smoothed[start + i] = np.median(padded[i:i + window])
+            smoothed[start + i] = np.median(padded[i : i + window])
 
     return np.exp2(smoothed / 12)
 
@@ -117,9 +123,12 @@ def p95_pitch_rate(
 ) -> np.float64:
     """Return the 95th percentile for a voiced segment."""
     valid = (
-        voiced[:-1] & voiced[1:]
-        & np.isfinite(f0[:-1]) & np.isfinite(f0[1:])
-        & (f0[:-1] > 0) & (f0[1:] > 0)
+        voiced[:-1]
+        & voiced[1:]
+        & np.isfinite(f0[:-1])
+        & np.isfinite(f0[1:])
+        & (f0[:-1] > 0)
+        & (f0[1:] > 0)
     )
     if not np.any(valid):
         return np.float64(0)
@@ -236,11 +245,11 @@ if __name__ == "__main__":
         step_offset = abs(step - ref_step)
 
         grades = [
-            (-0.5,  1.0,  "S"),
-            (-1.0,  2.0,  "A"),
-            (-1.5,  3.0,  "B"),
-            (-2.0,  4.0,  "C"),
-            (-2.5,  5.0,  "D"),
+            (-0.5, 1.0, "S"),
+            (-1.0, 2.0, "A"),
+            (-1.5, 3.0, "B"),
+            (-2.0, 4.0, "C"),
+            (-2.5, 5.0, "D"),
         ]
 
         for lower, upper, grade in grades:
