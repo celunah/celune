@@ -311,7 +311,7 @@ def _load_runtime() -> SimpleNamespace:
 
 
 def _load_core_runtime(*, defer_missing_dependency: bool = False) -> SimpleNamespace:
-    """Import the engine and full UI runtime when it is needed.
+    """Import Celune's engine core after lightweight startup completes.
 
     Args:
         defer_missing_dependency: Leave a missing dependency for the mounted UI
@@ -330,12 +330,6 @@ def _load_core_runtime(*, defer_missing_dependency: bool = False) -> SimpleNames
 
     try:
         configure_huggingface_runtime()
-        from celune.ui import (
-            CeluneUI,
-            CeluneTextualUI,
-            CeluneHeadlessUI,
-            CeluneHeadlessBaseUI,
-        )
         from celune.celune import Celune
     except ModuleNotFoundError as package:
         if defer_missing_dependency:
@@ -355,10 +349,6 @@ def _load_core_runtime(*, defer_missing_dependency: bool = False) -> SimpleNames
         sys.exit(EXIT_CODES.EXIT_MISSING_DEPENDENCIES.value)
 
     runtime.Celune = Celune
-    runtime.CeluneUI = CeluneUI
-    runtime.CeluneHeadlessUI = CeluneHeadlessUI
-    runtime.CeluneHeadlessBaseUI = CeluneHeadlessBaseUI
-    runtime.CeluneTextualUI = CeluneTextualUI
     return runtime
 
 
@@ -1301,6 +1291,8 @@ def start(
         if testing:
             if test_mode not in {None, "ui", "agent"}:
                 raise ValueError(f"unknown test mode: {test_mode}")
+            from celune.ui import CeluneUI
+
             runtime = _load_core_runtime()
             active_test_mode = test_mode or "ui"
             backend_mode = "ui_test" if active_test_mode == "ui" else "agent_test"
@@ -1335,7 +1327,7 @@ def start(
                     detail=detail,
                 )
 
-            ui = runtime.CeluneUI(
+            ui = CeluneUI(
                 startup_messages=_STARTUP_DIAGNOSTICS,
                 test_completion_callback=finish_test,
             )
@@ -1563,7 +1555,9 @@ def start(
                 _STARTUP_DIAGNOSTIC_SINK = None
         elif headless:
             runtime = _load_core_runtime()
-            ui_headless = runtime.CeluneHeadlessUI(config)
+            from celune.ui import CeluneHeadlessUI
+
+            ui_headless = CeluneHeadlessUI(config)
             _print_startup_diagnostic(string("ui.startup_loading_core"))
             celune = runtime.Celune(
                 tts_backend=backend,
