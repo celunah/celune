@@ -155,40 +155,22 @@ will be unavailable.
 
 ## VRAM presets & requirements
 
-Celune has several VRAM presets available. Here are their baseline requirements:
+Celune reserves 2 GiB for the system and other GPU users. The presets name the
+minimum total GPU capacity; the remaining budget is available to Celune:
 
-> Low (6GB VRAM recommended)
->
-> This preset supports:
->
-> - Qwen3-TTS 0.6B / Celune Mini / LuxTTS
-> - SeedVC voice changer mode
-> - Normalization on CPU
->
-> Medium (8GB VRAM required)
->
-> This preset supports:
->
-> - All of the above, and:
-> - Qwen3-TTS 1.7B
->
-> High (12GB VRAM required)
->
-> This preset supports:
->
-> - All of the above, and:
-> - High-end TTS backends, such as VoxCPM2 or dots.tts MF
-> - Persona (4-bit) (not all models may fit, use Pocket TTS if uncertain)
->
-> Extra High (16GB VRAM and beyond)
->
-> This preset supports:
->
-> - All of the above, and:
-> - Persona (8-bit)
-> - Agentic features
-> - Normalization on GPU
-> - Upcoming advanced features
+| Preset | Total VRAM | Celune budget |
+| --- | ---: | ---: |
+| `low` | 6 GB | 4 GiB |
+| `medium` | 8 GB | 6 GiB |
+| `high` | 12 GB | 10 GiB |
+| `xhigh` | 16 GB or more | 14 GiB or more |
+
+Persona and standard agent models require `high`; registered smart 8B-tier
+models require `xhigh`. Persona context is capped at 2,048 tokens outside agent
+mode and 8,192 tokens in agent mode. Known model combinations are checked
+against their hardware profiles. An unprofiled combination is allowed to
+proceed with a warning that it may not work on that hardware; it can still fail
+at runtime if it exhausts GPU memory.
 
 The desired preset may be set in Celune's configuration file. Refer to `default_config.yaml` for details.
 

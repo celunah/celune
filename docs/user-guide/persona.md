@@ -20,6 +20,10 @@ capabilities = celune.vision.capabilities() if celune.vision is not None else No
 probes. A speech-only model has no attachment path, even if the UI command is
 present.
 
+The `high` preset supports registered standard models, including the 4B tier.
+Registered smart 8B-tier models require `xhigh`. Persona context is capped at
+2,048 tokens outside agent mode; agent requests use a separate 8,192-token cap.
+
 ## Character context
 
 The active CEVOICE/CECHAR pack supplies the character identity, speaking style,
@@ -41,9 +45,10 @@ speech model, automatic language detection by default, a five-second no-input
 timeout, and a 1.5-second speech-end delay.
 
 The transcriber exposes segment and word timestamps for the voice-input
-workflow. Input is resampled to the runtime's audio invariants before
-transcription. Speech captions use the separate IPA aligner documented in
-[speech](speech.md).
+workflow. Whisper loads when a recording is transcribed and unloads after its
+final queued snapshot or cancellation. Input is resampled to the runtime's
+audio invariants before transcription. Speech captions use the separate IPA
+aligner documented in [speech](speech.md).
 
 ## Attachments
 

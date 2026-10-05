@@ -356,7 +356,7 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
             super().__init__(
                 log=log,
                 fatal=fatal,
-                quantize=bool(backend_kwargs.get("quantize", False)),
+                quantize=bool(backend_kwargs.get("quantize", True)),
             )
             self._start_packet_reader()
             self._load_description()

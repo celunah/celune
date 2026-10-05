@@ -109,7 +109,7 @@ class VoxCPM2(CeluneBackend[VoxCPM]):
         self,
         log: Callable[[str, str], None],
         fatal: Optional[Callable[[], None]] = None,
-        quantize: bool = False,
+        quantize: bool = True,
     ) -> None:
         super().__init__(log=log, fatal=fatal, quantize=quantize)
         self.log = log

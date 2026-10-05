@@ -15,7 +15,7 @@ import contextlib
 from typing import Never, Union, ClassVar, Optional, cast, final
 from pathlib import Path
 from dataclasses import dataclass
-from collections.abc import Callable, Generator
+from collections.abc import Mapping, Callable, Generator
 
 import numpy as np
 import torch
@@ -29,6 +29,8 @@ from .vram import (
     backend_allowed,
     resolve_vram_preset,
     resolve_backend_name,
+    is_cuda_out_of_memory,
+    release_cuda_after_oom,
 )
 from .locks import ComponentLockLease
 from .modes import (
@@ -61,7 +63,6 @@ from .pipeline import (
     playback_worker_job,
     generation_worker_job,
 )
-from . import speech as speech_module
 from .constants import (
     APP_NAME,
     AGENT_MAX_LOOPS,
@@ -147,6 +148,17 @@ from .dataclasses.properties import (
     bind_forwarded_properties,
 )
 
+
+def _load_speech_module():
+    """Import speech helpers after the pipeline facade has been initialized."""
+    from . import speech
+
+    return speech
+
+
+speech_module = _load_speech_module()
+
+
 play_pipeline = speech_module.play
 close_pipeline = speech_module.close
 queue_sfx_audio = speech_module.queue_sfx_audio
@@ -181,6 +193,29 @@ def _config_int(value: JSONSerializable, default: int) -> int:
     if value is None:
         return default
     raise TypeError("config value cannot be converted to int")
+
+
+def _tts_quantization_enabled(
+    config: Optional[Mapping[str, JSONSerializable]],
+    backend_spec: CoreBackendSpec,
+) -> bool:
+    """Resolve the default TTS quantization policy, excluding LuxTTS."""
+    if isinstance(backend_spec, CeluneVCBackend):
+        return False
+    if isinstance(backend_spec, type) and issubclass(backend_spec, CeluneVCBackend):
+        return False
+    raw_name = (
+        backend_spec
+        if isinstance(backend_spec, str)
+        else getattr(backend_spec, "name", "")
+    )
+    backend_name = raw_name.strip().lower() if isinstance(raw_name, str) else ""
+    return backend_name != "luxtts" and config_bool(
+        config,
+        "CELUNE_TTS_QUANTIZE",
+        "quantize",
+        default=True,
+    )
 
 
 def _resolve_input_mode(config: Config, requested_mode: Optional[str] = None) -> str:
@@ -261,7 +296,9 @@ def _agent_task_config(config: Config) -> AgentTaskConfig:
             )
             else None
         ),
-        context_size=positive("context_size", AGENT_CONTEXT_SPACE),
+        context_size=min(
+            positive("context_size", AGENT_CONTEXT_SPACE), AGENT_CONTEXT_SPACE
+        ),
         compact_at=(
             values["compact_at"]
             if isinstance(values.get("compact_at"), int)
@@ -567,7 +604,7 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
             tts_backend = preset.default_backend
 
         backend_kwargs: dict[str, Optional[Union[bool, str]]] = {
-            "quantize": config_bool(config, "CELUNE_TTS_QUANTIZE", "quantize"),
+            "quantize": _tts_quantization_enabled(config, tts_backend),
         }
         if isinstance(tts_backend, CeluneBackend):
             tts_backend.quantization_requested = bool(backend_kwargs["quantize"])
@@ -1464,11 +1501,7 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
     ) -> dict[str, JSONSerializable]:
         """Return constructor kwargs needed to instantiate one backend specification."""
         backend_kwargs: dict[str, JSONSerializable] = {
-            "quantize": config_bool(
-                self.config,
-                "CELUNE_TTS_QUANTIZE",
-                "quantize",
-            ),
+            "quantize": _tts_quantization_enabled(self.config, backend_spec),
         }
         raw_name = getattr(backend_spec, "name", None)
         backend_name = (
@@ -1654,14 +1687,23 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
         model_name = backend.model_id_for_voice(voice)
         try:
             model = cast(PreTrainedModel, backend.load_model(model_name))
-        except Exception:
+        except Exception as error:
+            if is_cuda_out_of_memory(error):
+                with contextlib.suppress(Exception):
+                    backend.unload_model()
+                release_cuda_after_oom()
+                raise
             if not backend.quantization_requested:
                 raise
             backend.disable_runtime_quantization()
             backend.unload_model()
             try:
                 model = cast(PreTrainedModel, backend.load_model(model_name))
-            except Exception:
+            except Exception as recovery_error:
+                if is_cuda_out_of_memory(recovery_error):
+                    with contextlib.suppress(Exception):
+                        backend.unload_model()
+                    release_cuda_after_oom()
                 fatal = getattr(backend, "_fatal_callback", None)
                 if callable(fatal):
                     fatal()

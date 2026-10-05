@@ -671,7 +671,7 @@ class FireRedTTS3(CeluneBackend[_FireRedModel]):
         log: Callable[[str, str], None],
         model_id: Optional[str] = None,
         fatal: Optional[Callable[[], None]] = None,
-        quantize: bool = False,
+        quantize: bool = True,
     ) -> None:
         super().__init__(
             log=log,

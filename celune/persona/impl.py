@@ -29,6 +29,7 @@ from ..constants import (
     PERSONA_DEFAULT_MODEL_ID,
     PERSONA_HISTORY_MESSAGES,
     DEFAULT_PERSONA_DESCRIPTION,
+    persona_model_tier,
 )
 from .capabilities import PersonaCapabilities
 from ..typing.common import JSON, JSONSerializable
@@ -221,10 +222,10 @@ def persona_config(config: Mapping[str, JSONSerializable]) -> Config:
 
 
 def persona_context_size(config: Mapping[str, JSONSerializable]) -> int:
-    """Return Persona's configured prompt context size."""
+    """Return Persona's configured prompt context size capped for 12 GB hardware."""
     value = persona_config(config).get("context_size")
     return (
-        value
+        min(value, PERSONA_CONTEXT_SPACE)
         if isinstance(value, int) and not isinstance(value, bool) and value > 0
         else PERSONA_CONTEXT_SPACE
     )
@@ -789,7 +790,10 @@ def persona_enabled(config: Mapping[str, JSONSerializable]) -> bool:
     preset = resolve_vram_preset(config)
     if not mode_allows_persona(mode):
         return False
-    return preset.persona_enabled
+    if not preset.persona_enabled:
+        return False
+    model_tier = persona_model_tier(persona_model_id(config))
+    return not (preset.tier == "high" and model_tier == "smart")
 
 
 def persona_talkback_enabled(config: Mapping[str, JSONSerializable]) -> bool:

@@ -990,6 +990,8 @@ def _persona_transcription_worker(
 
         self._shutdown_vc_stream(stream)
         self._close_live_vad(vad)
+        with contextlib.suppress(Exception):
+            transcriber.unload()
         if component_lease is not None:
             component_lease.release()
 

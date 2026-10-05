@@ -25,6 +25,7 @@ import soundfile as sf
 from huggingface_hub import snapshot_download
 
 from ...i18n import string
+from ...vram import backend_vram_report, is_cuda_out_of_memory, release_cuda_after_oom
 from ...paths import temp_data_dir, huggingface_progress, huggingface_hub_cache_dir
 from ...utils import discard
 from ...cevoice import CEVoiceLoader, default_loader
@@ -32,11 +33,10 @@ from .contracts import ModelContract
 from .contracts import model_contract as resolve_model_contract
 from ...constants import N_A_NUMERIC
 from ...exceptions import BackendError
-from ...typing.common import JSON
 from .quantization import QuantizationMode, quantization_mode, quantize_component
+from ...typing.common import JSON
 from ...typing.aliases import LogLevel, AudioChunk, RuntimeValue
 from ...typing.backends import BackendModel
-from ...vram import backend_vram_report
 
 __all__ = [
     "BackendModel",
@@ -244,7 +244,7 @@ class CeluneBackend[ModelT](ABC):
         log: Callable[[str, str], None],
         model_name: Optional[str] = None,
         fatal: Optional[Callable[[], None]] = None,
-        quantize: bool = False,
+        quantize: bool = True,
     ) -> None:
         self.model_name: Optional[str]
         if model_name is not None:
@@ -617,7 +617,12 @@ class CeluneBackend[ModelT](ABC):
 
         try:
             self.model = self.load_model(self.model_name)
-        except Exception:
+        except Exception as error:
+            if is_cuda_out_of_memory(error):
+                with contextlib.suppress(Exception):
+                    self.unload_model()
+                release_cuda_after_oom()
+                raise
             if not getattr(self, "quantization_attempted", False) or not getattr(
                 self, "quantization_requested", False
             ):

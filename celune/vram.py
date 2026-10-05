@@ -1,7 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
 """VRAM preset resolution and runtime accounting helpers for Celune."""
 
+import gc
+import os
 import math
+import contextlib
 from typing import Optional, cast
 from dataclasses import dataclass
 from collections.abc import Mapping, Iterator
@@ -9,50 +12,39 @@ from collections.abc import Mapping, Iterator
 import torch
 from torch import nn
 
-from .constants import TIERS, VRAM_REQUIREMENTS
+from .i18n import string
+from .constants import (
+    TIERS,
+    VRAM_BUDGETS,
+    VRAM_REQUIREMENTS,
+    AGENT_CONTEXT_SPACE,
+    PERSONA_CONTEXT_SPACE,
+    VRAM_SYSTEM_RESERVE_GIB,
+    PERSONA_DEFAULT_MODEL_ID,
+    persona_model_tier,
+    remote_code_model_revision,
+)
 from .typing.common import JSON, VramTier, JSONSerializable
 
 QWEN3_0_6B_MODEL = "Qwen/Qwen3-TTS-12Hz-0.6B-Base"
 QWEN3_1_7B_MODEL = "Qwen/Qwen3-TTS-12Hz-1.7B-Base"
 
 TEST_BACKENDS = ("fake", "counting")
-PERSONA_HIGH_ALLOWED_BACKENDS = ("mini", "qwen3", "luxtts", *TEST_BACKENDS)
+KNOWN_TTS_BACKENDS = (
+    "mini",
+    "qwen3",
+    "dotstts",
+    "voxcpm2",
+    "luxtts",
+    "fireredtts3",
+    *TEST_BACKENDS,
+)
 BACKENDS_ALLOWED: Mapping[VramTier, list[str]] = {
     "low": ["mini", "qwen3", "luxtts", *TEST_BACKENDS],
-    "medium": ["mini", "qwen3", "luxtts", *TEST_BACKENDS],
-    "high": [
-        "mini",
-        "qwen3",
-        "dotstts",
-        "voxcpm2",
-        "luxtts",
-        *TEST_BACKENDS,
-    ],
-    "xhigh": [
-        "mini",
-        "qwen3",
-        "dotstts",
-        "voxcpm2",
-        "luxtts",
-        *TEST_BACKENDS,
-    ],
+    "medium": list(KNOWN_TTS_BACKENDS),
+    "high": list(KNOWN_TTS_BACKENDS),
+    "xhigh": list(KNOWN_TTS_BACKENDS),
 }
-
-
-def _persona_requested(
-    config: Optional[Mapping[str, JSONSerializable]],
-) -> bool:
-    """Return whether the configuration leaves Persona enabled."""
-    if config is None:
-        return False
-
-    raw_persona = config.get("persona", config.get("pyop", {}))
-    if isinstance(raw_persona, bool):
-        return raw_persona
-    if not isinstance(raw_persona, dict):
-        return True
-
-    return bool(raw_persona.get("enabled", True))
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,13 +60,210 @@ class VramPreset:
     normalizer_device: str
 
 
-def _allowed_backends(
+@dataclass(frozen=True, slots=True)
+class VramProfile:
+    """Measured peak VRAM for one exact Celune hardware/configuration key."""
+
+    gpu_name: str
+    configuration: tuple[str, ...]
+    model_revision: str
+    tts_revision: str
+    dtype: str
+    quantization: str
+    components: tuple[str, ...]
+    context_size: int
+    load_peak_bytes: int
+    warmup_peak_bytes: int
+    inference_peak_bytes: int
+
+    @property
+    def peak_bytes(self) -> int:
+        """Return the greatest recorded phase peak."""
+        return max(
+            self.load_peak_bytes,
+            self.warmup_peak_bytes,
+            self.inference_peak_bytes,
+        )
+
+
+VRAM_PROFILES: dict[tuple[str, ...], VramProfile] = {}
+
+
+def is_cuda_out_of_memory(error: BaseException) -> bool:
+    """Return whether an exception reports a CUDA allocation failure."""
+    out_of_memory_type = getattr(torch.cuda, "OutOfMemoryError", None)
+    if isinstance(out_of_memory_type, type) and isinstance(error, out_of_memory_type):
+        return True
+    message = str(error).casefold()
+    return "cuda" in message and (
+        "out of memory" in message or "alloc_failed" in message
+    )
+
+
+def release_cuda_after_oom() -> None:
+    """Collect released model references and return unused CUDA blocks."""
+    gc.collect()
+    if torch.cuda.is_available():
+        with contextlib.suppress(RuntimeError, AssertionError):
+            torch.cuda.empty_cache()
+
+
+def vram_profile_key(
     config: Optional[Mapping[str, JSONSerializable]],
+) -> tuple[str, ...]:
+    """Return the exact hardware and model configuration key for profile lookup."""
+    from .backends.tts.contracts import MODEL_CONTRACTS
+
+    values = config or {}
+    preset = resolve_vram_preset(config)
+    raw_persona = values.get("persona")
+    persona = raw_persona if isinstance(raw_persona, dict) else {}
+    raw_agent = values.get("agent")
+    agent = raw_agent if isinstance(raw_agent, dict) else {}
+    backend_value = values.get("backend")
+    backend = (
+        backend_value.strip().lower()
+        if isinstance(backend_value, str) and backend_value.strip()
+        else preset.default_backend
+    )
+    model_id = persona.get("model_id")
+    model_id = model_id.strip() if isinstance(model_id, str) else "default"
+    resolved_model_id = model_id
+    if resolved_model_id == "default":
+        resolved_model_id = PERSONA_DEFAULT_MODEL_ID
+    model_revision = remote_code_model_revision(resolved_model_id) or "unknown"
+    tts_contracts = tuple(
+        contract
+        for contract in MODEL_CONTRACTS
+        if contract.backend_id == backend
+        and (backend != "qwen3" or contract.model_id == preset.qwen3_clone_model_id)
+    )
+    tts_model_ids = ",".join(sorted({contract.model_id for contract in tts_contracts}))
+    tts_revisions = ",".join(
+        sorted(
+            {
+                f"{contract.revision}:{contract.variant or 'default'}"
+                for contract in tts_contracts
+            }
+        )
+    )
+    tts_components = ",".join(
+        sorted(
+            {
+                component.name
+                for contract in tts_contracts
+                for component in contract.components
+            }
+        )
+    )
+    tts_dtypes = ",".join(
+        sorted(
+            {
+                f"{component.name}:{rule.prefix}:{'|'.join(rule.dtypes)}"
+                for contract in tts_contracts
+                for component in contract.components
+                for rule in component.runtime_dtypes
+            }
+        )
+    )
+    gpu_name = "unavailable"
+    capability: tuple[int, int] = (0, 0)
+    if torch.cuda.is_available():
+        try:
+            gpu_name = torch.cuda.get_device_name(0)
+            capability = torch.cuda.get_device_capability(0)
+        except (RuntimeError, AssertionError):
+            pass
+    mode = values.get("mode")
+    mode_name = mode.strip().lower() if isinstance(mode, str) else "converse"
+    persona_requested = bool(persona.get("enabled", True))
+    known_persona_tier = persona_model_tier(resolved_model_id)
+    persona_active = (
+        preset.persona_enabled
+        and persona_requested
+        and not (preset.tier == "high" and known_persona_tier == "smart")
+        and mode_name in {"converse", "agent"}
+    )
+    agent_active = (
+        mode_name == "agent" and persona_active and agent_vram_compatible(config)
+    )
+    persona_context = persona.get("context_size", PERSONA_CONTEXT_SPACE)
+    agent_context = agent.get("context_size", AGENT_CONTEXT_SPACE)
+    quantize_setting = os.getenv("CELUNE_TTS_QUANTIZE")
+    quantize_requested = (
+        quantize_setting.strip().lower() in {"1", "true", "on", "yes", "enabled"}
+        if quantize_setting is not None
+        else values.get("quantize", True) is True
+    )
+    quantization = "native-lux"
+    if backend != "luxtts":
+        quantization = "bf16"
+        if quantize_requested:
+            if capability >= (8, 9):
+                quantization = "fp8"
+            elif capability >= (8, 0):
+                quantization = "int8"
+    return (
+        gpu_name,
+        preset.tier,
+        mode_name,
+        backend,
+        tts_model_ids or "unknown",
+        tts_revisions or "unknown",
+        tts_dtypes or "unknown",
+        tts_components or "unknown",
+        model_id,
+        model_revision,
+        preset.persona_quantization,
+        str(min(persona_context, PERSONA_CONTEXT_SPACE))
+        if isinstance(persona_context, int) and not isinstance(persona_context, bool)
+        else str(PERSONA_CONTEXT_SPACE),
+        str(min(agent_context, AGENT_CONTEXT_SPACE))
+        if isinstance(agent_context, int) and not isinstance(agent_context, bool)
+        else str(AGENT_CONTEXT_SPACE),
+        quantization,
+        f"persona-kv:{bool(persona.get('quantize_kv_cache', values.get('quantize_kv_cache', True)))}",
+        "persona" if persona_active else "no-persona",
+        "agent" if agent_active else "no-agent",
+        "normalizer" if values.get("use_normalizer", False) else "no-normalizer",
+        "whisper-on-demand" if persona_active else "no-whisper",
+    )
+
+
+def vram_profile_fits(
+    config: Optional[Mapping[str, JSONSerializable]],
+) -> Optional[bool]:
+    """Return whether a confirmed profile fits both preset and current headroom.
+
+    ``None`` means no exact hardware/configuration profile is available and the
+    caller should allow startup while warning the user.
+    """
+    profile = VRAM_PROFILES.get(vram_profile_key(config))
+    if profile is None:
+        return None
+
+    tier = resolve_vram_preset(config).tier
+    budget_bytes = VRAM_BUDGETS[tier] * 1024**3
+    if profile.peak_bytes > budget_bytes:
+        return False
+
+    if torch.cuda.is_available():
+        try:
+            available_bytes, _ = torch.cuda.mem_get_info(0)
+            current_allocated = torch.cuda.memory_allocated(0)
+        except (RuntimeError, AssertionError):
+            return None
+        system_reserve_bytes = VRAM_SYSTEM_RESERVE_GIB * 1024**3
+        additional_bytes = max(0, profile.peak_bytes - current_allocated)
+        if additional_bytes > max(0, available_bytes - system_reserve_bytes):
+            return False
+    return True
+
+
+def _allowed_backends(
     preset: VramPreset,
 ) -> tuple[str, ...]:
-    """Return backend names allowed by the preset and Persona configuration."""
-    if preset.tier == "high" and preset.persona_enabled and _persona_requested(config):
-        return PERSONA_HIGH_ALLOWED_BACKENDS
+    """Return backend names whose known weight floor fits the preset."""
     return tuple(BACKENDS_ALLOWED[preset.tier])
 
 
@@ -109,6 +298,7 @@ def validate_vram_preset(
     """
     configured_tier = vram_tier(config)
 
+    warnings: list[str] = []
     if torch.cuda.is_available():
         _, total_bytes = torch.cuda.mem_get_info(0)
         total_gb = math.ceil(total_bytes / 1024**3)
@@ -119,13 +309,29 @@ def validate_vram_preset(
             tier = TIERS[TIERS.index(tier) - 1]
 
         if tier != configured_tier:
-            return (
-                f"You don't have enough VRAM ({total_gb} GB) for the "
-                f"'{configured_tier}' preset. "
-                f"Setting '{tier}' instead."
+            warnings.append(
+                string(
+                    "vram.preset_reduced",
+                    total=total_gb,
+                    requested=configured_tier,
+                    selected=tier,
+                )
             )
 
-    return None
+    if configured_tier == "high" and config is not None:
+        raw_persona = config.get("persona")
+        persona = raw_persona if isinstance(raw_persona, dict) else {}
+        model_id = persona.get("model_id")
+        if isinstance(model_id, str) and persona_model_tier(model_id) == "smart":
+            warnings.append(string("vram.smart_model_requires_xhigh"))
+
+    profile_status = vram_profile_fits(config)
+    if profile_status is None:
+        warnings.append(string("vram.configuration_unprofiled"))
+    elif not profile_status:
+        warnings.append(string("vram.profile_exceeds_budget"))
+
+    return "\n".join(warnings) if warnings else None
 
 
 def resolve_vram_preset(
@@ -176,9 +382,7 @@ def resolve_vram_preset(
         return VramPreset(
             tier="high",
             default_backend="qwen3",
-            allow_voxcpm2=(
-                "voxcpm2" in BACKENDS_ALLOWED["high"] and not _persona_requested(config)
-            ),
+            allow_voxcpm2="voxcpm2" in BACKENDS_ALLOWED["high"],
             qwen3_clone_model_id=QWEN3_1_7B_MODEL,
             persona_enabled=True,
             persona_quantization="4bit",
@@ -214,7 +418,7 @@ def resolve_backend_name(
         return preset.default_backend
 
     normalized = requested_backend.strip().lower()
-    if normalized in _allowed_backends(config, preset):
+    if normalized in _allowed_backends(preset):
         return normalized
     return preset.default_backend
 
@@ -235,14 +439,23 @@ def backend_allowed(
     """
     normalized = backend_name.strip().lower()
     preset = resolve_vram_preset(config)
-    return normalized in _allowed_backends(config, preset)
+    return normalized in _allowed_backends(preset)
 
 
 def agent_vram_compatible(
     config: Optional[Mapping[str, JSONSerializable]],
 ) -> bool:
     """Return whether the resolved VRAM preset supports agent mode."""
-    return resolve_vram_preset(config).tier == "xhigh"
+    tier = resolve_vram_preset(config).tier
+    if tier not in {"high", "xhigh"}:
+        return False
+    if tier == "high" and config is not None:
+        raw_persona = config.get("persona")
+        persona = raw_persona if isinstance(raw_persona, dict) else {}
+        model_id = persona.get("model_id")
+        if isinstance(model_id, str) and persona_model_tier(model_id) == "smart":
+            return False
+    return True
 
 
 def _iter_component_tensors(

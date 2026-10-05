@@ -136,6 +136,43 @@ Agent mode adds planning, schema validation, approvals, and task lifecycle on
 top of Persona. The agent can choose only registered tools; local management is
 an explicit opt-in catalog, not a hidden fallback.
 
+## VRAM budgets and profiles
+
+`celune/constants.py` keeps the minimum total capacity for each preset and
+subtracts a fixed 2 GiB system reserve to derive Celune's budget. `celune/vram.py`
+resolves the active GPU, backend and artifact revisions, quantization, model
+tiers, context limits, and enabled GPU components into an exact profile key.
+`VramProfile` stores load, warmup, and inference peaks plus dtype, quantization,
+revision, and component metadata.
+
+At startup, Celune looks for that exact key in `VRAM_PROFILES`. A known profile
+is rejected if its peak exceeds the preset budget or the current free memory
+after subtracting this process's current allocations and the 2 GiB reserve. A
+missing profile only produces a localized warning; Celune proceeds and handles
+a runtime CUDA out-of-memory error by releasing
+partial allocations and returning generation to an idle state. Add measured
+profiles to `celune/vram.py` only with the exact GPU name, revisions, component
+set, and all three phase peaks. Do not treat contract weight sizes or a profile
+from a different GPU as a confirmed peak measurement.
+No measured profile records are currently shipped, so configurations currently
+use the warning-and-proceed path until a hardware-specific profile is recorded.
+
+Persona and agent context are capped at 2,048 and 8,192 tokens respectively.
+Emotion analysis calls the Qwen text decoder directly with hidden-state
+collection and KV caching disabled, retaining only `last_hidden_state`.
+Whisper is loaded for a Persona recording session and unloaded after its final
+queued transcription or cancellation.
+
+TTS quantization defaults to enabled for supported TorchAO backends; LuxTTS is
+excluded. CUDA out-of-memory errors do not trigger BF16 recovery, which could
+require more memory. The active request fails with a warning while the runtime
+remains usable.
+
+Validation uses `python scripts/run_ci.py`. GPU profile records require
+sequential measurements of load, warmup, and inference on the target hardware;
+static tests verify profile matching, preset budgets, unknown-profile behavior,
+and out-of-memory cleanup without requiring a GPU.
+
 ## Shutdown
 
 UI unmount, `CTRL+Q`, API shutdown, process-loss detection, and `Celune.close()`

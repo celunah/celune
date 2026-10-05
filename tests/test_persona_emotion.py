@@ -1,13 +1,14 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for Persona emotion blending."""
 
-from collections.abc import Sequence
 from types import SimpleNamespace
-from typing import Optional, Union
+from typing import Union, Optional
+from collections.abc import Sequence
 
-import torch
 import numpy as np
+import torch
 from transformers.tokenization_utils_base import BatchEncoding
+
 from celune.utils import discard
 from celune.typing.persona import ModelGenerateKwargValue
 from celune.persona.emotion import (
@@ -100,7 +101,9 @@ class FakePersonaModel:
         assert isinstance(input_ids, torch.Tensor)
         input_ids = input_ids.float()
         hidden = torch.stack((input_ids, input_ids * 2), dim=-1)
-        return SimpleNamespace(hidden_states=(hidden,))
+        assert kwargs["output_hidden_states"] is False
+        assert kwargs["use_cache"] is False
+        return SimpleNamespace(last_hidden_state=hidden)
 
     @staticmethod
     def generate(**kwargs: ModelGenerateKwargValue) -> torch.Tensor:

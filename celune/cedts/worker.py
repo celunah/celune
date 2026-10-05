@@ -14,6 +14,7 @@ from contextlib import suppress
 from collections import OrderedDict
 from collections.abc import Mapping, Callable
 
+from ..vram import is_cuda_out_of_memory, release_cuda_after_oom
 from ..paths import configure_numba_cache
 from ..cevoice import select_voice_bundle
 from .protocol import (
@@ -543,7 +544,13 @@ def _run_request(
     if operation == "load_model":
         try:
             model = backend.load_model(**cast(BackendArguments, arguments))
-        except Exception:
+        except Exception as error:
+            if is_cuda_out_of_memory(error):
+                with suppress(Exception):
+                    backend.unload_model()
+                _release_worker_models(models)
+                release_cuda_after_oom()
+                raise
             if not bool(getattr(backend, "quantization_requested", False)):
                 raise
             disable_quantization = getattr(
@@ -961,6 +968,8 @@ def main() -> int:
             )
             next_model_id = updated_model_id
         except Exception as error:
+            if is_cuda_out_of_memory(error):
+                release_cuda_after_oom()
             response = _error_response(error)
             response_kind = "error"
             _worker_log(

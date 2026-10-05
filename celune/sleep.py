@@ -11,6 +11,7 @@ import torch
 
 from . import celune as _core
 from .i18n import string, tagged_string
+from .vram import is_cuda_out_of_memory, release_cuda_after_oom
 from .utils import format_error_message
 from .config import config_value
 from .binding import install_class_functions
@@ -264,7 +265,17 @@ def wake_from_sleep(self) -> bool:
                 self._start_wake_background_jobs(unload)
             return True
         except Exception as error:
-            self.fatal()
+            cuda_oom = is_cuda_out_of_memory(error)
+            if cuda_oom:
+                with contextlib.suppress(Exception):
+                    self.backend.unload_model()
+                self.model = None
+                self.model_name = ""
+                release_cuda_after_oom()
+                self.sleeping = True
+                self.cur_state = "sleeping"
+            else:
+                self.fatal()
             self.log(
                 format_error_message(
                     tagged_string("celune.wake_error", "WAKE ERROR"),
@@ -273,10 +284,14 @@ def wake_from_sleep(self) -> bool:
                 ),
                 "error",
             )
-            self.status_callback(
-                string("status.could_not_wake", app_name=APP_NAME), "error"
+            status = (
+                string("pipeline.generation_oom")
+                if cuda_oom
+                else string("status.could_not_wake", app_name=APP_NAME)
             )
-            self.error_callback(string("status.could_not_wake", app_name=APP_NAME))
+            self.status_callback(status, "warning" if cuda_oom else "error")
+            if not cuda_oom:
+                self.error_callback(status)
             self.progress_callback(0, 1)
             return False
         finally:

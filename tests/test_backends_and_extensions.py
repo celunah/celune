@@ -67,6 +67,23 @@ from .support import (
 class TestBackend(CeluneTestCase):
     """Tests for backend base behavior and backend resolution."""
 
+    def test_tts_load_oom_does_not_retry_unquantized_model(self) -> None:
+        """Verify CUDA OOM releases a partial load without retrying BF16."""
+        backend = FakeBackend(quantize=True)
+        backend.quantization_attempted = True
+        oom = torch.cuda.OutOfMemoryError("CUDA out of memory")
+        with (
+            mock.patch.object(backend, "load_model", side_effect=oom) as load,
+            mock.patch.object(backend, "unload_model") as unload,
+            mock.patch("celune.backends.tts.base.release_cuda_after_oom") as release,
+            pytest.raises(torch.cuda.OutOfMemoryError),
+        ):
+            backend.load_default_model()
+
+        load.assert_called_once()
+        unload.assert_called_once()
+        release.assert_called_once()
+
     def test_tts_preload_uses_celune_huggingface_cache(self) -> None:
         """Verify generic TTS preloading downloads into Celune's Hub cache."""
         with mock_mini_backend() as mini_cls:
@@ -1687,7 +1704,9 @@ class TestBackend(CeluneTestCase):
                 ) as from_pretrained,
                 mock.patch.dict(os.environ, {}, clear=False),
             ):
-                backend = qwen3_cls(log=lambda _msg, _severity="info": None)
+                backend = qwen3_cls(
+                    log=lambda _msg, _severity="info": None, quantize=False
+                )
                 assert backend.load_model("Qwen/test") is model
                 assert os.environ["NUMBA_CACHE_DIR"] == str(tmp_path / "numba")
 

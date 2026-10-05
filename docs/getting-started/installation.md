@@ -8,14 +8,20 @@ to install and launch Celune from the source repository.
 Celune supports Python 3.12, 3.13, and 3.14 on Windows and Linux. The core
 environment is GPU-oriented: most Persona and TTS features expect an NVIDIA
 RTX 30-series-or-newer GPU, while CPU-only operation is supported for the Mini
-backend. VRAM presets are approximately:
+backend. VRAM presets name the minimum total GPU capacity and reserve 2 GiB for
+the system and other GPU users:
 
-| Preset | Target VRAM |
-| --- | ---: |
-| `low` | 6 GB |
-| `medium` | 8 GB |
-| `high` | 12 GB |
-| `xhigh` | 16 GB or more |
+| Preset | Total VRAM | Celune budget |
+| --- | ---: | ---: |
+| `low` | 6 GB | 4 GiB |
+| `medium` | 8 GB | 6 GiB |
+| `high` | 12 GB | 10 GiB |
+| `xhigh` | 16 GB or more | 14 GiB or more |
+
+An unprofiled hardware/model combination is allowed to start with a warning that
+it may not work on that hardware. A confirmed profile that exceeds the budget
+or current GPU headroom is rejected. Persona and standard agent models require
+`high`; registered smart 8B-tier models require `xhigh`.
 
 The `doctor` command reports the active Python, PyTorch, CUDA, GPU, and system
 dependency state. It is the first diagnostic to run when a feature is missing.

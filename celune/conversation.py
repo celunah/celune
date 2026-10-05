@@ -6,16 +6,20 @@ from __future__ import annotations
 import json
 import queue
 import threading
-from collections.abc import Callable
-from typing import TYPE_CHECKING, Optional, cast
 from uuid import uuid4
+from typing import TYPE_CHECKING, Optional, cast
+from collections.abc import Callable
 
+from .i18n import string
+from .utils import format_error_message
+from .binding import install_class_functions, install_module_functions
 from .cevoice import (
-    bundle_character_name,
     default_loader,
+    bundle_character_name,
     persona_files_from_bundle,
     persona_metadata_from_manifest,
 )
+from .threads import run_in_daemon_thread
 from .constants import (
     APP_NAME,
     AGENT_CONTEXT_SPACE,
@@ -23,57 +27,53 @@ from .constants import (
     AGENT_ROUTING_MAX_NEW_TOKENS,
     PERSONA_MEMORY_EMBEDDING_MODEL,
 )
-from .i18n import string
-from .persona.emotion import PersonaEmotionAnalyzer
-from .persona.memory import PersonaMemoryStore, classifier_memory_candidates
-from .persona.paths import persona_override_files
-from .persona.prompts import (
-    CharacterProfile,
-    PersonaCard,
-    PersonaContext,
-    PersonaPromptBuilder,
-    PersonaSourceMaterial,
-    RetrievedMemoryBundle,
-)
 from .persona.impl import (
-    compact_persona_history,
-    default_persona_age,
-    default_persona_context,
-    default_persona_gender,
-    default_persona_persona,
+    persona_config,
+    persona_enabled,
+    persona_model_id,
+    pack_persona_text,
     pack_identity_text,
     pack_persona_lines,
-    pack_persona_text,
-    persona_active_character_name,
-    persona_config,
+    default_persona_age,
     persona_context_size,
-    persona_debug_overrides_enabled,
-    persona_enabled,
-    persona_history_messages,
-    persona_model_id,
-    persona_pending_attachments,
     persona_quantization,
-    persona_session_summary,
     persona_style_traits,
+    default_persona_gender,
+    compact_persona_history,
+    default_persona_context,
+    default_persona_persona,
+    persona_session_summary,
+    persona_history_messages,
+    persona_pending_attachments,
+    persona_active_character_name,
+    persona_debug_overrides_enabled,
 )
 from .typing.agent import (
-    AgentClassificationFailureKind,
-    AgentContext,
-    AgentRoute,
-    AgentToolSchema,
     ToolCall,
+    AgentRoute,
+    AgentContext,
+    AgentToolSchema,
+    AgentClassificationFailureKind,
 )
-from .typing.common import JSON, JSONSerializable
-from .threads import run_in_daemon_thread
 from .typing.locks import (
     ComponentLockName,
     ComponentLockOwner,
     ComponentLockRequirement,
 )
+from .persona.paths import persona_override_files
+from .typing.common import JSON, JSONSerializable
+from .persona.memory import PersonaMemoryStore, classifier_memory_candidates
 from .typing.persona import PersonaModel, PersonaTokenizer
-from .utils import format_error_message
+from .persona.emotion import PersonaEmotionAnalyzer
+from .persona.prompts import (
+    PersonaCard,
+    PersonaContext,
+    CharacterProfile,
+    PersonaPromptBuilder,
+    PersonaSourceMaterial,
+    RetrievedMemoryBundle,
+)
 from .persona.capabilities import PersonaCapabilities
-from .binding import install_class_functions, install_module_functions
 
 if TYPE_CHECKING:
     from .celune import Celune
@@ -714,7 +714,7 @@ def build_persona_request(
     context_size = persona_context_size(engine.config)
     if agent_context is not None:
         context_size = (
-            agent_context.task.config.context_size
+            min(agent_context.task.config.context_size, AGENT_CONTEXT_SPACE)
             if agent_context.task is not None
             else AGENT_ROUTING_CONTEXT_SPACE
         )
@@ -745,7 +745,7 @@ def _configured_agent_context_size(engine: Celune) -> int:
         return AGENT_CONTEXT_SPACE
     value = raw.get("context_size")
     if isinstance(value, int) and not isinstance(value, bool) and value > 0:
-        return value
+        return min(value, AGENT_CONTEXT_SPACE)
     return AGENT_CONTEXT_SPACE
 
 

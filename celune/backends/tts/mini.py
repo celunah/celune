@@ -45,7 +45,7 @@ class Mini(CeluneBackend[TTSModel]):
         self,
         log: Callable[[str, str], None],
         fatal: Optional[Callable[[], None]] = None,
-        quantize: bool = False,
+        quantize: bool = True,
     ) -> None:
         super().__init__(log=log, fatal=fatal, quantize=quantize)
         self._validate_refs()

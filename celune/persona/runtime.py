@@ -7,7 +7,7 @@ import logging
 import threading
 import contextlib
 from typing import Union, Optional, cast
-from collections.abc import Mapping, Sequence, Generator
+from collections.abc import Mapping, Callable, Sequence, Generator
 
 import torch
 from transformers import (
@@ -24,7 +24,7 @@ from transformers.configuration_utils import PreTrainedConfig
 from transformers.tokenization_utils_base import BatchEncoding
 
 from ..i18n import string
-from ..vram import resolve_vram_preset
+from ..vram import resolve_vram_preset, is_cuda_out_of_memory, release_cuda_after_oom
 from .cache import create_quantized_kv_cache
 from ..utils import normalize_special_characters
 from ..constants import (
@@ -146,6 +146,16 @@ def _model_supports_emotion_probes(model: PersonaModel) -> bool:
     return isinstance(hidden_size, int) and hidden_size > 0
 
 
+def _load_persona_model_safely(loader: Callable[[], PersonaModel]) -> PersonaModel:
+    """Release temporary CUDA allocations when Persona loading runs out of memory."""
+    try:
+        return loader()
+    except Exception as error:
+        if is_cuda_out_of_memory(error):
+            release_cuda_after_oom()
+        raise
+
+
 class PersonaBackend:
     """Character-agnostic backend for Persona generation."""
 
@@ -206,44 +216,50 @@ class PersonaBackend:
         if normalized in {"4bit", "nf4", "bnb4", "bitsandbytes-4bit"}:
             if not torch.cuda.is_available():
                 raise RuntimeError("CUDA support required to quantize Persona")
-            model = cast(
-                PersonaModel,
-                Qwen3VLForConditionalGeneration.from_pretrained(
-                    model_id,
-                    trust_remote_code=True,
-                    revision=load_revision,
-                    device_map="auto",
-                    quantization_config=BitsAndBytesConfig(
-                        load_in_4bit=True,
-                        bnb_4bit_quant_type="nf4",
-                        bnb_4bit_compute_dtype=torch.bfloat16,
-                        bnb_4bit_use_double_quant=True,
+            model = _load_persona_model_safely(
+                lambda: cast(
+                    PersonaModel,
+                    Qwen3VLForConditionalGeneration.from_pretrained(
+                        model_id,
+                        trust_remote_code=True,
+                        revision=load_revision,
+                        device_map="auto",
+                        quantization_config=BitsAndBytesConfig(
+                            load_in_4bit=True,
+                            bnb_4bit_quant_type="nf4",
+                            bnb_4bit_compute_dtype=torch.bfloat16,
+                            bnb_4bit_use_double_quant=True,
+                        ),
                     ),
-                ),
+                )
             )
         elif normalized in {"8bit", "bnb8", "bitsandbytes-8bit"}:
             if not torch.cuda.is_available():
                 raise RuntimeError("CUDA support required to quantize Persona")
-            model = cast(
-                PersonaModel,
-                Qwen3VLForConditionalGeneration.from_pretrained(
-                    model_id,
-                    trust_remote_code=True,
-                    revision=load_revision,
-                    device_map="auto",
-                    quantization_config=BitsAndBytesConfig(load_in_8bit=True),
-                ),
+            model = _load_persona_model_safely(
+                lambda: cast(
+                    PersonaModel,
+                    Qwen3VLForConditionalGeneration.from_pretrained(
+                        model_id,
+                        trust_remote_code=True,
+                        revision=load_revision,
+                        device_map="auto",
+                        quantization_config=BitsAndBytesConfig(load_in_8bit=True),
+                    ),
+                )
             )
         elif normalized in {"none", "false", "off", "disabled"}:
-            model = cast(
-                PersonaModel,
-                Qwen3VLForConditionalGeneration.from_pretrained(
-                    model_id,
-                    trust_remote_code=True,
-                    revision=load_revision,
-                    device_map="auto",
-                    dtype=torch.bfloat16,
-                ),
+            model = _load_persona_model_safely(
+                lambda: cast(
+                    PersonaModel,
+                    Qwen3VLForConditionalGeneration.from_pretrained(
+                        model_id,
+                        trust_remote_code=True,
+                        revision=load_revision,
+                        device_map="auto",
+                        dtype=torch.bfloat16,
+                    ),
+                )
             )
         else:
             raise ValueError(f"unsupported Persona quantization mode: {quantization}")
@@ -403,7 +419,9 @@ class PersonaBackend:
                         repetition_penalty=request.repetition_penalty,
                         **generation_kwargs,
                     )
-                except Exception:
+                except Exception as error:
+                    if is_cuda_out_of_memory(error):
+                        raise
                     if generation_cache is None:
                         raise
                     _LOGGER.debug(

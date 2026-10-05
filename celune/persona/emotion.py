@@ -7,8 +7,8 @@ from typing import Optional, cast
 from dataclasses import dataclass
 from collections.abc import Mapping, Sequence
 
-import torch
 import numpy as np
+import torch
 from transformers.modeling_utils import PreTrainedModel
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 
@@ -284,22 +284,20 @@ class PersonaEmotionAnalyzer:
                 return_tensors="pt",
             )
             encoded = encoded.to(backend.model.device)
+            text_model = getattr(
+                getattr(backend.model, "model", None), "language_model", None
+            )
+            inference_model = text_model if callable(text_model) else backend.model
             with torch.inference_mode():
-                outputs = backend.model(
+                outputs = inference_model(
                     **encoded,
-                    output_hidden_states=True,
+                    output_hidden_states=False,
+                    use_cache=False,
                     return_dict=True,
                 )
-            hidden_states = cast(
-                Optional[tuple[torch.Tensor, ...]],
-                getattr(outputs, "hidden_states", None),
+            last_hidden = cast(
+                Optional[torch.Tensor], getattr(outputs, "last_hidden_state", None)
             )
-            if hidden_states is not None and hidden_states != ():
-                last_hidden = hidden_states[-1]
-            else:
-                last_hidden = cast(
-                    Optional[torch.Tensor], getattr(outputs, "last_hidden_state", None)
-                )
             if last_hidden is None:
                 self.last_error = (
                     "Persona VLM did not expose hidden states or last_hidden_state"

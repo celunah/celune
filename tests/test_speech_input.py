@@ -283,6 +283,7 @@ class TestSpeechInput(CeluneTestCase):
 
         ui.celune.think.assert_called_once_with("hello there")
         transcriber.transcribe.assert_called_once()
+        transcriber.unload.assert_called_once()
 
     def test_persona_recording_times_out_without_speech(self) -> None:
         """Verify silent Persona recording stops after the no-input timeout."""
@@ -407,6 +408,7 @@ class TestSpeechInput(CeluneTestCase):
 
         ui.celune.think.assert_not_called()
         transcriber.transcribe.assert_not_called()
+        transcriber.unload.assert_called_once()
         assert any(call.args[1] == "warning" for call in ui.safe_log.call_args_list)
 
     @staticmethod

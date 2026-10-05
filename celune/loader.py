@@ -3,42 +3,44 @@
 
 from __future__ import annotations
 
-import contextlib
 import gc
 import os
-import threading
 import time
+import threading
+import contextlib
 from typing import Optional, cast
 
 import torch
 from transformers.modeling_utils import PreTrainedModel
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 
-from .cevoice import announce_default_bundle, bundle_display_name, default_loader
-from .backends.tts import CeluneBackend
-from .constants import APP_NAME, NORMALIZER_MODEL_ID
-from .dataclasses.events import ReadyEvent
-from .exceptions import BackendError, NotAvailableError, RuntimeCheckError, WarmupError
 from .i18n import string, tagged_string
-from .modeling import load_normalizer_components, normalizer_device
-from .persona.impl import persona_enabled
-from .pipeline import (
-    force_stop_speech as force_stop_pipeline,
-    saved_output_speech_seconds,
-)
-from .runtime import log_runtime_banner, validate_runtime
-from .threads import run_in_daemon_thread
-from .typing.celune import Generative, NormalizerTokenizer
+from .vram import vram_profile_fits, resolve_vram_preset, validate_vram_preset
 from .utils import (
-    custom_assert,
     discard,
     format_error,
-    format_error_message,
+    custom_assert,
     format_number,
     is_port_usable,
+    format_error_message,
 )
-from .vram import resolve_vram_preset, validate_vram_preset
 from .binding import install_class_functions
+from .cevoice import default_loader, bundle_display_name, announce_default_bundle
+from .runtime import validate_runtime, log_runtime_banner
+from .threads import run_in_daemon_thread
+from .modeling import normalizer_device, load_normalizer_components
+from .pipeline import (
+    force_stop_speech as force_stop_pipeline,
+)
+from .pipeline import (
+    saved_output_speech_seconds,
+)
+from .constants import APP_NAME, NORMALIZER_MODEL_ID
+from .exceptions import WarmupError, BackendError, NotAvailableError, RuntimeCheckError
+from .backends.tts import CeluneBackend
+from .persona.impl import persona_enabled
+from .typing.celune import Generative, NormalizerTokenizer
+from .dataclasses.events import ReadyEvent
 
 __all__ = (
     "_start_configured_api",
@@ -143,6 +145,16 @@ def load(self, raise_on_error: bool = False, skip_runtime_check: bool = False) -
     vram_message = validate_vram_preset(self.config)
     if vram_message:
         self.log(vram_message, "warning")
+
+    if vram_profile_fits(self.config) is False:
+        message = string("vram.profile_exceeds_budget")
+        self.fatal()
+        self.log(message, "error")
+        self.error_callback(message)
+        self.progress_callback(0, 1)
+        if raise_on_error:
+            raise BackendError(message)
+        return False
 
     effective_vram_preset = resolve_vram_preset(self.config)
     self.log(

@@ -14,13 +14,13 @@ before the interface opens. `celune config view` prints the active file and
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `backend` | `null` | TTS or VC backend name. `null` lets Celune choose its normal backend. |
-| `quantize` | `false` | Try contract-approved TTS weight-only quantization: INT8 on Ampere and FP8 on sm89 or newer, with BF16 recovery. |
+| `quantize` | `true` | Try contract-approved TTS weight-only quantization: INT8 on Ampere and FP8 on sm89 or newer, with BF16 recovery. LuxTTS is excluded. |
 | `quantize_kv_cache` | `true` | Store Persona's attention-cache prefix in INT8 on Ampere or FP8 on `sm89+`; use `false` for the normal dynamic cache. |
 | `voice_bundle` | `default` | CEVOICE/CECHAR name or path. |
 | `log_level` | `info` | `info`, `verbose`, or `debug`. |
 | `locale` | `null` | Locale override; `null` uses system detection. |
 | `mode` | `converse` | `speak`, `converse`, or `agent`. |
-| `vram` | `medium` | Model-size and memory preset: `low`, `medium`, `high`, or `xhigh`. Persona needs `high`; agent tasks need `xhigh`, with conversation fallback at `high`. |
+| `vram` | `medium` | Model-size and memory preset: `low`, `medium`, `high`, or `xhigh`. Persona and standard agent models need `high`; smart 8B-tier Persona models need `xhigh`. |
 | `headless` | `false` | Suppress the Textual interface. |
 | `headless_nocolor` | `false` | Suppress color in headless output. |
 | `theme` | `dark` | `dark` or `light`; a pack can supply its own accent colors. |
@@ -35,9 +35,27 @@ before the interface opens. `celune config view` prints the active file and
 change runtime behavior. Backend-specific settings should stay in their
 documented namespace instead of being duplicated at the top level.
 
+### VRAM budgets and profiles
+
+Each preset reserves 2 GiB for Windows/Linux and other GPU users. Celune's
+budget is therefore 4 GiB at `low`, 6 GiB at `medium`, 10 GiB at `high`, and
+14 GiB at `xhigh`. Preset names still describe minimum total GPU capacity.
+
+Persona context is capped at 2,048 tokens outside agent mode and 8,192 tokens
+in agent mode. Standard Persona models are available at `high`; smart models,
+including the registered 8B-tier variants, require `xhigh`.
+
+Celune checks exact hardware and model profiles when one is available. A
+confirmed configuration that exceeds its preset budget or current headroom is
+rejected. An unprofiled configuration is allowed to continue and logs:
+`This configuration is unprofiled and may not work on your hardware configuration.`
+It can still fail at load or inference time if the GPU runs out of memory.
+
 ### TTS quantization
 
-Set `quantize: true` to reduce TTS model VRAM use. Celune selects TorchAO
+Set `quantize: true` (the default) to reduce supported TTS model VRAM use.
+LuxTTS is excluded because its runtime is not eligible for TorchAO weight-only
+conversion. Celune selects TorchAO
 weight-only INT8 for Ampere devices before native FP8 support and FP8 for
 Ada-class (`sm89`) and newer devices. The model contracts identify the linear
 attention and feed-forward layers eligible for conversion; embeddings, norms,
@@ -47,13 +65,13 @@ backend-required dtype.
 For VoxCPM2, dots.tts, and FireRedTTS3, Celune quantizes the model on CPU
 before transferring it to CUDA. This prevents the full BF16 model and its
 quantized replacement from overlapping in VRAM during conversion. The lighter
-backends retain their existing loading path. If conversion, startup speech
-probing, or later speech generation fails, Celune unloads the quantized model,
-disables quantization for that runtime, and reloads the model in BF16. If the
-BF16 reload or its speech probe also fails, startup enters the normal fatal
-state; a failed later-generation recovery transitions the engine to the fatal
-state immediately. With `quantize: false`, TTS keeps its existing BF16 loading
-path.
+backends retain their existing loading path. For conversion, startup speech
+probing, or generation failures other than CUDA out-of-memory, Celune unloads
+the quantized model and retries in BF16. If that recovery also fails, startup
+enters the normal fatal state. A CUDA out-of-memory error does not retry with
+larger BF16 weights; Celune releases partial allocations, reports the failure,
+and returns speech generation to an idle state. Set `quantize: false` to opt
+out.
 
 `log_level` controls exception detail as well as ordinary diagnostics. `info`
 keeps handled failures concise, `verbose` appends the exception message, and
@@ -202,7 +220,7 @@ FastAPI/Gradio deployment.
 
 ```yaml
 persona:
-  context_size: 8192
+  context_size: 2048
   compact_at: 75
   max_turns: null
   debug_overrides: false
@@ -228,7 +246,8 @@ Persona is available in `converse` and `agent` modes; it is not enabled or
 disabled through a Persona-local switch. `context_size` bounds each ordinary
 Persona request, `compact_at` documents the context percentage at which
 history should be compacted, and `max_turns: null` leaves the turn count
-unbounded unless the memory settings impose a shorter history.
+unbounded unless the memory settings impose a shorter history. Context is
+capped at 2,048 tokens outside agent mode and 8,192 tokens in agent mode.
 
 Persona generation uses the configured `quantize_kv_cache` policy on CUDA. The
 quantized cache keeps a short BF16 tail for recent tokens and stores older
@@ -246,16 +265,16 @@ agent:
   fs_tools: true
   max_loops: 20
   max_tokens: null
-  context_size: 32768
+  context_size: 8192
   compact_at: 75
 ```
 
 `fs_tools` enables the local filesystem and process tool catalog. Agent task
 limits are applied when Celune creates a task; `null` for `max_tokens` means
-that generation is bounded only by the model and context limits. Lightweight
-agent routing and classification requests use a separate 8192-token ceiling,
-even when the task context is configured higher, to limit transient KV-cache
-allocation. Routing prompts contain only the current input and active task
+that generation is bounded only by the model and context limits. Agent context
+is capped at 8,192 tokens. Routing and classification requests use the same
+ceiling to limit transient KV-cache allocation. Routing prompts contain only
+the current input and active task
 metadata; they do not retain conversational history. Persona generation
 requests use the configured KV-cache policy and release unused CUDA allocator
 blocks after each response.
@@ -266,10 +285,10 @@ not grant arbitrary remote code. Memory records are character-scoped and are
 stored under the Persona data directory. Explicit memory requests are favored;
 the classifier is optional and confidence-gated.
 
-Persona requires at least the `high` preset. Agent mode additionally requires
-the `xhigh` preset while agent memory usage is being optimized. Selecting an
-incompatible preset disables the corresponding feature; Celune does not raise
-the configured VRAM target automatically.
+Persona and standard agent models require at least the `high` preset. Smart
+8B-tier Persona models require `xhigh`. Selecting an incompatible preset
+disables the corresponding feature; Celune does not raise the configured VRAM
+target automatically.
 
 ## Voice conversion
 

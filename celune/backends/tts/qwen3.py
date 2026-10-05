@@ -9,12 +9,12 @@ from collections.abc import Callable, Iterator
 from faster_qwen3_tts import FasterQwen3TTS
 from faster_qwen3_tts import __version__ as qwen3_ver
 
-from ...utils import available, custom_assert
-from ...i18n import string
-from ...typing.aliases import AudioChunk
-from ...cevoice import CEVoiceLoader, default_loader
-from ...paths import configure_numba_cache, huggingface_progress
 from .base import CeluneBackend, local_hf_offline_mode, cached_hf_snapshot_path
+from ...i18n import string
+from ...paths import huggingface_progress, configure_numba_cache
+from ...utils import available, custom_assert
+from ...cevoice import CEVoiceLoader, default_loader
+from ...typing.aliases import AudioChunk
 
 
 class Qwen3(CeluneBackend[FasterQwen3TTS]):
@@ -53,7 +53,7 @@ class Qwen3(CeluneBackend[FasterQwen3TTS]):
         x_vector_only: bool = False,
         clone_model_id: Optional[str] = None,
         fatal: Optional[Callable[[], None]] = None,
-        quantize: bool = False,
+        quantize: bool = True,
     ) -> None:
         super().__init__(log=log, fatal=fatal, quantize=quantize)
         self.x_vector_only = x_vector_only

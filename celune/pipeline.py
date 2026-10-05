@@ -27,6 +27,7 @@ import sounddevice as sd
 import pyrubberband as rb
 
 from .i18n import string, tagged_string
+from .vram import is_cuda_out_of_memory, release_cuda_after_oom
 from .paths import (
     outputs_dir,
 )
@@ -1797,8 +1798,9 @@ def _process_generation_request(
                     finish_stream=False,
                 )
 
+            cuda_oom = is_cuda_out_of_memory(original_error)
             recovery_error: Optional[Exception] = None
-            if getattr(engine.backend, "quantization_active", False):
+            if not cuda_oom and getattr(engine.backend, "quantization_active", False):
                 try:
                     _recover_quantized_tts(engine, request_language)
                 except Exception as caught_recovery_error:
@@ -1807,7 +1809,18 @@ def _process_generation_request(
             error = recovery_error or original_error
             short_input_error = _is_short_input_generation_error(error)
             input_too_short_message = string("pipeline.input_too_short")
-            if short_input_error:
+            if cuda_oom:
+                release_cuda_after_oom()
+                engine.log(
+                    format_error_message(
+                        tagged_string("pipeline.gen_error", "GEN ERROR"),
+                        error,
+                        engine.log_level,
+                    ),
+                    "warning",
+                )
+                engine.status_callback(string("pipeline.generation_oom"), "warning")
+            elif short_input_error:
                 engine.log(input_too_short_message, "warning")
             else:
                 engine.log(
@@ -1823,7 +1836,7 @@ def _process_generation_request(
             elif stream_queue is not None:
                 stream_queue.put(error)
                 stream_queue.put(None)
-            engine.cur_state = "idle" if short_input_error else "error"
+            engine.cur_state = "idle" if short_input_error or cuda_oom else "error"
             release_pipeline(engine)
             engine.progress_callback(0, 1)
             if short_input_error:

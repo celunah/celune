@@ -5,10 +5,10 @@ arbitrary shell or computer-control agent. The runtime exposes typed,
 allowlisted operations, validates every call against its schema, and routes
 mutating work through approval policy.
 
-Agent mode requires the `xhigh` VRAM preset while its memory usage is being
-optimized. If a lower preset is selected, agent routing is disabled rather than
-raising the configured preset automatically. Persona-only conversation requires
-at least the `high` preset.
+Agent mode requires at least the `high` VRAM preset with a standard Persona
+model. Registered smart 8B-tier Persona models require `xhigh`. At `high`, the
+agent context is capped at 8,192 tokens. If a lower preset is selected, agent
+routing is disabled rather than raising the configured preset automatically.
 
 ## Task lifecycle
 
@@ -21,8 +21,8 @@ not consume an iteration. Cancellation clears pending approval/choice state.
 The production limits are:
 
 - 20 tool/planning iterations per task.
-- 32,768 tokens of agent context space.
-- Compaction pressure around 24,576 tokens.
+- Up to 8,192 tokens of agent context space.
+- Compaction pressure around 6,144 tokens by default.
 - A stuck-task threshold of three repeated non-progress outcomes.
 
 The agent can speak its final result through the standard `say()` path. It can
