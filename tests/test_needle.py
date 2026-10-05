@@ -3,19 +3,18 @@
 
 from typing import cast
 from pathlib import Path
-
 from types import SimpleNamespace
 from tempfile import TemporaryDirectory
 
 import torch
 from safetensors.torch import save_file
-from celune.typing.agent import AgentTool
-from celune.agent.needle.models import NeedleModel, NeedleConfig
 from celune.agent.needle.impl import (
     NeedleHandler,
     _parse_selection,
     convert_needle_safetensors,
 )
+from celune.typing.agent import AgentTool
+from celune.agent.needle.models import NeedleModel, NeedleConfig
 
 
 class TestNeedleModel:  # pylint: disable=attribute-defined-outside-init
@@ -69,6 +68,15 @@ class TestNeedleModel:  # pylint: disable=attribute-defined-outside-init
         generated = self.model.generate(source, max_new_tokens=100)
 
         assert generated.shape[1] <= self.config.max_seq_len
+
+    def test_bfloat16_model_can_generate(self) -> None:
+        """Keep decoder logits compatible with BF16 checkpoint weights."""
+        model = NeedleModel(self.config).to(dtype=torch.bfloat16).eval()
+        source = torch.tensor([[2, 5, 9]], dtype=torch.long)
+
+        generated = model.generate(source, max_new_tokens=3)
+
+        assert generated.shape[0] == source.shape[0]
 
 
 class TestNeedleHandler:

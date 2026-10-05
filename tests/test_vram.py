@@ -10,6 +10,7 @@ from celune.vram import (
     VRAM_PROFILES,
     VramProfile,
     backend_allowed,
+    _cuda_total_capacity_bytes,
     vram_profile_key,
     format_vram_bytes,
     vram_profile_fits,
@@ -18,10 +19,13 @@ from celune.vram import (
     validate_vram_preset,
     is_cuda_out_of_memory,
     component_memory_usage,
+    _windows_shared_memory_capacity_bytes,
+    _windows_shared_memory_headroom_bytes,
 )
-from celune.celune import _tts_quantization_enabled
+
 from celune.constants import VRAM_BUDGETS
 from celune.typing.common import Config
+from celune.celune import _tts_quantization_enabled
 
 from .support import CeluneTestCase
 
@@ -121,16 +125,171 @@ class TestVram(CeluneTestCase):
                 "xhigh": 14,
             }
 
-    def test_confirmed_profile_fits_only_when_reserve_remains_free(self) -> None:
-        """Verify a confirmed combination must fit preset and live GPU budgets."""
+    def test_windows_shared_capacity_is_stable_and_headroom_keeps_reserve(self) -> None:
+        """Separate Windows shared capacity from live system-memory headroom."""
+        system_total = 32 * 1024**3
+        with (
+            mock.patch("celune.vram.sys.platform", "win32"),
+            mock.patch(
+                "celune.vram.psutil.virtual_memory",
+                return_value=mock.Mock(total=system_total, available=4 * 1024**3),
+            ),
+            mock.patch(
+                "celune.vram.torch.cuda.mem_get_info",
+                return_value=(1024**3, 12 * 1024**3),
+            ),
+        ):
+            assert _windows_shared_memory_capacity_bytes() == 16 * 1024**3
+            assert _windows_shared_memory_headroom_bytes() == 2 * 1024**3
+            assert _cuda_total_capacity_bytes() == 28 * 1024**3
+
+        with (
+            mock.patch("celune.vram.sys.platform", "win32"),
+            mock.patch(
+                "celune.vram.psutil.virtual_memory",
+                return_value=mock.Mock(total=64 * 1024**3),
+            ),
+        ):
+            assert _windows_shared_memory_capacity_bytes() == 48 * 1024**3
+
+        with (
+            mock.patch("celune.vram.sys.platform", "win32"),
+            mock.patch(
+                "celune.vram.psutil.virtual_memory",
+                return_value=mock.Mock(total=system_total, available=1024**3),
+            ),
+        ):
+            assert _windows_shared_memory_headroom_bytes() == 0
+
+        with mock.patch("celune.vram.sys.platform", "linux"):
+            assert _windows_shared_memory_capacity_bytes() == 0
+            assert _windows_shared_memory_headroom_bytes() == 0
+
+    def test_windows_profile_headroom_combines_dedicated_and_shared_free_memory(
+        self,
+    ) -> None:
+        """Use current shared headroom once without subtracting the reserve twice."""
         config: Config = {"vram": "high", "backend": "qwen3"}
         with (
+            mock.patch("celune.vram.sys.platform", "win32"),
             mock.patch("celune.vram.torch.cuda.is_available", return_value=True),
             mock.patch(
                 "celune.vram.torch.cuda.get_device_name", return_value="test GPU"
             ),
             mock.patch(
                 "celune.vram.torch.cuda.get_device_capability", return_value=(8, 9)
+            ),
+            mock.patch(
+                "celune.vram._cuda_total_capacity_bytes", return_value=12 * 1024**3
+            ),
+        ):
+            key = vram_profile_key(config)
+        profile = VramProfile(
+            gpu_name=key[0],
+            configuration=key,
+            model_revision="persona-revision",
+            tts_revision="tts-revision",
+            dtype="bfloat16",
+            quantization="int8",
+            components=("tts",),
+            context_size=2048,
+            load_peak_bytes=10 * 1024**3,
+            warmup_peak_bytes=10 * 1024**3,
+            inference_peak_bytes=10 * 1024**3,
+        )
+        with (
+            mock.patch.dict(VRAM_PROFILES, {key: profile}),
+            mock.patch("celune.vram.sys.platform", "win32"),
+            mock.patch("celune.vram.torch.cuda.is_available", return_value=True),
+            mock.patch(
+                "celune.vram.torch.cuda.get_device_name", return_value="test GPU"
+            ),
+            mock.patch(
+                "celune.vram.torch.cuda.get_device_capability", return_value=(8, 9)
+            ),
+            mock.patch(
+                "celune.vram._cuda_total_capacity_bytes", return_value=12 * 1024**3
+            ),
+            mock.patch(
+                "celune.vram.torch.cuda.mem_get_info",
+                return_value=(1024**3, 12 * 1024**3),
+            ),
+            mock.patch("celune.vram.torch.cuda.memory_allocated", return_value=0),
+            mock.patch(
+                "celune.vram._windows_shared_memory_headroom_bytes",
+                return_value=10 * 1024**3,
+            ),
+        ):
+            assert vram_profile_fits(config) is True
+
+    def test_measured_profiles_match_model_identity_and_leave_agent_unprofiled(
+        self,
+    ) -> None:
+        """Match measured revisions exactly while keeping agent mode unprofiled."""
+        whisper_revision = "41f01f3fe87f28c78e2fbf8b568835947dd65ed9"
+        persona_config: Config = {
+            "enabled": True,
+            "model_id": "huihui-ai/Huihui-Qwen3-VL-4B-Instruct-abliterated",
+            "context_size": 2048,
+            "speech_model_id": "openai/whisper-large-v3-turbo",
+        }
+        config: Config = {
+            "mode": "converse",
+            "vram": "high",
+            "backend": "qwen3",
+            "quantize": True,
+            "use_normalizer": False,
+            "persona": persona_config,
+        }
+        with (
+            mock.patch("celune.vram.sys.platform", "win32"),
+            mock.patch("celune.vram.torch.cuda.is_available", return_value=True),
+            mock.patch(
+                "celune.vram.torch.cuda.get_device_name",
+                return_value="NVIDIA GeForce RTX 5070",
+            ),
+            mock.patch(
+                "celune.vram.torch.cuda.get_device_capability", return_value=(8, 9)
+            ),
+            mock.patch(
+                "celune.vram._cuda_total_capacity_bytes", return_value=28 * 1024**3
+            ),
+            mock.patch(
+                "celune.vram._cached_hub_revision", return_value=whisper_revision
+            ),
+            mock.patch.dict("celune.vram.os.environ", {"CELUNE_TTS_QUANTIZE": "true"}),
+        ):
+            key = vram_profile_key(config)
+            assert key in VRAM_PROFILES
+            assert key[22] == "whisper-id:openai/whisper-large-v3-turbo"
+            assert key[23] == f"whisper-revision:{whisper_revision}"
+
+            persona_config["speech_model_id"] = "openai/whisper-small"
+            custom_whisper_key = vram_profile_key(config)
+            assert custom_whisper_key not in VRAM_PROFILES
+
+            agent_config = dict(config)
+            agent_config["mode"] = "agent"
+            with mock.patch("celune.vram.agent_vram_compatible", return_value=True):
+                agent_key = vram_profile_key(agent_config)
+            assert agent_key[-1].startswith("needle-revision:")
+            assert agent_key not in VRAM_PROFILES
+
+    def test_confirmed_profile_fits_only_when_reserve_remains_free(self) -> None:
+        """Verify a confirmed combination must fit preset and live GPU budgets."""
+        config: Config = {"vram": "high", "backend": "qwen3"}
+        with (
+            mock.patch("celune.vram.sys.platform", "linux"),
+            mock.patch("celune.vram.torch.cuda.is_available", return_value=True),
+            mock.patch(
+                "celune.vram.torch.cuda.get_device_name", return_value="test GPU"
+            ),
+            mock.patch(
+                "celune.vram.torch.cuda.get_device_capability", return_value=(8, 9)
+            ),
+            mock.patch(
+                "celune.vram.torch.cuda.mem_get_info",
+                return_value=(12 * 1024**3, 12 * 1024**3),
             ),
         ):
             key = vram_profile_key(config)
@@ -149,6 +308,7 @@ class TestVram(CeluneTestCase):
         )
         with (
             mock.patch.dict(VRAM_PROFILES, {key: profile}),
+            mock.patch("celune.vram.sys.platform", "linux"),
             mock.patch("celune.vram.torch.cuda.is_available", return_value=True),
             mock.patch(
                 "celune.vram.torch.cuda.get_device_name", return_value="test GPU"
@@ -167,6 +327,7 @@ class TestVram(CeluneTestCase):
 
         with (
             mock.patch.dict(VRAM_PROFILES, {key: profile}),
+            mock.patch("celune.vram.sys.platform", "linux"),
             mock.patch("celune.vram.torch.cuda.is_available", return_value=True),
             mock.patch("celune.vram.torch.cuda.get_device_name", return_value=key[0]),
             mock.patch(

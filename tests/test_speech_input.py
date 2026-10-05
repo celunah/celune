@@ -1,20 +1,24 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for Persona microphone speech input."""
 
+from unittest import mock
 from types import SimpleNamespace
 from typing import Optional, cast
-from unittest import mock
 from collections.abc import Callable
 
 import numpy as np
 import pytest
 from textual import events
 
-from celune.ui.app import CeluneUI, ButtonActions
+from celune.constants import (
+    DEFAULT_PERSONA_SPEECH_MODEL_ID,
+    DEFAULT_PERSONA_SPEECH_MODEL_REVISION,
+)
 from celune.persona.asr import (
     PERSONA_SPEECH_NO_INPUT_TIMEOUT_SECONDS,
     WhisperTranscriber,
 )
+from celune.ui.app import CeluneUI, ButtonActions
 from celune.typing.persona import _WhisperProcessor
 
 from .support import CeluneTestCase
@@ -75,6 +79,14 @@ class TestSpeechInput(CeluneTestCase):
         assert fake_processor.call_args.args[0].shape == (1600,)
         assert fake_processor.call_args.kwargs["sampling_rate"] == 16000
         assert fake_model.generate.call_args.kwargs["task"] == "transcribe"
+
+    def test_default_whisper_model_uses_its_measured_revision(self) -> None:
+        """Keep the profiled Whisper weights pinned to their measured commit."""
+        transcriber = WhisperTranscriber(DEFAULT_PERSONA_SPEECH_MODEL_ID)
+        custom_model = WhisperTranscriber("openai/whisper-small")
+
+        assert transcriber._revision == DEFAULT_PERSONA_SPEECH_MODEL_REVISION
+        assert custom_model._revision is None
 
     def test_whisper_word_timestamps_are_grouped_from_token_timestamps(self) -> None:
         """Verify token timestamps are grouped into the words Whisper decoded."""

@@ -3,13 +3,16 @@
 
 import gc
 import os
+import sys
 import math
 import contextlib
-from typing import Optional, cast
+from pathlib import Path
 from dataclasses import dataclass
+from typing import Optional, cast
 from collections.abc import Mapping, Iterator
 
 import torch
+import psutil
 from torch import nn
 
 from .i18n import string
@@ -19,11 +22,15 @@ from .constants import (
     VRAM_REQUIREMENTS,
     AGENT_CONTEXT_SPACE,
     PERSONA_CONTEXT_SPACE,
+    NORMALIZER_MODEL_ID,
     VRAM_SYSTEM_RESERVE_GIB,
     PERSONA_DEFAULT_MODEL_ID,
+    DEFAULT_PERSONA_SPEECH_MODEL_ID,
+    DEFAULT_PERSONA_SPEECH_MODEL_REVISION,
     persona_model_tier,
     remote_code_model_revision,
 )
+from .paths import huggingface_hub_cache_dir
 from .typing.common import JSON, VramTier, JSONSerializable
 
 QWEN3_0_6B_MODEL = "Qwen/Qwen3-TTS-12Hz-0.6B-Base"
@@ -89,6 +96,61 @@ class VramProfile:
 VRAM_PROFILES: dict[tuple[str, ...], VramProfile] = {}
 
 
+def _windows_shared_memory_capacity_bytes() -> int:
+    """Return the maximum WDDM shared-memory pool from installed system RAM."""
+    if sys.platform != "win32":
+        return 0
+
+    total_bytes = psutil.virtual_memory().total
+    return min(
+        total_bytes * 4 // 5,
+        max(total_bytes - 16 * 1024**3, total_bytes // 2),
+    )
+
+
+def _windows_shared_memory_headroom_bytes() -> int:
+    """Return the shared-memory capacity currently free above the system reserve."""
+    if sys.platform != "win32":
+        return 0
+
+    available_bytes = psutil.virtual_memory().available
+    reserve_bytes = VRAM_SYSTEM_RESERVE_GIB * 1024**3
+    return min(
+        _windows_shared_memory_capacity_bytes(),
+        max(0, available_bytes - reserve_bytes),
+    )
+
+
+def _cuda_total_capacity_bytes() -> int:
+    """Return dedicated CUDA memory plus maximum Windows WDDM shared memory."""
+    _, dedicated_bytes = torch.cuda.mem_get_info(0)
+    return dedicated_bytes + _windows_shared_memory_capacity_bytes()
+
+
+def _cached_hub_revision(model_id: str) -> str:
+    """Return the cached commit selected by the model's ``main`` reference."""
+    if "/" not in model_id:
+        return "unknown"
+
+    configured_cache = os.environ.get("HF_HUB_CACHE")
+    configured_home = os.environ.get("HF_HOME")
+    cache_root = (
+        Path(configured_cache)
+        if configured_cache
+        else Path(configured_home) / "hub"
+        if configured_home
+        else huggingface_hub_cache_dir()
+    )
+    revision_path = (
+        cache_root / f"models--{model_id.replace('/', '--')}" / "refs" / "main"
+    )
+    with contextlib.suppress(OSError, UnicodeError):
+        revision = revision_path.read_text(encoding="utf-8").strip()
+        if revision:
+            return revision
+    return "unknown"
+
+
 def is_cuda_out_of_memory(error: BaseException) -> bool:
     """Return whether an exception reports a CUDA allocation failure."""
     out_of_memory_type = getattr(torch.cuda, "OutOfMemoryError", None)
@@ -126,12 +188,45 @@ def vram_profile_key(
         if isinstance(backend_value, str) and backend_value.strip()
         else preset.default_backend
     )
+    mode = values.get("mode")
+    mode_name = mode.strip().lower() if isinstance(mode, str) else "converse"
     model_id = persona.get("model_id")
     model_id = model_id.strip() if isinstance(model_id, str) else "default"
     resolved_model_id = model_id
     if resolved_model_id == "default":
         resolved_model_id = PERSONA_DEFAULT_MODEL_ID
-    model_revision = remote_code_model_revision(resolved_model_id) or "unknown"
+    persona_requested = bool(persona.get("enabled", True))
+    known_persona_tier = persona_model_tier(resolved_model_id)
+    persona_active = (
+        preset.persona_enabled
+        and persona_requested
+        and not (preset.tier == "high" and known_persona_tier == "smart")
+        and mode_name in {"converse", "agent"}
+    )
+    model_revision = (
+        remote_code_model_revision(resolved_model_id) or "unknown"
+        if persona_active
+        else "no-persona-revision"
+    )
+    speech_model_value = persona.get("speech_model_id")
+    speech_model_id = (
+        speech_model_value.strip()
+        if isinstance(speech_model_value, str) and speech_model_value.strip()
+        else DEFAULT_PERSONA_SPEECH_MODEL_ID
+    )
+    speech_revision = "no-whisper-revision"
+    if persona_active:
+        speech_revision = (
+            DEFAULT_PERSONA_SPEECH_MODEL_REVISION
+            if speech_model_id == DEFAULT_PERSONA_SPEECH_MODEL_ID
+            else "unknown"
+        )
+    normalizer_enabled = bool(values.get("use_normalizer", False))
+    normalizer_revision = (
+        _cached_hub_revision(NORMALIZER_MODEL_ID)
+        if normalizer_enabled
+        else "no-normalizer-revision"
+    )
     tts_contracts = tuple(
         contract
         for contract in MODEL_CONTRACTS
@@ -174,37 +269,54 @@ def vram_profile_key(
             capability = torch.cuda.get_device_capability(0)
         except (RuntimeError, AssertionError):
             pass
-    mode = values.get("mode")
-    mode_name = mode.strip().lower() if isinstance(mode, str) else "converse"
-    persona_requested = bool(persona.get("enabled", True))
-    known_persona_tier = persona_model_tier(resolved_model_id)
-    persona_active = (
-        preset.persona_enabled
-        and persona_requested
-        and not (preset.tier == "high" and known_persona_tier == "smart")
-        and mode_name in {"converse", "agent"}
-    )
     agent_active = (
         mode_name == "agent" and persona_active and agent_vram_compatible(config)
     )
-    persona_context = persona.get("context_size", PERSONA_CONTEXT_SPACE)
+    needle_revision = "no-needle"
+    if agent_active:
+        from .agent.needle.checkpoints import NEEDLE_MODEL_REVISION
+
+        needle_revision = NEEDLE_MODEL_REVISION
     agent_context = agent.get("context_size", AGENT_CONTEXT_SPACE)
+    persona_context = (
+        agent_context
+        if agent_active
+        else persona.get("context_size", PERSONA_CONTEXT_SPACE)
+    )
+    context_limit = AGENT_CONTEXT_SPACE if agent_active else PERSONA_CONTEXT_SPACE
+    if not persona_active:
+        context_key = "no-persona-context"
+    elif isinstance(persona_context, int) and not isinstance(persona_context, bool):
+        context_key = str(min(persona_context, context_limit))
+    else:
+        context_key = str(context_limit)
+    agent_context_key = (
+        str(min(agent_context, AGENT_CONTEXT_SPACE))
+        if agent_active
+        and isinstance(agent_context, int)
+        and not isinstance(agent_context, bool)
+        else str(AGENT_CONTEXT_SPACE)
+        if agent_active
+        else "no-agent-context"
+    )
     quantize_setting = os.getenv("CELUNE_TTS_QUANTIZE")
     quantize_requested = (
         quantize_setting.strip().lower() in {"1", "true", "on", "yes", "enabled"}
         if quantize_setting is not None
         else values.get("quantize", True) is True
     )
-    quantization = "native-lux"
-    if backend != "luxtts":
-        quantization = "bf16"
+    quantization = "native-lux" if backend == "luxtts" else "bf16"
+    if backend not in {"luxtts", "mini"}:
         if quantize_requested:
             if capability >= (8, 9):
                 quantization = "fp8"
             elif capability >= (8, 0):
                 quantization = "int8"
+    elif backend == "mini":
+        quantization = "cpu"
     return (
         gpu_name,
+        sys.platform,
         preset.tier,
         mode_name,
         backend,
@@ -212,22 +324,239 @@ def vram_profile_key(
         tts_revisions or "unknown",
         tts_dtypes or "unknown",
         tts_components or "unknown",
-        model_id,
+        resolved_model_id if persona_active else "no-persona-model",
         model_revision,
-        preset.persona_quantization,
-        str(min(persona_context, PERSONA_CONTEXT_SPACE))
-        if isinstance(persona_context, int) and not isinstance(persona_context, bool)
-        else str(PERSONA_CONTEXT_SPACE),
-        str(min(agent_context, AGENT_CONTEXT_SPACE))
-        if isinstance(agent_context, int) and not isinstance(agent_context, bool)
-        else str(AGENT_CONTEXT_SPACE),
+        preset.persona_quantization if persona_active else "no-persona-quantization",
+        context_key,
+        agent_context_key,
         quantization,
-        f"persona-kv:{bool(persona.get('quantize_kv_cache', values.get('quantize_kv_cache', True)))}",
+        f"persona-kv:{bool(persona.get('quantize_kv_cache', values.get('quantize_kv_cache', True)))}"
+        if persona_active
+        else "no-persona-kv",
         "persona" if persona_active else "no-persona",
         "agent" if agent_active else "no-agent",
-        "normalizer" if values.get("use_normalizer", False) else "no-normalizer",
+        "normalizer" if normalizer_enabled else "no-normalizer",
+        f"normalizer-id:{NORMALIZER_MODEL_ID}"
+        if normalizer_enabled
+        else "no-normalizer-id",
+        f"normalizer-revision:{normalizer_revision}",
         "whisper-on-demand" if persona_active else "no-whisper",
+        f"whisper-id:{speech_model_id}" if persona_active else "no-whisper-id",
+        f"whisper-revision:{speech_revision}"
+        if persona_active
+        else "no-whisper-revision",
+        "whisper-quantization:int8" if persona_active else "no-whisper-quantization",
+        f"needle-revision:{needle_revision}",
     )
+
+
+_MEASURED_GPU_NAME = "NVIDIA GeForce RTX 5070"
+_MEASURED_PLATFORM = "win32"
+
+
+def _tts_profile_key(
+    backend: str,
+    model_id: str,
+    revision: str,
+    dtype: str,
+    components: str,
+    quantization: str,
+) -> tuple[str, ...]:
+    """Build a fixed key for a measured RTX 5070 TTS-only configuration."""
+    return (
+        _MEASURED_GPU_NAME,
+        _MEASURED_PLATFORM,
+        "xhigh",
+        "speak",
+        backend,
+        model_id,
+        revision,
+        dtype,
+        components,
+        "no-persona-model",
+        "no-persona-revision",
+        "no-persona-quantization",
+        "no-persona-context",
+        "no-agent-context",
+        quantization,
+        "no-persona-kv",
+        "no-persona",
+        "no-agent",
+        "no-normalizer",
+        "no-normalizer-id",
+        "normalizer-revision:no-normalizer-revision",
+        "no-whisper",
+        "no-whisper-id",
+        "no-whisper-revision",
+        "no-whisper-quantization",
+        "needle-revision:no-needle",
+    )
+
+
+def _reported_peak_bytes(reported_gib: float) -> int:
+    """Store a two-decimal GiB sample with a 0.01 GiB upward allowance."""
+    return math.ceil((reported_gib + 0.01) * 1024**3)
+
+
+def _measured_vram_profile(
+    key: tuple[str, ...],
+    phase_peaks_gib: tuple[float, float, float],
+    *,
+    model_revision: str,
+    quantization: str,
+    components: tuple[str, ...],
+    context_size: int = 0,
+    dtype: Optional[str] = None,
+) -> VramProfile:
+    """Create a measured profile from conservatively rounded phase peaks."""
+    return VramProfile(
+        gpu_name=key[0],
+        configuration=key,
+        model_revision=model_revision,
+        tts_revision=key[6],
+        dtype=dtype or key[7],
+        quantization=quantization,
+        components=components,
+        context_size=context_size,
+        load_peak_bytes=_reported_peak_bytes(phase_peaks_gib[0]),
+        warmup_peak_bytes=_reported_peak_bytes(phase_peaks_gib[1]),
+        inference_peak_bytes=_reported_peak_bytes(phase_peaks_gib[2]),
+    )
+
+
+_QWEN3_XHIGH_KEY = _tts_profile_key(
+    "qwen3",
+    "Qwen/Qwen3-TTS-12Hz-1.7B-Base",
+    "fd4b254389122332181a7c3db7f27e918eec64e3:default",
+    "speech_tokenizer::torch.float32,talker::torch.bfloat16",
+    "speech_tokenizer,talker",
+    "fp8",
+)
+_DOTSTTS_XHIGH_KEY = _tts_profile_key(
+    "dotstts",
+    "rednote-hilab/dots.tts-mf",
+    "c28105adc8228143392b4e346994ff613ee48a06:default",
+    "core::torch.bfloat16,speaker_encoder::torch.float32|torch.int64,vocoder::torch.float32",
+    "core,speaker_encoder,vocoder",
+    "fp8",
+)
+_FIREREDTTS3_XHIGH_KEY = _tts_profile_key(
+    "fireredtts3",
+    "FireRedTeam/FireRedTTS3",
+    "dcf1bdcd1b8b25b382fa84c3e34eb82e3054a610:default",
+    (
+        "redae:decoder:torch.float32,redae:encoder:torch.bfloat16,"
+        "tts_core:backbone_llm:torch.bfloat16,tts_core:dit:torch.float32,"
+        "tts_core:dit_head:torch.float32,tts_core:patch_encoder:torch.float32,"
+        "tts_core:spk_proj_dit:torch.float32,tts_core:spk_proj_llm:torch.float32,"
+        "tts_core:stop_head:torch.bfloat16"
+    ),
+    "redae,tts_core",
+    "fp8",
+)
+_LUXTTS_XHIGH_KEY = _tts_profile_key(
+    "luxtts",
+    "YatharthS/LuxTTS",
+    "527f245a276a0eb42ea103a7a512bcfd771eb9b6:default",
+    "unknown",
+    "unknown",
+    "native-lux",
+)
+_MINI_XHIGH_KEY = _tts_profile_key(
+    "mini",
+    "lunahr/pocket-tts-ungated",
+    (
+        "d03cd73415a8d46d8eb115c7b524aebb0a729f4a:english,"
+        "d03cd73415a8d46d8eb115c7b524aebb0a729f4a:french_24l,"
+        "d03cd73415a8d46d8eb115c7b524aebb0a729f4a:german,"
+        "d03cd73415a8d46d8eb115c7b524aebb0a729f4a:italian,"
+        "d03cd73415a8d46d8eb115c7b524aebb0a729f4a:portuguese,"
+        "d03cd73415a8d46d8eb115c7b524aebb0a729f4a:spanish"
+    ),
+    "flow_lm::torch.bfloat16",
+    "flow_lm",
+    "cpu",
+)
+_QWEN3_PERSONA_WHISPER_HIGH_KEY = (
+    _MEASURED_GPU_NAME,
+    _MEASURED_PLATFORM,
+    "high",
+    "converse",
+    "qwen3",
+    "Qwen/Qwen3-TTS-12Hz-1.7B-Base",
+    "fd4b254389122332181a7c3db7f27e918eec64e3:default",
+    "speech_tokenizer::torch.float32,talker::torch.bfloat16",
+    "speech_tokenizer,talker",
+    "huihui-ai/Huihui-Qwen3-VL-4B-Instruct-abliterated",
+    "ce72a7c22aacb493fb94478de3bfbe834c61844a",
+    "4bit",
+    "2048",
+    "no-agent-context",
+    "fp8",
+    "persona-kv:True",
+    "persona",
+    "no-agent",
+    "no-normalizer",
+    "no-normalizer-id",
+    "normalizer-revision:no-normalizer-revision",
+    "whisper-on-demand",
+    "whisper-id:openai/whisper-large-v3-turbo",
+    "whisper-revision:41f01f3fe87f28c78e2fbf8b568835947dd65ed9",
+    "whisper-quantization:int8",
+    "needle-revision:no-needle",
+)
+
+VRAM_PROFILES.update(
+    {
+        _QWEN3_XHIGH_KEY: _measured_vram_profile(
+            _QWEN3_XHIGH_KEY,
+            (4.53, 4.91, 4.91),
+            model_revision="no-persona",
+            quantization="fp8 requested; backend inactive",
+            components=("tts:qwen3", "speech_tokenizer", "talker"),
+        ),
+        _DOTSTTS_XHIGH_KEY: _measured_vram_profile(
+            _DOTSTTS_XHIGH_KEY,
+            (5.43, 6.26, 6.26),
+            model_revision="no-persona",
+            quantization="fp8 requested; backend inactive",
+            components=("tts:dotstts", "core", "speaker_encoder", "vocoder"),
+        ),
+        _FIREREDTTS3_XHIGH_KEY: _measured_vram_profile(
+            _FIREREDTTS3_XHIGH_KEY,
+            (6.39, 6.39, 6.39),
+            model_revision="no-persona",
+            quantization="fp8 requested; backend inactive",
+            components=("tts:fireredtts3", "redae", "tts_core"),
+        ),
+        _LUXTTS_XHIGH_KEY: _measured_vram_profile(
+            _LUXTTS_XHIGH_KEY,
+            (1.62, 1.62, 1.64),
+            model_revision="no-persona",
+            quantization="ONNX; not applicable",
+            components=("tts:luxtts",),
+        ),
+        _MINI_XHIGH_KEY: _measured_vram_profile(
+            _MINI_XHIGH_KEY,
+            (0.46, 0.46, 0.46),
+            model_revision="no-persona",
+            quantization="CPU model; not applicable",
+            components=("tts:mini", "flow_lm"),
+        ),
+        _QWEN3_PERSONA_WHISPER_HIGH_KEY: _measured_vram_profile(
+            _QWEN3_PERSONA_WHISPER_HIGH_KEY,
+            (8.67, 9.00, 9.98),
+            model_revision=(
+                "ce72a7c22aacb493fb94478de3bfbe834c61844a; "
+                "Whisper 41f01f3fe87f28c78e2fbf8b568835947dd65ed9"
+            ),
+            dtype=("TTS mixed; Persona bfloat16 compute; Whisper bfloat16 compute"),
+            quantization=("Persona 4bit; Whisper int8; TTS fp8 requested but inactive"),
+            components=("tts:qwen3", "persona:qwen3-vl-4b", "whisper"),
+            context_size=2048,
+        ),
+    }
+)
 
 
 def vram_profile_fits(
@@ -253,7 +582,11 @@ def vram_profile_fits(
             current_allocated = torch.cuda.memory_allocated(0)
         except (RuntimeError, AssertionError):
             return None
-        system_reserve_bytes = VRAM_SYSTEM_RESERVE_GIB * 1024**3
+        if sys.platform == "win32":
+            available_bytes += _windows_shared_memory_headroom_bytes()
+            system_reserve_bytes = 0
+        else:
+            system_reserve_bytes = VRAM_SYSTEM_RESERVE_GIB * 1024**3
         additional_bytes = max(0, profile.peak_bytes - current_allocated)
         if additional_bytes > max(0, available_bytes - system_reserve_bytes):
             return False
@@ -300,7 +633,7 @@ def validate_vram_preset(
 
     warnings: list[str] = []
     if torch.cuda.is_available():
-        _, total_bytes = torch.cuda.mem_get_info(0)
+        total_bytes = _cuda_total_capacity_bytes()
         total_gb = math.ceil(total_bytes / 1024**3)
 
         tier = configured_tier
@@ -350,7 +683,7 @@ def resolve_vram_preset(
 
     # downgrade VRAM preset if user doesn't have enough VRAM for the currently selected preset
     if torch.cuda.is_available():
-        _, total_bytes = torch.cuda.mem_get_info(0)
+        total_bytes = _cuda_total_capacity_bytes()
         total_gb = math.ceil(total_bytes / 1024**3)
 
         while VRAM_REQUIREMENTS[tier] > total_gb and tier != "low":

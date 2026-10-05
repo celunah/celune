@@ -4,16 +4,17 @@
 from __future__ import annotations
 
 import threading
-from typing import TYPE_CHECKING, Union, Optional, cast
 from dataclasses import dataclass
 from collections.abc import Mapping, Callable, Sequence
+from typing import TYPE_CHECKING, Union, Optional, cast
 
-import numpy as np
 import torch
+import numpy as np
 
-from ..paths import huggingface_progress
-from ..audio.dsp import resample_audio
-from ..typing.aliases import AudioChunk
+from ..constants import (
+    DEFAULT_PERSONA_SPEECH_MODEL_ID,
+    DEFAULT_PERSONA_SPEECH_MODEL_REVISION,
+)
 from ..typing.persona import (
     WhisperScalar,
     WhisperSegmentPayload,
@@ -21,6 +22,9 @@ from ..typing.persona import (
     _WhisperModel,
     _WhisperProcessor,
 )
+from ..audio.dsp import resample_audio
+from ..paths import huggingface_progress
+from ..typing.aliases import AudioChunk
 
 if TYPE_CHECKING:
     # noinspection PyPep8Naming
@@ -29,7 +33,6 @@ if TYPE_CHECKING:
     from torch import device as Device
 
 
-DEFAULT_PERSONA_SPEECH_MODEL_ID = "openai/whisper-large-v3-turbo"
 PERSONA_SPEECH_NO_INPUT_TIMEOUT_SECONDS = 5.0
 PERSONA_SPEECH_END_DELAY_SECONDS = 1.5
 WHISPER_SAMPLE_RATE = 16000
@@ -66,6 +69,11 @@ class WhisperTranscriber:
         ] = None,
     ) -> None:
         self.model_id = model_id.strip() or DEFAULT_PERSONA_SPEECH_MODEL_ID
+        self._revision = (
+            DEFAULT_PERSONA_SPEECH_MODEL_REVISION
+            if self.model_id == DEFAULT_PERSONA_SPEECH_MODEL_ID
+            else None
+        )
         self.language = language.strip() if language and language.strip() else None
         self._processor: Optional[_WhisperProcessor] = None
         self._model: Optional[_WhisperModel] = None
@@ -112,6 +120,9 @@ class WhisperTranscriber:
             bnb_config = BitsAndBytesConfig(
                 load_in_8bit=True,
             )
+            model_kwargs: dict[str, str] = {}
+            if self._revision is not None:
+                model_kwargs["revision"] = self._revision
             with huggingface_progress(self._progress_callback):
                 model = cast(
                     _WhisperModel,
@@ -121,10 +132,12 @@ class WhisperTranscriber:
                         low_cpu_mem_usage=True,
                         quantization_config=bnb_config,
                         device_map="auto",
+                        **model_kwargs,
                     ),
                 )
                 self._processor = cast(
-                    _WhisperProcessor, AutoProcessor.from_pretrained(self.model_id)
+                    _WhisperProcessor,
+                    AutoProcessor.from_pretrained(self.model_id, **model_kwargs),
                 )
             model.eval()
             generation_config = getattr(model, "generation_config", None)

@@ -258,6 +258,11 @@ dtype. Unsupported cache layouts, unavailable FP8 support, or a cache
 runtime failure fall back to the regular dynamic cache for that request.
 The cache is request-scoped and is released when generation finishes.
 
+The default Whisper model is pinned to a specific Hugging Face commit so its
+memory profile stays tied to the measured weights. A custom `speech_model_id`
+continues to use that repository's current revision and has no confirmed VRAM
+profile unless it is measured separately.
+
 ## Agent settings
 
 ```yaml

@@ -139,29 +139,58 @@ an explicit opt-in catalog, not a hidden fallback.
 ## VRAM budgets and profiles
 
 `celune/constants.py` keeps the minimum total capacity for each preset and
-subtracts a fixed 2 GiB system reserve to derive Celune's budget. `celune/vram.py`
-resolves the active GPU, backend and artifact revisions, quantization, model
-tiers, context limits, and enabled GPU components into an exact profile key.
-`VramProfile` stores load, warmup, and inference peaks plus dtype, quantization,
-revision, and component metadata.
+subtracts a fixed 2 GiB system reserve to derive Celune's budget. On Windows,
+hardware capacity includes the adapter's dedicated memory plus the WDDM
+shared-memory limit. Microsoft's formula is
+`min(80% of RAM, max(RAM - 16 GiB, 50% of RAM))`; see the [graphics memory
+calculation](https://learn.microsoft.com/en-us/windows-hardware/drivers/display/calculating-graphics-memory).
+Admission uses current dedicated GPU free memory and shared-memory headroom above
+the system reserve.
+`celune/vram.py` resolves the active GPU, backend and artifact revisions,
+quantization, model tiers, context limits, and enabled GPU components into an
+exact profile key. `VramProfile` stores load, warmup, and inference peaks plus
+dtype, quantization, revision, and component metadata.
 
 At startup, Celune looks for that exact key in `VRAM_PROFILES`. A known profile
 is rejected if its peak exceeds the preset budget or the current free memory
 after subtracting this process's current allocations and the 2 GiB reserve. A
 missing profile only produces a localized warning; Celune proceeds and handles
-a runtime CUDA out-of-memory error by releasing
-partial allocations and returning generation to an idle state. Add measured
-profiles to `celune/vram.py` only with the exact GPU name, revisions, component
-set, and all three phase peaks. Do not treat contract weight sizes or a profile
-from a different GPU as a confirmed peak measurement.
-No measured profile records are currently shipped, so configurations currently
-use the warning-and-proceed path until a hardware-specific profile is recorded.
+a runtime CUDA out-of-memory error by releasing partial allocations and
+returning generation to an idle state. Windows profile peaks sum the Celune
+process tree's dedicated and shared allocations. The stored peak is rounded up
+by 0.01 GiB from the two-decimal sample before admission.
+
+The shipped measurements are specific to a Windows NVIDIA GeForce RTX 5070.
+TTS quantization was requested for Torch backends but reported inactive, so
+those peaks do not assume quantization savings.
+
+| Configuration | Load | Warmup | Inference |
+| --- | ---: | ---: | ---: |
+| Qwen3 TTS only, xhigh | 4.53 GiB | 4.91 GiB | 4.91 GiB |
+| dots.tts TTS only, xhigh | 5.43 GiB | 6.26 GiB | 6.26 GiB |
+| FireRedTTS3 only, xhigh | 6.39 GiB | 6.39 GiB | 6.39 GiB |
+| LuxTTS only, xhigh | 1.62 GiB | 1.62 GiB | 1.64 GiB |
+| Pocket TTS only, xhigh | 0.46 GiB | 0.46 GiB | 0.46 GiB |
+| Qwen3 TTS, 4B Persona, and on-demand Whisper, high | 8.67 GiB | 9.00 GiB | 9.98 GiB |
+
+The VoxCPM2 run completed, but its exact per-phase peaks were not preserved, so
+it remains unprofiled. Other model revisions, normalizer-enabled configurations,
+and unmeasured component combinations also remain unprofiled and use the
+warning-and-proceed path.
 
 Persona and agent context are capped at 2,048 and 8,192 tokens respectively.
 Emotion analysis calls the Qwen text decoder directly with hidden-state
 collection and KV caching disabled, retaining only `last_hidden_state`.
 Whisper is loaded for a Persona recording session and unloaded after its final
-queued transcription or cancellation.
+queued transcription or cancellation. Profile keys include the cached Whisper
+revision; the default model is pinned to the measured commit, while custom
+model IDs without a fixed revision cannot match a measured profile.
+
+An interrupted 8,192-token agent diagnostic reached 20.35 GiB during Persona's
+context prefill, before the Needle selector was loaded. The standalone Needle
+max-length run used 168 MiB of peak CUDA allocations and 200 MiB reserved. This
+does not establish a complete agent profile; agent configurations remain
+unprofiled until Celune can control the Persona context-prefill peak.
 
 TTS quantization defaults to enabled for supported TorchAO backends; LuxTTS is
 excluded. CUDA out-of-memory errors do not trigger BF16 recovery, which could

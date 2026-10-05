@@ -359,7 +359,7 @@ class NeedleDecoder(nn.Module):
                 self.rope,
                 None,
             )
-        return lm_head(self.norm(value).float())
+        return lm_head(self.norm(value).to(dtype=lm_head.weight.dtype))
 
     def step(
         self,
@@ -376,7 +376,7 @@ class NeedleDecoder(nn.Module):
             layer_past = None if past is None else past[index]
             value, present = layer(value, encoder_output, self.rope, layer_past)
             updated.append(present)
-        logits = lm_head(self.norm(value).float())
+        logits = lm_head(self.norm(value).to(dtype=lm_head.weight.dtype))
         return logits, tuple(updated)
 
 
