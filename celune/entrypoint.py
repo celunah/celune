@@ -6,32 +6,32 @@ import sys
 import time
 import random
 import shutil
+import warnings
 import datetime
 import platform
-import warnings
 import contextlib
 import subprocess
 import importlib.util
-from types import ModuleType, SimpleNamespace
-from typing import TYPE_CHECKING, Optional
+from collections.abc import Callable
 from pathlib import Path
 from dataclasses import dataclass
-from collections.abc import Callable
+from typing import TYPE_CHECKING, Optional
+from types import ModuleType, SimpleNamespace
 
-from celune import REVISION, __tagline__, __version__
 from celune.i18n import string
+from celune.typing.common import Config
+from celune.terminal import set_terminal_title
+from celune.updater import apply_update_and_restart
+from celune import REVISION, __tagline__, __version__
+from celune.config import config_log_level, normalize_log_level
+from celune.watchdog import start_watchdog, launcher_loss_requested
+from celune.constants import APP_NAME, APP_SLUG, NVIDIA_DEVICE_KEYWORDS, ExitCodes
 from celune.paths import (
     project_root,
     running_compiled,
     migrate_legacy_app_data,
     configure_huggingface_runtime,
 )
-from celune.config import config_log_level, normalize_log_level
-from celune.updater import apply_update_and_restart
-from celune.terminal import set_terminal_title
-from celune.watchdog import start_watchdog, launcher_loss_requested
-from celune.constants import APP_NAME, APP_SLUG, NVIDIA_DEVICE_KEYWORDS, ExitCodes
-from celune.typing.common import Config
 
 if TYPE_CHECKING:
     from celune.celune import Celune
@@ -330,7 +330,10 @@ def _load_core_runtime(*, defer_missing_dependency: bool = False) -> SimpleNames
 
     try:
         configure_huggingface_runtime()
-        from celune.celune import Celune
+        from celune.compat import torchao_compatibility
+
+        with torchao_compatibility():
+            from celune.celune import Celune
     except ModuleNotFoundError as package:
         if defer_missing_dependency:
             raise
