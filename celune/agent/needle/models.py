@@ -10,8 +10,8 @@ code.
 from __future__ import annotations
 
 import math
-from typing import Optional, cast
 from dataclasses import dataclass
+from typing import Optional, cast
 from collections.abc import Mapping, Sequence
 
 import torch
@@ -145,26 +145,41 @@ class NeedleRMSNorm(nn.Module):
 
 
 class NeedleRoPE(nn.Module):
-    """Rotary position embeddings with explicit position slicing."""
+    """Rotary position embeddings calculated for only the active positions."""
 
     def __init__(self, config: NeedleConfig) -> None:
         super().__init__()
         half = config.head_dim // 2
-        frequencies = 1.0 / (
-            config.rope_theta
-            ** (torch.arange(0, config.head_dim, 2).float() / config.head_dim)
+        frequency_indices = torch.arange(0, config.head_dim, 2, dtype=torch.int64)
+        self.register_buffer(
+            "_frequency_indices",
+            frequency_indices,
+            persistent=False,
         )
-        positions = torch.arange(config.max_seq_len).float()
-        angles = torch.outer(positions, frequencies)
-        self.register_buffer("_cos", torch.cos(angles), persistent=False)
-        self.register_buffer("_sin", torch.sin(angles), persistent=False)
+        self._head_dim = config.head_dim
+        self._max_seq_len = config.max_seq_len
+        self._rope_theta = config.rope_theta
         self._half_dim = half
 
     def forward(self, value: Tensor, start: int = 0) -> Tensor:
         """Apply rotary embeddings to ``(batch, heads, time, head_dim)``."""
         length = value.shape[2]
-        cos = cast(Tensor, self._cos)[start : start + length].to(value.device)
-        sin = cast(Tensor, self._sin)[start : start + length].to(value.device)
+        if start < 0 or start + length > self._max_seq_len:
+            raise ValueError("Needle rotary position exceeds max_seq_len")
+        positions = torch.arange(
+            start,
+            start + length,
+            dtype=torch.float32,
+            device=value.device,
+        )
+        frequency_indices = cast(Tensor, self._frequency_indices).to(
+            device=value.device,
+            dtype=torch.float32,
+        )
+        frequencies = 1.0 / (self._rope_theta ** (frequency_indices / self._head_dim))
+        angles = torch.outer(positions, frequencies)
+        cos = torch.cos(angles).to(dtype=value.dtype)
+        sin = torch.sin(angles).to(dtype=value.dtype)
         cos = cos.unsqueeze(0).unsqueeze(0)
         sin = sin.unsqueeze(0).unsqueeze(0)
         first, second = value[..., : self._half_dim], value[..., self._half_dim :]

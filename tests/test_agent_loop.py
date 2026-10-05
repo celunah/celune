@@ -3,10 +3,11 @@
 
 from __future__ import annotations
 
-from contextlib import nullcontext
+from unittest import mock
+from types import SimpleNamespace
 from typing import Optional, cast
+from contextlib import nullcontext
 
-from celune.extensions.events import EventDispatcher
 from celune.agent import (
     ToolCall,
     ToolResult,
@@ -30,6 +31,10 @@ from celune.agent import (
     AgentApprovalResponse,
     AgentToolExecutionStatus,
 )
+from celune.celune import Celune
+from celune.agent.persona import PersonaAgentBridge
+from celune.extensions.events import EventDispatcher
+from celune.typing.persona import PersonaClientResponse
 
 
 def _request(session_id: str = "session-1") -> AgentRequest:
@@ -229,6 +234,118 @@ class TestAgentLoop:
         assert len(compacted) == 1
         assert task.state == AgentTaskState.COMPLETED
         assert task.context_tokens == 0
+
+    def test_compaction_threshold_does_not_reject_context_below_limit(self) -> None:
+        """Keep the configured context size as the hard limit."""
+        runtime = AgentRuntime(
+            planner=lambda _context: _output(response="Done.", end=True),
+        )
+        task = runtime.create_task(
+            _request(),
+            AgentTaskConfig(context_size=8, compact_at=75),
+            task_id="task-1",
+        )
+        task.update_context_tokens(6)
+
+        runtime.run(task.request)
+
+        assert task.state == AgentTaskState.COMPLETED
+
+    def test_context_above_hard_limit_aborts_without_compactor(self) -> None:
+        """Reject actual context usage above the configured hard limit."""
+        runtime = AgentRuntime(
+            planner=lambda _context: _output(response="Done.", end=True),
+        )
+        task = runtime.create_task(
+            _request(),
+            AgentTaskConfig(context_size=8, compact_at=75),
+            task_id="over-limit-task",
+        )
+        task.update_context_tokens(9)
+
+        runtime.run(task.request)
+
+        assert task.state == AgentTaskState.ABORTED
+        assert task.abort_reason == AgentAbortReason.CONTEXT_LIMIT
+
+    def test_persona_compaction_releases_old_history_references(self) -> None:
+        """Replace task snapshots when Persona removes old conversation turns."""
+        history = [
+            {
+                "role": "user" if index % 2 == 0 else "assistant",
+                "content": f"turn {index} " + ("detail " * 250),
+            }
+            for index in range(10)
+        ]
+        engine = SimpleNamespace(
+            config={
+                "persona": {
+                    "memory": {
+                        "max_short_term_messages": 10,
+                        "context_compaction_keep_recent_messages": 2,
+                        "context_summary_max_characters": 240,
+                    }
+                }
+            },
+            persona_history=[dict(message) for message in history],
+            persona_session_summary="",
+            vision=SimpleNamespace(
+                summarize_history=lambda _messages, _previous, _maximum: (
+                    "Earlier turns covered established facts and decisions."
+                )
+            ),
+        )
+        request = AgentRequest(
+            request="Continue the task.",
+            history=tuple(dict(message) for message in history),
+            session=AgentSession(session_id="compact-session"),
+        )
+        runtime = AgentRuntime()
+        task = runtime.create_task(
+            request,
+            AgentTaskConfig(context_size=100, compact_at=75),
+            task_id="compact-task",
+        )
+        task.update_context_tokens(80)
+        bridge = PersonaAgentBridge(cast(Celune, engine), {})
+
+        compacted = bridge.compact(runtime.get_context(task.task_id))
+
+        assert len(engine.persona_history) == 2
+        assert len(task.request.history) == 2
+        assert compacted.request is task.request
+        assert task.context_tokens < 80
+        assert engine.persona_session_summary
+        assert all(
+            "detail " * 250 not in str(message) for message in task.request.history
+        )
+
+    def test_persona_generation_updates_exact_agent_context_usage(self) -> None:
+        """Track actual prompt and completion tokens for agent compaction."""
+        response = PersonaClientResponse(
+            {"response": "I will check that."},
+            prompt_tokens=120,
+            completion_tokens=6,
+        )
+        engine = SimpleNamespace(
+            vision=SimpleNamespace(post=lambda **_kwargs: response),
+            component_locks=None,
+        )
+        runtime = AgentRuntime()
+        task = runtime.create_task(
+            _request(),
+            AgentTaskConfig(context_size=512, compact_at=75),
+            task_id="usage-task",
+        )
+        bridge = PersonaAgentBridge(cast(Celune, engine), {})
+
+        with mock.patch(
+            "celune.agent.persona.build_persona_request",
+            return_value={},
+        ):
+            bridge.plan(runtime.get_context(task.task_id))
+
+        assert task.context_tokens == 126
 
     def test_approval_pause_does_not_consume_iteration_or_lose_call(self) -> None:
         """Resume an approved pending call without repeating the planner cycle."""

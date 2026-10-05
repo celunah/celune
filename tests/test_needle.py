@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from tempfile import TemporaryDirectory
 
 import torch
+import pytest
 from safetensors.torch import save_file
 from celune.agent.needle.impl import (
     NeedleHandler,
@@ -14,7 +15,7 @@ from celune.agent.needle.impl import (
     convert_needle_safetensors,
 )
 from celune.typing.agent import AgentTool
-from celune.agent.needle.models import NeedleModel, NeedleConfig
+from celune.agent.needle.models import NeedleModel, NeedleConfig, NeedleRoPE
 
 
 class TestNeedleModel:  # pylint: disable=attribute-defined-outside-init
@@ -62,12 +63,44 @@ class TestNeedleModel:  # pylint: disable=attribute-defined-outside-init
         )
 
     def test_generation_respects_decoder_limit(self) -> None:
-        """Verify generation cannot request positions beyond the RoPE table."""
+        """Verify generation cannot request positions beyond the RoPE limit."""
         source = torch.tensor([[2, 5, 9]], dtype=torch.long)
 
         generated = self.model.generate(source, max_new_tokens=100)
 
         assert generated.shape[1] <= self.config.max_seq_len
+
+    def test_rope_calculates_only_requested_positions(self) -> None:
+        """Keep positional state independent of the configured context length."""
+        rope = NeedleRoPE(self.config)
+        value = torch.randn(1, self.config.num_heads, 3, self.config.head_dim)
+
+        actual = rope(value, start=2)
+
+        positions = torch.arange(2, 5, dtype=torch.float32)
+        indices = torch.arange(0, self.config.head_dim, 2, dtype=torch.float32)
+        frequencies = 1.0 / (self.config.rope_theta ** (indices / self.config.head_dim))
+        angles = torch.outer(positions, frequencies)
+        cos = torch.cos(angles).unsqueeze(0).unsqueeze(0)
+        sin = torch.sin(angles).unsqueeze(0).unsqueeze(0)
+        half_dim = self.config.head_dim // 2
+        first, second = value[..., :half_dim], value[..., half_dim:]
+        expected = torch.cat(
+            [first * cos - second * sin, second * cos + first * sin], dim=-1
+        )
+
+        torch.testing.assert_close(actual, expected)
+        buffers = dict(rope.named_buffers())
+        assert set(buffers) == {"_frequency_indices"}
+        assert buffers["_frequency_indices"].numel() == self.config.head_dim // 2
+
+    def test_rope_rejects_positions_beyond_configured_limit(self) -> None:
+        """Keep max_seq_len as the hard position limit."""
+        rope = NeedleRoPE(self.config)
+        value = torch.randn(1, self.config.num_heads, 2, self.config.head_dim)
+
+        with pytest.raises(ValueError, match="max_seq_len"):
+            rope(value, start=self.config.max_seq_len - 1)
 
     def test_bfloat16_model_can_generate(self) -> None:
         """Keep decoder logits compatible with BF16 checkpoint weights."""

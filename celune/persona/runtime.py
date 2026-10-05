@@ -23,18 +23,15 @@ from transformers.cache_utils import Cache
 from transformers.configuration_utils import PreTrainedConfig
 from transformers.tokenization_utils_base import BatchEncoding
 
-from ..i18n import string
-from ..vram import resolve_vram_preset, is_cuda_out_of_memory, release_cuda_after_oom
 from .cache import create_quantized_kv_cache
-from ..utils import normalize_special_characters
+from .capabilities import PersonaCapabilities
 from ..constants import (
     N_A_STR,
     PERSONA_CONTEXT_SPACE,
     PERSONA_DEFAULT_MODEL_ID,
     remote_code_model_revision,
 )
-from .capabilities import PersonaCapabilities
-from ..typing.common import JSONSerializable
+from ..i18n import string
 from ..typing.persona import (
     Role,
     ContentItem,
@@ -52,7 +49,10 @@ from ..typing.persona import (
     VisionProcessorOutput,
     ModelGenerateKwargValue,
 )
+from ..typing.common import JSONSerializable
+from ..utils import normalize_special_characters
 from ..dataclasses.persona import ChatMessage, GenerateRequest, GenerateResponse
+from ..vram import resolve_vram_preset, is_cuda_out_of_memory, release_cuda_after_oom
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -381,11 +381,19 @@ class PersonaBackend:
         generation_cache: Optional[Cache] = None
         generation_kwargs: dict[str, ModelGenerateKwargValue] = {}
         try:
-            inputs = self._build_inputs(message_dicts, request.context_space)
+            input_context_space = max(1, request.context_space - 1)
+            inputs = self._build_inputs(message_dicts, input_context_space)
             model_inputs = {
                 key: cast(torch.Tensor, value) for key, value in dict(inputs).items()
             }
             input_ids = model_inputs.get("input_ids")
+            if not isinstance(input_ids, torch.Tensor):
+                raise TypeError("Persona input encoding did not produce input IDs")
+            input_length = input_ids.shape[1]
+            available_output_tokens = request.context_space - input_length
+            max_new_tokens = min(request.max_new_tokens, available_output_tokens)
+            if max_new_tokens <= 0:
+                raise ValueError("Persona prompt leaves no room for a response")
             model_config = getattr(model, "config", None)
             if isinstance(input_ids, torch.Tensor) and isinstance(
                 model_config, PreTrainedConfig
@@ -412,7 +420,7 @@ class PersonaBackend:
                 try:
                     output_ids = model.generate(
                         **model_inputs,
-                        max_new_tokens=request.max_new_tokens,
+                        max_new_tokens=max_new_tokens,
                         do_sample=request.temperature > 0,
                         temperature=request.temperature,
                         top_p=request.top_p,
@@ -433,7 +441,7 @@ class PersonaBackend:
                     generation_kwargs["cache_implementation"] = "dynamic"
                     output_ids = model.generate(
                         **model_inputs,
-                        max_new_tokens=request.max_new_tokens,
+                        max_new_tokens=max_new_tokens,
                         do_sample=request.temperature > 0,
                         temperature=request.temperature,
                         top_p=request.top_p,
@@ -441,8 +449,7 @@ class PersonaBackend:
                         **generation_kwargs,
                     )
 
-            input_length = cast(torch.Tensor, inputs["input_ids"]).shape[1]
-            new_ids = output_ids[0, input_length:]
+            new_ids = output_ids[0, input_length : input_length + max_new_tokens]
             text = normalize_special_characters(
                 tokenizer.decode(new_ids, skip_special_tokens=True).strip()
             )
@@ -451,6 +458,8 @@ class PersonaBackend:
                 response=text,
                 model=self.model_id,
                 quantization=self.quantization,
+                prompt_tokens=input_length,
+                completion_tokens=new_ids.shape[0],
             )
         finally:
             new_ids = None

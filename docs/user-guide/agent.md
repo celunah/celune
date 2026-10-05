@@ -85,6 +85,9 @@ argument types, approval state, and availability before execution.
 The loader instantiates the model in the dtype declared by its validated
 checkpoint before placing it on the selected device, avoiding an intermediate
 FP32 copy for BF16 checkpoints.
+Needle's KV cache grows with generated tokens and lasts only for that selection
+request. Rotary values are computed for the prompt or decode step in use;
+`max_seq_len` is a hard limit and does not reserve a full positional table.
 
 ## User steering and approvals
 

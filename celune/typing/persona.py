@@ -3,14 +3,14 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Union, Literal, Optional, Protocol, TypedDict
 from collections.abc import Mapping, Iterator, Sequence
+from typing import TYPE_CHECKING, Union, Literal, Optional, Protocol, TypedDict
 
+import torch
 import numpy as np
 import numpy.typing as npt
-import torch
-from transformers import StoppingCriteriaList
 from transformers.cache_utils import Cache
+from transformers import StoppingCriteriaList
 from transformers.tokenization_utils_base import BatchEncoding
 
 from .common import JSONSerializable, VideoMetadataScalar
@@ -292,8 +292,16 @@ class PersonaEngineView(Protocol):
 class PersonaClientResponse:
     """Small response shim matching the local HTTP client contract."""
 
-    def __init__(self, payload: dict[str, JSONSerializable]) -> None:
+    def __init__(
+        self,
+        payload: dict[str, JSONSerializable],
+        *,
+        prompt_tokens: Optional[int] = None,
+        completion_tokens: Optional[int] = None,
+    ) -> None:
         self._payload = payload
+        self.prompt_tokens = prompt_tokens
+        self.completion_tokens = completion_tokens
 
     def raise_for_status(self) -> None:
         """Mirror the ``httpx`` response API for local in-process calls."""

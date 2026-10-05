@@ -256,7 +256,11 @@ FP8 is selected for `sm89` and newer GPUs. The cache is dequantized only for
 the attention operation, so the model still computes attention in its normal
 dtype. Unsupported cache layouts, unavailable FP8 support, or a cache
 runtime failure fall back to the regular dynamic cache for that request.
-The cache is request-scoped and is released when generation finishes.
+`context_size` is an upper bound: input encoding is limited to that bound while
+leaving room for at least one response token, and generation is capped by the
+remaining space after the actual prompt tokens are counted. The dynamic cache
+grows with the encoded prompt and generated tokens; it does not reserve the
+configured maximum. Celune releases the request cache after each response.
 
 The default Whisper model is pinned to a specific Hugging Face commit so its
 memory profile stays tied to the measured weights. A custom `speech_model_id`
@@ -282,7 +286,13 @@ ceiling to limit transient KV-cache allocation. Routing prompts contain only
 the current input and active task
 metadata; they do not retain conversational history. Persona generation
 requests use the configured KV-cache policy and release unused CUDA allocator
-blocks after each response.
+blocks after each response. In agent mode, Celune records the actual prompt and
+completion token counts. `compact_at` triggers compaction of older Persona
+history according to the memory settings. Celune updates the task's history
+snapshot and uses a new request-scoped cache for the next generation, releasing
+the previous generation's cache and pruned history references. Compaction is a
+soft threshold; `context_size` remains the hard maximum for the prompt and its
+response.
 
 Persona is independent of TTS backend selection. The model registry in
 `celune.constants` pins allowed remote-code revisions; changing a model ID does

@@ -563,6 +563,7 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
             tool_executor=self._execute_agent_tool,
             tool_result_handler=self._agent_persona_bridge.handle_tool_result,
             responder=self._agent_persona_bridge.respond,
+            compactor=self._agent_persona_bridge.compact,
             tool_schemas=self._agent_tool_schemas,
             task_config=_agent_task_config(config),
         )

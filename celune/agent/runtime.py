@@ -9,25 +9,6 @@ from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Optional, cast
 
 from ..i18n import string
-from ..utils import format_error_message
-from ..typing.aliases import LogLevel
-from ..typing.modes import OperationMode
-from ..extensions.events import EventDispatcher
-from ..typing.common import JSON, JSONSerializable
-from ..typing.events import EventName, EventPayload
-from ..persona.capabilities import PersonaCapabilities
-from ..typing.locks import (
-    ComponentLockName,
-    ComponentLockOwner,
-    ComponentBusyResult,
-    ComponentLockRequirement,
-)
-from ..dataclasses.events import (
-    AgentTaskFinishedEvent,
-    AgentChoiceRequestedEvent,
-    AgentTaskStateChangedEvent,
-    AgentApprovalRequestedEvent,
-)
 from ..typing.agent import (
     ToolCall,
     AgentTask,
@@ -71,6 +52,25 @@ from ..typing.agent import (
     AgentPermissionEvaluation,
     AgentClassificationFailure,
 )
+from ..typing.locks import (
+    ComponentLockName,
+    ComponentLockOwner,
+    ComponentBusyResult,
+    ComponentLockRequirement,
+)
+from ..dataclasses.events import (
+    AgentTaskFinishedEvent,
+    AgentChoiceRequestedEvent,
+    AgentTaskStateChangedEvent,
+    AgentApprovalRequestedEvent,
+)
+from ..typing.aliases import LogLevel
+from ..typing.modes import OperationMode
+from ..utils import format_error_message
+from ..extensions.events import EventDispatcher
+from ..typing.common import JSON, JSONSerializable
+from ..typing.events import EventName, EventPayload
+from ..persona.capabilities import PersonaCapabilities
 
 if TYPE_CHECKING:
     from ..locks import ComponentLockLease, ComponentLockManager
@@ -1273,8 +1273,10 @@ class AgentRuntime:
         if not task.needs_context_compaction:
             return True
         if self._compactor is None:
-            self.abort_task(task.task_id, AgentAbortReason.CONTEXT_LIMIT)
-            return False
+            if task.context_tokens > task.config.context_size:
+                self.abort_task(task.task_id, AgentAbortReason.CONTEXT_LIMIT)
+                return False
+            return True
         try:
             compacted = self._compactor(self.get_context(task.task_id))
         except Exception as exc:
@@ -1296,7 +1298,7 @@ class AgentRuntime:
             )
             return False
         self._contexts[task.task_id] = compacted
-        if task.needs_context_compaction:
+        if task.context_tokens > task.config.context_size:
             self.abort_task(task.task_id, AgentAbortReason.CONTEXT_LIMIT)
             return False
         return True
