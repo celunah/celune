@@ -5,15 +5,16 @@ from __future__ import annotations
 
 import json
 from uuid import uuid4
-from typing import TYPE_CHECKING, Optional, cast
 from collections.abc import Mapping
+from typing import TYPE_CHECKING, Optional, cast
 
-from ..i18n import string
-from ..vram import agent_vram_compatible
-from ..modes import mode_allows_agents
-from ..utils import format_error_message
 from .runtime import AgentRuntime
+from ..i18n import string
+from ..modes import mode_allows_agents
+from ..vram import agent_vram_compatible
 from ..exceptions import _EmptyClassifierOutput
+from ..typing.common import JSON, JSONSerializable
+from ..typing.persona import PersonaClientResponse
 from ..conversation import build_agent_classification_request
 from ..typing.agent import (
     AgentTask,
@@ -37,8 +38,6 @@ from ..typing.locks import (
     ComponentLockOwner,
     ComponentLockRequirement,
 )
-from ..typing.common import JSON, JSONSerializable
-from ..typing.persona import PersonaClientResponse
 
 if TYPE_CHECKING:
     from ..celune import Celune
@@ -566,14 +565,13 @@ class AgentInputRouter:
         if callable(log):
             log_level = getattr(self.engine, "log_level", "info")
             if log_level in {"verbose", "debug"}:
-                log(
-                    format_error_message(
-                        string("agent.classifier_failed"),
-                        error,
-                        log_level,
-                    )
+                reason = (
+                    f"{type(error).__name__}: {error}"
                     if error is not None
-                    else f"{string('agent.classifier_failed')}: {detail or kind.value}",
+                    else detail or kind.value
+                )
+                log(
+                    f"{string('agent.classifier_failed')} {reason}",
                     "warning",
                     loglevel="verbose",
                 )

@@ -22,6 +22,8 @@ The production limits are:
 
 - 20 tool/planning iterations per task.
 - Up to 8,192 tokens of agent context space.
+- Up to 256 output tokens for input classification, with one repair attempt for
+  rejected output.
 - Compaction pressure around 6,144 tokens by default.
 - A stuck-task threshold of three repeated non-progress outcomes.
 
@@ -82,6 +84,9 @@ available. The checkpoint is validated and prepared in an isolated cache; a
 legacy JAX/Flax `needle.pkl` is not accepted as a normal production artifact.
 Needle may select only registered schemas, and the runtime validates names,
 argument types, approval state, and availability before execution.
+If Needle returns a list of calls, Celune considers only the first call in that
+planning step; it validates that call and executes no more than one tool at a
+time.
 The loader instantiates the model in the dtype declared by its validated
 checkpoint before placing it on the selected device, avoiding an intermediate
 FP32 copy for BF16 checkpoints.

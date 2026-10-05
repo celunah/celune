@@ -12,16 +12,18 @@ import os
 import re
 import json
 from uuid import uuid4
-from typing import Union, Optional, cast
 from pathlib import Path
+from typing import Union, Optional, cast
 from collections.abc import Mapping, Sequence
 
 import torch
-from sentencepiece import SentencePieceProcessor
-from huggingface_hub import hf_hub_download
 from safetensors.torch import load_file
+from huggingface_hub import hf_hub_download
+from sentencepiece import SentencePieceProcessor
 
 from .models import NeedleModel, NeedleConfig
+from ...typing.common import JSONSerializable
+from ...exceptions import NeedleSelectionError
 from ...paths import huggingface_hub_cache_dir
 from .checkpoints import (
     NEEDLE_MODEL_ID,
@@ -35,7 +37,6 @@ from .checkpoints import (
     _expected_dtype,
     prepare_needle_checkpoint,
 )
-from ...exceptions import NeedleSelectionError
 from ...typing.agent import (
     ToolCall,
     AgentTool,
@@ -52,7 +53,6 @@ from ...typing.agent import (
     AgentToolArgumentSchema,
     NeedleToolParameterSpec,
 )
-from ...typing.common import JSONSerializable
 
 NEEDLE_TOOL_CALL_TOKEN_ID = 4
 NEEDLE_TOOLS_TOKEN_ID = 5
@@ -121,15 +121,16 @@ def _parse_single_selection(
     text: str,
     original_names: Mapping[str, str],
 ) -> NeedleToolCall:
-    """Parse exactly one JSON tool call from a Needle response."""
+    """Parse the first JSON tool call from a Needle response."""
     candidates = _json_candidates(text.replace("<tool_call>", ""))
     if not candidates:
         raise NeedleSelectionError("Needle returned malformed or empty JSON")
     candidate = candidates[0]
-    values = candidate if isinstance(candidate, list) else [candidate]
-    if len(values) != 1:
-        raise NeedleSelectionError("Needle returned multiple tool calls")
-    value = values[0]
+    if isinstance(candidate, list):
+        if not candidate:
+            raise NeedleSelectionError("Needle returned malformed or empty JSON")
+        candidate = candidate[0]
+    value = candidate
     if not isinstance(value, dict):
         raise NeedleSelectionError("Needle returned a malformed tool call")
     name = value.get("name")

@@ -2393,7 +2393,7 @@ class TestPipelineAsync(CeluneAsyncTestCase):
         self.assertEqual(payload["format"], "celune_agent_classification")
         self.assertEqual(payload["request"], "Please handle this.")
         self.assertEqual(payload["context_space"], 8192)
-        self.assertEqual(payload["max_new_tokens"], 96)
+        self.assertEqual(payload["max_new_tokens"], 256)
         system_prompt = payload["system"]
         self.assertIsInstance(system_prompt, str)
         assert isinstance(system_prompt, str)

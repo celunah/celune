@@ -9,20 +9,12 @@ from typing import Optional, cast
 from unittest import mock
 
 import torch
-
 import pytest
 
 from celune.typing.common import JSONSerializable
 from celune.agent.needle.models import NeedleModel
-from celune.agent.needle.impl import _parse_single_selection
 from celune.persona.capabilities import PersonaCapabilities
-from celune.typing.agent import (
-    ToolCall,
-    AgentOutput,
-    NeedleToolCall,
-    NeedleToolCatalog,
-    ToolExecutionResult,
-)
+from celune.agent.needle.impl import _parse_single_selection
 from celune.agent import (
     AgentTool,
     AgentContext,
@@ -46,6 +38,13 @@ from celune.agent import (
     AgentToolArgumentSchema,
     NeedleToolParameterSpec,
     AgentToolExecutionStatus,
+)
+from celune.typing.agent import (
+    ToolCall,
+    AgentOutput,
+    NeedleToolCall,
+    NeedleToolCatalog,
+    ToolExecutionResult,
 )
 
 
@@ -227,8 +226,8 @@ class TestNeedleSelector:
                 with pytest.raises(NeedleSelectionError):
                     selector(_context(), _output())
 
-    def test_empty_intent_and_strict_json_shapes_are_rejected(self) -> None:
-        """Reject an empty planner intent and malformed or multiple JSON calls."""
+    def test_empty_intent_and_multiple_calls_use_only_the_first(self) -> None:
+        """Reject empty or malformed output and select only the first listed call."""
         handler = _FakeNeedleHandler({"name": "SetTimer", "arguments": {"minutes": 5}})
         selector = NeedleToolSelector(
             cast(NeedleHandler, handler),
@@ -239,11 +238,11 @@ class TestNeedleSelector:
             selector(_context(), _output(" "))
         with pytest.raises(NeedleSelectionError):
             _parse_single_selection("not json", {})
-        with pytest.raises(NeedleSelectionError):
-            _parse_single_selection(
-                '[{"name":"one","arguments":{}},{"name":"two","arguments":{}}]',
-                {},
-            )
+        selection = _parse_single_selection(
+            '[{"name":"one","arguments":{}},{"name":"two","arguments":{}}]',
+            {},
+        )
+        assert selection["name"] == "one"
 
     def test_handler_uses_tokenizer_for_strict_single_call_selection(self) -> None:
         """Use the handler tokenizer and restore the canonical tool name."""
