@@ -5,8 +5,8 @@ from .vcs import get_revision as _get_revision
 
 
 REVISION = _get_revision()
-VERSION = "5.0.4"
-DEVELOPMENT = False
+VERSION = "5.1.0"
+DEVELOPMENT = True
 
 if REVISION:
     _local = REVISION.rstrip("*")
