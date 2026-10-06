@@ -307,7 +307,6 @@ class TestApiWebUI(CeluneTestCase):
                 progress_callback=lambda *_args: None,
                 caption_progress_callback=lambda *_args: None,
                 caption_callback=lambda _caption: None,
-                caption_timing_callback=lambda *_args: None,
                 voice_changed_callback=lambda _name: None,
                 change_input_state_callback=lambda _locked: None,
                 change_voice_lock_state_callback=lambda _locked: None,

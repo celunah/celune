@@ -10,22 +10,19 @@ import sounddevice as sd
 from transformers.modeling_utils import PreTrainedModel
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 
-from ..config import Config
-from ..chroma import AudioRGBGlow
-from ..cevoice import CEVoicePersona
-from ..constants import PipelineStates
-from ..typing.modes import BackendMode
 from ..locks import ComponentLockManager
+from ..chroma import AudioRGBGlow
+from ..config import Config
+from ..cevoice import CEVoicePersona
+from .pipeline import CaptionPlaybackState
+from ..audio.dsp import StreamingPedalboardReverb
+from ..constants import PipelineStates
+from .properties import ConstantPropertySpec, ForwardedPropertySpec
+from ..backends.vc import CeluneVCBackend
 from ..backends.tts import CeluneBackend
 from ..persona.impl import PersonaClient
-from ..backends.vc import CeluneVCBackend
-from ..typing.backends import BackendModel
-from ..audio.dsp import StreamingPedalboardReverb
-from ..typing.common import JSON, JSONSerializable
-from ..typing.aliases import LogLevel, AudioChunks
-from ..extensions.manager import CeluneExtensionManager
 from ..typing.locks import ComponentLockOwner, ComponentBusyResult
-from .properties import ConstantPropertySpec, ForwardedPropertySpec
+from ..typing.modes import BackendMode
 from ..typing.celune import (
     IdleCallback,
     ErrorCallback,
@@ -36,10 +33,14 @@ from ..typing.celune import (
     TTSBackendRecipe,
     InputStateCallback,
     VoiceChangedCallback,
-    CaptionTimingCallback,
     QueueAvailableCallback,
     VoiceLockStateCallback,
+    CaptionProgressCallback,
 )
+from ..typing.common import JSON, JSONSerializable
+from ..typing.aliases import LogLevel, AudioChunks
+from ..typing.backends import BackendModel
+from ..extensions.manager import CeluneExtensionManager
 
 
 @dataclass
@@ -55,9 +56,8 @@ class CeluneCallbackState:
     change_input_state_callback: InputStateCallback
     change_voice_lock_state_callback: VoiceLockStateCallback
     progress_callback: ProgressCallback
-    caption_progress_callback: ProgressCallback
+    caption_progress_callback: CaptionProgressCallback
     caption_callback: CaptionCallback
-    caption_timing_callback: CaptionTimingCallback
 
 
 @dataclass
@@ -130,6 +130,10 @@ class CelunePipelineState:
     playback_source_meta: dict[int, dict[str, Union[str, float]]] = field(
         default_factory=dict
     )
+    playback_caption_states: dict[int, CaptionPlaybackState] = field(
+        default_factory=dict
+    )
+    caption_source_id: Optional[int] = None
     playback_chunk_last_queued_at: dict[int, float] = field(default_factory=dict)
     playback_trace_last_logged_at: float = 0.0
     playback_progress_last_emit_at: float = 0.0
@@ -254,12 +258,6 @@ CELUNE_FORWARDED_PROPERTIES = (
         "caption_callback",
         reject_duplicate=True,
     ),
-    ForwardedPropertySpec(
-        "caption_timing_callback",
-        "_callbacks",
-        "caption_timing_callback",
-        reject_duplicate=True,
-    ),
     ForwardedPropertySpec("config", "_backend_state", "config"),
     ForwardedPropertySpec("_backend_spec", "_backend_state", "backend_spec"),
     ForwardedPropertySpec("_backend_kwargs", "_backend_state", "backend_kwargs"),
@@ -351,6 +349,10 @@ CELUNE_FORWARDED_PROPERTIES = (
     ForwardedPropertySpec(
         "_playback_source_meta", "_pipeline_state", "playback_source_meta"
     ),
+    ForwardedPropertySpec(
+        "_playback_caption_states", "_pipeline_state", "playback_caption_states"
+    ),
+    ForwardedPropertySpec("_caption_source_id", "_pipeline_state", "caption_source_id"),
     ForwardedPropertySpec(
         "_playback_chunk_last_queued_at",
         "_pipeline_state",

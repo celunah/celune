@@ -4,9 +4,10 @@
 import pathlib
 import warnings
 import contextlib
+import threading
 from pathlib import Path
-from collections.abc import Callable
 from typing import Optional, cast
+from collections.abc import Callable
 
 import torch
 import librosa
@@ -19,15 +20,13 @@ from matplotlib.projections import PolarAxes
 from matplotlib import rcParams, font_manager
 from transformers import AutoModel, AutoProcessor
 
-from .i18n import string
-from .paths import huggingface_progress
-from .typing.aliases import AudioChunk
-from .cevoice import ManifestValue, default_loader
 from .constants import (
     N_A_NUMERIC,
     VOICE_EMBEDDING_MODEL,
     remote_code_model_revision,
 )
+from .i18n import string
+from .utils import run_async
 from .typing.analysis import (
     TextConfig,
     VoiceMatch,
@@ -36,6 +35,9 @@ from .typing.analysis import (
     EmbeddingPayload,
     EmbeddingProcessor,
 )
+from .typing.aliases import AudioChunk
+from .paths import huggingface_progress
+from .cevoice import ManifestValue, default_loader
 
 matplotlib.use("Agg")
 
@@ -1087,6 +1089,53 @@ def analyze_voice_audio(
         reference_voice,
         progress_callback,
     )
+
+
+def _schedule_voice_analysis(
+    audio: npt.NDArray[np.float32],
+    sr: int,
+    display_name: str,
+    out_dir: pathlib.Path,
+    stem: str,
+    reference_voice: Optional[str],
+    on_error: Callable[[Exception], None],
+) -> threading.Thread:
+    """Start voice analysis without blocking the caller on process startup.
+
+    Args:
+        audio: Voice-only waveform to analyze.
+        sr: Waveform sample rate.
+        display_name: File name to show in generated reports.
+        out_dir: Directory where report artifacts are written.
+        stem: File stem to use for report artifacts.
+        reference_voice: Optional reference voice for similarity metrics.
+        on_error: Callback for failures to start the analysis process.
+
+    Returns:
+        threading.Thread: Daemon thread that starts the detached analysis process.
+    """
+
+    def start_process() -> None:
+        try:
+            run_async(
+                analyze_voice_audio,
+                audio,
+                sr,
+                display_name,
+                out_dir,
+                stem,
+                reference_voice,
+            )
+        except Exception as error:
+            on_error(error)
+
+    launcher = threading.Thread(
+        target=start_process,
+        name="celune-voice-analysis-launcher",
+        daemon=True,
+    )
+    launcher.start()
+    return launcher
 
 
 def _reference_embedding_names() -> set[str]:

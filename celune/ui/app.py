@@ -15,14 +15,14 @@ from io import TextIOWrapper
 from types import ModuleType
 from typing import (
     TYPE_CHECKING,
+    Never,
     Union,
     TextIO,
-    cast,
+    Literal,
+    ClassVar,
     Optional,
     Protocol,
-    Never,
-    ClassVar,
-    Literal,
+    cast,
     final,
 )
 from pathlib import Path
@@ -33,105 +33,104 @@ from textual import work, events
 from rich.text import Text
 from textual.app import (
     App,
-    AutopilotCallbackType,
+    ReturnType,
     ComposeResult,
     RenderableType,
-    ReturnType,
     ScreenStackError,
+    AutopilotCallbackType,
 )
 from textual.color import Color
 from textual.theme import Theme
 from textual.timer import Timer
+from textual.screen import ModalScreen
 from textual.widget import Widget
 from textual.message import Message
-from textual.screen import ModalScreen
 from textual.widgets import (
     Label,
-    Button as TextualButton,
     RichLog,
     TextArea,
     ProgressBar,
 )
+from textual.widgets import (
+    Button as TextualButton,
+)
 from textual.css.query import NoMatches
 from textual.css.types import EdgeStyle
-from textual.containers import Horizontal, Vertical
+from textual.containers import Vertical, Horizontal
 
 from ..i18n import string, tagged_string
 from .theme import CELUNE_CSS, severity_color
 from .loading import CeluneLoadingScreen
+from ..threads import run_in_daemon_thread
 from .terminal import SelectMenuOption, SelectMenuWidget
-from ..constants import APP_NAME, BASE_SR, ExitCodes, SIGTSTP
+from ..watchdog import launcher_loss_requested
+from ..constants import BASE_SR, SIGTSTP, APP_NAME, ExitCodes
+from ..typing.ui import CeluneUIMethodSurface
 from ..typing.agent import AgentTaskState
-from ..typing.common import JSONSerializable
-from ..typing.config import AudioDeviceInfoValue
 from ..typing.locks import (
     ComponentLockName,
     ComponentLockOwner,
     ComponentLockRequirement,
 )
-from ..threads import run_in_daemon_thread
-from ..typing.ui import CeluneUIMethodSurface
-from ..theme.defaults import default_error_theme_family, default_theme_family
-from ..watchdog import launcher_loss_requested
+from ..typing.common import JSONSerializable
+from ..typing.config import AudioDeviceInfoValue
+from ..theme.defaults import default_theme_family, default_error_theme_family
 
 if TYPE_CHECKING:
-    from ..typing.aliases import AudioChunk, AudioChunks, LogLevel
-    from ..typing.agent import AgentTask
-    from ..typing.aliases import _VCAudioCallback
-    from .terminal import LogRedirect, UILogHandler
     import sounddevice as sd
+
+    from .terminal import LogRedirect, UILogHandler
+    from ..typing.agent import AgentTask
+    from ..typing.aliases import LogLevel, AudioChunk, AudioChunks, _VCAudioCallback
 
     colors: ModuleType
 
+    import yaml
+    import numpy as np
+    import numpy.typing as npt
+
     from . import resources as ui_resources
     from ..vc import (
+        VC_PITCH_SHIFT_MAX,
+        VC_PITCH_SHIFT_MIN,
         LiveVoiceActivityDetector,
+        vc_input_rms,
+        vc_input_has_voice,
+        clamp_vc_pitch_shift,
+        vc_live_chunk_frames,
+        vc_vad_preroll_frames,
+        vc_vad_hangover_frames,
+        vc_live_chunk_overlap_frames,
+        create_live_voice_activity_detector,
     )
     from ..locks import ComponentLockLease
-    from ..celune import Celune
-    from ..cevoice import CEVoiceLoader
-    from ..persona.asr import (
-        WhisperTranscriber,
-    )
-    from ..extensions.events import EventDispatcher
-    from ..dataclasses.events import (
-        AgentApprovalRequestedEvent,
-        AgentChoiceRequestedEvent,
-        AgentTaskFinishedEvent,
-        AgentTaskStateChangedEvent,
-    )
-    from ..config import format_audio_device_name, resolve_audio_device_with_info
-    from ..dataclasses.pipeline import AudioOutput
-    from ..exceptions import CEDTSError
     from ..paths import config_path, main_window_log_path
+    from ..utils import discard, replace_ipa, is_april_fools
+    from ..celune import Celune
+    from ..config import format_audio_device_name, resolve_audio_device_with_info
+    from ..speech import queue_streaming_sfx_audio, finish_streaming_sfx_audio
+    from ..cevoice import CEVoiceLoader
+    from .commands import process_command as process_ui_command
+    from .terminal import is_celune_log_record
+    from ..playback import current_playback_status
+    from .resources import FOOTER_ROTATE_SECONDS
+    from ..exceptions import CEDTSError
     from ..persona.asr import (
         DEFAULT_PERSONA_SPEECH_MODEL_ID,
         PERSONA_SPEECH_END_DELAY_SECONDS,
         PERSONA_SPEECH_NO_INPUT_TIMEOUT_SECONDS,
         WhisperSegment,
+        WhisperTranscriber,
     )
     from ..persona.impl import persona_config, persona_enabled, persona_talkback_enabled
-    from ..playback import current_playback_status
-    from ..speech import finish_streaming_sfx_audio, queue_streaming_sfx_audio
-    from ..utils import discard, is_april_fools, replace_ipa
-    from ..vc import (
-        VC_PITCH_SHIFT_MAX,
-        VC_PITCH_SHIFT_MIN,
-        clamp_vc_pitch_shift,
-        create_live_voice_activity_detector,
-        vc_input_has_voice,
-        vc_input_rms,
-        vc_live_chunk_frames,
-        vc_live_chunk_overlap_frames,
-        vc_vad_hangover_frames,
-        vc_vad_preroll_frames,
+    from ..extensions.events import EventDispatcher
+    from ..dataclasses.events import (
+        AgentTaskFinishedEvent,
+        AgentChoiceRequestedEvent,
+        AgentTaskStateChangedEvent,
+        AgentApprovalRequestedEvent,
     )
-    from .commands import process_command as process_ui_command
-    from .resources import FOOTER_ROTATE_SECONDS
-    from .terminal import is_celune_log_record
-    import numpy as np
-    import numpy.typing as npt
-    import yaml
+    from ..dataclasses.pipeline import AudioOutput
 
     class _UIResources(Protocol):
         """Type-checkable subset of the resource footer module."""
@@ -254,6 +253,32 @@ def format_error_message(
     from ..utils import format_error_message as format_error_message_helper
 
     return format_error_message_helper(message, error, log_level)
+
+
+def concise_error_message(message: str) -> str:
+    """Remove traceback frames from startup text while retaining its final error."""
+    _, separator, traceback_text = message.partition(
+        "Traceback (most recent call last):"
+    )
+    if not separator:
+        return message
+
+    final_line = next(
+        (
+            line.strip()
+            for line in reversed(traceback_text.splitlines())
+            if line.strip()
+        ),
+        "",
+    )
+    _, separator, detail = final_line.partition("): ")
+    if separator and detail:
+        return detail
+
+    _, separator, detail = final_line.partition(": ")
+    if separator and detail:
+        return detail
+    return final_line or message
 
 
 def resolve_log_level(
@@ -515,24 +540,6 @@ def _load_ui_runtime_dependencies() -> None:
     global is_celune_log_record
     global _RUNTIME_LOG_REDIRECT_FILTER_MESSAGES
 
-    from ..theme import colors as loaded_colors
-    from ..config import format_audio_device_name, resolve_audio_device_with_info
-    from ..exceptions import CEDTSError
-    from ..paths import config_path, main_window_log_path
-    from ..terminal import (
-        RUNTIME_LOG_FILTER_MESSAGES,
-        set_terminal_title as loaded_set_terminal_title,
-        terminal_title_escape as loaded_terminal_title_escape,
-    )
-    from ..utils import (
-        discard,
-        indent as loaded_indent,
-        is_april_fools,
-        replace_ipa,
-        supports_ansi as loaded_supports_ansi,
-    )
-    from ..watchdog import launcher_loss_requested as loaded_launcher_loss_requested
-    from .terminal import LogRedirect, UILogHandler, is_celune_log_record
     import yaml
     import numpy as np
     import sounddevice as sd
@@ -552,14 +559,40 @@ def _load_ui_runtime_dependencies() -> None:
         vc_live_chunk_overlap_frames,
         create_live_voice_activity_detector,
     )
+    from ..paths import config_path, main_window_log_path
+    from ..theme import colors as loaded_colors
+    from ..utils import (
+        indent as loaded_indent,
+    )
+    from ..utils import (
+        discard,
+        replace_ipa,
+        is_april_fools,
+    )
+    from ..utils import (
+        supports_ansi as loaded_supports_ansi,
+    )
+    from ..config import format_audio_device_name, resolve_audio_device_with_info
+    from ..speech import (
+        queue_streaming_sfx_audio,
+        finish_streaming_sfx_audio,
+    )
     from ..cevoice import default_loader as loaded_default_loader
     from .commands import process_command as process_ui_command
-    from ..speech import (
-        finish_streaming_sfx_audio,
-        queue_streaming_sfx_audio,
-    )
+    from .terminal import LogRedirect, UILogHandler, is_celune_log_record
     from ..playback import current_playback_status
+    from ..terminal import (
+        RUNTIME_LOG_FILTER_MESSAGES,
+    )
+    from ..terminal import (
+        set_terminal_title as loaded_set_terminal_title,
+    )
+    from ..terminal import (
+        terminal_title_escape as loaded_terminal_title_escape,
+    )
+    from ..watchdog import launcher_loss_requested as loaded_launcher_loss_requested
     from .resources import FOOTER_ROTATE_SECONDS
+    from ..exceptions import CEDTSError
     from ..persona.asr import (
         DEFAULT_PERSONA_SPEECH_MODEL_ID,
         PERSONA_SPEECH_END_DELAY_SECONDS,
@@ -732,6 +765,8 @@ class CeluneUIBindingState:
     style_index: int = 0
     cur_state: str = "active"
     startup_error_exit_code: Optional[int] = None
+    loading_ui_reveal_available: bool = False
+    loading_ui_revealed: bool = False
     consume_on_boundary: bool = False
     suppress_input_change: bool = False
     resource_page: int = 0
@@ -764,6 +799,7 @@ class CeluneUILogCaptureState:
     stderr_original_fd_dup: Optional[int] = None
     stderr_forward_thread: Optional[threading.Thread] = None
     warnings_capture_enabled: bool = False
+    latest_startup_error: Optional[str] = None
     log_file_path: Path = field(default_factory=Path)
     log_file_initialized: bool = False
 
@@ -817,12 +853,10 @@ class CeluneUIInteractionState:
     caption_text: str = ""
     caption_words: tuple[str, ...] = ()
     caption_sentences: tuple[tuple[str, ...], ...] = ()
-    caption_word_timings: tuple[tuple[float, float], ...] = ()
-    caption_audio_duration: float = 0.0
     caption_rendered_text: str = ""
-    caption_transcriber: Optional[WhisperTranscriber] = None
     caption_visible_words: int = 0
     caption_progress: float = 0.0
+    caption_segmented_progress: bool = False
     caption_active: bool = False
     caption_transitioning: bool = False
     caption_transition_token: int = 0
@@ -943,6 +977,10 @@ class CeluneUI(App, CeluneUIMethodSurface):
     _startup_error_exit_code = _forward_ui_property(
         "_binding_state", "startup_error_exit_code"
     )
+    _loading_ui_reveal_available = _forward_ui_property(
+        "_binding_state", "loading_ui_reveal_available"
+    )
+    _loading_ui_revealed = _forward_ui_property("_binding_state", "loading_ui_revealed")
     consume_on_boundary = _forward_ui_property("_binding_state", "consume_on_boundary")
     _suppress_input_change = _forward_ui_property(
         "_binding_state", "suppress_input_change"
@@ -963,6 +1001,9 @@ class CeluneUI(App, CeluneUIMethodSurface):
     _log_stderr = _forward_ui_property("_log_capture_state", "log_stderr")
     _runtime_log_capture_enabled = _forward_ui_property(
         "_log_capture_state", "runtime_log_capture_enabled"
+    )
+    _latest_startup_error = _forward_ui_property(
+        "_log_capture_state", "latest_startup_error"
     )
     _runtime_redirect_handler = _forward_ui_property(
         "_log_capture_state", "runtime_redirect_handler"
@@ -1110,22 +1151,16 @@ class CeluneUI(App, CeluneUIMethodSurface):
     _caption_text = _forward_ui_property("_interaction_state", "caption_text")
     _caption_words = _forward_ui_property("_interaction_state", "caption_words")
     _caption_sentences = _forward_ui_property("_interaction_state", "caption_sentences")
-    _caption_word_timings = _forward_ui_property(
-        "_interaction_state", "caption_word_timings"
-    )
-    _caption_audio_duration = _forward_ui_property(
-        "_interaction_state", "caption_audio_duration"
-    )
     _caption_rendered_text = _forward_ui_property(
         "_interaction_state", "caption_rendered_text"
-    )
-    _caption_transcriber = _forward_ui_property(
-        "_interaction_state", "caption_transcriber"
     )
     _caption_visible_words = _forward_ui_property(
         "_interaction_state", "caption_visible_words"
     )
     _caption_progress = _forward_ui_property("_interaction_state", "caption_progress")
+    _caption_segmented_progress = _forward_ui_property(
+        "_interaction_state", "caption_segmented_progress"
+    )
     _caption_active = _forward_ui_property("_interaction_state", "caption_active")
     _caption_transitioning = _forward_ui_property(
         "_interaction_state", "caption_transitioning"
@@ -1357,6 +1392,7 @@ class CeluneUI(App, CeluneUIMethodSurface):
     @work(thread=True, exclusive=True)
     def load_tts(self) -> None:
         """Load the app runtime."""
+        self._latest_startup_error = None
         try:
             if self.celune.load():
                 self.celune_styles = self.celune.voices
@@ -1410,14 +1446,13 @@ class CeluneUI(App, CeluneUIMethodSurface):
                 self.cur_state = "error"
                 self.change_input_state(locked=True)
                 self.change_voice_lock_state(locked=True)
+                failure_message = self._latest_startup_error or string(
+                    "ui.app_could_not_start",
+                    app_name=APP_NAME,
+                )
                 self.error(string("ui.app_could_not_start", app_name=APP_NAME))
-                self._show_loading_error(
-                    string("ui.app_could_not_start", app_name=APP_NAME)
-                )
-                self._finish_test_startup(
-                    False,
-                    string("ui.app_could_not_start", app_name=APP_NAME),
-                )
+                self._show_loading_error(failure_message)
+                self._finish_test_startup(False, failure_message)
         except Exception as e:
             self.cur_state = "error"
             error_message = format_error_message(
@@ -1590,7 +1625,7 @@ class CeluneUI(App, CeluneUIMethodSurface):
 
 def _install_ui_methods() -> None:
     """Install split UI methods after the concrete UI class exists."""
-    from . import capture, interaction, runtime
+    from . import capture, runtime, interaction
 
     runtime.install(CeluneUI)
     capture.install(CeluneUI)

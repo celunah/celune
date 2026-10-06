@@ -1,6 +1,6 @@
 [project]
 name = "celune"
-version = "5.0.3"
+version = "5.0.4"
 description = "Real-time AI TTS character engine for all use cases"
 readme = "README.md"
 requires-python = ">=3.12,<3.15"
@@ -120,6 +120,11 @@ api = [
     "gradio",
 ]
 
+# Optional ONNX Runtime for IPA forced alignment of speech captions.
+captions = [
+    "onnxruntime>=1.22",
+]
+
 # Install to use OpenZL-compressed CECHAR v4 packages in Celune.
 openzl = [
     "openzl",
@@ -155,7 +160,7 @@ openzl = [
 # A cheap on compute Celune backend providing an exceptional sound quality. Fastest, with an exceptional sound quality
 # to size ratio.
 # mini = [
-#     "pocket-tts>=2.1.0",
+#     "pocket-tts>=2.1.0,!=3.0.0",
 # ]
 
 # LuxTTS is isolated in its CUDA-capable CEDTS environment and falls back to

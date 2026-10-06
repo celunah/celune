@@ -108,7 +108,6 @@ class TestCeluneCore(CeluneTestCase):
             progress_callback=celune._noop_progress,
             caption_progress_callback=celune._noop_progress,
             caption_callback=celune._noop_caption,
-            caption_timing_callback=celune._noop_caption_timing,
         )
         celune._backend_state = CeluneBackendState(
             config={},

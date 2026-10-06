@@ -29,16 +29,16 @@ from celune.utils import discard
 from celune.celune import Celune
 from celune.config import Config
 from celune.ui.app import (
-    ButtonActions,
     Button,
     CeluneUI,
-    ProgressLabel,
     VoiceButton,
+    ButtonActions,
+    ProgressLabel,
 )
 from tests.support import FakeBackend
 from celune.ui.theme import severity_color
-from celune.persona.asr import WhisperWord, WhisperSegment
 from celune.typing.common import JSONSerializable
+
 from .ui_startup_foundation import TestUIStartup as _TestUIStartup
 
 
@@ -1445,140 +1445,8 @@ class TestUIStartup(_TestUIStartup):
             worker.join()
         call_from_thread.assert_called_once_with(ui._hide_caption_widgets)
 
-    def test_speech_caption_uses_word_timestamps(self) -> None:
-        """Verify captions use Whisper word boundaries instead of sentence interpolation."""
-        segments = (
-            WhisperSegment(
-                text="One two three",
-                start=0.0,
-                end=3.0,
-                words=(
-                    WhisperWord("One", 0.0, 0.4),
-                    WhisperWord("two", 0.8, 1.4),
-                    WhisperWord("three", 1.9, 2.8),
-                ),
-            ),
-        )
-
-        timings = CeluneUI._caption_word_timing_ranges(
-            ("One", "two", "three"),
-            segments,
-            3.0,
-        )
-
-        assert timings == ((0.0, 0.4), (0.8, 1.4), (1.9, 2.8))
-
-        normalized_timings = CeluneUI._caption_word_timing_ranges(
-            (r"C:\Users\user",),
-            (
-                WhisperSegment(
-                    text="C drive Users user",
-                    start=0.0,
-                    end=3.0,
-                    words=(
-                        WhisperWord("C", 0.0, 0.4),
-                        WhisperWord("drive", 0.5, 1.0),
-                        WhisperWord("Users", 1.1, 1.8),
-                        WhisperWord("user", 2.0, 2.8),
-                    ),
-                ),
-            ),
-            3.0,
-            ("C", "drive", "Users", "user"),
-        )
-
-        self.assertEqual(normalized_timings, ((0.0, 2.8),))
-
-        mismatched_timing_words = CeluneUI._caption_word_timing_ranges(
-            ("One", "two"),
-            (
-                WhisperSegment(
-                    text="alpha beta gamma delta epsilon",
-                    start=0.0,
-                    end=5.0,
-                    words=tuple(
-                        WhisperWord(word, index, index + 0.5)
-                        for index, word in enumerate(
-                            ("alpha", "beta", "gamma", "delta", "epsilon")
-                        )
-                    ),
-                ),
-            ),
-            5.0,
-            ("first", "second", "third", "fourth", "fifth"),
-        )
-
-        assert len(mismatched_timing_words) == 2
-        assert mismatched_timing_words[0][0] == 0.0
-        assert mismatched_timing_words[-1][1] == 4.5
-
-        fewer_timing_words = CeluneUI._caption_word_timing_ranges(
-            ("One", "two", "three"),
-            (
-                WhisperSegment(
-                    text="alpha",
-                    start=0.0,
-                    end=1.0,
-                    words=(WhisperWord("alpha", 0.0, 1.0),),
-                ),
-            ),
-            1.0,
-            ("alpha",),
-        )
-
-        assert len(fewer_timing_words) == 3
-
-    def test_caption_transcriber_does_not_publish_progress_to_playback_bar(
-        self,
-    ) -> None:
-        """Verify caption model loading does not alter the foreground bar."""
-        ui = CeluneUI()
-        ui.celune = cast(
-            Celune,
-            SimpleNamespace(config={"persona": {"enabled": True}}),
-        )
-        ui._persona_speech_model_id = mock.Mock(return_value="test/whisper")
-        ui._persona_speech_language = mock.Mock(return_value=None)
-        ui._run_on_ui_thread = lambda callback: callback()
-        transcriber = mock.Mock()
-        transcriber.transcribe_segments.return_value = ()
-
-        class ImmediateThread:
-            """Run one background analysis target synchronously."""
-
-            def __init__(self, target: Callable[[], None], **_kwargs: object) -> None:
-                self._target = target
-
-            def start(self) -> None:
-                """Run the captured target."""
-                self._target()
-
-        with (
-            mock.patch.object(ui_app, "np", np, create=True),
-            mock.patch.object(
-                ui_app,
-                "persona_enabled",
-                return_value=True,
-                create=True,
-            ),
-            mock.patch.object(
-                ui_app,
-                "WhisperTranscriber",
-                return_value=transcriber,
-                create=True,
-            ) as transcriber_type,
-            mock.patch.object(ui_app.threading, "Thread", ImmediateThread),
-        ):
-            ui.tts_caption_timing(
-                "One two",
-                np.ones(8, dtype=np.float32),
-                48000,
-            )
-
-        transcriber_type.assert_called_once_with("test/whisper", language=None)
-
-    def test_speech_caption_timing_refinement_does_not_hide_words(self) -> None:
-        """Verify late word timings cannot regress an already rendered caption."""
+    def test_chunk_caption_progress_does_not_regress_on_stale_updates(self) -> None:
+        """Verify chunk progress reveals stable word counts and ignores stale counts."""
         ui = CeluneUI()
 
         class FakeCaption:
@@ -1590,20 +1458,17 @@ class TestUIStartup(_TestUIStartup):
                 self.rendered = ""
 
             def update(self, value: str) -> None:
-                """Capture the visible caption words."""
+                """Capture visible caption words."""
                 self.rendered = value
 
         ui.caption = cast(Label, FakeCaption())
-        ui.tts_caption("One two three")
-        ui.safe_caption_progress(2, 3)
+        ui.tts_caption("One two three four")
+
+        ui.safe_caption_progress(50.0, 400.0, 2)
         assert cast(FakeCaption, ui.caption).rendered == "One two"
 
-        ui._caption_word_timings = ((2.5, 2.8), (2.9, 3.0), (3.1, 3.2))
-        ui._caption_audio_duration = 3.2
-        visible_sentence, visible_words = ui._caption_words_for_progress(2 / 3)
-
-        assert visible_words == 2
-        assert visible_sentence == ("One", "two")
+        ui.safe_caption_progress(250.0, 600.0, 1)
+        assert cast(FakeCaption, ui.caption).rendered == "One two"
 
     def test_status_ticker_recovers_active_playback_status(self) -> None:
         """Verify the TUI ticker displays the active playback-source status."""

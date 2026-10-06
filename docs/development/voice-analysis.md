@@ -23,6 +23,14 @@ Reference similarity requires a `.pt` asset with a 2,048-element float32
 speaker embedding in the active pack. Missing or malformed embeddings produce
 a clear analysis error; the rest of the raw analysis can still be useful.
 
+## Automatic generation analysis
+
+When verbose or debug logging is enabled and Celune saves generated audio, the
+pipeline schedules its radar chart and report analysis after playback. A daemon
+launcher thread starts the detached analysis process, so Windows process
+startup and audio transfer do not pause the playback event loop or subsequent
+speech generation. A process-start failure is reported as a warning.
+
 ## `scripts/cac.py`
 
 The Character and Audio Creator script creates a CEVOICE pack through either a

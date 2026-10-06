@@ -3,24 +3,24 @@
 
 from __future__ import annotations
 
-import asyncio
-import contextlib
-import ctypes
 import os
-import queue as queue_module
 import re
-import shlex
 import sys
-import threading
+import queue as queue_module
+import shlex
 import types
+import ctypes
+import asyncio
+import threading
+import contextlib
 from copy import deepcopy
-from collections.abc import Callable, Iterator
-from typing import Optional, cast
 from uuid import uuid4
+from typing import Optional, cast
+from collections.abc import Callable, Iterator
 
-from ..constants import SIGTSTP
 from . import app as _app
 from ..binding import install_class_functions
+from ..constants import SIGTSTP
 
 __all__ = (
     "_close_menu",
@@ -750,8 +750,8 @@ def open_voice_menu(self) -> None:
         CEVoice,
         CEVoiceError,
         active_bundle_path,
-        bundle_display_name,
         bundled_voices_dir,
+        bundle_display_name,
     )
 
     options: list[_app.SelectMenuOption] = []
@@ -1177,6 +1177,12 @@ def on_key(self, event: _app.events.Key) -> None:
     """
     with contextlib.suppress(EOFError):
         if self.cur_state == "exiting":
+            return
+
+        if event.key == "escape" and self._loading_ui_reveal_available:
+            event.prevent_default()
+            event.stop()
+            self._reveal_main_ui()
             return
 
         if event.key == "ctrl+q":

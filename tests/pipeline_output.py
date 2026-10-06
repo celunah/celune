@@ -4,20 +4,20 @@
 # Import groups follow Celune's project-specific Ruff ordering.
 # pylint: disable=ungrouped-imports
 
-import json as _json
 import tempfile
 import threading
-from types import SimpleNamespace
+import json as _json
 from typing import cast
 from pathlib import Path
 from unittest import mock
+from types import SimpleNamespace
 
-import numpy as np
 import pytest
+import numpy as np
 import soundfile as sf
 
-from celune import pipeline
 from celune.celune import Celune
+from celune import metadata as celune_metadata, pipeline
 
 from .support import (
     FakeStream,
@@ -92,7 +92,7 @@ class TestPipelineAsync(_TestPipelineAsync):
             comment_block = next(
                 payload
                 for block_type, payload in blocks
-                if block_type == pipeline._FLAC_VORBIS_COMMENT_BLOCK
+                if block_type == celune_metadata._FLAC_VORBIS_COMMENT_BLOCK
             )
             _, comments = pipeline.parse_vorbis_comment_block(comment_block)
         assert ("artist", "Celune") in comments
@@ -173,7 +173,7 @@ class TestPipelineAsync(_TestPipelineAsync):
             comment_block = next(
                 payload
                 for block_type, payload in blocks
-                if block_type == pipeline._FLAC_VORBIS_COMMENT_BLOCK
+                if block_type == celune_metadata._FLAC_VORBIS_COMMENT_BLOCK
             )
             _, comments = pipeline.parse_vorbis_comment_block(comment_block)
             tags = dict(comments)

@@ -30,6 +30,9 @@ explicit start/run commands, and the UI or agent test modes.
 | `celune help` / `--help` / `-h` | Print command help. |
 | `celune version` / `--version` | Print version, revision, and tagline. |
 
+The command help aligns descriptions with spaces, so terminal tab-stop settings
+do not shift the text.
+
 The `-v` spelling is accepted both as the verbose start flag and as the version
 alias by the dispatcher; use `--verbose` and `--version` in scripts to avoid
 ambiguity.
