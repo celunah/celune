@@ -6,19 +6,21 @@ from __future__ import annotations
 import os
 import asyncio
 import threading
+from typing import TYPE_CHECKING, Optional, cast
 from pathlib import Path
 from urllib.parse import urlparse
 from collections.abc import Callable, Awaitable
-from typing import TYPE_CHECKING, Optional, cast
 
 import soundfile as sf
 
+from ..vc import (
+    VC_PITCH_SHIFT_MAX,
+    VC_PITCH_SHIFT_MIN,
+    clamp_vc_pitch_shift,
+)
 from ..i18n import string, tagged_string
+from ..vram import vram_report_int, format_vram_bytes, runtime_vram_report
 from ..paths import project_root
-from ..constants import APP_NAME
-from ..audio.server import restart_audio_server
-from ..exceptions import InvalidExtensionError
-from ..persona.capabilities import PersonaCapabilities
 from ..utils import (
     available,
     replace_ipa,
@@ -27,11 +29,10 @@ from ..utils import (
 )
 from ..cevoice import active_bundle_path, resolve_bundle_path
 from ..threads import run_in_daemon_thread
-from ..vc import (
-    VC_PITCH_SHIFT_MAX,
-    VC_PITCH_SHIFT_MIN,
-    clamp_vc_pitch_shift,
-)
+from ..constants import APP_NAME
+from ..exceptions import InvalidExtensionError
+from ..audio.server import restart_audio_server
+from ..persona.capabilities import PersonaCapabilities
 
 if TYPE_CHECKING:
     from .app import CeluneUI
@@ -71,6 +72,41 @@ async def _run_runtime_async_on_loop(
         method = cast(Callable[..., Awaitable[bool]], async_method)
         return await method(*method_args)
     return bool(await run_in_daemon_thread(getattr(target, sync_name), *method_args))
+
+
+def _vram_component_label(name: str) -> str:
+    """Return the localized display label for one runtime component."""
+    category, separator, backend = name.partition("/")
+    if category == "tts" and separator:
+        return string("commands.vram_text_to_speech", backend=backend)
+    if category == "vc" and separator:
+        return string("commands.vram_speech_input", backend=backend)
+    if category == "speech" and separator:
+        return string("commands.vram_speech_input", backend=backend)
+    if name == "persona":
+        return string("commands.vram_language_model")
+    if name == "normalizer":
+        return string("commands.vram_normalizer")
+    if name == "agent":
+        return string("commands.vram_agent")
+    return name
+
+
+def _vram_memory_values(
+    allocated: int,
+    reserved: int,
+    peak: int,
+) -> tuple[str, str, str]:
+    """Format one component's memory values for the VRAM report."""
+    allocated_value = format_vram_bytes(allocated)
+    if allocated == reserved == peak:
+        not_applicable = string("commands.vram_not_applicable")
+        return allocated_value, not_applicable, not_applicable
+    return (
+        allocated_value,
+        format_vram_bytes(reserved),
+        format_vram_bytes(peak),
+    )
 
 
 def _attachment_source(path: Path) -> str:
@@ -281,9 +317,71 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
         ui.safe_log(string("commands.help_tutorial", app_name=APP_NAME))
         ui.safe_log(string("commands.help_stop"))
         ui.safe_log(string("commands.help_restart_audio"))
+        ui.safe_log(string("commands.help_vram"))
         ui.safe_log(string("commands.help_settings"))
         ui.safe_log(string("commands.help_exit", app_name=APP_NAME))
         ui.safe_log(string("commands.help_help"))
+        return
+    if command == "vram":
+        speech_transcriber = getattr(ui, "_speech_transcriber", None)
+        speech_model = getattr(speech_transcriber, "loaded_model", None)
+        report = runtime_vram_report(
+            ui.celune,
+            {"speech/whisper": speech_model},
+        )
+        ui.safe_log(string("commands.vram_header"))
+        components = report.get("components")
+        entries: list[tuple[str, bool, int, int, int, str]] = []
+        if isinstance(components, list):
+            for component in components:
+                if not isinstance(component, dict):
+                    continue
+                raw_name = component.get("name")
+                if not isinstance(raw_name, str) or component.get("loaded") is not True:
+                    continue
+                name = _vram_component_label(raw_name)
+                component_available = component.get("available") is True
+                device_value = component.get("device")
+                device = (
+                    device_value
+                    if isinstance(device_value, str)
+                    else string("commands.vram_device_unknown")
+                )
+                entries.append(
+                    (
+                        name,
+                        component_available,
+                        vram_report_int(component, "allocated_bytes"),
+                        vram_report_int(component, "reserved_bytes"),
+                        vram_report_int(component, "peak_allocated_bytes"),
+                        device,
+                    )
+                )
+
+        label_width = max((len(f"{name}:") for name, *_ in entries), default=0)
+        for name, component_available, allocated, reserved, peak, device in entries:
+            padded_name = f"{name}:".ljust(label_width)
+            if not component_available:
+                ui.safe_log(
+                    string("commands.vram_component_unavailable", name=padded_name)
+                )
+                continue
+            allocated_value, reserved_value, peak_value = _vram_memory_values(
+                allocated,
+                reserved,
+                peak,
+            )
+            ui.safe_log(
+                string(
+                    "commands.vram_component",
+                    name=padded_name,
+                    allocated=allocated_value,
+                    reserved=reserved_value,
+                    peak=peak_value,
+                    device=device,
+                )
+            )
+        ui.safe_log(string("commands.vram_legend"))
         return
     if command == "settings":
         open_settings = getattr(ui, "open_settings_menu", None)

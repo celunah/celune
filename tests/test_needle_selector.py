@@ -3,24 +3,24 @@
 
 from __future__ import annotations
 
-from contextlib import nullcontext
-from types import SimpleNamespace
-from typing import Optional, cast
 from unittest import mock
-
-import torch
+from types import SimpleNamespace
+from contextlib import nullcontext
+from typing import Union, Optional, cast
 
 import pytest
+import torch
 
 from celune.typing.common import JSONSerializable
 from celune.agent.needle.models import NeedleModel
-from celune.agent.needle.impl import _parse_single_selection
 from celune.persona.capabilities import PersonaCapabilities
+from celune.agent.needle.impl import _parse_single_selection
 from celune.typing.agent import (
     ToolCall,
     AgentOutput,
     NeedleToolCall,
     NeedleToolCatalog,
+    NeedleToolSelection,
     ToolExecutionResult,
 )
 from celune.agent import (
@@ -113,7 +113,7 @@ def _output(intent: Optional[str] = "Set a timer for five minutes") -> AgentOutp
 class _FakeNeedleHandler:
     """Deterministic handler double that records the adapter boundary."""
 
-    def __init__(self, selection: NeedleToolCall) -> None:
+    def __init__(self, selection: Union[NeedleToolCall, NeedleToolSelection]) -> None:
         self.selection = selection
         self.query: Optional[str] = None
         self.catalog: NeedleToolCatalog = []
@@ -133,18 +133,18 @@ class _FakeNeedleHandler:
         )
         return self.catalog
 
-    def select_one_tool(
+    def select_tools(
         self,
         query: str,
         tools: NeedleToolCatalog,
         max_new_tokens: int,
-    ) -> NeedleToolCall:
-        """Record the action intent and return a deterministic model result."""
+    ) -> NeedleToolSelection:
+        """Record the action intent and return deterministic model results."""
         self.query = query
         self.catalog = tools
         if max_new_tokens <= 0:
             raise AssertionError("invalid test generation limit")
-        return self.selection
+        return self.selection if isinstance(self.selection, list) else [self.selection]
 
 
 class TestNeedleSelector:
@@ -172,12 +172,12 @@ class TestNeedleSelector:
             selection.catalog[0]["parameters"]["minutes"],
         )
         assert minutes["type"] == "integer"
+        assert isinstance(result, dict)
         assert result["name"] == "SetTimer"
-        validated = cast(ValidatedToolCall, result)
-        assert validated["tool_id"] == "set_timer"
-        assert validated["behavior"] == AgentToolBehavior.MUTATING
-        assert validated["danger"] == AgentToolDangerLevel.MEDIUM
-        assert validated["approval_required"]
+        assert result["tool_id"] == "set_timer"
+        assert result["behavior"] == AgentToolBehavior.MUTATING
+        assert result["danger"] == AgentToolDangerLevel.MEDIUM
+        assert result["approval_required"]
 
     def test_schema_mapping_can_be_keyed_by_tool_id(self) -> None:
         """Resolve a Phase 1 schema by its canonical tool identifier."""
@@ -198,6 +198,25 @@ class TestNeedleSelector:
             handler.catalog[0]["parameters"]["minutes"],
         )
         assert minutes["type"] == "integer"
+
+    def test_multiple_valid_calls_are_returned_as_choices(self) -> None:
+        """Keep every valid Needle call so the runtime can ask the user."""
+        handler = _FakeNeedleHandler(
+            [
+                {"name": "SetTimer", "arguments": {"minutes": 5}},
+                {"name": "SetTimer", "arguments": {"minutes": 10}},
+            ]
+        )
+        selector = NeedleToolSelector(
+            cast(NeedleHandler, handler),
+            (_tool("SetTimer"),),
+            schemas=_schemas(),
+        )
+
+        result = selector(_context(), _output())
+
+        assert isinstance(result, list)
+        assert [call["arguments"]["minutes"] for call in result] == [5, 10]
 
     def test_invalid_selection_shapes_and_arguments_are_rejected(self) -> None:
         """Reject unknown tools, unavailable tools, and schema-invalid arguments."""
@@ -227,8 +246,8 @@ class TestNeedleSelector:
                 with pytest.raises(NeedleSelectionError):
                     selector(_context(), _output())
 
-    def test_empty_intent_and_strict_json_shapes_are_rejected(self) -> None:
-        """Reject an empty planner intent and malformed or multiple JSON calls."""
+    def test_empty_intent_and_legacy_single_call_parser(self) -> None:
+        """Reject empty intent and preserve the strict single-call parser."""
         handler = _FakeNeedleHandler({"name": "SetTimer", "arguments": {"minutes": 5}})
         selector = NeedleToolSelector(
             cast(NeedleHandler, handler),
@@ -239,11 +258,11 @@ class TestNeedleSelector:
             selector(_context(), _output(" "))
         with pytest.raises(NeedleSelectionError):
             _parse_single_selection("not json", {})
-        with pytest.raises(NeedleSelectionError):
-            _parse_single_selection(
-                '[{"name":"one","arguments":{}},{"name":"two","arguments":{}}]',
-                {},
-            )
+        selection = _parse_single_selection(
+            '[{"name":"one","arguments":{}},{"name":"two","arguments":{}}]',
+            {},
+        )
+        assert selection["name"] == "one"
 
     def test_handler_uses_tokenizer_for_strict_single_call_selection(self) -> None:
         """Use the handler tokenizer and restore the canonical tool name."""
@@ -399,12 +418,12 @@ class TestNeedleSelector:
         class FailingHandler(_FakeNeedleHandler):
             """Handler double that fails during selection."""
 
-            def select_one_tool(
+            def select_tools(
                 self,
                 query: str,
                 tools: NeedleToolCatalog,
                 max_new_tokens: int,
-            ) -> NeedleToolCall:
+            ) -> NeedleToolSelection:
                 """Raise the typed selection failure."""
                 raise NeedleSelectionError("malformed output")
 
@@ -453,12 +472,12 @@ class TestNeedleSelector:
                         self.action_name = action_name
                         self.runtime: Optional[AgentRuntime] = None
 
-                    def select_one_tool(
+                    def select_tools(
                         self,
                         query: str,
                         tools: NeedleToolCatalog,
                         max_new_tokens: int,
-                    ) -> NeedleToolCall:
+                    ) -> NeedleToolSelection:
                         """Cancel or interrupt before returning a model call."""
                         assert self.runtime is not None
                         task = self.runtime.get_active_task("session-1")
@@ -472,7 +491,7 @@ class TestNeedleSelector:
                                     AgentInterruptionKind.USER_INTERRUPT,
                                 ),
                             )
-                        return {"name": "SetTimer", "arguments": {"minutes": 5}}
+                        return [{"name": "SetTimer", "arguments": {"minutes": 5}}]
 
                 interrupting_handler = InterruptingHandler(action)
                 selector = NeedleToolSelector(

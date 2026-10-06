@@ -6,16 +6,15 @@ from __future__ import annotations
 import json
 import pathlib
 import datetime
-from collections.abc import Mapping
 from typing import TYPE_CHECKING, Optional, cast
+from collections.abc import Mapping
 
 import soundfile as sf
 
 from . import __version__
 from .constants import APP_NAME
-from .typing.aliases import AudioChunk
 from .typing.common import JSON, JSONSerializable
-
+from .typing.aliases import AudioChunk
 
 if TYPE_CHECKING:
     from .celune import Celune

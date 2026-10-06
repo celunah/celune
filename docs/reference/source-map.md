@@ -8,6 +8,7 @@ own. It is the index to use when a feature needs a precise code entrypoint.
 | Path | Responsibility |
 | --- | --- |
 | `celune/__init__.py` | Lazy package exports and build metadata. |
+| `celune/exceptions.py` | Canonical Celune-owned exception hierarchy and structured failure metadata. |
 | `celune/celune.py` | Singleton engine, lifecycle, backend/voice switching, Persona, agent, and public calls. |
 | `celune/entrypoint.py` | CLI dispatch, startup, doctor, config commands, updates, and headless/interactive handoff. |
 | `main.py` | Lightweight interpreter-safe launcher. |
@@ -35,6 +36,8 @@ own. It is the index to use when a feature needs a precise code entrypoint.
 | Path | Responsibility |
 | --- | --- |
 | `celune/backends/tts/base.py` | TTS backend contract and common model/voice behavior. |
+| `celune/backends/tts/contracts.py` | Pinned TTS model revisions, weight inventories, and validation helpers. |
+| `celune/backends/tts/quantization.py` | GPU capability selection and contract-approved TorchAO weight quantization. |
 | `celune/backends/tts/mini.py` | Pocket TTS adapter. |
 | `celune/backends/tts/qwen3.py` | Qwen3 streaming voice-cloning adapter. |
 | `celune/backends/tts/fireredtts3.py` | FireRedTTS3 CEDTS adapter, source bootstrap, and BF16 loading. |
@@ -56,6 +59,7 @@ own. It is the index to use when a feature needs a precise code entrypoint.
 | --- | --- |
 | `celune/cevoice.py` | CEVOICE/CECHAR readers, writers, validation, lazy asset materialization, and pack selection. |
 | `celune/persona/runtime.py` | Model loading, quantization, generation, and context capacity. |
+| `celune/persona/cache.py` | Device-aware INT8/FP8 Persona KV-cache storage and dynamic-cache fallback boundary. |
 | `celune/persona/impl.py` | Configured Persona client and engine integration. |
 | `celune/persona/asr.py` | Whisper transcription, timestamps, and speech-input lifecycle. |
 | `celune/persona/capabilities.py` | Text/vision/upload/emotion capability detection. |

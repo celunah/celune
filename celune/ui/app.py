@@ -845,7 +845,7 @@ class CeluneUIInteractionState:
     persona_recording_stop_requested: bool = False
     persona_recording_stream: Optional[sd.InputStream] = None
     persona_recording_text_prefix: str = ""
-    persona_recording_transcriber: Optional[WhisperTranscriber] = None
+    speech_transcriber: Optional[WhisperTranscriber] = None
     persona_recording_worker: Optional[threading.Thread] = None
     persona_recording_vad: Optional[LiveVoiceActivityDetector] = None
     persona_recording_last_partial_at: float = 0.0
@@ -1133,8 +1133,8 @@ class CeluneUI(App, CeluneUIMethodSurface):
     _persona_recording_text_prefix = _forward_ui_property(
         "_interaction_state", "persona_recording_text_prefix"
     )
-    _persona_recording_transcriber = _forward_ui_property(
-        "_interaction_state", "persona_recording_transcriber"
+    _speech_transcriber = _forward_ui_property(
+        "_interaction_state", "speech_transcriber"
     )
     _persona_recording_worker = _forward_ui_property(
         "_interaction_state", "persona_recording_worker"

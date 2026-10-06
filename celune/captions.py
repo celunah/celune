@@ -5,27 +5,26 @@ from __future__ import annotations
 
 import json
 import queue
+import string as string_module
 import importlib
 import itertools
 import threading
 import subprocess
 import unicodedata
-from pathlib import Path
-import string as string_module
-from collections.abc import Callable, Mapping, Sequence
 from typing import TYPE_CHECKING, Optional, Protocol, cast
+from pathlib import Path
+from collections.abc import Mapping, Callable, Sequence
 
 import numpy as np
-from iso639.exceptions import DeprecatedLanguageValue, InvalidLanguageValue
+from iso639.exceptions import InvalidLanguageValue, DeprecatedLanguageValue
 
 from .i18n import string
-from .constants import BASE_SR
 from .utils import format_error_message
+from .constants import BASE_SR
+from .typing.aliases import LogLevel, AudioChunks
+from .typing.pipeline import SpeechStreamQueue
 from .audio.resampling import resample_audio
 from .dataclasses.pipeline import SpeechTiming
-from .typing.pipeline import SpeechStreamQueue
-from .typing.aliases import AudioChunks, LogLevel
-
 
 if TYPE_CHECKING:
     from .celune import Celune
@@ -623,8 +622,8 @@ class CaptionAlignmentWorker:
         sample_rate: int,
     ) -> None:
         from .playback import (
-            _flush_buffered_speech_chunks,
             _playback_source_meta,
+            _flush_buffered_speech_chunks,
             _record_caption_playback_segment,
         )
 

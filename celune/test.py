@@ -3,13 +3,13 @@
 
 from __future__ import annotations
 
-import time
 import threading
+import time
 from typing import TYPE_CHECKING, Optional
 
 from .i18n import string
-from .typing.common import JSON
 from .utils import format_error
+from .typing.common import JSON
 from .typing.agent import (
     AgentRoute,
     AgentTaskState,
@@ -127,6 +127,12 @@ def run_agent_test(
         if final_state == AgentTaskState.IDLE.value:
             raise RuntimeError(string("test.agent_task_not_started"))
         if final_state != AgentTaskState.COMPLETED.value:
+            if final_state in {
+                AgentTaskState.FAILED.value,
+                AgentTaskState.ABORTED.value,
+                AgentTaskState.CANCELLED.value,
+            }:
+                engine.playback_done.wait(timeout=timeout_seconds)
             raise RuntimeError(
                 f"agent test task ended in unexpected state: {final_state or 'none'}"
             )

@@ -26,6 +26,7 @@ from unittest import TestCase, mock
 
 import numpy as np
 import numpy.typing as npt
+
 from celune.utils import discard
 from celune.constants import PipelineStates
 from celune.typing.aliases import AudioChunk
@@ -271,10 +272,12 @@ class FakeBackend(CeluneBackend):
         self,
         log: Optional[Callable[[str, str], None]] = None,
         fatal: Optional[Callable[[], None]] = None,
+        quantize: bool = False,
     ) -> None:
         super().__init__(
             log=log or (lambda _msg, _severity="info": None),
             fatal=fatal,
+            quantize=quantize,
         )
 
     def model_is_available_locally(

@@ -30,6 +30,9 @@ explicit start/run commands, and the UI or agent test modes.
 | `celune help` / `--help` / `-h` | Print command help. |
 | `celune version` / `--version` | Print version, revision, and tagline. |
 
+The agent test waits for a queued spoken response to finish before it reports a
+task failure and stops the test runtime.
+
 The command help aligns descriptions with spaces, so terminal tab-stop settings
 do not shift the text.
 

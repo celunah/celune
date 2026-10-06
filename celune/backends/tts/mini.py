@@ -19,6 +19,8 @@ from ...i18n import string
 from ...paths import temp_data_dir, huggingface_progress, huggingface_hub_cache_dir
 from ...utils import custom_assert
 from ...cevoice import CEVoiceLoader, default_loader
+from .contracts import ModelContract
+from .contracts import model_contract as resolve_model_contract
 from ...typing.aliases import AudioChunk, AudioChunks
 from ...typing.backends import MiniModel, MiniPromptState
 
@@ -43,8 +45,9 @@ class Mini(CeluneBackend[TTSModel]):
         self,
         log: Callable[[str, str], None],
         fatal: Optional[Callable[[], None]] = None,
+        quantize: bool = True,
     ) -> None:
-        super().__init__(log=log, fatal=fatal)
+        super().__init__(log=log, fatal=fatal, quantize=quantize)
         self._validate_refs()
         self._voice_states: dict[str, MiniPromptState] = {}
         self._generated_config_path: Optional[Path] = None
@@ -96,6 +99,15 @@ class Mini(CeluneBackend[TTSModel]):
         )
         assert voice in voice_names
         return self.default_model_id
+
+    def model_contract(self, model_id: str, **kwargs: object) -> ModelContract:
+        """Return the Pocket TTS contract for the requested language variant."""
+        language = cast(Optional[str], kwargs.get("lang", kwargs.get("language", "en")))
+        return resolve_model_contract(
+            self.name,
+            model_id,
+            variant=self._resolve_language_name(language),
+        )
 
     def resolve_generation_language(self, lang: Optional[str]) -> str:
         """Normalize a requested language to one of Pocket TTS's supported variants.
@@ -348,6 +360,11 @@ class Mini(CeluneBackend[TTSModel]):
             self.model = TTSModel.load_model(
                 config=generated_config_path, temp=0.15, lsd_decode_steps=8
             )
+        self.model = self.apply_runtime_quantization(
+            self.model,
+            model_id,
+            lang=requested_language,
+        )
         self._loaded_language = requested_language
         self._voice_states.clear()
         return self.model

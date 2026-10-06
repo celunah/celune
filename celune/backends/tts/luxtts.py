@@ -332,8 +332,9 @@ class LuxTTS(CeluneBackend[_LuxTTSModel]):
         log: Callable[[str, str], None],
         fatal: Optional[Callable[[], None]] = None,
         threads: int = _LUXTTS_CPU_THREADS,
+        quantize: bool = False,
     ) -> None:
-        super().__init__(log=log, fatal=fatal)
+        super().__init__(log=log, fatal=fatal, quantize=quantize)
         self._threads = max(1, int(threads))
         self._validate_refs()
 

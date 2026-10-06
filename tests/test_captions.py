@@ -2,9 +2,9 @@
 """Tests for optional IPA caption alignment."""
 
 import json
+from types import SimpleNamespace
 from pathlib import Path
 from unittest import mock
-from types import SimpleNamespace
 
 import numpy as np
 

@@ -25,11 +25,17 @@ import soundfile as sf
 from huggingface_hub import snapshot_download
 
 from ...i18n import string
+from ...vram import backend_vram_report, is_cuda_out_of_memory, release_cuda_after_oom
 from ...paths import temp_data_dir, huggingface_progress, huggingface_hub_cache_dir
 from ...utils import discard
 from ...cevoice import CEVoiceLoader, default_loader
+from .contracts import ModelContract
+from .contracts import model_contract as resolve_model_contract
 from ...constants import N_A_NUMERIC
-from ...typing.aliases import AudioChunk, LogLevel, RuntimeValue
+from ...exceptions import BackendError
+from .quantization import QuantizationMode, quantization_mode, quantize_component
+from ...typing.common import JSON
+from ...typing.aliases import LogLevel, AudioChunk, RuntimeValue
 from ...typing.backends import BackendModel
 
 __all__ = [
@@ -238,6 +244,7 @@ class CeluneBackend[ModelT](ABC):
         log: Callable[[str, str], None],
         model_name: Optional[str] = None,
         fatal: Optional[Callable[[], None]] = None,
+        quantize: bool = True,
     ) -> None:
         self.model_name: Optional[str]
         if model_name is not None:
@@ -250,6 +257,10 @@ class CeluneBackend[ModelT](ABC):
         self.model: Optional[ModelT] = None
         self.log = log
         self._fatal_callback = fatal
+        self.quantization_requested = quantize
+        self.quantization_mode: Optional[QuantizationMode] = quantization_mode(quantize)
+        self.quantization_active = False
+        self.quantization_attempted = False
         self._progress_callback: Optional[
             Callable[[Optional[float], Optional[float]], None]
         ] = None
@@ -412,6 +423,115 @@ class CeluneBackend[ModelT](ABC):
 
         raise ValueError(f"{self.name} does not define a default model")
 
+    def model_contract(self, model_id: str, **kwargs: object) -> ModelContract:
+        """Return the pinned upstream weight contract for one model.
+
+        Args:
+            model_id: The Hugging Face repository identifier to resolve.
+            kwargs: Reserved for backend-specific contract variants.
+
+        Returns:
+            ModelContract: The immutable artifact and tensor inventory contract.
+
+        Raises:
+            ModelContractError: No pinned contract exists for the model.
+        """
+        del kwargs
+        return resolve_model_contract(self.name, model_id)
+
+    def quantization_components(
+        self, model: ModelT, contract: ModelContract
+    ) -> Mapping[str, torch.nn.Module]:
+        """Return loaded module roots corresponding to contract components.
+
+        Backends with wrapper objects override this hook. A single native
+        ``torch.nn.Module`` can use the component itself as its root.
+        """
+        components: dict[str, torch.nn.Module] = {}
+        for component in contract.components:
+            candidates = (
+                getattr(model, component.name, None),
+                getattr(getattr(model, "model", None), component.name, None),
+                model,
+                getattr(model, "model", None),
+            )
+            for candidate in candidates:
+                if isinstance(candidate, torch.nn.Module):
+                    components[component.name] = candidate
+                    break
+        if (
+            len(contract.components) == 1
+            and not components
+            and isinstance(model, torch.nn.Module)
+        ):
+            components[contract.components[0].name] = model
+        return components
+
+    def apply_runtime_quantization(
+        self,
+        model: ModelT,
+        model_id: str,
+        **contract_kwargs: RuntimeValue,
+    ) -> ModelT:
+        """Apply the contract-approved runtime quantization to one model.
+
+        Args:
+            model: Loaded BF16 model instance.
+            model_id: Model identifier used to resolve its pinned contract.
+            contract_kwargs: Backend-specific contract variant selectors.
+
+        Returns:
+            ModelT: The same model after in-place quantization.
+
+        Raises:
+            BackendError: Quantization was requested but no safe conversion
+                could be completed.
+            InvalidCheckpoint: The model state violates its contract.
+        """
+        if not getattr(self, "quantization_requested", False):
+            self.quantization_active = False
+            return model
+
+        selected_mode = quantization_mode(True)
+        self.quantization_attempted = True
+        if selected_mode is None:
+            self.quantization_active = False
+            self.quantization_mode = None
+            return model
+
+        contract = self.model_contract(model_id, **contract_kwargs)
+        components = self.quantization_components(model, contract)
+        converted = 0
+        for component in contract.components:
+            module = components.get(component.name)
+            if module is None or component.quantization is None:
+                continue
+            converted += quantize_component(
+                module,
+                component,
+                mode=selected_mode,
+                backend=self.name,
+            )
+
+        if converted == 0:
+            raise BackendError(
+                f"{self.name} has no contract-approved layers for {selected_mode} quantization",
+                error_code="tts_quantization_empty",
+            )
+        self.quantization_mode = selected_mode
+        self.quantization_active = True
+        return model
+
+    def disable_runtime_quantization(self) -> None:
+        """Disable quantization before a BF16 recovery load."""
+        self.quantization_requested = False
+        self.quantization_mode = None
+        self.quantization_active = False
+
+    def runtime_quantization_active(self) -> bool:
+        """Return whether this backend currently owns a quantized model."""
+        return self.quantization_active
+
     @property
     def all_model_ids(self) -> list[str]:
         """Return every known model identifier for this backend.
@@ -495,7 +615,21 @@ class CeluneBackend[ModelT](ABC):
         if self.model_name is None:
             raise ValueError(f"{self.name} does not have a configured model to load")
 
-        self.model = self.load_model(self.model_name)
+        try:
+            self.model = self.load_model(self.model_name)
+        except Exception as error:
+            if is_cuda_out_of_memory(error):
+                with contextlib.suppress(Exception):
+                    self.unload_model()
+                release_cuda_after_oom()
+                raise
+            if not getattr(self, "quantization_attempted", False) or not getattr(
+                self, "quantization_requested", False
+            ):
+                raise
+            self.disable_runtime_quantization()
+            self.unload_model()
+            self.model = self.load_model(self.model_name)
         return self.model
 
     def unload_model(self, release_cuda_cache: bool = True) -> None:
@@ -531,6 +665,10 @@ class CeluneBackend[ModelT](ABC):
             with contextlib.suppress(OSError):
                 truncated_path.unlink(missing_ok=True)
         self._truncated_reference_paths.clear()
+
+    def vram_report(self) -> JSON:
+        """Return the backend model's memory footprint and process memory."""
+        return backend_vram_report(self.name, self.model)
 
     def preload_models(self) -> None:
         """Ensure all required models are available locally."""

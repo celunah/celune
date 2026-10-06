@@ -25,6 +25,7 @@ from celune.exceptions import (
     CEDTSPayloadError,
     CEDTSTimeoutError,
     CEDTSProtocolError,
+    BackendEnvironmentError,
 )
 from celune.typing.worker import (
     WorkerValue,
@@ -53,15 +54,14 @@ from celune.typing.backends import (
 from celune.backends.environment import (
     BACKEND_MANIFESTS,
     BackendManifest,
-    BackendEnvironmentError,
     BackendEnvironmentManager,
     _exclusive_lock,
     backend_manifest,
 )
 from celune.dataclasses.pipeline import AudioOutput, VoiceConversionRequest
 
-from .backend_processes import ShutdownProcess
 from .support import CeluneTestCase
+from .backend_processes import ShutdownProcess
 
 _ShutdownProcess = ShutdownProcess
 
@@ -306,6 +306,14 @@ class TestBackendEnvironment(CeluneTestCase):
         for manifest in BACKEND_MANIFESTS.values():
             assert "https://download.pytorch.org/whl/cu128" in manifest.index_urls
             assert expected_requirements.issubset(manifest.requirements)
+
+    def test_manifests_include_gitpython_for_shared_core_utilities(self) -> None:
+        """Verify every isolated worker can import Celune's VCS helpers."""
+        requirement = "GitPython>=3.1.59,<4.0"
+        assert all(
+            requirement in manifest.requirements
+            for manifest in BACKEND_MANIFESTS.values()
+        )
 
     def test_manifests_use_the_main_branch_huggingface_versions(self) -> None:
         """Verify standard isolated backends use the main Hugging Face ranges."""
@@ -780,7 +788,7 @@ class TestBackendEnvironment(CeluneTestCase):
             return len(payload).to_bytes(4, "big") + payload
 
         nested_packet = (
-            b'{"cedts_version":1,"kind":"request","message_id":"nested",'
+            b'{"cedts_version":[1,1],"kind":"request","message_id":"nested",'
             b'"reply_to":null,"operation":"describe","data":{"arguments":'
             + b'{"value":'
             + b"[" * 65
@@ -789,7 +797,7 @@ class TestBackendEnvironment(CeluneTestCase):
             + b"}}}"
         )
         oversized_collection = {
-            "cedts_version": 1,
+            "cedts_version": [1, 1],
             "kind": "request",
             "message_id": "collection",
             "reply_to": None,
@@ -797,7 +805,7 @@ class TestBackendEnvironment(CeluneTestCase):
             "data": {"arguments": {"value": list(range(1025))}},
         }
         unknown_packet_field = {
-            "cedts_version": 1,
+            "cedts_version": [1, 1],
             "kind": "request",
             "message_id": "unknown-field",
             "reply_to": None,
@@ -815,7 +823,7 @@ class TestBackendEnvironment(CeluneTestCase):
 
         oversized_string = json.dumps(
             {
-                "cedts_version": 1,
+                "cedts_version": [1, 1],
                 "kind": "request",
                 "message_id": "string",
                 "reply_to": None,
@@ -859,6 +867,48 @@ class TestBackendEnvironment(CeluneTestCase):
                 io.BytesIO(),
             )
 
+    def test_worker_accepts_vram_report_callback(self) -> None:
+        """Verify worker dispatch accepts the VRAM diagnostics callback."""
+
+        class FakeBackend:
+            """Backend stand-in for VRAM callback dispatch."""
+
+            def vram_report(self) -> dict[str, WorkerValue]:
+                """Return a minimal JSON-compatible VRAM report."""
+                return {"process_scope": "worker"}
+
+        backend = cast(_BackendRuntime, FakeBackend())
+        response, next_model_id = worker._run_request(
+            backend,
+            {
+                "operation": "call",
+                "arguments": {"method": "vram_report"},
+            },
+            {},
+            1,
+            io.BytesIO(),
+        )
+
+        self.assertTrue(response["ok"])
+        self.assertEqual(response["value"], {"process_scope": "worker"})
+        self.assertEqual(next_model_id, 1)
+
+    def test_protocol_accepts_runtime_quantization_callbacks(self) -> None:
+        """Verify quantization control callbacks pass the parent packet validator."""
+        for method in (
+            "runtime_quantization_active",
+            "disable_runtime_quantization",
+            "vram_report",
+        ):
+            with self.subTest(method=method):
+                arguments = cast(dict[str, WorkerValue], {"method": method})
+                packet = build_packet(
+                    "request",
+                    "call",
+                    {"arguments": arguments},
+                )
+                send_message(io.BytesIO(), packet)
+
     def test_worker_request_validation_normalizes_malformed_arguments(self) -> None:
         """Verify non-object and invalid operation arguments become protocol errors."""
         backend = cast(_BackendRuntime, object())
@@ -889,7 +939,7 @@ class TestBackendEnvironment(CeluneTestCase):
                 cast(
                     dict[str, WorkerValue],
                     {
-                        "versions": [1],
+                        "versions": [[1, 1]],
                         "capabilities": remote.CORE_CAPABILITIES,
                         "unexpected": True,
                     },

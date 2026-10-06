@@ -221,6 +221,7 @@ bytes. `write_cevoice()` writes the legacy-compatible layout;
 | `celune.analysis` | Audio metrics, reference similarity, trait computation, radar plots, reports, and `analyze_voice_audio()`. |
 | `celune.paths` | App-data, runtime, Hugging Face cache, voice, backend-environment, config, output, and migration paths. |
 | `celune.extensions` | Extension base, context, manager, event dispatcher, and event decorator. |
+| `celune.exceptions` | Canonical Celune-owned exception hierarchy, including backend, agent, environment, and checkpoint failures. |
 | `celune.api` | `configure_api_security()`, `resolve_api_host()`, `bind_celune()`, `run_api()`, `start_api()`, `audio_bytes()`, and `stream_headers()`. |
 | `celune.backends.environment` | `BackendManifest`, `BackendEnvironment`, and `BackendEnvironmentManager`. |
 | `celune.cedts.protocol` | CEDTS framing, typed values, handshake, and stream exceptions. |

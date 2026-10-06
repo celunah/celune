@@ -3,15 +3,16 @@
 
 from __future__ import annotations
 
+import json
 from uuid import uuid4
 from dataclasses import replace
 from collections.abc import Mapping, Sequence
-from typing import TYPE_CHECKING, Optional, cast
+from typing import TYPE_CHECKING, Union, Optional, cast
 
 from ..i18n import string
-from ..utils import format_error_message
 from ..typing.aliases import LogLevel
 from ..typing.modes import OperationMode
+from ..utils import format_error_message
 from ..extensions.events import EventDispatcher
 from ..typing.common import JSON, JSONSerializable
 from ..typing.events import EventName, EventPayload
@@ -23,8 +24,8 @@ from ..typing.locks import (
     ComponentLockRequirement,
 )
 from ..dataclasses.events import (
-    AgentTaskFinishedEvent,
     AgentChoiceRequestedEvent,
+    AgentTaskFinishedEvent,
     AgentTaskStateChangedEvent,
     AgentApprovalRequestedEvent,
 )
@@ -43,6 +44,7 @@ from ..typing.agent import (
     AgentTaskConfig,
     AgentToolSchema,
     AgentAbortReason,
+    AgentChoiceOption,
     AgentInterruption,
     AgentSessionState,
     AgentTokenCounter,
@@ -73,8 +75,8 @@ from ..typing.agent import (
 )
 
 if TYPE_CHECKING:
-    from ..locks import ComponentLockLease, ComponentLockManager
     from ..celune import Celune
+    from ..locks import ComponentLockLease, ComponentLockManager
 
 
 def _default_token_counter(text: str) -> int:
@@ -268,6 +270,7 @@ class AgentRuntime:
         self._sessions: dict[str, AgentSession] = {}
         self._pending_approvals: dict[str, AgentApprovalRequest] = {}
         self._pending_choices: dict[str, AgentChoiceRequest] = {}
+        self._pending_tool_choice_calls: dict[str, dict[str, ToolCall]] = {}
         self._suspension_origins: dict[str, AgentTaskState] = {}
         self._pending_tool_calls: dict[str, ToolCall] = {}
         self._last_tool_calls: dict[str, ToolCall] = {}
@@ -588,6 +591,14 @@ class AgentRuntime:
         valid_choice = response.choice_id is not None and any(
             option.choice_id == response.choice_id for option in pending.options
         )
+        tool_candidates = self._pending_tool_choice_calls.pop(task_id, None)
+        selected_call = (
+            tool_candidates.get(response.choice_id or "")
+            if tool_candidates is not None
+            else None
+        )
+        if tool_candidates is not None and selected_call is None:
+            valid_choice = False
         valid_freeform = response.freeform is not None and pending.allow_freeform
         self._pending_choices.pop(task_id)
         if not valid_choice and not valid_freeform:
@@ -601,6 +612,13 @@ class AgentRuntime:
             loglevel="verbose",
         )
         self._transition(task, AgentTaskState.WORKING)
+        if selected_call is not None:
+            self._record_action(task, selected_call)
+            if task.is_terminal:
+                return task
+            authorized_call = self._authorize_tool(task, selected_call)
+            if authorized_call is not None:
+                self._pending_tool_calls[task_id] = authorized_call
         return task
 
     def complete_task(
@@ -920,6 +938,28 @@ class AgentRuntime:
                     )
                     if not self._run_is_current(task, generation):
                         return self._interrupted_output(task, callback)
+                    if isinstance(selected, Sequence):
+                        candidates = [
+                            self._validate_tool_call(cast(JSONSerializable, item))
+                            for item in selected
+                        ]
+                        if any(candidate is None for candidate in candidates):
+                            raise ValueError(
+                                "agent selector returned an empty tool candidate"
+                            )
+                        validated_candidates = cast(list[ToolCall], candidates)
+                        if len(validated_candidates) > 1:
+                            if not self._request_tool_choice(
+                                task,
+                                validated_candidates,
+                                callback,
+                                generation,
+                            ):
+                                return self._interrupted_output(task, callback)
+                            return _paused_output()
+                        selected = (
+                            validated_candidates[0] if validated_candidates else None
+                        )
                     call = self._validate_tool_call(cast(JSONSerializable, selected))
                     if call is not None:
                         self._log(
@@ -1187,7 +1227,7 @@ class AgentRuntime:
         self,
         task: AgentTask,
         output: AgentOutput,
-    ) -> Optional[ToolCall]:
+    ) -> Optional[Union[ToolCall, Sequence[ToolCall]]]:
         """Invoke the injected selector or the overridable runtime method."""
         context = self.get_context(task.task_id)
         if self._tool_selector is not None:
@@ -1198,7 +1238,7 @@ class AgentRuntime:
         self,
         task: AgentTask,
         output: AgentOutput,
-    ) -> Optional[ToolCall]:
+    ) -> Optional[Union[ToolCall, Sequence[ToolCall]]]:
         """Select a tool or preserve a typed catalog failure on the task."""
         if output.get("tool_call") is None and not self.tools:
             self.fail_task(
@@ -1223,6 +1263,64 @@ class AgentRuntime:
                 )
                 return None
         return self._invoke_select_tool(task, output)
+
+    def _request_tool_choice(
+        self,
+        task: AgentTask,
+        calls: Sequence[ToolCall],
+        callback: Optional[AgentResponseCallback],
+        generation: int,
+    ) -> bool:
+        """Pause execution and ask the user to choose among validated calls."""
+        options: list[AgentChoiceOption] = []
+        candidates: dict[str, ToolCall] = {}
+        for number, call in enumerate(calls, start=1):
+            choice_id = f"tool-{number}"
+            schema = self._tool_schemas.get(call["name"])
+            tool_name = schema.display_name if schema is not None else call["name"]
+            arguments = json.dumps(
+                call["arguments"],
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            options.append(
+                AgentChoiceOption(
+                    choice_id=choice_id,
+                    label=string(
+                        "agent.tool_choice_option",
+                        number=number,
+                        tool_name=tool_name,
+                        arguments=arguments,
+                    ),
+                    description=schema.description if schema is not None else "",
+                )
+            )
+            candidates[choice_id] = call
+
+        prompt = string(
+            "agent.tool_choice_prompt",
+            options="\n".join(option.label for option in options),
+        )
+        request = AgentChoiceRequest(
+            request_id=f"tool-choice-{uuid4().hex}",
+            task_id=task.task_id,
+            prompt=prompt,
+            options=tuple(options),
+        )
+        self._pending_tool_choice_calls[task.task_id] = candidates
+        self.request_choice(task.task_id, request)
+        return self._publish_output(
+            task,
+            {
+                "tool_call": None,
+                "response": prompt,
+                "end": False,
+                "paused": False,
+            },
+            callback,
+            generation,
+        ) and self._run_is_current(task, generation)
 
     def _invoke_execute(self, task: AgentTask, call: ToolCall) -> ToolResult:
         """Invoke the injected executor or the overridable runtime method."""
@@ -1273,8 +1371,10 @@ class AgentRuntime:
         if not task.needs_context_compaction:
             return True
         if self._compactor is None:
-            self.abort_task(task.task_id, AgentAbortReason.CONTEXT_LIMIT)
-            return False
+            if task.context_tokens > task.config.context_size:
+                self.abort_task(task.task_id, AgentAbortReason.CONTEXT_LIMIT)
+                return False
+            return True
         try:
             compacted = self._compactor(self.get_context(task.task_id))
         except Exception as exc:
@@ -1296,7 +1396,7 @@ class AgentRuntime:
             )
             return False
         self._contexts[task.task_id] = compacted
-        if task.needs_context_compaction:
+        if task.context_tokens > task.config.context_size:
             self.abort_task(task.task_id, AgentAbortReason.CONTEXT_LIMIT)
             return False
         return True
@@ -1423,7 +1523,7 @@ class AgentRuntime:
 
     @staticmethod
     def _validate_tool_call(value: JSONSerializable) -> Optional[ToolCall]:
-        """Validate one selector result without permitting multiple calls."""
+        """Validate one tool call returned by a selector."""
         if value is None:
             return None
         if not isinstance(value, dict):
@@ -1620,8 +1720,8 @@ class AgentRuntime:
         self,
         context: AgentContext,
         output: AgentOutput,
-    ) -> Optional[ToolCall]:
-        """Validate and select a tool call from one planning step."""
+    ) -> Optional[Union[ToolCall, Sequence[ToolCall]]]:
+        """Select one tool call or return choices for the user to resolve."""
         raise NotImplementedError("agent tool selection is not implemented")
 
     def execute_tool(
@@ -1768,6 +1868,7 @@ class AgentRuntime:
         """Reject stale approval, choice, and selected-call responses."""
         self._pending_approvals.pop(task_id, None)
         self._pending_choices.pop(task_id, None)
+        self._pending_tool_choice_calls.pop(task_id, None)
         self._pending_tool_calls.pop(task_id, None)
 
     def _append_interruption_history(
@@ -1832,6 +1933,7 @@ class AgentRuntime:
         """Drop pending user responses and suspension bookkeeping for a terminal task."""
         self._pending_approvals.pop(task_id, None)
         self._pending_choices.pop(task_id, None)
+        self._pending_tool_choice_calls.pop(task_id, None)
         self._suspension_origins.pop(task_id, None)
         self._pending_tool_calls.pop(task_id, None)
         self._last_tool_calls.pop(task_id, None)

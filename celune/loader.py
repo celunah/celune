@@ -3,42 +3,44 @@
 
 from __future__ import annotations
 
-import contextlib
 import gc
 import os
-import threading
 import time
+import threading
+import contextlib
 from typing import Optional, cast
 
 import torch
 from transformers.modeling_utils import PreTrainedModel
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 
-from .cevoice import announce_default_bundle, bundle_display_name, default_loader
-from .backends.tts import CeluneBackend
-from .constants import APP_NAME, NORMALIZER_MODEL_ID
-from .dataclasses.events import ReadyEvent
-from .exceptions import BackendError, NotAvailableError, RuntimeCheckError, WarmupError
 from .i18n import string, tagged_string
-from .modeling import load_normalizer_components, normalizer_device
-from .persona.impl import persona_enabled
-from .pipeline import (
-    force_stop_speech as force_stop_pipeline,
-    saved_output_speech_seconds,
-)
-from .runtime import log_runtime_banner, validate_runtime
-from .threads import run_in_daemon_thread
-from .typing.celune import Generative, NormalizerTokenizer
+from .vram import vram_profile_fits, resolve_vram_preset, validate_vram_preset
 from .utils import (
-    custom_assert,
     discard,
     format_error,
-    format_error_message,
+    custom_assert,
     format_number,
     is_port_usable,
+    format_error_message,
 )
-from .vram import resolve_vram_preset, validate_vram_preset
 from .binding import install_class_functions
+from .cevoice import default_loader, bundle_display_name, announce_default_bundle
+from .runtime import validate_runtime, log_runtime_banner
+from .threads import run_in_daemon_thread
+from .modeling import normalizer_device, load_normalizer_components
+from .pipeline import (
+    force_stop_speech as force_stop_pipeline,
+)
+from .pipeline import (
+    saved_output_speech_seconds,
+)
+from .constants import APP_NAME, NORMALIZER_MODEL_ID
+from .exceptions import WarmupError, BackendError, NotAvailableError, RuntimeCheckError
+from .backends.tts import CeluneBackend
+from .persona.impl import persona_enabled
+from .typing.celune import Generative, NormalizerTokenizer
+from .dataclasses.events import ReadyEvent
 
 __all__ = (
     "_start_configured_api",
@@ -143,6 +145,16 @@ def load(self, raise_on_error: bool = False, skip_runtime_check: bool = False) -
     vram_message = validate_vram_preset(self.config)
     if vram_message:
         self.log(vram_message, "warning")
+
+    if vram_profile_fits(self.config) is False:
+        message = string("vram.profile_exceeds_budget")
+        self.fatal()
+        self.log(message, "error")
+        self.error_callback(message)
+        self.progress_callback(0, 1)
+        if raise_on_error:
+            raise BackendError(message)
+        return False
 
     effective_vram_preset = resolve_vram_preset(self.config)
     self.log(
@@ -405,15 +417,14 @@ def _warmup(
     if forced_error:
         raise WarmupError("forced warmup failure")
 
-    try:
-        warmup_start = time.perf_counter()
-
+    def run_warmup(candidate_model: Optional[PreTrainedModel]) -> None:
+        """Run one speech probe against a loaded model."""
         with self._model_lock:
-            if active_model is None:
+            if candidate_model is None:
                 raise WarmupError("cannot warm up a null model")
 
             for _, _, _ in active_backend.generate_stream(
-                active_model,
+                candidate_model,
                 text=warmup_text,
                 language=self.language,
                 chunk_size=self.chunk_size,
@@ -421,6 +432,10 @@ def _warmup(
                 voice=active_voice,
             ):
                 pass
+
+    try:
+        warmup_start = time.perf_counter()
+        run_warmup(active_model)
 
         warmup_end = time.perf_counter()
         warmup_took = warmup_end - warmup_start
@@ -431,18 +446,43 @@ def _warmup(
 
         self.progress_callback(1, 1)
         return True
-    except Exception as e:
-        self._last_warmup_error = e
+    except Exception as error:
+        warmup_error = error
+        quantization_recovery_failed = False
+        if active_backend.quantization_active:
+            try:
+                active_backend.disable_runtime_quantization()
+                active_backend.unload_model()
+                if active_voice is None:
+                    raise WarmupError(
+                        "cannot recover a quantized model without a voice"
+                    ) from error
+                fallback_model = active_backend.load_model(
+                    active_backend.model_id_for_voice(active_voice),
+                    lang=self.language,
+                )
+                active_backend.model = fallback_model
+                active_model = cast(PreTrainedModel, fallback_model)
+                run_warmup(active_model)
+                if active_backend is self.backend:
+                    self.model = active_model
+                self._last_warmup_error = None
+                self.progress_callback(1, 1)
+                return True
+            except Exception as fallback_error:
+                warmup_error = fallback_error
+                quantization_recovery_failed = True
+        self._last_warmup_error = warmup_error
         self.log(
             format_error_message(
                 tagged_string("celune.warmup_error", "WARMUP ERROR"),
-                e,
+                warmup_error,
                 self.log_level,
             ),
             "error",
         )
         self.progress_callback(0, 1)
-        if fatal_on_failure:
+        if fatal_on_failure or quantization_recovery_failed:
             self.fatal()
             self.error_callback(string("celune.warmup_failed_app", app_name=APP_NAME))
         return False

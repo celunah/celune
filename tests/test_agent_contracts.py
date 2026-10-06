@@ -3,20 +3,13 @@
 
 from __future__ import annotations
 
-from contextlib import nullcontext
 import json
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Optional, cast
+from contextlib import nullcontext
 
 import pytest
 
-from celune.extensions.events import EVENT_NAMES, EventDispatcher
-from celune.dataclasses.events import (
-    AgentTaskFinishedEvent,
-    AgentChoiceRequestedEvent,
-    AgentTaskStateChangedEvent,
-    AgentApprovalRequestedEvent,
-)
 from celune.agent.contracts import (
     AgentTask,
     AgentRequest,
@@ -44,6 +37,13 @@ from celune.agent.contracts import (
     AgentCancellationReason,
     AgentToolArgumentSchema,
     AgentToolExecutionStatus,
+)
+from celune.extensions.events import EVENT_NAMES, EventDispatcher
+from celune.dataclasses.events import (
+    AgentTaskFinishedEvent,
+    AgentChoiceRequestedEvent,
+    AgentTaskStateChangedEvent,
+    AgentApprovalRequestedEvent,
 )
 
 if TYPE_CHECKING:
@@ -112,9 +112,9 @@ class TestAgentContracts:
         default_config = AgentTaskConfig()
         assert default_config.max_loops == 20
         assert default_config.max_tokens is None
-        assert default_config.context_size == 32768
+        assert default_config.context_size == 8192
         assert default_config.compact_at == 75
-        assert default_config.context_compaction_threshold == 24576
+        assert default_config.context_compaction_threshold == 6144
         assert default_config.to_json()["max_tokens"] is None
 
         with pytest.raises(ValueError):

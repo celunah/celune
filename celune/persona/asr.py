@@ -5,15 +5,16 @@ from __future__ import annotations
 
 import threading
 from dataclasses import dataclass
-from collections.abc import Mapping, Sequence, Callable
+from collections.abc import Mapping, Callable, Sequence
 from typing import TYPE_CHECKING, Union, Optional, cast
 
 import torch
 import numpy as np
 
-from ..audio.dsp import resample_audio
-from ..paths import huggingface_progress
-from ..typing.aliases import AudioChunk
+from ..constants import (
+    DEFAULT_PERSONA_SPEECH_MODEL_ID,
+    DEFAULT_PERSONA_SPEECH_MODEL_REVISION,
+)
 from ..typing.persona import (
     WhisperScalar,
     WhisperSegmentPayload,
@@ -21,6 +22,9 @@ from ..typing.persona import (
     _WhisperModel,
     _WhisperProcessor,
 )
+from ..audio.dsp import resample_audio
+from ..paths import huggingface_progress
+from ..typing.aliases import AudioChunk
 
 if TYPE_CHECKING:
     # noinspection PyPep8Naming
@@ -29,7 +33,6 @@ if TYPE_CHECKING:
     from torch import device as Device
 
 
-DEFAULT_PERSONA_SPEECH_MODEL_ID = "openai/whisper-large-v3-turbo"
 PERSONA_SPEECH_NO_INPUT_TIMEOUT_SECONDS = 5.0
 PERSONA_SPEECH_END_DELAY_SECONDS = 1.5
 WHISPER_SAMPLE_RATE = 16000
@@ -66,6 +69,11 @@ class WhisperTranscriber:
         ] = None,
     ) -> None:
         self.model_id = model_id.strip() or DEFAULT_PERSONA_SPEECH_MODEL_ID
+        self._revision = (
+            DEFAULT_PERSONA_SPEECH_MODEL_REVISION
+            if self.model_id == DEFAULT_PERSONA_SPEECH_MODEL_ID
+            else None
+        )
         self.language = language.strip() if language and language.strip() else None
         self._processor: Optional[_WhisperProcessor] = None
         self._model: Optional[_WhisperModel] = None
@@ -73,7 +81,23 @@ class WhisperTranscriber:
         self._dtype: Optional[DType] = None
         self._is_multilingual = True
         self._load_lock = threading.Lock()
+        self._inference_lock = threading.Lock()
         self._progress_callback = progress_callback
+
+    @property
+    def loaded_model(self) -> Optional[_WhisperModel]:
+        """Return the loaded Whisper model, if speech recognition initialized it."""
+        return self._model
+
+    def unload(self) -> None:
+        """Release the Whisper model and its processor from this transcriber."""
+        with self._inference_lock, self._load_lock:
+            self._model = None
+            self._processor = None
+            self._device = None
+            self._dtype = None
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
     def _load_model(self) -> None:
         """Load the configured Whisper processor and model once."""
@@ -96,6 +120,9 @@ class WhisperTranscriber:
             bnb_config = BitsAndBytesConfig(
                 load_in_8bit=True,
             )
+            model_kwargs: dict[str, str] = {}
+            if self._revision is not None:
+                model_kwargs["revision"] = self._revision
             with huggingface_progress(self._progress_callback):
                 model = cast(
                     _WhisperModel,
@@ -105,10 +132,12 @@ class WhisperTranscriber:
                         low_cpu_mem_usage=True,
                         quantization_config=bnb_config,
                         device_map="auto",
+                        **model_kwargs,
                     ),
                 )
                 self._processor = cast(
-                    _WhisperProcessor, AutoProcessor.from_pretrained(self.model_id)
+                    _WhisperProcessor,
+                    AutoProcessor.from_pretrained(self.model_id, **model_kwargs),
                 )
             model.eval()
             generation_config = getattr(model, "generation_config", None)
@@ -120,6 +149,16 @@ class WhisperTranscriber:
             self._dtype = torch.bfloat16
 
     def _decode(
+        self,
+        audio: AudioChunk,
+        sample_rate: int,
+        return_segments: bool = False,
+    ) -> Union[str, tuple[WhisperSegment, ...]]:
+        """Serialize one Whisper inference and decode its result."""
+        with self._inference_lock:
+            return self._decode_unlocked(audio, sample_rate, return_segments)
+
+    def _decode_unlocked(
         self,
         audio: AudioChunk,
         sample_rate: int,

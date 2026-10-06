@@ -10,47 +10,47 @@ import textwrap
 import importlib
 import threading
 import contextlib
+from types import ModuleType, SimpleNamespace
+from typing import Union, Optional, cast
 from pathlib import Path
 from unittest import mock
-from typing import Union, Optional, cast
-from types import ModuleType, SimpleNamespace
 from collections.abc import Iterator, Generator
 
+import numpy as np
 import torch
 import pytest
-import numpy as np
 import soundfile as sf
 
 from celune.i18n import string
+from celune.utils import discard
+from celune.celune import Celune
 from celune.exceptions import (
     InvalidExtensionError,
     ExtensionAlreadyRegisteredError,
 )
-from celune.celune import Celune
-from celune.utils import discard
+from celune.backends.vc import BACKEND_MANIFESTS as VC_BACKEND_MANIFESTS
+from celune.backends.vc import resolve_vc_backend
+from celune.backends.tts import BACKEND_MANIFESTS, resolve_backend
 from celune.typing.aliases import AudioChunk
-from celune.backends.tts.fireredtts3 import (
-    FireRedTTS3,
-    _FireRedIncrementalDecoder,
-    _FireRedModel,
-    _FireRedRedAE,
-    _create_firered_model,
-)
+from celune.extensions.base import CeluneContext, CeluneExtension
+from celune.typing.backends import BackendModel, _SeedVCRealtimeModule
+from celune.backends.vc.seedvc import CeluneSeedVCBackend
+from celune.extensions.manager import CeluneExtensionManager
 from celune.backends.tts.luxtts import (
     LuxTTS,
     _LuxTTSModel,
-    _install_cpu_duration_correction,
-    _install_vocoder_decode_guard,
     _set_vocoder_silence_feature,
+    _install_vocoder_decode_guard,
+    _install_cpu_duration_correction,
 )
-from celune.backends.vc import resolve_vc_backend
-from celune.backends.vc.seedvc import CeluneSeedVCBackend
-from celune.extensions.manager import CeluneExtensionManager
 from celune.dataclasses.pipeline import VoiceConversionRequest
-from celune.extensions.base import CeluneContext, CeluneExtension
-from celune.typing.backends import BackendModel, _SeedVCRealtimeModule
-from celune.backends.tts import BACKEND_MANIFESTS, resolve_backend
-from celune.backends.vc import BACKEND_MANIFESTS as VC_BACKEND_MANIFESTS
+from celune.backends.tts.fireredtts3 import (
+    FireRedTTS3,
+    _FireRedModel,
+    _FireRedRedAE,
+    _create_firered_model,
+    _FireRedIncrementalDecoder,
+)
 
 from .support import (
     FakeBackend,
@@ -66,6 +66,23 @@ from .support import (
 
 class TestBackend(CeluneTestCase):
     """Tests for backend base behavior and backend resolution."""
+
+    def test_tts_load_oom_does_not_retry_unquantized_model(self) -> None:
+        """Verify CUDA OOM releases a partial load without retrying BF16."""
+        backend = FakeBackend(quantize=True)
+        backend.quantization_attempted = True
+        oom = torch.cuda.OutOfMemoryError("CUDA out of memory")
+        with (
+            mock.patch.object(backend, "load_model", side_effect=oom) as load,
+            mock.patch.object(backend, "unload_model") as unload,
+            mock.patch("celune.backends.tts.base.release_cuda_after_oom") as release,
+            pytest.raises(torch.cuda.OutOfMemoryError),
+        ):
+            backend.load_default_model()
+
+        load.assert_called_once()
+        unload.assert_called_once()
+        release.assert_called_once()
 
     def test_tts_preload_uses_celune_huggingface_cache(self) -> None:
         """Verify generic TTS preloading downloads into Celune's Hub cache."""
@@ -430,6 +447,94 @@ class TestBackend(CeluneTestCase):
                 {"load_denoiser": False, "optimize": False},
                 {"load_denoiser": False, "optimize": False},
             ]
+
+    def test_voxcpm2_quantization_loads_on_cpu_before_cuda_transfer(self) -> None:
+        """Quantize VoxCPM2 before its single transfer to CUDA."""
+        with mock_voxcpm_backend() as voxcpm2_cls:
+            backend = voxcpm2_cls.__new__(voxcpm2_cls)
+            backend.log = mock.Mock()
+            backend.quantization_mode = "int8"
+            runtime = mock.Mock()
+            runtime.base_lm.kv_cache = None
+            runtime.residual_lm.kv_cache = None
+            runtime.config = SimpleNamespace()
+            model = SimpleNamespace(tts_model=runtime)
+            voxcpm_module = sys.modules[voxcpm2_cls.__module__]
+            voxcpm_loader = voxcpm_module.__dict__["VoxCPM"]
+
+            with (
+                mock.patch.object(
+                    voxcpm_loader,
+                    "from_pretrained",
+                    create=True,
+                    return_value=model,
+                ) as load_model,
+                mock.patch.object(
+                    backend,
+                    "_install_checkpoint_tokenizer",
+                ),
+                mock.patch.object(
+                    backend,
+                    "model_is_available_locally",
+                    return_value=(True, "cached"),
+                ),
+                mock.patch.object(
+                    backend,
+                    "apply_runtime_quantization",
+                    return_value=model,
+                ) as quantize,
+            ):
+                assert backend.load_model("openbmb/VoxCPM2") is model
+
+            assert load_model.call_args.kwargs == {
+                "load_denoiser": False,
+                "optimize": False,
+                "device": "cpu",
+            }
+            quantize.assert_called_once_with(model, "openbmb/VoxCPM2")
+            runtime.to.assert_called_once_with(torch.device("cuda"))
+            assert runtime.device == "cuda"
+            assert runtime.config.device == "cuda"
+
+    def test_voxcpm2_releases_unused_static_cache_capacity(self) -> None:
+        """Bound both private VoxCPM caches before the runtime is used."""
+        with mock_voxcpm_backend() as voxcpm2_cls:
+            cache = SimpleNamespace(
+                max_length=8192,
+                kv_cache=torch.zeros(2, 1, 1, 1, 8192, 1),
+            )
+            base_lm = SimpleNamespace(
+                kv_cache=cache,
+                setup_cache=mock.Mock(),
+            )
+            residual_lm = SimpleNamespace(
+                kv_cache=SimpleNamespace(
+                    max_length=8192,
+                    kv_cache=torch.zeros(2, 1, 1, 1, 8192, 1),
+                ),
+                setup_cache=mock.Mock(),
+            )
+            model = SimpleNamespace(
+                tts_model=SimpleNamespace(
+                    base_lm=base_lm,
+                    residual_lm=residual_lm,
+                )
+            )
+
+            voxcpm2_cls._resize_runtime_caches(model)
+
+            base_lm.setup_cache.assert_called_once_with(
+                1,
+                2048,
+                cache.kv_cache.device,
+                cache.kv_cache.dtype,
+            )
+            residual_lm.setup_cache.assert_called_once_with(
+                1,
+                2048,
+                residual_lm.kv_cache.kv_cache.device,
+                residual_lm.kv_cache.kv_cache.dtype,
+            )
 
     def test_base_backend_reports_models(self) -> None:
         """Verify model metadata helpers on a fake backend.
@@ -1599,7 +1704,9 @@ class TestBackend(CeluneTestCase):
                 ) as from_pretrained,
                 mock.patch.dict(os.environ, {}, clear=False),
             ):
-                backend = qwen3_cls(log=lambda _msg, _severity="info": None)
+                backend = qwen3_cls(
+                    log=lambda _msg, _severity="info": None, quantize=False
+                )
                 assert backend.load_model("Qwen/test") is model
                 assert os.environ["NUMBA_CACHE_DIR"] == str(tmp_path / "numba")
 

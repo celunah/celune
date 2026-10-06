@@ -216,11 +216,27 @@ Commands are entered in the input box and start with `/`.
 | <code>/seed NUMBER&#124;random</code> | Set a backend seed or restore random seeds. |
 | `/tutorial` | Play the four bundled tutorial clips and demonstrate `/help`. |
 | `/stop` | Stop current speech. |
+| `/vram` | Report allocated, reserved, and peak memory for each active component. |
 | `/exit` | Exit the application. |
 
 `/help` hides commands that the current backend cannot use, so the list is a
 capability report rather than a fixed promise. Unknown commands are logged as a
 warning and do not terminate the runtime.
+
+`/vram` reports each currently loaded component as
+`allocated/reserved/peak (device)`. It includes TTS, voice conversion, Persona,
+speech input, the normalizer, and the agent whether their tensors are on CUDA or
+the CPU. Persona recording and playback captions share one Whisper model, so
+speech input appears at most once in the report.
+When all three values are identical, the reserved and peak positions are shown
+as `-` because those per-component allocator statistics are not applicable.
+For CUDA components, allocated memory is the component's resident tensor
+storage; reserved and peak memory are the allocator totals from the owning
+process because PyTorch does not attribute those values to individual model
+objects. For CPU components, all three values are the component's resident
+tensor storage because the CPU allocator has no corresponding per-component
+reserved or peak counters. Worker-backed TTS and VC backends report from their
+own CEDTS processes.
 
 ## Themes and lighting
 

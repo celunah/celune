@@ -4,10 +4,11 @@
 import os
 import time
 import contextlib
-from typing import Optional
+from typing import Union, Optional
 from collections.abc import Mapping, Callable, Iterator, Generator
 
 import numpy as np
+import torch
 from voxcpm import VoxCPM
 from transformers import AutoTokenizer
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
@@ -27,6 +28,8 @@ from ...utils import available, custom_assert
 from ...cevoice import CEVoiceLoader, default_loader
 from ...constants import BASE_SR
 from ...typing.aliases import AudioChunk, AudioChunks
+
+_VOXCPM_RUNTIME_KV_CACHE_LENGTH = 2048
 
 
 class _VoxCPMTextTokenizer:
@@ -106,8 +109,9 @@ class VoxCPM2(CeluneBackend[VoxCPM]):
         self,
         log: Callable[[str, str], None],
         fatal: Optional[Callable[[], None]] = None,
+        quantize: bool = True,
     ) -> None:
-        super().__init__(log=log, fatal=fatal)
+        super().__init__(log=log, fatal=fatal, quantize=quantize)
         self.log = log
         self.optimize_enabled = False
         self._validate_refs()
@@ -227,6 +231,15 @@ class VoxCPM2(CeluneBackend[VoxCPM]):
             VoxCPM: The loaded VoxCPM2 model instance.
         """
         available, path = self.model_is_available_locally(model_id)
+        quantize_on_cpu = getattr(self, "quantization_mode", None) is not None
+        optimize = bool(kwargs.get("optimize", False))
+        load_optimize = optimize and not quantize_on_cpu
+        load_kwargs: dict[str, Union[bool, str]] = {
+            "load_denoiser": kwargs.get("load_denoiser", False),
+            "optimize": load_optimize,
+        }
+        if quantize_on_cpu:
+            load_kwargs["device"] = "cpu"
 
         # NOTE:
         # this may cause errors in internal ops when switching backends
@@ -253,26 +266,79 @@ class VoxCPM2(CeluneBackend[VoxCPM]):
             ):
                 self.model = VoxCPM.from_pretrained(
                     path,
-                    load_denoiser=kwargs.get("load_denoiser", False),
-                    optimize=kwargs.get("optimize", False),
+                    **load_kwargs,
                 )
                 self._install_checkpoint_tokenizer(self.model, path)
-
-            return self.model
-
-        self.log(string("tts.model_download_start"), "info")
-        with (
-            huggingface_progress(self.report_progress),
-            self._suppress_backend_output(),
-        ):
-            self.model = VoxCPM.from_pretrained(
-                model_id,
-                load_denoiser=kwargs.get("load_denoiser", False),
-                optimize=kwargs.get("optimize", False),
-            )
-            _, path = self.model_is_available_locally(model_id)
-            self._install_checkpoint_tokenizer(self.model, path)
+        else:
+            self.log(string("tts.model_download_start"), "info")
+            with (
+                huggingface_progress(self.report_progress),
+                self._suppress_backend_output(),
+            ):
+                self.model = VoxCPM.from_pretrained(
+                    model_id,
+                    **load_kwargs,
+                )
+                _, path = self.model_is_available_locally(model_id)
+                self._install_checkpoint_tokenizer(self.model, path)
+        self._resize_runtime_caches(self.model)
+        self.model = self.apply_runtime_quantization(self.model, model_id)
+        if quantize_on_cpu:
+            self._move_quantized_runtime_to_cuda(self.model)
+            if optimize:
+                self.model.tts_model.optimize()
+                self.model.tts_model.generate(
+                    target_text="Hello, this is the first test sentence.",
+                    max_len=10,
+                )
         return self.model
+
+    @staticmethod
+    def _runtime_cache_length(max_length: int) -> int:
+        """Bound VoxCPM's static cache to the supported generation envelope."""
+        return min(max_length, _VOXCPM_RUNTIME_KV_CACHE_LENGTH)
+
+    @classmethod
+    def _resize_runtime_caches(cls, model: VoxCPM) -> None:
+        """Release VoxCPM's oversized load-time caches before inference."""
+        runtime = getattr(model, "tts_model", None)
+        if runtime is None:
+            return
+        for language_model in (runtime.base_lm, runtime.residual_lm):
+            cache = language_model.kv_cache
+            if cache is None:
+                continue
+            max_length = getattr(cache, "max_length", None)
+            if not isinstance(max_length, int) or max_length <= 0:
+                continue
+            target_length = cls._runtime_cache_length(max_length)
+            if target_length == max_length:
+                continue
+            storage = cache.kv_cache
+            language_model.setup_cache(
+                1,
+                target_length,
+                storage.device,
+                storage.dtype,
+            )
+
+    @classmethod
+    def _move_quantized_runtime_to_cuda(cls, model: VoxCPM) -> None:
+        """Move a CPU-quantized VoxCPM runtime to CUDA and rebuild its caches."""
+        runtime = model.tts_model
+        runtime.to(torch.device("cuda"))
+        runtime.device = "cuda"
+        runtime.config.device = "cuda"
+        for language_model in (runtime.base_lm, runtime.residual_lm):
+            cache = language_model.kv_cache
+            if cache is None:
+                continue
+            language_model.setup_cache(
+                1,
+                cls._runtime_cache_length(cache.max_length),
+                torch.device("cuda"),
+                torch.bfloat16,
+            )
 
     def generate_stream(
         self, model: VoxCPM, **kwargs

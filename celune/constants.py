@@ -57,13 +57,15 @@ PERSONA_MEMORY_EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 PERSONA_EMOTION_MODEL = "lunahr/emotispace-128"
 
 # agents use more context than plain Persona
-PERSONA_CONTEXT_SPACE = 8192
+PERSONA_CONTEXT_SPACE = 2048
 PERSONA_COMPACT_AT = 75
-AGENT_CONTEXT_SPACE = 32768
+AGENT_CONTEXT_SPACE = 8192
 AGENT_ROUTING_CONTEXT_SPACE = 8192
-AGENT_ROUTING_MAX_NEW_TOKENS = 96
+AGENT_ROUTING_MAX_NEW_TOKENS = 256
 AGENT_COMPACT_AT = 75
 AGENT_MAX_LOOPS = 20
+DEFAULT_PERSONA_SPEECH_MODEL_ID = "openai/whisper-large-v3-turbo"
+DEFAULT_PERSONA_SPEECH_MODEL_REVISION = "41f01f3fe87f28c78e2fbf8b568835947dd65ed9"
 
 
 class PersonaModelRevisions(TypedDict):
@@ -286,6 +288,13 @@ VRAM_REQUIREMENTS = {
     "medium": 8,
     "high": 12,
     "xhigh": 16,
+}
+
+# Reserve memory for the desktop and other GPU users on every preset.
+VRAM_SYSTEM_RESERVE_GIB = 2
+VRAM_BUDGETS = {
+    tier: requirement - VRAM_SYSTEM_RESERVE_GIB
+    for tier, requirement in VRAM_REQUIREMENTS.items()
 }
 
 # equivalent service costs per minute grouped by popular TTS providers

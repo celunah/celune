@@ -19,7 +19,6 @@ import pytest
 import numpy as np
 import numpy.typing as npt
 
-from celune import pipeline
 from celune.cevoice import (
     CEVoicePersona,
     PersonaIdentity,
@@ -35,10 +34,10 @@ from celune.typing.agent import (
 from celune.constants import PipelineStates
 from celune.typing.aliases import AudioChunk
 from celune.typing.locks import ComponentLockName
-from celune import conversation as conversation_module
 from celune.typing.common import JSON, JSONSerializable
-from celune.dataclasses.pipeline import AudioInputRequest
 from celune.persona.capabilities import PersonaCapabilities
+from celune import conversation as conversation_module, pipeline
+from celune.dataclasses.pipeline import SpeechRequest, AudioInputRequest
 
 from .support import (
     FakeStream,
@@ -53,6 +52,28 @@ from .platform import LINUX_ONLY, WINDOWS_ONLY
 
 class TestPipeline(CeluneTestCase):
     """Tests for lightweight pipeline behavior."""
+
+    def test_cuda_oom_during_generation_returns_engine_to_idle(self) -> None:
+        """Verify a synthesis OOM is reported recoverably without a BF16 retry."""
+        engine = make_pipeline_engine()
+        engine.backend.quantization_active = True
+        error = RuntimeError("CUDA error: out of memory")
+        with (
+            mock.patch.object(engine.model_ready, "wait", side_effect=error),
+            mock.patch("celune.pipeline.release_cuda_after_oom") as release_memory,
+            mock.patch("celune.pipeline._recover_quantized_tts") as recover,
+        ):
+            pipeline._process_generation_request(
+                cast(Celune, engine),
+                SpeechRequest(text="hello", display_text="hello", save=False),
+                None,
+            )
+
+        assert engine.cur_state == "idle"
+        assert release_memory.call_count == 1
+        recover.assert_not_called()
+        assert engine.statuses[-1][1] == "warning"
+        assert "CUDA" not in engine.errors[-1]
 
     def test_pipeline_cpu_config_has_conservative_defaults(self) -> None:
         """Verify playback pressure protection defaults to a small bounded window."""
@@ -2362,6 +2383,8 @@ class TestPipelineAsync(CeluneAsyncTestCase):
             "persona": {"model_id": "fixture/persona-test"},
         }
         engine.persona_history = [{"role": "assistant", "content": "Earlier."}]
+        engine.persona_session_summary = "Stale conversation summary."
+        engine.retrieved_long_term_memory = ["Stale long-term memory."]
 
         payload = pipeline.build_agent_classification_request(
             cast(Celune, engine),
@@ -2371,10 +2394,14 @@ class TestPipelineAsync(CeluneAsyncTestCase):
         self.assertEqual(payload["format"], "celune_agent_classification")
         self.assertEqual(payload["request"], "Please handle this.")
         self.assertEqual(payload["context_space"], 8192)
-        self.assertEqual(payload["max_new_tokens"], 96)
+        self.assertEqual(payload["max_new_tokens"], 256)
         system_prompt = payload["system"]
         self.assertIsInstance(system_prompt, str)
         assert isinstance(system_prompt, str)
+        self.assertNotIn("\n\n<memory>\n", system_prompt)
+        self.assertNotIn("<conversation_summary>", system_prompt)
+        self.assertNotIn("Stale long-term memory", system_prompt)
+        self.assertNotIn("Stale conversation summary", system_prompt)
         self.assertIn("Classify the latest user input", system_prompt)
         self.assertIn(
             "internal routing request, not a character response", system_prompt
@@ -2453,7 +2480,7 @@ class TestPipelineAsync(CeluneAsyncTestCase):
         engine.config = {"vram": "high"}
 
         conversation = pipeline.build_persona_request(cast(Celune, engine), "Hello")
-        self.assertEqual(conversation["context_space"], 8192)
+        self.assertEqual(conversation["context_space"], 2048)
 
         task = AgentTask(
             task_id="task-context",
@@ -2471,4 +2498,4 @@ class TestPipelineAsync(CeluneAsyncTestCase):
             task.request.request,
             agent_context=agent_context,
         )
-        self.assertEqual(agent["context_space"], 32768)
+        self.assertEqual(agent["context_space"], 8192)

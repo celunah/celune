@@ -5,9 +5,9 @@ from __future__ import annotations
 
 import io
 import contextlib
+from unittest import mock
 from typing import Optional, cast
 from collections.abc import Mapping, Sequence
-from unittest import mock
 
 import pytest
 
@@ -15,8 +15,8 @@ from celune import entrypoint
 from celune.i18n import string
 from celune.celune import Celune
 from celune.typing.common import JSON
-from celune.config import config_log_level
 from celune.test import run_agent_test
+from celune.config import config_log_level
 from celune.persona.impl import PersonaClient
 from celune.typing.persona import PersonaClientResponse
 from celune.agent.needle import NeedleHandler, NeedleToolSelector
@@ -32,7 +32,7 @@ from celune.typing.agent import (
     AgentClassificationFailureKind,
 )
 
-from .support import CeluneTestCase, FakeGlow, FakeBackend
+from .support import FakeGlow, FakeBackend, CeluneTestCase
 
 
 class _TestPersonaClient:
@@ -72,15 +72,15 @@ class _TestNeedleHandler:
             available_only=available_only,
         )
 
-    def select_one_tool(
+    def select_tools(
         self,
         query: str,
         tools: NeedleToolCatalog,
         max_new_tokens: int = 96,
-    ) -> NeedleToolCall:
+    ) -> list[NeedleToolCall]:
         """Return the one safe tool selected by this controlled adapter."""
         del query, tools, max_new_tokens
-        return {"name": "local_current_working_directory", "arguments": {}}
+        return [{"name": "local_current_working_directory", "arguments": {}}]
 
     def close(self) -> None:
         """Release the controlled adapter without external model resources."""

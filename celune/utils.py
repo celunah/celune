@@ -7,10 +7,9 @@ import math
 import time
 import random
 import inspect
-import importlib.util
 import datetime
 import traceback
-import subprocess
+import importlib.util
 import multiprocessing
 from pathlib import Path
 from collections.abc import Callable, Iterator, Container
@@ -26,6 +25,7 @@ from .paths import traceback_path
 from .typing.aliases import LogLevel
 from .constants import REFERENCE_NEW_MOON
 from .typing.utils import CallerInfo, LanguageResult
+from .vcs import get_revision as _get_repository_revision
 from .terminal import supports_ansi as terminal_supports_ansi
 
 _LANGUAGE_DETECTOR = LanguageDetectorBuilder.from_all_spoken_languages().build()
@@ -38,25 +38,7 @@ def get_revision() -> str:
         str: The short commit hash, suffixed with ``*`` when the worktree is dirty, or an empty string when Git metadata
         is unavailable.
     """
-    try:
-        rev = (
-            subprocess.check_output(
-                ["git", "rev-parse", "--short", "HEAD"], stderr=subprocess.DEVNULL
-            )
-            .decode("utf-8")
-            .strip()
-        )
-        status = (
-            subprocess.check_output(
-                ["git", "status", "--porcelain"], stderr=subprocess.DEVNULL
-            )
-            .decode("utf-8")
-            .strip()
-        )
-        dirty = "*" if status else ""
-        return f"{rev}{dirty}"
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        return ""
+    return _get_repository_revision()
 
 
 def format_number(num: float, precision: int = 0, fallback: str = "N/A") -> str:

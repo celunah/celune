@@ -17,13 +17,18 @@ import subprocess
 import urllib.parse
 import urllib.request
 import collections.abc
-from collections import deque
-from difflib import SequenceMatcher
 from typing import TYPE_CHECKING, Union, Optional, cast
+from difflib import SequenceMatcher
+from collections import deque
 
 import numpy as np
 
 from .i18n import string
+from .locks import ComponentLockManager
+from .paths import project_root, temp_data_dir, running_compiled
+from .utils import available
+from .binding import install_class_functions, install_module_functions
+from .constants import BASE_SR, APP_NAME, PipelineStates
 from .pipelinecore import (
     _SFX_DUCK_GAIN,
     _LEGACY_BUFFER_SECONDS,
@@ -49,7 +54,9 @@ from .typing.locks import (
     ComponentLockAcquisition,
     ComponentLockRequirement,
 )
-from .utils import available
+from .typing.common import JSONSerializable
+from .typing.aliases import AudioChunk, AudioChunks
+from .typing.pipeline import SpeechStreamQueue
 from .dataclasses.pipeline import (
     SpeechTiming,
     PlaybackChunk,
@@ -57,14 +64,6 @@ from .dataclasses.pipeline import (
     CaptionPlaybackState,
     CaptionPlaybackSegment,
 )
-from .locks import ComponentLockManager
-from .typing.common import JSONSerializable
-from .typing.pipeline import SpeechStreamQueue
-from .typing.aliases import AudioChunk, AudioChunks
-from .constants import BASE_SR, APP_NAME, PipelineStates
-from .paths import project_root, temp_data_dir, running_compiled
-from .binding import install_class_functions, install_module_functions
-
 
 if TYPE_CHECKING:
     from .celune import Celune

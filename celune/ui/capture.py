@@ -5,18 +5,18 @@ from __future__ import annotations
 
 import re
 import time
+import queue as queue_module
 import threading
 import contextlib
 from uuid import uuid4
-import queue as queue_module
-from collections.abc import Callable
 from typing import Union, Optional, cast
+from collections.abc import Callable
 
 from textual.color import Color
 
 from . import app as _app
-from .constants import _CAPTION_FADE_SECONDS
 from ..binding import install_class_functions
+from .constants import _CAPTION_FADE_SECONDS
 
 __all__ = (
     "_acquire_recording_component_lease",
@@ -35,6 +35,7 @@ __all__ = (
     "_flush_vc_recording_buffer_locked",
     "_flush_vc_recording_chunk_locked",
     "_format_vc_pitch_shift",
+    "_get_persona_speech_transcriber",
     "_hide_caption_widgets",
     "_is_voice_conversion_mode",
     "_join_vc_recording_threads",
@@ -815,6 +816,18 @@ def _persona_speech_language(self) -> Optional[str]:
     return configured.strip()
 
 
+def _get_persona_speech_transcriber(self) -> _app.WhisperTranscriber:
+    """Return the Whisper transcriber shared by recording and captions."""
+    transcriber = self._speech_transcriber
+    if transcriber is None:
+        transcriber = _app.WhisperTranscriber(
+            self._persona_speech_model_id(),
+            language=self._persona_speech_language(),
+        )
+        self._speech_transcriber = transcriber
+    return transcriber
+
+
 def _persona_speech_end_delay_seconds(self) -> float:
     """Return the extra VAD silence delay before Persona submission."""
     configured = _app.persona_config(self.celune.config).get("speech_end_delay_seconds")
@@ -969,7 +982,6 @@ def _persona_transcription_worker(
             self._persona_recording_queue = None
             self._persona_recording_worker = None
             self._persona_recording_vad = None
-            self._persona_recording_transcriber = None
             self._persona_recording_chunks = []
             self._persona_recording_stop_requested = False
             self._persona_recording_speech_started = False
@@ -978,6 +990,8 @@ def _persona_transcription_worker(
 
         self._shutdown_vc_stream(stream)
         self._close_live_vad(vad)
+        with contextlib.suppress(Exception):
+            transcriber.unload()
         if component_lease is not None:
             component_lease.release()
 
@@ -1074,10 +1088,7 @@ def _start_persona_recording(self) -> bool:
     recording_queue: queue_module.Queue[tuple[_app.AudioChunk, bool]] = (
         queue_module.Queue(maxsize=1)
     )
-    transcriber = _app.WhisperTranscriber(
-        self._persona_speech_model_id(),
-        language=self._persona_speech_language(),
-    )
+    transcriber = self._get_persona_speech_transcriber()
     prefix = self.input_box.text.strip() if self.input_box is not None else ""
     recording_started_at = time.monotonic()
     should_stop = False
@@ -1165,7 +1176,6 @@ def _start_persona_recording(self) -> bool:
             self._persona_recording_queue = recording_queue
             self._persona_recording_worker = worker
             self._persona_recording_vad = ai_vad
-            self._persona_recording_transcriber = transcriber
             self._persona_recording_sample_rate = sample_rate
             self._persona_recording_chunks = []
             self._persona_recording_silence_frames = 0
@@ -1184,7 +1194,6 @@ def _start_persona_recording(self) -> bool:
             self._persona_recording_queue = None
             self._persona_recording_worker = None
             self._persona_recording_vad = None
-            self._persona_recording_transcriber = None
             self._persona_recording_chunks = []
             self._persona_recording_stop_requested = True
             self._persona_recording_component_lease = None
@@ -1236,7 +1245,6 @@ def _shutdown_persona_recording(self) -> None:
         self._persona_recording_queue = None
         self._persona_recording_worker = None
         self._persona_recording_vad = None
-        self._persona_recording_transcriber = None
         self._persona_recording_chunks = []
         self._persona_recording_stop_requested = True
         self._persona_recording_component_lease = None

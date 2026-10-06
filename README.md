@@ -3,7 +3,10 @@
 
 ---
 
-![Python](https://img.shields.io/badge/Python-3.12–3.14-cebaff) ![License](https://img.shields.io/badge/License-Apache%202.0-cebaff) ![Platform](https://img.shields.io/badge/Platform-Windows%2FLinux-cebaff) ![VRAM](https://img.shields.io/badge/VRAM-6%20GB–16%20GB+-cebaff)
+![Python](https://img.shields.io/badge/Python-3.12–3.14-cebaff)
+![License](https://img.shields.io/badge/License-Apache%202.0-cebaff)
+![Platform](https://img.shields.io/badge/Platform-Windows%2FLinux-cebaff)
+![VRAM](https://img.shields.io/badge/VRAM-6%20GB–16%20GB+-cebaff)
 
 Celune is a conversational character engine with agentic features.
 
@@ -37,15 +40,18 @@ Set the following value in Celune's configuration to change the operation mode:
 mode: converse  # speak|converse|agent
 ```
 
-- `speak` uses only Celune's speech features. It is best suited for performance use. It does not use any extra features.
+- `speak` uses only Celune's speech features. It is best suited for performance use.
+  It does not use any extra features.
 - `converse` uses Persona, allowing you to talk with any characters you've set up with Celune.
-- `agent` turns Celune into a conversational local agent, allowing her to perform actions on your computer while speaking as needed.
+- `agent` turns Celune into a conversational local agent, allowing her to perform actions
+  on your computer while speaking as needed.
 
 ## Note on development
 
 Celune is against the stance of "vibe coding" used in development.
 
-None of the 100,000+ lines of code in Celune were created solely using AI. AI tools (e.g. Codex) were only used to assist in faster development, iteration and solving issues.
+None of the 100,000+ lines of code in Celune were created solely using AI. AI tools (e.g. Codex)
+were only used to assist in faster development, iteration and solving issues.
 
 All decisions and implementations were reviewed, validated, and approved by human developers.
 
@@ -57,7 +63,12 @@ Visit <https://celune.readthedocs.io/en/latest> to view Celune documentation. Th
 
 ## License note
 
-Celune is licensed under the Apache 2.0 License, but the software may download certain models from [Hugging Face](https://huggingface.co) that are of varying licenses, such as [Apache 2.0](https://www.apache.org/licenses/LICENSE-2.0) (Qwen, etc.), [CC-BY-4.0](https://creativecommons.org/licenses/by/4.0/deed.en) (Pocket TTS), [GPL-3.0](https://opensource.org/license/gpl-3.0) (SeedVC), and MIT (Whisper, Silero VAD, etc.). Users of Celune are expected to read and comply with any applicable license terms for the models they intend to use.
+Celune is licensed under the Apache 2.0 License, but the software may download certain models
+from [Hugging Face](https://huggingface.co) that are of varying licenses,
+such as [Apache 2.0](https://www.apache.org/licenses/LICENSE-2.0) (Qwen, etc.), [CC-BY-4.0](https://creativecommons.org/licenses/by/4.0/deed.en) (Pocket TTS),
+[GPL-3.0](https://opensource.org/license/gpl-3.0) (SeedVC),
+and MIT (Whisper, Silero VAD, etc.). Users of Celune are expected to read and comply with any applicable
+license terms for the models they intend to use.
 
 Please note that Celune 4.3.2 and older are still licensed under the MIT license.
 
@@ -88,7 +99,7 @@ Browse the `demos` directory for demonstration content from the current version 
 > They may be interpreted as control sequences and cause unexpected vocalizations.
 > Refer to the model's known tags before including them.
 >
-> Do not mix multiple languages in one sentence.  
+> Do not mix multiple languages in one sentence.
 > Keep language boundaries clear and explicit.
 >
 > Some models may tolerate badly formatted inputs differently, but it is advised to correctly format your text inputs.
@@ -139,44 +150,27 @@ If Celune looks incorrect while your terminal supports True Color on Linux, run 
 COLORTERM=truecolor celune
 ```
 
-If Rubber Band is not installed or fails to run, Celune will speak at normal speed, and speed controls will be unavailable.
+If Rubber Band is not installed or fails to run, Celune will speak at normal speed, and speed controls
+will be unavailable.
 
 ## VRAM presets & requirements
 
-Celune has several VRAM presets available. Here are their baseline requirements:
+Celune reserves 2 GiB for the system and other GPU users. The presets name the
+minimum total GPU capacity; the remaining budget is available to Celune:
 
-> Low (6GB VRAM recommended)
->
-> This preset supports:
->
-> - Qwen3-TTS 0.6B / Celune Mini / LuxTTS
-> - SeedVC voice changer mode
-> - Normalization on CPU
->
-> Medium (8GB VRAM required)
->
-> This preset supports:
->
-> - All of the above, and:
-> - Qwen3-TTS 1.7B
->
-> High (12GB VRAM required)
->
-> This preset supports:
->
-> - All of the above, and:
-> - High-end TTS backends, such as VoxCPM2 or dots.tts MF
-> - Persona (4-bit) (not all models may fit, use Pocket TTS if uncertain)
->
-> Extra High (16GB VRAM and beyond)
->
-> This preset supports:
->
-> - All of the above, and:
-> - Persona (8-bit)
-> - Agentic features
-> - Normalization on GPU
-> - Upcoming advanced features
+| Preset | Total VRAM | Celune budget |
+| --- | ---: | ---: |
+| `low` | 6 GB | 4 GiB |
+| `medium` | 8 GB | 6 GiB |
+| `high` | 12 GB | 10 GiB |
+| `xhigh` | 16 GB or more | 14 GiB or more |
+
+Persona and standard agent models require `high`; registered smart 8B-tier
+models require `xhigh`. Persona context is capped at 2,048 tokens outside agent
+mode and 8,192 tokens in agent mode. Known model combinations are checked
+against their hardware profiles. An unprofiled combination is allowed to
+proceed with a warning that it may not work on that hardware; it can still fail
+at runtime if it exhausts GPU memory.
 
 The desired preset may be set in Celune's configuration file. Refer to `default_config.yaml` for details.
 
@@ -187,9 +181,11 @@ Tested on: RTX 5070 (12 GB VRAM)
 
 ## Installation
 
-Download and extract the [latest SemVer binary release](https://github.com/celunah/celune/releases/latest) prior to running the below commands in an already cloned copy of Celune.
+Download and extract the [latest SemVer binary release](https://github.com/celunah/celune/releases/latest) prior to running the below commands in an already
+cloned copy of Celune.
 
-Alternatively, run `scripts/build_nuitka.ps1` or `scripts/build_nuitka.sh` to build Celune binaries by yourself, depending on your platform.
+Alternatively, run `scripts/build_nuitka.ps1` or `scripts/build_nuitka.sh` to build Celune binaries by yourself,
+depending on your platform.
 
 Don't have a copy yet? Run the following commands:
 
@@ -238,7 +234,8 @@ Don't run `celune-bin` manually. The `celune` binary is Celune's main entrypoint
 
 Both binaries are required for correct operation, `celune-bin` contains core code, while `celune` is the outer launcher.
 
-Celune can also run from other working directories, provided the main binary is installed correctly. The binary must always be located as part of the cloned repository, as it depends on files contained within it.
+Celune can also run from other working directories, provided the main binary is installed correctly. The binary must
+always be located as part of the cloned repository, as it depends on files contained within it.
 
 ### SoX & Rubber Band installation
 
@@ -285,11 +282,13 @@ rubberband --version
 
 ### OpenRGB installation
 
-To install OpenRGB, go to <https://openrgb.org/>, download and install a package appropriate for your platform. This will allow Celune to glow up your PC as she speaks.
+To install OpenRGB, go to <https://openrgb.org/>, download and install a package appropriate for your platform.
+This will allow Celune to glow up your PC as she speaks.
 
 ### C/C++ compiler setup
 
-Celune's VoxCPM2 backend may require a C/C++ compiler to compile dependencies. To install a suitable compiler, run one of the following commands:
+Celune's VoxCPM2 backend may require a C/C++ compiler to compile dependencies. To install a suitable compiler,
+run one of the following commands:
 
 This is not required to use other backends, but you may need to install dependencies manually.
 
@@ -334,7 +333,7 @@ Symbolic links are recommended for best performance and compatibility.
 
 To enable them:
 
-- Enable **Developer Mode** in Windows settings  
+- Enable **Developer Mode** in Windows settings
   (Settings → Privacy & Security → For Developers)
 
 Without this, Celune may require elevated permissions or fall back to slower behavior.
@@ -373,7 +372,8 @@ The aforementioned extension defines a basic usage case for Celune extensions.
 
 ## Web UI
 
-Celune exposes a web interface for remote access to Celune. It reuses the Celune API commands to provide an interface for control.
+Celune exposes a web interface for remote access to Celune. It reuses the Celune API commands to provide
+an interface for control.
 It can be accessed via `/ui` on Celune's exposed API URL.
 
 ## Shortlink

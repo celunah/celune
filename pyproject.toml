@@ -12,6 +12,7 @@ dependencies = [
     # AI stack
     # Wow, up to date!
     "torch==2.13.0+cu130",
+    "torchao==0.17.0",
     "torchaudio==2.11.0+cu130",
     # This package is not required if you want to use Persona in text-only mode,
     # or Celune operates in speech-only mode.
@@ -52,6 +53,7 @@ dependencies = [
     "psutil",
     "platformdirs",
     "pyyaml",
+    "GitPython>=3.1.59,<4.0",
     "httpx>=0.27.0,<0.29.0",
     # Used to detect language of input.
     "lingua-language-detector>=2.2.0,<3.0.0",

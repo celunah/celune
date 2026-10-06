@@ -3,12 +3,18 @@
 
 from __future__ import annotations
 
-from contextlib import nullcontext
+from unittest import mock
 from typing import Optional, cast
+from types import SimpleNamespace
+from contextlib import nullcontext
 
+from celune.celune import Celune
+from celune.agent.persona import PersonaAgentBridge
 from celune.extensions.events import EventDispatcher
+from celune.typing.persona import PersonaClientResponse
 from celune.agent import (
     ToolCall,
+    AgentTool,
     ToolResult,
     AgentOutput,
     AgentRequest,
@@ -16,6 +22,7 @@ from celune.agent import (
     AgentSession,
     AgentTaskState,
     AgentTaskConfig,
+    AgentToolSchema,
     AgentAbortReason,
     AgentChoiceOption,
     AgentToolBehavior,
@@ -230,6 +237,118 @@ class TestAgentLoop:
         assert task.state == AgentTaskState.COMPLETED
         assert task.context_tokens == 0
 
+    def test_compaction_threshold_does_not_reject_context_below_limit(self) -> None:
+        """Keep the configured context size as the hard limit."""
+        runtime = AgentRuntime(
+            planner=lambda _context: _output(response="Done.", end=True),
+        )
+        task = runtime.create_task(
+            _request(),
+            AgentTaskConfig(context_size=8, compact_at=75),
+            task_id="task-1",
+        )
+        task.update_context_tokens(6)
+
+        runtime.run(task.request)
+
+        assert task.state == AgentTaskState.COMPLETED
+
+    def test_context_above_hard_limit_aborts_without_compactor(self) -> None:
+        """Reject actual context usage above the configured hard limit."""
+        runtime = AgentRuntime(
+            planner=lambda _context: _output(response="Done.", end=True),
+        )
+        task = runtime.create_task(
+            _request(),
+            AgentTaskConfig(context_size=8, compact_at=75),
+            task_id="over-limit-task",
+        )
+        task.update_context_tokens(9)
+
+        runtime.run(task.request)
+
+        assert task.state == AgentTaskState.ABORTED
+        assert task.abort_reason == AgentAbortReason.CONTEXT_LIMIT
+
+    def test_persona_compaction_releases_old_history_references(self) -> None:
+        """Replace task snapshots when Persona removes old conversation turns."""
+        history = [
+            {
+                "role": "user" if index % 2 == 0 else "assistant",
+                "content": f"turn {index} " + ("detail " * 250),
+            }
+            for index in range(10)
+        ]
+        engine = SimpleNamespace(
+            config={
+                "persona": {
+                    "memory": {
+                        "max_short_term_messages": 10,
+                        "context_compaction_keep_recent_messages": 2,
+                        "context_summary_max_characters": 240,
+                    }
+                }
+            },
+            persona_history=[dict(message) for message in history],
+            persona_session_summary="",
+            vision=SimpleNamespace(
+                summarize_history=lambda _messages, _previous, _maximum: (
+                    "Earlier turns covered established facts and decisions."
+                )
+            ),
+        )
+        request = AgentRequest(
+            request="Continue the task.",
+            history=tuple(dict(message) for message in history),
+            session=AgentSession(session_id="compact-session"),
+        )
+        runtime = AgentRuntime()
+        task = runtime.create_task(
+            request,
+            AgentTaskConfig(context_size=100, compact_at=75),
+            task_id="compact-task",
+        )
+        task.update_context_tokens(80)
+        bridge = PersonaAgentBridge(cast(Celune, engine), {})
+
+        compacted = bridge.compact(runtime.get_context(task.task_id))
+
+        assert len(engine.persona_history) == 2
+        assert len(task.request.history) == 2
+        assert compacted.request is task.request
+        assert task.context_tokens < 80
+        assert engine.persona_session_summary
+        assert all(
+            "detail " * 250 not in str(message) for message in task.request.history
+        )
+
+    def test_persona_generation_updates_exact_agent_context_usage(self) -> None:
+        """Track actual prompt and completion tokens for agent compaction."""
+        response = PersonaClientResponse(
+            {"response": "I will check that."},
+            prompt_tokens=120,
+            completion_tokens=6,
+        )
+        engine = SimpleNamespace(
+            vision=SimpleNamespace(post=lambda **_kwargs: response),
+            component_locks=None,
+        )
+        runtime = AgentRuntime()
+        task = runtime.create_task(
+            _request(),
+            AgentTaskConfig(context_size=512, compact_at=75),
+            task_id="usage-task",
+        )
+        bridge = PersonaAgentBridge(cast(Celune, engine), {})
+
+        with mock.patch(
+            "celune.agent.persona.build_persona_request",
+            return_value={},
+        ):
+            bridge.plan(runtime.get_context(task.task_id))
+
+        assert task.context_tokens == 126
+
     def test_approval_pause_does_not_consume_iteration_or_lose_call(self) -> None:
         """Resume an approved pending call without repeating the planner cycle."""
         planner_calls = 0
@@ -358,6 +477,101 @@ class TestAgentLoop:
         assert task.state == AgentTaskState.COMPLETED
         assert task.iterations == 1
         assert planner_calls == 2
+
+    def test_multiple_tool_candidates_require_choice_and_normal_approval(self) -> None:
+        """Run only the chosen candidate after its normal approval gate."""
+        planner_calls = 0
+        executions: list[ToolCall] = []
+        calls: list[ToolCall] = [
+            {"id": "status", "name": "read_status", "arguments": {}},
+            {"id": "write", "name": "write_file", "arguments": {}},
+        ]
+        outputs: list[AgentOutput] = []
+
+        def planner(_context):
+            nonlocal planner_calls
+            planner_calls += 1
+            return _output(response="Check the requested information.")
+
+        def execute(_context, call):
+            executions.append(call)
+            return _result(call)
+
+        def capture(output: AgentOutput) -> None:
+            outputs.append(output)
+
+        runtime = AgentRuntime(
+            tools=(
+                cast(
+                    AgentTool,
+                    SimpleNamespace(name="read_status", description="Read status."),
+                ),
+                cast(
+                    AgentTool,
+                    SimpleNamespace(name="write_file", description="Write a file."),
+                ),
+            ),
+            planner=planner,
+            tool_selector=lambda _context, _output: calls,
+            tool_executor=execute,
+            tool_schemas={
+                "read_status": AgentToolSchema(
+                    tool_id="read_status",
+                    display_name="Read status",
+                    description="Read status.",
+                ),
+                "write_file": AgentToolSchema(
+                    tool_id="write_file",
+                    display_name="Write file",
+                    description="Write a file.",
+                    behavior=AgentToolBehavior.MUTATING,
+                ),
+            },
+            tool_result_handler=lambda _context, _result: _output(
+                response="Done.", end=True
+            ),
+        )
+        task = runtime.create_task(_request(), task_id="tool-choice-task")
+
+        paused = runtime.run(task.request, callback=capture)
+
+        assert paused["paused"]
+        assert task.state == AgentTaskState.AWAITING_CHOICE
+        assert task.iterations == 0
+        assert not executions
+        choice = runtime.get_pending_choice(task.task_id)
+        assert choice is not None
+        assert len(choice.options) == 2
+        choice_prompt = outputs[-1]["response"]
+        assert isinstance(choice_prompt, str)
+        assert "Which tool should I run?" in choice_prompt
+        assert "Read status" in choice.options[0].label
+        assert "Write file" in choice.options[1].label
+
+        runtime.respond_to_choice(
+            task.task_id,
+            AgentChoiceResponse(choice.request_id, choice_id="tool-2"),
+        )
+
+        assert task.state == AgentTaskState.AWAITING_APPROVAL
+        approval = runtime.get_pending_approval(task.task_id)
+        assert approval is not None
+        assert approval.tool_call["name"] == "write_file"
+        assert not executions
+        runtime.respond_to_approval(
+            task.task_id,
+            AgentApprovalResponse(
+                approval.request_id,
+                AgentApprovalDecision.APPROVED,
+            ),
+        )
+        runtime.run(task.request, callback=capture)
+
+        assert task.state == AgentTaskState.COMPLETED
+        assert len(executions) == 1
+        assert executions[0]["id"] == calls[1]["id"]
+        assert executions[0]["name"] == calls[1]["name"]
+        assert planner_calls == 1
 
     def test_dependency_cancellation_leaves_terminal_task(self) -> None:
         """Handle cancellation during planning, selection, and execution."""

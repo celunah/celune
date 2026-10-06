@@ -662,6 +662,27 @@ class TestUIStartup(_TestUIStartup):
         start_event.prevent_default.assert_called_once_with()
         start_event.stop.assert_called_once_with()
 
+    def test_ctrl_j_submits_input_once_and_stops_key_propagation(self) -> None:
+        """Verify the command shortcut consumes its key after one submission."""
+        ui = CeluneUI()
+        self.addCleanup(setattr, CeluneUI, "_instance", None)
+        ui.input_box = TextArea()
+        ui.input_box.load_text("/vram")
+        ui._submit_text = mock.Mock(return_value=True)
+        ui.celune = cast(Celune, SimpleNamespace(test_finished=False, cur_state="idle"))
+
+        event = SimpleNamespace(
+            key="ctrl+j",
+            prevent_default=mock.Mock(),
+            stop=mock.Mock(),
+        )
+
+        ui.on_key(cast(events.Key, event))
+
+        ui._submit_text.assert_called_once_with("/vram")
+        event.prevent_default.assert_called_once_with()
+        event.stop.assert_called_once_with()
+
     def test_graceful_exit_uses_live_vc_shutdown_path(self) -> None:
         """Verify app exit stops live VC before closing the runtime."""
         ui = CeluneUI()

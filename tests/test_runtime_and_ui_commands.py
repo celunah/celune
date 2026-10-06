@@ -602,6 +602,68 @@ class TestUICommand(CeluneTestCase):
             "info",
         )
 
+    def test_vram_command_reports_process_and_component_usage(self) -> None:
+        """Verify /vram renders aggregate and per-component CUDA diagnostics."""
+        report = {
+            "available": True,
+            "allocated_bytes": 2 * 1024**3,
+            "reserved_bytes": 3 * 1024**3,
+            "peak_allocated_bytes": 4 * 1024**3,
+            "components": [
+                {
+                    "name": "tts/qwen3",
+                    "loaded": True,
+                    "available": True,
+                    "device": "cuda:0",
+                    "allocated_bytes": 1024**3,
+                    "reserved_bytes": 3 * 1024**3,
+                    "peak_allocated_bytes": 4 * 1024**3,
+                }
+            ],
+        }
+        with mock.patch("celune.ui.commands.runtime_vram_report", return_value=report):
+            self._process_command("vram", [])
+
+        assert self.logs == [
+            ("--- Memory usage statistics ---", "info"),
+            (
+                "Text to speech (qwen3): 1.00 GiB/3.00 GiB/4.00 GiB (cuda:0)",
+                "info",
+            ),
+            ("Legend: allocated memory, reserved memory, peak memory", "info"),
+        ]
+
+    def test_vram_command_reports_cpu_only_components(self) -> None:
+        """Verify /vram reports loaded components on the CPU."""
+        report = {
+            "available": True,
+            "allocated_bytes": 2 * 1024**3,
+            "reserved_bytes": 3 * 1024**3,
+            "peak_allocated_bytes": 4 * 1024**3,
+            "components": [
+                {
+                    "name": "normalizer",
+                    "loaded": True,
+                    "available": True,
+                    "device": "cpu",
+                    "allocated_bytes": 32 * 1024**2,
+                    "reserved_bytes": 32 * 1024**2,
+                    "peak_allocated_bytes": 32 * 1024**2,
+                }
+            ],
+        }
+        with mock.patch("celune.ui.commands.runtime_vram_report", return_value=report):
+            self._process_command("vram", [])
+
+        assert self.logs == [
+            ("--- Memory usage statistics ---", "info"),
+            (
+                "Normalizer: 32.00 MiB/-/- (cpu)",
+                "info",
+            ),
+            ("Legend: allocated memory, reserved memory, peak memory", "info"),
+        ]
+
     def test_common_commands_update_state_and_validate_inputs(self) -> None:
         """Verify prompt, speed, and reverb command paths.
 

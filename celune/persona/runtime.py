@@ -7,10 +7,9 @@ import logging
 import threading
 import contextlib
 from typing import Union, Optional, cast
-from collections.abc import Mapping, Sequence, Generator
+from collections.abc import Mapping, Callable, Sequence, Generator
 
 import torch
-from transformers.tokenization_utils_base import BatchEncoding
 from transformers import (
     AutoConfig,
     AutoProcessor,
@@ -20,19 +19,19 @@ from transformers import (
     StoppingCriteriaList,
     Qwen3VLForConditionalGeneration,
 )
+from transformers.cache_utils import Cache
+from transformers.configuration_utils import PreTrainedConfig
+from transformers.tokenization_utils_base import BatchEncoding
 
-from ..i18n import string
-from ..vram import resolve_vram_preset
-from ..typing.common import JSONSerializable
+from .cache import create_quantized_kv_cache
 from .capabilities import PersonaCapabilities
-from ..utils import normalize_special_characters
-from ..dataclasses.persona import ChatMessage, GenerateRequest, GenerateResponse
 from ..constants import (
     N_A_STR,
     PERSONA_CONTEXT_SPACE,
     PERSONA_DEFAULT_MODEL_ID,
     remote_code_model_revision,
 )
+from ..i18n import string
 from ..typing.persona import (
     Role,
     ContentItem,
@@ -50,8 +49,22 @@ from ..typing.persona import (
     VisionProcessorOutput,
     ModelGenerateKwargValue,
 )
+from ..typing.common import JSONSerializable
+from ..utils import normalize_special_characters
+from ..dataclasses.persona import ChatMessage, GenerateRequest, GenerateResponse
+from ..vram import resolve_vram_preset, is_cuda_out_of_memory, release_cuda_after_oom
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _quantize_kv_cache_enabled(
+    config: Optional[Mapping[str, JSONSerializable]],
+) -> bool:
+    """Return whether Persona cache quantization is enabled by configuration."""
+    if config is None:
+        return True
+    value = config.get("quantize_kv_cache")
+    return value is not False
 
 
 class _PersonaCancellationCriteria(StoppingCriteria):
@@ -133,6 +146,16 @@ def _model_supports_emotion_probes(model: PersonaModel) -> bool:
     return isinstance(hidden_size, int) and hidden_size > 0
 
 
+def _load_persona_model_safely(loader: Callable[[], PersonaModel]) -> PersonaModel:
+    """Release temporary CUDA allocations when Persona loading runs out of memory."""
+    try:
+        return loader()
+    except Exception as error:
+        if is_cuda_out_of_memory(error):
+            release_cuda_after_oom()
+        raise
+
+
 class PersonaBackend:
     """Character-agnostic backend for Persona generation."""
 
@@ -193,44 +216,50 @@ class PersonaBackend:
         if normalized in {"4bit", "nf4", "bnb4", "bitsandbytes-4bit"}:
             if not torch.cuda.is_available():
                 raise RuntimeError("CUDA support required to quantize Persona")
-            model = cast(
-                PersonaModel,
-                Qwen3VLForConditionalGeneration.from_pretrained(
-                    model_id,
-                    trust_remote_code=True,
-                    revision=load_revision,
-                    device_map="auto",
-                    quantization_config=BitsAndBytesConfig(
-                        load_in_4bit=True,
-                        bnb_4bit_quant_type="nf4",
-                        bnb_4bit_compute_dtype=torch.bfloat16,
-                        bnb_4bit_use_double_quant=True,
+            model = _load_persona_model_safely(
+                lambda: cast(
+                    PersonaModel,
+                    Qwen3VLForConditionalGeneration.from_pretrained(
+                        model_id,
+                        trust_remote_code=True,
+                        revision=load_revision,
+                        device_map="auto",
+                        quantization_config=BitsAndBytesConfig(
+                            load_in_4bit=True,
+                            bnb_4bit_quant_type="nf4",
+                            bnb_4bit_compute_dtype=torch.bfloat16,
+                            bnb_4bit_use_double_quant=True,
+                        ),
                     ),
-                ),
+                )
             )
         elif normalized in {"8bit", "bnb8", "bitsandbytes-8bit"}:
             if not torch.cuda.is_available():
                 raise RuntimeError("CUDA support required to quantize Persona")
-            model = cast(
-                PersonaModel,
-                Qwen3VLForConditionalGeneration.from_pretrained(
-                    model_id,
-                    trust_remote_code=True,
-                    revision=load_revision,
-                    device_map="auto",
-                    quantization_config=BitsAndBytesConfig(load_in_8bit=True),
-                ),
+            model = _load_persona_model_safely(
+                lambda: cast(
+                    PersonaModel,
+                    Qwen3VLForConditionalGeneration.from_pretrained(
+                        model_id,
+                        trust_remote_code=True,
+                        revision=load_revision,
+                        device_map="auto",
+                        quantization_config=BitsAndBytesConfig(load_in_8bit=True),
+                    ),
+                )
             )
         elif normalized in {"none", "false", "off", "disabled"}:
-            model = cast(
-                PersonaModel,
-                Qwen3VLForConditionalGeneration.from_pretrained(
-                    model_id,
-                    trust_remote_code=True,
-                    revision=load_revision,
-                    device_map="auto",
-                    dtype=torch.bfloat16,
-                ),
+            model = _load_persona_model_safely(
+                lambda: cast(
+                    PersonaModel,
+                    Qwen3VLForConditionalGeneration.from_pretrained(
+                        model_id,
+                        trust_remote_code=True,
+                        revision=load_revision,
+                        device_map="auto",
+                        dtype=torch.bfloat16,
+                    ),
+                )
             )
         else:
             raise ValueError(f"unsupported Persona quantization mode: {quantization}")
@@ -317,11 +346,18 @@ class PersonaBackend:
             return False
         return self.supports_vision or _processor_supports_vision(processor)
 
-    def generate(self, request: GenerateRequest) -> GenerateResponse:
+    def generate(
+        self,
+        request: GenerateRequest,
+        *,
+        quantize_kv_cache: bool = True,
+    ) -> GenerateResponse:
         """Generate a persona-formatted response.
 
         Args:
             request: The request to be processed by Persona.
+            quantize_kv_cache: Whether to use the selected INT8 or FP8 cache on
+                supported CUDA devices.
 
         Returns:
             GenerateResponse: A response generated from Persona.
@@ -342,34 +378,78 @@ class PersonaBackend:
         model_inputs = None
         output_ids = None
         new_ids = None
+        generation_cache: Optional[Cache] = None
+        generation_kwargs: dict[str, ModelGenerateKwargValue] = {}
         try:
-            inputs = self._build_inputs(message_dicts, request.context_space)
+            input_context_space = max(1, request.context_space - 1)
+            inputs = self._build_inputs(message_dicts, input_context_space)
             model_inputs = {
                 key: cast(torch.Tensor, value) for key, value in dict(inputs).items()
             }
-            generation_kwargs: dict[str, ModelGenerateKwargValue] = {
-                "cache_implementation": "dynamic",
-                "stopping_criteria": StoppingCriteriaList(
-                    [_PersonaCancellationCriteria(self._generation_cancelled)]
-                ),
-            }
+            input_ids = model_inputs.get("input_ids")
+            if not isinstance(input_ids, torch.Tensor):
+                raise TypeError("Persona input encoding did not produce input IDs")
+            input_length = input_ids.shape[1]
+            available_output_tokens = request.context_space - input_length
+            max_new_tokens = min(request.max_new_tokens, available_output_tokens)
+            if max_new_tokens <= 0:
+                raise ValueError("Persona prompt leaves no room for a response")
+            model_config = getattr(model, "config", None)
+            if isinstance(input_ids, torch.Tensor) and isinstance(
+                model_config, PreTrainedConfig
+            ):
+                with contextlib.suppress(RuntimeError, TypeError, ValueError):
+                    generation_cache = create_quantized_kv_cache(
+                        config=model_config,
+                        device=input_ids.device,
+                        enabled=quantize_kv_cache,
+                    )
+
+            generation_kwargs["stopping_criteria"] = StoppingCriteriaList(
+                [_PersonaCancellationCriteria(self._generation_cancelled)]
+            )
+            if generation_cache is not None:
+                generation_kwargs["past_key_values"] = generation_cache
+            else:
+                generation_kwargs["cache_implementation"] = "dynamic"
             pad_token_id = tokenizer.eos_token_id
             if pad_token_id is not None:
                 generation_kwargs["pad_token_id"] = pad_token_id
 
             with torch.inference_mode():
-                output_ids = model.generate(
-                    **model_inputs,
-                    max_new_tokens=request.max_new_tokens,
-                    do_sample=request.temperature > 0,
-                    temperature=request.temperature,
-                    top_p=request.top_p,
-                    repetition_penalty=request.repetition_penalty,
-                    **generation_kwargs,
-                )
+                try:
+                    output_ids = model.generate(
+                        **model_inputs,
+                        max_new_tokens=max_new_tokens,
+                        do_sample=request.temperature > 0,
+                        temperature=request.temperature,
+                        top_p=request.top_p,
+                        repetition_penalty=request.repetition_penalty,
+                        **generation_kwargs,
+                    )
+                except Exception as error:
+                    if is_cuda_out_of_memory(error):
+                        raise
+                    if generation_cache is None:
+                        raise
+                    _LOGGER.debug(
+                        "Persona quantized KV cache failed; retrying dynamic cache",
+                        exc_info=True,
+                    )
+                    generation_cache = None
+                    generation_kwargs.pop("past_key_values", None)
+                    generation_kwargs["cache_implementation"] = "dynamic"
+                    output_ids = model.generate(
+                        **model_inputs,
+                        max_new_tokens=max_new_tokens,
+                        do_sample=request.temperature > 0,
+                        temperature=request.temperature,
+                        top_p=request.top_p,
+                        repetition_penalty=request.repetition_penalty,
+                        **generation_kwargs,
+                    )
 
-            input_length = cast(torch.Tensor, inputs["input_ids"]).shape[1]
-            new_ids = output_ids[0, input_length:]
+            new_ids = output_ids[0, input_length : input_length + max_new_tokens]
             text = normalize_special_characters(
                 tokenizer.decode(new_ids, skip_special_tokens=True).strip()
             )
@@ -378,12 +458,16 @@ class PersonaBackend:
                 response=text,
                 model=self.model_id,
                 quantization=self.quantization,
+                prompt_tokens=input_length,
+                completion_tokens=new_ids.shape[0],
             )
         finally:
             new_ids = None
             output_ids = None
             model_inputs = None
             inputs = None
+            generation_cache = None
+            generation_kwargs.clear()
             gc.collect()
             if torch.cuda.is_available():
                 with contextlib.suppress(Exception):
@@ -550,7 +634,10 @@ class PersonaRuntime:
         with self.lock:
             self.backend._reset_generation_cancellation()
             self.backend.load(model_id, quantization)
-            return self.backend.generate(request)
+            return self.backend.generate(
+                request,
+                quantize_kv_cache=_quantize_kv_cache_enabled(self.config),
+            )
 
     def interrupt(self) -> None:
         """Request cancellation of an active Persona generation."""

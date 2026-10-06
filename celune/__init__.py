@@ -15,12 +15,12 @@ instances can exhaust GPU resources and is not a supported usage pattern.
 """
 
 import sys as _sys
-from typing import TYPE_CHECKING, Union
 from collections.abc import Callable
+from typing import TYPE_CHECKING, Union
 
+from .i18n import string
 from .constants import APP_NAME
 from ._version import REVISION, __version__
-from .i18n import string
 
 try:
     from .paths import configure_huggingface_cache_environment

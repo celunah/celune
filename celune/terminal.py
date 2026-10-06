@@ -4,9 +4,8 @@
 import re
 import sys
 import ctypes
-
-from collections.abc import Callable
 from typing import IO, Optional, cast
+from collections.abc import Callable
 
 from .i18n import string
 
@@ -38,6 +37,9 @@ RUNTIME_LOG_FILTER_MESSAGES = frozenset(
         "A custom logits processor of type",
         "FireRedTTS3 (text front-end) loaded",
         "with an incorrect regex pattern",
+        "SyntaxWarning: invalid escape sequence",
+        "regex for parameter names, must start with",
+        "Redirects are currently not supported in Windows or Mac",
         "flash-attn is not installed",
         "Could not infer sample rate from base model",
         "Warming up predictor",

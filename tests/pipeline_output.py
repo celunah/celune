@@ -4,20 +4,21 @@
 # Import groups follow Celune's project-specific Ruff ordering.
 # pylint: disable=ungrouped-imports
 
+import json as _json
 import tempfile
 import threading
-import json as _json
+from types import SimpleNamespace
 from typing import cast
 from pathlib import Path
 from unittest import mock
-from types import SimpleNamespace
 
-import pytest
 import numpy as np
+import pytest
 import soundfile as sf
 
+from celune import metadata as celune_metadata
+from celune import pipeline
 from celune.celune import Celune
-from celune import metadata as celune_metadata, pipeline
 
 from .support import (
     FakeStream,

@@ -15,7 +15,7 @@ import contextlib
 from typing import Never, Union, ClassVar, Optional, cast, final
 from pathlib import Path
 from dataclasses import dataclass
-from collections.abc import Callable, Generator
+from collections.abc import Mapping, Callable, Generator
 
 import numpy as np
 import torch
@@ -29,6 +29,8 @@ from .vram import (
     backend_allowed,
     resolve_vram_preset,
     resolve_backend_name,
+    is_cuda_out_of_memory,
+    release_cuda_after_oom,
 )
 from .locks import ComponentLockLease
 from .modes import (
@@ -37,8 +39,8 @@ from .modes import (
 )
 from .paths import temp_data_dir
 from .utils import (
-    available,
     discard,
+    available,
     format_error_message,
 )
 from .chroma import AudioRGBGlow
@@ -55,17 +57,11 @@ from .cevoice import (
     bundle_matches_default_pack_checksum,
 )
 from .pipeline import (
+    split_text,
     clear_queue,
     close_stream,
-    generation_worker_job,
     playback_worker_job,
-    split_text,
-)
-from .speech import (
-    play as play_pipeline,
-    close as close_pipeline,
-    queue_sfx_audio,
-    stop_live_audio_input,
+    generation_worker_job,
 )
 from .constants import (
     APP_NAME,
@@ -117,8 +113,8 @@ from .typing.celune import (
     ProgressCallback,
     ReleasableObject,
     InputStateCallback,
-    CeluneStateAccessors,
     CeluneMethodSurface,
+    CeluneStateAccessors,
     VoiceLockStateCallback,
     _BundleWithPath,
 )
@@ -153,6 +149,22 @@ from .dataclasses.properties import (
 )
 
 
+def _load_speech_module():
+    """Import speech helpers after the pipeline facade has been initialized."""
+    from . import speech
+
+    return speech
+
+
+speech_module = _load_speech_module()
+
+
+play_pipeline = speech_module.play
+close_pipeline = speech_module.close
+queue_sfx_audio = speech_module.queue_sfx_audio
+stop_live_audio_input = speech_module.stop_live_audio_input
+
+
 def _config_str(value: JSONSerializable) -> Optional[str]:
     """Return a config value only when it is a string."""
     return value if isinstance(value, str) else None
@@ -181,6 +193,29 @@ def _config_int(value: JSONSerializable, default: int) -> int:
     if value is None:
         return default
     raise TypeError("config value cannot be converted to int")
+
+
+def _tts_quantization_enabled(
+    config: Optional[Mapping[str, JSONSerializable]],
+    backend_spec: CoreBackendSpec,
+) -> bool:
+    """Resolve the default TTS quantization policy, excluding LuxTTS."""
+    if isinstance(backend_spec, CeluneVCBackend):
+        return False
+    if isinstance(backend_spec, type) and issubclass(backend_spec, CeluneVCBackend):
+        return False
+    raw_name = (
+        backend_spec
+        if isinstance(backend_spec, str)
+        else getattr(backend_spec, "name", "")
+    )
+    backend_name = raw_name.strip().lower() if isinstance(raw_name, str) else ""
+    return backend_name != "luxtts" and config_bool(
+        config,
+        "CELUNE_TTS_QUANTIZE",
+        "quantize",
+        default=True,
+    )
 
 
 def _resolve_input_mode(config: Config, requested_mode: Optional[str] = None) -> str:
@@ -261,7 +296,9 @@ def _agent_task_config(config: Config) -> AgentTaskConfig:
             )
             else None
         ),
-        context_size=positive("context_size", AGENT_CONTEXT_SPACE),
+        context_size=min(
+            positive("context_size", AGENT_CONTEXT_SPACE), AGENT_CONTEXT_SPACE
+        ),
         compact_at=(
             values["compact_at"]
             if isinstance(values.get("compact_at"), int)
@@ -526,6 +563,7 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
             tool_executor=self._execute_agent_tool,
             tool_result_handler=self._agent_persona_bridge.handle_tool_result,
             responder=self._agent_persona_bridge.respond,
+            compactor=self._agent_persona_bridge.compact,
             tool_schemas=self._agent_tool_schemas,
             task_config=_agent_task_config(config),
         )
@@ -566,7 +604,11 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
         if tts_backend is None:
             tts_backend = preset.default_backend
 
-        backend_kwargs: dict[str, Optional[Union[bool, str]]] = {}
+        backend_kwargs: dict[str, Optional[Union[bool, str]]] = {
+            "quantize": _tts_quantization_enabled(config, tts_backend),
+        }
+        if isinstance(tts_backend, CeluneBackend):
+            tts_backend.quantization_requested = bool(backend_kwargs["quantize"])
         if isinstance(tts_backend, CeluneBackend):
             if not backend_allowed(config, tts_backend.name):
                 raise BackendError(
@@ -1459,7 +1501,9 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
         backend_spec: Union[str, CeluneBackend, type[CeluneBackend]],
     ) -> dict[str, JSONSerializable]:
         """Return constructor kwargs needed to instantiate one backend specification."""
-        backend_kwargs: dict[str, JSONSerializable] = {}
+        backend_kwargs: dict[str, JSONSerializable] = {
+            "quantize": _tts_quantization_enabled(self.config, backend_spec),
+        }
         raw_name = getattr(backend_spec, "name", None)
         backend_name = (
             backend_spec.strip().lower()
@@ -1469,7 +1513,8 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
             else None
         )
         if isinstance(backend_spec, CeluneBackend):
-            return backend_kwargs
+            backend_spec.quantization_requested = bool(backend_kwargs["quantize"])
+            return {}
 
         if backend_name == "qwen3":
             preset = resolve_vram_preset(self.config)
@@ -1641,7 +1686,29 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
     ) -> tuple[Optional[PreTrainedModel], str]:
         """Load the TTS runtime for one backend and voice without disturbing the previous runtime."""
         model_name = backend.model_id_for_voice(voice)
-        model = cast(PreTrainedModel, backend.load_model(model_name))
+        try:
+            model = cast(PreTrainedModel, backend.load_model(model_name))
+        except Exception as error:
+            if is_cuda_out_of_memory(error):
+                with contextlib.suppress(Exception):
+                    backend.unload_model()
+                release_cuda_after_oom()
+                raise
+            if not backend.quantization_requested:
+                raise
+            backend.disable_runtime_quantization()
+            backend.unload_model()
+            try:
+                model = cast(PreTrainedModel, backend.load_model(model_name))
+            except Exception as recovery_error:
+                if is_cuda_out_of_memory(recovery_error):
+                    with contextlib.suppress(Exception):
+                        backend.unload_model()
+                    release_cuda_after_oom()
+                fatal = getattr(backend, "_fatal_callback", None)
+                if callable(fatal):
+                    fatal()
+                raise
         backend.model = model
         return model, model_name
 
@@ -1753,6 +1820,9 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
                     voice=candidate_voice,
                 ):
                     self._raise_warmup_error("warmup failed after backend reload")
+                candidate_model = cast(
+                    Optional[PreTrainedModel], candidate_backend.model
+                )
 
                 self.backend = candidate_backend
                 self.vc_backend = None
@@ -2440,14 +2510,24 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
 def _install_celune_methods() -> None:
     """Install split engine methods after the concrete class exists."""
     from . import (
-        conversation,
-        loader as loader_methods,
-        pipeline as pipeline_methods,
-        playback as playback_methods,
+        vc as vc_methods,
+    )
+    from . import (
         sleep,
         speech,
-        vc as vc_methods,
+        conversation,
+    )
+    from . import (
         voice as voice_methods,
+    )
+    from . import (
+        loader as loader_methods,
+    )
+    from . import (
+        pipeline as pipeline_methods,
+    )
+    from . import (
+        playback as playback_methods,
     )
     from .agent import core as agent_methods
 

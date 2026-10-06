@@ -12,20 +12,22 @@ import random
 import asyncio
 import pathlib
 import datetime
-import contextlib
 import threading
+import contextlib
 import collections.abc
-from collections import deque
-from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Optional, cast
+from collections import deque
+from dataclasses import replace, dataclass
 
+import numpy as np
 import torch
 import psutil
-import numpy as np
 import soundfile as sf
 import sounddevice as sd
 import pyrubberband as rb
 
+from .i18n import string, tagged_string
+from .vram import is_cuda_out_of_memory, release_cuda_after_oom
 from .paths import (
     outputs_dir,
 )
@@ -34,12 +36,16 @@ from .utils import (
     format_number,
     format_error_message,
 )
+from .config import resolve_audio_device
+from .binding import install_class_functions
+from .threads import run_in_daemon_thread as _run_in_daemon_thread
+from .analysis import _schedule_voice_analysis
 from .metadata import (
-    _celune_metadata_payload,
-    _flac_metadata_blocks,
-    _parse_vorbis_comment_block,
     _write_celune_flac,
     _write_flac_metadata,
+    _flac_metadata_blocks,
+    _celune_metadata_payload,
+    _parse_vorbis_comment_block,
 )
 from .playback import (
     acquire_pipeline,
@@ -82,6 +88,8 @@ from .constants import (
     APP_NAME,
     APP_SLUG,
 )
+from .exceptions import BackendError, NotAvailableError
+from .conversation import _think_persona, _effective_voice_prompt
 from .pipelinecore import (
     _PIPELINE_CPU_YIELD_SECONDS,
     _PLAYBACK_BUFFER_MAX_SECONDS,
@@ -97,27 +105,18 @@ from .pipelinecore import (
     _PLAYBACK_CONTENTION_LAG_CRITICAL_SECONDS,
     _monotonic_time,
 )
+from .typing.common import JSONSerializable
+from .typing.aliases import AudioChunk, AudioChunks
+from .typing.pipeline import SpeechStreamQueue
 from .dataclasses.pipeline import (
     SpeechTiming,
     PlaybackChunk,
     SpeechRequest,
     PlaybackSourceDone,
 )
-from .i18n import string, tagged_string
-from .config import resolve_audio_device
-from .exceptions import NotAvailableError
-from .typing.common import JSONSerializable
-from .binding import install_class_functions
-from .analysis import _schedule_voice_analysis
-from .typing.pipeline import SpeechStreamQueue
-from .typing.aliases import AudioChunk, AudioChunks
-from .conversation import _think_persona, _effective_voice_prompt
-from .threads import run_in_daemon_thread as _run_in_daemon_thread
-
 
 if TYPE_CHECKING:
     from .celune import Celune
-    from .captions import CaptionAlignmentWorker
     from .speech import (
         say,
         play,
@@ -134,6 +133,7 @@ if TYPE_CHECKING:
         queue_streaming_sfx_audio,
         finish_streaming_sfx_audio,
     )
+    from .captions import CaptionAlignmentWorker
     from .playback import (
         _config_text,
         _config_lines,
@@ -1097,6 +1097,42 @@ def play_signal(engine: Celune, signal_type: str) -> bool:
     return False
 
 
+def _recover_quantized_tts(engine: Celune, language: Optional[str]) -> None:
+    """Reload a failed quantized TTS runtime in BF16.
+
+    Args:
+        engine: Celune runtime that owns the active TTS backend.
+        language: Language requested by the failed generation.
+
+    Raises:
+        BackendError: The active voice cannot be resolved or BF16 recovery fails.
+    """
+    backend = engine.backend
+    try:
+        backend.disable_runtime_quantization()
+        backend.unload_model()
+        active_voice = engine.current_voice or backend.default_voice
+        if active_voice is None:
+            raise BackendError(
+                "cannot recover a quantized model without an active voice",
+                error_code="tts_quantization_recovery_failed",
+            )
+        model_id = backend.model_id_for_voice(active_voice)
+        model = backend.load_model(model_id, lang=language)
+        backend.model = model
+        engine.model = model
+        engine.model_name = model_id
+    except Exception as error:
+        engine.fatal()
+        if isinstance(error, BackendError):
+            raise
+        raise BackendError(
+            "quantized TTS recovery failed",
+            error_code="tts_quantization_recovery_failed",
+            error_type=type(error).__name__,
+        ) from error
+
+
 def _process_generation_request(
     engine: Celune,
     item: SpeechRequest,
@@ -1737,7 +1773,7 @@ def _process_generation_request(
                     if stream_queue is not None:
                         stream_queue.put(None)
             break
-        except Exception as e:
+        except Exception as original_error:
             if engine.exit_requested:
                 if caption_worker is not None and source_id is not None:
                     caption_worker.cancel_source(source_id)
@@ -1762,25 +1798,45 @@ def _process_generation_request(
                     finish_stream=False,
                 )
 
-            short_input_error = _is_short_input_generation_error(e)
+            cuda_oom = is_cuda_out_of_memory(original_error)
+            recovery_error: Optional[Exception] = None
+            if not cuda_oom and getattr(engine.backend, "quantization_active", False):
+                try:
+                    _recover_quantized_tts(engine, request_language)
+                except Exception as caught_recovery_error:
+                    recovery_error = caught_recovery_error
+
+            error = recovery_error or original_error
+            short_input_error = _is_short_input_generation_error(error)
             input_too_short_message = string("pipeline.input_too_short")
-            if short_input_error:
+            if cuda_oom:
+                release_cuda_after_oom()
+                engine.log(
+                    format_error_message(
+                        tagged_string("pipeline.gen_error", "GEN ERROR"),
+                        error,
+                        engine.log_level,
+                    ),
+                    "warning",
+                )
+                engine.status_callback(string("pipeline.generation_oom"), "warning")
+            elif short_input_error:
                 engine.log(input_too_short_message, "warning")
             else:
                 engine.log(
                     format_error_message(
                         tagged_string("pipeline.gen_error", "GEN ERROR"),
-                        e,
+                        error,
                         engine.log_level,
                     ),
                     "error",
                 )
             if stream_queue is not None and caption_worker is not None:
-                caption_worker.submit_stream_error(stream_queue, e)
+                caption_worker.submit_stream_error(stream_queue, error)
             elif stream_queue is not None:
-                stream_queue.put(e)
+                stream_queue.put(error)
                 stream_queue.put(None)
-            engine.cur_state = "idle" if short_input_error else "error"
+            engine.cur_state = "idle" if short_input_error or cuda_oom else "error"
             release_pipeline(engine)
             engine.progress_callback(0, 1)
             if short_input_error:

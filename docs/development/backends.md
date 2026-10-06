@@ -11,6 +11,12 @@ backend-specific packages must not be imported by core modules at startup.
 Explicit CEDTS worker callers may still use the manifest-backed environment
 manager; normal application configuration does not select that path.
 
+If a CEDTS worker exits before its first handshake frame, Celune reports the
+unexpected end of the protocol stream. When worker stderr contains an
+exception, the early-startup error also includes its final exception line;
+traceback frames remain in the worker diagnostics rather than the error
+screen.
+
 ## Registered manifests
 
 | ID | Kind | Worker | Extra requirements |
@@ -23,10 +29,11 @@ manager; normal application configuration does not select that path.
 | `luxtts` | TTS | `celune.backends.tts.luxtts:LuxTTS` | CUDA-first LuxTTS worker with CPU ONNX fallback, its ZipVoice/LinaCodec VCS dependencies, and English prompt transcription. |
 | `seed-vc` | VC | `celune.backends.vc.seedvc:CeluneSeedVCBackend` | Celune's Seed-VC fork. |
 
-Most workers share a compatibility baseline containing Hugging Face Hub and
-`hf-xet`, Transformers below 5 in the worker environment, Lingua, librosa,
-llvmlite, NumPy/Numba, Pillow, platformdirs, psutil, sounddevice, soundfile,
-and Zstandard, plus the CEDTS-compatible PyTorch 2.11 CUDA 12.8 worker stack.
+Most workers share a compatibility baseline that includes GitPython for
+Celune's shared repository helpers, Hugging Face Hub and `hf-xet`, Transformers
+below 5, Lingua, librosa, llvmlite, NumPy/Numba, Pillow, platformdirs, psutil,
+sounddevice, soundfile, and Zstandard. They also use the CEDTS-compatible
+PyTorch 2.11 CUDA 12.8 worker stack.
 LuxTTS uses that same pinned PyTorch stack. It selects the native PyTorch
 checkpoint and CUDA runtime when `torch.cuda.is_available()` is true, and uses
 the ONNX CPU path only when no usable CUDA runtime exists. Its model and
@@ -142,6 +149,98 @@ utterance can still be admitted. The known LuxTTS short-input vocoder shape and
 empty-reduction failures return Celune to idle and are presented as a warning
 asking the user to enter a longer utterance; other generation failures retain
 the normal error treatment.
+
+## Model weight contracts
+
+`celune.backends.tts.contracts` records the pinned Hugging Face revision and
+weight inventory for every supported TTS backend. Each safetensors artifact is
+identified by its expected size and SHA-256 digest, then described by its
+tensor count, parameter count, dtype distribution, and canonical tensor
+inventory digest. The inventory digest covers tensor names, shapes, and dtypes;
+it lets a worker reject missing, unexpected, or structurally changed weights
+without embedding a several-thousand-name list in the source tree.
+
+The contract includes the currently supported model variants:
+
+- Pocket TTS uses `lunahr/pocket-tts-ungated`, not the gated upstream
+  repository. Its language variants are separate contracts because the
+  current French `french_24l` artifact has a different tensor inventory from
+  the other selected language artifacts.
+- Qwen3 includes both the 0.6B and 1.7B Base checkpoints and their shared F32
+  speech tokenizer.
+- FireRedTTS3 records the upstream F32 source inventories separately from its
+  runtime dtype rules: the Qwen backbone, stop head, and RedAE encoder are
+  BF16, while the flow and decoder paths remain F32.
+- LuxTTS is represented by its Torch/ONNX/BIN artifacts because its model
+  repository does not use safetensors for the selected runtime path.
+
+`validate_safetensors_artifact` validates a cached artifact without loading
+its tensors into VRAM. `validate_model_state` validates a loaded component's
+exact structural inventory, runtime dtypes, parameter count, and finite values.
+Both validators raise `celune.exceptions.InvalidCheckpoint` on failure. The
+exception exposes the backend, checkpoint filename and path, and—when a
+specific tensor is responsible—the tensor name, owning layer, shape, dtype,
+expected dtype, and actual dtype. Contract lookup failures remain
+`ModelContractError` because they indicate a missing Celune contract rather
+than a corrupt checkpoint.
+Each quantizable component also carries a `QuantizationRule`. It lists the
+linear-module suffixes that are safe for weight-only conversion and explicit
+module names that must remain at their contract dtype. The runtime validates
+the BF16 state before conversion and calls `validate_model_state` again with
+`allow_quantized=True` afterward; that mode permits only approved INT8/FP8
+weights and continues checking counts, parameter totals, runtime dtypes for
+other tensors, and finite values. `celune.backends.tts.quantization` selects
+INT8 for Ampere (`sm80`/`sm86`) and FP8 for `sm89` or newer, using TorchAO's
+version-2 weight-only configs. It does not quantize embeddings, norms, output
+heads, speaker-conditioning paths, or vocoders. Conversion releases the
+temporary pre-quantization state references before TorchAO replaces weights.
+The heavy VoxCPM2, dots.tts, and FireRedTTS3 loaders construct the model on
+CPU, quantize the contract-approved components there, and transfer the single
+resulting model to CUDA once. This prevents the full BF16 model and its
+quantized replacement from overlapping in VRAM during conversion. The lighter
+backends retain their existing load order. After conversion Celune clears
+unreferenced CUDA cache blocks, so the runtime retains only the quantized model
+storage and backend-required unquantized components in VRAM.
+Component resolution checks the contract component name on the backend wrapper
+and its nested `model` before falling back to a native root module. This keeps
+TorchAO scoped to the declared component—for example, Pocket TTS's `flow_lm`
+or dots.tts's `core`—instead of quantizing a wrapper that also owns a vocoder
+or speaker encoder.
+
+When importing or using integrations that may load TorchAO, Celune skips only
+the redundant pytree registration for Enum classes that the active PyTorch
+version already supports as opaque compile values. Other TorchAO constant
+registrations remain unchanged, so this compatibility path removes the known
+`register_constant()` deprecation warning without disabling quantization. The
+Transformers imports are also deferred into this boundary because its
+quantizer registry can import TorchAO eagerly. The same boundary covers the
+lazy Qwen3 voice-embedding model used by post-speech voice analysis.
+The isolated worker log bridge also suppresses the known TorchAO invalid-escape
+source warning and PyTorch's Windows/macOS redirect-support note; backend
+tracebacks and actionable errors remain visible.
+
+Persona attention caches have a separate core-owned policy because TorchAO's
+weight-only APIs do not quantize runtime K/V activations. With
+`quantize_kv_cache: true`, the Transformers cache stores older full-attention
+keys and values as INT8 on Ampere or FP8 on `sm89+`, with a short BF16 tail for
+recent tokens. It dequantizes the compact prefix only for each attention
+operation and falls back to the normal dynamic cache if the model layout or
+runtime does not support the custom cache. The cache object is request-scoped;
+the generation cleanup path drops it before releasing allocator blocks.
+
+VoxCPM2 does not expose a Transformers cache boundary. Its two private static
+MiniCPM caches are therefore bounded at the adapter boundary to 2048 positions
+before the model is used, and are rebuilt at that capacity when a CPU-quantized
+runtime moves to CUDA. This removes the unused 8192-position resident
+allocation without modifying the isolated upstream package. The cap is sized
+for Celune's ten-second reference limit and 512-step speech chunks; extending
+those limits requires revisiting the adapter cap and checking the model's
+position budget.
+
+When quantized loading, the startup speech probe, or a later speech generation
+fails, the backend disables quantization, unloads the model, and reloads the
+same model in BF16. A failed BF16 recovery invokes the fatal engine transition
+immediately.
 
 ## Adding a backend
 
