@@ -14,7 +14,9 @@ from .utils import (
     available,
     format_number,
     cuda_architecture,
+    current_platform,
 )
+from .vcs import get_branch
 from ._version import DEVELOPMENT
 from .constants import APP_NAME, NVIDIA_DEVICE_KEYWORDS
 from .backends.vc import CeluneVCBackend
@@ -46,7 +48,7 @@ def log_runtime_banner(
         backend_line = f"on backend {backend.name}, "
 
     log(
-        f"{APP_NAME} {__version__} "
+        f"{APP_NAME} {__version__} ({get_branch()}, {current_platform()}) "
         f"{backend_line}"
         f"Python {platform.python_version()}, "
         f"PyTorch {torch.__version__}"

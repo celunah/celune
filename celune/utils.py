@@ -8,6 +8,7 @@ import time
 import random
 import inspect
 import datetime
+import platform
 import traceback
 import importlib.util
 import multiprocessing
@@ -877,3 +878,16 @@ def available(
             return False
     finally:
         del frame
+
+
+def current_platform() -> str:
+    """Return the platform name and architecture.
+
+    Returns:
+        str: The platform name and architecture.
+    """
+
+    operating_system = platform.system()
+    architecture = platform.machine()
+
+    return f"{operating_system} {architecture}"
