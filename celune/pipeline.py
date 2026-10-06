@@ -1525,7 +1525,7 @@ def _process_generation_request(
             if generated_text_parts:
                 text = timing_text
 
-            generation_time = _monotonic_time() - start_time
+            generation_time = max(_monotonic_time() - start_time, 1e-6)
 
             engine.log(
                 "[GEN] stream complete "
