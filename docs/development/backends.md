@@ -29,10 +29,11 @@ screen.
 | `luxtts` | TTS | `celune.backends.tts.luxtts:LuxTTS` | CUDA-first LuxTTS worker with CPU ONNX fallback, its ZipVoice/LinaCodec VCS dependencies, and English prompt transcription. |
 | `seed-vc` | VC | `celune.backends.vc.seedvc:CeluneSeedVCBackend` | Celune's Seed-VC fork. |
 
-Most workers share a compatibility baseline containing Hugging Face Hub and
-`hf-xet`, Transformers below 5 in the worker environment, Lingua, librosa,
-llvmlite, NumPy/Numba, Pillow, platformdirs, psutil, sounddevice, soundfile,
-and Zstandard, plus the CEDTS-compatible PyTorch 2.11 CUDA 12.8 worker stack.
+Most workers share a compatibility baseline that includes GitPython for
+Celune's shared repository helpers, Hugging Face Hub and `hf-xet`, Transformers
+below 5, Lingua, librosa, llvmlite, NumPy/Numba, Pillow, platformdirs, psutil,
+sounddevice, soundfile, and Zstandard. They also use the CEDTS-compatible
+PyTorch 2.11 CUDA 12.8 worker stack.
 LuxTTS uses that same pinned PyTorch stack. It selects the native PyTorch
 checkpoint and CUDA runtime when `torch.cuda.is_available()` is true, and uses
 the ONNX CPU path only when no usable CUDA runtime exists. Its model and

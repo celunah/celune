@@ -307,6 +307,14 @@ class TestBackendEnvironment(CeluneTestCase):
             assert "https://download.pytorch.org/whl/cu128" in manifest.index_urls
             assert expected_requirements.issubset(manifest.requirements)
 
+    def test_manifests_include_gitpython_for_shared_core_utilities(self) -> None:
+        """Verify every isolated worker can import Celune's VCS helpers."""
+        requirement = "GitPython>=3.1.59,<4.0"
+        assert all(
+            requirement in manifest.requirements
+            for manifest in BACKEND_MANIFESTS.values()
+        )
+
     def test_manifests_use_the_main_branch_huggingface_versions(self) -> None:
         """Verify standard isolated backends use the main Hugging Face ranges."""
         expected_requirements = {

@@ -29,6 +29,7 @@ __all__ = [
 ]
 
 _WORKER_SHARED_REQUIREMENTS = (
+    "GitPython>=3.1.59,<4.0",
     "lingua-language-detector>=2.2.0,<3.0.0",
     "librosa==0.11.0",
     "llvmlite==0.47.0",
