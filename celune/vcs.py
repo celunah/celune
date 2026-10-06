@@ -21,15 +21,20 @@ def _open_repository(path: Optional[Path] = None) -> Repo:
 
 
 def get_revision(path: Optional[Path] = None) -> str:
-    """Return the short Git revision and a dirty marker, or empty outside a repository.
+    """Return the short Git revision and dirty marker, or empty when unavailable.
 
     Args:
         path: Optional path used to locate the repository.
 
     Returns:
-        str: Seven-character revision followed by ``*`` for dirty worktrees, or ``""``.
+        str: Seven-character revision plus ``*`` when dirty, or ``""`` if unavailable.
     """
-    from git.exc import GitError
+    try:
+        from git.exc import GitError
+    except ModuleNotFoundError as package:
+        if package.name != "git":
+            raise
+        return ""
 
     try:
         with _open_repository(path) as repository:
