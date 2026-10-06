@@ -9,9 +9,9 @@ import shutil
 import datetime
 import platform
 import warnings
-import importlib
 import contextlib
 import subprocess
+import importlib
 import importlib.util
 from pathlib import Path
 from dataclasses import dataclass
@@ -19,15 +19,13 @@ from collections.abc import Callable
 from types import ModuleType, SimpleNamespace
 from typing import TYPE_CHECKING, NoReturn, Optional
 
-from .i18n import string
-from .typing.common import Config
-from .terminal import set_terminal_title
-from .updater import apply_update_and_restart
-from . import REVISION, __tagline__, __version__
-from .config import config_log_level, normalize_log_level
-from .watchdog import start_watchdog, launcher_loss_requested
-from .constants import APP_NAME, APP_SLUG, NVIDIA_DEVICE_KEYWORDS, ExitCodes
-from .paths import (
+from celune.i18n import string
+from celune.typing.common import Config
+from celune.terminal import set_terminal_title
+from celune import REVISION, __tagline__, __version__
+from celune.config import config_log_level, normalize_log_level
+from celune.constants import APP_NAME, APP_SLUG, NVIDIA_DEVICE_KEYWORDS, ExitCodes
+from celune.paths import (
     project_root,
     running_compiled,
     migrate_legacy_app_data,
@@ -35,7 +33,7 @@ from .paths import (
 )
 
 if TYPE_CHECKING:
-    from .celune import Celune
+    from celune.celune import Celune
 
 
 def _env_flag(name: str) -> bool:
@@ -250,22 +248,22 @@ def _load_runtime() -> SimpleNamespace:
         import yaml
         import psutil
 
-        from .ui import SelectMenu
-        from .paths import (
+        from celune.ui import SelectMenu
+        from celune.paths import (
             config_path,
             ensure_config_path,
             default_config_path,
         )
-        from .utils import indent, title_case, detected_ide, supports_ansi
-        from .config import (
+        from celune.utils import indent, title_case, detected_ide, supports_ansi
+        from celune.config import (
             env_bool,
             config_bool,
             config_value,
             merge_missing_defaults,
         )
-        from .updater import check_for_update, update_to_latest
-        from .namedays import has_name_day
-        from .exceptions import No, UpdateError
+        from celune.updater import check_for_update, update_to_latest
+        from celune.namedays import has_name_day
+        from celune.exceptions import No, UpdateError
 
         config_path()
     except ModuleNotFoundError as package:
@@ -321,7 +319,7 @@ def _load_config_runtime() -> SimpleNamespace:
     try:
         import webbrowser
 
-        from .paths import config_path
+        from celune.paths import config_path
 
         config_path()
     except ModuleNotFoundError as package:
@@ -352,14 +350,14 @@ def _load_core_runtime(*, defer_missing_dependency: bool = False) -> SimpleNames
         return runtime
 
     try:
-        from .paths import configure_huggingface_cache_environment
+        from celune.paths import configure_huggingface_cache_environment
 
         configure_huggingface_cache_environment()
         configure_huggingface_runtime()
-        from .compat import torchao_compatibility
+        from celune.compat import torchao_compatibility
 
         with torchao_compatibility():
-            from .celune import Celune
+            from celune.celune import Celune
     except ModuleNotFoundError as package:
         if defer_missing_dependency:
             raise
@@ -789,7 +787,7 @@ def _doctor_checks() -> list[DoctorCheck]:
         hint=f"{APP_NAME} currently supports Windows and Linux only.",
     )
 
-    from .cpu import check_cpu_features
+    from celune.cpu import check_cpu_features
 
     cpu_check = check_cpu_features()
     required_cpu = _format_cpu_features(cpu_check.required)
@@ -1309,7 +1307,7 @@ def start(
     global _FORCE_STARTUP_DIAGNOSTICS
     global _STARTUP_DIAGNOSTIC_SINK
 
-    from .watchdog import launcher_loss_requested, start_watchdog
+    from celune.watchdog import launcher_loss_requested, start_watchdog
 
     start_watchdog()
     _FORCE_STARTUP_DIAGNOSTICS = log_level not in {None, "info"}
@@ -1323,7 +1321,7 @@ def start(
         if testing:
             if test_mode not in {None, "ui", "agent"}:
                 raise ValueError(f"unknown test mode: {test_mode}")
-            from .ui import CeluneUI
+            from celune.ui import CeluneUI
 
             runtime = _load_core_runtime()
             active_test_mode = test_mode or "ui"
@@ -1349,7 +1347,7 @@ def start(
             ) -> None:
                 """Finish the selected explicit test through the core boundary."""
                 if active_test_mode == "agent" and success:
-                    from .test import run_agent_test
+                    from celune.test import run_agent_test
 
                     run_agent_test(core)
                     return
@@ -1542,7 +1540,7 @@ def start(
             _close_existing_celune_processes(runtime)
 
         if not headless and runtime.supports_ansi():
-            from .ui import CeluneUI
+            from celune.ui import CeluneUI
 
             def prepare_interactive_runtime():
                 """Construct the engine inside the already-mounted UI worker."""
@@ -1587,7 +1585,7 @@ def start(
                 _STARTUP_DIAGNOSTIC_SINK = None
         elif headless:
             runtime = _load_core_runtime()
-            from .ui import CeluneHeadlessUI
+            from celune.ui import CeluneHeadlessUI
 
             ui_headless = CeluneHeadlessUI(config)
             _print_startup_diagnostic(string("ui.startup_loading_core"))
@@ -1640,7 +1638,7 @@ def start(
 
                 raise
             if active_log_level == "verbose":
-                from .utils import format_error_message
+                from celune.utils import format_error_message
 
                 print(
                     format_error_message(
@@ -1716,11 +1714,11 @@ def main(argv: Optional[list[str]] = None) -> None:
 
         launcher_path = Path(args[2]).resolve()
         try:
-            from .updater import apply_update_and_restart
+            from celune.updater import apply_update_and_restart
 
             sys.exit(apply_update_and_restart(parent_pid, launcher_path, args[3:]))
         except Exception as exc:
-            from .utils import format_error_message
+            from celune.utils import format_error_message
 
             print(
                 format_error_message(
