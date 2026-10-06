@@ -102,6 +102,7 @@ _BACKEND_MODEL_OPERATION_TIMEOUT_SECONDS = 900.0
 _BACKEND_MODEL_LOAD_TIMEOUT_SECONDS = _BACKEND_MODEL_OPERATION_TIMEOUT_SECONDS
 _MAX_RESPONSE_QUEUE_ITEMS = 128
 _MAX_RESPONSE_QUEUE_BYTES = 16 * 1024 * 1024
+_MAX_WORKER_ERROR_MESSAGE_LENGTH = 512
 _MESSAGE_ID_REPLAY_WINDOW = 4096
 _CANCELLATION_TOMBSTONE_WINDOW = 4096
 _WORKER_ENVIRONMENT_VARIABLES = (
@@ -351,7 +352,10 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
             try:
                 self._handshake()
             except CEDTSError as error:
-                self._report_transport_error("handshake", error)
+                detailed_error = self._worker_exit_error(error)
+                self._report_transport_error("handshake", detailed_error)
+                if detailed_error is not error:
+                    raise detailed_error from error
                 raise
             super().__init__(
                 log=log,
@@ -558,6 +562,44 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
         with self._worker_stderr_lock:
             recent_lines = list(self._worker_stderr)[-20:]
         return "\n".join(recent_lines)
+
+    def _worker_exit_message(self) -> str:
+        """Return one worker error line after its stderr reader has drained."""
+        process = getattr(self, "_process", None)
+        stderr_thread = getattr(self, "_stderr_thread", None)
+        try:
+            process_exited = process is not None and process.poll() is not None
+        except Exception:
+            process_exited = False
+        if (
+            process_exited
+            and stderr_thread is not None
+            and stderr_thread is not threading.current_thread()
+        ):
+            with suppress(RuntimeError):
+                stderr_thread.join(timeout=_WORKER_THREAD_JOIN_TIMEOUT_SECONDS)
+
+        lines = self._worker_error_detail().splitlines()
+        for line in reversed(lines):
+            if self._is_traceback_exception_line(line):
+                return line[:_MAX_WORKER_ERROR_MESSAGE_LENGTH]
+        for line in reversed(lines):
+            severity, _, message, _ = self._split_worker_log(line)
+            if severity == "error" and message:
+                return message[:_MAX_WORKER_ERROR_MESSAGE_LENGTH]
+        return ""
+
+    def _worker_exit_error(self, error: CEDTSError) -> CEDTSError:
+        """Attach a worker's final error line to an unexpected startup EOF."""
+        if not isinstance(error, CEDTSEOFError):
+            return error
+        worker_error = self._worker_exit_message()
+        if not worker_error:
+            return error
+        return CEDTSEOFError(
+            f"{error}: {worker_error}",
+            packet_name=error.packet_name,
+        )
 
     def _report_transport_error(self, operation: str, error: CEDTSError) -> None:
         """Report one CEDTS transport failure to Celune immediately."""

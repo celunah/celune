@@ -1740,6 +1740,32 @@ class TestBackendEnvironment(_TestBackendEnvironment):
         self.assertEqual(error.error_type, "ImportError")
         self.assertIn("backend dependency missing", str(context.exception))
 
+    def test_remote_proxy_eof_reports_worker_exception_without_traceback(self) -> None:
+        """Verify startup EOF includes the worker's final exception line only."""
+        proxy = object.__new__(remote.RemoteBackendProxy)
+        process = mock.Mock()
+        process.poll.return_value = 1
+        proxy._process = cast(subprocess.Popen[bytes], process)
+        proxy._stderr_thread = mock.Mock()
+        proxy._worker_stderr = deque(
+            (
+                "Traceback (most recent call last):",
+                '  File "C:/backend/bootstrap.py", line 14, in <module>',
+                "ModuleNotFoundError: No module named 'torch'",
+            )
+        )
+        proxy._worker_stderr_lock = threading.Lock()
+
+        error = proxy._worker_exit_error(CEDTSEOFError())
+
+        self.assertEqual(
+            str(error),
+            "unexpected EOF while reading stream: "
+            "ModuleNotFoundError: No module named 'torch'",
+        )
+        self.assertNotIn("Traceback", str(error))
+        proxy._stderr_thread.join.assert_called_once_with(timeout=2.0)
+
     def test_remote_proxy_surfaces_handshake_error_before_ready(self) -> None:
         """Verify a worker error after hello acknowledgement remains a backend error."""
         stream = io.BytesIO()

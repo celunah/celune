@@ -11,6 +11,12 @@ backend-specific packages must not be imported by core modules at startup.
 Explicit CEDTS worker callers may still use the manifest-backed environment
 manager; normal application configuration does not select that path.
 
+If a CEDTS worker exits before its first handshake frame, Celune reports the
+unexpected end of the protocol stream. When worker stderr contains an
+exception, the early-startup error also includes its final exception line;
+traceback frames remain in the worker diagnostics rather than the error
+screen.
+
 ## Registered manifests
 
 | ID | Kind | Worker | Extra requirements |
