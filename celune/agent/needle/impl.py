@@ -22,9 +22,6 @@ from huggingface_hub import hf_hub_download
 from sentencepiece import SentencePieceProcessor
 
 from .models import NeedleModel, NeedleConfig
-from ...typing.common import JSONSerializable
-from ...exceptions import NeedleSelectionError
-from ...paths import huggingface_hub_cache_dir
 from .checkpoints import (
     NEEDLE_MODEL_ID,
     NEEDLE_CONFIG_FILE,
@@ -37,8 +34,11 @@ from .checkpoints import (
     _expected_dtype,
     prepare_needle_checkpoint,
 )
+
+from ...typing.common import JSONSerializable
+from ...exceptions import NeedleSelectionError
+from ...paths import huggingface_hub_cache_dir
 from ...typing.agent import (
-    ToolCall,
     AgentTool,
     AgentOutput,
     AgentContext,
@@ -495,8 +495,8 @@ class NeedleToolSelector:
         context: AgentContext,
         output: AgentOutput,
         /,
-    ) -> Optional[ToolCall]:
-        """Select and schema-validate one tool without executing it."""
+    ) -> Optional[Union[ValidatedToolCall, Sequence[ValidatedToolCall]]]:
+        """Select and validate tool candidates without executing them."""
         intent = output.get("response")
         if not isinstance(intent, str) or not intent.strip():
             raise NeedleSelectionError(
@@ -507,14 +507,17 @@ class NeedleToolSelector:
             schemas=self.schemas,
             available_only=True,
         )
-        selection = self.handler.select_one_tool(
+        selection = self.handler.select_tools(
             intent,
             catalog,
             max_new_tokens=self.max_new_tokens,
         )
         if context.task is not None and context.task.is_terminal:
             return None
-        return self._validate_selection(selection)
+        if not selection:
+            raise NeedleSelectionError("Needle returned no valid tool calls")
+        validated = [self._validate_selection(call) for call in selection]
+        return validated[0] if len(validated) == 1 else validated
 
     def _validate_selection(self, selection: NeedleToolCall) -> ValidatedToolCall:
         """Validate one restored canonical call against registered schemas."""

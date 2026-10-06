@@ -4,12 +4,17 @@
 from __future__ import annotations
 
 from unittest import mock
-from types import SimpleNamespace
 from typing import Optional, cast
+from types import SimpleNamespace
 from contextlib import nullcontext
 
+from celune.celune import Celune
+from celune.agent.persona import PersonaAgentBridge
+from celune.extensions.events import EventDispatcher
+from celune.typing.persona import PersonaClientResponse
 from celune.agent import (
     ToolCall,
+    AgentTool,
     ToolResult,
     AgentOutput,
     AgentRequest,
@@ -17,6 +22,7 @@ from celune.agent import (
     AgentSession,
     AgentTaskState,
     AgentTaskConfig,
+    AgentToolSchema,
     AgentAbortReason,
     AgentChoiceOption,
     AgentToolBehavior,
@@ -31,10 +37,6 @@ from celune.agent import (
     AgentApprovalResponse,
     AgentToolExecutionStatus,
 )
-from celune.celune import Celune
-from celune.agent.persona import PersonaAgentBridge
-from celune.extensions.events import EventDispatcher
-from celune.typing.persona import PersonaClientResponse
 
 
 def _request(session_id: str = "session-1") -> AgentRequest:
@@ -475,6 +477,101 @@ class TestAgentLoop:
         assert task.state == AgentTaskState.COMPLETED
         assert task.iterations == 1
         assert planner_calls == 2
+
+    def test_multiple_tool_candidates_require_choice_and_normal_approval(self) -> None:
+        """Run only the chosen candidate after its normal approval gate."""
+        planner_calls = 0
+        executions: list[ToolCall] = []
+        calls: list[ToolCall] = [
+            {"id": "status", "name": "read_status", "arguments": {}},
+            {"id": "write", "name": "write_file", "arguments": {}},
+        ]
+        outputs: list[AgentOutput] = []
+
+        def planner(_context):
+            nonlocal planner_calls
+            planner_calls += 1
+            return _output(response="Check the requested information.")
+
+        def execute(_context, call):
+            executions.append(call)
+            return _result(call)
+
+        def capture(output: AgentOutput) -> None:
+            outputs.append(output)
+
+        runtime = AgentRuntime(
+            tools=(
+                cast(
+                    AgentTool,
+                    SimpleNamespace(name="read_status", description="Read status."),
+                ),
+                cast(
+                    AgentTool,
+                    SimpleNamespace(name="write_file", description="Write a file."),
+                ),
+            ),
+            planner=planner,
+            tool_selector=lambda _context, _output: calls,
+            tool_executor=execute,
+            tool_schemas={
+                "read_status": AgentToolSchema(
+                    tool_id="read_status",
+                    display_name="Read status",
+                    description="Read status.",
+                ),
+                "write_file": AgentToolSchema(
+                    tool_id="write_file",
+                    display_name="Write file",
+                    description="Write a file.",
+                    behavior=AgentToolBehavior.MUTATING,
+                ),
+            },
+            tool_result_handler=lambda _context, _result: _output(
+                response="Done.", end=True
+            ),
+        )
+        task = runtime.create_task(_request(), task_id="tool-choice-task")
+
+        paused = runtime.run(task.request, callback=capture)
+
+        assert paused["paused"]
+        assert task.state == AgentTaskState.AWAITING_CHOICE
+        assert task.iterations == 0
+        assert not executions
+        choice = runtime.get_pending_choice(task.task_id)
+        assert choice is not None
+        assert len(choice.options) == 2
+        choice_prompt = outputs[-1]["response"]
+        assert isinstance(choice_prompt, str)
+        assert "Which tool should I run?" in choice_prompt
+        assert "Read status" in choice.options[0].label
+        assert "Write file" in choice.options[1].label
+
+        runtime.respond_to_choice(
+            task.task_id,
+            AgentChoiceResponse(choice.request_id, choice_id="tool-2"),
+        )
+
+        assert task.state == AgentTaskState.AWAITING_APPROVAL
+        approval = runtime.get_pending_approval(task.task_id)
+        assert approval is not None
+        assert approval.tool_call["name"] == "write_file"
+        assert not executions
+        runtime.respond_to_approval(
+            task.task_id,
+            AgentApprovalResponse(
+                approval.request_id,
+                AgentApprovalDecision.APPROVED,
+            ),
+        )
+        runtime.run(task.request, callback=capture)
+
+        assert task.state == AgentTaskState.COMPLETED
+        assert len(executions) == 1
+        assert executions[0]["id"] == calls[1]["id"]
+        assert executions[0]["name"] == calls[1]["name"]
+        assert planner_calls == 1
 
     def test_dependency_cancellation_leaves_terminal_task(self) -> None:
         """Handle cancellation during planning, selection, and execution."""

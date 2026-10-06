@@ -33,6 +33,8 @@
     "agent.unsandboxed_rollback": "Permitted actions may proceed automatically; Celune cannot guarantee rollback.",
     "agent.approval_prompt": "Allow {tool_name} to perform this action?",
     "agent.choice_clarification": "Please choose one of the available options.",
+    "agent.tool_choice_prompt": "Which tool should I run?\n{options}",
+    "agent.tool_choice_option": "{number}: {tool_name} with arguments {arguments}",
     "agent.clarification_prompt": "Would you like me to explain this or take an action? Please tell me what you want me to do.",
     "agent.cancelled_final": "I stopped working on that.",
     "agent.failure_final": "I couldn't complete that.",
