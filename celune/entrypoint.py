@@ -9,28 +9,28 @@ import shutil
 import datetime
 import platform
 import warnings
-import contextlib
-import subprocess
 import importlib
 import importlib.util
+import contextlib
+import subprocess
+from types import ModuleType, SimpleNamespace
+from typing import TYPE_CHECKING, NoReturn, Optional
 from pathlib import Path
 from dataclasses import dataclass
 from collections.abc import Callable
-from types import ModuleType, SimpleNamespace
-from typing import TYPE_CHECKING, NoReturn, Optional
 
-from celune.i18n import string
-from celune.typing.common import Config
-from celune.terminal import set_terminal_title
 from celune import REVISION, __tagline__, __version__
-from celune.config import config_log_level, normalize_log_level
-from celune.constants import APP_NAME, APP_SLUG, NVIDIA_DEVICE_KEYWORDS, ExitCodes
+from celune.i18n import string
 from celune.paths import (
     project_root,
     running_compiled,
     migrate_legacy_app_data,
     configure_huggingface_runtime,
 )
+from celune.config import config_log_level, normalize_log_level
+from celune.terminal import set_terminal_title
+from celune.constants import APP_NAME, APP_SLUG, NVIDIA_DEVICE_KEYWORDS, ExitCodes
+from celune.typing.common import Config
 
 if TYPE_CHECKING:
     from celune.celune import Celune
@@ -1307,7 +1307,7 @@ def start(
     global _FORCE_STARTUP_DIAGNOSTICS
     global _STARTUP_DIAGNOSTIC_SINK
 
-    from celune.watchdog import launcher_loss_requested, start_watchdog
+    from celune.watchdog import start_watchdog, launcher_loss_requested
 
     start_watchdog()
     _FORCE_STARTUP_DIAGNOSTICS = log_level not in {None, "info"}
@@ -1346,10 +1346,14 @@ def start(
                 detail: Optional[str],
             ) -> None:
                 """Finish the selected explicit test through the core boundary."""
-                if active_test_mode == "agent" and success:
+                if active_test_mode == "agent":
                     from celune.test import run_agent_test
 
-                    run_agent_test(core)
+                    run_agent_test(
+                        core,
+                        startup_success=success,
+                        startup_detail=detail,
+                    )
                     return
                 core.finish_test_mode(
                     active_test_mode,
@@ -1391,6 +1395,11 @@ def start(
                     sys.exit(ui.return_code)
                 if ui.return_code not in (None, 0):
                     sys.exit(runtime.ExitCodes.EXIT_FAILURE.value)
+                if active_test_mode == "agent":
+                    from celune.test import _agent_test_succeeded
+
+                    if not _agent_test_succeeded(celune.test_result):
+                        sys.exit(runtime.ExitCodes.EXIT_FAILURE.value)
             finally:
                 _STARTUP_DIAGNOSTIC_SINK = None
             if test_mode is None:

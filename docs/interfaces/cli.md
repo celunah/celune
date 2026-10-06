@@ -30,8 +30,20 @@ explicit start/run commands, and the UI or agent test modes.
 | `celune help` / `--help` / `-h` | Print command help. |
 | `celune version` / `--version` | Print version, revision, and tagline. |
 
-The agent test waits for a queued spoken response to finish before it reports a
-task failure and stops the test runtime.
+The agent test runs the configured Persona, Needle, and TTS path through one
+read-only task. It then checks the active production tool catalog, task
+lifecycle, schema validation, permissions, approvals, choices, context limits,
+terminal outcomes, and every active tool handler with isolated test state.
+When local-management tools are enabled, it checks process and application
+mutation gates without launching or closing real resources. Independent checks
+continue after a failure.
+
+The stopped test UI log shows one `PASS`, `FAIL`, or `SKIP` entry per check and
+a total for each status. Local-management tools are skipped when
+`agent.fs_tools` is disabled. When enabled, filesystem mutations stay inside a
+temporary directory; process and application launch or termination use test
+doubles and do not affect running programs. A failed active check makes
+`celune test agent` return the standard failure exit code after the UI closes.
 
 The command help aligns descriptions with spaces, so terminal tab-stop settings
 do not shift the text.
@@ -77,3 +89,7 @@ arguments, already-running instances, no ANSI-capable terminal, launcher loss,
 pending updates, and an unsupported CPU. A normal interactive start should use
 the launcher so process-loss, CPU compatibility, and update handoff behavior
 are preserved.
+
+## See also
+
+- [Agent mode](../user-guide/agent.md)

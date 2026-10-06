@@ -5,21 +5,20 @@ from __future__ import annotations
 
 import io
 import contextlib
+from types import SimpleNamespace
+from typing import ClassVar, Optional, cast
 from unittest import mock
-from typing import Optional, cast
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping, Callable, Sequence
 
 import pytest
 
 from celune import entrypoint
 from celune.i18n import string
+from celune.test import run_agent_test, _agent_test_succeeded
 from celune.celune import Celune
-from celune.typing.common import JSON
-from celune.test import run_agent_test
 from celune.config import config_log_level
-from celune.persona.impl import PersonaClient
-from celune.typing.persona import PersonaClientResponse
 from celune.agent.needle import NeedleHandler, NeedleToolSelector
+from celune.persona.impl import PersonaClient
 from celune.typing.agent import (
     AgentTool,
     AgentRoute,
@@ -31,6 +30,8 @@ from celune.typing.agent import (
     AgentClassificationFailure,
     AgentClassificationFailureKind,
 )
+from celune.typing.common import JSON
+from celune.typing.persona import PersonaClientResponse
 
 from .support import FakeGlow, FakeBackend, CeluneTestCase
 
@@ -140,6 +141,88 @@ class TestCommandTests:
             == "verbose"
         )
 
+    def test_agent_test_exit_status_requires_a_successful_report(self) -> None:
+        """Missing and failed diagnostic reports must map to a failure exit."""
+        assert not _agent_test_succeeded(None)
+        assert not _agent_test_succeeded({"success": False})
+        assert _agent_test_succeeded({"success": True})
+
+    def test_failed_agent_report_exits_after_the_test_ui_returns(self) -> None:
+        """Return the standard failure code after the report UI has closed."""
+
+        class TestCore:
+            """Hold the diagnostic result from the UI completion callback."""
+
+            test_result: Optional[JSON] = None
+
+            def __init__(self, **_kwargs: object) -> None:
+                self.test_result = None
+
+        class TestUI:
+            """Run the callback and record when the test UI has returned."""
+
+            instances: ClassVar[list[object]] = []
+
+            def __init__(
+                self,
+                *,
+                startup_messages: list[str],
+                test_completion_callback: Callable[
+                    [TestCore, bool, Optional[str]], None
+                ],
+            ) -> None:
+                del startup_messages
+                self.test_completion_callback = test_completion_callback
+                self.return_code = 0
+                self.celune: Optional[TestCore] = None
+                self.closed = False
+                self.instances.append(self)
+
+            @staticmethod
+            def receive_startup_diagnostic(_message: str) -> None:
+                """Accept launcher diagnostics without rendering them."""
+
+            @staticmethod
+            def prepare_theme() -> None:
+                """Provide the theme setup boundary used by the real UI."""
+
+            def run(self) -> None:
+                """Invoke completion before marking the UI returned."""
+                assert self.celune is not None
+                self.test_completion_callback(self.celune, True, None)
+                self.closed = True
+
+        runtime = SimpleNamespace(
+            Celune=TestCore,
+            ExitCodes=entrypoint.EXIT_CODES,
+        )
+
+        def fail_report(core: TestCore, **_kwargs: object) -> JSON:
+            """Record a failed result in the fake core after UI startup."""
+            core.test_result = {"success": False}
+            return core.test_result
+
+        TestUI.instances.clear()
+        with (
+            mock.patch("celune.watchdog.start_watchdog"),
+            mock.patch("celune.entrypoint._load_runtime", return_value=runtime),
+            mock.patch("celune.entrypoint._load_core_runtime", return_value=runtime),
+            mock.patch(
+                "celune.entrypoint._load_test_runtime_config",
+                return_value=({}, None),
+            ),
+            mock.patch("celune.entrypoint.migrate_legacy_app_data"),
+            mock.patch("celune.entrypoint._print_startup_diagnostic"),
+            mock.patch("celune.ui.CeluneUI", TestUI),
+            mock.patch("celune.test.run_agent_test", side_effect=fail_report),
+            pytest.raises(SystemExit) as exit_info,
+        ):
+            entrypoint.start(testing=True, test_mode="agent")
+
+        assert exit_info.value.code == entrypoint.EXIT_CODES.EXIT_FAILURE.value
+        assert isinstance(TestUI.instances[0], TestUI)
+        assert TestUI.instances[0].closed
+
 
 class TestFinishedLifecycleTests(CeluneTestCase):
     """Verify the stopped-but-alive boundary shared by explicit test modes."""
@@ -217,6 +300,34 @@ class TestFinishedLifecycleTests(CeluneTestCase):
         core.close()
         assert core._closed
 
+    def test_agent_report_totals_include_failures_and_skips(self) -> None:
+        """Summarize every check and make any failed check fail the report."""
+        core = self._make_core()
+        checks: list[JSON] = [
+            {"name": "catalog", "status": "passed", "detail": "covered"},
+            {"name": "optional", "status": "skipped", "detail": "disabled"},
+            {"name": "runtime", "status": "failed", "detail": "controlled"},
+        ]
+        with (
+            mock.patch.object(core, "stop_live_audio"),
+            mock.patch.object(core, "log") as log,
+        ):
+            result = core.finish_test_mode("agent", True, checks=checks)
+
+        assert result["success"] is False
+        summary = cast(JSON, result["summary"])
+        assert summary == {"passed": 1, "failed": 1, "skipped": 1}
+        messages = [args[0] for args, _kwargs in log.call_args_list if args]
+        assert (
+            string(
+                "test.agent_report_summary",
+                passed=1,
+                failed=1,
+                skipped=1,
+            )
+            in messages
+        )
+
     def test_cleanup_exception_still_reaches_stopped_state(self) -> None:
         """A cleanup failure is recorded as a failed test without stranding the core."""
         core = self._make_core()
@@ -245,11 +356,14 @@ class TestFinishedLifecycleTests(CeluneTestCase):
             core._agent_tools,
             schemas=core._agent_tool_schemas,
         )
-        with mock.patch.object(
-            NeedleToolSelector,
-            "from_pretrained",
-            return_value=selector,
-        ) as load_selector:
+        with (
+            mock.patch("celune.test.run_agent_feature_checks", return_value=[]),
+            mock.patch.object(
+                NeedleToolSelector,
+                "from_pretrained",
+                return_value=selector,
+            ) as load_selector,
+        ):
             result = run_agent_test(core)
         load_selector.assert_called_once()
 
@@ -262,10 +376,14 @@ class TestFinishedLifecycleTests(CeluneTestCase):
             persona.requests[0]["user"]
             == "Check the current working directory and report the result."
         )
-        detail = payload["detail"]
-        assert isinstance(detail, str)
-        assert "tool=local_current_working_directory" in detail
-        assert "status=succeeded" in detail
+        checks = cast(list[JSON], payload["checks"])
+        task_check = next(check for check in checks if check["name"] == "live.task")
+        task_detail = task_check.get("detail")
+        assert isinstance(task_detail, str)
+        assert "tool=local_current_working_directory" in task_detail
+        assert "status=succeeded" in task_detail
+        summary = cast(dict[str, int], payload["summary"])
+        assert summary["failed"] == 0
         assert core.cur_state == "stopped"
         assert not core.say("queued after test")
 
@@ -280,13 +398,16 @@ class TestFinishedLifecycleTests(CeluneTestCase):
         with (
             mock.patch("celune.test._wait_for_persona"),
             mock.patch("celune.test._start_agent_test_pipeline"),
+            mock.patch("celune.test.run_agent_feature_checks", return_value=[]),
             mock.patch.object(core, "stop_live_audio"),
             mock.patch.object(core, "route_input", return_value=route),
         ):
             result = run_agent_test(core)
 
         assert not result["success"]
-        assert result["detail"] == "no task detected"
+        checks = cast(list[JSON], result["checks"])
+        routing = next(check for check in checks if check["name"] == "live.routing")
+        assert routing["detail"] == "no task detected"
 
     def test_agent_test_reports_classification_failure(self) -> None:
         """Preserve the typed classifier failure category in the test result."""
@@ -303,13 +424,16 @@ class TestFinishedLifecycleTests(CeluneTestCase):
         with (
             mock.patch("celune.test._wait_for_persona"),
             mock.patch("celune.test._start_agent_test_pipeline"),
+            mock.patch("celune.test.run_agent_feature_checks", return_value=[]),
             mock.patch.object(core, "stop_live_audio"),
             mock.patch.object(core, "route_input", return_value=route),
         ):
             result = run_agent_test(core)
 
         assert not result["success"]
-        assert result["detail"] == "classification failed: malformed_output"
+        checks = cast(list[JSON], result["checks"])
+        routing = next(check for check in checks if check["name"] == "live.routing")
+        assert routing["detail"] == "classification failed: malformed_output"
 
     def test_agent_test_reports_task_detected_but_not_started(self) -> None:
         """Distinguish a task route without a runtime task identity."""
@@ -326,10 +450,13 @@ class TestFinishedLifecycleTests(CeluneTestCase):
         with (
             mock.patch("celune.test._wait_for_persona"),
             mock.patch("celune.test._start_agent_test_pipeline"),
+            mock.patch("celune.test.run_agent_feature_checks", return_value=[]),
             mock.patch.object(core, "stop_live_audio"),
             mock.patch.object(core, "route_input", return_value=route),
         ):
             result = run_agent_test(core)
 
         assert not result["success"]
-        assert result["detail"] == "task detected but not started"
+        checks = cast(list[JSON], result["checks"])
+        routing = next(check for check in checks if check["name"] == "live.routing")
+        assert routing["detail"] == "task detected but not started"

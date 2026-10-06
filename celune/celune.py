@@ -823,6 +823,7 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
         *,
         task_state: Optional[str] = None,
         detail: Optional[str] = None,
+        checks: Optional[list[JSON]] = None,
     ) -> JSON:
         """Finish an explicit test mode and leave the engine stopped but alive.
 
@@ -831,6 +832,7 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
             success: Whether the controlled test completed successfully.
             task_state: Final agent task state, when the mode created a task.
             detail: Optional diagnostic detail retained with the final result.
+            checks: Optional per-feature agent diagnostic results.
 
         Returns:
             JSON: The synchronously recorded final test result.
@@ -868,6 +870,19 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
         if cleanup_errors:
             success = False
             detail = detail or "; ".join(cleanup_errors)
+            if checks is not None:
+                checks.append(
+                    {
+                        "name": "cleanup",
+                        "status": "failed",
+                        "detail": "; ".join(cleanup_errors),
+                    }
+                )
+
+        if checks is not None:
+            success = success and not any(
+                check.get("status") == "failed" for check in checks
+            )
 
         result: JSON = {
             "mode": mode,
@@ -876,12 +891,48 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
             "task_state": task_state,
             "detail": detail,
         }
+        summary = {"passed": 0, "failed": 0, "skipped": 0}
+        if checks is not None:
+            result["checks"] = cast(JSONSerializable, checks)
+            summary = {
+                "passed": sum(check.get("status") == "passed" for check in checks),
+                "failed": sum(check.get("status") == "failed" for check in checks),
+                "skipped": sum(check.get("status") == "skipped" for check in checks),
+            }
+            result["summary"] = cast(JSONSerializable, summary)
         self._runtime_state.test_result = result
         try:
             self.cur_state = "stopped"
         except Exception:
             self._runtime_state.cur_state = "stopped"
-        if mode == "agent":
+        if mode == "agent" and checks is not None:
+            self.log(
+                string(
+                    "test.agent_report_summary",
+                    passed=summary["passed"],
+                    failed=summary["failed"],
+                    skipped=summary["skipped"],
+                ),
+                "error" if not success else "info",
+            )
+            for check in checks:
+                status = check.get("status")
+                message_key = "test.agent_check_failed"
+                if isinstance(status, str):
+                    message_key = {
+                        "passed": "test.agent_check_passed",
+                        "failed": "test.agent_check_failed",
+                        "skipped": "test.agent_check_skipped",
+                    }.get(status, message_key)
+                self.log(
+                    string(
+                        message_key,
+                        check=check.get("name", "unknown"),
+                        message=check.get("detail", ""),
+                    ),
+                    "error" if status == "failed" else "info",
+                )
+        elif mode == "agent":
             message_key = (
                 "test.finished_success" if success else "test.finished_failure"
             )

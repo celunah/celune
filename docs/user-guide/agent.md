@@ -108,3 +108,17 @@ Extensions can subscribe to `agent_approval_requested`,
 `agent_choice_requested`, `agent_task_state_changed`, and
 `agent_task_finished`. See [Extensions](../interfaces/extensions.md) for the
 event payloads.
+
+## Verify agent availability
+
+Run `celune test agent` to check the configured live agent path, every active
+tool handler, schema validation, permissions and approvals, task lifecycle,
+choices, context limits, and terminal outcomes. Its report records each check
+as passed, failed, or skipped. Optional local-management checks run only when
+`agent.fs_tools` is enabled. The [CLI guide](../interfaces/cli.md#commands)
+describes the report and exit status.
+
+## See also
+
+- [CLI](../interfaces/cli.md)
+- [Extensions](../interfaces/extensions.md)
