@@ -233,6 +233,7 @@ persona:
     auto_classifier: true
     auto_classifier_min_confidence: 0.82
     auto_classifier_max_candidates: 3
+    automatic_max_age_days: 60
     context_compaction_enabled: true
     context_compaction_keep_recent_messages: 8
     context_summary_max_characters: 1200

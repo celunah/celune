@@ -7,19 +7,15 @@ import json
 import queue
 import threading
 from uuid import uuid4
-from typing import TYPE_CHECKING, Optional, cast
 from collections.abc import Callable
+from typing import TYPE_CHECKING, Optional, cast
 
-from .i18n import string
-from .utils import format_error_message
-from .binding import install_class_functions, install_module_functions
 from .cevoice import (
-    default_loader,
     bundle_character_name,
+    default_loader,
     persona_files_from_bundle,
     persona_metadata_from_manifest,
 )
-from .threads import run_in_daemon_thread
 from .constants import (
     APP_NAME,
     AGENT_CONTEXT_SPACE,
@@ -27,53 +23,57 @@ from .constants import (
     AGENT_ROUTING_MAX_NEW_TOKENS,
     PERSONA_MEMORY_EMBEDDING_MODEL,
 )
+from .i18n import string
 from .persona.impl import (
-    persona_config,
-    persona_enabled,
-    persona_model_id,
-    pack_persona_text,
+    default_persona_age,
+    default_persona_context,
+    default_persona_gender,
+    default_persona_persona,
+    compact_persona_history,
     pack_identity_text,
     pack_persona_lines,
-    default_persona_age,
-    persona_context_size,
-    persona_quantization,
-    persona_style_traits,
-    default_persona_gender,
-    compact_persona_history,
-    default_persona_context,
-    default_persona_persona,
-    persona_session_summary,
-    persona_history_messages,
-    persona_pending_attachments,
+    pack_persona_text,
     persona_active_character_name,
+    persona_config,
+    persona_context_size,
     persona_debug_overrides_enabled,
+    persona_enabled,
+    persona_history_messages,
+    persona_model_id,
+    persona_pending_attachments,
+    persona_quantization,
+    persona_session_summary,
+    persona_style_traits,
 )
 from .typing.agent import (
-    ToolCall,
-    AgentRoute,
     AgentContext,
-    AgentToolSchema,
     AgentClassificationFailureKind,
+    AgentRoute,
+    AgentToolSchema,
+    ToolCall,
 )
 from .typing.locks import (
     ComponentLockName,
     ComponentLockOwner,
     ComponentLockRequirement,
 )
-from .persona.paths import persona_override_files
-from .typing.common import JSON, JSONSerializable
-from .persona.memory import PersonaMemoryStore, classifier_memory_candidates
-from .typing.persona import PersonaModel, PersonaTokenizer
-from .persona.emotion import PersonaEmotionAnalyzer
 from .persona.prompts import (
+    CharacterProfile,
     PersonaCard,
     PersonaContext,
-    CharacterProfile,
     PersonaPromptBuilder,
     PersonaSourceMaterial,
     RetrievedMemoryBundle,
 )
+from .utils import format_error_message
+from .threads import run_in_daemon_thread
+from .persona.paths import persona_override_files
+from .typing.common import JSON, JSONSerializable
+from .persona.emotion import PersonaEmotionAnalyzer
 from .persona.capabilities import PersonaCapabilities
+from .typing.persona import PersonaModel, PersonaTokenizer
+from .binding import install_class_functions, install_module_functions
+from .persona.memory import PersonaMemoryStore, classifier_memory_candidates
 
 if TYPE_CHECKING:
     from .celune import Celune
@@ -246,6 +246,7 @@ def _persona_memory_store(engine: Celune) -> Optional[PersonaMemoryStore]:
 
     similarity_threshold = normalized_memory.get("semantic_similarity_threshold", 0.62)
     overlap_threshold = normalized_memory.get("fallback_token_overlap_threshold", 1)
+    automatic_max_age_days = normalized_memory.get("automatic_max_age_days", 60)
     embedding_model = normalized_memory.get("semantic_embedding_model")
     embedding_model_name = (
         embedding_model.strip()
@@ -268,6 +269,13 @@ def _persona_memory_store(engine: Celune) -> Optional[PersonaMemoryStore]:
         if isinstance(overlap_threshold, (int, float))
         and not isinstance(overlap_threshold, bool)
         else 1,
+        automatic_max_age_days=automatic_max_age_days
+        if automatic_max_age_days is None
+        or (
+            isinstance(automatic_max_age_days, int)
+            and not isinstance(automatic_max_age_days, bool)
+        )
+        else 60,
         embedding_model=embedding_model_name or PERSONA_MEMORY_EMBEDDING_MODEL,
     )
 
@@ -288,20 +296,32 @@ def _store_persona_memories(engine: Celune, request: str) -> None:
     store.remember_from_user_message(character_name, request)
 
 
-def _persona_memory_classifier_context(engine: Celune) -> str:
-    """Build the bounded conversation context sent to the memory classifier."""
-    sections: list[str] = []
-    summary = persona_session_summary(engine)
-    if summary:
-        sections.append(f"Conversation summary:\n{summary}")
+def _persona_memory_classifier_context(
+    engine: Celune,
+    current_request: Optional[str] = None,
+) -> str:
+    """Build bounded user-authored context for the memory classifier.
 
+    Args:
+        engine: Celune engine holding the current Persona history.
+        current_request: Current user message, which is added separately.
+
+    Returns:
+        str: Prior user-authored messages without assistant-generated content.
+    """
+    sections: list[str] = []
+    normalized_request = current_request.strip() if current_request else ""
     messages = persona_history_messages(engine)
+    messages = [
+        message
+        for message in messages
+        if message.get("role") == "user"
+        and str(message.get("content", "")).strip() != normalized_request
+    ]
     if messages:
         sections.append(
-            "Recent conversation:\n"
-            + "\n".join(
-                f"{message['role']}: {message['content']}" for message in messages
-            )
+            "Recent user messages:\n"
+            + "\n".join(str(message["content"]) for message in messages)
         )
     return "\n\n".join(sections)
 
@@ -338,7 +358,7 @@ def _classify_persona_memories(engine: Celune, request: str) -> None:
     ):
         maximum_candidates = 3
 
-    context = _persona_memory_classifier_context(engine)
+    context = _persona_memory_classifier_context(engine, request)
     if request.strip():
         context = f"{context}\n\nCurrent user message:\n{request.strip()}".strip()
 
@@ -554,6 +574,7 @@ def build_persona_context(
     request: str,
     *,
     agent_context: Optional[AgentContext] = None,
+    include_memory_context: bool = True,
     tool_schemas: tuple[AgentToolSchema, ...] = (),
     pending_tool_call: Optional[ToolCall] = None,
 ) -> PersonaContext:
@@ -563,11 +584,12 @@ def build_persona_context(
         engine: The instance of Celune to use.
         request: The user's request.
         agent_context: Optional existing agent callback context for task-aware prompts.
+        include_memory_context: Whether to include stored memories and summaries.
         tool_schemas: Existing tool schemas available to the agent runtime.
         pending_tool_call: Optional validated-boundary tool call awaiting runtime handling.
 
     Returns:
-        PersonaContext: The built RAG context for Persona.
+        PersonaContext: The built context for Persona.
     """
     from .playback import _config_text
 
@@ -622,8 +644,16 @@ def build_persona_context(
         persona_card=persona_card,
         persona_source_material=persona_source_material,
         mood_or_state=mood_or_state,
-        conversation_summary=persona_session_summary(engine),
-        retrieved_long_term_memory=_build_retrieved_memory_bundle(engine, request),
+        conversation_summary=(
+            persona_session_summary(engine)
+            if include_memory_context and agent_context is None
+            else ""
+        ),
+        retrieved_long_term_memory=(
+            _build_retrieved_memory_bundle(engine, request)
+            if include_memory_context and agent_context is None
+            else RetrievedMemoryBundle()
+        ),
         user_instructions=_configured_persona_instructions(engine),
         agent_context=agent_context,
         tool_schemas=tool_schemas,
@@ -674,7 +704,8 @@ def build_persona_messages(
             {"role": "system", "content": PersonaPromptBuilder.build(resolved_context)},
         )
     ]
-    messages.extend(persona_history_messages(engine))
+    if resolved_context.agent_context is None:
+        messages.extend(persona_history_messages(engine))
     messages.append(cast(JSON, {"role": "user", "content": user_content}))
     return messages
 
@@ -767,7 +798,11 @@ def build_agent_classification_request(
     """
     from .pipeline import _AGENT_CLASSIFICATION_INSTRUCTIONS
 
-    context = build_persona_context(engine, request)
+    context = build_persona_context(
+        engine,
+        request,
+        include_memory_context=False,
+    )
     persona_prompt = PersonaPromptBuilder.build(context)
     system_prompt = f"{persona_prompt}\n\n{_AGENT_CLASSIFICATION_INSTRUCTIONS}"
     if routing_context is not None:

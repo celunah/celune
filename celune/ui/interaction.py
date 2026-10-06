@@ -6,21 +6,21 @@ from __future__ import annotations
 import os
 import re
 import sys
-import queue as queue_module
 import shlex
 import types
 import ctypes
 import asyncio
 import threading
 import contextlib
-from copy import deepcopy
 from uuid import uuid4
+from copy import deepcopy
+import queue as queue_module
 from typing import Optional, cast
 from collections.abc import Callable, Iterator
 
 from . import app as _app
-from ..binding import install_class_functions
 from ..constants import SIGTSTP
+from ..binding import install_class_functions
 
 __all__ = (
     "_close_menu",
@@ -682,6 +682,11 @@ def _config_explanation(path: tuple[str, ...]) -> str:
             "max_short_term_messages",
         ): "persona.memory.short_term",
         ("persona", "memory", "auto_classifier"): "persona.memory.auto",
+        (
+            "persona",
+            "memory",
+            "automatic_max_age_days",
+        ): "mem.automatic_age",
         ("persona", "memory", "auto_classifier_min_confidence"): "mem.auto_conf",
         (
             "persona",

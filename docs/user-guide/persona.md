@@ -86,10 +86,16 @@ this”, “on record”, or “going forward” when a detail should be persist
 
 The classifier may suggest additional memories when its confidence is above
 the configured threshold and the candidate count is within the configured
-limit. Sensitive-looking secrets, passwords, API keys, payment numbers, and
+limit. It uses user-authored messages, not Celune's generated replies, as
+evidence. Sensitive-looking secrets, passwords, API keys, payment numbers, and
 similar credentials are rejected rather than stored. Retrieval uses a local
 sentence-transformer embedding when available and falls back to token overlap;
-the configured thresholds control both paths.
+the configured thresholds control both paths. Inferred memories stop being
+retrieved 60 days after their last update by default; explicit memories remain
+available until forgotten. Set `persona.memory.automatic_max_age_days` to
+`null` to disable inferred-memory expiry. Exact duplicates are merged, and
+high-confidence semantic duplicates are merged when local embeddings are
+available.
 
 Agent tools expose `remember`, `recall`, `forget`, `clear_recent_context`, and
 `summarize_context`. The same memory store is used by ordinary Persona turns.

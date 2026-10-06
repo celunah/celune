@@ -9,36 +9,35 @@ import queue
 import asyncio
 import tempfile
 import threading
-from types import TracebackType, SimpleNamespace
-from typing import Self, Optional, cast
 from pathlib import Path
 from unittest import mock
 from collections.abc import Iterator
+from typing import Self, Optional, cast
+from types import TracebackType, SimpleNamespace
 
-import numpy as np
 import pytest
+import numpy as np
 import numpy.typing as npt
 
-from celune import pipeline
-from celune import conversation as conversation_module
-from celune.utils import discard
-from celune.celune import Celune
 from celune.cevoice import (
     CEVoicePersona,
     PersonaIdentity,
     PersonaStyleValues,
 )
-from celune.constants import PipelineStates
+from celune.celune import Celune
+from celune.utils import discard
 from celune.typing.agent import (
     AgentTask,
     AgentContext,
     AgentRequest,
 )
+from celune.constants import PipelineStates
+from celune.typing.aliases import AudioChunk
 from celune.typing.locks import ComponentLockName
 from celune.typing.common import JSON, JSONSerializable
-from celune.typing.aliases import AudioChunk
-from celune.dataclasses.pipeline import SpeechRequest, AudioInputRequest
 from celune.persona.capabilities import PersonaCapabilities
+from celune import conversation as conversation_module, pipeline
+from celune.dataclasses.pipeline import SpeechRequest, AudioInputRequest
 
 from .support import (
     FakeStream,
@@ -2384,6 +2383,8 @@ class TestPipelineAsync(CeluneAsyncTestCase):
             "persona": {"model_id": "fixture/persona-test"},
         }
         engine.persona_history = [{"role": "assistant", "content": "Earlier."}]
+        engine.persona_session_summary = "Stale conversation summary."
+        engine.retrieved_long_term_memory = ["Stale long-term memory."]
 
         payload = pipeline.build_agent_classification_request(
             cast(Celune, engine),
@@ -2397,6 +2398,10 @@ class TestPipelineAsync(CeluneAsyncTestCase):
         system_prompt = payload["system"]
         self.assertIsInstance(system_prompt, str)
         assert isinstance(system_prompt, str)
+        self.assertNotIn("\n\n<memory>\n", system_prompt)
+        self.assertNotIn("<conversation_summary>", system_prompt)
+        self.assertNotIn("Stale long-term memory", system_prompt)
+        self.assertNotIn("Stale conversation summary", system_prompt)
         self.assertIn("Classify the latest user input", system_prompt)
         self.assertIn(
             "internal routing request, not a character response", system_prompt

@@ -31,6 +31,10 @@ The agent can speak its final result through the standard `say()` path. It can
 also be paused, resumed, cancelled, or queried by the runtime and extension
 events.
 
+Agent prompts do not include Persona's automatically retrieved long-term
+memories, conversation summary, or ordinary chat history. Memory tools remain
+available when a task explicitly needs a memory operation.
+
 ## Built-in engine tools
 
 The normal production catalog is always local and explicitly registered:

@@ -669,6 +669,7 @@
     "ui.settings_explanation.persona.speech_delay": "Set the silence after voice activity ends before Persona submits input.",
     "ui.settings_explanation.persona.memory.short_term": "Set how many recent messages Persona keeps in short-term memory.",
     "ui.settings_explanation.persona.memory.auto": "Allow Persona to classify durable memories with the local model.",
+    "ui.settings_explanation.mem.automatic_age": "Set the retrieval age limit in days for inferred memories; null keeps them indefinitely.",
     "ui.settings_explanation.mem.auto_conf": "Set the confidence required before the memory classifier stores a fact.",
     "ui.settings_explanation.mem.auto_candidates": "Limit how many memory candidates the classifier may return.",
     "ui.settings_explanation.persona.memory.compaction": "Allow Persona to summarize older conversation context.",
