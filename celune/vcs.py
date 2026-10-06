@@ -43,3 +43,22 @@ def get_revision(path: Optional[Path] = None) -> str:
             return f"{revision}{dirty}"
     except (GitError, OSError, TypeError, ValueError):
         return ""
+
+
+def get_branch(path: Optional[Path] = None) -> str:
+    """Return the current Git repository's branch name.
+
+    Args:
+        path: Optional path used to locate the repository.
+
+    Returns:
+        str: The repository's branch name.
+    """
+
+    from git.exc import GitError
+
+    try:
+        with _open_repository(path) as repository:
+            return repository.active_branch.name
+    except (GitError, OSError, TypeError, ValueError):
+        return ""
