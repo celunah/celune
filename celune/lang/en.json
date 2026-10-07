@@ -626,6 +626,8 @@
     "ui.recording_stream_chunk_failed": "Could not stream microphone audio from {label}.",
     "ui.recording_stream_submit_failed": "Could not stream the microphone conversion right now.",
     "ui.caption_alignment_failed": "Could not align speech captions.",
+    "ui.caption_alignment_loading": "Preparing caption alignment model.",
+    "ui.caption_alignment_ready": "Caption alignment model is ready.",
     "ui.caption_espeak_not_found": "eSpeak not found, cannot align captions.",
     "ui.caption_onnxruntime_not_found": "ONNX Runtime not found, cannot align captions.",
     "ui.persona_recording_started": "Speak now.",

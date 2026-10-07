@@ -2,9 +2,10 @@
 """Tests for optional IPA caption alignment."""
 
 import json
-from types import SimpleNamespace
+import threading
 from pathlib import Path
 from unittest import mock
+from types import SimpleNamespace
 
 import numpy as np
 
@@ -127,10 +128,44 @@ def test_missing_onnxruntime_logs_a_warning_without_traceback() -> None:
     )
 
 
+def test_caption_aligner_preloads_model_in_background_once() -> None:
+    """Prepare the alignment model asynchronously and only once."""
+    aligner = captions.CaptionAligner()
+    loading_started = threading.Event()
+    allow_load_to_finish = threading.Event()
+    model_ready = threading.Event()
+    messages: list[tuple[str, str]] = []
+
+    def load_model() -> tuple[mock.Mock, dict[str, int]]:
+        loading_started.set()
+        allow_load_to_finish.wait()
+        return mock.Mock(), {}
+
+    def log(message: str, severity: str) -> None:
+        messages.append((message, severity))
+        if message == captions.string("ui.caption_alignment_ready"):
+            model_ready.set()
+
+    with mock.patch.object(aligner, "_load_model", side_effect=load_model) as load:
+        aligner.preload(log, "info")
+        try:
+            assert loading_started.wait(timeout=2)
+            aligner.preload(log, "info")
+            assert load.call_count == 1
+        finally:
+            allow_load_to_finish.set()
+
+    assert model_ready.wait(timeout=2)
+    assert messages == [
+        (captions.string("ui.caption_alignment_loading"), "info"),
+        (captions.string("ui.caption_alignment_ready"), "info"),
+    ]
+
+
 def test_caption_aligner_loads_model_lazily_and_aligns_ipa(
     tmp_path: Path,
 ) -> None:
-    """Load the selected acoustic model only when IPA alignment is requested."""
+    """Load the acoustic model on demand when startup preload is not used."""
     vocab = {"<pad>": 0, "h": 1, "ɛ": 2, "l": 3, "o": 4, "ʊ": 5}
     vocab_path = tmp_path / "vocab.json"
     vocab_path.write_text(json.dumps(vocab), encoding="utf-8")

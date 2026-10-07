@@ -14,8 +14,6 @@ import torch
 from transformers.modeling_utils import PreTrainedModel
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 
-from .i18n import string, tagged_string
-from .vram import vram_profile_fits, resolve_vram_preset, validate_vram_preset
 from .utils import (
     discard,
     format_error,
@@ -24,23 +22,23 @@ from .utils import (
     is_port_usable,
     format_error_message,
 )
-from .binding import install_class_functions
-from .cevoice import default_loader, bundle_display_name, announce_default_bundle
-from .runtime import validate_runtime, log_runtime_banner
-from .threads import run_in_daemon_thread
-from .modeling import normalizer_device, load_normalizer_components
 from .pipeline import (
     force_stop_speech as force_stop_pipeline,
-)
-from .pipeline import (
     saved_output_speech_seconds,
 )
-from .constants import APP_NAME, NORMALIZER_MODEL_ID
-from .exceptions import WarmupError, BackendError, NotAvailableError, RuntimeCheckError
 from .backends.tts import CeluneBackend
+from .i18n import string, tagged_string
 from .persona.impl import persona_enabled
-from .typing.celune import Generative, NormalizerTokenizer
+from .threads import run_in_daemon_thread
 from .dataclasses.events import ReadyEvent
+from .binding import install_class_functions
+from .constants import APP_NAME, NORMALIZER_MODEL_ID
+from .runtime import validate_runtime, log_runtime_banner
+from .typing.celune import Generative, NormalizerTokenizer
+from .modeling import normalizer_device, load_normalizer_components
+from .vram import vram_profile_fits, resolve_vram_preset, validate_vram_preset
+from .cevoice import default_loader, bundle_display_name, announce_default_bundle
+from .exceptions import WarmupError, BackendError, NotAvailableError, RuntimeCheckError
 
 __all__ = (
     "_start_configured_api",
@@ -246,6 +244,11 @@ def load(self, raise_on_error: bool = False, skip_runtime_check: bool = False) -
 
     if self.use_normalization:
         self.load_normalizer()
+
+    if self.config.get("captions") is True:
+        from .captions import preload_caption_aligner
+
+        preload_caption_aligner(self.log, self.log_level)
 
     if self.backend_mode == "normal":
         self._start_configured_api()

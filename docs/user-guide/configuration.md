@@ -175,14 +175,12 @@ with:
 uv sync --dev --extra api --extra captions
 ```
 
-Also install the `espeak-ng` executable and make it available on `PATH`. Celune
-downloads the `sadda-speech/wav2vec2-espeak-ctc` acoustic model from Hugging Face
-on first alignment; the model is licensed Apache-2.0. A background worker aligns
-each generated text chunk and releases its audio with the word timings in
-order. The generation worker can continue and accept another speech request
-while alignment is pending. Captions are hidden when `captions` is false or a
-chunk cannot be aligned; speech playback continues. With `captions: false`,
-Celune does not load or download the alignment model.
+Also install the `espeak-ng` executable and make it available on `PATH`. When
+captions are enabled, Celune prepares the Apache-2.0-licensed acoustic model in
+the background during startup without blocking startup; the first alignment can
+still wait if preparation is ongoing. See [speech](speech.md) for alignment and
+troubleshooting details. With `captions: false`, Celune does not load or download
+the alignment model.
 
 ## Sleep and model lifecycle
 

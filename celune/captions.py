@@ -5,26 +5,27 @@ from __future__ import annotations
 
 import json
 import queue
-import string as string_module
 import importlib
 import itertools
 import threading
 import subprocess
 import unicodedata
-from typing import TYPE_CHECKING, Optional, Protocol, cast
+import string as string_module
+
 from pathlib import Path
 from collections.abc import Mapping, Callable, Sequence
+from typing import TYPE_CHECKING, Optional, Protocol, cast
 
 import numpy as np
 from iso639.exceptions import InvalidLanguageValue, DeprecatedLanguageValue
 
 from .i18n import string
-from .utils import format_error_message
 from .constants import BASE_SR
-from .typing.aliases import LogLevel, AudioChunks
-from .typing.pipeline import SpeechStreamQueue
+from .utils import format_error_message
 from .audio.resampling import resample_audio
 from .dataclasses.pipeline import SpeechTiming
+from .typing.pipeline import SpeechStreamQueue
+from .typing.aliases import LogLevel, AudioChunks
 
 if TYPE_CHECKING:
     from .celune import Celune
@@ -75,10 +76,52 @@ class CaptionAligner:
 
     def __init__(self) -> None:
         self._load_lock = threading.Lock()
+        self._preload_lock = threading.Lock()
+        self._preload_started = False
         self._session: Optional[_InferenceSession] = None
         self._input_name = ""
         self._output_name = ""
         self._vocab: Optional[dict[str, int]] = None
+
+    def preload(
+        self,
+        logger: Callable[[str, str], None],
+        log_level: LogLevel,
+    ) -> None:
+        """Prepare the acoustic model asynchronously before first speech."""
+        with self._preload_lock:
+            if self._preload_started or self._session is not None:
+                return
+            self._preload_started = True
+
+        logger(string("ui.caption_alignment_loading"), "info")
+
+        def _worker() -> None:
+            try:
+                self._load_model()
+            except _OnnxRuntimeNotFound:
+                with self._preload_lock:
+                    self._preload_started = False
+                logger(string("ui.caption_onnxruntime_not_found"), "warning")
+            except Exception as error:
+                with self._preload_lock:
+                    self._preload_started = False
+                logger(
+                    format_error_message(
+                        string("ui.caption_alignment_failed"),
+                        error,
+                        log_level,
+                    ),
+                    "warning",
+                )
+            else:
+                logger(string("ui.caption_alignment_ready"), "info")
+
+        threading.Thread(
+            target=_worker,
+            name="celune-caption-model-preload",
+            daemon=True,
+        ).start()
 
     def align_words(
         self,
@@ -196,6 +239,14 @@ def get_caption_aligner() -> CaptionAligner:
         if _ALIGNER is None:
             _ALIGNER = CaptionAligner()
         return _ALIGNER
+
+
+def preload_caption_aligner(
+    logger: Callable[[str, str], None],
+    log_level: LogLevel,
+) -> None:
+    """Start preparing the process-wide aligner without blocking startup."""
+    get_caption_aligner().preload(logger, log_level)
 
 
 def align_chunk_word_start_frames(

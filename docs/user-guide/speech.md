@@ -91,8 +91,10 @@ faster than the sound device consumes them. Set `captions: true` to enable IPA
 alignment with the `sadda-speech/wav2vec2-espeak-ctc` phoneme model. Celune
 aligns each generated text chunk to only its corresponding audio range, so a
 mismatch in one chunk cannot shift later caption words. The model is
-Apache-2.0 licensed and is downloaded from Hugging Face on first use. Install
-the optional ONNX Runtime dependency on Windows with:
+Apache-2.0 licensed and is downloaded from Hugging Face. When captions are
+enabled, Celune prepares the model in the background during startup without
+blocking startup; the first alignment can still wait if preparation is ongoing.
+Install the optional ONNX Runtime dependency on Windows with:
 
 ```powershell
 uv sync --dev --extra api --extra captions
@@ -100,7 +102,8 @@ uv sync --dev --extra api --extra captions
 
 The `espeak-ng` executable must also be on `PATH`. If eSpeak NG or ONNX Runtime
 is missing, Celune logs a yellow warning and hides captions for the utterance;
-speech playback continues. A background worker aligns each generated text
+speech playback continues. With captions disabled, Celune does not load or
+download the alignment model. A background worker aligns each generated text
 chunk and queues its audio with the word timings in order.
 Generation can continue, including another speech request, while alignment is
 pending. Playback waits for a chunk's alignment. Celune hides captions for the
