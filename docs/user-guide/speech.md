@@ -98,10 +98,10 @@ the optional ONNX Runtime dependency on Windows with:
 uv sync --dev --extra api --extra captions
 ```
 
-The `espeak-ng` executable must also be on `PATH`. If it is missing, Celune
-logs a yellow warning and hides captions for the utterance; speech playback
-continues. A background worker aligns each generated text chunk and queues its
-audio with the word timings in order.
+The `espeak-ng` executable must also be on `PATH`. If eSpeak NG or ONNX Runtime
+is missing, Celune logs a yellow warning and hides captions for the utterance;
+speech playback continues. A background worker aligns each generated text
+chunk and queues its audio with the word timings in order.
 Generation can continue, including another speech request, while alignment is
 pending. Playback waits for a chunk's alignment. Celune hides captions for the
 utterance if alignment is unavailable or fails; speech playback continues.

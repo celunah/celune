@@ -81,6 +81,52 @@ def test_missing_espeak_logs_a_warning_without_traceback() -> None:
     )
 
 
+def test_missing_onnxruntime_logs_a_warning_without_traceback() -> None:
+    """Report an absent ONNX Runtime extra as a concise warning."""
+    logger = mock.Mock()
+    aligner = captions.CaptionAligner()
+
+    def load_module(module_name: str) -> object:
+        if module_name == "huggingface_hub":
+            return SimpleNamespace()
+        if module_name == "onnxruntime":
+            raise ModuleNotFoundError(
+                "No module named 'onnxruntime'",
+                name="onnxruntime",
+            )
+        raise AssertionError(f"unexpected optional module: {module_name}")
+
+    with (
+        mock.patch("celune.captions.get_caption_aligner", return_value=aligner),
+        mock.patch(
+            "celune.captions.subprocess.run",
+            return_value=SimpleNamespace(stdout="hɛloʊ\n"),
+        ),
+        mock.patch.object(
+            captions.importlib,
+            "import_module",
+            side_effect=load_module,
+        ),
+    ):
+        assert (
+            captions.align_chunk_word_start_frames(
+                (np.ones(12, dtype=np.float32),),
+                48000,
+                "hello",
+                ("hello",),
+                "en-US",
+                logger,
+                "info",
+            )
+            is None
+        )
+
+    assert logger.call_args.args == (
+        captions.string("ui.caption_onnxruntime_not_found"),
+        "warning",
+    )
+
+
 def test_caption_aligner_loads_model_lazily_and_aligns_ipa(
     tmp_path: Path,
 ) -> None:

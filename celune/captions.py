@@ -66,6 +66,10 @@ class _EspeakExecutableNotFound(FileNotFoundError):
     """Identify eSpeak NG launch failures for a concise user warning."""
 
 
+class _OnnxRuntimeNotFound(ImportError):
+    """Identify a missing ONNX Runtime install for a concise user warning."""
+
+
 class CaptionAligner:
     """Lazily load the IPA acoustic model and align transcript words."""
 
@@ -158,7 +162,12 @@ class CaptionAligner:
         with self._load_lock:
             if self._session is None or self._vocab is None:
                 hub = importlib.import_module("huggingface_hub")
-                runtime = importlib.import_module("onnxruntime")
+                try:
+                    runtime = importlib.import_module("onnxruntime")
+                except ModuleNotFoundError as error:
+                    if error.name != "onnxruntime":
+                        raise
+                    raise _OnnxRuntimeNotFound("onnxruntime") from error
                 download = cast(Callable[[str, str], str], hub.hf_hub_download)
                 model_path = download(_ALIGNMENT_MODEL_ID, "model.onnx")
                 vocab_path = download(_ALIGNMENT_MODEL_ID, "vocab.json")
@@ -225,6 +234,9 @@ def align_chunk_word_start_frames(
         )
     except _EspeakExecutableNotFound:
         logger(string("ui.caption_espeak_not_found"), "warning")
+        return None
+    except _OnnxRuntimeNotFound:
+        logger(string("ui.caption_onnxruntime_not_found"), "warning")
         return None
     except Exception as error:
         logger(
