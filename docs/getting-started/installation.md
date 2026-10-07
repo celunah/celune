@@ -70,8 +70,8 @@ existing installation unchanged. Run the helper with a system Python
 interpreter rather than the `.venv` interpreter when repairing, because the
 active environment cannot safely remove itself.
 The optional `live-vc-ai` extra adds Silero VAD for AI-assisted live
-voice-conversion capture; `openzl` adds OpenZL-compressed CECHAR v4 support on
-Linux.
+voice-conversion capture; `cechar4-openzl` adds OpenZL-compressed CECHAR v4
+support on Linux.
 
 For a dependency-only manual setup, use `uv sync --dev --all-extras` on Linux
 or `uv sync --dev --extra api` on Windows.

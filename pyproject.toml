@@ -124,13 +124,13 @@ api = [
     "gradio",
 ]
 
-# Optional ONNX Runtime for IPA forced alignment of speech captions.
+# Install to support caption display with forced-alignment.
 captions = [
     "onnxruntime>=1.22",
 ]
 
 # Install to use OpenZL-compressed CECHAR v4 packages in Celune.
-openzl = [
+cechar4-openzl = [
     "openzl",
 ]
 
