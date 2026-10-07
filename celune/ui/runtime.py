@@ -364,7 +364,41 @@ def _chain_runtime_callback(
         try:
             signature.bind(*args, **kwargs)
         except TypeError:
-            target(*args)
+            positional_parameters = tuple(
+                parameter
+                for parameter in signature.parameters.values()
+                if parameter.kind
+                in {
+                    inspect.Parameter.POSITIONAL_ONLY,
+                    inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                }
+            )
+            accepts_extra_arguments = any(
+                parameter.kind == inspect.Parameter.VAR_POSITIONAL
+                for parameter in signature.parameters.values()
+            )
+            if (
+                attribute == "caption_progress_callback"
+                and not accepts_extra_arguments
+                and len(args) > len(positional_parameters)
+            ):
+                compatible_args = args[: len(positional_parameters)]
+                compatible_kwargs = dict(kwargs)
+                visible_words = signature.parameters.get("visible_words")
+                if (
+                    visible_words is not None
+                    and visible_words.kind == inspect.Parameter.KEYWORD_ONLY
+                    and len(args) == len(positional_parameters) + 1
+                ):
+                    compatible_kwargs["visible_words"] = args[-1]
+                try:
+                    signature.bind(*compatible_args, **compatible_kwargs)
+                except TypeError:
+                    target(*args)
+                else:
+                    target(*compatible_args, **compatible_kwargs)
+            else:
+                target(*args)
         else:
             target(*args, **kwargs)
 

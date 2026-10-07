@@ -81,6 +81,8 @@ without waiting for unrelated SFX overlays, while the global idle transition
 still waits for every source and deferred queue-reader handoffs. A completion
 marker retains its idle notification until the final playback stage drains, so
 readiness and speech cannot leave the runtime in a stale speaking state.
+Caption progress forwards revealed-word counts to compatible consumers while
+preserving existing two-argument progress callbacks.
 Output failures clear the source maps, mark
 playback complete, and release any held pipeline lease.
 Automatic sleep also waits for every registered playback source, including SFX

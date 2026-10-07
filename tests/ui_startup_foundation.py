@@ -924,6 +924,32 @@ class TestUIStartup(CeluneTestCase):
         assert calls == ["message"]
         assert fake_celune.log_callback is callback
 
+    def test_caption_callback_chaining_preserves_legacy_callbacks(self) -> None:
+        """Verify three-argument caption updates tolerate legacy two-argument callbacks."""
+        ui = CeluneUI()
+        received: list[tuple[Optional[float], Optional[float], Optional[int]]] = []
+
+        def caption_progress(
+            progress: Optional[float],
+            total: Optional[float],
+            visible_words: Optional[int] = None,
+        ) -> None:
+            received.append((progress, total, visible_words))
+
+        fake_celune = cast(
+            Celune,
+            SimpleNamespace(caption_progress_callback=Celune._noop_progress),
+        )
+        ui.celune = fake_celune
+        ui._chain_runtime_callback("caption_progress_callback", caption_progress)
+
+        caption_callback = cast(
+            Callable[..., None], fake_celune.caption_progress_callback
+        )
+        caption_callback(5.0, 10.0, 2)
+
+        assert received == [(5.0, 10.0, 2)]
+
     def test_log_binding_does_not_chain_startup_sink_again(self) -> None:
         """Verify startup log delivery does not duplicate the UI log callback."""
         calls: list[str] = []

@@ -116,6 +116,7 @@ from .typing.celune import (
     CeluneMethodSurface,
     CeluneStateAccessors,
     VoiceLockStateCallback,
+    CaptionProgressCallback,
     _BundleWithPath,
 )
 from .typing.common import JSON, JSONSerializable
@@ -448,7 +449,7 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
         change_input_state_callback: Optional[InputStateCallback] = None,
         change_voice_lock_state_callback: Optional[VoiceLockStateCallback] = None,
         progress_callback: Optional[ProgressCallback] = None,
-        caption_progress_callback: Optional[ProgressCallback] = None,
+        caption_progress_callback: Optional[CaptionProgressCallback] = None,
         caption_callback: Optional[CaptionCallback] = None,
         log_level: LogLevel = "info",
         agent_tool_selector: Optional[AgentToolSelector] = None,
