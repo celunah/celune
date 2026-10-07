@@ -6,21 +6,21 @@ from __future__ import annotations
 import os
 import re
 import sys
+import queue as queue_module
 import shlex
 import types
 import ctypes
 import asyncio
 import threading
 import contextlib
-from uuid import uuid4
 from copy import deepcopy
-import queue as queue_module
+from uuid import uuid4
 from typing import Optional, cast
 from collections.abc import Callable, Iterator
 
 from . import app as _app
-from ..constants import SIGTSTP
 from ..binding import install_class_functions
+from ..constants import SIGTSTP
 
 __all__ = (
     "_close_menu",
@@ -61,6 +61,7 @@ __all__ = (
     "open_settings_menu",
     "open_voice_menu",
     "process_command",
+    "request_agent_test_response",
     "split_command_input",
     "toggle_vc_recording",
     "tts_idle",
@@ -1004,11 +1005,21 @@ def _submit_text(self, text: str, process_commands: bool = True) -> bool:
         return True
 
     if self._is_agent_test_mode():
+        response_queue = self._agent_test_response_queue
         self._suppress_input_change = True
         try:
             self.input_box.load_text("")
         finally:
             self._suppress_input_change = False
+        if response_queue is not None:
+            try:
+                response_queue.put_nowait(text)
+            except queue_module.Full:
+                return True
+            self._agent_test_response_queue = None
+            self.change_input_state(locked=True)
+            self.safe_status(_app.string("ui.agent_test_answer_received"))
+            return True
         self.safe_status(_app.string("ui.agent_test_mode_active"))
         return True
 
@@ -1074,6 +1085,44 @@ def _submit_text(self, text: str, process_commands: bool = True) -> bool:
     self.input_box.load_text("")
     self.update_resources()
     return True
+
+
+def request_agent_test_response(
+    self,
+    prompt: str,
+    timeout_seconds: float = 120.0,
+) -> Optional[str]:
+    """Display an agent diagnostic prompt and wait for one typed answer.
+
+    Args:
+        prompt: The spoken question or approval request to display.
+        timeout_seconds: Maximum time to wait for the user's response.
+
+    Returns:
+        Optional[str]: The submitted answer, or ``None`` after timeout or exit.
+
+    Raises:
+        RuntimeError: If the UI is not running the agent test mode.
+        ValueError: If the response timeout is not positive.
+    """
+    if not self._is_agent_test_mode():
+        raise RuntimeError("agent test prompts require agent test mode")
+    if timeout_seconds <= 0:
+        raise ValueError("agent test prompt timeout must be positive")
+    response_queue: queue_module.Queue[Optional[str]] = queue_module.Queue(maxsize=1)
+    self._agent_test_response_queue = response_queue
+    self.safe_log(prompt)
+    self.safe_status(_app.string("ui.agent_test_prompt_ready"))
+    self.change_input_state(locked=False)
+    try:
+        try:
+            return response_queue.get(timeout=timeout_seconds)
+        except queue_module.Empty:
+            return None
+    finally:
+        if self._agent_test_response_queue is response_queue:
+            self._agent_test_response_queue = None
+        self.change_input_state(locked=True)
 
 
 def tutorial_after(self, delay: float, callback: Callable[[], None]) -> None:
@@ -1320,6 +1369,11 @@ def on_button_pressed(self, event: _app.Button.Pressed) -> None:
 
 def on_unmount(self) -> None:
     """Unload Celune."""
+    response_queue = self._agent_test_response_queue
+    if response_queue is not None:
+        self._agent_test_response_queue = None
+        with contextlib.suppress(queue_module.Full):
+            response_queue.put_nowait(None)
     restarting = self.cur_state == "restarting"
     if not restarting:
         self.cur_state = "exiting"
@@ -1349,13 +1403,16 @@ def tts_idle(self) -> None:
     celune = self.celune
     if celune is None:
         return
-    if getattr(celune, "test_finished", False) or self._is_agent_test_mode():
+    if getattr(celune, "test_finished", False):
         self.change_input_state(locked=True)
         self.change_voice_lock_state(locked=True)
-        if getattr(celune, "test_finished", False):
-            if self.input_box is not None:
-                self.input_box.placeholder = _app.string("ui.stopped_placeholder")
-            self.safe_status(_app.string("status.stopped"), "sleeping")
+        if self.input_box is not None:
+            self.input_box.placeholder = _app.string("ui.stopped_placeholder")
+        self.safe_status(_app.string("status.stopped"), "sleeping")
+        return
+    if self._is_agent_test_mode():
+        self.change_input_state(locked=self._agent_test_response_queue is None)
+        self.change_voice_lock_state(locked=True)
         return
     if self.cur_state in {"exiting", "error"} or not self.celune_ready:
         if self.input_box is not None:

@@ -118,6 +118,14 @@ as passed, failed, or skipped. Optional local-management checks run only when
 `agent.fs_tools` is enabled. The [CLI guide](../interfaces/cli.md#commands)
 describes the report and exit status.
 
+After the live task, the test invokes every active tool with isolated test
+adapters and speaks each tool result. Celune then speaks a multiple-choice
+request and an approval request before displaying each request and accepting a
+typed answer. Either listed choice is accepted. Approving or declining the
+simulated mutation passes when Celune processes the response. These spoken
+tool results and interactive prompts apply only to `celune test agent`. Each
+typed response has a two-minute timeout; no response fails that check.
+
 ## See also
 
 - [CLI](../interfaces/cli.md)

@@ -31,12 +31,17 @@ explicit start/run commands, and the UI or agent test modes.
 | `celune version` / `--version` | Print version, revision, and tagline. |
 
 The agent test runs the configured Persona, Needle, and TTS path through one
-read-only task. It then checks the active production tool catalog, task
-lifecycle, schema validation, permissions, approvals, choices, context limits,
-terminal outcomes, and every active tool handler with isolated test state.
-When local-management tools are enabled, it checks process and application
-mutation gates without launching or closing real resources. Independent checks
-continue after a failure.
+read-only task. It then runs every active production tool handler with isolated
+test state and speaks each tool result. Celune speaks a multiple-choice
+question and an approval request before displaying them and accepting typed
+answers. Either listed choice passes. Approving or declining the simulated
+mutation passes when the response is processed. The test also checks task
+lifecycle, schema validation, permissions, context limits, and terminal
+outcomes. Each typed response prompt waits up to two minutes; a missing answer
+fails that check. When local-management tools are enabled, filesystem operations stay
+inside a temporary directory; process and application mutations use test
+doubles and never launch or close real resources. Independent checks continue
+after a failure.
 
 The stopped test UI log shows one `PASS`, `FAIL`, or `SKIP` entry per check and
 a total for each status. Local-management tools are skipped when

@@ -509,7 +509,7 @@ def change_input_state(self, locked: bool) -> None:
         locked: Whether user input should be disabled.
     """
 
-    if not locked:
+    if not locked and not self._is_agent_test_mode():
         self._schedule_sleep_timer()
 
     def update() -> None:

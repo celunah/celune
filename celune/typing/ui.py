@@ -61,6 +61,7 @@ class CeluneUIMethodSurface:
     _agent_task_for_display: Callable[..., Optional[AgentTask]]
     _agent_status_text: Callable[..., Optional[str]]
     _refresh_agent_status: Callable[..., None]
+    request_agent_test_response: Callable[..., Optional[str]]
     _is_ui_test_mode: Callable[..., bool]
     _is_agent_test_mode: Callable[..., bool]
     _finish_test_startup: Callable[..., None]

@@ -6,6 +6,7 @@ from __future__ import annotations
 import time
 import threading
 from typing import TYPE_CHECKING, Optional
+from collections.abc import Callable
 
 from .i18n import string
 from .utils import format_error
@@ -16,7 +17,7 @@ from .typing.agent import (
     AgentClassificationResult,
 )
 from .typing.common import JSON
-from .agent.diagnostics import run_agent_feature_checks
+from .agent.diagnostics import run_agent_feature_checks, run_agent_interaction_checks
 
 _AGENT_TEST_REQUEST = "Check the current working directory and report the result."
 _LIVE_CHECKS = (
@@ -107,6 +108,52 @@ def _agent_test_succeeded(result: Optional[JSON]) -> bool:
 def _skip_live_checks(checks: list[JSON], names: tuple[str, ...], reason: str) -> None:
     """Mark live stages skipped when an earlier prerequisite failed."""
     checks.extend(_check(name, "skipped", reason) for name in names)
+
+
+def _speak_agent_test_message(
+    engine: Celune,
+    message: str,
+    timeout_seconds: float,
+) -> None:
+    """Speak one test message and wait until its playback completes."""
+    if not engine.playback_done.wait(timeout=timeout_seconds):
+        raise TimeoutError(string("test.agent_previous_speech_timeout"))
+    if not engine.say(message, save=False):
+        raise RuntimeError(string("test.agent_speech_not_queued"))
+    if not engine.playback_done.wait(timeout=timeout_seconds):
+        raise TimeoutError(string("test.agent_speech_timeout"))
+
+
+def _announce_tool_result(
+    engine: Celune,
+    name: str,
+    status: str,
+    detail: str,
+    timeout_seconds: float,
+) -> None:
+    """Speak one bounded, localized summary of a production tool result."""
+    status_keys = {
+        "passed": "test.agent_tool_status_passed",
+        "failed": "test.agent_tool_status_failed",
+        "skipped": "test.agent_tool_status_skipped",
+        "unavailable": "test.agent_tool_status_unavailable",
+    }
+    status_key = status_keys.get(status)
+    if status_key is None:
+        raise ValueError(f"unknown tool diagnostic status: {status}")
+    if status == "unavailable":
+        result = string("test.agent_tool_no_result")
+    elif "result=" in detail:
+        result = detail.partition("result=")[2]
+    else:
+        result = detail
+    message = string(
+        "test.agent_tool_announcement",
+        tool=" ".join(name.split("_")),
+        status=string(status_key),
+        result=result,
+    )
+    _speak_agent_test_message(engine, message, timeout_seconds)
 
 
 def _run_live_checks(
@@ -251,18 +298,22 @@ def run_agent_test(
     *,
     startup_success: bool = True,
     startup_detail: Optional[str] = None,
+    request_user: Optional[Callable[[str], Optional[str]]] = None,
 ) -> JSON:
-    """Run isolated feature checks and the configured live agent workflow.
+    """Run the live task, announce tool results, and collect choice and approval.
 
     The test-only model catalog remains read-only. Every active production tool
     handler is exercised separately using temporary files and adapters for
-    speech, memory, process, and application side effects.
+    speech, memory, process, and application side effects. With a UI response
+    callback, each tool result is spoken before the test presents a choice and
+    an approval request for typed answers.
 
     Args:
         engine: A Celune engine instance.
         timeout_seconds: Maximum wait for Persona readiness and speech playback.
         startup_success: Whether the UI startup callback reported success.
         startup_detail: Optional startup failure detail for the report.
+        request_user: Optional UI callback for the spoken choice and approval steps.
 
     Returns:
         JSON: The aggregate report recorded by the engine.
@@ -271,13 +322,6 @@ def run_agent_test(
         raise ValueError("agent test timeout_seconds must be positive")
 
     checks: list[JSON] = []
-    try:
-        checks.extend(run_agent_feature_checks(engine))
-    except Exception as exc:
-        checks.append(
-            _check("features.setup", "failed", _detail_for_error(engine, exc))
-        )
-
     live_checks, task_id = _run_live_checks(
         engine,
         timeout_seconds,
@@ -285,6 +329,36 @@ def run_agent_test(
         startup_detail=startup_detail,
     )
     checks.extend(live_checks)
+
+    tool_result_callback: Optional[Callable[[str, str, str], None]] = None
+    if request_user is not None:
+
+        def announce_tool_result(name: str, status: str, detail: str) -> None:
+            """Speak one tool result through the live test runtime."""
+            _announce_tool_result(engine, name, status, detail, timeout_seconds)
+
+        tool_result_callback = announce_tool_result
+    try:
+        checks.extend(
+            run_agent_feature_checks(
+                engine,
+                tool_result_callback=tool_result_callback,
+            )
+        )
+    except Exception as exc:
+        checks.append(
+            _check("features.setup", "failed", _detail_for_error(engine, exc))
+        )
+
+    if request_user is None:
+        checks.extend(run_agent_interaction_checks(engine, None))
+    else:
+
+        def speak_before_request(prompt: str) -> Optional[str]:
+            _speak_agent_test_message(engine, prompt, timeout_seconds)
+            return request_user(prompt)
+
+        checks.extend(run_agent_interaction_checks(engine, speak_before_request))
     final_state = _task_state(engine, task_id)
     success = not any(check.get("status") == "failed" for check in checks)
     return engine.finish_test_mode(

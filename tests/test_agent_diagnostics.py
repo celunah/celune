@@ -5,13 +5,19 @@ from __future__ import annotations
 
 import os
 from types import SimpleNamespace
+from typing import cast
 from unittest import mock
 
 from celune.celune import Celune
 from celune.agent.tools import production_agent_tools, production_agent_tool_schemas
-from celune.typing.agent import AgentToolSchema, AgentToolBehavior
-from celune.typing.common import JSON
-from celune.agent.diagnostics import run_agent_feature_checks
+from celune.persona.impl import PersonaClient
+from celune.typing.agent import AgentRoute, AgentToolSchema, AgentToolBehavior
+from celune.typing.common import JSON, JSONSerializable
+from celune.typing.persona import PersonaClientResponse
+from celune.agent.diagnostics import (
+    run_agent_feature_checks,
+    run_agent_interaction_checks,
+)
 
 from .support import FakeGlow, FakeBackend, CeluneTestCase
 
@@ -20,6 +26,17 @@ def _check_name(check: JSON) -> str:
     """Read one diagnostic name without trusting its JSON value type."""
     name = check.get("name")
     return name if isinstance(name, str) else ""
+
+
+def _persona_route_response(route: AgentRoute, **values: str) -> PersonaClientResponse:
+    """Create a deterministic Persona classification response for routing tests."""
+    payload: dict[str, JSONSerializable] = {
+        "classification": "task",
+        "confidence": 1.0,
+        "route": route.value,
+    }
+    payload.update(values)
+    return PersonaClientResponse(payload)
 
 
 class TestAgentDiagnostics(CeluneTestCase):
@@ -48,7 +65,13 @@ class TestAgentDiagnostics(CeluneTestCase):
         """Run each active tool and ensure process operations stay stubbed."""
         core = self._core()
         with mock.patch.dict(os.environ, {"CELUNE_AGENT_FS_TOOLS": "true"}):
-            checks = run_agent_feature_checks(core)
+            announced: list[str] = []
+            checks = run_agent_feature_checks(
+                core,
+                tool_result_callback=lambda name, _status, _detail: announced.append(
+                    name
+                ),
+            )
 
         expected_tools = set(
             production_agent_tool_schemas(include_local_management=True)
@@ -58,6 +81,8 @@ class TestAgentDiagnostics(CeluneTestCase):
             for check in checks
             if _check_name(check) in expected_tools
         }
+        assert set(announced) == expected_tools
+        assert len(announced) == len(expected_tools)
         failed = [check for check in checks if check["status"] == "failed"]
         assert actual_tools == expected_tools
         assert not failed
@@ -68,7 +93,10 @@ class TestAgentDiagnostics(CeluneTestCase):
         }
         assert set(unavailable) == {"pause_speech", "resume_speech"}
         assert all(check["status"] == "passed" for check in unavailable.values())
-        assert all(check["detail"] == "status=failed" for check in unavailable.values())
+        assert all(
+            check["detail"] == "The tool is unavailable as expected."
+            for check in unavailable.values()
+        )
         assert {
             "runtime.lifecycle.pause_resume",
             "runtime.lifecycle.interruption",
@@ -135,6 +163,75 @@ class TestAgentDiagnostics(CeluneTestCase):
         assert "runtime.outcome.completed" in results
         assert "query_status" in results
 
+    def test_tool_announcement_failure_does_not_hide_later_tools(self) -> None:
+        """Keep independent tool results when one spoken report fails."""
+        core = self._core()
+        announced: list[str] = []
+
+        def announce(name: str, _status: str, _detail: str) -> None:
+            announced.append(name)
+            if name == "query_status":
+                raise RuntimeError("controlled speech failure")
+
+        checks = run_agent_feature_checks(core, tool_result_callback=announce)
+        results = {_check_name(check): check for check in checks}
+
+        assert results["query_status"]["status"] == "passed"
+        assert results["speech.tool_result.query_status"]["status"] == "failed"
+        assert "query_models" in announced
+        assert results["query_models"]["status"] == "passed"
+
+    def test_interactive_choice_and_approval_answers_are_processed(self) -> None:
+        """Route either choice and both approval outcomes through Persona."""
+        core = self._core()
+        prompts: list[str] = []
+        post = mock.Mock(
+            side_effect=(
+                _persona_route_response(
+                    AgentRoute.CHOICE_RESPONSE,
+                    choice_id="tool-2",
+                ),
+                _persona_route_response(
+                    AgentRoute.APPROVAL_RESPONSE,
+                    approval_decision="denied",
+                ),
+            )
+        )
+        core.vision = cast(PersonaClient, SimpleNamespace(post=post))
+        answers = iter(("2", "decline"))
+
+        def request_user(prompt: str) -> str:
+            prompts.append(prompt)
+            return next(answers)
+
+        checks = run_agent_interaction_checks(core, request_user)
+
+        assert [check["status"] for check in checks] == ["passed", "passed"]
+        assert "1:" in prompts[0]
+        assert "2:" in prompts[0]
+        assert "Either choice is accepted" in prompts[0]
+        assert "approve or decline" in prompts[1]
+        declined_detail = checks[1].get("detail")
+        assert isinstance(declined_detail, str)
+        assert "declined" in declined_detail
+
+        post.side_effect = (
+            _persona_route_response(
+                AgentRoute.CHOICE_RESPONSE,
+                choice_id="tool-1",
+            ),
+            _persona_route_response(
+                AgentRoute.APPROVAL_RESPONSE,
+                approval_decision="approved",
+            ),
+        )
+        answers = iter(("1", "approve"))
+        approved_checks = run_agent_interaction_checks(core, request_user)
+        approved_detail = approved_checks[1].get("detail")
+        assert approved_checks[1]["status"] == "passed"
+        assert isinstance(approved_detail, str)
+        assert "approved" in approved_detail
+
     def test_unmapped_production_tool_fails_coverage_and_its_own_check(self) -> None:
         """Report an unmapped catalog tool while continuing the tool pass."""
         core = self._core()
@@ -152,6 +249,7 @@ class TestAgentDiagnostics(CeluneTestCase):
             description=unmapped_schema.description,
             execute=mock.Mock(),
         )
+        announced: list[tuple[str, str]] = []
         with (
             mock.patch(
                 "celune.agent.diagnostics.production_agent_tools",
@@ -162,10 +260,16 @@ class TestAgentDiagnostics(CeluneTestCase):
                 return_value=schemas,
             ),
         ):
-            checks = run_agent_feature_checks(core)
+            checks = run_agent_feature_checks(
+                core,
+                tool_result_callback=lambda name, status, _detail: announced.append(
+                    (name, status)
+                ),
+            )
 
         results = {_check_name(check): check for check in checks}
         assert results["catalog.coverage"]["status"] == "failed"
         assert results["unmapped_diagnostic"]["status"] == "failed"
+        assert ("unmapped_diagnostic", "failed") in announced
         assert results["query_status"]["status"] in {"passed", "failed"}
         unmapped_tool.execute.assert_not_called()

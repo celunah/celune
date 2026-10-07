@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import io
+import threading
 import contextlib
 from types import SimpleNamespace
 from typing import ClassVar, Optional, cast
@@ -11,12 +12,14 @@ from unittest import mock
 from collections.abc import Mapping, Callable, Sequence
 
 import pytest
+from textual.widgets import TextArea
 
 from celune import entrypoint
 from celune.i18n import string
 from celune.test import run_agent_test, _agent_test_succeeded
 from celune.celune import Celune
 from celune.config import config_log_level
+from celune.ui.app import CeluneUI
 from celune.agent.needle import NeedleHandler, NeedleToolSelector
 from celune.persona.impl import PersonaClient
 from celune.typing.agent import (
@@ -386,6 +389,100 @@ class TestFinishedLifecycleTests(CeluneTestCase):
         assert summary["failed"] == 0
         assert core.cur_state == "stopped"
         assert not core.say("queued after test")
+
+    def test_agent_test_speaks_each_tool_result_before_user_prompts(self) -> None:
+        """Keep tool announcements and spoken requests in the requested order."""
+        core = self._make_core()
+        sequence: list[str] = []
+
+        def feature_checks(_engine, *, tool_result_callback=None):
+            assert tool_result_callback is not None
+            tool_result_callback("query_status", "passed", "result=ready")
+            tool_result_callback("query_models", "passed", "result=loaded")
+            return []
+
+        def interaction_checks(_engine, request_user):
+            assert request_user is not None
+            assert request_user("Choice question") == "any answer"
+            assert request_user("Approval question") == "any answer"
+            return [
+                {"name": "choice", "status": "passed", "detail": "processed"},
+                {"name": "approval", "status": "passed", "detail": "processed"},
+            ]
+
+        def request_user(prompt: str) -> str:
+            sequence.append(f"shown:{prompt}")
+            return "any answer"
+
+        with (
+            mock.patch("celune.test._run_live_checks", return_value=([], None)),
+            mock.patch(
+                "celune.test.run_agent_feature_checks",
+                side_effect=feature_checks,
+            ),
+            mock.patch(
+                "celune.test.run_agent_interaction_checks",
+                side_effect=interaction_checks,
+            ),
+            mock.patch(
+                "celune.test._speak_agent_test_message",
+                side_effect=lambda _engine, text, _timeout: sequence.append(
+                    f"spoken:{text}"
+                ),
+            ),
+            mock.patch.object(core, "stop_live_audio"),
+        ):
+            result = run_agent_test(core, request_user=request_user)
+
+        assert result["success"]
+        assert [entry.split(":", 1)[0] for entry in sequence] == [
+            "spoken",
+            "spoken",
+            "spoken",
+            "shown",
+            "spoken",
+            "shown",
+        ]
+        assert sequence[2] == "spoken:Choice question"
+        assert sequence[3] == "shown:Choice question"
+        assert sequence[4] == "spoken:Approval question"
+        assert sequence[5] == "shown:Approval question"
+
+    def test_agent_test_ui_response_channel_processes_typed_answer(self) -> None:
+        """Unlock input only for a prompt and deliver one typed response."""
+        ui = CeluneUI()
+        self.addCleanup(setattr, CeluneUI, "_instance", None)
+        ui.input_box = TextArea()
+        ui.celune = cast(
+            Celune,
+            SimpleNamespace(backend_mode="agent_test", test_finished=False),
+        )
+        ui.safe_log = mock.Mock()
+        ui.safe_status = mock.Mock()
+        ready = threading.Event()
+
+        def change_input_state(*, locked: bool) -> None:
+            if not locked:
+                ready.set()
+
+        ui.change_input_state = change_input_state
+        answers: list[Optional[str]] = []
+        worker = threading.Thread(
+            target=lambda: answers.append(
+                ui.request_agent_test_response("Choose an option", timeout_seconds=2)
+            ),
+            daemon=True,
+        )
+        worker.start()
+        assert ready.wait(timeout=1)
+        ui.input_box.load_text("2")
+        assert ui._submit_text(ui.input_box.text)
+        worker.join(timeout=1)
+
+        assert answers == ["2"]
+        ui.safe_log.assert_called_once_with("Choose an option")
+        ui.safe_status.assert_any_call(string("ui.agent_test_prompt_ready"))
+        ui.safe_status.assert_any_call(string("ui.agent_test_answer_received"))
 
     def test_agent_test_reports_no_task_detected(self) -> None:
         """Distinguish an ordinary conversation result from a test crash."""

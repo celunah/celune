@@ -925,6 +925,9 @@ class CeluneUI(App, CeluneUIMethodSurface):
             log_file_path=Path(),
         )
         self._interaction_state = CeluneUIInteractionState()
+        self._agent_test_response_queue: Optional[queue_module.Queue[Optional[str]]] = (
+            None
+        )
         self._terminal_status: Optional[tuple[str, str, str]] = None
         self._loading_screen: Optional[CeluneLoadingScreen] = None
         self._startup_loader = startup_loader

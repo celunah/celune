@@ -9,10 +9,10 @@ import shutil
 import datetime
 import platform
 import warnings
-import importlib
-import importlib.util
 import contextlib
 import subprocess
+import importlib
+import importlib.util
 from types import ModuleType, SimpleNamespace
 from typing import TYPE_CHECKING, NoReturn, Optional
 from pathlib import Path
@@ -1353,6 +1353,11 @@ def start(
                         core,
                         startup_success=success,
                         startup_detail=detail,
+                        request_user=getattr(
+                            ui,
+                            "request_agent_test_response",
+                            None,
+                        ),
                     )
                     return
                 core.finish_test_mode(

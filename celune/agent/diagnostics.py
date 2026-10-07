@@ -16,12 +16,14 @@ from collections.abc import Mapping, Callable
 
 from ..i18n import string
 from .tools import production_agent_tools, production_agent_tool_schemas
+from .routing import AgentInputRouter
 from .runtime import AgentRuntime, DefaultAgentPermissionPolicy
 from ..exceptions import NeedleSelectionError
 from ..typing.agent import (
     ToolCall,
     AgentTask,
     AgentTool,
+    AgentRoute,
     ToolResult,
     AgentOutput,
     AgentContext,
@@ -198,11 +200,16 @@ class _ExternalEffects:
     process: Optional[_DiagnosticProcess] = None
 
 
-def run_agent_feature_checks(engine: Celune) -> list[JSON]:
+def run_agent_feature_checks(
+    engine: Celune,
+    *,
+    tool_result_callback: Optional[Callable[[str, str, str], None]] = None,
+) -> list[JSON]:
     """Run isolated checks for the active production agent catalog.
 
     Args:
         engine: Loaded Celune core used by the agent test mode.
+        tool_result_callback: Optional callback for each completed tool result.
 
     Returns:
         list[JSON]: Ordered per-check status records.
@@ -222,6 +229,14 @@ def run_agent_feature_checks(engine: Celune) -> list[JSON]:
         )
     ]
     checks.extend(
+        _run_tool_checks(
+            engine,
+            tools,
+            schemas,
+            result_callback=tool_result_callback,
+        )
+    )
+    checks.extend(
         _run_runtime_checks(
             engine,
             tools,
@@ -229,7 +244,6 @@ def run_agent_feature_checks(engine: Celune) -> list[JSON]:
             include_local_management=include_local_management,
         )
     )
-    checks.extend(_run_tool_checks(engine, tools, schemas))
     if not include_local_management:
         checks.append(
             _record(
@@ -239,6 +253,37 @@ def run_agent_feature_checks(engine: Celune) -> list[JSON]:
             )
         )
     return checks
+
+
+def run_agent_interaction_checks(
+    engine: Celune,
+    request_user: Optional[Callable[[str], Optional[str]]],
+) -> list[JSON]:
+    """Run real choice and approval pauses with isolated tool adapters.
+
+    Args:
+        engine: Loaded Celune core used by the agent test mode.
+        request_user: Callback that displays a prompt and returns one answer.
+
+    Returns:
+        list[JSON]: Results for the interactive choice and approval checks.
+    """
+    if request_user is None:
+        reason = string("test.agent_interaction_unavailable")
+        return [
+            _record("runtime.choice.user", "skipped", reason),
+            _record("runtime.approval.user", "skipped", reason),
+        ]
+    return [
+        _run_check(
+            "runtime.choice.user",
+            lambda: _check_interactive_choice(engine, request_user),
+        ),
+        _run_check(
+            "runtime.approval.user",
+            lambda: _check_interactive_approval(engine, request_user),
+        ),
+    ]
 
 
 def _run_check(name: str, check: Callable[[], str]) -> JSON:
@@ -449,11 +494,16 @@ def _runtime(
     )
 
 
-def _working_task(runtime: AgentRuntime, name: str) -> AgentTask:
+def _working_task(
+    runtime: AgentRuntime,
+    name: str,
+    *,
+    session_id: Optional[str] = None,
+) -> AgentTask:
     """Create one working task with an isolated session identifier."""
     request = AgentRequest(
         "Run the isolated agent diagnostic.",
-        session=AgentSession(session_id=f"agent-diagnostic-{name}"),
+        session=AgentSession(session_id=session_id or f"agent-diagnostic-{name}"),
     )
     task = runtime.create_task(request)
     runtime.start_task(task.task_id)
@@ -844,6 +894,165 @@ def _check_tool_choice(
     return string("test.agent_choice_ok")
 
 
+def _check_interactive_choice(
+    engine: Celune,
+    request_user: Callable[[str], Optional[str]],
+) -> str:
+    """Pause on two safe tool candidates and process one user's choice."""
+    schemas = production_agent_tool_schemas(
+        include_local_management=_local_management_enabled(engine)
+    )
+    names = ("query_status", "query_models")
+    if any(name not in schemas for name in names):
+        raise RuntimeError("read-only choice candidates are unavailable")
+    calls: list[ToolCall] = [
+        {"id": f"interactive-choice-{index}", "name": name, "arguments": {}}
+        for index, name in enumerate(names, start=1)
+    ]
+    executed: list[str] = []
+
+    def execute(_context: AgentContext, call: ToolCall) -> ToolResult:
+        executed.append(call["name"])
+        return {
+            "tool_call_id": call["id"],
+            "output": {"selected": call["name"]},
+            "error": None,
+        }
+
+    runtime = _runtime(
+        engine,
+        schemas,
+        planner=lambda _context: {
+            "tool_call": calls[0],
+            "response": None,
+            "end": False,
+            "paused": False,
+        },
+        selector=cast(AgentToolSelector, lambda _context, _output: calls),
+        executor=execute,
+        result_handler=lambda _context, _result: {
+            "tool_call": None,
+            "response": "Diagnostic complete.",
+            "end": True,
+            "paused": False,
+        },
+    )
+    original_runtime = engine.agent_runtime
+    original_router = engine._agent_router
+    engine.agent_runtime = runtime
+    engine._agent_router = AgentInputRouter(engine, runtime)
+    try:
+        task = _working_task(runtime, "interactive-choice", session_id="default")
+        paused = runtime.run(task.request)
+        request = runtime.get_pending_choice(task.task_id)
+        if not paused["paused"] or request is None:
+            raise RuntimeError("multiple-tool selection did not request a choice")
+        answer = request_user(
+            f"{request.prompt}\n{string('test.agent_choice_response_help')}"
+        )
+        if answer is None or not answer.strip():
+            raise RuntimeError("user choice response was not received")
+        route = engine.route_input(answer, persona_ready=True)
+        if route.route != AgentRoute.CHOICE_RESPONSE or route.choice_id is None:
+            raise RuntimeError("Persona did not process the user's choice response")
+        runtime.run(task.request)
+        selected_index = int(route.choice_id.removeprefix("tool-")) - 1
+        if task.state != AgentTaskState.COMPLETED or executed != [
+            calls[selected_index]["name"]
+        ]:
+            raise RuntimeError("user choice was not processed by the runtime")
+        selected_option = next(
+            option for option in request.options if option.choice_id == route.choice_id
+        )
+        return string(
+            "test.agent_user_choice_processed",
+            choice=selected_option.label,
+        )
+    finally:
+        engine.agent_runtime = original_runtime
+        engine._agent_router = original_router
+
+
+def _check_interactive_approval(
+    engine: Celune,
+    request_user: Callable[[str], Optional[str]],
+) -> str:
+    """Process either answer to a simulated high-risk tool approval request."""
+    schemas = production_agent_tool_schemas(
+        include_local_management=_local_management_enabled(engine)
+    )
+    schema = schemas.get("set_voice")
+    if schema is None or schema.behavior != AgentToolBehavior.MUTATING:
+        raise RuntimeError("set_voice mutation schema is unavailable")
+    executions: list[str] = []
+    call: ToolCall = {
+        "id": "interactive-approval-call",
+        "name": "set_voice",
+        "arguments": {"voice": "diagnostic"},
+    }
+
+    def execute(_context: AgentContext, selected: ToolCall) -> ToolResult:
+        executions.append(selected["name"])
+        return {
+            "tool_call_id": selected["id"],
+            "output": {"simulated": True},
+            "error": None,
+        }
+
+    runtime = _runtime(
+        engine,
+        schemas,
+        planner=lambda _context: {
+            "tool_call": call,
+            "response": None,
+            "end": False,
+            "paused": False,
+        },
+        selector=lambda _context, output: output["tool_call"],
+        executor=execute,
+        result_handler=lambda _context, _result: {
+            "tool_call": None,
+            "response": "Diagnostic complete.",
+            "end": True,
+            "paused": False,
+        },
+    )
+    original_runtime = engine.agent_runtime
+    original_router = engine._agent_router
+    engine.agent_runtime = runtime
+    engine._agent_router = AgentInputRouter(engine, runtime)
+    try:
+        task = _working_task(runtime, "interactive-approval", session_id="default")
+        paused = runtime.run(task.request)
+        approval = runtime.get_pending_approval(task.task_id)
+        if not paused["paused"] or approval is None:
+            raise RuntimeError("simulated tool did not request approval")
+        answer = request_user(
+            f"{approval.prompt}\n{string('test.agent_approval_response_help')}"
+        )
+        if answer is None or not answer.strip():
+            raise RuntimeError("user approval response was not received")
+        route = engine.route_input(answer, persona_ready=True)
+        decision = route.approval_decision
+        if route.route != AgentRoute.APPROVAL_RESPONSE or decision is None:
+            raise RuntimeError("Persona did not process the approval response")
+        if decision == AgentApprovalDecision.APPROVED:
+            runtime.run(task.request)
+            if task.state != AgentTaskState.COMPLETED or executions != ["set_voice"]:
+                raise RuntimeError("approved user response was not processed")
+        elif task.state != AgentTaskState.FAILED or executions:
+            raise RuntimeError("denied user response crossed the tool boundary")
+        decision_text = string(
+            "test.agent_approval_decision_approved"
+            if decision == AgentApprovalDecision.APPROVED
+            else "test.agent_approval_decision_denied"
+        )
+        return string("test.agent_user_approval_processed", decision=decision_text)
+    finally:
+        engine.agent_runtime = original_runtime
+        engine._agent_router = original_router
+
+
 def _check_compaction(engine: Celune) -> str:
     """Verify context pressure calls the production compaction boundary."""
     compacted: list[str] = []
@@ -978,8 +1187,20 @@ def _run_tool_checks(
     engine: Celune,
     tools: tuple[AgentTool, ...],
     schemas: Mapping[str, AgentToolSchema],
+    *,
+    result_callback: Optional[Callable[[str, str, str], None]] = None,
 ) -> list[JSON]:
-    """Exercise every mapped handler with disposable state and safe adapters."""
+    """Exercise every mapped handler with disposable state and safe adapters.
+
+    Args:
+        engine: Loaded Celune core used by the agent test mode.
+        tools: Active production handlers to exercise.
+        schemas: Production schemas used to validate the active catalog.
+        result_callback: Optional callback for announcing each tool result.
+
+    Returns:
+        list[JSON]: Per-tool results and any announcement failures.
+    """
     checks: list[JSON] = []
     original_runtime = engine.agent_runtime
     original_tools = engine._agent_tools
@@ -1012,12 +1233,13 @@ def _run_tool_checks(
                         name == "set_voice_prompt"
                         and not engine.voice_prompt_supported()
                     ):
-                        checks.append(
-                            _record(
-                                name,
-                                "skipped",
-                                string("test.agent_voice_prompt_skipped"),
-                            )
+                        detail = string("test.agent_voice_prompt_skipped")
+                        _append_tool_result(
+                            checks,
+                            name,
+                            "skipped",
+                            detail,
+                            result_callback,
                         )
                         continue
 
@@ -1076,12 +1298,28 @@ def _run_tool_checks(
                     if not schema.available:
                         if status != "failed":
                             raise RuntimeError("unavailable tool unexpectedly executed")
+                        detail = string("test.agent_tool_unavailable")
+                        spoken_status = "unavailable"
                     elif status != "succeeded":
                         raise RuntimeError(execution_result.get("error") or status)
-                    checks.append(_record(name, "passed", f"status={status}"))
+                    else:
+                        detail = f"status={status}; result={_tool_output_text(execution_result)}"
+                        spoken_status = "passed"
+                    _append_tool_result(
+                        checks,
+                        name,
+                        "passed",
+                        detail,
+                        result_callback,
+                        spoken_status=spoken_status,
+                    )
                 except Exception as exc:
-                    checks.append(
-                        _record(name, "failed", str(exc) or type(exc).__name__)
+                    _append_tool_result(
+                        checks,
+                        name,
+                        "failed",
+                        str(exc) or type(exc).__name__,
+                        result_callback,
                     )
     except Exception as exc:
         checks.append(
@@ -1097,6 +1335,58 @@ def _run_tool_checks(
         engine.voice_prompt = original_voice_prompt
         engine._agent_needle_selector = old_needle
     return checks
+
+
+def _append_tool_result(
+    checks: list[JSON],
+    name: str,
+    status: str,
+    detail: str,
+    result_callback: Optional[Callable[[str, str, str], None]],
+    *,
+    spoken_status: Optional[str] = None,
+) -> None:
+    """Record one tool result and independently report its spoken outcome."""
+    checks.append(_record(name, status, detail))
+    if result_callback is None:
+        return
+    try:
+        result_callback(name, spoken_status or status, detail)
+    except Exception as exc:
+        checks.append(
+            _record(
+                f"speech.tool_result.{name}",
+                "failed",
+                str(exc) or type(exc).__name__,
+            )
+        )
+    else:
+        checks.append(
+            _record(
+                f"speech.tool_result.{name}",
+                "passed",
+                string("test.agent_tool_result_spoken"),
+            )
+        )
+
+
+def _tool_output_text(result: ToolExecutionResult) -> str:
+    """Format a bounded tool value for its diagnostic report and announcement."""
+    output = result.get("output")
+    if output is None:
+        output = result.get("error") or string("test.agent_tool_no_result")
+    if isinstance(output, dict):
+        text = ", ".join(
+            f"{key.replace('_', ' ')}: {value}" for key, value in output.items()
+        )
+    elif isinstance(output, list):
+        text = ", ".join(str(value) for value in output)
+    else:
+        text = str(output)
+    text = " ".join(text.split())
+    if len(text) > 180:
+        return f"{text[:177]}..."
+    return text
 
 
 def _tool_arguments(root: Path, engine: Celune) -> dict[str, JSON]:
