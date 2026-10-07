@@ -626,6 +626,7 @@
     "ui.recording_stream_chunk_failed": "Could not stream microphone audio from {label}.",
     "ui.recording_stream_submit_failed": "Could not stream the microphone conversion right now.",
     "ui.caption_alignment_failed": "Could not align speech captions.",
+    "ui.caption_espeak_not_found": "eSpeak not found, cannot align captions.",
     "ui.persona_recording_started": "Speak now.",
     "ui.persona_recording_listening": "Listening",
     "ui.persona_transcribing": "Transcribing",

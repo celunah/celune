@@ -50,6 +50,37 @@ def test_align_chunk_word_start_frames_reports_alignment_errors() -> None:
     assert logger.call_args.args[1] == "warning"
 
 
+def test_missing_espeak_logs_a_warning_without_traceback() -> None:
+    """Report a missing eSpeak executable as a concise warning."""
+    logger = mock.Mock()
+    aligner = captions.CaptionAligner()
+
+    with (
+        mock.patch("celune.captions.get_caption_aligner", return_value=aligner),
+        mock.patch(
+            "celune.captions.subprocess.run",
+            side_effect=FileNotFoundError("espeak-ng"),
+        ),
+    ):
+        assert (
+            captions.align_chunk_word_start_frames(
+                (np.ones(12, dtype=np.float32),),
+                48000,
+                "hello",
+                ("hello",),
+                "en-US",
+                logger,
+                "info",
+            )
+            is None
+        )
+
+    assert logger.call_args.args == (
+        captions.string("ui.caption_espeak_not_found"),
+        "warning",
+    )
+
+
 def test_caption_aligner_loads_model_lazily_and_aligns_ipa(
     tmp_path: Path,
 ) -> None:
