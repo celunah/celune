@@ -100,6 +100,9 @@ Install the optional ONNX Runtime dependency on Windows with:
 uv sync --dev --extra api --extra captions
 ```
 
+Caption alignment keeps ONNX Runtime session logs at error level, suppressing
+CPU graph-optimization warnings while preserving actual runtime errors.
+
 The `espeak-ng` executable must also be on `PATH`. If eSpeak NG or ONNX Runtime
 is missing, Celune logs a yellow warning and hides captions for the utterance;
 speech playback continues. With captions disabled, Celune does not load or

@@ -33,6 +33,7 @@ if TYPE_CHECKING:
 _ALIGNMENT_MODEL_ID = "sadda-speech/wav2vec2-espeak-ctc"
 _MODEL_SAMPLE_RATE = 16000
 _MODEL_FRAME_RATE = 50.0
+_ONNX_LOG_SEVERITY_ERROR = 3
 _ALIGNER_LOCK = threading.Lock()
 _ALIGNER: Optional[CaptionAligner] = None
 _EDGE_PUNCTUATION = string_module.punctuation + "…—–«»¡¿"
@@ -218,10 +219,13 @@ class CaptionAligner:
                     dict[str, int],
                     json.loads(Path(vocab_path).read_text(encoding="utf-8")),
                 )
+                session_options = runtime.SessionOptions()
+                session_options.log_severity_level = _ONNX_LOG_SEVERITY_ERROR
                 session = cast(
                     _InferenceSession,
                     runtime.InferenceSession(
                         model_path,
+                        sess_options=session_options,
                         providers=["CPUExecutionProvider"],
                     ),
                 )

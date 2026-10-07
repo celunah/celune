@@ -179,9 +179,13 @@ def test_caption_aligner_loads_model_lazily_and_aligns_ipa(
     session.get_outputs.return_value = (SimpleNamespace(name="logits"),)
     session.run.return_value = (logits,)
     inference_session = mock.Mock(return_value=session)
+    session_options = SimpleNamespace(log_severity_level=2)
     download = mock.Mock(side_effect=("model.onnx", str(vocab_path)))
     hub = SimpleNamespace(hf_hub_download=download)
-    runtime = SimpleNamespace(InferenceSession=inference_session)
+    runtime = SimpleNamespace(
+        InferenceSession=inference_session,
+        SessionOptions=mock.Mock(return_value=session_options),
+    )
     aligner = captions.CaptionAligner()
     waveform = np.linspace(-0.5, 0.5, 14400, dtype=np.float32)
 
@@ -218,8 +222,10 @@ def test_caption_aligner_loads_model_lazily_and_aligns_ipa(
     ]
     inference_session.assert_called_once_with(
         "model.onnx",
+        sess_options=session_options,
         providers=["CPUExecutionProvider"],
     )
+    assert session_options.log_severity_level == 3
     assert session.run.call_count == 2
     assert espeak.call_args.args[0] == [
         "espeak-ng",
