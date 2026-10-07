@@ -336,8 +336,8 @@ class TestUIStartup(CeluneTestCase):
             app = Harness()
             async with app.run_test(size=(80, 24)) as pilot:
                 await pilot.pause()
-                assert str(screen.query_one("#loading-brand", Static).render()) == (
-                    APP_NAME
+                assert str(screen.query_one("#header", Static).render()) == (
+                    "  ".join(APP_NAME.upper())
                 )
                 screen.set_latest_log_message("Backend initialized")
                 self.assertEqual(

@@ -875,7 +875,7 @@ def compose() -> _app.ComposeResult:
     with _app.Vertical(id="container"):
         with _app.Horizontal(id="header-container"):
             yield _app.Label("", classes="line")
-            yield _app.Label(_app.APP_NAME, id="header")
+            yield _app.Label("  ".join(_app.APP_NAME.upper()), id="header")
             yield _app.Label("", classes="line")
         yield _app.RichLog(id="logs", wrap=True, markup=False)
         yield _app.Label("", id="caption", markup=False)

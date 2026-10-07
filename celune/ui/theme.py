@@ -45,8 +45,9 @@ CELUNE_CSS = """
 
     #loading-content {
         width: 1fr;
-        max-width: 70;
         height: auto;
+        max-width: 90;
+        padding: 1;
         align: center middle;
     }
 
