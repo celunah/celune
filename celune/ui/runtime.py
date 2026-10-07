@@ -963,7 +963,11 @@ def on_mount(self) -> None:
 
 def _start_deferred_runtime(self) -> None:
     """Start constructing Celune after the initial loading frame renders."""
-    self.run_worker(self._load_deferred_runtime, thread=True, exclusive=True)
+    threading.Thread(
+        target=self._load_deferred_runtime,
+        name="celune-ui-runtime-startup",
+        daemon=True,
+    ).start()
 
 
 def _startup_terminal_status_for(
@@ -1028,10 +1032,17 @@ def _load_deferred_runtime(self) -> None:
             celune = self._startup_loader()
         _app._load_ui_runtime_dependencies()
     except BaseException as exc:
-        self.call_from_thread(self._handle_deferred_runtime_error, exc)
+        try:
+            self.call_from_thread(self._handle_deferred_runtime_error, exc)
+        except RuntimeError:
+            pass
         return
     if celune is not None:
-        self.call_from_thread(self.attach_celune, celune)
+        try:
+            self.call_from_thread(self.attach_celune, celune)
+        except RuntimeError:
+            with contextlib.suppress(Exception):
+                celune.close()
 
 
 def _handle_deferred_runtime_error(self, error: BaseException) -> None:

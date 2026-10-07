@@ -60,6 +60,7 @@ from textual.containers import Vertical, Horizontal
 
 from ..i18n import string, tagged_string
 from .theme import CELUNE_CSS, severity_color
+from .compat import install_textual_timer_sleep
 from .loading import CeluneLoadingScreen
 from ..threads import run_in_daemon_thread
 from .terminal import SelectMenuOption, SelectMenuWidget
@@ -75,6 +76,8 @@ from ..typing.locks import (
 from ..typing.common import JSONSerializable
 from ..typing.config import AudioDeviceInfoValue
 from ..theme.defaults import default_theme_family, default_error_theme_family
+
+install_textual_timer_sleep()
 
 if TYPE_CHECKING:
     import sounddevice as sd
@@ -1392,12 +1395,24 @@ class CeluneUI(App, CeluneUIMethodSurface):
             if self.cur_state != "exiting" and self.celune.sleeping:
                 self.safe_status(string("ui.sleeping_status"), "sleeping")
 
-    @work(thread=True, exclusive=True)
     def load_tts(self) -> None:
+        """Start runtime loading in a daemon thread."""
+        threading.Thread(
+            target=self._load_tts,
+            name="celune-ui-runtime-load",
+            daemon=True,
+        ).start()
+
+    def _load_tts(self) -> None:
         """Load the app runtime."""
+        if self.cur_state == "exiting":
+            return
         self._latest_startup_error = None
         try:
-            if self.celune.load():
+            loaded = self.celune.load()
+            if self.cur_state == "exiting":
+                return
+            if loaded:
                 self.celune_styles = self.celune.voices
                 if not self.celune_styles:
                     if self._is_ui_test_mode():
@@ -1457,6 +1472,8 @@ class CeluneUI(App, CeluneUIMethodSurface):
                 self._show_loading_error(failure_message)
                 self._finish_test_startup(False, failure_message)
         except Exception as e:
+            if self.cur_state == "exiting":
+                return
             self.cur_state = "error"
             error_message = format_error_message(
                 tagged_string("ui.init_error", "INIT ERROR"),

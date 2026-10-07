@@ -25,6 +25,7 @@ from textual.widgets import Label, Static, RichLog, TextArea, ProgressBar
 from textual.containers import Vertical
 
 from celune.ui import app as ui_app
+from celune.ui import compat as ui_compat
 from celune.ui import terminal as ui_terminal
 from celune.ui import resources as ui_resources
 from celune.i18n import string, tagged_string
@@ -72,6 +73,54 @@ class TestUIStartup(CeluneTestCase):
         )
         assert isinstance(error, SystemExit)
         assert error.code == 4
+
+    def test_deferred_startup_uses_a_daemon_thread(self) -> None:
+        """Verify deferred runtime loading cannot hold up executor shutdown."""
+        ui = CeluneUI(startup_loader=mock.Mock())
+
+        with mock.patch("celune.ui.runtime.threading.Thread") as thread_type:
+            ui._start_deferred_runtime()
+
+        thread_type.assert_called_once_with(
+            target=ui._load_deferred_runtime,
+            name="celune-ui-runtime-startup",
+            daemon=True,
+        )
+        thread_type.return_value.start.assert_called_once_with()
+
+    def test_model_loading_uses_a_daemon_thread(self) -> None:
+        """Verify model loading cannot hold up executor shutdown."""
+        ui = CeluneUI()
+
+        with mock.patch("celune.ui.app.threading.Thread") as thread_type:
+            ui.load_tts()
+
+        thread_type.assert_called_once_with(
+            target=ui._load_tts,
+            name="celune-ui-runtime-load",
+            daemon=True,
+        )
+        thread_type.return_value.start.assert_called_once_with()
+
+    def test_windows_textual_timers_do_not_use_the_default_executor(self) -> None:
+        """Verify Windows Textual timer sleeps use cancellable asyncio waits."""
+        textual_timer = ui_compat.textual_timer
+        original_sleep = textual_timer.sleep
+        try:
+            textual_timer.sleep = mock.Mock()
+            with mock.patch.object(ui_compat.sys, "platform", "win32"):
+                ui_compat.install_textual_timer_sleep()
+
+            self.assertIs(textual_timer.sleep, ui_compat._asyncio_timer_sleep)
+
+            with mock.patch.object(
+                asyncio.BaseEventLoop,
+                "run_in_executor",
+                side_effect=AssertionError("timer sleep used the default executor"),
+            ):
+                asyncio.run(textual_timer.sleep(0.001))
+        finally:
+            textual_timer.sleep = original_sleep
 
     def test_linux_terminal_stream_does_not_need_lazy_discard_export(self) -> None:
         """Verify Linux terminal setup works before deferred UI imports complete."""
@@ -1303,8 +1352,7 @@ class TestUIStartup(CeluneTestCase):
                     side_effect=lambda callback, *args: callback(*args),
                 ),
             ):
-                load_tts = getattr(CeluneUI.load_tts, "__wrapped__", CeluneUI.load_tts)
-                load_tts(ui)
+                ui._load_tts()
 
             terminal.write.assert_called_with(f"\x1b]0;{APP_NAME} ・ Ready ・ Idle\x07")
             terminal.flush.assert_called()
@@ -1366,8 +1414,7 @@ class TestUIStartup(CeluneTestCase):
         )
         ui.error = mock.Mock()
 
-        load_tts = getattr(CeluneUI.load_tts, "__wrapped__", CeluneUI.load_tts)
-        load_tts(ui)
+        ui._load_tts()
 
         ui.error.assert_called_once_with(f"{APP_NAME} could not start")
         assert ui.cur_state == "error"
@@ -1397,11 +1444,10 @@ class TestUIStartup(CeluneTestCase):
             ),
         )
 
-        load_tts = getattr(CeluneUI.load_tts, "__wrapped__", CeluneUI.load_tts)
         patched_modules = dict(sys.modules)
         patched_modules.pop("pytest", None)
         with mock.patch("celune.ui.app.sys.modules", patched_modules):
-            load_tts(ui)
+            ui._load_tts()
 
         ui.safe_status.assert_called_once_with(string("ui.test_mode_active"))
         ui.safe_progress.assert_called_once_with(1, 1)
@@ -1430,8 +1476,7 @@ class TestUIStartup(CeluneTestCase):
             ),
         )
 
-        load_tts = getattr(CeluneUI.load_tts, "__wrapped__", CeluneUI.load_tts)
-        load_tts(ui)
+        ui._load_tts()
 
         ui.tts_voice_changed.assert_called_once_with("balanced")
 

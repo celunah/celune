@@ -210,6 +210,10 @@ asked to shut down, streams are closed, models release their state, and event
 listeners receive terminal notifications. Pipeline blocking work uses daemon
 threads rather than the event loop's default executor, so a cancelled backend
 or reload operation cannot make `asyncio.run()` wait for the executor's
-300-second join window during restart. CEDTS backends receive an abort/shutdown
-request before their daemon caller is abandoned. A fatal state can stop
-generation without pretending that the engine is healthy.
+300-second join window during restart. The Textual UI also uses daemon threads
+for deferred runtime construction and model loading. On Windows, Textual timer
+waits use cancellable event-loop sleeps instead of blocking default-executor
+threads. These paths let UI shutdown finish without waiting for abandoned
+startup work or timer threads. CEDTS backends receive an abort/shutdown request
+before their daemon caller is abandoned. A fatal state can stop generation
+without pretending that the engine is healthy.
