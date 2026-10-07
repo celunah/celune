@@ -62,6 +62,10 @@ class _InferenceSession(Protocol):
         """Evaluate the ONNX graph."""
 
 
+class _EspeakExecutableNotFound(FileNotFoundError):
+    """Identify eSpeak NG launch failures for a concise user warning."""
+
+
 class CaptionAligner:
     """Lazily load the IPA acoustic model and align transcript words."""
 
@@ -219,6 +223,9 @@ def align_chunk_word_start_frames(
             max(0, min(len(chunk_audio), round(start * sample_rate)))
             for start, _end in aligned_timings
         )
+    except _EspeakExecutableNotFound:
+        logger(string("ui.caption_espeak_not_found"), "warning")
+        return None
     except Exception as error:
         logger(
             format_error_message(
@@ -364,13 +371,16 @@ def _phonemize(transcript: str, voice: str) -> tuple[tuple[str, ...], ...]:
         word = token.strip(_EDGE_PUNCTUATION)
         if not word:
             continue
-        result = subprocess.run(
-            ["espeak-ng", "-q", "--ipa", "-v", voice, word],
-            check=True,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-        )
+        try:
+            result = subprocess.run(
+                ["espeak-ng", "-q", "--ipa", "-v", voice, word],
+                check=True,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+            )
+        except FileNotFoundError as error:
+            raise _EspeakExecutableNotFound("espeak-ng") from error
         ipa = result.stdout.replace("\n", " ").translate(
             {ord(mark): None for mark in _STRESS_MARKS}
         )
