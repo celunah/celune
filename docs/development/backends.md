@@ -219,14 +219,18 @@ The isolated worker log bridge also suppresses the known TorchAO invalid-escape
 source warning and PyTorch's Windows/macOS redirect-support note; backend
 tracebacks and actionable errors remain visible.
 
-Persona attention caches have a separate core-owned policy because TorchAO's
-weight-only APIs do not quantize runtime K/V activations. With
-`quantize_kv_cache: true`, the Transformers cache stores older full-attention
-keys and values as INT8 on Ampere or FP8 on `sm89+`, with a short BF16 tail for
-recent tokens. It dequantizes the compact prefix only for each attention
-operation and falls back to the normal dynamic cache if the model layout or
-runtime does not support the custom cache. The cache object is request-scoped;
-the generation cleanup path drops it before releasing allocator blocks.
+Runtime KV-cache quantization is separate from TorchAO's weight-only policy.
+With `quantize_kv_cache: true`, Persona and the Qwen3 and FireRedTTS3 decoder
+caches store older full-attention keys and values as INT8 on Ampere or FP8 on
+`sm89+`, while keeping a short recent-token tail in the model's compute dtype.
+Attention receives dequantized values in that dtype. Qwen3 uses its dynamic
+cache path instead of CUDA graphs while this policy is active. When cache
+construction is unsupported, each backend keeps its native cache.
+
+VoxCPM2 uses two custom static MiniCPM caches, so its adapter supplies compact
+prefix storage and dequantizes each prefix for attention while preserving the
+existing cache capacity bound. Mini/Pocket TTS, dots.tts MeanFlow, and LuxTTS
+do not use autoregressive KV caches. Whisper and Needle are outside this policy.
 
 VoxCPM2 does not expose a Transformers cache boundary. Its two private static
 MiniCPM caches are therefore bounded at the adapter boundary to 2048 positions

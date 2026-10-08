@@ -4,11 +4,11 @@
 import os
 import time
 import contextlib
-from typing import Union, Optional
+from typing import Union, Optional, cast
 from collections.abc import Mapping, Callable, Iterator, Generator
 
-import numpy as np
 import torch
+import numpy as np
 from voxcpm import VoxCPM
 from transformers import AutoTokenizer
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
@@ -28,6 +28,7 @@ from ...utils import available, custom_assert
 from ...cevoice import CEVoiceLoader, default_loader
 from ...constants import BASE_SR
 from ...typing.aliases import AudioChunk, AudioChunks
+from .voxcpm_cache import _VoxCPMModel, install_voxcpm_quantized_cache
 
 _VOXCPM_RUNTIME_KV_CACHE_LENGTH = 2048
 
@@ -110,8 +111,14 @@ class VoxCPM2(CeluneBackend[VoxCPM]):
         log: Callable[[str, str], None],
         fatal: Optional[Callable[[], None]] = None,
         quantize: bool = True,
+        quantize_kv_cache: bool = True,
     ) -> None:
-        super().__init__(log=log, fatal=fatal, quantize=quantize)
+        super().__init__(
+            log=log,
+            fatal=fatal,
+            quantize=quantize,
+            quantize_kv_cache=quantize_kv_cache,
+        )
         self.log = log
         self.optimize_enabled = False
         self._validate_refs()
@@ -291,6 +298,10 @@ class VoxCPM2(CeluneBackend[VoxCPM]):
                     target_text="Hello, this is the first test sentence.",
                     max_len=10,
                 )
+        install_voxcpm_quantized_cache(
+            cast(_VoxCPMModel, self.model),
+            self.quantize_kv_cache,
+        )
         return self.model
 
     @staticmethod

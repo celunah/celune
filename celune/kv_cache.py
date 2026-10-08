@@ -1,17 +1,23 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Memory-bounded key/value caches for Persona generation."""
+"""Memory-bounded key/value caches for autoregressive model generation."""
 
 from __future__ import annotations
 
-from typing import Union, Literal, Optional, cast
+from typing import TYPE_CHECKING, Literal, Optional, Union, cast
 
 import torch
 from transformers.cache_utils import (
     Cache,
     CacheLayerMixin,
-    LinearAttentionCacheLayerMixin,
 )
-from transformers.configuration_utils import PreTrainedConfig
+
+try:
+    from transformers.cache_utils import LinearAttentionCacheLayerMixin
+except ImportError:
+    LinearAttentionCacheLayerMixin = CacheLayerMixin
+
+if TYPE_CHECKING:
+    from transformers.configuration_utils import PreTrainedConfig
 
 QuantizedKVCacheMode = Literal["int8", "fp8"]
 
@@ -79,7 +85,7 @@ def _cache_layer_types(config: PreTrainedConfig) -> Optional[list[str]]:
 
 
 class _QuantizedKVCacheLayer(CacheLayerMixin):
-    """One attention layer with a quantized prefix and BF16 residual tail."""
+    """One attention layer with a quantized prefix and compute-dtype tail."""
 
     is_sliding = False
 
@@ -112,9 +118,11 @@ class _QuantizedKVCacheLayer(CacheLayerMixin):
     def lazy_initialization(
         self,
         key_states: torch.Tensor,
-        value_states: torch.Tensor,
+        value_states: Optional[torch.Tensor] = None,
     ) -> None:
         """Initialize metadata and empty storage from the first attention states."""
+        if value_states is None:
+            value_states = key_states
         self.dtype = key_states.dtype
         self.device = key_states.device
         self.batch_size = key_states.shape[0]
@@ -164,8 +172,16 @@ class _QuantizedKVCacheLayer(CacheLayerMixin):
 
         return self._dequantized_cache()
 
-    def get_mask_sizes(self, query_length: int) -> tuple[int, int]:
+    def get_mask_sizes(
+        self,
+        query_length: Union[int, torch.Tensor],
+    ) -> tuple[int, int]:
         """Return the attention mask dimensions for the current cache length."""
+        query_length = (
+            query_length.shape[0]
+            if isinstance(query_length, torch.Tensor)
+            else query_length
+        )
         return self.get_seq_length() + query_length, 0
 
     def get_seq_length(self) -> int:
@@ -174,6 +190,10 @@ class _QuantizedKVCacheLayer(CacheLayerMixin):
 
     def get_max_length(self) -> int:
         """Return ``-1`` because the cache grows with the generation request."""
+        return -1
+
+    def get_max_cache_shape(self) -> int:
+        """Return ``-1`` because this cache has no fixed maximum length."""
         return -1
 
     def crop(self, max_length: int) -> None:
@@ -418,7 +438,7 @@ class _QuantizedKVCacheLayer(CacheLayerMixin):
     def _residual_states(self) -> tuple[torch.Tensor, torch.Tensor]:
         """Return the initialized full-precision residual tensors."""
         if self.keys is None or self.values is None:
-            raise RuntimeError("Persona KV cache layer is not initialized")
+            raise RuntimeError("KV cache layer is not initialized")
         return self.keys, self.values
 
     def _quantized_length(self) -> int:
@@ -439,7 +459,7 @@ class QuantizedKVCache(Cache):
     ) -> None:
         layer_types = _cache_layer_types(config)
         if layer_types is None:
-            raise ValueError("Persona model cache layout is not supported")
+            raise ValueError("model cache layout is not supported")
         layers = cast(
             list[CacheLayerMixin],
             [_QuantizedKVCacheLayer(mode, residual_length) for _ in layer_types],
@@ -455,12 +475,33 @@ class QuantizedKVCache(Cache):
         """Expose dequantized tuples for compatibility consumers."""
         for layer in self.layers:
             if not isinstance(layer, _QuantizedKVCacheLayer):
-                raise TypeError("unexpected Persona cache layer")
+                raise TypeError("unexpected quantized cache layer")
             if not layer.is_initialized:
-                yield layer.keys, layer.values, None
+                yield layer.keys, layer.values
                 continue
             keys, values = layer._dequantized_cache()
-            yield keys, values, None
+            yield keys, values
+
+    def __getitem__(self, layer_idx: int) -> tuple[torch.Tensor, torch.Tensor]:
+        """Return the complete dequantized state for a compatibility consumer."""
+        if layer_idx >= len(self.layers):
+            raise KeyError(
+                f"Cache only has {len(self.layers)} layers, "
+                f"attempted to access layer with index {layer_idx}"
+            )
+        layer = self.layers[layer_idx]
+        if not isinstance(layer, _QuantizedKVCacheLayer):
+            raise TypeError("unexpected quantized cache layer")
+        if not layer.is_initialized:
+            return cast(tuple[torch.Tensor, torch.Tensor], (layer.keys, layer.values))
+        return layer._dequantized_cache()
+
+    def to_legacy_cache(self) -> tuple[tuple[torch.Tensor, torch.Tensor], ...]:
+        """Convert each layer to full-precision legacy key/value tensors."""
+        return cast(
+            tuple[tuple[torch.Tensor, torch.Tensor], ...],
+            tuple(self),
+        )
 
 
 def create_quantized_kv_cache(

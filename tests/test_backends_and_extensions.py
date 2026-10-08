@@ -422,6 +422,7 @@ class TestBackend(CeluneTestCase):
         with mock_voxcpm_backend() as voxcpm2_cls:
             backend = voxcpm2_cls.__new__(voxcpm2_cls)
             backend.log = mock.Mock()
+            backend.quantize_kv_cache = True
             model = object()
             voxcpm_module = sys.modules[voxcpm2_cls.__module__]
             voxcpm_loader = voxcpm_module.__dict__["VoxCPM"]
@@ -439,6 +440,7 @@ class TestBackend(CeluneTestCase):
                     "model_is_available_locally",
                     side_effect=[(True, "cached"), (False, None), (False, None)],
                 ),
+                mock.patch.object(voxcpm_module, "install_voxcpm_quantized_cache"),
             ):
                 assert backend.load_model("openbmb/VoxCPM2") is model
                 assert backend.load_model("openbmb/VoxCPM2") is model
@@ -454,6 +456,7 @@ class TestBackend(CeluneTestCase):
             backend = voxcpm2_cls.__new__(voxcpm2_cls)
             backend.log = mock.Mock()
             backend.quantization_mode = "int8"
+            backend.quantize_kv_cache = True
             runtime = mock.Mock()
             runtime.base_lm.kv_cache = None
             runtime.residual_lm.kv_cache = None
@@ -483,6 +486,10 @@ class TestBackend(CeluneTestCase):
                     "apply_runtime_quantization",
                     return_value=model,
                 ) as quantize,
+                mock.patch.object(
+                    voxcpm_module,
+                    "install_voxcpm_quantized_cache",
+                ),
             ):
                 assert backend.load_model("openbmb/VoxCPM2") is model
 
@@ -957,7 +964,7 @@ class TestBackend(CeluneTestCase):
             _FireRedRedAE,
             SimpleNamespace(decoder=decoder),
         )
-        incremental = _FireRedIncrementalDecoder(redae)
+        incremental = _FireRedIncrementalDecoder(redae, torch.device("cpu"), True)
 
         prompt_audio, prompt_start = incremental.push(torch.zeros(1, 1, 1))
         generated_audio, generated_start = incremental.push(torch.zeros(1, 1, 1))

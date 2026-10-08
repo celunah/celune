@@ -23,8 +23,8 @@ from transformers.cache_utils import Cache
 from transformers.configuration_utils import PreTrainedConfig
 from transformers.tokenization_utils_base import BatchEncoding
 
-from .cache import create_quantized_kv_cache
 from .capabilities import PersonaCapabilities
+from ..kv_cache import create_quantized_kv_cache
 from ..constants import (
     N_A_STR,
     PERSONA_CONTEXT_SPACE,

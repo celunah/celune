@@ -15,7 +15,7 @@ before the interface opens. `celune config view` prints the active file and
 | --- | --- | --- |
 | `backend` | `null` | TTS or VC backend name. `null` lets Celune choose its normal backend. |
 | `quantize` | `true` | Try contract-approved TTS weight-only quantization: INT8 on Ampere and FP8 on sm89 or newer, with BF16 recovery. LuxTTS is excluded. |
-| `quantize_kv_cache` | `true` | Store Persona's attention-cache prefix in INT8 on Ampere or FP8 on `sm89+`; use `false` for the normal dynamic cache. |
+| `quantize_kv_cache` | `true` | Store supported Persona, Qwen3, FireRedTTS3, and VoxCPM2 cache prefixes in INT8 on Ampere or FP8 on `sm89+`; use `false` to keep their native cache dtype. |
 | `voice_bundle` | `default` | CEVOICE/CECHAR name or path. |
 | `log_level` | `info` | `info`, `verbose`, or `debug`. |
 | `locale` | `null` | Locale override; `null` uses system detection. |
@@ -50,6 +50,9 @@ confirmed configuration that exceeds its preset budget or current headroom is
 rejected. An unprofiled configuration is allowed to continue and logs:
 `This configuration is unprofiled and may not work on your hardware configuration.`
 It can still fail at load or inference time if the GPU runs out of memory.
+The `quantize_kv_cache` setting is part of this profile identity. Existing
+Qwen3 measurements cover native TTS caches, so quantized-cache configurations
+remain unprofiled until measured separately.
 
 ### TTS quantization
 
@@ -248,13 +251,15 @@ history should be compacted, and `max_turns: null` leaves the turn count
 unbounded unless the memory settings impose a shorter history. Context is
 capped at 2,048 tokens outside agent mode and 8,192 tokens in agent mode.
 
-Persona generation uses the configured `quantize_kv_cache` policy on CUDA. The
-quantized cache keeps a short BF16 tail for recent tokens and stores older
-keys and values with one scale per token. INT8 is selected for Ampere GPUs;
-FP8 is selected for `sm89` and newer GPUs. The cache is dequantized only for
-the attention operation, so the model still computes attention in its normal
-dtype. Unsupported cache layouts, unavailable FP8 support, or a cache
-runtime failure fall back to the regular dynamic cache for that request.
+Persona, Qwen3, FireRedTTS3, and VoxCPM2 use the configured
+`quantize_kv_cache` policy for supported CUDA caches. Older keys and values
+use INT8 on Ampere GPUs or FP8 on `sm89` and newer GPUs; recent tokens remain
+in the model's compute dtype. Attention uses dequantized values, so model
+compute retains its normal dtype. Qwen3 switches from CUDA-graph decoding to
+its dynamic-cache path while this option is active. Unsupported cache layouts
+or unavailable quantized storage use the backend's native cache. Mini/Pocket
+TTS, dots.tts MeanFlow, and LuxTTS do not use autoregressive KV caches. Whisper
+and Needle are not affected.
 `context_size` is an upper bound: input encoding is limited to that bound while
 leaving room for at least one response token, and generation is capped by the
 remaining space after the actual prompt tokens are counted. The dynamic cache

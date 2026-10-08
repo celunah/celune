@@ -260,9 +260,15 @@ class TestVram(CeluneTestCase):
             mock.patch.dict("celune.vram.os.environ", {"CELUNE_TTS_QUANTIZE": "true"}),
         ):
             key = vram_profile_key(config)
-            assert key in VRAM_PROFILES
-            assert key[22] == "whisper-id:openai/whisper-large-v3-turbo"
-            assert key[23] == f"whisper-revision:{whisper_revision}"
+            assert "tts-kv:True" in key
+            assert key not in VRAM_PROFILES
+
+            persona_config["quantize_kv_cache"] = True
+            config["quantize_kv_cache"] = False
+            native_cache_key = vram_profile_key(config)
+            assert native_cache_key in VRAM_PROFILES
+            assert native_cache_key[23] == "whisper-id:openai/whisper-large-v3-turbo"
+            assert native_cache_key[24] == f"whisper-revision:{whisper_revision}"
 
             persona_config["speech_model_id"] = "openai/whisper-small"
             custom_whisper_key = vram_profile_key(config)

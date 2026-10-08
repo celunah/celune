@@ -10,17 +10,18 @@ import tempfile
 import threading
 import contextlib
 import urllib.request
-from typing import TYPE_CHECKING, ClassVar, Optional, Protocol, cast
 from pathlib import Path
 from collections.abc import Callable, Iterator, Generator
+from typing import TYPE_CHECKING, ClassVar, Optional, Protocol, cast
 
-import numpy as np
 import torch
 import torchaudio
+import numpy as np
 from huggingface_hub import snapshot_download
 
 if TYPE_CHECKING:
     from transformers.cache_utils import Cache
+    from transformers.configuration_utils import PreTrainedConfig
 
 from .base import (
     CeluneBackend,
@@ -28,15 +29,16 @@ from .base import (
     local_hf_offline_mode,
     cached_hf_snapshot_path,
 )
-from ...i18n import string
 from ...paths import (
     runtime_data_dir,
     huggingface_progress,
     huggingface_hub_cache_dir,
 )
+from ...i18n import string
 from ...cevoice import CEVoiceLoader, default_loader
 from ...typing.aliases import AudioChunk
 from ...typing.backends import BackendModel
+from ...kv_cache import create_quantized_kv_cache
 
 __all__ = ["FireRedTTS3"]
 
@@ -161,7 +163,12 @@ class _FireRedAudioDecoder(Protocol):
 class _FireRedIncrementalDecoder:
     """Decode FireRed latent batches without re-running the completed prefix."""
 
-    def __init__(self, redae: _FireRedRedAE) -> None:
+    def __init__(
+        self,
+        redae: _FireRedRedAE,
+        device: torch.device,
+        quantize_kv_cache: bool,
+    ) -> None:
         """Initialize cached Qwen3 and overlap-add decoder state."""
         self._decoder = redae.decoder
         istft = self._decoder.istft_head.istft
@@ -169,7 +176,14 @@ class _FireRedIncrementalDecoder:
         self._hop_length = istft.hop_length
         self._padding = (self._n_fft - self._hop_length) // 2
         self._window = istft.window
-        self._cache: Optional[Cache] = None
+        try:
+            self._cache = create_quantized_kv_cache(
+                config=cast("PreTrainedConfig", self._decoder.qwen3.config),
+                device=device,
+                enabled=quantize_kv_cache,
+            )
+        except (TypeError, ValueError):
+            self._cache = None
         self._frame_count = 0
         self._raw_cursor = 0
         self._ola: Optional[torch.Tensor] = None
@@ -295,6 +309,7 @@ def _create_firered_model(
         Callable[[Optional[float], Optional[float]], None]
     ] = None,
     cpu_first: bool = False,
+    quantize_kv_cache: bool = True,
 ) -> _FireRedModel:
     """Construct FireRedTTS3 with Celune's supported attention path.
 
@@ -303,6 +318,7 @@ def _create_firered_model(
         log: Optional callback for model-loading progress messages.
         report_progress: Optional callback for model-loading progress values.
         cpu_first: Load model components on CPU for pre-CUDA quantization.
+        quantize_kv_cache: Whether to use a supported compact attention cache.
 
     Returns:
         _FireRedModel: The loaded FireRedTTS3 model.
@@ -393,7 +409,17 @@ def _create_firered_model(
                     self.history_patches,
                     input_embeds.shape[-1],
                 )
-                backbone_cache = None
+                try:
+                    backbone_cache = create_quantized_kv_cache(
+                        config=cast(
+                            "PreTrainedConfig",
+                            self.backbone_llm.config,
+                        ),
+                        device=device,
+                        enabled=quantize_kv_cache,
+                    )
+                except (TypeError, ValueError):
+                    backbone_cache = None
 
                 max_gen_steps = 400 if max_gen_steps is None else max_gen_steps
                 for step_index in range(max_gen_steps):
@@ -672,12 +698,14 @@ class FireRedTTS3(CeluneBackend[_FireRedModel]):
         model_id: Optional[str] = None,
         fatal: Optional[Callable[[], None]] = None,
         quantize: bool = True,
+        quantize_kv_cache: bool = True,
     ) -> None:
         super().__init__(
             log=log,
             model_name=model_id or self.model_repo,
             fatal=fatal,
             quantize=quantize,
+            quantize_kv_cache=quantize_kv_cache,
         )
         self._validate_refs()
 
@@ -976,6 +1004,7 @@ class FireRedTTS3(CeluneBackend[_FireRedModel]):
                 log=self.log,
                 report_progress=self.report_progress,
                 cpu_first=getattr(self, "quantization_mode", None) is not None,
+                quantize_kv_cache=self.quantize_kv_cache,
             )
         self.log(string("fireredtts3.finalizing_model"), "info")
         self.report_progress(3, 4)
@@ -1061,7 +1090,11 @@ class FireRedTTS3(CeluneBackend[_FireRedModel]):
                 seed=seed,
             ):
                 if decoder is None:
-                    decoder = _FireRedIncrementalDecoder(model.redae)
+                    decoder = _FireRedIncrementalDecoder(
+                        model.redae,
+                        model.device,
+                        self.quantize_kv_cache,
+                    )
                     decoder.push(prompt_latents)
 
                 audio, audio_start = decoder.push(latent_patch)

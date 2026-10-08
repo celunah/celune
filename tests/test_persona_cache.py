@@ -1,13 +1,13 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for Persona's compact attention-cache storage."""
 
-from typing import ClassVar, cast
 from unittest.mock import patch
+from typing import ClassVar, cast
 
 import torch
 from transformers.configuration_utils import PreTrainedConfig
 
-from celune.persona.cache import (
+from celune.kv_cache import (
     QuantizedKVCache,
     _QuantizedKVCacheLayer,
     quantized_kv_cache_mode,
@@ -60,6 +60,8 @@ def test_int8_cache_keeps_recent_tail_in_compute_dtype() -> None:
         == layer._quantized_keys.numel()
     )
     torch.testing.assert_close(second_keys[..., -2:, :], keys[..., -2:, :])
+    torch.testing.assert_close(cache[0][0], second_keys)
+    torch.testing.assert_close(cache.to_legacy_cache()[0][1], second_values)
 
 
 def test_quantized_cache_crop_and_reset_release_logical_tokens() -> None:
@@ -91,11 +93,11 @@ def test_quantized_kv_cache_mode_selects_hardware_policy() -> None:
     """Use INT8 on Ampere and FP8 on Ada-class CUDA devices."""
     with (
         patch(
-            "celune.persona.cache.torch.cuda.is_available",
+            "celune.kv_cache.torch.cuda.is_available",
             return_value=True,
         ),
         patch(
-            "celune.persona.cache.torch.cuda.get_device_capability",
+            "celune.kv_cache.torch.cuda.get_device_capability",
             return_value=(8, 6),
         ),
     ):
@@ -103,11 +105,11 @@ def test_quantized_kv_cache_mode_selects_hardware_policy() -> None:
 
     with (
         patch(
-            "celune.persona.cache.torch.cuda.is_available",
+            "celune.kv_cache.torch.cuda.is_available",
             return_value=True,
         ),
         patch(
-            "celune.persona.cache.torch.cuda.get_device_capability",
+            "celune.kv_cache.torch.cuda.get_device_capability",
             return_value=(8, 9),
         ),
     ):

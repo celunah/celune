@@ -245,6 +245,7 @@ class CeluneBackend[ModelT](ABC):
         model_name: Optional[str] = None,
         fatal: Optional[Callable[[], None]] = None,
         quantize: bool = True,
+        quantize_kv_cache: bool = True,
     ) -> None:
         self.model_name: Optional[str]
         if model_name is not None:
@@ -258,6 +259,7 @@ class CeluneBackend[ModelT](ABC):
         self.log = log
         self._fatal_callback = fatal
         self.quantization_requested = quantize
+        self.quantize_kv_cache = quantize_kv_cache
         self.quantization_mode: Optional[QuantizationMode] = quantization_mode(quantize)
         self.quantization_active = False
         self.quantization_attempted = False

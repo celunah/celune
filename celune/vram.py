@@ -314,6 +314,17 @@ def vram_profile_key(
                 quantization = "int8"
     elif backend == "mini":
         quantization = "cpu"
+    cache_quantization = bool(
+        persona.get("quantize_kv_cache", values.get("quantize_kv_cache", True))
+    )
+    kv_cache_signature = (
+        f"persona-kv:{cache_quantization}" if persona_active else "no-persona-kv"
+    )
+    tts_kv_cache_signature = (
+        (f"tts-kv:{bool(values.get('quantize_kv_cache', True))}",)
+        if backend in {"qwen3", "fireredtts3", "voxcpm2"}
+        else ()
+    )
     return (
         gpu_name,
         sys.platform,
@@ -330,9 +341,8 @@ def vram_profile_key(
         context_key,
         agent_context_key,
         quantization,
-        f"persona-kv:{bool(persona.get('quantize_kv_cache', values.get('quantize_kv_cache', True)))}"
-        if persona_active
-        else "no-persona-kv",
+        kv_cache_signature,
+        *tts_kv_cache_signature,
         "persona" if persona_active else "no-persona",
         "agent" if agent_active else "no-agent",
         "normalizer" if normalizer_enabled else "no-normalizer",
@@ -363,6 +373,9 @@ def _tts_profile_key(
     quantization: str,
 ) -> tuple[str, ...]:
     """Build a fixed key for a measured RTX 5070 TTS-only configuration."""
+    tts_kv_cache_signature = (
+        ("tts-kv:False",) if backend in {"qwen3", "fireredtts3", "voxcpm2"} else ()
+    )
     return (
         _MEASURED_GPU_NAME,
         _MEASURED_PLATFORM,
@@ -380,6 +393,7 @@ def _tts_profile_key(
         "no-agent-context",
         quantization,
         "no-persona-kv",
+        *tts_kv_cache_signature,
         "no-persona",
         "no-agent",
         "no-normalizer",
@@ -494,6 +508,7 @@ _QWEN3_PERSONA_WHISPER_HIGH_KEY = (
     "no-agent-context",
     "fp8",
     "persona-kv:True",
+    "tts-kv:False",
     "persona",
     "no-agent",
     "no-normalizer",

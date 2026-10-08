@@ -284,6 +284,28 @@ class TestCeluneCore(CeluneTestCase):
         assert celune.backend.name == "fake"
         assert celune.tts_backend == "fake"
 
+    def test_tts_cache_quantization_setting_reaches_initial_and_reloaded_backends(
+        self,
+    ) -> None:
+        """Pass the shared cache policy into cache-backed TTS workers."""
+        with (
+            mock.patch("celune.celune.AudioRGBGlow", FakeGlow),
+            mock.patch("celune.celune.default_loader", return_value=None),
+            mock.patch("celune.celune.persona_is_available", return_value=False),
+            mock.patch(
+                "celune.celune.resolve_backend",
+                return_value=FakeBackend(),
+            ) as resolve,
+        ):
+            celune = Celune(
+                config={"vram": "medium", "quantize_kv_cache": False},
+                tts_backend="qwen3",
+            )
+            self.addCleanup(self._close_celune, celune)
+
+        assert resolve.call_args.kwargs["quantize_kv_cache"] is False
+        assert celune._backend_reload_kwargs("voxcpm2")["quantize_kv_cache"] is False
+
     def test_constructor_accepts_backend_alias_for_vc_runtime(self) -> None:
         """Verify ``backend=`` can configure the VC runtime in VC mode."""
         with (

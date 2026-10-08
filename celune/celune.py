@@ -165,6 +165,8 @@ close_pipeline = speech_module.close
 queue_sfx_audio = speech_module.queue_sfx_audio
 stop_live_audio_input = speech_module.stop_live_audio_input
 
+_TTS_KV_CACHE_BACKENDS = frozenset({"qwen3", "fireredtts3", "voxcpm2"})
+
 
 def _config_str(value: JSONSerializable) -> Optional[str]:
     """Return a config value only when it is a string."""
@@ -643,6 +645,11 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
             if isinstance(raw_name, str)
             else None
         )
+        quantize_kv_cache = config_value(config, "quantize_kv_cache", True) is not False
+        if isinstance(tts_backend, CeluneBackend):
+            tts_backend.quantize_kv_cache = quantize_kv_cache
+        if backend_name in _TTS_KV_CACHE_BACKENDS:
+            backend_kwargs["quantize_kv_cache"] = quantize_kv_cache
         if backend_name == "qwen3":
             backend_kwargs["x_vector_only"] = config_bool(
                 config,
@@ -1564,10 +1571,16 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
             if isinstance(raw_name, str)
             else None
         )
+        quantize_kv_cache = (
+            config_value(self.config, "quantize_kv_cache", True) is not False
+        )
         if isinstance(backend_spec, CeluneBackend):
             backend_spec.quantization_requested = bool(backend_kwargs["quantize"])
+            backend_spec.quantize_kv_cache = quantize_kv_cache
             return {}
 
+        if backend_name in _TTS_KV_CACHE_BACKENDS:
+            backend_kwargs["quantize_kv_cache"] = quantize_kv_cache
         if backend_name == "qwen3":
             preset = resolve_vram_preset(self.config)
             backend_kwargs["x_vector_only"] = config_bool(
