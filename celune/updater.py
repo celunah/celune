@@ -23,15 +23,20 @@ from pathlib import Path, PurePosixPath, PureWindowsPath
 
 from git.exc import GitError
 
+from .vcs import (
+    UPSTREAM_REPOSITORY_URL,
+    _open_repository,
+    git_checkout_hint,
+    is_git_checkout,
+)
 from .i18n import string
 from . import __version__
-from .vcs import _open_repository
 from .constants import CELUNE_UA
 from .exceptions import UpdateError
 from .paths import project_root, running_compiled
 from .typing.common import JSONSerializable
 
-REMOTE_URL = "https://github.com/celunah/celune.git"
+REMOTE_URL = f"{UPSTREAM_REPOSITORY_URL}.git"
 RELEASES_API_URL = "https://api.github.com/repos/celunah/celune/releases?per_page=100"
 UPDATE_MANIFEST_NAME = "celune-update.json"
 SHORT_HASH_LENGTH = 7
@@ -334,12 +339,8 @@ def _has_local_changes() -> bool:
 
 
 def _is_git_checkout() -> bool:
-    """Can the repository be checked out?"""
-    try:
-        with _open_repository(_repo_root()) as repository:
-            return not repository.bare and repository.working_tree_dir is not None
-    except (GitError, OSError, TypeError, ValueError):
-        return False
+    """Return whether the active source root is a committed Git checkout."""
+    return is_git_checkout(_repo_root())
 
 
 def _update_is_fast_forward() -> bool:
@@ -698,7 +699,7 @@ def update_to_latest(install_dir: Optional[Path] = None) -> None:
         return
 
     if not _is_git_checkout():
-        raise UpdateError("did not find a repository")
+        raise UpdateError(f"{string('git.checkout_required')}\n{git_checkout_hint()}")
 
     if _has_local_changes():
         raise UpdateError("repository not committed")
@@ -730,7 +731,9 @@ def update_to_latest(install_dir: Optional[Path] = None) -> None:
             f"timed out fetching the repository after {exc.timeout} seconds"
         ) from exc
     except FileNotFoundError as exc:
-        raise UpdateError("git is not available") from exc
+        raise UpdateError(
+            f"{string('git.checkout_required')}\n{git_checkout_hint()}"
+        ) from exc
 
     try:
         can_fast_forward = _update_is_fast_forward()
@@ -747,7 +750,9 @@ def update_to_latest(install_dir: Optional[Path] = None) -> None:
     except subprocess.TimeoutExpired as exc:
         raise UpdateError(f"timed out merging after {exc.timeout} seconds") from exc
     except FileNotFoundError as exc:
-        raise UpdateError("git is not available") from exc
+        raise UpdateError(
+            f"{string('git.checkout_required')}\n{git_checkout_hint()}"
+        ) from exc
 
 
 def _wait_for_pid_exit(pid: int, timeout: float = 120.0) -> None:

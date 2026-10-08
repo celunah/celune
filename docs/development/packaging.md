@@ -21,6 +21,12 @@ Celune source installations support Python 3.12 through 3.14. Compiled
 artifacts use Python 3.13 deliberately so v4 and v5 releases share one
 CPython ABI. Both build scripts pin the Nuitka invocation to Python 3.13.
 
+Build from a Git checkout with at least one commit. Each script checks for a valid `HEAD`
+before stopping a running Celune process or changing build artifacts. A GitHub
+**Download ZIP** has no commit history and cannot supply the revision recorded
+in `.celune-root` and the update manifest; the script exits with the clone
+command when Git metadata is missing.
+
 The compiled build remains a deployment build rather than a fully standalone
 bundle, so its `.venv` must use the matching Python 3.13 runtime. Python 3.14
 remains available for source development and source-based launches; a Python

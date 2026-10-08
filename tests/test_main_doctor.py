@@ -5,9 +5,9 @@ import io
 import sys
 import contextlib
 import subprocess
+from unittest import mock
 from types import SimpleNamespace
 from pathlib import Path, PureWindowsPath
-from unittest import mock
 
 import pytest
 
@@ -42,6 +42,8 @@ class TestDoctorCommand(CeluneTestCase):
 
             assert check.returncode == expected_code, check.stderr
             assert check.stderr == ""
+            if arguments == ["--version"]:
+                assert entrypoint.git_checkout_hint() not in check.stdout
 
     def test_config_reports_its_single_missing_path_dependency(self) -> None:
         """Verify config commands do not require the full runtime dependency set."""
@@ -322,7 +324,7 @@ class TestDoctorCommand(CeluneTestCase):
         assert exit_code == 0
         output = stdout.getvalue()
         assert "[WARN] Accelerator backend" in output
-        assert "performance may be impacted" in output
+        assert "slower or unavailable" in output
 
     @WINDOWS_ONLY
     def test_doctor_checks_warn_when_running_outside_project_venv(self) -> None:
@@ -345,6 +347,7 @@ class TestDoctorCommand(CeluneTestCase):
                 return_value=Path("C:/runtime/config.yaml"),
             ),
             mock.patch.object(entrypoint, "_doctor_torch_details", return_value=[]),
+            mock.patch.object(entrypoint, "is_git_checkout", return_value=False),
             mock.patch.object(entrypoint.shutil, "which", return_value="C:/bin/uv.exe"),
             mock.patch.object(
                 entrypoint,
@@ -366,6 +369,14 @@ class TestDoctorCommand(CeluneTestCase):
         assert not python_env.ok
         assert python_env.severity == "warning"
         assert "system interpreter" in python_env.detail
+        git_checkout = next(
+            check
+            for check in checks
+            if check.label == entrypoint.string("cli.doctor_git_checkout")
+        )
+        assert not git_checkout.ok
+        assert git_checkout.severity == "warning"
+        assert git_checkout.hint == entrypoint.git_checkout_hint()
 
     def test_doctor_torch_details_detects_zluda_and_runs_compute_test(self) -> None:
         """Verify doctor mirrors the app's ZLUDA warning and CUDA compute smoke test."""

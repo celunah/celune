@@ -52,6 +52,15 @@ PortAudio development headers for `sounddevice`. The CI workflow installs
 
 From a clean checkout:
 
+GitHub's **Download ZIP** archive does not include Git metadata. Source builds
+and in-place source updates require a Git checkout with a commit. Celune reports
+when that metadata is missing and prints the upstream clone command. Clone the
+repository with:
+
+```bash
+git clone https://github.com/celunah/celune
+```
+
 The project uses `uv` for dependency resolution. Run the setup helper from the
 repository root:
 

@@ -15,6 +15,13 @@ app_dir="$output_dir/Celune.AppDir"
 desktop_src="$repo_root/Celune.AppDir/celune.desktop"
 icon_src="$repo_root/Celune.AppDir/celune.png"
 
+export UV_CACHE_DIR="$repo_root/.uv-cache"
+if [[ "$repo_root" == /mnt/* ]]; then
+    export UV_CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/celune-uv"
+fi
+
+revision="$(python3 "$repo_root/scripts/root.py" --revision)"
+
 if pgrep -x celune >/dev/null || pgrep -x celune-bin >/dev/null; then
     echo "Celune is already running, terminating before proceeding with build."
     pkill -TERM -x celune || true
@@ -75,13 +82,9 @@ if ! command -v zip >/dev/null 2>&1; then
     exit 1
 fi
 
-export UV_CACHE_DIR="$repo_root/.uv-cache"
-if [[ "$repo_root" == /mnt/* ]]; then
-    export UV_CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/celune-uv"
-fi
 mkdir -p "$UV_CACHE_DIR"
 
-uv run python "$repo_root/scripts/root.py"
+python3 "$repo_root/scripts/root.py"
 
 mkdir -p "$output_dir"
 rm -rf \
@@ -144,12 +147,6 @@ esac
 
 ARCH="$appimage_arch" appimagetool "$app_dir" "$output_dir/celune.AppImage"
 rm -rf "$app_dir"
-
-revision="$(git -C "$repo_root" rev-parse HEAD)"
-if [[ -z "$revision" ]]; then
-    echo "Could not determine the Git revision for update metadata." >&2
-    exit 1
-fi
 
 uv run python "$manifest_script" \
     --output-dir "$output_dir" \

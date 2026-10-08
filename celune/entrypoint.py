@@ -11,25 +11,26 @@ import platform
 import warnings
 import contextlib
 import subprocess
-from types import ModuleType, SimpleNamespace
-from typing import TYPE_CHECKING, NoReturn, Optional
 from pathlib import Path
-from importlib import util, import_module
 from dataclasses import dataclass
 from collections.abc import Callable
+from importlib import util, import_module
+from types import ModuleType, SimpleNamespace
+from typing import TYPE_CHECKING, NoReturn, Optional
 
-from celune import REVISION, __tagline__, __version__
-from celune.i18n import string
 from celune.paths import (
     project_root,
     running_compiled,
     migrate_legacy_app_data,
     configure_huggingface_runtime,
 )
-from celune.config import config_log_level, normalize_log_level
-from celune.terminal import set_terminal_title
-from celune.constants import APP_NAME, APP_SLUG, NVIDIA_DEVICE_KEYWORDS, ExitCodes
+from celune.i18n import string
 from celune.typing.common import Config
+from celune.terminal import set_terminal_title
+from celune import REVISION, __tagline__, __version__
+from celune.vcs import git_checkout_hint, is_git_checkout
+from celune.config import config_log_level, normalize_log_level
+from celune.constants import APP_NAME, APP_SLUG, NVIDIA_DEVICE_KEYWORDS, ExitCodes
 
 if TYPE_CHECKING:
     from celune.celune import Celune
@@ -845,6 +846,19 @@ def _doctor_checks() -> list[DoctorCheck]:
         ),
     ):
         _doctor_add(checks, label, path.exists(), str(path), hint=hint)
+
+    if not running_compiled():
+        git_checkout_present = is_git_checkout(PROJECT_ROOT)
+        _doctor_add(
+            checks,
+            string("cli.doctor_git_checkout"),
+            git_checkout_present,
+            string("cli.doctor_git_checkout_present")
+            if git_checkout_present
+            else string("git.checkout_missing"),
+            severity="warning",
+            hint=None if git_checkout_present else git_checkout_hint(),
+        )
 
     version, revision = _display_version()
     version_detail = version if not revision else f"{version} ({revision})"
@@ -1857,6 +1871,11 @@ def main(argv: Optional[list[str]] = None) -> None:
         else:
             print(f"{APP_NAME} {version}")
         print(__tagline__)
+
+        if not running_compiled() and not is_git_checkout(PROJECT_ROOT):
+            print()
+            print(string("git.checkout_missing"))
+            print(git_checkout_hint())
 
         if "dirty" in revision:
             print()

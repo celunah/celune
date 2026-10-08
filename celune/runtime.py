@@ -8,21 +8,22 @@ from collections.abc import Callable
 
 import torch
 
-from . import __comment__, __version__, __codename__
-from .i18n import string
 from .utils import (
     available,
     format_number,
     cuda_architecture,
     current_platform,
 )
-from .vcs import get_branch
+from .i18n import string
 from ._version import DEVELOPMENT
-from .constants import APP_NAME, NVIDIA_DEVICE_KEYWORDS
-from .backends.vc import CeluneVCBackend
-from .backends.tts import CeluneBackend
 from .typing.modes import BackendMode
+from .backends.tts import CeluneBackend
+from .backends.vc import CeluneVCBackend
+from .paths import project_root, running_compiled
 from .typing.aliases import LogLevel, LogCallback
+from . import __comment__, __version__, __codename__
+from .constants import APP_NAME, NVIDIA_DEVICE_KEYWORDS
+from .vcs import get_branch, git_checkout_hint, is_git_checkout
 
 
 def log_runtime_banner(
@@ -48,7 +49,7 @@ def log_runtime_banner(
         backend_line = f"on backend {backend.name}, "
 
     log(
-        f"{APP_NAME} {__version__} ({get_branch()}, {current_platform()}) "
+        f"{APP_NAME} {__version__} ({get_branch(project_root())}, {current_platform()}) "
         f"{backend_line}"
         f"Python {platform.python_version()}, "
         f"PyTorch {torch.__version__}"
@@ -59,6 +60,10 @@ def log_runtime_banner(
         f'{__codename__} - "{__comment__}"',
         "info",
     )
+
+    if not running_compiled() and not is_git_checkout(project_root()):
+        log(string("git.checkout_missing"), "warning")
+        log(git_checkout_hint(), "warning")
 
     if DEVELOPMENT:
         log(string("celune.development_version"), "warning")
