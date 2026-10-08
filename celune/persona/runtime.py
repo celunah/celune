@@ -27,6 +27,7 @@ from .capabilities import PersonaCapabilities
 from ..kv_cache import create_quantized_kv_cache
 from ..constants import (
     N_A_STR,
+    APP_NAME,
     PERSONA_CONTEXT_SPACE,
     PERSONA_DEFAULT_MODEL_ID,
     remote_code_model_revision,
@@ -304,7 +305,13 @@ class PersonaBackend:
         """Return a pinned revision or warn before using an unknown model."""
         revision = remote_code_model_revision(model_id)
         if revision is None:
-            _LOGGER.warning(string("persona.unsupported_model", model_id=model_id))
+            _LOGGER.warning(
+                string(
+                    "persona.unsupported_model",
+                    model_id=model_id,
+                    app_name=APP_NAME,
+                )
+            )
         return revision
 
     def unload(self) -> None:

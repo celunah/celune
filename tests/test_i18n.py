@@ -32,6 +32,21 @@ def test_localization_entries_follow_size_and_content_rules() -> None:
     assert not any(re.match(r"^\[[^\]]+\]", value) for value in translations.values())
 
 
+def test_product_name_uses_placeholder_in_user_facing_messages() -> None:
+    """Keep the product name configurable outside of technical identifiers."""
+    translations = _translations()
+    literal_name_keys = {
+        key for key, value in translations.items() if "celune" in value.casefold()
+    }
+
+    assert literal_name_keys == {
+        "git.clone_upstream",
+        "cli.apply_update_usage",
+        "cli.traceback_cmd_dev_python",
+        "cli.traceback_cmd_set_dev",
+    }
+
+
 def test_literal_localization_calls_have_english_entries() -> None:
     """Ensure every static source localization reference resolves in English."""
     references: set[str] = set()

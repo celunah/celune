@@ -285,7 +285,7 @@ def wake_from_sleep(self) -> bool:
                 "error",
             )
             status = (
-                string("pipeline.generation_oom")
+                string("pipeline.generation_oom", app_name=APP_NAME)
                 if cuda_oom
                 else string("status.could_not_wake", app_name=APP_NAME)
             )

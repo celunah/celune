@@ -774,7 +774,7 @@ WEBUI_CSS = textwrap.dedent(
     """
 ).replace(
     "__CELUNE_CONNECTION_LOST_MESSAGE__",
-    json.dumps(string("webui.connection_lost"), ensure_ascii=False),
+    json.dumps(string("webui.connection_lost", app_name=APP_NAME), ensure_ascii=False),
 )
 
 

@@ -20,7 +20,7 @@ from collections.abc import Callable, Iterator
 
 from . import app as _app
 from ..binding import install_class_functions
-from ..constants import SIGTSTP
+from ..constants import SIGTSTP, APP_NAME
 
 __all__ = (
     "_close_menu",
@@ -715,12 +715,13 @@ def _config_explanation(path: tuple[str, ...]) -> str:
     }
     explanation_path = aliases.get(path, ".".join(path))
     explanation_key = "ui.settings_explanation." + explanation_path
-    explanation = _app.string(explanation_key)
+    explanation = _app.string(explanation_key, app_name=APP_NAME)
     if explanation != explanation_key:
         return explanation
     return _app.string(
         "ui.settings_explanation_generic",
         setting=_app.CeluneUI._config_label(path),
+        app_name=APP_NAME,
     )
 
 

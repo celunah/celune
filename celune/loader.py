@@ -145,7 +145,7 @@ def load(self, raise_on_error: bool = False, skip_runtime_check: bool = False) -
         self.log(vram_message, "warning")
 
     if vram_profile_fits(self.config) is False:
-        message = string("vram.profile_exceeds_budget")
+        message = string("vram.profile_exceeds_budget", app_name=APP_NAME)
         self.fatal()
         self.log(message, "error")
         self.error_callback(message)

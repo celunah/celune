@@ -544,8 +544,8 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
                     "\n".join(
                         (
                             string("agent.unsandboxed_title"),
-                            string("agent.unsandboxed_body"),
-                            string("agent.unsandboxed_rollback"),
+                            string("agent.unsandboxed_body", app_name=APP_NAME),
+                            string("agent.unsandboxed_rollback", app_name=APP_NAME),
                         )
                     ),
                     "warning",
@@ -951,6 +951,7 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
                         mode=mode,
                         task_state=task_state or "none",
                         detail=detail or "none",
+                        app_name=APP_NAME,
                     ),
                     "info" if success else "error",
                 )

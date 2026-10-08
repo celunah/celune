@@ -9,6 +9,7 @@ from typing import Union, Optional, cast
 import pytest
 
 from celune.constants import (
+    APP_NAME,
     PERSONA_MODELS,
     PERSONA_DEFAULT_MODEL_ID,
     persona_model_tier,
@@ -402,7 +403,11 @@ class TestPersonaApi(CeluneTestCase):
             backend.load("untrusted/example", "none")
 
         warning.assert_called_once_with(
-            string("persona.unsupported_model", model_id="untrusted/example")
+            string(
+                "persona.unsupported_model",
+                model_id="untrusted/example",
+                app_name=APP_NAME,
+            )
         )
         loaders["config_loader"].assert_called_once_with(
             "untrusted/example",

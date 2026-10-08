@@ -18,6 +18,7 @@ from torch import nn
 from .i18n import string
 from .constants import (
     TIERS,
+    APP_NAME,
     VRAM_BUDGETS,
     VRAM_REQUIREMENTS,
     AGENT_CONTEXT_SPACE,
@@ -677,7 +678,7 @@ def validate_vram_preset(
     if profile_status is None:
         warnings.append(string("vram.configuration_unprofiled"))
     elif not profile_status:
-        warnings.append(string("vram.profile_exceeds_budget"))
+        warnings.append(string("vram.profile_exceeds_budget", app_name=APP_NAME))
 
     return "\n".join(warnings) if warnings else None
 

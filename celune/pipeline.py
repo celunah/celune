@@ -1819,7 +1819,9 @@ def _process_generation_request(
                     ),
                     "warning",
                 )
-                engine.status_callback(string("pipeline.generation_oom"), "warning")
+                engine.status_callback(
+                    string("pipeline.generation_oom", app_name=APP_NAME), "warning"
+                )
             elif short_input_error:
                 engine.log(input_too_short_message, "warning")
             else:
