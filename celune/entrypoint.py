@@ -908,6 +908,7 @@ def _doctor_checks() -> list[DoctorCheck]:
         hint=f"{APP_NAME} setup uses uv to sync Python dependencies.",
     )
 
+    # CEDTS worker manifests own backend-specific packages; probe core imports here only.
     required_imports = [
         ("yaml", "PyYAML", f"{APP_NAME} needs YAML support for config loading."),
         ("psutil", "psutil", f"{APP_NAME} uses psutil for process checks."),
@@ -940,17 +941,9 @@ def _doctor_checks() -> list[DoctorCheck]:
             f"{APP_NAME} DSP playback requires sounddevice.",
         ),
         ("soundfile", "soundfile", f"{APP_NAME}'s audio writer requires soundfile."),
-        (
-            "faster_qwen3_tts",
-            "faster-qwen3-tts",
-            f"{APP_NAME}'s default backend requires faster-qwen3-tts.",
-        ),
     ]
     optional_imports = [
         ("torchvision", "torchvision", "Persona vision support uses torchvision."),
-        ("pocket_tts", "pocket-tts", f"{APP_NAME} Mini needs pocket-tts."),
-        ("dots_tts", "dots.tts", "The dots.tts MeanFlow backend needs dots.tts."),
-        ("voxcpm", "voxcpm", "The VoxCPM2 backend needs voxcpm."),
         ("openrgb", "openrgb-python", "Presence lighting needs openrgb-python."),
         ("matplotlib", "matplotlib", "Developer visualizations use matplotlib."),
         ("pedalboard", "pedalboard", "Reverb effects require pedalboard."),

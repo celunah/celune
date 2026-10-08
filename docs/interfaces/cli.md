@@ -72,7 +72,9 @@ overrides are useful for one process, a service wrapper, or a packaged launcher.
 Doctor checks Python version, repository/default-config paths, version metadata,
 the active interpreter/venv, core Python imports, system binaries, runtime
 configuration, PyTorch build and CUDA backend, GPU architecture, and a compute
-smoke test where possible. Source-tree runs also check for a committed Git
+smoke test where possible. TTS backend dependencies belong to isolated CEDTS
+worker environments, so doctor does not look for them in Celune's core Python
+environment. Source-tree runs also check for a committed Git
 checkout with a commit and show the upstream clone command when Git metadata is missing.
 Compiled releases use their bundled update manifest and do not need a local Git
 checkout. The report distinguishes a missing prerequisite from an accelerator
