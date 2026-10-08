@@ -79,7 +79,9 @@ checkout with a commit and show the upstream clone command when Git metadata is 
 Compiled releases use their bundled update manifest and do not need a local Git
 checkout. The report distinguishes a missing prerequisite from an accelerator
 that is present but unusable. `--fix` does not promise to repair third-party
-GPU drivers or arbitrary backend environments.
+GPU drivers or arbitrary backend environments. The optional eSpeak NG check is
+a warning: without eSpeak NG, Celune still runs, but word-timed captions are
+unavailable.
 
 ## CPU compatibility
 

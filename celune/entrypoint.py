@@ -24,19 +24,19 @@ from celune.paths import (
     migrate_legacy_app_data,
     configure_huggingface_runtime,
 )
+from celune.constants import (
+    APP_NAME,
+    APP_SLUG,
+    NVIDIA_DEVICE_KEYWORDS,
+    SUPPORTED_CUDA_VERSIONS,
+    ExitCodes,
+)
 from celune.i18n import string
 from celune.typing.common import Config
 from celune.terminal import set_terminal_title
 from celune import REVISION, __tagline__, __version__
-from celune.vcs import git_checkout_hint, is_git_checkout
+from celune.vcs import is_git_checkout, git_checkout_hint
 from celune.config import config_log_level, normalize_log_level
-from celune.constants import (
-    APP_NAME,
-    APP_SLUG,
-    ExitCodes,
-    NVIDIA_DEVICE_KEYWORDS,
-    SUPPORTED_CUDA_VERSIONS,
-)
 
 if TYPE_CHECKING:
     from celune.celune import Celune
@@ -1010,6 +1010,20 @@ def _doctor_checks() -> list[DoctorCheck]:
             str(binary_path) if binary_path else "not found",
             hint=hint,
         )
+
+    espeak_path = _doctor_binary_path("espeak-ng")
+    _doctor_add(
+        checks,
+        string("cli.doctor_espeak_label"),
+        espeak_path is not None,
+        (
+            str(espeak_path)
+            if espeak_path is not None
+            else string("cli.doctor_espeak_missing")
+        ),
+        severity="warning",
+        hint=string("cli.doctor_espeak_hint"),
+    )
 
     config_path = _doctor_config_path()
     if config_path is None:

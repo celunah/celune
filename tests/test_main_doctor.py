@@ -6,6 +6,7 @@ import sys
 import contextlib
 import subprocess
 from unittest import mock
+from typing import Optional
 from types import SimpleNamespace
 from pathlib import Path, PureWindowsPath
 
@@ -378,10 +379,8 @@ class TestDoctorCommand(CeluneTestCase):
         assert git_checkout.severity == "warning"
         assert git_checkout.hint == entrypoint.git_checkout_hint()
 
-    def test_doctor_does_not_probe_cedts_backend_packages_in_the_core_environment(
-        self,
-    ) -> None:
-        """Verify TTS dependencies remain owned by isolated backend workers."""
+    def test_doctor_keeps_backend_packages_isolated_and_espeak_optional(self) -> None:
+        """Verify worker dependencies stay isolated and eSpeak only warns."""
         checked_imports: list[str] = []
         backend_packages = {
             "faster_qwen3_tts",
@@ -389,6 +388,12 @@ class TestDoctorCommand(CeluneTestCase):
             "dots_tts",
             "voxcpm",
         }
+
+        def binary_path(binary_name: str) -> Optional[Path]:
+            if binary_name == "espeak-ng":
+                return None
+            return Path("C:/bin/sox.exe")
+
         with (
             mock.patch.object(
                 entrypoint,
@@ -396,7 +401,7 @@ class TestDoctorCommand(CeluneTestCase):
                 side_effect=lambda name: checked_imports.append(name) or False,
             ),
             mock.patch.object(
-                entrypoint, "_doctor_binary_path", return_value=Path("C:/bin/sox.exe")
+                entrypoint, "_doctor_binary_path", side_effect=binary_path
             ),
             mock.patch.object(
                 entrypoint,
@@ -408,9 +413,16 @@ class TestDoctorCommand(CeluneTestCase):
             mock.patch.object(entrypoint.shutil, "which", return_value="C:/bin/uv.exe"),
             mock.patch.object(entrypoint.Path, "exists", return_value=True),
         ):
-            entrypoint.doctor_checks()
+            checks = entrypoint.doctor_checks()
 
         assert backend_packages.isdisjoint(checked_imports)
+        espeak_check = next(
+            check
+            for check in checks
+            if check.label == entrypoint.string("cli.doctor_espeak_label")
+        )
+        assert not espeak_check.ok
+        assert espeak_check.severity == "warning"
 
     def test_doctor_torch_details_detects_zluda_and_runs_compute_test(self) -> None:
         """Verify doctor mirrors the app's ZLUDA warning and CUDA compute smoke test."""
