@@ -11,11 +11,10 @@ import platform
 import warnings
 import contextlib
 import subprocess
-import importlib
-import importlib.util
 from types import ModuleType, SimpleNamespace
 from typing import TYPE_CHECKING, NoReturn, Optional
 from pathlib import Path
+from importlib import util, import_module
 from dataclasses import dataclass
 from collections.abc import Callable
 
@@ -112,7 +111,7 @@ _CELUNE_PROCESS_NAMES = frozenset(
 
 def _load_ui_test_backend() -> type:
     """Load the lightweight fake backend used by the explicit UI test mode."""
-    support = importlib.import_module("tests.support")
+    support = import_module("tests.support")
     return support.FakeBackend
 
 
@@ -415,7 +414,7 @@ def _doctor_add(
 
 def _doctor_import(module_name: str) -> bool:
     """Return whether a module can be resolved without importing the full app."""
-    return importlib.util.find_spec(module_name) is not None
+    return util.find_spec(module_name) is not None
 
 
 def _doctor_distro_name(system_name: str) -> str:
@@ -596,7 +595,7 @@ def _doctor_torch_details() -> list[DoctorCheck]:
         return checks
 
     try:
-        torch = importlib.import_module("torch")
+        torch = import_module("torch")
     except Exception as exc:
         _doctor_add(
             checks,
@@ -1339,6 +1338,13 @@ def start(
             if active_test_mode == "agent":
                 test_config = configured_test_config
                 test_backend = configured_test_backend
+                from celune.compat import _suppress_torchao_quantization_syntax_warning
+
+                runtime_startup_context = (
+                    _suppress_torchao_quantization_syntax_warning()
+                )
+            else:
+                runtime_startup_context = contextlib.nullcontext()
 
             def finish_test(
                 core: "Celune",
@@ -1382,13 +1388,14 @@ def start(
                 )
             else:
                 _print_startup_diagnostic(string("ui.startup_loading_core"))
-                celune = runtime.Celune(
-                    config=test_config,
-                    tts_backend=test_backend,
-                    backend_mode=backend_mode,
-                    log_level=active_log_level,
-                    startup_callback=_print_startup_diagnostic,
-                )
+                with runtime_startup_context:
+                    celune = runtime.Celune(
+                        config=test_config,
+                        tts_backend=test_backend,
+                        backend_mode=backend_mode,
+                        log_level=active_log_level,
+                        startup_callback=_print_startup_diagnostic,
+                    )
             ui.celune = celune
             ui.prepare_theme()
             try:

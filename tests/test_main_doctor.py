@@ -5,9 +5,9 @@ import io
 import sys
 import contextlib
 import subprocess
-from unittest import mock
 from types import SimpleNamespace
 from pathlib import Path, PureWindowsPath
+from unittest import mock
 
 import pytest
 
@@ -186,7 +186,7 @@ class TestDoctorCommand(CeluneTestCase):
         fake_support = mock.Mock(FakeBackend=SimpleNamespace())
 
         with mock.patch.object(
-            entrypoint.importlib,
+            entrypoint,
             "import_module",
             return_value=fake_support,
         ) as import_module:
@@ -381,9 +381,7 @@ class TestDoctorCommand(CeluneTestCase):
 
         with (
             mock.patch.object(entrypoint, "_doctor_import", return_value=True),
-            mock.patch.object(
-                entrypoint.importlib, "import_module", return_value=fake_torch
-            ),
+            mock.patch.object(entrypoint, "import_module", return_value=fake_torch),
             mock.patch.object(
                 entrypoint, "_doctor_run_compute_test", return_value="cuda:0"
             ),

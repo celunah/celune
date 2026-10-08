@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import io
+import warnings
 import threading
 import contextlib
 from types import SimpleNamespace
@@ -151,7 +152,7 @@ class TestCommandTests:
         assert _agent_test_succeeded({"success": True})
 
     def test_failed_agent_report_exits_after_the_test_ui_returns(self) -> None:
-        """Return the standard failure code after the report UI has closed."""
+        """Suppress the startup warning and fail after the report UI closes."""
 
         class TestCore:
             """Hold the diagnostic result from the UI completion callback."""
@@ -159,6 +160,20 @@ class TestCommandTests:
             test_result: Optional[JSON] = None
 
             def __init__(self, **_kwargs: object) -> None:
+                warnings.warn_explicit(
+                    "invalid escape sequence '\\.'",
+                    SyntaxWarning,
+                    "torchao/quantization/quant_api.py",
+                    1745,
+                    module="torchao.quantization.quant_api",
+                )
+                warnings.warn_explicit(
+                    "unrelated startup warning",
+                    UserWarning,
+                    "torchao/other.py",
+                    1,
+                    module="torchao.other",
+                )
                 self.test_result = None
 
         class TestUI:
@@ -206,23 +221,29 @@ class TestCommandTests:
             return core.test_result
 
         TestUI.instances.clear()
-        with (
-            mock.patch("celune.watchdog.start_watchdog"),
-            mock.patch("celune.entrypoint._load_runtime", return_value=runtime),
-            mock.patch("celune.entrypoint._load_core_runtime", return_value=runtime),
-            mock.patch(
-                "celune.entrypoint._load_test_runtime_config",
-                return_value=({}, None),
-            ),
-            mock.patch("celune.entrypoint.migrate_legacy_app_data"),
-            mock.patch("celune.entrypoint._print_startup_diagnostic"),
-            mock.patch("celune.ui.CeluneUI", TestUI),
-            mock.patch("celune.test.run_agent_test", side_effect=fail_report),
-            pytest.raises(SystemExit) as exit_info,
-        ):
-            entrypoint.start(testing=True, test_mode="agent")
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            with (
+                mock.patch("celune.watchdog.start_watchdog"),
+                mock.patch("celune.entrypoint._load_runtime", return_value=runtime),
+                mock.patch(
+                    "celune.entrypoint._load_core_runtime", return_value=runtime
+                ),
+                mock.patch(
+                    "celune.entrypoint._load_test_runtime_config",
+                    return_value=({}, None),
+                ),
+                mock.patch("celune.entrypoint.migrate_legacy_app_data"),
+                mock.patch("celune.entrypoint._print_startup_diagnostic"),
+                mock.patch("celune.ui.CeluneUI", TestUI),
+                mock.patch("celune.test.run_agent_test", side_effect=fail_report),
+                pytest.raises(SystemExit) as exit_info,
+            ):
+                entrypoint.start(testing=True, test_mode="agent")
 
         assert exit_info.value.code == entrypoint.EXIT_CODES.EXIT_FAILURE.value
+        assert len(caught) == 1
+        assert caught[0].category is UserWarning
         assert isinstance(TestUI.instances[0], TestUI)
         assert TestUI.instances[0].closed
 

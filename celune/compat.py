@@ -2,6 +2,7 @@
 """Compatibility boundaries for optional runtime integrations."""
 
 import sys
+import warnings
 import importlib
 import threading
 from enum import Enum
@@ -54,12 +55,27 @@ def _patch_torchao_decorator() -> None:
 
 
 @contextmanager
+def _suppress_torchao_quantization_syntax_warning() -> Generator[None, None, None]:
+    """Suppress TorchAO's invalid-regex SyntaxWarning during startup imports."""
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message=r"invalid escape sequence",
+            category=SyntaxWarning,
+            module=r"torchao\.quantization\.quant_api",
+        )
+        yield
+
+
+@contextmanager
 def torchao_compatibility() -> Generator[None, None, None]:
-    """Suppress redundant TorchAO Enum registration for the active operation.
+    """Suppress known TorchAO warnings for the active integration operation.
 
     PyTorch versions that natively treat Enum classes as opaque compile values
     warn when TorchAO registers those same classes as pytree constants. The
-    wrapper is active only while Celune imports or initializes an integration
+    TorchAO quantization API also emits a SyntaxWarning for an invalid escape
+    in its regex documentation. The wrapper suppresses only those warnings
+    while Celune imports or initializes an integration
     that may load TorchAO, and TorchAO's decorator is retained afterward for
     modules imported later in the process.
     """
@@ -70,7 +86,7 @@ def torchao_compatibility() -> Generator[None, None, None]:
         if not _is_native_opaque_enum(cls):
             register_constant(cls)
 
-    with _TORCHAO_IMPORT_LOCK:
+    with _TORCHAO_IMPORT_LOCK, _suppress_torchao_quantization_syntax_warning():
         _patch_torchao_decorator()
         setattr(
             pytree,

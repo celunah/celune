@@ -1,13 +1,14 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for TTS quantization policy and TorchAO integration boundaries."""
 
+import warnings
 import importlib
 from unittest.mock import patch
 
 import torch
 from torch import nn
 
-from tests.support import FakeBackend
+from celune.compat import torchao_compatibility
 from celune.backends.tts.contracts import (
     ModelContract,
     QuantizationRule,
@@ -22,6 +23,30 @@ from celune.backends.tts.quantization import (
     quantization_mode,
     quantize_component,
 )
+
+
+def test_torchao_quant_api_syntax_warning_is_suppressed() -> None:
+    """Hide TorchAO's invalid-regex warning without hiding other warnings."""
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        with torchao_compatibility():
+            warnings.warn_explicit(
+                "invalid escape sequence '\\.'",
+                SyntaxWarning,
+                "torchao/quantization/quant_api.py",
+                1745,
+                module="torchao.quantization.quant_api",
+            )
+            warnings.warn_explicit(
+                "invalid escape sequence '\\.'",
+                SyntaxWarning,
+                "torchao/other.py",
+                1,
+                module="torchao.other",
+            )
+
+    assert len(caught) == 1
+    assert caught[0].message == "invalid escape sequence '\\.'"
 
 
 def test_torchao_import_skips_native_enum_registration(capsys) -> None:
@@ -99,6 +124,8 @@ def test_quantization_policy_only_targets_contract_layer_families() -> None:
 
 def test_quantization_components_prefer_declared_nested_module() -> None:
     """Scope TorchAO to a named child instead of the wrapper root."""
+    from tests.support import FakeBackend
+
     root = nn.Module()
     root.core = nn.Linear(4, 4)
     root.vocoder = nn.Linear(4, 4)
