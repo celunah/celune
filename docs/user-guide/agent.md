@@ -89,10 +89,12 @@ legacy JAX/Flax `needle.pkl` is not accepted as a normal production artifact.
 Needle may select only registered schemas, and the runtime validates names,
 argument types, approval state, and availability before execution.
 If Needle returns multiple valid calls, Celune pauses and asks which one to run.
-The numbered options show each tool and its arguments; the user can identify an
-option in their response. Celune executes only the selected call, then applies
-the normal availability and approval checks. The choice pause does not consume
-an iteration or trigger another planning step.
+The numbered options show each tool and its arguments in speakable form: empty
+objects are described as having no arguments, and populated JSON is rendered
+as named values instead of reading braces and quotes aloud. The user can
+identify an option in their response. Celune executes only the selected call,
+then applies the normal availability and approval checks. The choice pause does
+not consume an iteration or trigger another planning step.
 The loader instantiates the model in the dtype declared by its validated
 checkpoint before placing it on the selected device, avoiding an intermediate
 FP32 copy for BF16 checkpoints.

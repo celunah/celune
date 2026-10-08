@@ -495,7 +495,11 @@ def _refresh_persona_availability(self) -> None:
             changed = self._persona_available != available
             self._persona_available = available
             if changed and not self._input_locked:
-                self.input_box.placeholder = self._normal_input_placeholder()
+                self.input_box.placeholder = (
+                    _app.string("ui.agent_test_answer_placeholder")
+                    if self._agent_test_response_queue is not None
+                    else self._normal_input_placeholder()
+                )
 
         self._run_on_ui_thread(apply_result)
 
@@ -526,6 +530,8 @@ def change_input_state(self, locked: bool) -> None:
             if stopped
             else _app.string("ui.wait_placeholder")
             if locked
+            else _app.string("ui.agent_test_answer_placeholder")
+            if self._agent_test_response_queue is not None
             else self._normal_input_placeholder()
         )
         self.style_button.actions = _app.ButtonActions(

@@ -3,15 +3,11 @@
 
 from __future__ import annotations
 
-from unittest import mock
-from typing import Optional, cast
 from types import SimpleNamespace
+from typing import Optional, cast
+from unittest import mock
 from contextlib import nullcontext
 
-from celune.celune import Celune
-from celune.agent.persona import PersonaAgentBridge
-from celune.extensions.events import EventDispatcher
-from celune.typing.persona import PersonaClientResponse
 from celune.agent import (
     ToolCall,
     AgentTool,
@@ -29,14 +25,20 @@ from celune.agent import (
     ValidatedToolCall,
     AgentChoiceRequest,
     AgentFailureReason,
+    AgentToolValueType,
     AgentChoiceResponse,
     ToolExecutionResult,
     AgentApprovalRequest,
     AgentToolDangerLevel,
     AgentApprovalDecision,
     AgentApprovalResponse,
+    AgentToolArgumentSchema,
     AgentToolExecutionStatus,
 )
+from celune.celune import Celune
+from celune.agent.persona import PersonaAgentBridge
+from celune.typing.persona import PersonaClientResponse
+from celune.extensions.events import EventDispatcher
 
 
 def _request(session_id: str = "session-1") -> AgentRequest:
@@ -484,7 +486,14 @@ class TestAgentLoop:
         executions: list[ToolCall] = []
         calls: list[ToolCall] = [
             {"id": "status", "name": "read_status", "arguments": {}},
-            {"id": "write", "name": "write_file", "arguments": {}},
+            {
+                "id": "write",
+                "name": "write_file",
+                "arguments": {
+                    "file_path": "reports/weekly.txt",
+                    "overwrite": False,
+                },
+            },
         ]
         outputs: list[AgentOutput] = []
 
@@ -524,6 +533,16 @@ class TestAgentLoop:
                     tool_id="write_file",
                     display_name="Write file",
                     description="Write a file.",
+                    arguments=(
+                        AgentToolArgumentSchema(
+                            "file_path",
+                            AgentToolValueType.STRING,
+                        ),
+                        AgentToolArgumentSchema(
+                            "overwrite",
+                            AgentToolValueType.BOOLEAN,
+                        ),
+                    ),
                     behavior=AgentToolBehavior.MUTATING,
                 ),
             },
@@ -547,6 +566,10 @@ class TestAgentLoop:
         assert "Which tool should I run?" in choice_prompt
         assert "Read status" in choice.options[0].label
         assert "Write file" in choice.options[1].label
+        assert "Read status with no arguments" in choice_prompt
+        assert "file path is reports/weekly.txt" in choice_prompt
+        assert "overwrite is no" in choice_prompt
+        assert "{}" not in choice_prompt
 
         runtime.respond_to_choice(
             task.task_id,

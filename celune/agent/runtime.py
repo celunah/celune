@@ -3,32 +3,13 @@
 
 from __future__ import annotations
 
-import json
 from uuid import uuid4
+from typing import TYPE_CHECKING, Union, Optional, cast
 from dataclasses import replace
 from collections.abc import Mapping, Sequence
-from typing import TYPE_CHECKING, Union, Optional, cast
 
 from ..i18n import string
-from ..typing.aliases import LogLevel
-from ..typing.modes import OperationMode
 from ..utils import format_error_message
-from ..extensions.events import EventDispatcher
-from ..typing.common import JSON, JSONSerializable
-from ..typing.events import EventName, EventPayload
-from ..persona.capabilities import PersonaCapabilities
-from ..typing.locks import (
-    ComponentLockName,
-    ComponentLockOwner,
-    ComponentBusyResult,
-    ComponentLockRequirement,
-)
-from ..dataclasses.events import (
-    AgentChoiceRequestedEvent,
-    AgentTaskFinishedEvent,
-    AgentTaskStateChangedEvent,
-    AgentApprovalRequestedEvent,
-)
 from ..typing.agent import (
     ToolCall,
     AgentTask,
@@ -73,10 +54,28 @@ from ..typing.agent import (
     AgentPermissionEvaluation,
     AgentClassificationFailure,
 )
+from ..typing.locks import (
+    ComponentLockName,
+    ComponentLockOwner,
+    ComponentBusyResult,
+    ComponentLockRequirement,
+)
+from ..typing.modes import OperationMode
+from ..typing.common import JSON, JSONSerializable
+from ..typing.events import EventName, EventPayload
+from ..typing.aliases import LogLevel
+from ..extensions.events import EventDispatcher
+from ..dataclasses.events import (
+    AgentTaskFinishedEvent,
+    AgentChoiceRequestedEvent,
+    AgentTaskStateChangedEvent,
+    AgentApprovalRequestedEvent,
+)
+from ..persona.capabilities import PersonaCapabilities
 
 if TYPE_CHECKING:
-    from ..celune import Celune
     from ..locks import ComponentLockLease, ComponentLockManager
+    from ..celune import Celune
 
 
 def _default_token_counter(text: str) -> int:
@@ -95,6 +94,51 @@ def _is_json_value(value: JSONSerializable) -> bool:
             isinstance(key, str) and _is_json_value(item) for key, item in value.items()
         )
     return False
+
+
+def _tool_choice_fields(arguments: JSON) -> str:
+    """Render argument fields as a concise phrase suitable for speech."""
+    separator = string("agent.tool_choice_argument_separator")
+    return separator.join(
+        string(
+            "agent.tool_choice_argument",
+            name=" ".join(name.replace("_", " ").split()),
+            value=_tool_choice_value(value),
+        )
+        for name, value in sorted(arguments.items())
+    )
+
+
+def _tool_choice_value(value: JSONSerializable) -> str:
+    """Render one JSON value without exposing JSON punctuation to speech."""
+    if value is None:
+        return string("agent.tool_choice_no_value")
+    if isinstance(value, bool):
+        return string("agent.tool_choice_true" if value else "agent.tool_choice_false")
+    if isinstance(value, str):
+        return value or string("agent.tool_choice_empty_text")
+    if isinstance(value, (int, float)):
+        return str(value)
+    if isinstance(value, list):
+        if not value:
+            return string("agent.tool_choice_empty_list")
+        values = string("agent.tool_choice_argument_separator").join(
+            _tool_choice_value(item) for item in value
+        )
+        return string("agent.tool_choice_list", values=values)
+    if not value:
+        return string("agent.tool_choice_empty_object")
+    return string("agent.tool_choice_object", arguments=_tool_choice_fields(value))
+
+
+def _tool_choice_arguments(arguments: JSON) -> str:
+    """Render a complete JSON argument object as a speakable phrase."""
+    if not arguments:
+        return string("agent.tool_choice_no_arguments")
+    return string(
+        "agent.tool_choice_arguments",
+        arguments=_tool_choice_fields(arguments),
+    )
 
 
 def _empty_output(
@@ -1278,12 +1322,7 @@ class AgentRuntime:
             choice_id = f"tool-{number}"
             schema = self._tool_schemas.get(call["name"])
             tool_name = schema.display_name if schema is not None else call["name"]
-            arguments = json.dumps(
-                call["arguments"],
-                ensure_ascii=False,
-                sort_keys=True,
-                separators=(",", ":"),
-            )
+            arguments = _tool_choice_arguments(call["arguments"])
             options.append(
                 AgentChoiceOption(
                     choice_id=choice_id,
