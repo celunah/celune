@@ -438,3 +438,31 @@ class TestDoctorCommand(CeluneTestCase):
         assert "ZLUDA" in by_label["Accelerator backend"].detail
         assert by_label["CUDA compute test"].ok
         assert by_label["CUDA compute test"].detail == "Succeeded on cuda:0"
+
+    @pytest.mark.parametrize(
+        ("cuda_version", "expected_ok"),
+        (("12.8", True), ("13.0", True), ("12.9", False)),
+    )
+    def test_doctor_accepts_runtime_supported_cuda_versions(
+        self, cuda_version: str, expected_ok: bool
+    ) -> None:
+        """Verify doctor uses the versions supported by the core runtime."""
+        fake_torch = mock.Mock()
+        fake_torch.__version__ = "2.13.0+cu130"
+        fake_torch.version = mock.Mock(cuda=cuda_version, hip=None)
+        fake_torch.cuda.is_available.return_value = True
+        fake_torch.cuda.device_count.return_value = 0
+        fake_torch.backends = mock.Mock()
+
+        with (
+            mock.patch.object(entrypoint, "_doctor_import", return_value=True),
+            mock.patch.object(entrypoint, "import_module", return_value=fake_torch),
+            mock.patch.object(
+                entrypoint, "_doctor_detect_backend", return_value=("CUDA", True)
+            ),
+        ):
+            checks = entrypoint.doctor_torch_details()
+
+        by_label = {check.label: check for check in checks}
+        assert by_label["CUDA runtime"].ok is expected_ok
+        assert "12.8 or 13.0" in (by_label["CUDA runtime"].hint or "")

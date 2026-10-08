@@ -30,7 +30,13 @@ from celune.terminal import set_terminal_title
 from celune import REVISION, __tagline__, __version__
 from celune.vcs import git_checkout_hint, is_git_checkout
 from celune.config import config_log_level, normalize_log_level
-from celune.constants import APP_NAME, APP_SLUG, NVIDIA_DEVICE_KEYWORDS, ExitCodes
+from celune.constants import (
+    APP_NAME,
+    APP_SLUG,
+    ExitCodes,
+    NVIDIA_DEVICE_KEYWORDS,
+    SUPPORTED_CUDA_VERSIONS,
+)
 
 if TYPE_CHECKING:
     from celune.celune import Celune
@@ -681,13 +687,17 @@ def _doctor_torch_details() -> list[DoctorCheck]:
         return checks
 
     if cuda_available:
-        expected = "12.8"
+        supported_versions = cuda_version in SUPPORTED_CUDA_VERSIONS
         _doctor_add(
             checks,
             "CUDA runtime",
-            cuda_version == expected,
+            supported_versions,
             f"Detected CUDA {cuda_version or 'unknown'}",
-            hint=f"{APP_NAME} expects a CUDA 12.8-compatible runtime for the main GPU backends.",
+            hint=string(
+                "cli.doctor_cuda_runtime_hint",
+                app_name=APP_NAME,
+                versions=" or ".join(SUPPORTED_CUDA_VERSIONS),
+            ),
         )
 
         try:

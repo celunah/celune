@@ -22,7 +22,7 @@ from .backends.vc import CeluneVCBackend
 from .paths import project_root, running_compiled
 from .typing.aliases import LogLevel, LogCallback
 from . import __comment__, __version__, __codename__
-from .constants import APP_NAME, NVIDIA_DEVICE_KEYWORDS
+from .constants import APP_NAME, NVIDIA_DEVICE_KEYWORDS, SUPPORTED_CUDA_VERSIONS
 from .vcs import get_branch, git_checkout_hint, is_git_checkout
 
 
@@ -216,11 +216,14 @@ def validate_runtime(
         )
         log(string("runtime.zluda_performance", app_name=APP_NAME), "warning")
 
-    cuda_version_tuple = tuple(map(int, cuda_version.split(".")))
-    if cuda_version_tuple not in {(12, 8), (13, 0)}:
+    if cuda_version not in SUPPORTED_CUDA_VERSIONS:
         log(
-            f"{APP_NAME} only supports CUDA 12.8 or 13.0, "
-            f"found version {torch.version.cuda}.",
+            string(
+                "runtime.incompatible_cuda_detail",
+                app_name=APP_NAME,
+                versions=" or ".join(SUPPORTED_CUDA_VERSIONS),
+                version=cuda_version,
+            ),
             "error",
         )
         set_state("error")

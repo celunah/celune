@@ -35,8 +35,8 @@ Install these before using the corresponding features:
   falls back to a simpler speed path when it is unavailable.
 - OpenRGB, plus a compatible device, for audio-reactive lighting.
 - A C/C++ compiler for VoxCPM2 and any backend that builds native extensions.
-- CUDA Toolkit 12.8-compatible runtime components for the supported PyTorch
-  CUDA build. The exact driver must still support the installed CUDA runtime.
+- A driver that supports the core PyTorch CUDA 13.0 build. The runtime also
+  accepts CUDA 12.8; CEDTS workers use a separate CUDA 12.8 stack.
 - Symbolic-link support on Windows when developing or using workflows that
   create links.
 
