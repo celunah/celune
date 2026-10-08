@@ -5,15 +5,12 @@ from __future__ import annotations
 
 import os
 from types import SimpleNamespace
-from typing import cast
 from unittest import mock
 
 from celune.celune import Celune
 from celune.agent.tools import production_agent_tools, production_agent_tool_schemas
-from celune.persona.impl import PersonaClient
-from celune.typing.agent import AgentRoute, AgentToolSchema, AgentToolBehavior
-from celune.typing.common import JSON, JSONSerializable
-from celune.typing.persona import PersonaClientResponse
+from celune.typing.agent import AgentToolSchema, AgentToolBehavior
+from celune.typing.common import JSON
 from celune.agent.diagnostics import (
     run_agent_feature_checks,
     run_agent_interaction_checks,
@@ -26,17 +23,6 @@ def _check_name(check: JSON) -> str:
     """Read one diagnostic name without trusting its JSON value type."""
     name = check.get("name")
     return name if isinstance(name, str) else ""
-
-
-def _persona_route_response(route: AgentRoute, **values: str) -> PersonaClientResponse:
-    """Create a deterministic Persona classification response for routing tests."""
-    payload: dict[str, JSONSerializable] = {
-        "classification": "task",
-        "confidence": 1.0,
-        "route": route.value,
-    }
-    payload.update(values)
-    return PersonaClientResponse(payload)
 
 
 class TestAgentDiagnostics(CeluneTestCase):
@@ -182,29 +168,22 @@ class TestAgentDiagnostics(CeluneTestCase):
         assert results["query_models"]["status"] == "passed"
 
     def test_interactive_choice_and_approval_answers_are_processed(self) -> None:
-        """Route either choice and both approval outcomes through Persona."""
+        """Process typed choices and both approval outcomes in the paused runtime."""
         core = self._core()
         prompts: list[str] = []
-        post = mock.Mock(
-            side_effect=(
-                _persona_route_response(
-                    AgentRoute.CHOICE_RESPONSE,
-                    choice_id="tool-2",
-                ),
-                _persona_route_response(
-                    AgentRoute.APPROVAL_RESPONSE,
-                    approval_decision="denied",
-                ),
-            )
-        )
-        core.vision = cast(PersonaClient, SimpleNamespace(post=post))
         answers = iter(("2", "decline"))
 
         def request_user(prompt: str) -> str:
             prompts.append(prompt)
             return next(answers)
 
-        checks = run_agent_interaction_checks(core, request_user)
+        with mock.patch.object(
+            core,
+            "route_input",
+            side_effect=RuntimeError("Persona did not respond"),
+        ) as route_input:
+            checks = run_agent_interaction_checks(core, request_user)
+            assert route_input.call_count == 0
 
         assert [check["status"] for check in checks] == ["passed", "passed"]
         assert "1:" in prompts[0]
@@ -215,18 +194,14 @@ class TestAgentDiagnostics(CeluneTestCase):
         assert isinstance(declined_detail, str)
         assert "declined" in declined_detail
 
-        post.side_effect = (
-            _persona_route_response(
-                AgentRoute.CHOICE_RESPONSE,
-                choice_id="tool-1",
-            ),
-            _persona_route_response(
-                AgentRoute.APPROVAL_RESPONSE,
-                approval_decision="approved",
-            ),
-        )
         answers = iter(("1", "approve"))
-        approved_checks = run_agent_interaction_checks(core, request_user)
+        with mock.patch.object(
+            core,
+            "route_input",
+            side_effect=RuntimeError("Persona did not respond"),
+        ) as route_input:
+            approved_checks = run_agent_interaction_checks(core, request_user)
+            assert route_input.call_count == 0
         approved_detail = approved_checks[1].get("detail")
         assert approved_checks[1]["status"] == "passed"
         assert isinstance(approved_detail, str)

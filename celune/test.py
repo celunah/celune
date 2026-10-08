@@ -128,30 +128,17 @@ def _announce_tool_result(
     engine: Celune,
     name: str,
     status: str,
-    detail: str,
+    _detail: str,
     timeout_seconds: float,
 ) -> None:
-    """Speak one bounded, localized summary of a production tool result."""
-    status_keys = {
-        "passed": "test.agent_tool_status_passed",
-        "failed": "test.agent_tool_status_failed",
-        "skipped": "test.agent_tool_status_skipped",
-        "unavailable": "test.agent_tool_status_unavailable",
-    }
-    status_key = status_keys.get(status)
-    if status_key is None:
-        raise ValueError(f"unknown tool diagnostic status: {status}")
-    if status == "unavailable":
-        result = string("test.agent_tool_no_result")
-    elif "result=" in detail:
-        result = detail.partition("result=")[2]
-    else:
-        result = detail
+    """Speak a short, localized status while keeping details in the test log."""
+    status_message = string(
+        "test.agent_tool_worked" if status == "passed" else "test.agent_tool_failed"
+    )
     message = string(
         "test.agent_tool_announcement",
         tool=" ".join(name.split("_")),
-        status=string(status_key),
-        result=result,
+        status=status_message,
     )
     _speak_agent_test_message(engine, message, timeout_seconds)
 

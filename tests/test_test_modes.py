@@ -398,8 +398,15 @@ class TestFinishedLifecycleTests(CeluneTestCase):
         def feature_checks(_engine, *, tool_result_callback=None):
             assert tool_result_callback is not None
             tool_result_callback("query_status", "passed", "result=ready")
-            tool_result_callback("query_models", "passed", "result=loaded")
-            return []
+            tool_result_callback("query_models", "failed", "result=private raw output")
+            return [
+                {"name": "query_status", "status": "passed", "detail": "result=ready"},
+                {
+                    "name": "query_models",
+                    "status": "failed",
+                    "detail": "result=private raw output",
+                },
+            ]
 
         def interaction_checks(_engine, request_user):
             assert request_user is not None
@@ -434,7 +441,16 @@ class TestFinishedLifecycleTests(CeluneTestCase):
         ):
             result = run_agent_test(core, request_user=request_user)
 
-        assert result["success"]
+        assert not result["success"]
+        assert sequence[0] == (
+            "spoken:I ran query status, and it worked. "
+            "The result was recorded in the logs."
+        )
+        assert sequence[1] == (
+            "spoken:I ran query models, and it didn't work. "
+            "The result was recorded in the logs."
+        )
+        assert "private raw output" not in " ".join(sequence)
         assert [entry.split(":", 1)[0] for entry in sequence] == [
             "spoken",
             "spoken",
@@ -480,6 +496,7 @@ class TestFinishedLifecycleTests(CeluneTestCase):
         worker.join(timeout=1)
 
         assert answers == ["2"]
+        assert ui.input_box.placeholder == string("ui.agent_test_answer_placeholder")
         ui.safe_log.assert_called_once_with("Choose an option")
         ui.safe_status.assert_any_call(string("ui.agent_test_prompt_ready"))
         ui.safe_status.assert_any_call(string("ui.agent_test_answer_received"))

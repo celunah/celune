@@ -2007,7 +2007,9 @@ def _finalize_playback_idle(
     engine.cur_state = "idle"
     engine.idle_callback()
 
-    if random.random() < 0.01:
+    if getattr(engine, "backend_mode", None) == "agent_test":
+        engine._ready_announced = True
+    elif random.random() < 0.01:
         flavor_texts = [
             "I will speak.",
             "I'll answer.",

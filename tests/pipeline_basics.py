@@ -9,35 +9,36 @@ import queue
 import asyncio
 import tempfile
 import threading
+from types import TracebackType, SimpleNamespace
+from typing import Self, Optional, cast
 from pathlib import Path
 from unittest import mock
 from collections.abc import Iterator
-from typing import Self, Optional, cast
-from types import TracebackType, SimpleNamespace
 
-import pytest
 import numpy as np
+import pytest
 import numpy.typing as npt
 
+from celune import pipeline
+from celune import conversation as conversation_module
+from celune.utils import discard
+from celune.celune import Celune
 from celune.cevoice import (
     CEVoicePersona,
     PersonaIdentity,
     PersonaStyleValues,
 )
-from celune.celune import Celune
-from celune.utils import discard
+from celune.constants import PipelineStates
 from celune.typing.agent import (
     AgentTask,
     AgentContext,
     AgentRequest,
 )
-from celune.constants import PipelineStates
-from celune.typing.aliases import AudioChunk
 from celune.typing.locks import ComponentLockName
 from celune.typing.common import JSON, JSONSerializable
-from celune.persona.capabilities import PersonaCapabilities
-from celune import conversation as conversation_module, pipeline
+from celune.typing.aliases import AudioChunk
 from celune.dataclasses.pipeline import SpeechRequest, AudioInputRequest
+from celune.persona.capabilities import PersonaCapabilities
 
 from .support import (
     FakeStream,
@@ -2216,6 +2217,22 @@ class TestPipelineAsync(CeluneAsyncTestCase):
         assert ("Ready to speak.", "info") not in engine.messages
         assert not getattr(engine, "_ready_announced", False)
         assert engine.cur_state == "reloading"
+
+    def test_finalize_playback_idle_does_not_announce_readiness_in_agent_test(
+        self,
+    ) -> None:
+        """Keep the normal speech readiness message out of the agent test log."""
+        engine = make_pipeline_engine()
+        engine.backend_mode = "agent_test"
+        engine.locked = False
+        engine.loaded = True
+        engine.cur_state = "speaking"
+
+        with mock.patch("celune.pipeline.random.random", return_value=0.5):
+            pipeline.finalize_playback_idle(cast(Celune, engine))
+
+        assert ("Ready to speak.", "info") not in engine.messages
+        assert engine._ready_announced
 
     def test_finalize_playback_idle_does_not_emit_idle_callback_while_locked(
         self,

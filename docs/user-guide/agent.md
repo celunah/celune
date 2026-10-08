@@ -119,12 +119,17 @@ as passed, failed, or skipped. Optional local-management checks run only when
 describes the report and exit status.
 
 After the live task, the test invokes every active tool with isolated test
-adapters and speaks each tool result. Celune then speaks a multiple-choice
-request and an approval request before displaying each request and accepting a
-typed answer. Either listed choice is accepted. Approving or declining the
-simulated mutation passes when Celune processes the response. These spoken
-tool results and interactive prompts apply only to `celune test agent`. Each
-typed response has a two-minute timeout; no response fails that check.
+adapters and speaks a short status for each tool; the detailed result is
+recorded in the test log. Celune then speaks a multiple-choice request and an
+approval request before displaying each request and accepting a typed answer.
+The answer is applied directly to the paused diagnostic runtime, so the check
+verifies that the response was received and processed without requiring another
+Persona response. Either listed choice is accepted, and approving or declining
+the simulated mutation passes when processed. The answer field says “Enter your
+answer here,” with “Waiting for answer” and “Processing answer” status messages.
+These spoken tool results and interactive prompts apply only to
+`celune test agent`. Each typed response has a two-minute timeout; no response
+fails that check.
 
 ## See also
 

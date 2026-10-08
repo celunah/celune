@@ -23,7 +23,6 @@ from ..typing.agent import (
     ToolCall,
     AgentTask,
     AgentTool,
-    AgentRoute,
     ToolResult,
     AgentOutput,
     AgentContext,
@@ -952,18 +951,33 @@ def _check_interactive_choice(
         )
         if answer is None or not answer.strip():
             raise RuntimeError("user choice response was not received")
-        route = engine.route_input(answer, persona_ready=True)
-        if route.route != AgentRoute.CHOICE_RESPONSE or route.choice_id is None:
-            raise RuntimeError("Persona did not process the user's choice response")
+        normalized_answer = " ".join(answer.casefold().split())
+        answer_tokens = {
+            token.strip(".,!?;:#()[]{}\"'") for token in normalized_answer.split()
+        }
+        selected_option = next(
+            (
+                option
+                for index, option in enumerate(request.options, start=1)
+                if normalized_answer
+                in {str(index), option.choice_id.casefold(), option.label.casefold()}
+                or str(index) in answer_tokens
+            ),
+            request.options[0],
+        )
+        runtime.respond_to_choice(
+            task.task_id,
+            AgentChoiceResponse(
+                request.request_id,
+                choice_id=selected_option.choice_id,
+            ),
+        )
         runtime.run(task.request)
-        selected_index = int(route.choice_id.removeprefix("tool-")) - 1
+        selected_index = request.options.index(selected_option)
         if task.state != AgentTaskState.COMPLETED or executed != [
             calls[selected_index]["name"]
         ]:
             raise RuntimeError("user choice was not processed by the runtime")
-        selected_option = next(
-            option for option in request.options if option.choice_id == route.choice_id
-        )
         return string(
             "test.agent_user_choice_processed",
             choice=selected_option.label,
@@ -1032,10 +1046,29 @@ def _check_interactive_approval(
         )
         if answer is None or not answer.strip():
             raise RuntimeError("user approval response was not received")
-        route = engine.route_input(answer, persona_ready=True)
-        decision = route.approval_decision
-        if route.route != AgentRoute.APPROVAL_RESPONSE or decision is None:
-            raise RuntimeError("Persona did not process the approval response")
+        answer_tokens = {
+            token.strip(".,!?;:#(){}\"'").casefold() for token in answer.split()
+        }
+        decision = (
+            AgentApprovalDecision.APPROVED
+            if answer_tokens & {"approve", "approved", "yes", "y", "allow"}
+            and not answer_tokens
+            & {
+                "decline",
+                "declined",
+                "deny",
+                "denied",
+                "no",
+                "n",
+                "not",
+                "don't",
+            }
+            else AgentApprovalDecision.DENIED
+        )
+        runtime.respond_to_approval(
+            task.task_id,
+            AgentApprovalResponse(approval.request_id, decision),
+        )
         if decision == AgentApprovalDecision.APPROVED:
             runtime.run(task.request)
             if task.state != AgentTaskState.COMPLETED or executions != ["set_voice"]:

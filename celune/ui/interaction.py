@@ -1113,6 +1113,7 @@ def request_agent_test_response(
     self._agent_test_response_queue = response_queue
     self.safe_log(prompt)
     self.safe_status(_app.string("ui.agent_test_prompt_ready"))
+    self.input_box.placeholder = _app.string("ui.agent_test_answer_placeholder")
     self.change_input_state(locked=False)
     try:
         try:

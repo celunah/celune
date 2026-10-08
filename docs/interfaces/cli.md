@@ -32,10 +32,12 @@ explicit start/run commands, and the UI or agent test modes.
 
 The agent test runs the configured Persona, Needle, and TTS path through one
 read-only task. It then runs every active production tool handler with isolated
-test state and speaks each tool result. Celune speaks a multiple-choice
-question and an approval request before displaying them and accepting typed
-answers. Either listed choice passes. Approving or declining the simulated
-mutation passes when the response is processed. The test also checks task
+test state and speaks a short worked/didn't work status for each tool; detailed
+results are recorded in the test log. Celune speaks a multiple-choice question
+and an approval request before displaying them and accepting typed answers. The
+answers are applied directly to the paused diagnostic runtime, without another
+Persona response. Either listed choice passes. Approving or declining the
+simulated mutation passes when the response is processed. The test also checks task
 lifecycle, schema validation, permissions, context limits, and terminal
 outcomes. Each typed response prompt waits up to two minutes; a missing answer
 fails that check. When local-management tools are enabled, filesystem operations stay
