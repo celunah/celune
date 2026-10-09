@@ -1,5 +1,7 @@
 # Voice Design
 
+Updated: Sep 30, 2026 (Classic Remastered)
+
 This document describes how Celune's voice identities were created, selected, and refined.
 
 ## Who is Celune
@@ -38,119 +40,82 @@ Refer to the following models for details:
 - [Qwen3-TTS](<https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-Base>)
 - [VoxCPM2](<https://huggingface.co/openbmb/VoxCPM2>)
 - [Pocket TTS](<https://huggingface.co/kyutai/pocket-tts>) [(ungated)](<https://huggingface.co/lunahr/pocket-tts-ungated>)
+- [dots.tts](<https://huggingface.co/dots-studio/dots.tts-mf>)
+- [LuxTTS](<https://huggingface.co/YatharthS/LuxTTS>)
 
 ## Reference text
 
-These scripts are what Celune says in the reference audio. They were modified from an original script to reduce the hallucination risk.
+These scripts are what Celune says in the reference audio:
+
+Non-verbal tags are included for improved expression in her delivery.
 
 > Calm:
 >
 > ```text
-> My name is... Celune... It is so... quiet.
+> [sigh] There are moments in life, which need... just a little bit of calmness, right?
 > ```
 >
 > Balanced:
 >
 > ```text
-> My name is Celune, pronounced Celune. It is a pleasure to meet you.
+> I feel like something good is about to happen. Really, it's just bound to come.
 > ```
 >
 > Bold:
 >
 > ```text
-> My name is Celune! Let's do this, we have to get it done!
+> [gasp] Wait, what the hell just happened? Why?
 > ```
 >
 > Upbeat:
 >
 > ```text
-> Hehehe... Hi, I'm Celune. Look, I have something to tell... might as well make it fun. Shall we?
+> [laughter] Now THAT is what I call "funny".
 > ```
->
-> ℹ️ This sample includes leading laughter.
 
 ## Reference prompts
 
-These prompts were used to steer direction of the voice during auditioning.
+A base prompt was used to create the main voice with [Gemini 3.8 Flash TTS](https://blog.google/innovation-and-ai/models-and-research/gemini-models/gemini-3-8-text-to-speech/):
+
+
+```text
+A feminine voice in a low register, clear and steady with mild airiness. Balanced, composed delivery with natural, restrained expression. Fully voiced, not breathy or whispered.
+```
+
+It was then guided by a style delivery prompt. They are listed below.
 
 > Calm:
 >
 > ```text
-> A female voice with a soft, velvety, and hushed texture. A slow, sophisticated blend with focused vocal control.
+> slightly hushed delivery, very subtle modulation, not a whisper
 > ```
 >
 > Balanced:
 >
 > ```text
-> A female voice with a warm, steady, and slightly resonant texture. Calm and articulate with clear, grounded presence.
+> No extra prompt
 > ```
 >
 > Bold:
 >
 > ```text
-> A female voice with a rich, resonant, and decisive texture. Confident, professional, and clear with a rhythmic drive.
+> high energy, with richer modulation
 > ```
 >
 > Upbeat:
 >
 > ```text
-> A female voice with a bright, warm, and expressive texture. Upbeat, witty, and clear with a conversational flow and playful cadence.
+> playful with joy, richer modulation, slightly higher pitched
 > ```
-
-## Candidates
-
-The batch size per voice is 50. One voice was selected as the best match. Voices were generated using [Qwen3-TTS-12Hz-1.7B-VoiceDesign](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign).
-
-The following are the original sample names. Voice display names may differ from the original names.
-
-- Energetic #16, seed: `590298652`
-- Neutral #32, seed: `418977738`
-- Calm #7, seed: `4243102495`
-- Upbeat #16, seed: `3771593946`
-
-## Post-processing
-
-These edits were applied to make sure the new references match the initial reference.
-
-- Upbeat pitch: `-2.5 sem` (1.5 may have been too high, let's see if an additional semitone makes her better)
-- Bold & Balanced pitch: `-1 sem`
-- Calm pitch: `-0.5 sem`
-- Many voices: Added natural pacing pauses
 
 ## Effects
 
-These effects and their settings give Celune's voice its identity.
+Celune's voice does not incorporate any additional audio effects to ensure a clean, natural delivery.
 
-### Reverb
-
-- room size = 50%
-- pre-delay = 20ms
-- reverberance = 40%
-- damping = 75%
-- tone low = 0%
-- tone high = 50%
-- wet gain = -16 dB
-- dry gain = 0 dB
-- stereo width = 85%
-- wet only = no
-
-An additional amount of reverb can be applied within Celune.
-
-Refer to the `/reverb` command for details.
-
-## Compressor
-
-- threshold = -15 dB
-- makeup gain = 0 dB
-- knee width = 5 dB
-- ratio = 10
-
-- smoothing lookahead - 1.0 ms
-- smoothing attack = 30 ms
-- smoothing release = 150 ms
+The voices were cleaned up of background noise.
 
 ## Output format
 
-This format makes Celune sound the best on your computer, especially if using VoxCPM2.
+This format is currently enforced by Celune's DSP outputs.
 
-- 48kHz stereo, signed 24-bit PCM, FLAC or WAV
+- 48kHz stereo, signed 24-bit PCM, FLAC 
