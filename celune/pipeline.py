@@ -15,19 +15,16 @@ import datetime
 import threading
 import contextlib
 import collections.abc
-from typing import TYPE_CHECKING, Optional, cast
 from collections import deque
-from dataclasses import replace, dataclass
+from dataclasses import dataclass, replace
+from typing import TYPE_CHECKING, Optional, cast
 
-import numpy as np
 import torch
-import psutil
+import numpy as np
 import soundfile as sf
 import sounddevice as sd
 import pyrubberband as rb
 
-from .i18n import string, tagged_string
-from .vram import is_cuda_out_of_memory, release_cuda_after_oom
 from .paths import (
     outputs_dir,
 )
@@ -36,10 +33,6 @@ from .utils import (
     format_number,
     format_error_message,
 )
-from .config import resolve_audio_device
-from .binding import install_class_functions
-from .threads import run_in_daemon_thread as _run_in_daemon_thread
-from .analysis import _schedule_voice_analysis
 from .metadata import (
     _write_celune_flac,
     _write_flac_metadata,
@@ -88,32 +81,30 @@ from .constants import (
     APP_NAME,
     APP_SLUG,
 )
-from .exceptions import BackendError, NotAvailableError
-from .conversation import _think_persona, _effective_voice_prompt
 from .pipelinecore import (
-    _PIPELINE_CPU_YIELD_SECONDS,
-    _PLAYBACK_BUFFER_MAX_SECONDS,
-    _PLAYBACK_BUFFER_MIN_SECONDS,
-    _PLAYBACK_CONTENTION_CPU_START,
-    _PLAYBACK_CONTENTION_CPU_CRITICAL,
-    _PLAYBACK_CONTENTION_STABLE_DECAY,
-    _PLAYBACK_CONTENTION_REBUFFER_LEVEL,
-    _PLAYBACK_CONTENTION_SAMPLE_SECONDS,
-    _PLAYBACK_BUFFER_CRITICAL_MAX_SECONDS,
-    _PLAYBACK_BUFFER_STARTUP_GRACE_SECONDS,
-    _PLAYBACK_CONTENTION_LAG_START_SECONDS,
-    _PLAYBACK_CONTENTION_LAG_CRITICAL_SECONDS,
     _monotonic_time,
+    _PIPELINE_CPU_YIELD_SECONDS,
+    _PLAYBACK_BUFFER_STARTUP_GRACE_SECONDS,
 )
-from .typing.common import JSONSerializable
-from .typing.aliases import AudioChunk, AudioChunks
-from .typing.pipeline import SpeechStreamQueue
 from .dataclasses.pipeline import (
     SpeechTiming,
     PlaybackChunk,
     SpeechRequest,
     PlaybackSourceDone,
 )
+from .i18n import string, tagged_string
+from .config import resolve_audio_device
+from .typing.common import JSONSerializable
+from .binding import install_class_functions
+from .analysis import _schedule_voice_analysis
+from .typing.pipeline import SpeechStreamQueue
+from .contention import _PlaybackContentionMonitor
+from .typing.aliases import AudioChunk, AudioChunks
+from .exceptions import BackendError, NotAvailableError
+from .vram import is_cuda_out_of_memory, release_cuda_after_oom
+from .conversation import _think_persona, _effective_voice_prompt
+from .threads import run_in_daemon_thread as _run_in_daemon_thread
+from .prepared import finish_tutorial_audio_capture, play_prepared_speech
 
 if TYPE_CHECKING:
     from .celune import Celune
@@ -244,140 +235,6 @@ class _PlaybackWriteItem:
     source_ids: tuple[int, ...]
     duration_seconds: float
     submitted_at: float
-
-
-class _PlaybackContentionMonitor:
-    """Estimate playback contention from CPU pressure and output timing."""
-
-    def __init__(self, engine: Celune) -> None:
-        self._engine = engine
-        self._lock = threading.Lock()
-        self._process = psutil.Process(os.getpid())
-        self._last_sample_at = 0.0
-        self._level = 0.0
-        self._underflows = 0
-        with contextlib.suppress(psutil.Error, OSError):
-            self._process.cpu_percent(interval=None)
-
-    @staticmethod
-    def _pressure(value: float, start: float, critical: float) -> float:
-        """Normalize one observed pressure value to the inclusive 0..1 range."""
-        if value <= start:
-            return 0.0
-        if value >= critical:
-            return 1.0
-        return (value - start) / (critical - start)
-
-    def _publish_locked(self) -> None:
-        """Publish lightweight diagnostics for logs and status views."""
-        self._engine.playback_contention_level = self._level
-        self._engine.playback_underflows = self._underflows
-
-    def sample_cpu(self, now: float) -> None:
-        """Sample system and process CPU without blocking the playback loop."""
-        with self._lock:
-            if now - self._last_sample_at < _PLAYBACK_CONTENTION_SAMPLE_SECONDS:
-                return
-            self._last_sample_at = now
-
-        try:
-            cpu_percent = psutil.cpu_percent(interval=None)
-        except (psutil.Error, OSError, TypeError, ValueError):
-            cpu_percent = 0.0
-
-        try:
-            process_percent = self._process.cpu_percent(interval=None)
-        except (psutil.Error, OSError, TypeError, ValueError):
-            process_percent = 0.0
-
-        logical_cpus = max(1, psutil.cpu_count(logical=True) or 1)
-        normalized_process_percent = process_percent / logical_cpus
-        pressure = max(
-            self._pressure(
-                cpu_percent,
-                _PLAYBACK_CONTENTION_CPU_START,
-                _PLAYBACK_CONTENTION_CPU_CRITICAL,
-            ),
-            self._pressure(
-                normalized_process_percent,
-                _PLAYBACK_CONTENTION_CPU_START,
-                _PLAYBACK_CONTENTION_CPU_CRITICAL,
-            ),
-        )
-
-        with self._lock:
-            if pressure > 0.0:
-                self._level = max(self._level * 0.9, pressure)
-            else:
-                self._level *= _PLAYBACK_CONTENTION_STABLE_DECAY
-            self._publish_locked()
-
-    def observe_scheduler_lag(self, delay_seconds: float) -> None:
-        """Record a delayed playback-loop wakeup as contention evidence."""
-        self._observe_pressure(
-            self._pressure(
-                delay_seconds,
-                _PLAYBACK_CONTENTION_LAG_START_SECONDS,
-                _PLAYBACK_CONTENTION_LAG_CRITICAL_SECONDS,
-            )
-        )
-
-    def _observe_pressure(self, pressure: float) -> None:
-        """Update the smoothed contention level from one pressure sample."""
-        pressure = max(0.0, min(1.0, pressure))
-        with self._lock:
-            if pressure > 0.0:
-                self._level = max(self._level * 0.9, pressure)
-            else:
-                self._level *= _PLAYBACK_CONTENTION_STABLE_DECAY
-            self._publish_locked()
-
-    def observe_write(
-        self,
-        elapsed_seconds: float,
-        block_seconds: float,
-        underflowed: bool,
-    ) -> None:
-        """Record one output write and any PortAudio-reported underflow."""
-        with self._lock:
-            if underflowed:
-                self._underflows += 1
-                self._level = 1.0
-            else:
-                write_pressure = self._pressure(
-                    max(0.0, elapsed_seconds - block_seconds),
-                    _PLAYBACK_CONTENTION_LAG_START_SECONDS,
-                    _PLAYBACK_CONTENTION_LAG_CRITICAL_SECONDS,
-                )
-                if write_pressure > 0.0:
-                    self._level = max(self._level * 0.9, write_pressure)
-                else:
-                    self._level *= _PLAYBACK_CONTENTION_STABLE_DECAY
-            self._publish_locked()
-
-    def target_seconds(self) -> float:
-        """Return the current reserve target, rising as contention increases."""
-        with self._lock:
-            max_seconds = _PLAYBACK_BUFFER_MAX_SECONDS + (
-                (_PLAYBACK_BUFFER_CRITICAL_MAX_SECONDS - _PLAYBACK_BUFFER_MAX_SECONDS)
-                * self._level
-            )
-            return _PLAYBACK_BUFFER_MIN_SECONDS + (
-                (max_seconds - _PLAYBACK_BUFFER_MIN_SECONDS) * self._level
-            )
-
-    def capacity_seconds(self) -> float:
-        """Return the maximum reserve allowed at the current contention level."""
-        with self._lock:
-            return _PLAYBACK_BUFFER_MAX_SECONDS + (
-                (_PLAYBACK_BUFFER_CRITICAL_MAX_SECONDS - _PLAYBACK_BUFFER_MAX_SECONDS)
-                * self._level
-            )
-
-    def requires_rebuffer(self) -> bool:
-        """Return whether contention is high enough to pause for more reserve."""
-        with self._lock:
-            return self._level >= _PLAYBACK_CONTENTION_REBUFFER_LEVEL
 
 
 def _prioritize_playback_thread() -> None:
@@ -1139,11 +996,16 @@ def _process_generation_request(
     caption_worker: Optional[CaptionAlignmentWorker],
 ) -> None:
     """Process one queued speech request on a blocking worker thread."""
+    if item.prepared_audio is not None:
+        play_prepared_speech(engine, item, caption_worker)
+        return
+
     text = item.text
     display_text = item.display_text
     request_language = item.language
     save_output = item.save
     stream_queue = item.stream_queue
+    capture_tutorial_audio = item.audio_capture_queue is not None
     kept_sfx_audio = engine.kept_sfx_audio
     engine.kept_sfx_audio = None
 
@@ -1151,18 +1013,26 @@ def _process_generation_request(
         if stream_queue is not None:
             stream_queue.put(NotAvailableError("stream queue interrupted"))
             stream_queue.put(None)
+        if item.audio_capture_queue is not None:
+            item.audio_capture_queue.put(
+                NotAvailableError("tutorial speech preparation was interrupted")
+            )
         release_pipeline(engine)
         return
 
-    source_id: Optional[int] = None
     while True:
-        source_id = None
+        source_id = _next_playback_source_id(engine)
+        prepared_sections: list[AudioChunk] = []
         try:
             engine.model_ready.wait()
 
             if not engine.loaded and not engine.backend.is_fake:
                 engine.log(string("ui.core_engine_not_loaded"), "warning")
                 engine.locked = False
+                if item.audio_capture_queue is not None:
+                    item.audio_capture_queue.put(
+                        NotAvailableError("model is not ready")
+                    )
                 if stream_queue is not None:
                     stream_queue.put(NotAvailableError("model is not ready"))
                     stream_queue.put(None)
@@ -1204,9 +1074,15 @@ def _process_generation_request(
             }
 
             chunks = split_text(engine, text)
+            if capture_tutorial_audio:
+                chunks = list(item.synthesis_sections)
             if not chunks:
                 engine.progress_callback(0, 1)
                 engine.error_callback(string("pipeline.nothing_to_say"))
+                if item.audio_capture_queue is not None:
+                    item.audio_capture_queue.put(
+                        NotAvailableError("tutorial speech has no sections")
+                    )
                 release_pipeline(engine)
                 if stream_queue is not None:
                     stream_queue.put(NotAvailableError("nothing to say"))
@@ -1217,20 +1093,22 @@ def _process_generation_request(
             full_audio: AudioChunks = []
             generated_text_parts: list[str] = []
             request_generation = item.generation
-            source_id = _next_playback_source_id(engine)
             caption_word_total = len(display_text.split())
             caption_alignment_enabled = (
-                engine.config.get("captions") is True and caption_worker is not None
+                not capture_tutorial_audio
+                and engine.config.get("captions") is True
+                and caption_worker is not None
             )
-            _register_playback_source(
-                engine,
-                source_id,
-                kind="speech",
-                async_caption_audio=caption_alignment_enabled,
-                caption_word_total=(
-                    caption_word_total if caption_alignment_enabled else 0
-                ),
-            )
+            if not capture_tutorial_audio:
+                _register_playback_source(
+                    engine,
+                    source_id,
+                    kind="speech",
+                    async_caption_audio=caption_alignment_enabled,
+                    caption_word_total=(
+                        caption_word_total if caption_alignment_enabled else 0
+                    ),
+                )
             caption_word_ranges = _caption_chunk_word_ranges(display_text, chunks)
 
             for chunk_index, chunk_text in enumerate(chunks):
@@ -1242,7 +1120,9 @@ def _process_generation_request(
 
                 chunk_word_start, chunk_word_end = caption_word_ranges[chunk_index]
                 chunk_start_frames = 0
-                if source_id in _playback_caption_states(engine):
+                if source_id is not None and source_id in _playback_caption_states(
+                    engine
+                ):
                     with engine.queue_lock:
                         source_meta = _playback_source_meta(engine).get(source_id)
                         if isinstance(source_meta, dict):
@@ -1428,9 +1308,13 @@ def _process_generation_request(
                         )
                         engine.smart_buffer_target_seconds = smart_buffer_target_seconds
 
-                        if not caption_alignment_enabled and (
-                            smart_buffer_target_seconds <= 0.0
-                            or buffered_speech_len >= smart_buffer_target_seconds
+                        if (
+                            not capture_tutorial_audio
+                            and not caption_alignment_enabled
+                            and (
+                                smart_buffer_target_seconds <= 0.0
+                                or buffered_speech_len >= smart_buffer_target_seconds
+                            )
                         ):
                             pushed_audio = _flush_buffered_speech_chunks(
                                 engine,
@@ -1455,7 +1339,20 @@ def _process_generation_request(
                             "warning",
                         )
 
-                if (
+                if capture_tutorial_audio:
+                    if engine.reverb.strength > 0.0:
+                        tail = engine.reverb.flush()
+                        if len(tail) > 0:
+                            buffer.append(np.asarray(tail, dtype=np.float32))
+                            full_audio.append(np.asarray(tail, dtype=np.float32))
+                        engine.reverb.reset()
+                    prepared_sections.append(
+                        np.concatenate(buffer).astype(np.float32, copy=False)
+                        if buffer
+                        else np.empty(0, dtype=np.float32)
+                    )
+                    buffer.clear()
+                elif (
                     not engine.exit_requested
                     and not engine.utterance_force_stop.is_set()
                     and request_generation
@@ -1541,7 +1438,11 @@ def _process_generation_request(
             )
 
             if engine.exit_requested:
-                if caption_worker is not None:
+                if item.audio_capture_queue is not None:
+                    item.audio_capture_queue.put(
+                        NotAvailableError("tutorial speech preparation was interrupted")
+                    )
+                if caption_worker is not None and not capture_tutorial_audio:
                     caption_worker.cancel_source(source_id)
                     caption_worker.submit_done(
                         engine,
@@ -1558,7 +1459,11 @@ def _process_generation_request(
             if engine.utterance_force_stop.is_set() or request_generation != getattr(
                 engine, "_speech_generation", request_generation
             ):
-                if caption_worker is not None:
+                if item.audio_capture_queue is not None:
+                    item.audio_capture_queue.put(
+                        NotAvailableError("tutorial speech preparation was interrupted")
+                    )
+                if caption_worker is not None and not capture_tutorial_audio:
                     caption_worker.cancel_source(source_id)
                     caption_worker.submit_done(
                         engine,
@@ -1586,7 +1491,7 @@ def _process_generation_request(
             )
             engine.log(f"TTFC {format_number(speech_timing.ttfc_ms(), 1)}ms")
 
-            if buffer:
+            if buffer and not capture_tutorial_audio:
                 if caption_alignment_enabled and caption_worker is not None:
                     caption_worker.submit_audio(
                         engine,
@@ -1611,6 +1516,26 @@ def _process_generation_request(
 
             saved_path = None
             analysis_audio = None
+            if capture_tutorial_audio:
+                audio_capture_queue = item.audio_capture_queue
+                if audio_capture_queue is None:
+                    raise NotAvailableError("tutorial capture queue is unavailable")
+                if finish_tutorial_audio_capture(
+                    engine,
+                    audio_capture_queue,
+                    speech_len,
+                    full_audio,
+                    prepared_sections,
+                    item.silent_retry_count,
+                    _MAX_SILENT_UTTERANCE_RETRIES,
+                ):
+                    item = replace(
+                        item,
+                        silent_retry_count=item.silent_retry_count + 1,
+                    )
+                    continue
+                break
+
             if not engine.exit_requested:
                 if engine.reverb.strength > 0.0:
                     tail = engine.reverb.flush()
@@ -1775,7 +1700,7 @@ def _process_generation_request(
             break
         except Exception as original_error:
             if engine.exit_requested:
-                if caption_worker is not None and source_id is not None:
+                if caption_worker is not None and not capture_tutorial_audio:
                     caption_worker.cancel_source(source_id)
                     caption_worker.submit_done(
                         engine,
@@ -1787,7 +1712,7 @@ def _process_generation_request(
                 release_pipeline(engine)
                 break
 
-            if caption_worker is not None and source_id is not None:
+            if caption_worker is not None and not capture_tutorial_audio:
                 caption_worker.cancel_source(source_id)
                 caption_worker.submit_done(
                     engine,
@@ -1807,6 +1732,8 @@ def _process_generation_request(
                     recovery_error = caught_recovery_error
 
             error = recovery_error or original_error
+            if item.audio_capture_queue is not None:
+                item.audio_capture_queue.put(error)
             short_input_error = _is_short_input_generation_error(error)
             input_too_short_message = string("pipeline.input_too_short")
             if cuda_oom:
@@ -1888,6 +1815,14 @@ async def generation_worker_job(engine: Celune) -> None:
         ):
             if request.stream_queue is not None:
                 request.stream_queue.put(None)
+            if request.audio_capture_queue is not None:
+                request.audio_capture_queue.put(
+                    NotAvailableError("speech generation was superseded")
+                )
+            if request.playback_source_queue is not None:
+                request.playback_source_queue.put(
+                    NotAvailableError("prepared playback was superseded")
+                )
             continue
 
         engine.utterance_force_stop.clear()

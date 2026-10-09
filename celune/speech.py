@@ -4,10 +4,11 @@
 from __future__ import annotations
 
 import os
+import time
 import queue
 import pathlib
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Optional, cast
+from typing import TYPE_CHECKING, Optional, Union, cast
 
 import numpy as np
 import soundfile as sf
@@ -15,48 +16,50 @@ from iso639 import Lang
 from iso639.exceptions import DeprecatedLanguageValue, InvalidLanguageValue
 
 from .utils import (
+    rng_replace,
+    is_april_fools,
     detect_language,
     format_error_message,
-    is_april_fools,
     normalize_special_characters,
-    rng_replace,
 )
 from .pipeline import (
-    _format_stat_duration,
-    _invalidate_speech_work,
-    _run_in_daemon_thread,
     close_stream,
+    _format_stat_duration,
+    _run_in_daemon_thread,
+    _invalidate_speech_work,
 )
 from .playback import (
     acquire_pipeline,
-    acquire_pipeline_result,
-    _clear_playback_source_status,
-    _download_youtube_sfx,
+    release_pipeline,
     _is_youtube_sfx_url,
-    _next_playback_source_id,
+    _queue_playback_done,
+    _download_youtube_sfx,
     _playback_source_meta,
     _queue_playback_chunk,
-    _queue_playback_done,
-    _register_overlay_playback_state,
+    acquire_pipeline_result,
+    _next_playback_source_id,
     _register_playback_source,
     _set_playback_source_status,
-    release_pipeline,
+    _clear_playback_source_status,
+    _register_overlay_playback_state,
 )
 from .i18n import string
 from .conversation import (
-    _classify_persona_memories,
     _store_persona_memories,
+    _classify_persona_memories,
 )
 from .vc import normalize_vc_audio
 from .cevoice import default_loader
 from .dataclasses.pipeline import (
-    AudioInputRequest,
     AudioOutput,
     SpeechRequest,
+    AudioInputRequest,
+    PreparedSpeechAudio,
     VoiceConversionRequest,
 )
 from .typing.aliases import AudioChunk
 from .constants import APP_NAME, BASE_SR
+from .exceptions import NotAvailableError
 from .typing.pipeline import SpeechStreamQueue
 from .persona.impl import compact_persona_history
 from .audio.dsp import pitch_shift_audio, resample_audio, split
@@ -159,40 +162,128 @@ def say(
     )
 
 
-def _say_tutorial(engine: Celune, text: str) -> bool:
-    """Queue one tutorial utterance while tutorial mode holds the input lock.
-
-    Args:
-        engine: Runtime that owns the tutorial speech pipeline.
-        text: Localized tutorial text to speak.
-
-    Returns:
-        bool: ``True`` when the utterance was queued successfully.
-    """
-    if not getattr(engine, "is_in_tutorial", False):
-        return False
-
-    if getattr(engine, "test_finished", False):
-        return False
-    engine.log(
-        f"[ENGINE] say requested text_chars={len(text)} save=False "
-        f"state={engine.cur_state} mode={engine.input_mode}",
-        loglevel="debug",
+def _prepare_tutorial_sections(
+    engine: Celune,
+    sections: tuple[str, ...],
+    is_active: Callable[[], bool],
+    timeout: float,
+) -> Optional[tuple[AudioChunk, ...]]:
+    """Generate each section separately without playback or Celune normalization."""
+    transcript = " ".join(sections)
+    result_queue: queue.Queue[Union[PreparedSpeechAudio, Exception]] = queue.Queue(
+        maxsize=1
     )
-    if engine.input_mode != "text_to_speech":
-        engine.log(string("celune.text_input_unavailable_vc"), "warning")
-        engine.error_callback(string("celune.not_possible"))
-        engine.progress_callback(0, 1)
-        return False
-
-    return _queue_speech_request(
+    if not sections or not _queue_speech_request(
         engine,
-        text,
+        transcript,
         save=False,
-        stream_queue=None,
-        display_text=text,
+        display_text=transcript,
         allow_tutorial=True,
+        normalize=False,
+        synthesis_sections=sections,
+        audio_capture_queue=result_queue,
+    ):
+        raise NotAvailableError("tutorial speech preparation was rejected")
+
+    deadline = time.monotonic() + timeout
+    while is_active() and time.monotonic() < deadline:
+        try:
+            result = result_queue.get(timeout=0.1)
+        except queue.Empty:
+            continue
+        if isinstance(result, Exception):
+            raise result
+        if len(result.sections) != len(sections) or any(
+            not audio.size for audio in result.sections
+        ):
+            raise NotAvailableError("tutorial speech preparation returned no audio")
+        return result.sections
+    if is_active():
+        raise TimeoutError("tutorial speech preparation timed out")
+    return None
+
+
+def _play_tutorial_sections(
+    engine: Celune,
+    sections: tuple[str, ...],
+    audio_sections: tuple[AudioChunk, ...],
+    is_active: Callable[[], bool],
+    on_section_start: Callable[[int], None],
+    timeout: float,
+) -> bool:
+    """Stitch prepared sections with pauses, then play and synchronize actions."""
+    if not sections or len(sections) != len(audio_sections):
+        raise NotAvailableError("tutorial speech sections do not match their audio")
+    normalized_audio = tuple(
+        np.asarray(audio, dtype=np.float32) for audio in audio_sections
     )
+    if any(
+        audio.ndim != normalized_audio[0].ndim
+        or audio.shape[1:] != normalized_audio[0].shape[1:]
+        for audio in normalized_audio
+    ):
+        raise NotAvailableError("tutorial speech sections have different audio layouts")
+
+    pause_samples = BASE_SR // 2
+    combined_parts: list[AudioChunk] = []
+    section_starts: list[int] = []
+    total_frames = 0
+    silence_shape = (pause_samples,) + normalized_audio[0].shape[1:]
+    silence = np.zeros(silence_shape, dtype=np.float32)
+    for index, section_audio in enumerate(normalized_audio):
+        section_starts.append(total_frames)
+        combined_parts.append(section_audio)
+        total_frames += len(section_audio)
+        if index < len(audio_sections) - 1:
+            combined_parts.append(silence)
+            total_frames += pause_samples
+
+    transcript = " ".join(sections)
+    combined_audio = np.concatenate(combined_parts).astype(np.float32, copy=False)
+    source_queue: queue.Queue[Union[int, Exception]] = queue.Queue(maxsize=1)
+    if not _queue_speech_request(
+        engine,
+        transcript,
+        save=False,
+        display_text=transcript,
+        allow_tutorial=True,
+        normalize=False,
+        prepared_audio=combined_audio,
+        playback_source_queue=source_queue,
+    ):
+        raise NotAvailableError("tutorial playback was rejected")
+
+    source_id: Optional[int] = None
+    deadline = time.monotonic() + timeout
+    while is_active() and time.monotonic() < deadline:
+        try:
+            source = source_queue.get(timeout=0.1)
+        except queue.Empty:
+            continue
+        if isinstance(source, Exception):
+            raise source
+        source_id = source
+        break
+    if source_id is None:
+        if is_active():
+            raise TimeoutError("tutorial playback did not start")
+        return False
+
+    next_section = 0
+    deadline = time.monotonic() + timeout
+    source_meta = getattr(engine, "_playback_source_meta", {})
+    while is_active() and time.monotonic() < deadline:
+        metadata = source_meta.get(source_id, {})
+        played_frames = int(float(metadata.get("played_frames", 0.0)))
+        while (
+            next_section < len(section_starts)
+            and played_frames >= section_starts[next_section]
+        ):
+            on_section_start(next_section)
+            next_section += 1
+        if engine.playback_done.wait(timeout=0.02):
+            return True
+    return False
 
 
 async def say_async(
@@ -450,6 +541,13 @@ def _queue_speech_request(
     display_text: Optional[str] = None,
     *,
     allow_tutorial: bool,
+    normalize: Optional[bool] = None,
+    synthesis_sections: tuple[str, ...] = (),
+    audio_capture_queue: Optional[
+        queue.Queue[Union[PreparedSpeechAudio, Exception]]
+    ] = None,
+    prepared_audio: Optional[AudioChunk] = None,
+    playback_source_queue: Optional[queue.Queue[Union[int, Exception]]] = None,
 ) -> bool:
     """Wait for readiness and queue one speech request.
 
@@ -478,6 +576,11 @@ def _queue_speech_request(
         save=save,
         stream_queue=stream_queue,
         display_text=display_text,
+        normalize=normalize,
+        synthesis_sections=synthesis_sections,
+        audio_capture_queue=audio_capture_queue,
+        prepared_audio=prepared_audio,
+        playback_source_queue=playback_source_queue,
     )
 
 
@@ -566,6 +669,14 @@ def _queue_speech_after_ready(
     save: bool = True,
     stream_queue: Optional[SpeechStreamQueue] = None,
     display_text: Optional[str] = None,
+    *,
+    normalize: Optional[bool] = None,
+    synthesis_sections: tuple[str, ...] = (),
+    audio_capture_queue: Optional[
+        queue.Queue[Union[PreparedSpeechAudio, Exception]]
+    ] = None,
+    prepared_audio: Optional[AudioChunk] = None,
+    playback_source_queue: Optional[queue.Queue[Union[int, Exception]]] = None,
 ) -> bool:
     """Queue one speech request after reload readiness is satisfied."""
 
@@ -639,8 +750,17 @@ def _queue_speech_after_ready(
                     language=requested_language,
                     save=save,
                     stream_queue=stream_queue,
-                    normalize=engine.use_normalization,
+                    normalize=(
+                        engine.use_normalization if normalize is None else normalize
+                    ),
                     generation=engine.speech_generation,
+                    synthesis_sections=tuple(
+                        normalize_special_characters(section, for_tts=True)
+                        for section in synthesis_sections
+                    ),
+                    audio_capture_queue=audio_capture_queue,
+                    prepared_audio=prepared_audio,
+                    playback_source_queue=playback_source_queue,
                 )
             )
             engine.log(

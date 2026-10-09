@@ -5,8 +5,8 @@ from __future__ import annotations
 
 import time
 import queue
-from typing import Union, Optional
 from pathlib import Path
+from typing import Union, Optional
 from dataclasses import field, dataclass
 
 import numpy as np
@@ -14,6 +14,13 @@ import numpy.typing as npt
 
 from ..constants import N_A_NUMERIC
 from ..typing.aliases import AudioChunk
+
+
+@dataclass(frozen=True)
+class PreparedSpeechAudio:
+    """Generated section audio kept in order for deferred playback."""
+
+    sections: tuple[AudioChunk, ...]
 
 
 @dataclass(frozen=True)
@@ -28,6 +35,12 @@ class SpeechRequest:
     normalize: bool = False
     silent_retry_count: int = 0
     generation: int = 0
+    synthesis_sections: tuple[str, ...] = ()
+    audio_capture_queue: Optional[
+        queue.Queue[Union[PreparedSpeechAudio, Exception]]
+    ] = None
+    prepared_audio: Optional[AudioChunk] = None
+    playback_source_queue: Optional[queue.Queue[Union[int, Exception]]] = None
 
 
 @dataclass(frozen=True)

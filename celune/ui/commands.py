@@ -3,8 +3,8 @@
 
 from __future__ import annotations
 
-import asyncio
 import os
+import asyncio
 import threading
 from pathlib import Path
 from urllib.parse import urlparse
@@ -25,18 +25,18 @@ from ..utils import (
     format_error_message,
 )
 from ..constants import APP_NAME
-from ..speech import _say_tutorial
 from ..i18n import string, tagged_string
 from ..threads import run_in_daemon_thread
 from ..exceptions import InvalidExtensionError
 from ..audio.server import restart_audio_server
 from ..persona.capabilities import PersonaCapabilities
 from ..cevoice import active_bundle_path, resolve_bundle_path
+from ..speech import _play_tutorial_sections, _prepare_tutorial_sections
 from ..vram import vram_report_int, format_vram_bytes, runtime_vram_report
 
 if TYPE_CHECKING:
-    from .app import CeluneUI
     from ..celune import Celune
+    from .app import CeluneUI
 
 IMAGE_EXTENSIONS = {".jpeg", ".jpg", ".png", ".webp"}
 VIDEO_EXTENSIONS = {".mp4", ".webm"}
@@ -162,21 +162,36 @@ def _run_tutorial_sequence(
         return token == ui.tutorial_token and ui.tutorial_active
 
     try:
-        for text, action in steps:
-            if not is_active():
-                return
-            if not _say_tutorial(ui.celune, text):
-                raise RuntimeError("tutorial utterance was rejected")
+        sections = tuple(text for text, _action in steps)
+        audio_sections = _prepare_tutorial_sections(
+            ui.celune,
+            sections,
+            is_active,
+            _TUTORIAL_SPEECH_TIMEOUT * max(1, len(sections)),
+        )
+        if not is_active():
+            return
+        if audio_sections is None:
+            raise TimeoutError("tutorial speech preparation did not finish")
+
+        def start_section(index: int) -> None:
+            action = steps[index][1]
             if action is not None:
                 ui.call_from_thread(action)
-            if (
-                not ui.celune.wait_until_idle(
-                    timeout=_TUTORIAL_SPEECH_TIMEOUT,
-                    wait_for_speech=True,
-                )
-                or ui.celune.cur_state == "error"
-            ):
-                raise TimeoutError("tutorial utterance did not finish")
+
+        if not _play_tutorial_sections(
+            ui.celune,
+            sections,
+            audio_sections,
+            is_active,
+            start_section,
+            _TUTORIAL_SPEECH_TIMEOUT,
+        ):
+            if not is_active():
+                return
+            raise TimeoutError("tutorial speech did not finish")
+        if ui.celune.cur_state == "error":
+            raise RuntimeError("tutorial speech playback failed")
         if is_active():
             ui.call_from_thread(ui.finish_tutorial)
     except Exception as exc:

@@ -9,43 +9,46 @@ import queue
 import asyncio
 import tempfile
 import threading
-from types import TracebackType, SimpleNamespace
-from typing import Self, Optional, cast
 from pathlib import Path
 from unittest import mock
 from collections.abc import Iterator
+from typing import Self, Optional, cast
+from types import TracebackType, SimpleNamespace
 
-import numpy as np
 import pytest
+import numpy as np
 import numpy.typing as npt
 
 from celune import pipeline
-from celune import conversation as conversation_module
-from celune.utils import discard
-from celune.celune import Celune
 from celune.cevoice import (
     CEVoicePersona,
     PersonaIdentity,
     PersonaStyleValues,
 )
-from celune.constants import PipelineStates
+from celune.celune import Celune
+from celune.utils import discard
 from celune.typing.agent import (
     AgentTask,
     AgentContext,
     AgentRequest,
 )
-from celune.typing.locks import ComponentLockName
-from celune.typing.common import JSON, JSONSerializable
+from celune.dataclasses.pipeline import (
+    SpeechRequest,
+    AudioInputRequest,
+)
+from celune.constants import PipelineStates
 from celune.typing.aliases import AudioChunk
-from celune.dataclasses.pipeline import SpeechRequest, AudioInputRequest
+from celune.typing.locks import ComponentLockName
+from celune import conversation as conversation_module
+from celune.typing.common import JSON, JSONSerializable
 from celune.persona.capabilities import PersonaCapabilities
 
 from .support import (
     FakeStream,
     FakeVCBackend,
     CeluneTestCase,
-    CeluneAsyncTestCase,
     make_voice_loader,
+    CeluneAsyncTestCase,
     make_pipeline_engine,
 )
 from .platform import LINUX_ONLY, WINDOWS_ONLY
