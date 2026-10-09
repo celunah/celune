@@ -47,12 +47,13 @@ browser polling is only a reconnect fallback.
 
 The tutorial generates each localized passage as a separate utterance in the
 currently active voice, without CeluneNorm. It stitches the prepared audio with
-500 ms pauses, then plays the sequence as one source. The combined transcript
-is sent to caption alignment, and the input and voice-style highlights and
-`/help` action start at their matching passage offsets. Tutorial preparation and
-playback run in a background worker while the input and voice controls remain
-locked. If speech cannot be prepared or playback does not finish, the UI logs
-the failure and cancels the tutorial.
+500 ms pauses, then plays the sequence as one source. Captions align each
+passage to its own audio range, so a timing mismatch cannot accumulate across
+the full tutorial. The input and voice-style highlights and `/help` action
+start at their matching passage offsets. Tutorial preparation and playback run
+in a background worker while the input and voice controls remain locked. If
+speech cannot be prepared or playback does not finish, the UI logs the failure
+and cancels the tutorial.
 
 When Celune requests an exit, including a settings-confirmed restart, the
 mounted Textual screen fades out as one surface, hides any mounted scrollbars,

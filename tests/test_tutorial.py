@@ -11,13 +11,18 @@ from collections.abc import Callable
 import numpy as np
 
 from celune import pipeline
-from celune.i18n import string
 from celune.ui import commands
+from celune.i18n import string
 from celune.celune import Celune
 from celune.ui.app import CeluneUI
 from celune.prepared import play_prepared_speech
-from celune.dataclasses.pipeline import PreparedSpeechAudio, SpeechRequest
 from celune.speech import _play_tutorial_sections, _prepare_tutorial_sections
+
+from celune.dataclasses.pipeline import (
+    SpeechRequest,
+    PreparedSpeechAudio,
+    PreparedSpeechCaption,
+)
 
 from .support import make_pipeline_engine
 
@@ -306,8 +311,8 @@ def test_pipeline_captures_tutorial_sections_without_playback() -> None:
     assert engine.audio_queue.empty()
 
 
-def test_tutorial_playback_stitches_audio_with_caption_transcript(monkeypatch) -> None:
-    """Queue one stitched source with the combined transcript and timed actions."""
+def test_tutorial_playback_stitches_audio_and_caption_sections(monkeypatch) -> None:
+    """Queue one stitched source with passage ranges and timed actions."""
     sections = ("First section.", "Second section.", "Third section.")
     audio = (
         np.zeros((3, 2), dtype=np.float32),
@@ -328,6 +333,16 @@ def test_tutorial_playback_stitches_audio_with_caption_transcript(monkeypatch) -
         prepared = kwargs["prepared_audio"]
         assert isinstance(prepared, np.ndarray)
         captured_audio.append(prepared)
+        caption_sections = kwargs["prepared_caption_sections"]
+        assert [
+            (
+                section.audio_start_frame,
+                section.audio_end_frame,
+                section.word_start,
+                section.word_end,
+            )
+            for section in caption_sections
+        ] == [(0, 3, 0, 2), (24_003, 24_007, 2, 4), (48_007, 48_009, 4, 6)]
         kwargs["playback_source_queue"].put(source_id)
         return True
 
@@ -352,8 +367,8 @@ def test_tutorial_playback_stitches_audio_with_caption_transcript(monkeypatch) -
     assert starts == [0, 1, 2]
 
 
-def test_prepared_tutorial_playback_aligns_combined_transcript(monkeypatch) -> None:
-    """Pass the combined tutorial transcript to the caption alignment worker."""
+def test_prepared_speech_without_sections_aligns_full_transcript(monkeypatch) -> None:
+    """Keep whole-utterance alignment for prepared speech without sections."""
     transcript = "First section. Second section."
     audio = np.ones((8, 2), dtype=np.float32)
     source_queue: queue.Queue[Union[int, Exception]] = queue.Queue()
@@ -384,3 +399,57 @@ def test_prepared_tutorial_playback_aligns_combined_transcript(monkeypatch) -> N
 
     assert caption_worker.submit_chunk.call_args.args[6] == transcript
     assert source_queue.get_nowait() == 5
+
+
+def test_prepared_tutorial_audio_aligns_each_passage(monkeypatch) -> None:
+    """Align each tutorial passage against only its own audio frames."""
+    transcript = "First section. Second section."
+    audio = np.asarray(
+        ((1.0, 1.0), (1.0, 1.0), (0.0, 0.0), (0.0, 0.0), (2.0, 2.0), (2.0, 2.0)),
+        dtype=np.float32,
+    )
+    source_queue: queue.Queue[Union[int, Exception]] = queue.Queue()
+    request = SpeechRequest(
+        text=transcript,
+        display_text=transcript,
+        language="English",
+        save=False,
+        prepared_audio=audio,
+        prepared_caption_sections=(
+            PreparedSpeechCaption("First section.", 0, 2, 0, 2),
+            PreparedSpeechCaption("Second section.", 4, 6, 2, 4),
+        ),
+        playback_source_queue=source_queue,
+    )
+    engine = SimpleNamespace(
+        config={"captions": True},
+        backend=SimpleNamespace(resolve_generation_language=lambda language: language),
+        log=mock.Mock(),
+        log_level="info",
+        cur_state="idle",
+        progress_callback=mock.Mock(),
+        error_callback=mock.Mock(),
+    )
+    caption_worker = mock.Mock()
+    monkeypatch.setattr("celune.prepared._next_playback_source_id", lambda _engine: 5)
+    monkeypatch.setattr("celune.prepared._register_playback_source", mock.Mock())
+    monkeypatch.setattr("celune.prepared.release_pipeline", mock.Mock())
+    monkeypatch.setattr("celune.prepared.string", lambda key, **_kwargs: key)
+
+    play_prepared_speech(cast(Celune, engine), request, caption_worker)
+
+    caption_calls = caption_worker.submit_chunk.call_args_list
+    assert [call.args[6] for call in caption_calls] == [
+        "First section.",
+        "Second section.",
+    ]
+    assert [(call.args[9], call.args[10]) for call in caption_calls] == [
+        (0, 2),
+        (2, 4),
+    ]
+    np.testing.assert_array_equal(caption_calls[0].args[2][0], audio[:2])
+    np.testing.assert_array_equal(caption_calls[1].args[2][0], audio[4:])
+    np.testing.assert_array_equal(
+        caption_worker.submit_audio.call_args.args[2][0],
+        audio[2:4],
+    )

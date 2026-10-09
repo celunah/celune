@@ -9,13 +9,6 @@ from typing import TYPE_CHECKING, Optional, Union
 
 import numpy as np
 
-from .playback import (
-    release_pipeline,
-    _queue_playback_done,
-    _next_playback_source_id,
-    _register_playback_source,
-    _flush_buffered_speech_chunks,
-)
 from .i18n import string, tagged_string
 from .utils import format_error_message
 from .constants import APP_NAME, BASE_SR
@@ -24,9 +17,83 @@ from .audio.dsp import is_silent_utterance
 from .typing.aliases import AudioChunk, AudioChunks
 from .dataclasses.pipeline import PreparedSpeechAudio, SpeechRequest, SpeechTiming
 
+from .playback import (
+    release_pipeline,
+    _queue_playback_done,
+    _next_playback_source_id,
+    _register_playback_source,
+    _flush_buffered_speech_chunks,
+)
+
 if TYPE_CHECKING:
     from .celune import Celune
     from .captions import CaptionAlignmentWorker
+
+
+def _submit_prepared_caption_sections(
+    engine: Celune,
+    item: SpeechRequest,
+    audio: AudioChunk,
+    source_id: int,
+    caption_worker: CaptionAlignmentWorker,
+    speech_timing: SpeechTiming,
+    words: tuple[str, ...],
+    language: Optional[str],
+) -> None:
+    """Queue one alignment job per prepared tutorial passage.
+
+    Args:
+        engine: Runtime that owns the shared playback source.
+        item: Prepared request containing passage boundaries and display text.
+        audio: Complete prepared waveform, including inter-passage pauses.
+        source_id: Playback source registered for the full waveform.
+        caption_worker: Worker that aligns passages and queues audio in order.
+        speech_timing: Timing data shared by all queued audio ranges.
+        words: Display words for mapping each passage onto caption text.
+        language: Resolved language passed to the forced aligner.
+    """
+    alignment_failed = [False]
+    pushed_audio = [False]
+    audio_cursor = 0
+    for section in item.prepared_caption_sections:
+        if section.audio_start_frame > audio_cursor:
+            caption_worker.submit_audio(
+                engine,
+                source_id,
+                [audio[audio_cursor : section.audio_start_frame]],
+                speech_timing,
+                item.stream_queue,
+                pushed_audio,
+            )
+        section_audio = audio[section.audio_start_frame : section.audio_end_frame]
+        caption_worker.submit_chunk(
+            engine,
+            source_id,
+            [section_audio],
+            speech_timing,
+            item.stream_queue,
+            item.display_text,
+            section.text,
+            words[section.word_start : section.word_end],
+            language,
+            section.word_start,
+            section.word_end,
+            tuple(section.text.split()),
+            alignment_failed,
+            pushed_audio,
+            BASE_SR,
+        )
+        audio_cursor = section.audio_end_frame
+
+    if audio_cursor < len(audio):
+        caption_worker.submit_audio(
+            engine,
+            source_id,
+            [audio[audio_cursor:]],
+            speech_timing,
+            item.stream_queue,
+            pushed_audio,
+        )
 
 
 def finish_tutorial_audio_capture(
@@ -109,23 +176,35 @@ def play_prepared_speech(
                 if callable(language_resolver)
                 else item.language
             )
-            caption_worker.submit_chunk(
-                engine,
-                source_id,
-                [audio],
-                speech_timing,
-                item.stream_queue,
-                item.display_text,
-                item.text,
-                words,
-                language if isinstance(language, str) else None,
-                0,
-                len(words),
-                tuple(item.text.split()),
-                [False],
-                [False],
-                BASE_SR,
-            )
+            if item.prepared_caption_sections:
+                _submit_prepared_caption_sections(
+                    engine,
+                    item,
+                    audio,
+                    source_id,
+                    caption_worker,
+                    speech_timing,
+                    words,
+                    language if isinstance(language, str) else None,
+                )
+            else:
+                caption_worker.submit_chunk(
+                    engine,
+                    source_id,
+                    [audio],
+                    speech_timing,
+                    item.stream_queue,
+                    item.display_text,
+                    item.text,
+                    words,
+                    language if isinstance(language, str) else None,
+                    0,
+                    len(words),
+                    tuple(item.text.split()),
+                    [False],
+                    [False],
+                    BASE_SR,
+                )
             caption_worker.submit_done(
                 engine,
                 source_id,
