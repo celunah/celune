@@ -11,27 +11,19 @@ import asyncio
 import tempfile
 import warnings
 import threading
-from types import SimpleNamespace
-from typing import Optional, cast
 from pathlib import Path
 from unittest import mock
+from types import SimpleNamespace
+from typing import Optional, cast
 from collections.abc import Callable
 
-import numpy as np
 import pytest
+import numpy as np
 from textual import events
 from textual.app import App
-from textual.widgets import Label, Static, RichLog, TextArea, ProgressBar
 from textual.containers import Vertical
+from textual.widgets import Label, Static, RichLog, TextArea, ProgressBar
 
-from celune.ui import app as ui_app
-from celune.ui import compat as ui_compat
-from celune.ui import terminal as ui_terminal
-from celune.ui import resources as ui_resources
-from celune.i18n import string, tagged_string
-from celune.theme import colors
-from celune.utils import discard
-from celune.celune import Celune
 from celune.ui.app import (
     Button,
     CeluneUI,
@@ -41,9 +33,17 @@ from celune.ui.app import (
     ProgressLabel,
     CeluneLoadingScreen,
 )
+from celune.theme import colors
+from celune.celune import Celune
+from celune.utils import discard
+from celune.ui import app as ui_app
+from celune.ui import compat as ui_compat
+from celune.i18n import string, tagged_string
+from celune.ui import terminal as ui_terminal
+from celune.ui import resources as ui_resources
+from celune.ui.headless import CeluneHeadlessUI
 from tests.support import FakeBackend, CeluneTestCase
 from celune.constants import APP_NAME, COST_EQUIVALENTS, ExitCodes
-from celune.ui.headless import CeluneHeadlessUI
 
 
 class TestUIStartup(CeluneTestCase):
@@ -1779,10 +1779,10 @@ class TestUIStartup(CeluneTestCase):
         ]
 
         assert len(cost_pages) == len(COST_EQUIVALENTS) * 2
-        assert "gemini-flash-tts (this session): $0.03" in cost_pages
-        assert "openai-realtime (this session): $0.19" in cost_pages
-        assert "gemini-flash-tts (overall): $0.08" in cost_pages
-        assert "openai-realtime (overall): $0.48" in cost_pages
+        assert "gemini-3.8-flash-tts (this session): $0.05" in cost_pages
+        assert "gpt-realtime-2.1 (this session): $0.15" in cost_pages
+        assert "gemini-3.8-flash-tts (overall): $0.14" in cost_pages
+        assert "gpt-realtime-2.1 (overall): $0.38" in cost_pages
 
     def test_ctrl_r_toggles_tui_vc_recording(self) -> None:
         """Verify CTRL+R streams VC audio live and flushes the final tail on stop."""

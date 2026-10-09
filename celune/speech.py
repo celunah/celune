@@ -4,8 +4,8 @@
 from __future__ import annotations
 
 import os
-import pathlib
 import queue
+import pathlib
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Optional, cast
 
@@ -14,20 +14,12 @@ import soundfile as sf
 from iso639 import Lang
 from iso639.exceptions import DeprecatedLanguageValue, InvalidLanguageValue
 
-from .audio.dsp import pitch_shift_audio, resample_audio, split
-from .cevoice import default_loader
-from .constants import APP_NAME, BASE_SR
-from .dataclasses.pipeline import (
-    AudioInputRequest,
-    AudioOutput,
-    SpeechRequest,
-    VoiceConversionRequest,
-)
-from .i18n import string
-from .persona.impl import compact_persona_history
-from .conversation import (
-    _classify_persona_memories,
-    _store_persona_memories,
+from .utils import (
+    detect_language,
+    format_error_message,
+    is_april_fools,
+    normalize_special_characters,
+    rng_replace,
 )
 from .pipeline import (
     _format_stat_duration,
@@ -50,16 +42,24 @@ from .playback import (
     _set_playback_source_status,
     release_pipeline,
 )
-from .typing.aliases import AudioChunk
-from .typing.pipeline import SpeechStreamQueue
-from .utils import (
-    detect_language,
-    format_error_message,
-    is_april_fools,
-    normalize_special_characters,
-    rng_replace,
+from .i18n import string
+from .conversation import (
+    _classify_persona_memories,
+    _store_persona_memories,
 )
 from .vc import normalize_vc_audio
+from .cevoice import default_loader
+from .dataclasses.pipeline import (
+    AudioInputRequest,
+    AudioOutput,
+    SpeechRequest,
+    VoiceConversionRequest,
+)
+from .typing.aliases import AudioChunk
+from .constants import APP_NAME, BASE_SR
+from .typing.pipeline import SpeechStreamQueue
+from .persona.impl import compact_persona_history
+from .audio.dsp import pitch_shift_audio, resample_audio, split
 from .binding import install_class_functions, install_module_functions
 
 if TYPE_CHECKING:
@@ -151,7 +151,47 @@ def say(
         return False
 
     return queue_speech(
-        engine, text, save=save, stream_queue=None, display_text=display_text
+        engine,
+        text,
+        save=save,
+        stream_queue=None,
+        display_text=display_text,
+    )
+
+
+def _say_tutorial(engine: Celune, text: str) -> bool:
+    """Queue one tutorial utterance while tutorial mode holds the input lock.
+
+    Args:
+        engine: Runtime that owns the tutorial speech pipeline.
+        text: Localized tutorial text to speak.
+
+    Returns:
+        bool: ``True`` when the utterance was queued successfully.
+    """
+    if not getattr(engine, "is_in_tutorial", False):
+        return False
+
+    if getattr(engine, "test_finished", False):
+        return False
+    engine.log(
+        f"[ENGINE] say requested text_chars={len(text)} save=False "
+        f"state={engine.cur_state} mode={engine.input_mode}",
+        loglevel="debug",
+    )
+    if engine.input_mode != "text_to_speech":
+        engine.log(string("celune.text_input_unavailable_vc"), "warning")
+        engine.error_callback(string("celune.not_possible"))
+        engine.progress_callback(0, 1)
+        return False
+
+    return _queue_speech_request(
+        engine,
+        text,
+        save=False,
+        stream_queue=None,
+        display_text=text,
+        allow_tutorial=True,
     )
 
 
@@ -392,7 +432,39 @@ def queue_speech(
     Raises:
         Exception: An exception was caught and subsequently raised to propagate it to Celune.
     """
-    if not _prepare_speech_readiness(engine):
+    return _queue_speech_request(
+        engine,
+        text,
+        save=save,
+        stream_queue=stream_queue,
+        display_text=display_text,
+        allow_tutorial=False,
+    )
+
+
+def _queue_speech_request(
+    engine: Celune,
+    text: str,
+    save: bool = True,
+    stream_queue: Optional[SpeechStreamQueue] = None,
+    display_text: Optional[str] = None,
+    *,
+    allow_tutorial: bool,
+) -> bool:
+    """Wait for readiness and queue one speech request.
+
+    Args:
+        engine: Runtime that owns the speech pipeline.
+        text: Text to synthesize.
+        save: Whether generated output artifacts should be saved.
+        stream_queue: Optional queue that receives generated audio chunks.
+        display_text: Optional text to associate with the request in the UI.
+        allow_tutorial: Whether this internal request may speak during tutorial mode.
+
+    Returns:
+        bool: ``True`` when the request was queued successfully.
+    """
+    if not _prepare_speech_readiness(engine, allow_tutorial=allow_tutorial):
         return False
 
     if not _wait_for_model_ready(engine):
@@ -409,11 +481,23 @@ def queue_speech(
     )
 
 
-def _prepare_speech_readiness(engine: Celune) -> bool:
-    """Run the pre-wait checks shared by synchronous and async speech queueing."""
+def _prepare_speech_readiness(
+    engine: Celune,
+    *,
+    allow_tutorial: bool = False,
+) -> bool:
+    """Run the pre-wait checks shared by synchronous and async speech queueing.
+
+    Args:
+        engine: Runtime that owns the speech pipeline.
+        allow_tutorial: Whether this internal request may speak during tutorial mode.
+
+    Returns:
+        bool: ``True`` when speech may proceed.
+    """
     if getattr(engine, "test_finished", False):
         return False
-    if engine.is_in_tutorial:
+    if engine.is_in_tutorial and not allow_tutorial:
         engine.log(string("celune.speech_input_disabled_tutorial"), "warning")
         return False
 

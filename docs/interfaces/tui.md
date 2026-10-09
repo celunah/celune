@@ -45,10 +45,13 @@ timed status, theme, marquee, and resource-page updates through the CEDTS
 frontend channel so the browser does not maintain an independent timer state;
 browser polling is only a reconnect fallback.
 
-Tutorial text typing runs as a native Textual async worker, so its delays and
-input updates do not create a basic worker thread. Tutorial audio preparation
-and playback remain thread-backed because file metadata and audio submission
-are synchronous operations.
+The tutorial speaks localized text through the currently active voice. Each
+short passage is a separate utterance, and playback finishes before the next
+one begins. The input and voice-style highlights start with the passages that
+describe them, and the help passage types `/help` for the user. Tutorial speech
+runs in a background worker while the input and voice controls remain locked.
+If speech cannot be queued or a passage does not finish, the UI logs the failure
+and cancels the tutorial.
 
 When Celune requests an exit, including a settings-confirmed restart, the
 mounted Textual screen fades out as one surface, hides any mounted scrollbars,
@@ -214,7 +217,7 @@ Commands are entered in the input box and start with `/`.
 | `/attach FILE...` | Add vision attachments; `/attach clear` removes them. |
 | `/say TEXT` | Send a direct Persona/vision prompt when vision is available. |
 | <code>/seed NUMBER&#124;random</code> | Set a backend seed or restore random seeds. |
-| `/tutorial` | Play the four bundled tutorial clips and demonstrate `/help`. |
+| `/tutorial` | Speak short localized tutorial passages in the active voice and demonstrate `/help`. |
 | `/stop` | Stop current speech. |
 | `/vram` | Report allocated, reserved, and peak memory for each active component. |
 | `/exit` | Exit the application. |

@@ -90,7 +90,7 @@ own. It is the index to use when a feature needs a precise code entrypoint.
 | `celune/ui/app.py` | Textual UI, loading, captions, recording, themes, and shutdown. |
 | `celune/ui/headless.py` | Non-interactive log/status surface. |
 
-## Scripts and assets
+## Scripts and bundled data
 
 | Path | Responsibility |
 | --- | --- |
@@ -101,7 +101,7 @@ own. It is the index to use when a feature needs a precise code entrypoint.
 | `scripts/celune-bin.cmd` | Windows compiled-binary handoff. |
 | `scripts/ci_warnings.py` | CI warning annotations. |
 | `scripts/write_update_manifest.py` | Release update metadata. |
-| `celune/assets/` | Tutorial audio and packaged runtime assets. |
+| `celune/lang/` | Localized runtime strings. |
 | `voices/` | Bundled CEVOICE packs. |
 
 The tests mirror these boundaries. `tests/test_cedts_*`, `tests/test_cevoice_*`,

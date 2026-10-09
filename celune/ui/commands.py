@@ -6,10 +6,10 @@ from __future__ import annotations
 import os
 import asyncio
 import threading
-from typing import TYPE_CHECKING, Optional, cast
 from pathlib import Path
 from urllib.parse import urlparse
 from collections.abc import Callable, Awaitable
+from typing import TYPE_CHECKING, Optional, cast
 
 import soundfile as sf
 
@@ -18,21 +18,21 @@ from ..vc import (
     VC_PITCH_SHIFT_MIN,
     clamp_vc_pitch_shift,
 )
-from ..i18n import string, tagged_string
-from ..vram import vram_report_int, format_vram_bytes, runtime_vram_report
-from ..paths import project_root
 from ..utils import (
     available,
     replace_ipa,
     format_number,
     format_error_message,
 )
-from ..cevoice import active_bundle_path, resolve_bundle_path
-from ..threads import run_in_daemon_thread
 from ..constants import APP_NAME
+from ..speech import _say_tutorial
+from ..i18n import string, tagged_string
+from ..threads import run_in_daemon_thread
 from ..exceptions import InvalidExtensionError
 from ..audio.server import restart_audio_server
 from ..persona.capabilities import PersonaCapabilities
+from ..cevoice import active_bundle_path, resolve_bundle_path
+from ..vram import vram_report_int, format_vram_bytes, runtime_vram_report
 
 if TYPE_CHECKING:
     from .app import CeluneUI
@@ -40,6 +40,7 @@ if TYPE_CHECKING:
 
 IMAGE_EXTENSIONS = {".jpeg", ".jpg", ".png", ".webp"}
 VIDEO_EXTENSIONS = {".mp4", ".webm"}
+_TUTORIAL_SPEECH_TIMEOUT = 180.0
 
 
 def _run_runtime_async(
@@ -144,94 +145,84 @@ def _remote_attachment_kind(source: str) -> Optional[str]:
     return None
 
 
+def _run_tutorial_sequence(
+    ui: CeluneUI,
+    token: int,
+    steps: tuple[tuple[str, Optional[Callable[[], None]]], ...],
+) -> None:
+    """Speak tutorial sections in sequence and synchronize their UI actions.
+
+    Args:
+        ui: UI that owns the tutorial state and actions.
+        token: Cancellation token captured when this tutorial began.
+        steps: Localized utterances and actions that begin with each utterance.
+    """
+
+    def is_active() -> bool:
+        return token == ui.tutorial_token and ui.tutorial_active
+
+    try:
+        for text, action in steps:
+            if not is_active():
+                return
+            if not _say_tutorial(ui.celune, text):
+                raise RuntimeError("tutorial utterance was rejected")
+            if action is not None:
+                ui.call_from_thread(action)
+            if (
+                not ui.celune.wait_until_idle(
+                    timeout=_TUTORIAL_SPEECH_TIMEOUT,
+                    wait_for_speech=True,
+                )
+                or ui.celune.cur_state == "error"
+            ):
+                raise TimeoutError("tutorial utterance did not finish")
+        if is_active():
+            ui.call_from_thread(ui.finish_tutorial)
+    except Exception as exc:
+        if not is_active():
+            return
+        ui.safe_log(
+            format_error_message(
+                string("commands.tutorial_failed"),
+                exc,
+                getattr(ui.celune, "log_level", "info"),
+            ),
+            "warning",
+        )
+        ui.call_from_thread(ui.cancel_tutorial, True)
+
+
 def tutorial(ui: CeluneUI) -> None:
-    """Run actions related to the tutorial.
+    """Speak the localized tutorial through the active voice.
 
     Args:
         ui: The instance of CeluneUI that the tutorial will interact with.
     """
-    assets = project_root() / "celune" / "assets"
-    if not assets.exists():
-        assets = project_root() / "assets"
-    if not assets.exists():
-        ui.safe_log(string("commands.no_tutorial_assets"), "warning")
-        return
 
     def send_help() -> None:
         """Submit the tutorial help command after its typing animation."""
         ui.type_and_send("/help", process_commands=True)
 
-    clips = (
-        (assets / "tutorial1.wav", None),
-        (assets / "tutorial2.wav", lambda: ui.pulse_border("#input")),
-        (assets / "tutorial3.wav", lambda: ui.pulse_border("#style")),
-        (assets / "tutorial4.wav", send_help),
+    steps = (
+        (string("commands.tutorial_intro"), None),
+        (string("commands.tutorial_input"), lambda: ui.pulse_border("#input")),
+        (string("commands.tutorial_voice"), lambda: ui.pulse_border("#style")),
+        (string("commands.tutorial_help"), send_help),
+        (string("commands.tutorial_voice_pack"), None),
+        (string("commands.tutorial_extensions"), None),
+        (string("commands.tutorial_persona"), None),
+        (string("commands.tutorial_local_api"), None),
+        (string("commands.tutorial_agent"), None),
+        (string("commands.tutorial_wrap_up"), None),
     )
 
     ui.begin_tutorial()
-    tutorial_token = ui.tutorial_token
-
-    def prepare_and_schedule() -> None:
-        def wav_duration(pth: Path) -> float:
-            if not pth.exists():
-                raise FileNotFoundError(f"tutorial clip not found: {pth}")
-
-            info = sf.info(str(pth))
-            return info.frames / info.samplerate
-
-        def play_tutorial_clip(pth: Path) -> None:
-            def worker() -> None:
-                try:
-                    ui.celune.play(str(pth))
-                except Exception as exc:
-                    ui.safe_log(
-                        format_error_message(
-                            string("commands.tutorial_playback_failed"),
-                            exc,
-                            getattr(ui.celune, "log_level", "info"),
-                        ),
-                        "warning",
-                    )
-                    ui.call_from_thread(ui.cancel_tutorial, True)
-
-            threading.Thread(target=worker, daemon=True).start()
-
-        try:
-            clip_durations = tuple(
-                (path, action, wav_duration(path)) for path, action in clips
-            )
-        except Exception as e:
-            ui.safe_log(
-                format_error_message(
-                    string("commands.tutorial_failed"),
-                    e,
-                    getattr(ui.celune, "log_level", "info"),
-                ),
-                "warning",
-            )
-            ui.call_from_thread(ui.cancel_tutorial, True)
-            return
-
-        def schedule() -> None:
-            if tutorial_token != ui.tutorial_token or not ui.tutorial_active:
-                return
-
-            elapsed = 0.0
-            gap = 0.15
-
-            for path, action, duration in clip_durations:
-                ui.tutorial_after(elapsed, lambda pth=path: play_tutorial_clip(pth))
-
-                if action is not None:
-                    ui.tutorial_after(elapsed, action)
-
-                elapsed += duration + gap
-
-            ui.tutorial_after(elapsed, ui.finish_tutorial)
-
-        ui.call_from_thread(schedule)
-
-    threading.Thread(target=prepare_and_schedule, daemon=True).start()
+    threading.Thread(
+        target=_run_tutorial_sequence,
+        args=(ui, ui.tutorial_token, steps),
+        daemon=True,
+    ).start()
 
 
 def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
