@@ -291,7 +291,8 @@ VRAM_REQUIREMENTS = {
     "xhigh": 16,
 }
 
-# Reserve memory for the desktop and other GPU users on every preset.
+# reserve 2 GB of VRAM for safety margins
+# otherwise she could make your system lag and cause OOM errors
 VRAM_SYSTEM_RESERVE_GIB = 2
 VRAM_BUDGETS = {
     tier: requirement - VRAM_SYSTEM_RESERVE_GIB
@@ -300,20 +301,27 @@ VRAM_BUDGETS = {
 
 # equivalent service costs per minute grouped by popular TTS providers
 #
-# please note Celune does not use any of these providers, so this is only for
-# calculating equivalent API cost had you not been using Celune
+# NOTE: Celune does not use any of these providers, so this is only for
+# calculating equivalent API cost if you were not using Celune
 COST_EQUIVALENTS = {
-    "gemini-flash-tts": 0.015,
-    "gemini-pro-tts": 0.03,
-    "openai-realtime": 0.096,
-    "openai-realtime-mini": 0.03,
-    "elevenlabs-flash": 0.05,
-    "elevenlabs-turbo": 0.05,
-    "elevenlabs-multilingual-v2": 0.1,
-    "elevenlabs-multilingual-v3": 0.1,
+    # NOTE: Celune's voice samples were designed with this TTS (as of Sep 30, 2026)
+    # she does not require it to speak, the app remains local only
+    "gemini-3.8-flash-tts": 0.027,
+    "gemini-3.8-flash-lite-tts": 0.018,
+    "gpt-realtime-2.1": 0.076,
+    "gpt-realtime-2.1-mini": 0.024,
+    "gpt-live-1": 0.05,
+    "elevenlabs-flash": 0.04,
+    "elevenlabs-turbo": 0.04,
+    "elevenlabs-multilingual-v2": 0.08,
+    "elevenlabs-conversational-v3": 0.04,
+    "elevenlabs-v3": 0.08,
+    "elevenlabs-v4-turbo": 0.04,
+    "elevenlabs-v4": 0.08,
     "fishaudio-s2-pro": 0.021,
     "fishaudio-s2.1-pro": 0.021,
 }
 
-# temporary Celune user agent, will be used properly in v5
+# Celune user agent
+# TODO: use in the agent web crawler (v5.1.0)
 CELUNE_UA = f"Celune/{VERSION}"
