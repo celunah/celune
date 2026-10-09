@@ -139,6 +139,7 @@ Celune also depends on external system dependencies that are not available in `p
 - **OpenRGB** - required to glow compatible devices
 - **Symbolic link support** - recommended on Windows for optimal operation
 - **C/C++ compiler** - to compile required dependencies for VoxCPM2
+- **eSpeak-NG** - for IPA-based forced alignment of captions
 
 Celune requires an RTX 30 series GPU or newer to use most features.
 
@@ -164,19 +165,21 @@ will be unavailable.
 Celune reserves 2 GiB for the system and other GPU users. The presets name the
 minimum total GPU capacity; the remaining budget is available to Celune:
 
-| Preset | Total VRAM | Celune budget |
-| --- | ---: | ---: |
-| `low` | 6 GB | 4 GiB |
-| `medium` | 8 GB | 6 GiB |
-| `high` | 12 GB | 10 GiB |
-| `xhigh` | 16 GB or more | 14 GiB or more |
+| Preset   | Total VRAM    | Allocated budget |
+| -------- | ------------: | ---------------: |
+| `low`    | 6 GB          | 4 GiB            |
+| `medium` | 8 GB          | 6 GiB            |
+| `high`   | 12 GB         | 10 GiB           |
+| `xhigh`  | 16 GB or more | 14 GiB or more   |
 
-Persona and standard agent models require `high`; registered smart 8B-tier
-models require `xhigh`. Persona context is capped at 2,048 tokens outside agent
-mode and 8,192 tokens in agent mode. Known model combinations are checked
-against their hardware profiles. An unprofiled combination is allowed to
-proceed with a warning that it may not work on that hardware; it can still fail
-at runtime if it exhausts GPU memory.
+Use of Persona and related features (such as the agent mode) requires the `high` preset, or above.
+
+Large Persona models (~8B parameters) will only run on `xhigh`. 
+Persona context is variable depending on Celune's operation mode: 2,048 tokens in basic conversation
+mode (`mode: converse`), and 8,192 tokens in agent mode (`mode: agent`).
+
+Combinations of presets and model selections were validated where possible, unchecked configurations
+display clear warnings and may fail with OOM errors, use then with caution.
 
 The desired preset may be set in Celune's configuration file. Refer to `default_config.yaml` for details.
 
@@ -189,6 +192,8 @@ Tested on: RTX 5070 (12 GB VRAM)
 
 Download and extract the [latest SemVer binary release](https://github.com/celunah/celune/releases/latest) prior to running the below commands in an already
 cloned copy of Celune.
+
+Copies obtained via `Download ZIP` will not work.
 
 Alternatively, run `scripts/build_nuitka.ps1` or `scripts/build_nuitka.sh` to build Celune binaries by yourself,
 depending on your platform.
@@ -221,7 +226,7 @@ uv --version
 
 # Manual environment setup
 # Linux: uv sync --dev --all-extras
-# Windows: uv sync --dev --extra api
+# Windows: uv sync --dev --extra api --extra captions
 # The selected backend is installed automatically into Celune's AppData
 # environment the first time it is used.
 
@@ -289,7 +294,15 @@ rubberband --version
 ### OpenRGB installation
 
 To install OpenRGB, go to <https://openrgb.org/>, download and install a package appropriate for your platform.
+
 This will allow Celune to glow up your PC as she speaks.
+
+### eSpeak-NG installation
+
+Install a [Windows version](https://github.com/espeak-ng/espeak-ng/releases/download/1.52.0/espeak-ng.msi) on your machine,
+or use your package manager to get an appropriate Linux version for your distribution.
+
+This will enable captioning and caption display.
 
 ### C/C++ compiler setup
 
