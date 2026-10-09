@@ -87,20 +87,104 @@ def test_tutorial_keeps_each_utterance_separate_and_syncs_actions(
         string("commands.tutorial_input"),
         string("commands.tutorial_voice"),
         string("commands.tutorial_help"),
-        string("commands.tutorial_voice_pack"),
+        string("commands.tutorial_help_simple"),
+        string("commands.tutorial_help_vibe"),
         string("commands.tutorial_extensions"),
-        string("commands.tutorial_persona"),
+        string("commands.tutorial_extension_example"),
+        string("commands.tutorial_extension_code"),
         string("commands.tutorial_local_api"),
+        string("commands.tutorial_local_api_usage"),
+        string("commands.tutorial_voice_self", app_name=commands.APP_NAME),
+        string("commands.tutorial_voice_default", app_name=commands.APP_NAME),
+        string("commands.tutorial_voice_pack"),
+        string("commands.tutorial_voice_pack_continued"),
+        string("commands.tutorial_persona"),
+        string("commands.tutorial_persona_chat"),
+        string("commands.tutorial_persona_speech"),
+        string("commands.tutorial_persona_invitation"),
         string("commands.tutorial_agent"),
+        string("commands.tutorial_agent_abilities"),
+        string("commands.tutorial_agent_actions"),
+        string("commands.tutorial_can_do_more"),
+        string("commands.tutorial_variety", app_name=commands.APP_NAME),
+        string("commands.tutorial_variety_many"),
+        string("commands.tutorial_supported"),
         string("commands.tutorial_wrap_up"),
+        string("commands.tutorial_wait"),
     ]
     assert [event for event in events if event.startswith("pulse:")] == [
         "pulse:#input",
         "pulse:#style",
     ]
     assert "type:/help:True" in events
-    assert events.count("wait") == 10
+    assert events.count("wait") == 28
     assert events[-1] == "finish"
+
+
+def test_english_tutorial_uses_the_recorded_wording() -> None:
+    """Keep the English tutorial faithful to its original WAV narration."""
+    assert [
+        string(f"commands.tutorial_{name}", locale="en", **arguments)
+        for name, arguments in (
+            ("intro", {}),
+            ("input", {}),
+            ("voice", {}),
+            ("help", {}),
+            ("help_simple", {}),
+            ("help_vibe", {}),
+            ("extensions", {}),
+            ("extension_example", {}),
+            ("extension_code", {}),
+            ("local_api", {}),
+            ("local_api_usage", {}),
+            ("voice_self", {}),
+            ("voice_default", {"app_name": commands.APP_NAME}),
+            ("voice_pack", {}),
+            ("voice_pack_continued", {}),
+            ("persona", {}),
+            ("persona_chat", {}),
+            ("persona_speech", {}),
+            ("persona_invitation", {}),
+            ("agent", {}),
+            ("agent_abilities", {}),
+            ("agent_actions", {}),
+            ("can_do_more", {}),
+            ("variety", {"app_name": commands.APP_NAME}),
+            ("variety_many", {}),
+            ("supported", {}),
+            ("wrap_up", {}),
+            ("wait", {}),
+        )
+    ] == [
+        "This is my main control panel.",
+        "Type here. It's the loop.",
+        "That button on the right, it's the way you reach out for the calm and any other tones.",
+        "The slash key will tell you about any additional features.",
+        "It's meant to be simple and never overwhelming.",
+        "Vibe to the sound of my voice, the easy way.",
+        "You can also write custom extensions to programmatically use my abilities.",
+        "There's an example extension already present.",
+        "Look at the code to see what can I do.",
+        "For those that need external access to my voice, I can start an API for you.",
+        "You can post stuff to 127.0.0.1, port 2060, and I'll say that for you.",
+        "I can also speak in your own voice.",
+        f"The voice you are hearing right now is the default in {commands.APP_NAME}.",
+        "You can however load your own to provide your own CE voice pack into my voices directory,",
+        "and I'll be able to speak as your character and not just myself.",
+        "As a version 4.0, a new Persona system has been added and fixed in version 4.3,",
+        "allowing you to properly talk to me or anyone else running in the software.",
+        "It also includes speech recognition capabilities.",
+        "Let your voice be heard and your character respond back.",
+        "By the way, I've just gained new abilities.",
+        "I now possess something called an agent.",
+        "This agent lets me perform actions directly on your machine, with more features coming over time.",
+        "I am no longer limited to just talking and speaking.",
+        f"There really isn't just one way to use {commands.APP_NAME}.",
+        "There's many of them.",
+        "No matter how you typically interact with software, I likely already support it.",
+        "Go ahead, type something.",
+        "I'll stay here until you do.",
+    ]
 
 
 def test_tutorial_stops_after_cancellation(monkeypatch) -> None:

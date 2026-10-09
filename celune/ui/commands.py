@@ -3,8 +3,8 @@
 
 from __future__ import annotations
 
-import os
 import asyncio
+import os
 import threading
 from pathlib import Path
 from urllib.parse import urlparse
@@ -209,12 +209,30 @@ def tutorial(ui: CeluneUI) -> None:
         (string("commands.tutorial_input"), lambda: ui.pulse_border("#input")),
         (string("commands.tutorial_voice"), lambda: ui.pulse_border("#style")),
         (string("commands.tutorial_help"), send_help),
-        (string("commands.tutorial_voice_pack"), None),
+        (string("commands.tutorial_help_simple"), None),
+        (string("commands.tutorial_help_vibe"), None),
         (string("commands.tutorial_extensions"), None),
-        (string("commands.tutorial_persona"), None),
+        (string("commands.tutorial_extension_example"), None),
+        (string("commands.tutorial_extension_code"), None),
         (string("commands.tutorial_local_api"), None),
+        (string("commands.tutorial_local_api_usage"), None),
+        (string("commands.tutorial_voice_self", app_name=APP_NAME), None),
+        (string("commands.tutorial_voice_default", app_name=APP_NAME), None),
+        (string("commands.tutorial_voice_pack"), None),
+        (string("commands.tutorial_voice_pack_continued"), None),
+        (string("commands.tutorial_persona"), None),
+        (string("commands.tutorial_persona_chat"), None),
+        (string("commands.tutorial_persona_speech"), None),
+        (string("commands.tutorial_persona_invitation"), None),
         (string("commands.tutorial_agent"), None),
+        (string("commands.tutorial_agent_abilities"), None),
+        (string("commands.tutorial_agent_actions"), None),
+        (string("commands.tutorial_can_do_more"), None),
+        (string("commands.tutorial_variety", app_name=APP_NAME), None),
+        (string("commands.tutorial_variety_many"), None),
+        (string("commands.tutorial_supported"), None),
         (string("commands.tutorial_wrap_up"), None),
+        (string("commands.tutorial_wait"), None),
     )
 
     ui.begin_tutorial()
