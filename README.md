@@ -179,7 +179,7 @@ Persona context is variable depending on Celune's operation mode: 2,048 tokens i
 mode (`mode: converse`), and 8,192 tokens in agent mode (`mode: agent`).
 
 Combinations of presets and model selections were validated where possible, unchecked configurations
-display clear warnings and may fail with OOM errors, use then with caution.
+display clear warnings and may fail with OOM errors, use them with caution.
 
 The desired preset may be set in Celune's configuration file. Refer to `default_config.yaml` for details.
 
