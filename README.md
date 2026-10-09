@@ -121,6 +121,12 @@ Samples were captured directly from Celune's output directory. No extra post-pro
 
 For details on voice production, check [VOICES.md](./docs/VOICES.md).
 
+> [!NOTE]
+> AI-generated voices may occasionally mispronounce words. 
+> Minor pronunciation errors are expected, and do not necessarily indicate a software defect.
+>
+> If a word is mispronounced, try spelling it phonetically to guide the voice.
+
 ## System Requirements
 
 Celune requires [Python](https://python.org) 3.12, 3.13 or 3.14.
