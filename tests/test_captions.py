@@ -3,9 +3,9 @@
 
 import json
 import threading
+from types import SimpleNamespace
 from pathlib import Path
 from unittest import mock
-from types import SimpleNamespace
 
 import numpy as np
 
@@ -26,6 +26,59 @@ def test_map_word_timings_maps_normalized_text_within_its_chunk() -> None:
         ((0.1, 0.3), (0.5, 0.9)),
         1.0,
     ) == ((0.1, 0.25), (0.25, 0.4), (0.4, 0.65), (0.65, 0.9))
+
+
+def test_map_section_word_timings_keeps_word_mapping_inside_passages() -> None:
+    """Map display words independently inside their known audio passages."""
+    sections = (
+        captions.CaptionAlignmentSection(0, 48_000, 0, 1, 0, 2),
+        captions.CaptionAlignmentSection(48_000, 96_000, 1, 2, 2, 3),
+    )
+
+    assert captions.map_section_word_timings(
+        ("first", "passage", "second"),
+        ((0.1, 0.4), (1.1, 1.4)),
+        sections,
+        2.0,
+        48_000,
+    ) == ((0.1, 0.25), (0.25, 0.4), (1.1, 1.4))
+
+
+def test_caption_aligner_constrains_ctc_to_tutorial_passages() -> None:
+    """Align each known tutorial passage inside one full-model inference."""
+    vocab = {"<pad>": 0, "a": 1, "b": 2}
+    logits = np.full((1, 10, len(vocab)), -10.0, dtype=np.float32)
+    logits[0, :, 0] = 0.0
+    logits[0, 1, 1] = 10.0
+    logits[0, 7, 2] = 10.0
+    session = mock.Mock()
+    session.run.return_value = (logits,)
+    aligner = captions.CaptionAligner()
+    sections = (
+        captions.CaptionAlignmentSection(0, 4_800, 0, 1, 0, 1),
+        captions.CaptionAlignmentSection(4_800, 9_600, 1, 2, 1, 2),
+    )
+    waveform = np.linspace(-0.5, 0.5, 9_600, dtype=np.float32)
+
+    with (
+        mock.patch.object(aligner, "_load_model", return_value=(session, vocab)),
+        mock.patch(
+            "celune.captions._phonemize",
+            return_value=(("a",), ("b",)),
+        ) as phonemize,
+    ):
+        aligned = aligner.align_words(
+            waveform,
+            48_000,
+            "first second",
+            "en-US",
+            sections,
+        )
+
+    assert aligned[0][0] < 0.1
+    assert aligned[1][0] > 0.1
+    phonemize.assert_called_once_with("first second", "en-us")
+    session.run.assert_called_once()
 
 
 def test_align_chunk_word_start_frames_reports_alignment_errors() -> None:

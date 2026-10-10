@@ -7,14 +7,16 @@ import os
 import time
 import queue
 import pathlib
+from typing import TYPE_CHECKING, Union, Optional, cast
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Optional, Union, cast
 
 import numpy as np
 import soundfile as sf
 from iso639 import Lang
-from iso639.exceptions import DeprecatedLanguageValue, InvalidLanguageValue
+from iso639.exceptions import InvalidLanguageValue, DeprecatedLanguageValue
 
+from .vc import normalize_vc_audio
+from .i18n import string
 from .utils import (
     rng_replace,
     is_april_fools,
@@ -22,6 +24,8 @@ from .utils import (
     format_error_message,
     normalize_special_characters,
 )
+from .binding import install_class_functions, install_module_functions
+from .cevoice import default_loader
 from .pipeline import (
     close_stream,
     _format_stat_duration,
@@ -43,27 +47,24 @@ from .playback import (
     _clear_playback_source_status,
     _register_overlay_playback_state,
 )
-from .i18n import string
+from .audio.dsp import split, resample_audio, pitch_shift_audio
+from .constants import BASE_SR, APP_NAME
+from .exceptions import NotAvailableError
 from .conversation import (
     _store_persona_memories,
     _classify_persona_memories,
 )
-from .vc import normalize_vc_audio
-from .cevoice import default_loader
+from .persona.impl import compact_persona_history
+from .typing.aliases import AudioChunk
+from .typing.pipeline import SpeechStreamQueue
 from .dataclasses.pipeline import (
     AudioOutput,
     SpeechRequest,
     AudioInputRequest,
     PreparedSpeechAudio,
     VoiceConversionRequest,
+    CaptionAlignmentSection,
 )
-from .typing.aliases import AudioChunk
-from .constants import APP_NAME, BASE_SR
-from .exceptions import NotAvailableError
-from .typing.pipeline import SpeechStreamQueue
-from .persona.impl import compact_persona_history
-from .audio.dsp import pitch_shift_audio, resample_audio, split
-from .binding import install_class_functions, install_module_functions
 
 if TYPE_CHECKING:
     from .celune import Celune
@@ -227,12 +228,32 @@ def _play_tutorial_sections(
     pause_samples = BASE_SR // 2
     combined_parts: list[AudioChunk] = []
     section_starts: list[int] = []
+    alignment_sections: list[CaptionAlignmentSection] = []
     total_frames = 0
+    transcript_word_start = 0
+    display_word_start = 0
     silence_shape = (pause_samples,) + normalized_audio[0].shape[1:]
     silence = np.zeros(silence_shape, dtype=np.float32)
     for index, section_audio in enumerate(normalized_audio):
         section_starts.append(total_frames)
+        transcript_words = normalize_special_characters(
+            sections[index],
+            for_tts=True,
+        ).split()
+        display_words = sections[index].split()
         combined_parts.append(section_audio)
+        alignment_sections.append(
+            CaptionAlignmentSection(
+                audio_start_frame=total_frames,
+                audio_end_frame=total_frames + len(section_audio),
+                transcript_word_start=transcript_word_start,
+                transcript_word_end=transcript_word_start + len(transcript_words),
+                display_word_start=display_word_start,
+                display_word_end=display_word_start + len(display_words),
+            )
+        )
+        transcript_word_start += len(transcript_words)
+        display_word_start += len(display_words)
         total_frames += len(section_audio)
         if index < len(audio_sections) - 1:
             combined_parts.append(silence)
@@ -250,6 +271,7 @@ def _play_tutorial_sections(
         normalize=False,
         prepared_audio=combined_audio,
         playback_source_queue=source_queue,
+        caption_alignment_sections=tuple(alignment_sections),
     ):
         raise NotAvailableError("tutorial playback was rejected")
 
@@ -548,6 +570,7 @@ def _queue_speech_request(
     ] = None,
     prepared_audio: Optional[AudioChunk] = None,
     playback_source_queue: Optional[queue.Queue[Union[int, Exception]]] = None,
+    caption_alignment_sections: tuple[CaptionAlignmentSection, ...] = (),
 ) -> bool:
     """Wait for readiness and queue one speech request.
 
@@ -581,6 +604,7 @@ def _queue_speech_request(
         audio_capture_queue=audio_capture_queue,
         prepared_audio=prepared_audio,
         playback_source_queue=playback_source_queue,
+        caption_alignment_sections=caption_alignment_sections,
     )
 
 
@@ -677,6 +701,7 @@ def _queue_speech_after_ready(
     ] = None,
     prepared_audio: Optional[AudioChunk] = None,
     playback_source_queue: Optional[queue.Queue[Union[int, Exception]]] = None,
+    caption_alignment_sections: tuple[CaptionAlignmentSection, ...] = (),
 ) -> bool:
     """Queue one speech request after reload readiness is satisfied."""
 
@@ -761,6 +786,7 @@ def _queue_speech_after_ready(
                     audio_capture_queue=audio_capture_queue,
                     prepared_audio=prepared_audio,
                     playback_source_queue=playback_source_queue,
+                    caption_alignment_sections=caption_alignment_sections,
                 )
             )
             engine.log(

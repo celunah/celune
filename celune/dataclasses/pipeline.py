@@ -5,8 +5,8 @@ from __future__ import annotations
 
 import time
 import queue
-from pathlib import Path
 from typing import Union, Optional
+from pathlib import Path
 from dataclasses import field, dataclass
 
 import numpy as np
@@ -21,6 +21,18 @@ class PreparedSpeechAudio:
     """Generated section audio kept in order for deferred playback."""
 
     sections: tuple[AudioChunk, ...]
+
+
+@dataclass(frozen=True)
+class CaptionAlignmentSection:
+    """Known audio and transcript ranges for one prepared speech passage."""
+
+    audio_start_frame: int
+    audio_end_frame: int
+    transcript_word_start: int
+    transcript_word_end: int
+    display_word_start: int
+    display_word_end: int
 
 
 @dataclass(frozen=True)
@@ -41,6 +53,7 @@ class SpeechRequest:
     ] = None
     prepared_audio: Optional[AudioChunk] = None
     playback_source_queue: Optional[queue.Queue[Union[int, Exception]]] = None
+    caption_alignment_sections: tuple[CaptionAlignmentSection, ...] = ()
 
 
 @dataclass(frozen=True)

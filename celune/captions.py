@@ -5,27 +5,26 @@ from __future__ import annotations
 
 import json
 import queue
+import string as string_module
 import importlib
 import itertools
 import threading
 import subprocess
 import unicodedata
-import string as string_module
-
+from typing import TYPE_CHECKING, Optional, Protocol, cast
 from pathlib import Path
 from collections.abc import Mapping, Callable, Sequence
-from typing import TYPE_CHECKING, Optional, Protocol, cast
 
 import numpy as np
 from iso639.exceptions import InvalidLanguageValue, DeprecatedLanguageValue
 
 from .i18n import string
-from .constants import BASE_SR
 from .utils import format_error_message
-from .audio.resampling import resample_audio
-from .dataclasses.pipeline import SpeechTiming
-from .typing.pipeline import SpeechStreamQueue
+from .constants import BASE_SR
 from .typing.aliases import LogLevel, AudioChunks
+from .typing.pipeline import SpeechStreamQueue
+from .audio.resampling import resample_audio
+from .dataclasses.pipeline import SpeechTiming, CaptionAlignmentSection
 
 if TYPE_CHECKING:
     from .celune import Celune
@@ -130,6 +129,7 @@ class CaptionAligner:
         sample_rate: int,
         transcript: str,
         language: Optional[str] = None,
+        alignment_sections: tuple[CaptionAlignmentSection, ...] = (),
     ) -> tuple[tuple[float, float], ...]:
         """Return word intervals by aligning eSpeak IPA phones to audio.
 
@@ -138,6 +138,7 @@ class CaptionAligner:
             sample_rate: Sample rate of ``audio``.
             transcript: Exact text generated for the supplied audio.
             language: eSpeak language or dialect identifier for phonemization.
+            alignment_sections: Known audio and transcript ranges for passages.
 
         Returns:
             tuple[tuple[float, float], ...]: Word start and end times in seconds.
@@ -191,8 +192,20 @@ class CaptionAligner:
             target_tokens.extend(_tokenize_ipa(word, vocab))
             word_token_ranges.append((token_start, len(target_tokens)))
 
-        frame_spans = _ctc_token_spans(log_probs, target_tokens, vocab["<pad>"])
         duration = len(model_audio) / _MODEL_SAMPLE_RATE
+        if alignment_sections:
+            return _align_words_in_sections(
+                log_probs,
+                target_tokens,
+                word_token_ranges,
+                vocab["<pad>"],
+                alignment_sections,
+                len(waveform),
+                len(model_audio),
+                duration,
+            )
+
+        frame_spans = _ctc_token_spans(log_probs, target_tokens, vocab["<pad>"])
         return tuple(
             (
                 min(duration, start / _MODEL_FRAME_RATE),
@@ -261,8 +274,13 @@ def align_chunk_word_start_frames(
     language: Optional[str],
     logger: Callable[[str, str], None],
     log_level: LogLevel,
+    alignment_sections: tuple[CaptionAlignmentSection, ...] = (),
 ) -> Optional[tuple[int, ...]]:
-    """Align one generated chunk and return word starts in its audio frames."""
+    """Align one chunk and return word starts in its audio frames.
+
+    Known passage ranges constrain alignment while retaining the full transcript
+    and waveform as one acoustic-model input.
+    """
     try:
         chunk_audio = np.concatenate(audio_chunks)
         if chunk_audio.ndim == 2:
@@ -270,17 +288,33 @@ def align_chunk_word_start_frames(
                 np.mean(chunk_audio, axis=1, dtype=np.float32),
                 dtype=np.float32,
             )
-        aligned_words = get_caption_aligner().align_words(
-            chunk_audio,
-            sample_rate,
-            transcript,
-            language,
-        )
-        aligned_timings = map_word_timings(
-            display_words,
-            aligned_words,
-            len(chunk_audio) / sample_rate,
-        )
+        if alignment_sections:
+            aligned_words = get_caption_aligner().align_words(
+                chunk_audio,
+                sample_rate,
+                transcript,
+                language,
+                alignment_sections,
+            )
+            aligned_timings = map_section_word_timings(
+                display_words,
+                aligned_words,
+                alignment_sections,
+                len(chunk_audio) / sample_rate,
+                sample_rate,
+            )
+        else:
+            aligned_words = get_caption_aligner().align_words(
+                chunk_audio,
+                sample_rate,
+                transcript,
+                language,
+            )
+            aligned_timings = map_word_timings(
+                display_words,
+                aligned_words,
+                len(chunk_audio) / sample_rate,
+            )
         if not aligned_timings or len(aligned_timings) != len(display_words):
             raise ValueError("caption alignment returned incomplete word timings")
         return tuple(
@@ -347,6 +381,143 @@ def map_word_timings(
         end = boundary_at(end_position)
         mapped.append((start, max(start, end)))
     return tuple(mapped)
+
+
+def map_section_word_timings(
+    display_words: tuple[str, ...],
+    aligned_words: tuple[tuple[float, float], ...],
+    sections: tuple[CaptionAlignmentSection, ...],
+    audio_duration: float,
+    sample_rate: int,
+) -> tuple[tuple[float, float], ...]:
+    """Map transcript and display word ranges independently per audio section.
+
+    Args:
+        display_words: Words shown by the caption UI.
+        aligned_words: Transcript word intervals in the combined audio timeline.
+        sections: Known audio and transcript word ranges for each passage.
+        audio_duration: Total duration of the combined audio in seconds.
+        sample_rate: Sample rate used by section audio frame offsets.
+
+    Returns:
+        tuple[tuple[float, float], ...]: Display word timings in the combined
+        audio timeline.
+    """
+    if sample_rate <= 0 or audio_duration <= 0.0:
+        raise ValueError("caption section timing requires positive audio duration")
+    mapped: list[tuple[float, float]] = []
+    previous_source_end = 0
+    previous_display_end = 0
+    previous_audio_end = 0
+    for section in sections:
+        source_start = section.transcript_word_start
+        source_end = section.transcript_word_end
+        display_start = section.display_word_start
+        display_end = section.display_word_end
+        if not (
+            previous_source_end == source_start < source_end <= len(aligned_words)
+            and 0 <= display_start < display_end <= len(display_words)
+            and previous_display_end == display_start
+            and previous_audio_end
+            <= section.audio_start_frame
+            < section.audio_end_frame
+        ):
+            raise ValueError("caption section word ranges are invalid")
+        audio_start = section.audio_start_frame / sample_rate
+        audio_end = section.audio_end_frame / sample_rate
+        if audio_end > audio_duration:
+            raise ValueError("caption section audio range exceeds the waveform")
+        section_timings = aligned_words[source_start:source_end]
+        local_timings = tuple(
+            (start - audio_start, end - audio_start) for start, end in section_timings
+        )
+        section_display_words = display_words[display_start:display_end]
+        mapped.extend(
+            (start + audio_start, end + audio_start)
+            for start, end in map_word_timings(
+                section_display_words,
+                local_timings,
+                min(audio_duration, audio_end) - audio_start,
+            )
+        )
+        previous_source_end = source_end
+        previous_display_end = display_end
+        previous_audio_end = section.audio_end_frame
+    if previous_source_end != len(aligned_words) or previous_display_end != len(
+        display_words
+    ):
+        raise ValueError("caption sections do not cover all display words")
+    return tuple(mapped)
+
+
+def _align_words_in_sections(
+    log_probs: np.ndarray,
+    target_tokens: list[int],
+    word_token_ranges: list[tuple[int, int]],
+    blank_id: int,
+    sections: tuple[CaptionAlignmentSection, ...],
+    waveform_samples: int,
+    model_samples: int,
+    duration: float,
+) -> tuple[tuple[float, float], ...]:
+    """Run CTC alignment inside known passage audio and transcript boundaries."""
+    if not sections:
+        return ()
+    if sections[0].audio_start_frame != 0:
+        raise ValueError("caption alignment sections must start at the waveform origin")
+    timings: list[tuple[float, float]] = []
+    previous_audio_end = 0
+    previous_word_end = 0
+    for section in sections:
+        if not (
+            previous_audio_end
+            <= section.audio_start_frame
+            < section.audio_end_frame
+            <= waveform_samples
+            and previous_word_end
+            == section.transcript_word_start
+            < section.transcript_word_end
+            <= len(word_token_ranges)
+        ):
+            raise ValueError("caption alignment sections are invalid or out of order")
+        token_start = word_token_ranges[section.transcript_word_start][0]
+        token_end = word_token_ranges[section.transcript_word_end - 1][1]
+        start_model_sample = (
+            section.audio_start_frame * model_samples / waveform_samples
+        )
+        end_model_sample = section.audio_end_frame * model_samples / waveform_samples
+        start_frame = int(start_model_sample * log_probs.shape[0] / model_samples)
+        end_frame = int(np.ceil(end_model_sample * log_probs.shape[0] / model_samples))
+        start_frame = max(0, min(log_probs.shape[0] - 1, start_frame))
+        end_frame = max(start_frame + 1, min(log_probs.shape[0], end_frame))
+        section_log_probs = log_probs[start_frame:end_frame]
+        section_spans = _ctc_token_spans(
+            section_log_probs,
+            target_tokens[token_start:token_end],
+            blank_id,
+        )
+        section_words = _word_frame_spans(
+            section_spans,
+            [
+                (start - token_start, end - token_start)
+                for start, end in word_token_ranges[
+                    section.transcript_word_start : section.transcript_word_end
+                ]
+            ],
+        )
+        frame_offset = start_frame
+        timings.extend(
+            (
+                min(duration, (frame_offset + start) / _MODEL_FRAME_RATE),
+                min(duration, (frame_offset + end) / _MODEL_FRAME_RATE),
+            )
+            for start, end in section_words
+        )
+        previous_audio_end = section.audio_end_frame
+        previous_word_end = section.transcript_word_end
+    if previous_word_end != len(word_token_ranges):
+        raise ValueError("caption sections do not cover all transcript words")
+    return tuple(timings)
 
 
 def _log_softmax(logits: np.ndarray) -> np.ndarray:
@@ -567,8 +738,13 @@ class CaptionAlignmentWorker:
         alignment_failed: list[bool],
         pushed_audio: list[bool],
         sample_rate: int = BASE_SR,
+        alignment_sections: tuple[CaptionAlignmentSection, ...] = (),
     ) -> None:
-        """Align and queue one transcript chunk without blocking generation."""
+        """Align and queue one transcript chunk without blocking generation.
+
+        Optional passage ranges keep words within their known audio sections
+        while the worker processes one combined transcript and waveform.
+        """
         self.submit_task(
             lambda: self._align_and_flush_chunk(
                 engine,
@@ -586,6 +762,7 @@ class CaptionAlignmentWorker:
                 alignment_failed,
                 pushed_audio,
                 sample_rate,
+                alignment_sections,
             )
         )
 
@@ -697,6 +874,7 @@ class CaptionAlignmentWorker:
         alignment_failed: list[bool],
         pushed_audio: list[bool],
         sample_rate: int,
+        alignment_sections: tuple[CaptionAlignmentSection, ...],
     ) -> None:
         from .playback import (
             _playback_source_meta,
@@ -726,6 +904,7 @@ class CaptionAlignmentWorker:
                 language,
                 self._logger,
                 self._log_level,
+                alignment_sections,
             )
             if aligned_frames is None:
                 alignment_failed[0] = True

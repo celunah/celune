@@ -3,21 +3,25 @@
 
 import queue
 import threading
-from unittest import mock
-from typing import Union, cast
 from types import SimpleNamespace
+from typing import Union, cast
+from unittest import mock
 from collections.abc import Callable
 
 import numpy as np
 
 from celune import pipeline
-from celune.i18n import string
 from celune.ui import commands
+from celune.i18n import string
 from celune.celune import Celune
+from celune.speech import _play_tutorial_sections, _prepare_tutorial_sections
 from celune.ui.app import CeluneUI
 from celune.prepared import play_prepared_speech
-from celune.dataclasses.pipeline import PreparedSpeechAudio, SpeechRequest
-from celune.speech import _play_tutorial_sections, _prepare_tutorial_sections
+from celune.dataclasses.pipeline import (
+    SpeechRequest,
+    PreparedSpeechAudio,
+    CaptionAlignmentSection,
+)
 
 from .support import make_pipeline_engine
 
@@ -322,12 +326,14 @@ def test_tutorial_playback_stitches_audio_with_caption_transcript(monkeypatch) -
     engine.playback_done.wait.return_value = True
     captured_audio: list[np.ndarray] = []
     captured_transcript: list[str] = []
+    captured_sections: list[tuple[CaptionAlignmentSection, ...]] = []
 
     def queue_speech(_engine, transcript, **kwargs):
         captured_transcript.append(transcript)
         prepared = kwargs["prepared_audio"]
         assert isinstance(prepared, np.ndarray)
         captured_audio.append(prepared)
+        captured_sections.append(kwargs["caption_alignment_sections"])
         kwargs["playback_source_queue"].put(source_id)
         return True
 
@@ -349,6 +355,13 @@ def test_tutorial_playback_stitches_audio_with_caption_transcript(monkeypatch) -
     np.testing.assert_array_equal(combined_audio[:3], audio[0])
     assert np.count_nonzero(combined_audio[3:24_003]) == 0
     np.testing.assert_array_equal(combined_audio[24_003:24_007], audio[1])
+    assert captured_sections == [
+        (
+            CaptionAlignmentSection(0, 3, 0, 2, 0, 2),
+            CaptionAlignmentSection(24_003, 24_007, 2, 4, 2, 4),
+            CaptionAlignmentSection(48_007, 48_009, 4, 6, 4, 6),
+        )
+    ]
     assert starts == [0, 1, 2]
 
 
@@ -357,6 +370,7 @@ def test_prepared_tutorial_playback_aligns_combined_transcript(monkeypatch) -> N
     transcript = "First section. Second section."
     audio = np.ones((8, 2), dtype=np.float32)
     source_queue: queue.Queue[Union[int, Exception]] = queue.Queue()
+    alignment_sections = (CaptionAlignmentSection(0, 8, 0, 4, 0, 4),)
     request = SpeechRequest(
         text=transcript,
         display_text=transcript,
@@ -364,6 +378,7 @@ def test_prepared_tutorial_playback_aligns_combined_transcript(monkeypatch) -> N
         save=False,
         prepared_audio=audio,
         playback_source_queue=source_queue,
+        caption_alignment_sections=alignment_sections,
     )
     engine = SimpleNamespace(
         config={"captions": True},
@@ -383,4 +398,5 @@ def test_prepared_tutorial_playback_aligns_combined_transcript(monkeypatch) -> N
     play_prepared_speech(cast(Celune, engine), request, caption_worker)
 
     assert caption_worker.submit_chunk.call_args.args[6] == transcript
+    assert caption_worker.submit_chunk.call_args.args[15] == alignment_sections
     assert source_queue.get_nowait() == 5

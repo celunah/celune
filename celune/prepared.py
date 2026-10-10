@@ -5,10 +5,12 @@ from __future__ import annotations
 
 import time
 import queue
-from typing import TYPE_CHECKING, Optional, Union
+from typing import TYPE_CHECKING, Union, Optional
 
 import numpy as np
 
+from .i18n import string, tagged_string
+from .utils import format_error_message
 from .playback import (
     release_pipeline,
     _queue_playback_done,
@@ -16,13 +18,15 @@ from .playback import (
     _register_playback_source,
     _flush_buffered_speech_chunks,
 )
-from .i18n import string, tagged_string
-from .utils import format_error_message
-from .constants import APP_NAME, BASE_SR
-from .exceptions import NotAvailableError
 from .audio.dsp import is_silent_utterance
+from .constants import BASE_SR, APP_NAME
+from .exceptions import NotAvailableError
 from .typing.aliases import AudioChunk, AudioChunks
-from .dataclasses.pipeline import PreparedSpeechAudio, SpeechRequest, SpeechTiming
+from .dataclasses.pipeline import (
+    SpeechTiming,
+    SpeechRequest,
+    PreparedSpeechAudio,
+)
 
 if TYPE_CHECKING:
     from .celune import Celune
@@ -125,6 +129,7 @@ def play_prepared_speech(
                 [False],
                 [False],
                 BASE_SR,
+                item.caption_alignment_sections,
             )
             caption_worker.submit_done(
                 engine,
