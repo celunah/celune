@@ -113,8 +113,6 @@ pending. Playback waits for a chunk's alignment. Celune hides captions for the
 utterance if alignment is unavailable or fails; speech playback continues.
 The tutorial aligns each prepared passage against its own audio range, keeping
 timing errors within that passage instead of carrying them into later passages.
-Caption progress follows each output block's audio duration, so virtual devices
-that accept buffered audio quickly do not make captions run ahead.
 For a caller that needs every chunk, use `say_stream()` and drain the returned
 queue until its terminal sentinel/condition; do not read the internal playback
 queue directly.

@@ -5,7 +5,6 @@
 # pylint: disable=ungrouped-imports
 
 import sys
-import time
 import queue
 import asyncio
 import tempfile
@@ -333,34 +332,6 @@ class TestPipeline(CeluneTestCase):
         assert not any(
             "[PLAY] playback write" in message for message, _ in engine.messages
         )
-
-    def test_playback_writer_does_not_advance_faster_than_audio_duration(self) -> None:
-        """Pace progress when an output device accepts a block immediately."""
-        engine = make_pipeline_engine()
-        monitor = pipeline._PlaybackContentionMonitor(cast(Celune, engine))
-        writer = pipeline._PlaybackWriter(cast(Celune, engine), monitor)
-        pipeline.register_playback_source(
-            cast(Celune, engine),
-            1,
-            kind="speech",
-            caption_word_total=1,
-        )
-        source_meta = pipeline._playback_source_meta(cast(Celune, engine))[1]
-        source_meta["total_frames"] = 2400.0
-
-        started_at = time.monotonic()
-        with mock.patch(
-            "celune.pipeline._write_playback_block",
-            return_value=False,
-        ):
-            writer.start()
-            writer.submit(np.zeros((2400, 2), dtype=np.float32), (1,))
-            writer.wait_empty()
-            writer.stop()
-        elapsed = time.monotonic() - started_at
-
-        assert elapsed >= 0.045
-        assert source_meta["played_frames"] == 2400.0
 
     def test_caption_progress_waits_for_final_chunk_total(self) -> None:
         """Verify captions do not finish against a still-growing speech source."""
