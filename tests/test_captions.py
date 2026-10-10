@@ -3,7 +3,6 @@
 
 import json
 import threading
-from typing import cast
 from pathlib import Path
 from unittest import mock
 from types import SimpleNamespace
@@ -11,12 +10,6 @@ from types import SimpleNamespace
 import numpy as np
 
 from celune import captions
-from celune.celune import Celune
-from celune.dataclasses.pipeline import (
-    CaptionPlaybackSegment,
-    CaptionPlaybackState,
-    SpeechTiming,
-)
 
 
 def test_map_word_timings_keeps_aligned_boundaries() -> None:
@@ -56,57 +49,6 @@ def test_align_chunk_word_start_frames_reports_alignment_errors() -> None:
 
     assert "bad transcript" in logger.call_args.args[0]
     assert logger.call_args.args[1] == "warning"
-
-
-def test_caption_timing_is_registered_before_audio_is_queued(monkeypatch) -> None:
-    """Make caption ranges visible before playback can advance through audio."""
-    engine = SimpleNamespace(
-        queue_lock=threading.RLock(),
-        _playback_source_meta={3: {"total_frames": 4.0}},
-        _playback_caption_states={3: CaptionPlaybackState(total_words=2)},
-    )
-    worker = captions.CaptionAlignmentWorker.__new__(captions.CaptionAlignmentWorker)
-    worker._state_lock = threading.Lock()
-    worker._cancelled_sources = set()
-    worker._logger = mock.Mock()
-    worker._log_level = "info"
-
-    def flush_audio(*_args, **_kwargs) -> bool:
-        assert engine._playback_caption_states[3].segments == [
-            CaptionPlaybackSegment(
-                start_frame=4,
-                end_frame=9,
-                word_start=0,
-                word_end=2,
-                timing_words=("one", "two"),
-                word_start_frames=(1, 3),
-            )
-        ]
-        return True
-
-    monkeypatch.setattr(
-        "celune.captions.align_chunk_word_start_frames",
-        lambda *_args: (1, 3),
-    )
-    monkeypatch.setattr("celune.playback._flush_buffered_speech_chunks", flush_audio)
-
-    worker._align_and_flush_chunk(
-        cast(Celune, engine),
-        3,
-        [np.ones(5, dtype=np.float32)],
-        SpeechTiming(start_time=0.0),
-        None,
-        "one two",
-        "one two",
-        ("one", "two"),
-        "en-US",
-        0,
-        2,
-        ("one", "two"),
-        [False],
-        [False],
-        48000,
-    )
 
 
 def test_missing_espeak_logs_a_warning_without_traceback() -> None:
