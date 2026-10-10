@@ -740,22 +740,7 @@ class CaptionAlignmentWorker:
             if source_id in self._cancelled_sources:
                 audio_chunks.clear()
                 return
-            pushed_audio[0] = _flush_buffered_speech_chunks(
-                engine,
-                source_id,
-                audio_chunks,
-                speech_timing,
-                pushed_audio[0],
-                stream_queue,
-                caption_text=None if alignment_failed[0] else caption_text,
-            )
-            with engine.queue_lock:
-                source_meta = _playback_source_meta(engine).get(source_id)
-                chunk_end = (
-                    int(float(source_meta.get("total_frames", 0.0)))
-                    if isinstance(source_meta, dict)
-                    else chunk_start
-                )
+            chunk_end = chunk_start + sum(len(chunk) for chunk in audio_chunks)
             if not alignment_failed[0]:
                 _record_caption_playback_segment(
                     engine,
@@ -767,6 +752,15 @@ class CaptionAlignmentWorker:
                     timing_words,
                     word_start_frames,
                 )
+            pushed_audio[0] = _flush_buffered_speech_chunks(
+                engine,
+                source_id,
+                audio_chunks,
+                speech_timing,
+                pushed_audio[0],
+                stream_queue,
+                caption_text=None if alignment_failed[0] else caption_text,
+            )
 
     def _flush_audio(
         self,
