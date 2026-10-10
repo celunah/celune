@@ -1878,7 +1878,6 @@ api = gr.mount_gradio_app(
     _build_webui(),
     path="/ui",
     footer_links=[],
-    favicon_path=str(project_root() / "resources" / "celune.ico"),
     show_error=True,
     css=WEBUI_CSS,
     head=WEBUI_HEAD,
