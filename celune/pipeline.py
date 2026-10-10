@@ -268,6 +268,7 @@ class _PlaybackWriter:
         self._pending_sources: dict[int, int] = {}
         self._error: Optional[BaseException] = None
         self._last_write_finished_at: Optional[float] = None
+        self._next_playback_at: Optional[float] = None
 
     def start(self) -> None:
         """Start the persistent writer when it is not already running."""
@@ -319,6 +320,21 @@ class _PlaybackWriter:
                 ) + float(len(item.audio))
         _update_playback_progress(self._engine)
 
+    def _pace_output(self, item: _PlaybackWriteItem, started_at: float) -> None:
+        """Keep accepted output frames from advancing faster than real time."""
+        caption_states = _playback_caption_states(self._engine)
+        if not any(source_id in caption_states for source_id in item.source_ids):
+            return
+
+        playback_start = max(
+            started_at,
+            self._next_playback_at or started_at,
+        )
+        self._next_playback_at = playback_start + item.duration_seconds
+        wait_seconds = self._next_playback_at - time.monotonic()
+        if wait_seconds > 0.0:
+            time.sleep(wait_seconds)
+
     def _run(self) -> None:
         """Consume the output queue until a stop marker is received."""
         _prioritize_playback_thread()
@@ -338,8 +354,12 @@ class _PlaybackWriter:
             self._engine.playback_writer_gap_seconds = writer_gap
             underflowed = False
             failed: Optional[BaseException] = None
+            write_started_at = time.monotonic()
+            write_finished_at = write_started_at
             try:
                 underflowed = bool(_write_playback_block(self._engine, item.audio))
+                write_finished_at = time.monotonic()
+                self._pace_output(item, started_at)
                 self._record_played_frames(item)
             except BaseException as error:  # pylint: disable=broad-exception-caught
                 failed = error
@@ -355,7 +375,7 @@ class _PlaybackWriter:
                 )
                 self._engine.playback_writer_write_seconds = max(
                     0.0,
-                    finished_at - started_at,
+                    write_finished_at - write_started_at,
                 )
                 self._last_write_finished_at = finished_at
                 self._queue.task_done()
