@@ -24,17 +24,6 @@ class PreparedSpeechAudio:
 
 
 @dataclass(frozen=True)
-class PreparedSpeechCaption:
-    """Map one prepared passage's transcript and display words to audio frames."""
-
-    text: str
-    audio_start_frame: int
-    audio_end_frame: int
-    word_start: int
-    word_end: int
-
-
-@dataclass(frozen=True)
 class SpeechRequest:
     """Queued speech input and output persistence preference."""
 
@@ -51,7 +40,6 @@ class SpeechRequest:
         queue.Queue[Union[PreparedSpeechAudio, Exception]]
     ] = None
     prepared_audio: Optional[AudioChunk] = None
-    prepared_caption_sections: tuple[PreparedSpeechCaption, ...] = ()
     playback_source_queue: Optional[queue.Queue[Union[int, Exception]]] = None
 
 
