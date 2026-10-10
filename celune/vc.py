@@ -22,8 +22,8 @@ from .typing.backends import _StreamingSpeechModel
 if TYPE_CHECKING:
     from .celune import Celune
 
-VC_PITCH_SHIFT_MIN = -3
-VC_PITCH_SHIFT_MAX = 3
+VC_PITCH_SHIFT_MIN = -12
+VC_PITCH_SHIFT_MAX = 12
 VC_VAD_RMS_THRESHOLD = 0.005
 VC_VAD_HANGOVER_SECONDS = 0.3
 VC_VAD_PREROLL_SECONDS = 0.18

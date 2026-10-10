@@ -26,9 +26,9 @@ from celune.i18n import string
 from celune.agent import AgentTaskState
 from celune.celune import Celune
 from celune.ui.app import (
-    ButtonActions,
     CeluneUI,
     VoiceButton,
+    ButtonActions,
 )
 from tests.support import FakeBackend, FakeVCBackend, CeluneTestCase
 from tests.platform import WINDOWS_ONLY
@@ -43,6 +43,7 @@ from celune.typing.locks import (
 )
 from celune.typing.common import JSONSerializable
 from celune.typing.aliases import LogLevel
+
 from .ui_startup_interactions import TestUIStartup as _TestUIStartup
 
 
@@ -801,7 +802,7 @@ class TestUICommand(CeluneTestCase):
 
         self._process_command("vcpitch", ["13"])
         assert self.logs[-1] == (
-            "Pitch shift must be between -3 and 3 semitones.",
+            string("commands.vcpitch_range", min_value=-12, max_value=12),
             "warning",
         )
 

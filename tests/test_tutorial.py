@@ -112,8 +112,8 @@ def test_tutorial_keeps_each_utterance_separate_and_syncs_actions(
     assert events[-1] == "finish"
 
 
-def test_english_tutorial_uses_the_recorded_wording() -> None:
-    """Keep the English tutorial faithful to its original WAV narration."""
+def test_english_tutorial_uses_the_current_wording() -> None:
+    """Keep the English tutorial wording aligned with its active localization."""
     assert [
         string(f"commands.tutorial_{name}", locale="en", **arguments)
         for name, arguments in (
@@ -160,7 +160,7 @@ def test_english_tutorial_uses_the_recorded_wording() -> None:
         "You can post stuff to 127.0.0.1, port 2060, and I'll say that for you.",
         "I can also speak in your own voice.",
         f"The voice you are hearing right now is the default in {commands.APP_NAME}.",
-        'You can however load your own to provide your own "CE voice" pack into my voices directory,',
+        'You can however load your own too. Provide your own "CE voice" pack into my voices directory,',
         "and I'll be able to speak as your character, and not just myself.",
         "As of version 4.0, a new Persona system has been added, and then fixed,",
         "allowing you to properly talk to me, or anyone else running in this software.",
