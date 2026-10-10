@@ -12,7 +12,8 @@ class WebUiUnset(Sentinel):
 
 
 type WebUiUpdate = dict[str, JSONSerializable]
-type WebUiAudioValue = Optional[tuple[int, AudioChunk]]
+type WebUiAudioArray = Union[AudioChunk, AudioChunkNonNormalized]
+type WebUiAudioValue = Optional[tuple[int, WebUiAudioArray]]
 type WebUiInputArray = Union[AudioChunk, AudioChunkNonNormalized]
 type WebUiInputAudioValue = Optional[tuple[int, WebUiInputArray]]
 type TaskEventName = Literal[

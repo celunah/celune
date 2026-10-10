@@ -6,21 +6,21 @@ from __future__ import annotations
 import os
 import re
 import sys
-import queue as queue_module
-import shlex
 import types
+import shlex
 import ctypes
 import asyncio
-import threading
 import contextlib
-from copy import deepcopy
+import threading
 from uuid import uuid4
+from copy import deepcopy
+import queue as queue_module
 from typing import Optional, cast
 from collections.abc import Callable, Iterator
 
 from . import app as _app
-from ..binding import install_class_functions
 from ..constants import SIGTSTP, APP_NAME
+from ..binding import install_class_functions
 
 __all__ = (
     "_close_menu",
@@ -179,6 +179,7 @@ def _start_vc_recording(self) -> bool:
                     source_id=live_source_id,
                     generation=live_playback_generation,
                     status_label_key="pipeline.revoicing_label",
+                    low_latency=True,
                     reset_ready_announcement=live_source_id is None,
                 )
                 if live_source_id is None:
@@ -286,7 +287,10 @@ def _start_vc_recording(self) -> bool:
         feedback_min_capture_frames = self._vc_feedback_min_capture_frames(sample_rate)
         if ai_vad is not None:
             try:
-                voice_detected = ai_vad.has_voice(callback_audio, sample_rate)
+                voice_detected = ai_vad.has_voice(
+                    callback_audio,
+                    sample_rate,
+                ) or self._vc_input_has_voice(callback_audio)
             except (RuntimeError, AssertionError, ValueError):
                 ai_vad.reset()
                 voice_detected = self._vc_input_has_voice(callback_audio)
@@ -336,7 +340,7 @@ def _start_vc_recording(self) -> bool:
                 self._vc_recording_silence_frames = 0
             elif self._vc_recording_speech_started:
                 self._vc_recording_silence_frames += len(callback_audio)
-                live_audio = _app.np.zeros_like(callback_audio)
+                live_audio = callback_audio
                 if self._vc_recording_silence_frames > vad_hangover_frames:
                     self._vc_recording_speech_started = False
                     self._vc_recording_silence_frames = 0

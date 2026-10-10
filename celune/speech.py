@@ -7,16 +7,24 @@ import os
 import time
 import queue
 import pathlib
-from typing import TYPE_CHECKING, Union, Optional, cast
 from collections.abc import Callable
+from typing import TYPE_CHECKING, Union, Optional, cast
 
 import numpy as np
 import soundfile as sf
 from iso639 import Lang
 from iso639.exceptions import InvalidLanguageValue, DeprecatedLanguageValue
 
-from .vc import normalize_vc_audio
 from .i18n import string
+from .vc import normalize_vc_audio
+from .cevoice import default_loader
+from .typing.aliases import AudioChunk
+from .constants import BASE_SR, APP_NAME
+from .exceptions import NotAvailableError
+from .typing.pipeline import SpeechStreamQueue
+from .persona.impl import compact_persona_history
+from .audio.dsp import split, resample_audio, pitch_shift_audio
+from .binding import install_class_functions, install_module_functions
 from .utils import (
     rng_replace,
     is_april_fools,
@@ -24,8 +32,6 @@ from .utils import (
     format_error_message,
     normalize_special_characters,
 )
-from .binding import install_class_functions, install_module_functions
-from .cevoice import default_loader
 from .pipeline import (
     close_stream,
     _format_stat_duration,
@@ -47,16 +53,10 @@ from .playback import (
     _clear_playback_source_status,
     _register_overlay_playback_state,
 )
-from .audio.dsp import split, resample_audio, pitch_shift_audio
-from .constants import BASE_SR, APP_NAME
-from .exceptions import NotAvailableError
 from .conversation import (
     _store_persona_memories,
     _classify_persona_memories,
 )
-from .persona.impl import compact_persona_history
-from .typing.aliases import AudioChunk
-from .typing.pipeline import SpeechStreamQueue
 from .dataclasses.pipeline import (
     AudioOutput,
     SpeechRequest,
@@ -984,6 +984,7 @@ def queue_streaming_sfx_audio(
     volume: float = 1.0,
     status_label_key: str = "pipeline.playing_label",
     log_length: bool = False,
+    low_latency: bool = False,
     reset_ready_announcement: bool = False,
 ) -> Optional[int]:
     """Queue one SFX segment onto a persistent playback source.
@@ -998,6 +999,7 @@ def queue_streaming_sfx_audio(
         volume: Gain multiplier applied before the clip is queued for playback.
         status_label_key: Localization key used for the surfaced playback status.
         log_length: Whether to log the prepared playback sample rate and length.
+        low_latency: Whether playback should skip contention reserve buffering.
         reset_ready_announcement: Whether a newly created source should reset readiness.
 
     Returns:
@@ -1022,7 +1024,13 @@ def queue_streaming_sfx_audio(
             engine,
             reset_ready_announcement=reset_ready_announcement,
         )
-        _register_playback_source(engine, source_id, kind="sfx", base_gain=volume)
+        _register_playback_source(
+            engine,
+            source_id,
+            kind="sfx",
+            base_gain=volume,
+            low_latency=low_latency,
+        )
         engine.cur_state = "speaking"
     elif float(meta[source_id].get("generation", 0.0)) != float(active_generation):
         return None

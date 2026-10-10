@@ -4,19 +4,22 @@
 # Import groups follow Celune's project-specific Ruff ordering.
 # pylint: disable=ungrouped-imports
 
+import json as _json
 import tempfile
 import threading
-import json as _json
+from types import SimpleNamespace
+from typing import Optional, cast
 from pathlib import Path
 from unittest import mock
-from typing import Optional, cast
-from types import SimpleNamespace
 from collections.abc import Iterator
 
-import pytest
 import numpy as np
+import pytest
 
 from celune import pipeline
+from celune.i18n import string
+from celune.utils import discard
+from celune.celune import Celune
 from celune.cevoice import (
     CEVoice,
     CEVoiceLoader,
@@ -25,31 +28,29 @@ from celune.cevoice import (
     PersonaStyleValues,
     persona_files_from_bundle,
 )
-from celune.i18n import string
-from celune.celune import Celune
-from celune.utils import discard
+from celune.constants import PipelineStates
+from celune.persona.impl import compact_persona_history
 from celune.typing.agent import (
+    ToolCall,
+    AgentTask,
     AgentContext,
     AgentRequest,
-    AgentToolArgumentSchema,
-    AgentToolBehavior,
-    AgentToolDangerLevel,
     AgentToolSchema,
+    AgentToolBehavior,
     AgentToolValueType,
-    AgentTask,
-    ToolCall,
+    AgentToolDangerLevel,
+    AgentToolArgumentSchema,
 )
-from celune.constants import PipelineStates
-from celune.typing.aliases import AudioChunk
-from celune.persona.impl import compact_persona_history
 from celune.typing.common import JSON, JSONSerializable
-from celune.persona.capabilities import PersonaCapabilities
+from celune.typing.aliases import AudioChunk
 from celune.persona.prompts import PersonaPromptBuilder, render_markdown_subsection
+from celune.dataclasses.pipeline import CaptionAlignmentSection
+from celune.persona.capabilities import PersonaCapabilities
 
 from .support import make_pipeline_engine
 from .platform import LINUX_ONLY, WINDOWS_ONLY
-from .test_persona_memory import StubEmbeddingMemoryStore
 from .pipeline_basics import TestPipelineAsync as _TestPipelineAsync
+from .test_persona_memory import StubEmbeddingMemoryStore
 
 
 @pytest.mark.anyio
@@ -1310,6 +1311,7 @@ class TestPipelineAsync(_TestPipelineAsync):
         release_alignment = threading.Event()
         alignment_timed_out = False
         generated_during_alignment = False
+        alignment_calls: list[tuple[str, tuple[CaptionAlignmentSection, ...]]] = []
 
         def generate_stream(
             model: mock.Mock, **kwargs: JSONSerializable
@@ -1363,9 +1365,11 @@ class TestPipelineAsync(_TestPipelineAsync):
             sample_rate: int,
             transcript: str,
             language: Optional[str],
+            alignment_sections: tuple[CaptionAlignmentSection, ...] = (),
         ) -> tuple[tuple[float, float], ...]:
             nonlocal alignment_timed_out
             events.append(f"align:{transcript}:flushes={flush_mock.call_count}")
+            alignment_calls.append((transcript, alignment_sections))
             alignment_started.set()
             assert audio.ndim == 1
             assert sample_rate == 48000
@@ -1417,13 +1421,24 @@ class TestPipelineAsync(_TestPipelineAsync):
         )
         self.assertTrue(generated_during_alignment)
         self.assertFalse(alignment_timed_out)
-        self.assertIn("align:normalized first:flushes=0", events)
-        self.assertIn("align:normalized second:flushes=0", events)
+        self.assertIn(
+            "align:normalized first normalized second:flushes=0",
+            events,
+        )
+        self.assertEqual(
+            alignment_calls[0],
+            (
+                "normalized first normalized second",
+                (
+                    CaptionAlignmentSection(0, 8, 0, 2, 0, 1),
+                    CaptionAlignmentSection(8, 16, 2, 4, 1, 2),
+                ),
+            ),
+        )
         caption_states = pipeline._playback_caption_states(cast(Celune, engine))
         caption_state = next(iter(caption_states.values()))
-        self.assertEqual(len(caption_state.segments), 2)
-        self.assertEqual(caption_state.segments[0].word_start_frames, (0,))
-        self.assertEqual(caption_state.segments[1].word_start_frames, (0,))
+        self.assertEqual(len(caption_state.segments), 1)
+        self.assertEqual(len(caption_state.segments[0].word_start_frames), 2)
 
     @pytest.mark.parametrize(
         "error_message",

@@ -323,6 +323,8 @@ Persona/agent submission path, slash-command handler, voice state, VC state,
 speech lifecycle callbacks, and one-shot upload/microphone VC conversion. TUI
 timed state updates are delivered through the CEDTS frontend update channel;
 the browser keeps a polling fallback for reconnects and standalone API hosts.
+Browser playback is returned as 16-bit PCM; Celune's engine continues to use
+normalized float32 audio internally.
 The WebUI exposes the active voice as a compact button beside the text input;
 clicking it cycles through the available voices using the same Core switching
 path as the TUI. It does not expose the TUI's settings editor. When live

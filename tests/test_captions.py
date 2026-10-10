@@ -44,6 +44,41 @@ def test_map_section_word_timings_keeps_word_mapping_inside_passages() -> None:
     ) == ((0.1, 0.25), (0.25, 0.4), (1.1, 1.4))
 
 
+def test_build_caption_alignment_sections_combines_text_and_audio_boundaries() -> None:
+    """Keep each generated text chunk inside its known combined-audio range."""
+    transcript, sections = captions._build_caption_alignment_sections(
+        "first passage second line",
+        (
+            (0, 48_000, "first passage"),
+            (48_000, 96_000, "second line"),
+        ),
+    )
+
+    assert transcript == "first passage second line"
+    assert sections == (
+        captions.CaptionAlignmentSection(0, 48_000, 0, 2, 0, 2),
+        captions.CaptionAlignmentSection(48_000, 96_000, 2, 4, 2, 4),
+    )
+
+
+def test_build_caption_alignment_sections_merges_empty_display_ranges() -> None:
+    """Keep all transcript words covered when chunks outnumber display ranges."""
+    transcript, sections = captions._build_caption_alignment_sections(
+        "one two",
+        (
+            (0, 48_000, "one"),
+            (48_000, 96_000, "two"),
+            (96_000, 144_000, "three"),
+        ),
+    )
+
+    assert transcript == "one two three"
+    assert sections == (
+        captions.CaptionAlignmentSection(0, 48_000, 0, 1, 0, 1),
+        captions.CaptionAlignmentSection(48_000, 144_000, 1, 3, 1, 2),
+    )
+
+
 def test_caption_aligner_constrains_ctc_to_tutorial_passages() -> None:
     """Align each known tutorial passage inside one full-model inference."""
     vocab = {"<pad>": 0, "a": 1, "b": 2}

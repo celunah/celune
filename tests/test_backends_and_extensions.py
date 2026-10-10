@@ -7,35 +7,42 @@ import re
 import sys
 import tempfile
 import textwrap
-import importlib
-import threading
 import contextlib
-from types import ModuleType, SimpleNamespace
-from typing import Union, Optional, cast
+import threading
+import importlib
 from pathlib import Path
 from unittest import mock
+from typing import Union, Optional, cast
+from types import ModuleType, SimpleNamespace
 from collections.abc import Iterator, Generator
 
-import numpy as np
-import torch
 import pytest
+import torch
+import numpy as np
 import soundfile as sf
 
 from celune.i18n import string
-from celune.utils import discard
 from celune.celune import Celune
+from celune.utils import discard
+from celune.typing.aliases import AudioChunk
+from celune.backends.vc.seedvc import CeluneSeedVCBackend
+from celune.extensions.manager import CeluneExtensionManager
+from celune.dataclasses.pipeline import VoiceConversionRequest
+from celune.extensions.base import CeluneContext, CeluneExtension
+from celune.backends.tts import BACKEND_MANIFESTS, resolve_backend
 from celune.exceptions import (
     InvalidExtensionError,
     ExtensionAlreadyRegisteredError,
 )
-from celune.backends.vc import BACKEND_MANIFESTS as VC_BACKEND_MANIFESTS
-from celune.backends.vc import resolve_vc_backend
-from celune.backends.tts import BACKEND_MANIFESTS, resolve_backend
-from celune.typing.aliases import AudioChunk
-from celune.extensions.base import CeluneContext, CeluneExtension
-from celune.typing.backends import BackendModel, _SeedVCRealtimeModule
-from celune.backends.vc.seedvc import CeluneSeedVCBackend
-from celune.extensions.manager import CeluneExtensionManager
+from celune.backends.vc import (
+    BACKEND_MANIFESTS as VC_BACKEND_MANIFESTS,
+    resolve_vc_backend,
+)
+from celune.typing.backends import (
+    BackendModel,
+    SeedVCModelValue,
+    _SeedVCRealtimeModule,
+)
 from celune.backends.tts.luxtts import (
     LuxTTS,
     _LuxTTSModel,
@@ -43,7 +50,6 @@ from celune.backends.tts.luxtts import (
     _install_vocoder_decode_guard,
     _install_cpu_duration_correction,
 )
-from celune.dataclasses.pipeline import VoiceConversionRequest
 from celune.backends.tts.fireredtts3 import (
     FireRedTTS3,
     _FireRedModel,
@@ -1043,10 +1049,31 @@ class TestBackend(CeluneTestCase):
                 )
             )
 
-    def test_seedvc_backend_converts_audio_with_cached_wrapper(self) -> None:
-        """Verify Seed-VC wraps converted audio into Celune's VC output contract."""
-        backend = CeluneSeedVCBackend(log=lambda _msg, _severity="info": None)
+    @pytest.mark.parametrize(
+        ("cache_live_runtime", "pitch_shift", "length_adjust"),
+        ((False, 0, 1.0), (True, 2, 1.0), (True, 0, 1.5)),
+    )
+    def test_seedvc_offline_conversion_falls_back_to_wrapper(
+        self,
+        cache_live_runtime: bool,
+        pitch_shift: int,
+        length_adjust: float,
+    ) -> None:
+        """Verify first-use and unsupported requests retain wrapper conversion."""
+        backend = CeluneSeedVCBackend(
+            log=lambda _msg, _severity="info": None,
+            length_adjust=length_adjust,
+        )
         captured: dict[str, Union[str, int, float, bool]] = {}
+        if cache_live_runtime:
+            backend._live_module = cast(
+                _SeedVCRealtimeModule,
+                ModuleType("seed_vc.real_time"),
+            )
+            backend._live_model_set = cast(
+                tuple[SeedVCModelValue, ...],
+                ("model", "semantic", "vocoder", "campplus", "mel", {}),
+            )
 
         class FakeWrapper:
             """Minimal Seed-VC wrapper stand-in for one backend test."""
@@ -1086,6 +1113,7 @@ class TestBackend(CeluneTestCase):
                     target_character="Celune",
                     target_references=(target,),
                     label="fixture audio",
+                    pitch_shift=pitch_shift,
                 )
             )
 
@@ -1095,7 +1123,90 @@ class TestBackend(CeluneTestCase):
         assert output.audio.tolist() == [0.25, -0.25]
         assert not captured["stream_output"]
         assert not captured["f0_condition"]
-        assert captured["pitch_shift"] == 0
+        assert captured["pitch_shift"] == pitch_shift
+
+    def test_seedvc_offline_conversion_reuses_cached_live_models(self) -> None:
+        """Verify non-F0 file conversion reuses the loaded native model set."""
+        backend = CeluneSeedVCBackend(
+            log=lambda _msg, _severity="info": None,
+            diffusion_steps=18,
+            inference_cfg_rate=0.4,
+        )
+        reference = Path("reference.wav")
+        request = VoiceConversionRequest(
+            source_audio=np.ones((6, 2), dtype=np.float32),
+            sample_rate=24000,
+            target_references=(reference,),
+            label="offline fixture",
+            f0_condition=False,
+        )
+        model_set = (
+            "model",
+            "semantic",
+            "vocoder",
+            "campplus",
+            "mel",
+            {"sampling_rate": 24000},
+        )
+        realtime_module = ModuleType("seed_vc.real_time")
+        backend._live_module = cast(_SeedVCRealtimeModule, realtime_module)
+        backend._live_model_set = cast(
+            tuple[SeedVCModelValue, ...],
+            model_set,
+        )
+        captured: list[tuple[int, float]] = []
+
+        def initialize_session(
+            _module: _SeedVCRealtimeModule,
+            _model_set: tuple[SeedVCModelValue, ...],
+            _reference: Path,
+            sample_rate: int,
+        ) -> None:
+            backend._live_session_key = (reference, sample_rate)
+            backend._live_model_sample_rate = 24000
+            backend._live_block_frame = 4
+
+        def convert_block(
+            audio: np.ndarray,
+            *,
+            diffusion_steps: int,
+            inference_cfg_rate: float,
+        ) -> np.ndarray:
+            captured.append((diffusion_steps, inference_cfg_rate))
+            return np.asarray(audio * 0.5, dtype=np.float32)
+
+        with (
+            mock.patch.object(backend, "_get_live_runtime") as get_live_runtime,
+            mock.patch.object(
+                backend,
+                "_initialize_live_session",
+                side_effect=initialize_session,
+            ),
+            mock.patch.object(
+                backend,
+                "_resample_live_audio",
+                side_effect=lambda audio, _source, _target: np.asarray(
+                    audio,
+                    dtype=np.float32,
+                ),
+            ),
+            mock.patch.object(
+                backend, "_convert_live_block", side_effect=convert_block
+            ),
+            mock.patch.object(backend, "_get_wrapper") as get_wrapper,
+        ):
+            output = backend.convert(request)
+
+        get_wrapper.assert_not_called()
+        get_live_runtime.assert_not_called()
+        assert output.sample_rate == 24000
+        assert output.label == "offline fixture"
+        np.testing.assert_array_equal(
+            output.audio,
+            np.full(6, 0.5, dtype=np.float32),
+        )
+        assert captured == [(18, 0.4), (18, 0.4)]
+        assert backend._live_session_key is None
 
     def test_seedvc_live_backend_uses_native_session_without_offline_wrapper(
         self,

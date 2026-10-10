@@ -77,17 +77,18 @@ startup or playback state with a later indeterminate update. The WebUI has no
 corresponding progress bar or percentage label. Captions are
 scoped to speech playback and only advance: delayed progress callbacks and late
 word-timing refinement cannot hide words that have already appeared. They fade
-out when speech ends even if an SFX overlay continues. A streaming utterance's
-caption follows the frame ranges produced by each text chunk, so a growing audio
-total cannot move its progress backward or shift later words. When enabled, a
-background worker matches IPA forced alignments from the Sadda acoustic model
-within each chunk. Generation can continue while alignment is pending, and the
-worker queues aligned audio chunks and completion markers in order. Chunk
-boundaries map synthesis tokens to display words so TTS normalization does not
-shift later captions. If an alignment fails, Celune clears the caption and
-suppresses it for the rest of that utterance. Captions stay hidden when disabled
-or unavailable, while speech playback continues. A single-chunk caption
-waits for its final playback marker before it can finish. The caption and bar
+out when speech ends even if an SFX overlay continues. During speech playback,
+caption progress follows the frame ranges produced by generated text chunks, so a
+growing audio total cannot move its progress backward or shift later words.
+When enabled, a background worker matches the combined transcript and waveform
+with one IPA forced-alignment inference from the Sadda acoustic model. Known
+chunk boundaries constrain the match to each chunk's audio range; chunk
+boundaries also map normalized synthesis tokens to display words. Captioned
+playback waits for synthesis and alignment to finish, while speech without
+captions keeps streaming. Another speech request can generate while alignment
+is pending. If alignment fails, Celune clears the caption and suppresses it for
+the rest of that utterance; speech playback continues. A caption waits for its
+final playback marker before it can finish. The caption and bar
 share one reserved line, so the bar is not restored until the caption transition
 completes; the normal bar/readout state is also restored immediately when wake
 begins.

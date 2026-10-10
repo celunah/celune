@@ -282,7 +282,9 @@ def align_chunk_word_start_frames(
     and waveform as one acoustic-model input.
     """
     try:
-        chunk_audio = np.concatenate(audio_chunks)
+        chunk_audio = (
+            audio_chunks[0] if len(audio_chunks) == 1 else np.concatenate(audio_chunks)
+        )
         if chunk_audio.ndim == 2:
             chunk_audio = np.asarray(
                 np.mean(chunk_audio, axis=1, dtype=np.float32),
@@ -337,6 +339,86 @@ def align_chunk_word_start_frames(
             "warning",
         )
         return None
+
+
+def _build_caption_alignment_sections(
+    display_text: str,
+    audio_sections: Sequence[tuple[int, int, str]],
+) -> tuple[str, tuple[CaptionAlignmentSection, ...]]:
+    """Build combined-transcript alignment ranges from generated text chunks."""
+    from .playback import _caption_chunk_word_ranges
+
+    spoken_sections = tuple(
+        (audio_start, audio_end, text)
+        for audio_start, audio_end, text in audio_sections
+        if audio_end > audio_start and text.split()
+    )
+    if not spoken_sections:
+        return "", ()
+
+    transcript_chunks = tuple(section[2] for section in spoken_sections)
+    display_ranges = _caption_chunk_word_ranges(display_text, list(transcript_chunks))
+    sections: list[CaptionAlignmentSection] = []
+    transcript_word_start = 0
+    for (audio_start, audio_end, text), (display_start, display_end) in zip(
+        spoken_sections,
+        display_ranges,
+        strict=True,
+    ):
+        transcript_word_end = transcript_word_start + len(text.split())
+        sections.append(
+            CaptionAlignmentSection(
+                audio_start,
+                audio_end,
+                transcript_word_start,
+                transcript_word_end,
+                display_start,
+                display_end,
+            )
+        )
+        transcript_word_start = transcript_word_end
+
+    merged_sections: list[CaptionAlignmentSection] = []
+    pending = sections[0]
+    for section in sections[1:]:
+        if pending.display_word_start == pending.display_word_end or (
+            section.display_word_start == section.display_word_end
+        ):
+            pending = CaptionAlignmentSection(
+                pending.audio_start_frame,
+                section.audio_end_frame,
+                pending.transcript_word_start,
+                section.transcript_word_end,
+                pending.display_word_start,
+                section.display_word_end,
+            )
+        else:
+            merged_sections.append(pending)
+            pending = section
+    if pending.display_word_start == pending.display_word_end and merged_sections:
+        previous = merged_sections[-1]
+        merged_sections[-1] = CaptionAlignmentSection(
+            previous.audio_start_frame,
+            pending.audio_end_frame,
+            previous.transcript_word_start,
+            pending.transcript_word_end,
+            previous.display_word_start,
+            pending.display_word_end,
+        )
+    else:
+        merged_sections.append(pending)
+
+    first = merged_sections[0]
+    if first.audio_start_frame > 0:
+        merged_sections[0] = CaptionAlignmentSection(
+            0,
+            first.audio_end_frame,
+            first.transcript_word_start,
+            first.transcript_word_end,
+            first.display_word_start,
+            first.display_word_end,
+        )
+    return " ".join(transcript_chunks), tuple(merged_sections)
 
 
 def map_word_timings(

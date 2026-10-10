@@ -6,23 +6,24 @@ from __future__ import annotations
 import io
 import json
 import textwrap
-from collections.abc import Awaitable, Callable, Iterator
 from typing import Optional, cast
+from collections.abc import Awaitable, Callable, Iterator
 
-import gradio as gr
 import numpy as np
+import gradio as gr
 import soundfile as sf
 from fastapi.responses import JSONResponse
 
 from . import api as _api
-from .constants import APP_NAME, BASE_SR
-from .i18n import string, tagged_string
-from .persona.impl import persona_talkback_enabled
-from .speech import prepare_playback_audio
-from .typing.aliases import AudioChunk, AudioChunks
-from .typing.api import WebUiAudioValue, WebUiInputAudioValue, WebUiUpdate
 from .ui.app import CeluneUI
+from .i18n import string, tagged_string
+from .constants import APP_NAME, BASE_SR
+from .speech import prepare_playback_audio
+from .binding import install_module_functions
+from .persona.impl import persona_talkback_enabled
+from .typing.aliases import AudioChunk, AudioChunks
 from .vc import VC_PITCH_SHIFT_MAX, VC_PITCH_SHIFT_MIN
+from .typing.api import WebUiAudioValue, WebUiInputAudioValue, WebUiUpdate
 from .webui import (
     _append_webui_error,
     _append_webui_log,
@@ -37,7 +38,6 @@ from .webui import (
     _webui_vc_controls_update,
     _webui_vc_mode_active,
 )
-from .binding import install_module_functions
 
 __all__ = (
     "_build_webui",
@@ -120,6 +120,20 @@ def _normalize_webui_audio_input(
         normalized = normalized.astype(np.float32, copy=False)
 
     return sample_rate, np.ascontiguousarray(normalized, dtype=np.float32)
+
+
+def _webui_playback_audio(
+    audio: AudioChunk,
+    sample_rate: int,
+) -> WebUiAudioValue:
+    """Encode normalized playback audio as PCM16 for Gradio."""
+    prepared_audio = prepare_playback_audio(audio, sample_rate)
+    peak = float(np.max(np.abs(prepared_audio))) if prepared_audio.size else 0.0
+    if peak == 0.0:
+        pcm_audio = np.zeros(prepared_audio.shape, dtype=np.int16)
+    else:
+        pcm_audio = np.asarray(prepared_audio / peak * 32767.0, dtype=np.int16)
+    return BASE_SR, pcm_audio
 
 
 def _voice_conversion_unavailable_response() -> JSONResponse:
@@ -223,7 +237,10 @@ def _webui_speak(
             audio_chunks.append(_normalized_audio(item))
         audio_value: WebUiAudioValue
         if audio_chunks:
-            audio_value = (BASE_SR, np.concatenate(audio_chunks))
+            audio_value = _webui_playback_audio(
+                np.concatenate(audio_chunks),
+                BASE_SR,
+            )
         else:
             audio_value = None
         snapshot = _webui_submit_snapshot("")
@@ -335,8 +352,7 @@ def _webui_convert_audio(
             send_update,
         )
 
-    prepared_audio = prepare_playback_audio(output.audio, output.sample_rate)
-    converted_audio = (BASE_SR, prepared_audio)
+    converted_audio = _webui_playback_audio(output.audio, output.sample_rate)
     logs_html, status_html, resources_html, voice_update, send_update, _input = (
         _webui_snapshot()
     )

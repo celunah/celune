@@ -14,11 +14,11 @@ Seed-VC's primary controls are:
 
 | Control | Default | Meaning |
 | --- | ---: | --- |
-| diffusion steps | 30 | Quality/latency tradeoff. |
+| diffusion steps | 20 | Quality/latency tradeoff. |
 | length adjust | 1 | Timing adjustment. |
 | inference CFG rate | 0.5 | Diffusion guidance. |
 | F0 condition | `false` | Talk mode by default; singing/intonation path when enabled. |
-| automatic F0 adjust | `true` | Aligns pitch for conversion. |
+| automatic F0 adjust | `false` | Aligns pitch for conversion. |
 | pitch shift | 0 | Semitones; UI range -12 through +12. |
 
 The active CEVOICE/CECHAR pack supplies the target reference WAV. A pack with
@@ -55,7 +55,10 @@ also exposes buttons for F0 mode and pitch cycling.
 
 The live backend keeps overlap state between blocks. Call
 `convert_live_audio()` for each low-latency block and `stop_live_audio()` when
-the stream ends so that backend state is flushed.
+the stream ends so that backend state is flushed. Stopping live conversion
+clears its stream buffers but keeps the loaded models available. A later
+non-F0 file conversion can reuse those cached native models; F0-conditioned
+conversion continues to use its wrapper path.
 
 ## Audio and rate behavior
 

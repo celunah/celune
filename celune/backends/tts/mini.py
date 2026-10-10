@@ -354,11 +354,11 @@ class Mini(CeluneBackend[TTSModel]):
         load_model_parameters = inspect.signature(TTSModel.load_model).parameters
         if "sampler_decode_steps" in load_model_parameters:
             self.model = TTSModel.load_model(
-                config=generated_config_path, temp=0.15, sampler_decode_steps=8
+                config=generated_config_path, temp=0.15, sampler_decode_steps=2
             )
         else:
             self.model = TTSModel.load_model(
-                config=generated_config_path, temp=0.15, lsd_decode_steps=8
+                config=generated_config_path, temp=0.15, lsd_decode_steps=2
             )
         self.model = self.apply_runtime_quantization(
             self.model,

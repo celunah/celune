@@ -16,7 +16,7 @@ import threading
 import contextlib
 import collections.abc
 from collections import deque
-from dataclasses import dataclass, replace
+from dataclasses import replace, dataclass
 from typing import TYPE_CHECKING, Optional, cast
 
 import torch
@@ -25,6 +25,20 @@ import soundfile as sf
 import sounddevice as sd
 import pyrubberband as rb
 
+from .i18n import string, tagged_string
+from .config import resolve_audio_device
+from .typing.common import JSONSerializable
+from .binding import install_class_functions
+from .analysis import _schedule_voice_analysis
+from .typing.pipeline import SpeechStreamQueue
+from .contention import _PlaybackContentionMonitor
+from .typing.aliases import AudioChunk, AudioChunks
+from .exceptions import BackendError, NotAvailableError
+from .captions import _build_caption_alignment_sections
+from .vram import is_cuda_out_of_memory, release_cuda_after_oom
+from .conversation import _think_persona, _effective_voice_prompt
+from .threads import run_in_daemon_thread as _run_in_daemon_thread
+from .prepared import play_prepared_speech, finish_tutorial_audio_capture
 from .paths import (
     outputs_dir,
 )
@@ -46,6 +60,7 @@ from .playback import (
     _apply_source_gain,
     _youtube_sfx_title,
     _pipeline_cpu_config,
+    _should_apply_contention_buffering,
     _queue_playback_done,
     _download_youtube_sfx,
     _playback_source_meta,
@@ -67,6 +82,11 @@ from .playback import (
     _notify_speech_playback_finished,
     _record_caption_playback_segment,
 )
+from .constants import (
+    BASE_SR,
+    APP_NAME,
+    APP_SLUG,
+)
 from .audio.dsp import (
     soften,
     to_48khz,
@@ -76,15 +96,10 @@ from .audio.dsp import (
     readiness_signal,
     is_silent_utterance,
 )
-from .constants import (
-    BASE_SR,
-    APP_NAME,
-    APP_SLUG,
-)
 from .pipelinecore import (
-    _monotonic_time,
     _PIPELINE_CPU_YIELD_SECONDS,
     _PLAYBACK_BUFFER_STARTUP_GRACE_SECONDS,
+    _monotonic_time,
 )
 from .dataclasses.pipeline import (
     SpeechTiming,
@@ -92,19 +107,6 @@ from .dataclasses.pipeline import (
     SpeechRequest,
     PlaybackSourceDone,
 )
-from .i18n import string, tagged_string
-from .config import resolve_audio_device
-from .typing.common import JSONSerializable
-from .binding import install_class_functions
-from .analysis import _schedule_voice_analysis
-from .typing.pipeline import SpeechStreamQueue
-from .contention import _PlaybackContentionMonitor
-from .typing.aliases import AudioChunk, AudioChunks
-from .exceptions import BackendError, NotAvailableError
-from .vram import is_cuda_out_of_memory, release_cuda_after_oom
-from .conversation import _think_persona, _effective_voice_prompt
-from .threads import run_in_daemon_thread as _run_in_daemon_thread
-from .prepared import finish_tutorial_audio_capture, play_prepared_speech
 
 if TYPE_CHECKING:
     from .celune import Celune
@@ -1063,6 +1065,8 @@ def _process_generation_request(
             caption_language: Optional[str] = None
             caption_alignment_failed: list[bool] = [False]
             pushed_audio_state: list[bool] = [False]
+            caption_audio_frames = 0
+            caption_audio_sections: list[tuple[int, int, str]] = []
 
             # these generation parameters are fixed and do not change
             # this only applies to Qwen3-TTS, other backends discard this
@@ -1121,9 +1125,13 @@ def _process_generation_request(
                     break
 
                 chunk_word_start, chunk_word_end = caption_word_ranges[chunk_index]
-                chunk_start_frames = 0
-                if source_id is not None and source_id in _playback_caption_states(
-                    engine
+                chunk_start_frames = (
+                    caption_audio_frames if caption_alignment_enabled else 0
+                )
+                if (
+                    not caption_alignment_enabled
+                    and source_id is not None
+                    and source_id in _playback_caption_states(engine)
                 ):
                     with engine.queue_lock:
                         source_meta = _playback_source_meta(engine).get(source_id)
@@ -1296,6 +1304,8 @@ def _process_generation_request(
 
                         buffer.append(audio_chunk)
                         full_audio.append(audio_chunk)
+                        if caption_alignment_enabled:
+                            caption_audio_frames += len(audio_chunk)
                         chunk_dur = len(audio_chunk) / BASE_SR
                         speech_len += chunk_dur
                         buffered_speech_len += chunk_dur
@@ -1368,31 +1378,14 @@ def _process_generation_request(
                     == getattr(engine, "_speech_generation", request_generation)
                 ):
                     word_start_frames: tuple[int, ...] = ()
-                    if (
-                        caption_alignment_enabled
-                        and caption_worker is not None
-                        and buffer
-                    ):
-                        caption_worker.submit_chunk(
-                            engine,
-                            source_id,
-                            buffer,
-                            speech_timing,
-                            stream_queue,
-                            display_text,
-                            chunk_text,
-                            tuple(display_text.split())[
-                                chunk_word_start:chunk_word_end
-                            ],
-                            caption_language,
-                            chunk_word_start,
-                            chunk_word_end,
-                            tuple(chunk_text.split()),
-                            caption_alignment_failed,
-                            pushed_audio_state,
-                            BASE_SR,
-                        )
-                        buffer = []
+                    if caption_alignment_enabled and caption_worker is not None:
+                        if (
+                            caption_audio_frames > chunk_start_frames
+                            and chunk_text.split()
+                        ):
+                            caption_audio_sections.append(
+                                (chunk_start_frames, caption_audio_frames, chunk_text)
+                            )
                     else:
                         pushed_audio = _flush_buffered_speech_chunks(
                             engine,
@@ -1500,26 +1493,16 @@ def _process_generation_request(
             )
             engine.log(f"TTFC {format_number(speech_timing.ttfc_ms(), 1)}ms")
 
-            if buffer and not capture_tutorial_audio:
-                if caption_alignment_enabled and caption_worker is not None:
-                    caption_worker.submit_audio(
-                        engine,
-                        source_id,
-                        buffer,
-                        speech_timing,
-                        stream_queue,
-                        pushed_audio_state,
-                    )
-                else:
-                    _flush_buffered_speech_chunks(
-                        engine,
-                        source_id,
-                        buffer,
-                        speech_timing,
-                        pushed_audio,
-                        stream_queue,
-                        caption_text=None,
-                    )
+            if buffer and not capture_tutorial_audio and not caption_alignment_enabled:
+                _flush_buffered_speech_chunks(
+                    engine,
+                    source_id,
+                    buffer,
+                    speech_timing,
+                    pushed_audio,
+                    stream_queue,
+                    caption_text=None,
+                )
 
             engine.log("[GEN] done")
 
@@ -1550,15 +1533,9 @@ def _process_generation_request(
                     tail = engine.reverb.flush()
                     if len(tail) > 0:
                         if caption_alignment_enabled and caption_worker is not None:
-                            caption_worker.submit_audio(
-                                engine,
-                                source_id,
-                                [tail],
-                                speech_timing,
-                                stream_queue,
-                                pushed_audio_state,
-                            )
+                            buffer.append(np.asarray(tail, dtype=np.float32))
                             full_audio.append(tail)
+                            caption_audio_frames += len(tail)
                         else:
                             queued_tail = _queue_playback_chunk(
                                 engine,
@@ -1620,6 +1597,46 @@ def _process_generation_request(
                     )
                 if is_silent and silence_tier == 1:
                     engine.log(string("pipeline.may_be_silent"), "warning")
+
+                if caption_alignment_enabled and caption_worker is not None and buffer:
+                    if full_audio_array is not None:
+                        buffer.clear()
+                        buffer.append(full_audio_array)
+                        full_audio.clear()
+                    if caption_audio_sections:
+                        transcript, alignment_sections = (
+                            _build_caption_alignment_sections(
+                                display_text,
+                                tuple(caption_audio_sections),
+                            )
+                        )
+                        caption_worker.submit_chunk(
+                            engine,
+                            source_id,
+                            buffer,
+                            speech_timing,
+                            stream_queue,
+                            display_text,
+                            transcript,
+                            tuple(display_text.split()),
+                            caption_language,
+                            0,
+                            caption_word_total,
+                            tuple(transcript.split()),
+                            caption_alignment_failed,
+                            pushed_audio_state,
+                            BASE_SR,
+                            alignment_sections,
+                        )
+                    else:
+                        caption_worker.submit_audio(
+                            engine,
+                            source_id,
+                            buffer,
+                            speech_timing,
+                            stream_queue,
+                            pushed_audio_state,
+                        )
 
                 engine.total_generated_speech_seconds += speech_len
 
@@ -2346,6 +2363,12 @@ async def playback_worker_job(engine: Celune) -> None:
             if not await drain_pending_items():
                 break
 
+            apply_contention_buffering = _should_apply_contention_buffering(
+                engine,
+                source_buffers,
+                bool(source_done),
+            )
+
             if (writer_error := writer.error) is not None:
                 await handle_playback_error(writer_error)
                 break
@@ -2353,7 +2376,7 @@ async def playback_worker_job(engine: Celune) -> None:
             contention.sample_cpu(_monotonic_time())
             now = _monotonic_time()
             if (
-                not source_done
+                apply_contention_buffering
                 and contention.requires_rebuffer()
                 and buffered_seconds + writer.pending_seconds
                 < contention.target_seconds()
@@ -2366,8 +2389,9 @@ async def playback_worker_job(engine: Celune) -> None:
             finish_rebuffer_wait(now)
 
             if (
-                buffered_seconds + writer.pending_seconds < contention.target_seconds()
-                and not source_done
+                apply_contention_buffering
+                and buffered_seconds + writer.pending_seconds
+                < contention.target_seconds()
                 and buffering_started_at is not None
                 and _monotonic_time() - buffering_started_at
                 < _PLAYBACK_BUFFER_STARTUP_GRACE_SECONDS

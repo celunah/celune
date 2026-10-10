@@ -137,6 +137,8 @@ when Celune detects high system/process CPU usage, delayed scheduling, slow
 output writes, or a PortAudio underflow. The output stream requests high
 latency device buffering to add a second hardware-side reserve; this may add
 latency but prevents short CPU spikes from becoming audible gaps.
+Live microphone voice conversion bypasses the adaptive reserve so its output
+does not wait for seconds of buffered audio.
 
 Playback contention is an engine-owned policy and is not user-configurable. A
 persistent queue reader and output writer keep queue waits and stream writes
@@ -314,7 +316,10 @@ target automatically.
 Voice-conversion pitch shift and F0 conditioning are runtime controls rather
 than YAML settings. Live capture always performs voice-activity detection. The
 optional `live-vc-ai` extra supplies Silero VAD; when it is unavailable, Celune
-uses its built-in energy detector instead.
+uses its built-in energy detector instead. With Silero enabled, the energy
+detector also catches speech onset while the background model catches up. Live
+capture preserves microphone audio through a 300 ms VAD hangover so delayed or
+briefly missed decisions do not cut off speech boundaries.
 
 ## Configuration precedence
 

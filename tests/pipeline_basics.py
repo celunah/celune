@@ -19,14 +19,20 @@ import pytest
 import numpy as np
 import numpy.typing as npt
 
-from celune import pipeline
+from celune.celune import Celune
+from celune.utils import discard
+from celune import pipeline, speech
+from celune.constants import PipelineStates
+from celune.typing.aliases import AudioChunk
+from celune.typing.locks import ComponentLockName
+from celune import conversation as conversation_module
+from celune.typing.common import JSON, JSONSerializable
+from celune.persona.capabilities import PersonaCapabilities
 from celune.cevoice import (
     CEVoicePersona,
     PersonaIdentity,
     PersonaStyleValues,
 )
-from celune.celune import Celune
-from celune.utils import discard
 from celune.typing.agent import (
     AgentTask,
     AgentContext,
@@ -36,13 +42,8 @@ from celune.dataclasses.pipeline import (
     SpeechRequest,
     AudioInputRequest,
 )
-from celune.constants import PipelineStates
-from celune.typing.aliases import AudioChunk
-from celune.typing.locks import ComponentLockName
-from celune import conversation as conversation_module
-from celune.typing.common import JSON, JSONSerializable
-from celune.persona.capabilities import PersonaCapabilities
 
+from .platform import LINUX_ONLY, WINDOWS_ONLY
 from .support import (
     FakeStream,
     FakeVCBackend,
@@ -51,7 +52,6 @@ from .support import (
     CeluneAsyncTestCase,
     make_pipeline_engine,
 )
-from .platform import LINUX_ONLY, WINDOWS_ONLY
 
 
 class TestPipeline(CeluneTestCase):
@@ -113,6 +113,41 @@ class TestPipeline(CeluneTestCase):
         assert monitor.target_seconds() == 30.0
         assert monitor.capacity_seconds() == 30.0
         assert monitor.requires_rebuffer()
+
+    def test_live_vc_source_bypasses_contention_buffering(self) -> None:
+        """Verify live VC avoids adaptive buffering that adds audible delay."""
+        engine = make_pipeline_engine()
+        with (
+            mock.patch(
+                "celune.speech.prepare_playback_audio",
+                side_effect=lambda audio, sample_rate: audio,
+            ),
+            mock.patch("celune.speech._queue_playback_chunk", return_value=True),
+        ):
+            source_id = speech.queue_streaming_sfx_audio(
+                cast(Celune, engine),
+                np.zeros(48, dtype=np.float32),
+                pipeline.BASE_SR,
+                "Live VC",
+                low_latency=True,
+            )
+
+        assert source_id is not None
+        assert not pipeline._should_apply_contention_buffering(
+            cast(Celune, engine),
+            (source_id,),
+            False,
+        )
+        assert pipeline._should_apply_contention_buffering(
+            cast(Celune, engine),
+            (),
+            False,
+        )
+        assert not pipeline._should_apply_contention_buffering(
+            cast(Celune, engine),
+            (),
+            True,
+        )
 
     def test_pipeline_cpu_config_ignores_removed_user_configuration(self) -> None:
         """Verify playback protection remains bounded regardless of engine config."""

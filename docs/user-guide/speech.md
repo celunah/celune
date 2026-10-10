@@ -85,12 +85,14 @@ int16 payloads are converted using `/32768` when decoded by CEDTS.
 
 Long text is segmented before generation. Smart buffering protects already
 played audio and throttles playback speed only within its configured limits.
-Caption progress follows blocks after they reach the output writer, so captions
-remain synchronized with audible playback even when generation produces chunks
-faster than the sound device consumes them. Set `captions: true` to enable IPA
-alignment with the `sadda-speech/wav2vec2-espeak-ctc` phoneme model. Celune
-aligns each generated text chunk to only its corresponding audio range, so a
-mismatch in one chunk cannot shift later caption words. The model is
+With captions disabled, progress follows blocks after they reach the output
+writer, so playback progress stays synchronized even when generation produces
+chunks faster than the sound device consumes them. Set `captions: true` to
+enable IPA alignment with the `sadda-speech/wav2vec2-espeak-ctc` phoneme model. Celune
+combines the generated text chunks and aligns them against the complete
+utterance waveform in one model inference. Known chunk boundaries constrain
+the alignment to each chunk's audio range, preventing timing drift across the
+utterance. The model is
 Apache-2.0 licensed and is downloaded from Hugging Face. When captions are
 enabled, Celune prepares the model in the background during startup without
 blocking startup; the first alignment can still wait if preparation is ongoing.
@@ -106,11 +108,12 @@ CPU graph-optimization warnings while preserving actual runtime errors.
 The `espeak-ng` executable must also be on `PATH`. If eSpeak NG or ONNX Runtime
 is missing, Celune logs a yellow warning and hides captions for the utterance;
 speech playback continues. With captions disabled, Celune does not load or
-download the alignment model. A background worker aligns each generated text
-chunk and queues its audio with the word timings in order.
-Generation can continue, including another speech request, while alignment is
-pending. Playback waits for a chunk's alignment. Celune hides captions for the
-utterance if alignment is unavailable or fails; speech playback continues.
+download the alignment model. A background worker aligns one combined waveform
+and queues it with the word timings. Captioned playback waits for synthesis and
+alignment to finish; disabling captions retains normal streaming playback.
+Another speech request can generate while alignment is pending. Celune hides
+captions for the utterance if alignment is unavailable or fails; speech
+playback continues.
 For a caller that needs every chunk, use `say_stream()` and drain the returned
 queue until its terminal sentinel/condition; do not read the internal playback
 queue directly.

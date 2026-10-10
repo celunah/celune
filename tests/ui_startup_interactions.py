@@ -9,25 +9,18 @@ import asyncio
 import logging
 import tempfile
 import threading
-from types import SimpleNamespace
-from typing import Optional, cast
 from pathlib import Path
 from unittest import mock
+from types import SimpleNamespace
+from typing import Optional, cast
 from collections.abc import Callable
 
-import numpy as np
 import pytest
+import numpy as np
 from textual import events
 from textual.widget import Widget
 from textual.widgets import Label, RichLog, TextArea, ProgressBar
 
-from celune.ui import app as ui_app
-from celune.ui import resources as ui_resources
-from celune.i18n import string
-from celune.theme import colors
-from celune.utils import discard
-from celune.celune import Celune
-from celune.config import Config
 from celune.ui.app import (
     Button,
     CeluneUI,
@@ -35,8 +28,15 @@ from celune.ui.app import (
     ButtonActions,
     ProgressLabel,
 )
+from celune.i18n import string
+from celune.theme import colors
+from celune.utils import discard
+from celune.celune import Celune
+from celune.config import Config
+from celune.ui import app as ui_app
 from tests.support import FakeBackend
 from celune.ui.theme import severity_color
+from celune.ui import resources as ui_resources
 from celune.typing.common import JSONSerializable
 
 from .ui_startup_foundation import TestUIStartup as _TestUIStartup
@@ -361,13 +361,19 @@ class TestUIStartup(_TestUIStartup):
                     captured_callback,
                     np.full((40000, 2), 0.05, dtype=np.float32),
                 )
-                time.sleep(0.05)
+                trailing_audio = np.full((1000, 2), 0.004, dtype=np.float32)
+                invoke_captured_callback(captured_callback, trailing_audio)
+                for _ in range(50):
+                    if len(converted_chunks) >= 3:
+                        break
+                    time.sleep(0.01)
 
-            assert cast(mock.Mock, ui.celune.convert_audio).call_count >= 1
+            assert len(converted_chunks) >= 3
             assert (
                 queue_stream.call_args.kwargs["status_label_key"]
                 == "pipeline.revoicing_label"
             )
+            assert queue_stream.call_args.kwargs["low_latency"] is True
 
             stop_event = SimpleNamespace(
                 key="ctrl+r",
@@ -378,11 +384,13 @@ class TestUIStartup(_TestUIStartup):
 
         assert converted_chunks
         assert converted_chunks[0].shape[0] >= 17000
+        self.assertTrue(np.allclose(converted_chunks[-1], trailing_audio))
 
-    def test_vc_recording_prefers_ai_vad_when_available(self) -> None:
-        """Verify live VC can use the optional AI VAD instead of the RMS fallback."""
+    def test_vc_recording_uses_energy_onset_with_ai_vad(self) -> None:
+        """Verify current audio energy preserves onset while AI VAD catches up."""
         ui = CeluneUI()
         self.addCleanup(setattr, CeluneUI, "_instance", None)
+        converted_chunks: list[np.ndarray] = []
         ui.celune = cast(
             Celune,
             SimpleNamespace(
@@ -390,7 +398,10 @@ class TestUIStartup(_TestUIStartup):
                 vc_backend=SimpleNamespace(),
                 convert_audio=mock.Mock(
                     side_effect=lambda audio, sample_rate, label=None, **_kwargs: (
-                        SimpleNamespace(
+                        converted_chunks.append(
+                            np.asarray(audio, dtype=np.float32).copy()
+                        )
+                        or SimpleNamespace(
                             audio=np.asarray(audio, dtype=np.float32).copy(),
                             sample_rate=sample_rate,
                             label=label or "Stereo Mix",
@@ -486,7 +497,10 @@ class TestUIStartup(_TestUIStartup):
                     captured_callback,
                     np.full((120000, 2), 0.2, dtype=np.float32),
                 )
-                time.sleep(0.05)
+                for _ in range(50):
+                    if converted_chunks:
+                        break
+                    time.sleep(0.01)
 
             stop_event = SimpleNamespace(
                 key="ctrl+r",
@@ -496,7 +510,8 @@ class TestUIStartup(_TestUIStartup):
             ui.on_key(cast(events.Key, stop_event))
 
         self.assertGreaterEqual(fake_vad.calls, 1)
-        self.assertGreaterEqual(cast(mock.Mock, ui.celune.convert_audio).call_count, 1)
+        self.assertTrue(converted_chunks)
+        self.assertTrue(np.any(np.abs(converted_chunks[0]) >= 0.05))
 
     def test_vc_recording_ai_vad_exception_keeps_detector_active(self) -> None:
         """Verify one AI VAD callback failure does not disable AI VAD forever."""
