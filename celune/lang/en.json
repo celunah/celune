@@ -473,6 +473,7 @@
     "commands.tutorial_variety_many": "There's many of them.",
     "commands.tutorial_voice": "That button on the right, it's the way you reach out for the \"calm\", and any other tones.",
     "commands.tutorial_voice_pack": "You can however load your own too. Provide your own \"CE voice\" pack into my voices directory,",
+    "commands.tutorial_voice_pack_display": "You can however load your own too. Provide your own \"CEVOICE\" pack into my voices directory,",
     "commands.tutorial_voice_pack_continued": "and I'll be able to speak as your character, and not just myself.",
     "commands.tutorial_voice_self": "I can also speak in your own voice.",
     "commands.tutorial_voice_default": "The voice you are hearing right now is the default in {app_name}.",

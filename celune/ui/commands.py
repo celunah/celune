@@ -6,10 +6,10 @@ from __future__ import annotations
 import os
 import asyncio
 import threading
+from typing import TYPE_CHECKING, Optional, cast
 from pathlib import Path
 from urllib.parse import urlparse
 from collections.abc import Callable, Awaitable
-from typing import TYPE_CHECKING, Optional, cast
 
 import soundfile as sf
 
@@ -18,25 +18,24 @@ from ..vc import (
     VC_PITCH_SHIFT_MIN,
     clamp_vc_pitch_shift,
 )
+from ..i18n import string, tagged_string
+from ..vram import vram_report_int, format_vram_bytes, runtime_vram_report
 from ..utils import (
     available,
     replace_ipa,
     format_number,
     format_error_message,
 )
-from ..constants import APP_NAME
-from ..i18n import string, tagged_string
+from ..cevoice import active_bundle_path, resolve_bundle_path
 from ..threads import run_in_daemon_thread
+from ..constants import APP_NAME
 from ..exceptions import InvalidExtensionError
 from ..audio.server import restart_audio_server
 from ..persona.capabilities import PersonaCapabilities
-from ..cevoice import active_bundle_path, resolve_bundle_path
-from ..speech import _play_tutorial_sections, _prepare_tutorial_sections
-from ..vram import vram_report_int, format_vram_bytes, runtime_vram_report
 
 if TYPE_CHECKING:
-    from ..celune import Celune
     from .app import CeluneUI
+    from ..celune import Celune
 
 IMAGE_EXTENSIONS = {".jpeg", ".jpg", ".png", ".webp"}
 VIDEO_EXTENSIONS = {".mp4", ".webm"}
@@ -148,26 +147,36 @@ def _remote_attachment_kind(source: str) -> Optional[str]:
 def _run_tutorial_sequence(
     ui: CeluneUI,
     token: int,
-    steps: tuple[tuple[str, Optional[Callable[[], None]]], ...],
+    steps: tuple[
+        tuple[str, Optional[Callable[[], None]], Optional[str]],
+        ...,
+    ],
 ) -> None:
     """Speak tutorial sections in sequence and synchronize their UI actions.
 
     Args:
         ui: UI that owns the tutorial state and actions.
         token: Cancellation token captured when this tutorial began.
-        steps: Localized utterances and actions that begin with each utterance.
+        steps: Spoken utterances, actions, and optional caption text overrides.
     """
 
     def is_active() -> bool:
         return token == ui.tutorial_token and ui.tutorial_active
 
     try:
-        sections = tuple(text for text, _action in steps)
+        from ..speech import _play_tutorial_sections, _prepare_tutorial_sections
+
+        sections = tuple(text for text, _action, _display_text in steps)
+        display_sections = tuple(
+            text if display_text is None else display_text
+            for text, _action, display_text in steps
+        )
         audio_sections = _prepare_tutorial_sections(
             ui.celune,
             sections,
             is_active,
             _TUTORIAL_SPEECH_TIMEOUT * max(1, len(sections)),
+            display_sections,
         )
         if not is_active():
             return
@@ -186,6 +195,7 @@ def _run_tutorial_sequence(
             is_active,
             start_section,
             _TUTORIAL_SPEECH_TIMEOUT,
+            display_sections=display_sections,
         ):
             if not is_active():
                 return
@@ -220,34 +230,38 @@ def tutorial(ui: CeluneUI) -> None:
         ui.type_and_send("/help", process_commands=True)
 
     steps = (
-        (string("commands.tutorial_intro"), None),
-        (string("commands.tutorial_input"), lambda: ui.pulse_border("#input")),
-        (string("commands.tutorial_voice"), lambda: ui.pulse_border("#style")),
-        (string("commands.tutorial_help"), send_help),
-        (string("commands.tutorial_help_simple"), None),
-        (string("commands.tutorial_help_vibe"), None),
-        (string("commands.tutorial_extensions"), None),
-        (string("commands.tutorial_extension_example"), None),
-        (string("commands.tutorial_extension_code"), None),
-        (string("commands.tutorial_local_api"), None),
-        (string("commands.tutorial_local_api_usage"), None),
-        (string("commands.tutorial_voice_self", app_name=APP_NAME), None),
-        (string("commands.tutorial_voice_default", app_name=APP_NAME), None),
-        (string("commands.tutorial_voice_pack"), None),
-        (string("commands.tutorial_voice_pack_continued"), None),
-        (string("commands.tutorial_persona"), None),
-        (string("commands.tutorial_persona_chat"), None),
-        (string("commands.tutorial_persona_speech"), None),
-        (string("commands.tutorial_persona_invitation"), None),
-        (string("commands.tutorial_agent"), None),
-        (string("commands.tutorial_agent_abilities"), None),
-        (string("commands.tutorial_agent_actions"), None),
-        (string("commands.tutorial_can_do_more"), None),
-        (string("commands.tutorial_variety", app_name=APP_NAME), None),
-        (string("commands.tutorial_variety_many"), None),
-        (string("commands.tutorial_supported"), None),
-        (string("commands.tutorial_wrap_up"), None),
-        (string("commands.tutorial_wait"), None),
+        (string("commands.tutorial_intro"), None, None),
+        (string("commands.tutorial_input"), lambda: ui.pulse_border("#input"), None),
+        (string("commands.tutorial_voice"), lambda: ui.pulse_border("#style"), None),
+        (string("commands.tutorial_help"), send_help, None),
+        (string("commands.tutorial_help_simple"), None, None),
+        (string("commands.tutorial_help_vibe"), None, None),
+        (string("commands.tutorial_extensions"), None, None),
+        (string("commands.tutorial_extension_example"), None, None),
+        (string("commands.tutorial_extension_code"), None, None),
+        (string("commands.tutorial_local_api"), None, None),
+        (string("commands.tutorial_local_api_usage"), None, None),
+        (string("commands.tutorial_voice_self", app_name=APP_NAME), None, None),
+        (string("commands.tutorial_voice_default", app_name=APP_NAME), None, None),
+        (
+            string("commands.tutorial_voice_pack"),
+            None,
+            string("commands.tutorial_voice_pack_display"),
+        ),
+        (string("commands.tutorial_voice_pack_continued"), None, None),
+        (string("commands.tutorial_persona"), None, None),
+        (string("commands.tutorial_persona_chat"), None, None),
+        (string("commands.tutorial_persona_speech"), None, None),
+        (string("commands.tutorial_persona_invitation"), None, None),
+        (string("commands.tutorial_agent"), None, None),
+        (string("commands.tutorial_agent_abilities"), None, None),
+        (string("commands.tutorial_agent_actions"), None, None),
+        (string("commands.tutorial_can_do_more"), None, None),
+        (string("commands.tutorial_variety", app_name=APP_NAME), None, None),
+        (string("commands.tutorial_variety_many"), None, None),
+        (string("commands.tutorial_supported"), None, None),
+        (string("commands.tutorial_wrap_up"), None, None),
+        (string("commands.tutorial_wait"), None, None),
     )
 
     ui.begin_tutorial()

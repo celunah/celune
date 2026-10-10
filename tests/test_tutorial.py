@@ -66,6 +66,8 @@ def test_tutorial_keeps_each_utterance_separate_and_syncs_actions(
     """Keep tutorial lines separate and start each UI action in its matching line."""
     events: list[str] = []
     ui = _tutorial_ui(events)
+    spoken_sections: list[tuple[str, ...]] = []
+    display_sections: list[tuple[str, ...]] = []
 
     class ImmediateThread:
         """Run the tutorial worker inline for deterministic coverage."""
@@ -84,25 +86,44 @@ def test_tutorial_keeps_each_utterance_separate_and_syncs_actions(
             """Run the stored target synchronously."""
             self.target(*self.args)
 
-    def prepare(_engine, sections, is_active, _timeout):
+    def prepare(_engine, sections, is_active, _timeout, visible_sections):
         events.append("prepare")
         assert is_active()
+        spoken_sections.append(sections)
+        display_sections.append(visible_sections)
         return tuple(f"audio:{index}" for index in range(len(sections)))
 
-    def play(_engine, sections, audio, is_active, on_start, _timeout):
+    def play(
+        _engine,
+        sections,
+        audio,
+        is_active,
+        on_start,
+        _timeout,
+        *,
+        display_sections,
+    ):
         events.append("play")
         assert is_active()
         assert len(audio) == len(sections)
+        voice_pack_index = sections.index(string("commands.tutorial_voice_pack"))
+        assert display_sections[voice_pack_index] == string(
+            "commands.tutorial_voice_pack_display"
+        )
         for index in range(len(sections)):
             on_start(index)
         return True
 
     monkeypatch.setattr(commands, "threading", SimpleNamespace(Thread=ImmediateThread))
-    monkeypatch.setattr(commands, "_prepare_tutorial_sections", prepare)
-    monkeypatch.setattr(commands, "_play_tutorial_sections", play)
+    monkeypatch.setattr("celune.speech._prepare_tutorial_sections", prepare)
+    monkeypatch.setattr("celune.speech._play_tutorial_sections", play)
 
     commands.tutorial(cast(CeluneUI, ui))
 
+    voice_pack_index = spoken_sections[0].index(string("commands.tutorial_voice_pack"))
+    assert display_sections[0][voice_pack_index] == string(
+        "commands.tutorial_voice_pack_display"
+    )
     assert events[:2] == ["prepare", "play"]
     assert [event for event in events if event.startswith("pulse:")] == [
         "pulse:#input",
@@ -176,6 +197,9 @@ def test_english_tutorial_uses_the_current_wording() -> None:
         "Go ahead, type something.",
         "I'll stay here until you do.",
     ]
+    assert string("commands.tutorial_voice_pack_display", locale="en") == (
+        'You can however load your own too. Provide your own "CEVOICE" pack into my voices directory,'
+    )
 
 
 def test_tutorial_stops_after_cancellation(monkeypatch) -> None:
@@ -184,25 +208,20 @@ def test_tutorial_stops_after_cancellation(monkeypatch) -> None:
     ui = _tutorial_ui(events)
     ui.tutorial_active = True
 
-    def prepare(_engine, _sections, _is_active, _timeout):
+    def prepare(_engine, _sections, _is_active, _timeout, _display_sections):
         ui.tutorial_active = False
         ui.tutorial_token += 1
 
+    monkeypatch.setattr("celune.speech._prepare_tutorial_sections", prepare)
     monkeypatch.setattr(
-        commands,
-        "_prepare_tutorial_sections",
-        prepare,
-    )
-    monkeypatch.setattr(
-        commands,
-        "_play_tutorial_sections",
-        lambda *_args: events.append("play") or True,
+        "celune.speech._play_tutorial_sections",
+        lambda *_args, **_kwargs: events.append("play") or True,
     )
 
     commands._run_tutorial_sequence(
         cast(CeluneUI, ui),
         0,
-        (("first section", None), ("second section", None)),
+        (("first section", None, None), ("second section", None, None)),
     )
 
     assert not events
@@ -214,15 +233,14 @@ def test_tutorial_cancels_when_speech_cannot_be_queued(monkeypatch) -> None:
     ui = _tutorial_ui(events)
     ui.tutorial_active = True
     monkeypatch.setattr(
-        commands,
-        "_prepare_tutorial_sections",
+        "celune.speech._prepare_tutorial_sections",
         lambda *_args: None,
     )
 
     commands._run_tutorial_sequence(
         cast(CeluneUI, ui),
         0,
-        (("first section", None),),
+        (("first section", None, None),),
     )
 
     assert events == ["cancel:True"]
@@ -233,20 +251,30 @@ def test_tutorial_cancels_when_speech_cannot_be_queued(monkeypatch) -> None:
 def test_tutorial_generation_is_batched_without_normalization(monkeypatch) -> None:
     """Generate each tutorial section independently and skip CeluneNorm."""
     sections = ("First section.", "Second section.")
+    display_sections = ("First caption.", "Second caption.")
     audio = (np.zeros((4, 2), dtype=np.float32), np.ones((5, 2), dtype=np.float32))
+    captured_requests: list[tuple[str, str]] = []
 
-    def queue_speech(_engine, _transcript, **kwargs):
+    def queue_speech(_engine, transcript, **kwargs):
         assert kwargs["normalize"] is False
         assert kwargs["synthesis_sections"] == sections
+        captured_requests.append((transcript, kwargs["display_text"]))
         kwargs["audio_capture_queue"].put(PreparedSpeechAudio(audio))
         return True
 
     monkeypatch.setattr("celune.speech._queue_speech_request", queue_speech)
 
     prepared_audio = _prepare_tutorial_sections(
-        cast(Celune, SimpleNamespace()), sections, lambda: True, 1.0
+        cast(Celune, SimpleNamespace()),
+        sections,
+        lambda: True,
+        1.0,
+        display_sections,
     )
     assert prepared_audio is not None
+    assert captured_requests == [
+        ("First section. Second section.", "First caption. Second caption.")
+    ]
     assert len(prepared_audio) == len(audio)
     for prepared, expected in zip(prepared_audio, audio):
         np.testing.assert_array_equal(prepared, expected)
@@ -313,7 +341,8 @@ def test_pipeline_captures_tutorial_sections_without_playback() -> None:
 
 def test_tutorial_playback_stitches_audio_with_caption_transcript(monkeypatch) -> None:
     """Queue one stitched source with the combined transcript and timed actions."""
-    sections = ("First section.", "Second section.", "Third section.")
+    sections = ("First section.", "CE voice.", "Third section.")
+    display_sections = ("First section.", "CEVOICE.", "Third section.")
     audio = (
         np.zeros((3, 2), dtype=np.float32),
         np.ones((4, 2), dtype=np.float32),
@@ -327,10 +356,12 @@ def test_tutorial_playback_stitches_audio_with_caption_transcript(monkeypatch) -
     engine.playback_done.wait.return_value = True
     captured_audio: list[np.ndarray] = []
     captured_transcript: list[str] = []
+    captured_display_text: list[str] = []
     captured_sections: list[tuple[CaptionAlignmentSection, ...]] = []
 
     def queue_speech(_engine, transcript, **kwargs):
         captured_transcript.append(transcript)
+        captured_display_text.append(kwargs["display_text"])
         prepared = kwargs["prepared_audio"]
         assert isinstance(prepared, np.ndarray)
         captured_audio.append(prepared)
@@ -348,10 +379,12 @@ def test_tutorial_playback_stitches_audio_with_caption_transcript(monkeypatch) -
         lambda: True,
         starts.append,
         1.0,
+        display_sections=display_sections,
     )
 
     combined_audio = captured_audio[0]
-    assert captured_transcript == ["First section. Second section. Third section."]
+    assert captured_transcript == ["First section. CE voice. Third section."]
+    assert captured_display_text == ["First section. CEVOICE. Third section."]
     assert combined_audio.shape == (48_009, 2)
     np.testing.assert_array_equal(combined_audio[:3], audio[0])
     assert np.count_nonzero(combined_audio[3:24_003]) == 0
@@ -359,8 +392,8 @@ def test_tutorial_playback_stitches_audio_with_caption_transcript(monkeypatch) -
     assert captured_sections == [
         (
             CaptionAlignmentSection(0, 3, 0, 2, 0, 2),
-            CaptionAlignmentSection(24_003, 24_007, 2, 4, 2, 4),
-            CaptionAlignmentSection(48_007, 48_009, 4, 6, 4, 6),
+            CaptionAlignmentSection(24_003, 24_007, 2, 4, 2, 3),
+            CaptionAlignmentSection(48_007, 48_009, 4, 6, 3, 5),
         )
     ]
     assert starts == [0, 1, 2]

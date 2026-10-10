@@ -163,14 +163,53 @@ def say(
     )
 
 
+def _resolve_tutorial_display_sections(
+    sections: tuple[str, ...],
+    display_sections: Optional[tuple[str, ...]],
+) -> tuple[str, ...]:
+    """Return caption passages and validate their one-to-one section mapping.
+
+    Args:
+        sections: Spoken tutorial passages.
+        display_sections: Optional passages shown by the caption UI.
+
+    Returns:
+        tuple[str, ...]: Caption passages aligned by section with speech.
+
+    Raises:
+        NotAvailableError: If display passages do not match the spoken passages.
+    """
+    visible_sections = sections if display_sections is None else display_sections
+    if len(visible_sections) != len(sections) or any(
+        not section.split() for section in visible_sections
+    ):
+        raise NotAvailableError("tutorial display sections do not match their speech")
+    return visible_sections
+
+
 def _prepare_tutorial_sections(
     engine: Celune,
     sections: tuple[str, ...],
     is_active: Callable[[], bool],
     timeout: float,
+    display_sections: Optional[tuple[str, ...]] = None,
 ) -> Optional[tuple[AudioChunk, ...]]:
-    """Generate each section separately without playback or Celune normalization."""
+    """Generate tutorial speech passages separately without normalization.
+
+    Args:
+        engine: Runtime that owns tutorial speech generation.
+        sections: Passage text sent to the TTS backend.
+        is_active: Callback that reports whether the tutorial is still active.
+        timeout: Maximum time to wait for all passages to be generated.
+        display_sections: Optional caption text corresponding to each passage.
+
+    Returns:
+        Optional[tuple[AudioChunk, ...]]: Prepared passage audio, or ``None`` if
+        the tutorial was canceled.
+    """
+    visible_sections = _resolve_tutorial_display_sections(sections, display_sections)
     transcript = " ".join(sections)
+    display_transcript = " ".join(visible_sections)
     result_queue: queue.Queue[Union[PreparedSpeechAudio, Exception]] = queue.Queue(
         maxsize=1
     )
@@ -178,7 +217,7 @@ def _prepare_tutorial_sections(
         engine,
         transcript,
         save=False,
-        display_text=transcript,
+        display_text=display_transcript,
         allow_tutorial=True,
         normalize=False,
         synthesis_sections=sections,
@@ -211,10 +250,25 @@ def _play_tutorial_sections(
     is_active: Callable[[], bool],
     on_section_start: Callable[[int], None],
     timeout: float,
+    display_sections: Optional[tuple[str, ...]] = None,
 ) -> bool:
-    """Stitch prepared sections with pauses, then play and synchronize actions."""
+    """Stitch tutorial passages and align visible text with spoken passages.
+
+    Args:
+        engine: Runtime that owns tutorial playback.
+        sections: Passage text sent to the TTS backend.
+        audio_sections: Generated audio for each spoken passage.
+        is_active: Callback that reports whether the tutorial is still active.
+        on_section_start: Callback invoked when playback reaches each passage.
+        timeout: Maximum time to wait for playback to complete.
+        display_sections: Optional caption text corresponding to each passage.
+
+    Returns:
+        bool: ``True`` when stitched tutorial playback completes.
+    """
     if not sections or len(sections) != len(audio_sections):
         raise NotAvailableError("tutorial speech sections do not match their audio")
+    visible_sections = _resolve_tutorial_display_sections(sections, display_sections)
     normalized_audio = tuple(
         np.asarray(audio, dtype=np.float32) for audio in audio_sections
     )
@@ -240,7 +294,7 @@ def _play_tutorial_sections(
             sections[index],
             for_tts=True,
         ).split()
-        display_words = sections[index].split()
+        display_words = visible_sections[index].split()
         combined_parts.append(section_audio)
         alignment_sections.append(
             CaptionAlignmentSection(
@@ -260,13 +314,14 @@ def _play_tutorial_sections(
             total_frames += pause_samples
 
     transcript = " ".join(sections)
+    display_transcript = " ".join(visible_sections)
     combined_audio = np.concatenate(combined_parts).astype(np.float32, copy=False)
     source_queue: queue.Queue[Union[int, Exception]] = queue.Queue(maxsize=1)
     if not _queue_speech_request(
         engine,
         transcript,
         save=False,
-        display_text=transcript,
+        display_text=display_transcript,
         allow_tutorial=True,
         normalize=False,
         prepared_audio=combined_audio,
