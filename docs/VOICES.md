@@ -77,7 +77,6 @@ Non-verbal tags are included for improved expression in her delivery.
 
 A base prompt was used to create the main voice with [Gemini 3.8 Flash TTS](https://blog.google/innovation-and-ai/models-and-research/gemini-models/gemini-3-8-text-to-speech/):
 
-
 ```text
 A feminine voice in a low register, clear and steady with mild airiness. Balanced, composed delivery with natural, restrained expression. Fully voiced, not breathy or whispered.
 ```
@@ -118,4 +117,4 @@ The voices were cleaned up of background noise.
 
 This format is currently enforced by Celune's DSP outputs.
 
-- 48kHz stereo, signed 24-bit PCM, FLAC 
+- 48kHz stereo, signed 24-bit PCM, FLAC
