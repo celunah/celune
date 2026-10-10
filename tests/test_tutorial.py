@@ -308,6 +308,7 @@ def test_pipeline_captures_tutorial_sections_without_playback() -> None:
     assert len(result.sections) == 2
     assert engine.normalize.call_count == 0
     assert engine.audio_queue.empty()
+    assert engine.progress == [(0, 2), (1, 2), (2, 2)]
 
 
 def test_tutorial_playback_stitches_audio_with_caption_transcript(monkeypatch) -> None:

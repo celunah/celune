@@ -46,15 +46,16 @@ frontend channel so the browser does not maintain an independent timer state;
 browser polling is only a reconnect fallback.
 
 The tutorial generates each localized passage as a separate utterance in the
-currently active voice, without CeluneNorm. It stitches the prepared audio with
-500 ms pauses, then plays the sequence as one source. The combined transcript
-is phonemized and sent through one acoustic-model inference. Known passage audio
-and word boundaries constrain alignment to each passage, so words cannot drift
-across a pause into another line. The input and voice-style highlights and
-`/help` action start at their matching passage offsets. Tutorial preparation and
-playback run in a background worker while the input and voice controls remain
-locked. If speech cannot be prepared or playback does not finish, the UI logs
-the failure and cancels the tutorial.
+currently active voice, without CeluneNorm. During preparation, the progress bar
+shows how many passages have finished generating. It stitches the prepared audio
+with 500 ms pauses, then plays the sequence as one source. The combined
+transcript is phonemized and sent through one acoustic-model inference. Known
+passage audio and word boundaries constrain alignment to each passage, so words
+cannot drift across a pause into another line. The input and voice-style
+highlights and `/help` action start at their matching passage offsets. Tutorial
+preparation and playback run in a background worker while the input and voice
+controls remain locked. If speech cannot be prepared or playback does not
+finish, the UI logs the failure and cancels the tutorial.
 
 When Celune requests an exit, including a settings-confirmed restart, the
 mounted Textual screen fades out as one surface, hides any mounted scrollbars,

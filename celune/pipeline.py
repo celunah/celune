@@ -1088,6 +1088,8 @@ def _process_generation_request(
                     stream_queue.put(NotAvailableError("nothing to say"))
                     stream_queue.put(None)
                 break
+            if capture_tutorial_audio:
+                engine.progress_callback(0, len(chunks))
 
             buffer: AudioChunks = []
             full_audio: AudioChunks = []
@@ -1352,6 +1354,13 @@ def _process_generation_request(
                         else np.empty(0, dtype=np.float32)
                     )
                     buffer.clear()
+                    if (
+                        not engine.exit_requested
+                        and not engine.utterance_force_stop.is_set()
+                        and request_generation
+                        == getattr(engine, "_speech_generation", request_generation)
+                    ):
+                        engine.progress_callback(chunk_index + 1, len(chunks))
                 elif (
                     not engine.exit_requested
                     and not engine.utterance_force_stop.is_set()
