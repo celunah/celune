@@ -3,21 +3,21 @@
 
 from __future__ import annotations
 
+import queue as queue_module
 import importlib
 import threading
 import contextlib
-import queue as queue_module
 from typing import TYPE_CHECKING, Optional, cast
 
-import torch
 import numpy as np
+import torch
 from scipy import signal
 
-from .binding import install_class_functions
-from .dataclasses.pipeline import AudioInputRequest, AudioOutput
 from .i18n import string
+from .binding import install_class_functions
 from .typing.aliases import AudioChunk
 from .typing.backends import _StreamingSpeechModel
+from .dataclasses.pipeline import AudioOutput, AudioInputRequest
 
 if TYPE_CHECKING:
     from .celune import Celune
@@ -27,6 +27,8 @@ VC_VAD_HANGOVER_SECONDS = 0.3
 VC_VAD_PREROLL_SECONDS = 0.18
 VC_LIVE_CHUNK_SECONDS = 0.18
 VC_LIVE_CHUNK_OVERLAP_SECONDS = 0.0
+VC_PLAYBACK_ATTENUATION_DB = 2.0
+VC_PLAYBACK_GAIN = 10.0 ** (-VC_PLAYBACK_ATTENUATION_DB / 20.0)
 _VC_AUDIO_PEAK = 0.95
 
 _LIVE_VAD_TARGET_SAMPLE_RATE = 16000
@@ -37,6 +39,8 @@ _LIVE_VAD_NEGATIVE_THRESHOLD = 0.35
 __all__ = [
     "VC_LIVE_CHUNK_OVERLAP_SECONDS",
     "VC_LIVE_CHUNK_SECONDS",
+    "VC_PLAYBACK_ATTENUATION_DB",
+    "VC_PLAYBACK_GAIN",
     "VC_VAD_HANGOVER_SECONDS",
     "VC_VAD_PREROLL_SECONDS",
     "VC_VAD_RMS_THRESHOLD",

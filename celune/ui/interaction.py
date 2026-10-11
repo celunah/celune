@@ -6,17 +6,17 @@ from __future__ import annotations
 import os
 import re
 import sys
+import queue as queue_module
 import shlex
 import types
 import ctypes
 import asyncio
 import threading
 import contextlib
-import queue as queue_module
 from copy import deepcopy
 from uuid import uuid4
-from collections.abc import Callable, Iterator
 from typing import TYPE_CHECKING, Optional, cast
+from collections.abc import Callable, Iterator
 
 from . import app as _app
 from ..binding import install_class_functions
@@ -182,6 +182,7 @@ def _start_vc_recording(self) -> bool:
                     audio_label,
                     source_id=live_source_id,
                     generation=live_playback_generation,
+                    volume=_app.VC_PLAYBACK_GAIN,
                     status_label_key="pipeline.revoicing_label",
                     low_latency=True,
                     reset_ready_announcement=live_source_id is None,

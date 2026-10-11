@@ -92,9 +92,9 @@ if TYPE_CHECKING:
     import numpy as np
     import numpy.typing as npt
 
-    from ..vc_debug import VCDebugCapture
     from . import resources as ui_resources
     from ..vc import (
+        VC_PLAYBACK_GAIN,
         LiveVoiceActivityDetector,
         vc_input_rms,
         vc_input_has_voice,
@@ -114,6 +114,7 @@ if TYPE_CHECKING:
     from .commands import process_command as process_ui_command
     from .terminal import is_celune_log_record
     from ..playback import current_playback_status
+    from ..vc_debug import VCDebugCapture
     from .resources import FOOTER_ROTATE_SECONDS
     from ..exceptions import CEDTSError
     from ..persona.asr import (
@@ -211,6 +212,7 @@ if TYPE_CHECKING:
         current_playback_status,
         finish_streaming_sfx_audio,
         queue_streaming_sfx_audio,
+        VC_PLAYBACK_GAIN,
         discard,
         is_april_fools,
         replace_ipa,
@@ -531,6 +533,7 @@ def _load_ui_runtime_dependencies() -> None:
     global vc_live_chunk_overlap_frames
     global vc_vad_hangover_frames
     global vc_vad_preroll_frames
+    global VC_PLAYBACK_GAIN
     global yaml
     global is_celune_log_record
     global _RUNTIME_LOG_REDIRECT_FILTER_MESSAGES
@@ -542,6 +545,7 @@ def _load_ui_runtime_dependencies() -> None:
 
     from . import resources as ui_resources
     from ..vc import (
+        VC_PLAYBACK_GAIN,
         LiveVoiceActivityDetector,
         vc_input_rms,
         vc_input_has_voice,

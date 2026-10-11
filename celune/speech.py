@@ -7,24 +7,16 @@ import os
 import time
 import queue
 import pathlib
-from collections.abc import Callable
 from typing import TYPE_CHECKING, Union, Optional, cast
+from collections.abc import Callable
 
 import numpy as np
 import soundfile as sf
 from iso639 import Lang
 from iso639.exceptions import InvalidLanguageValue, DeprecatedLanguageValue
 
+from .vc import VC_PLAYBACK_GAIN, normalize_vc_audio
 from .i18n import string
-from .vc import normalize_vc_audio
-from .cevoice import default_loader
-from .typing.aliases import AudioChunk
-from .constants import BASE_SR, APP_NAME
-from .exceptions import NotAvailableError
-from .typing.pipeline import SpeechStreamQueue
-from .persona.impl import compact_persona_history
-from .audio.dsp import split, resample_audio
-from .binding import install_class_functions, install_module_functions
 from .utils import (
     rng_replace,
     is_april_fools,
@@ -32,6 +24,8 @@ from .utils import (
     format_error_message,
     normalize_special_characters,
 )
+from .binding import install_class_functions, install_module_functions
+from .cevoice import default_loader
 from .pipeline import (
     close_stream,
     _format_stat_duration,
@@ -53,10 +47,16 @@ from .playback import (
     _clear_playback_source_status,
     _register_overlay_playback_state,
 )
+from .audio.dsp import split, resample_audio
+from .constants import BASE_SR, APP_NAME
+from .exceptions import NotAvailableError
 from .conversation import (
     _store_persona_memories,
     _classify_persona_memories,
 )
+from .persona.impl import compact_persona_history
+from .typing.aliases import AudioChunk
+from .typing.pipeline import SpeechStreamQueue
 from .dataclasses.pipeline import (
     AudioOutput,
     SpeechRequest,
@@ -471,6 +471,7 @@ def handle_audio_input(engine: Celune, request: AudioInputRequest) -> bool:
             output.audio,
             output.sample_rate,
             output.label,
+            volume=VC_PLAYBACK_GAIN,
             status_label_key="pipeline.revoicing_label",
             log_length=request.log_playback,
             reset_ready_announcement=request.reset_ready_announcement,

@@ -40,6 +40,10 @@ The REST API exposes the same operation at `POST /v1/convert` as a multipart
 upload. The optional `f0_condition` form field overrides the runtime default
 for that request.
 
+Celune plays converted audio with a 2 dB attenuation to bring its playback
+level closer to TTS. This affects file and live VC playback only; conversion
+results returned to Python or the REST API retain the backend's original level.
+
 ## Live microphone conversion
 
 Press `CTRL+R` in VC mode to start or stop microphone capture. The capture path
