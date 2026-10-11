@@ -28,6 +28,45 @@ VRAM presets from 6 GB to 16 GB, and beyond.
 * Preserve Celune's local-first, polished, anti-slop project identity.
 * Reuse existing architecture instead of creating parallel systems.
 
+## Agentic coding workflow
+
+Choose the coding mode based on how independently the work can be completed.
+
+### Single-agent mode
+
+Use one upper-tier agent for small tasks, tightly coupled changes, or work whose boundaries are not
+yet clear. The agent owns investigation, implementation, documentation, and final validation.
+
+### Multi-agent tree mode
+
+Use a lead agent with lower-tier workers when at least two implementation tasks can proceed
+independently and the expected time saved is greater than the coordination cost.
+
+* The lead owns task analysis, decomposition, shared interfaces, integration, conflict resolution,
+  final diff review, and validation.
+* Delegate one worker per independent file or workstream, with explicit scope and exclusive file
+  ownership. Group coupled files under one worker instead of splitting them mechanically.
+* Workers report changed paths, assumptions, implementation notes, and checks performed. The lead
+  decides whether the combined work is complete.
+* Keep edits to shared interfaces coordinated through the lead. Do not have workers edit the same
+  files concurrently.
+* The lead completes the repository's documentation, localization, docstring, formatting,
+  import-order, and CI requirements after integration.
+
+### Model and reasoning preferences
+
+Use the upper tier for single-agent work and for the multi-agent lead. Use the lower tier for bounded worker assignments.
+
+| Coding environment | Lower-tier worker | Upper-tier agent |
+| --- | --- | --- |
+| Codex | GPT-6 Luna at xhigh reasoning | GPT-6.1 Sol at medium reasoning |
+| Claude | Sonnet 5.5 at xhigh effort | Opus 5.5 at medium effort |
+
+Use these model and effort targets when the selected coding environment supports them. If a host
+exposes effort controls under different names, choose the closest supported settings while
+preserving the lower-worker and upper-lead tiers. Effort labels across providers are configuration
+counterparts, not guarantees of equal capability.
+
 ## Typing Style
 
 Prefer classic unions like `Union[str, int]` or `Optional[str]`, rather than using PEP 604 unions like
