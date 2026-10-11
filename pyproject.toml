@@ -97,7 +97,7 @@ dev = [
     "pylint",
     # Docstrings matter, so everyone can read the code more easily.
     "docstr-coverage",
-    "ruff==0.16.0",
+    "ruff==0.17.0",
     # How many useless functions do we have?
     "vulture",
     # How many lines do we have?
