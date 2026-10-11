@@ -117,7 +117,6 @@ from .extensions.events import EventDispatcher
 from .utils import available, format_error_message
 from .typing.events import EventName, EventCallback
 
-
 _receive_webui_timed_update = webui._receive_webui_timed_update
 _webui_audio_waveform_options = webui._webui_audio_waveform_options
 _input_update = webui._input_update
@@ -1280,12 +1279,12 @@ def _webui_auth_font_css() -> str:
 def _webui_auth_page() -> str:
     """Build the standalone, blocking WebUI API-key prompt."""
     values = {
-        "app_name": APP_NAME,
-        "title": string("api.webui_auth_title", app_name=APP_NAME),
-        "message": string("api.webui_auth_message", app_name=APP_NAME),
+        "title": string("api.webui_auth_title"),
+        "message": string("api.webui_auth_message"),
         "placeholder": string("api.webui_auth_placeholder"),
         "submit": string("api.webui_auth_submit"),
-        "invalid": string("api.webui_auth_invalid", app_name=APP_NAME),
+        "invalid": string("api.webui_auth_invalid"),
+        "error": string("api.webui_auth_error"),
     }
     safe_values = {key: html.escape(value) for key, value in values.items()}
     return (
@@ -1330,7 +1329,6 @@ def _webui_auth_page() -> str:
               background: #241e2f;
               box-shadow: 0 24px 90px rgb(0 0 0 / 45%);
             }
-            .eyebrow { color: #cebaff; font-size: .82rem; letter-spacing: .16em; }
             h1 {
               margin: 12px 0;
               font-family: Michroma, sans-serif;
@@ -1363,14 +1361,14 @@ def _webui_auth_page() -> str:
               font-weight: 700;
             }
             button:disabled { cursor: wait; opacity: .7; }
-            #error { min-height: 1.5em; color: #ff999e; }
+            #error { display: none; margin: 12px 0 0; color: #ff999e; }
+            #error:not(:empty) { display: block; }
             @media (max-width: 480px) { section { padding: 28px 22px; } }
           </style>
         </head>
         <body>
           <main>
             <section role="dialog" aria-modal="true" aria-labelledby="title">
-              <div class="eyebrow">__APP_NAME__</div>
               <h1 id="title">__TITLE__</h1>
               <p>__MESSAGE__</p>
               <form id="key-form">
@@ -1400,10 +1398,10 @@ def _webui_auth_page() -> str:
                   window.location.replace("/ui");
                   return;
                 }
-                const result = await response.json();
-                error.textContent = result.message || "__INVALID__";
+                error.textContent = response.status === 401 ? "__INVALID__" : "__ERROR__";
+                return;
               } catch {
-                error.textContent = "__INVALID__";
+                error.textContent = "__ERROR__";
               } finally {
                 button.disabled = false;
               }
@@ -1414,12 +1412,12 @@ def _webui_auth_page() -> str:
         """
         )
         .replace("__FONT_FACES__", _webui_auth_font_css())
-        .replace("__APP_NAME__", safe_values["app_name"])
         .replace("__TITLE__", safe_values["title"])
         .replace("__MESSAGE__", safe_values["message"])
         .replace("__PLACEHOLDER__", safe_values["placeholder"])
         .replace("__SUBMIT__", safe_values["submit"])
         .replace("__INVALID__", safe_values["invalid"])
+        .replace("__ERROR__", safe_values["error"])
     )
 
 
@@ -1749,7 +1747,7 @@ async def authenticate_webui(
             status_code=401,
             content={
                 "error": "unauthorized",
-                "message": string("api.webui_auth_invalid", app_name=APP_NAME),
+                "message": string("api.webui_auth_invalid"),
             },
             headers={"Cache-Control": "no-store"},
         )

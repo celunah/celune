@@ -21,6 +21,7 @@ from celune import api
 from celune.i18n import string
 from celune.celune import Celune
 from celune.pipeline import SpeechStreamQueue
+
 from .support import CeluneTestCase
 
 
@@ -209,11 +210,17 @@ class TestApiWebUI(CeluneTestCase):
 
         assert response.status_code == 200
         assert 'aria-modal="true"' in bytes(response.body).decode()
-        assert (
-            string("api.webui_auth_title", app_name=api.APP_NAME)
-            in bytes(response.body).decode()
-        )
         page = bytes(response.body).decode()
+        assert '<h1 id="title">API key required</h1>' in page
+        assert "This interface requires an API key. Enter it below to continue." in page
+        assert '<label for="api-key">API key</label>' in page
+        assert '<button id="submit" type="submit">Continue</button>' in page
+        assert (
+            'response.status === 401 ? "Invalid API key" : '
+            '"An error occurred while authenticating"'
+        ) in page
+        assert "#error { display: none;" in page
+        assert "#error:not(:empty) { display: block; }" in page
         assert 'fetch("/ui/key"' in page
         assert "font-family: Outfit" in page
         assert "font-family: Michroma" in page
@@ -234,6 +241,7 @@ class TestApiWebUI(CeluneTestCase):
 
         assert response.status_code == 401
         assert response.headers["WWW-Authenticate"] == "Bearer"
+        assert string("api.unauthorized") in bytes(response.body).decode()
 
     def test_api_security_accepts_a_webui_session_cookie(self) -> None:
         """Verify an authenticated browser session can use WebUI actions."""
@@ -305,10 +313,7 @@ class TestApiWebUI(CeluneTestCase):
         )
 
         assert response.status_code == 401
-        assert (
-            string("api.webui_auth_invalid", app_name=api.APP_NAME)
-            in bytes(response.body).decode()
-        )
+        assert string("api.webui_auth_invalid") in bytes(response.body).decode()
         assert "set-cookie" not in response.headers
 
     def test_webui_websocket_rejects_missing_authentication(self) -> None:

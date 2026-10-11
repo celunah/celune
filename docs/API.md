@@ -49,8 +49,8 @@ load voices, and play uploaded audio.
 Authenticated requests may send either header:
 
 ```http
-Authorization: Bearer YOUR_TOKEN
-X-Celune-Token: YOUR_TOKEN
+Authorization: Bearer YOUR_API_KEY
+X-Celune-Token: YOUR_API_KEY
 ```
 
 ## API key helpers
@@ -360,16 +360,16 @@ interactive capture path.
 
 ## Authentication, limits, and errors
 
-When a token is configured, send either:
+When an API key is configured, send either:
 
 ```http
-Authorization: Bearer YOUR_TOKEN
+Authorization: Bearer YOUR_API_KEY
 ```
 
 or:
 
 ```http
-X-Celune-Token: YOUR_TOKEN
+X-Celune-Token: YOUR_API_KEY
 ```
 
 The configured per-minute rate limit applies to API calls, WebUI actions, and
@@ -389,7 +389,7 @@ Browser playback is returned as 16-bit PCM; Celune's engine continues to use
 normalized float32 audio internally.
 
 Unauthenticated access to `/ui` redirects to `/ui/key`, which displays a
-blocking Celune key prompt. Submitting the key sends it to `POST /ui/key` in a
+blocking API-key prompt. Submitting the key sends it to `POST /ui/key` in a
 JSON `api_key` field. A valid key creates an opaque, `HttpOnly`,
 `SameSite=Strict` cookie scoped to `/ui` for eight hours, then the browser
 returns to `/ui`. The session is held in memory and ends when it expires, the
@@ -404,13 +404,15 @@ browser writes and WebSocket connections must come from the same origin.
 The browser submits this body to `POST /ui/key`:
 
 ```json
-{"api_key":"YOUR_TOKEN"}
+{"api_key":"YOUR_API_KEY"}
 ```
 
 `api_key` must contain 1 to 4096 characters. A valid key returns
 `{"authenticated":true}` with the session cookie. An invalid key returns
 `401`, a cross-origin request returns `403`, and an attempt over the configured
-request limit returns `429`.
+request limit returns `429`. The prompt shows “Invalid API key” for `401`
+responses; other HTTP or network errors show “An error occurred while
+authenticating.”
 
 The WebUI exposes the active voice as a compact button beside the text input;
 clicking it cycles through the available voices using the same Core switching
