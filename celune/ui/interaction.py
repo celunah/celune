@@ -6,21 +6,24 @@ from __future__ import annotations
 import os
 import re
 import sys
-import types
 import shlex
+import types
 import ctypes
 import asyncio
-import contextlib
 import threading
-from uuid import uuid4
-from copy import deepcopy
+import contextlib
 import queue as queue_module
-from typing import Optional, cast
+from copy import deepcopy
+from uuid import uuid4
 from collections.abc import Callable, Iterator
+from typing import TYPE_CHECKING, Optional, cast
 
 from . import app as _app
-from ..constants import SIGTSTP, APP_NAME
 from ..binding import install_class_functions
+from ..constants import SIGTSTP, APP_NAME
+
+if TYPE_CHECKING:
+    from ..vc_debug import VCDebugSaveResult
 
 __all__ = (
     "_close_menu",
@@ -43,6 +46,7 @@ __all__ = (
     "_signal_handler_windows",
     "_split_command_input",
     "_start_vc_recording",
+    "_stop_vc_debug_capture",
     "_submit_text",
     "action_quit",
     "begin_tutorial",
@@ -215,6 +219,10 @@ def _start_vc_recording(self) -> bool:
                 return
 
             audio, queued_sample_rate, queued_label, is_final_chunk = item
+            debug_capture = getattr(self, "_vc_debug_capture", None)
+            debug_token = (
+                debug_capture.begin_conversion() if debug_capture is not None else None
+            )
             try:
                 if self.celune is None:
                     continue
@@ -230,6 +238,8 @@ def _start_vc_recording(self) -> bool:
                     label=queued_label,
                 )
                 if converted is None:
+                    if debug_capture is not None:
+                        debug_capture.record_conversion(debug_token)
                     self.safe_log(
                         _app.string("ui.recording_stream_submit_failed"),
                         "warning",
@@ -241,6 +251,12 @@ def _start_vc_recording(self) -> bool:
                 )
                 playback_sample_rate = converted.sample_rate
                 playback_label = converted.label
+                if debug_capture is not None:
+                    debug_capture.record_conversion(
+                        debug_token,
+                        converted_audio,
+                        playback_sample_rate,
+                    )
                 if len(converted_audio) > 0:
                     queue_playback_segment(
                         converted_audio,
@@ -251,6 +267,8 @@ def _start_vc_recording(self) -> bool:
                 if is_final_chunk:
                     finish_playback_segment()
             except Exception as exc:
+                if debug_capture is not None:
+                    debug_capture.record_conversion(debug_token)
                 if self.celune is None:
                     continue
                 self.safe_log(
@@ -282,6 +300,9 @@ def _start_vc_recording(self) -> bool:
         discard(status)
 
         callback_audio = _app.np.asarray(indata, dtype=_app.np.float32).copy()
+        debug_capture = getattr(self, "_vc_debug_capture", None)
+        if debug_capture is not None:
+            debug_capture.record_microphone(callback_audio, sample_rate)
         current_rms = self._vc_input_rms(callback_audio)
         should_stop_for_feedback = False
         feedback_min_capture_frames = self._vc_feedback_min_capture_frames(sample_rate)
@@ -482,6 +503,7 @@ def _shutdown_live_vc_recording(self) -> None:
         self.celune._exit_requested = True
 
     if not self._vc_recording_active():
+        self._stop_vc_debug_capture(announce=False, discard_pending=True)
         return
 
     with self._vc_recording_lock:
@@ -499,6 +521,54 @@ def _shutdown_live_vc_recording(self) -> None:
     self._shutdown_vc_stream(stream)
     self._stop_live_vc_backend()
     self._join_vc_recording_threads(stop_thread, worker)
+    self._stop_vc_debug_capture(announce=False, discard_pending=True)
+
+
+def _stop_vc_debug_capture(
+    self,
+    announce: bool = True,
+    discard_pending: bool = False,
+) -> bool:
+    """Stop and export the active diagnostic capture asynchronously."""
+    capture = getattr(self, "_vc_debug_capture", None)
+    if capture is None:
+        return False
+
+    def report(result: VCDebugSaveResult) -> None:
+        def clear_capture() -> None:
+            if getattr(self, "_vc_debug_capture", None) is capture:
+                self._vc_debug_capture = None
+
+        self._run_on_ui_thread(clear_capture)
+        files = tuple(
+            path.name
+            for path in (result.microphone_path, result.converted_path)
+            if path is not None
+        )
+        if files and announce:
+            self.safe_log(
+                _app.string(
+                    "ui.vc_debug_saved",
+                    files=", ".join(files),
+                    path=str(result.directory),
+                )
+            )
+        elif not files and not result.errors and announce:
+            self.safe_log(_app.string("ui.vc_debug_empty"), "warning")
+
+        if result.errors and announce:
+            message = "; ".join(result.errors)
+            self.safe_log(
+                _app.format_error_message(
+                    _app.string("ui.vc_debug_save_failed"),
+                    RuntimeError(message),
+                    getattr(self.celune, "log_level", "info"),
+                ),
+                "warning",
+            )
+
+    capture.stop(report, discard_pending=discard_pending)
+    return True
 
 
 def tts_voice_changed(self, name: str) -> None:

@@ -731,6 +731,30 @@ class TestUICommand(CeluneTestCase):
         assert self.logs[-1] == ("Voice conversion mode set to Sing.", "info")
         assert self.ui.refresh_vc_controls.call_count == 1
 
+    def test_vcdebug_command_starts_and_stops_capture(self) -> None:
+        """Verify /vcdebug is available only as an explicit VC capture toggle."""
+        self.ui.celune.input_mode = "voice_conversion"
+        capture = SimpleNamespace(directory=Path("temporary"))
+        self.ui._vc_debug_capture = None
+        self.ui._stop_vc_debug_capture = mock.Mock(return_value=True)
+
+        with mock.patch("celune.vc_debug.VCDebugCapture", return_value=capture):
+            self._process_command("vcdebug", ["on"])
+
+        assert self.ui._vc_debug_capture is capture
+        assert self.logs[-1] == (
+            "VC debug capture started. Run /vcdebug off to save it.",
+            "info",
+        )
+
+        self._process_command("vcdebug", ["off"])
+
+        self.ui._stop_vc_debug_capture.assert_called_once_with(announce=True)
+        assert self.logs[-1] == (
+            "Stopping VC debug capture and saving audio.",
+            "info",
+        )
+
     def test_vc_command_submits_audio_file_through_engine_pipeline(self) -> None:
         """Verify /vc decodes a file and submits it through Celune's VC pipeline."""
         self.ui.celune.input_mode = "voice_conversion"

@@ -152,6 +152,7 @@ class CeluneUIMethodSurface:
     toggle_persona_recording: Callable[..., bool]
     _shutdown_persona_recording: Callable[..., None]
     _vc_recording_active: Callable[..., bool]
+    _stop_vc_debug_capture: Callable[..., bool]
     _vc_input_rms: Callable[..., float]
     _vc_feedback_rise_detected: Callable[..., bool]
     _vc_feedback_min_capture_frames: Callable[..., int]

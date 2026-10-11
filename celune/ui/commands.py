@@ -321,6 +321,7 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
         if getattr(ui.celune, "input_mode", "text_to_speech") == "voice_conversion":
             ui.safe_log(string("commands.help_vc"))
             ui.safe_log(string("commands.help_vcmode"))
+            ui.safe_log(string("commands.help_vcdebug"))
 
         if ui.celune.backend.name == "qwen3":
             ui.safe_log(string("commands.help_xvectoronly"))
@@ -772,6 +773,43 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
             return
 
         ui.safe_log(string("commands.usage_vcmode"), "warning")
+        return
+    if command == "vcdebug":
+        if getattr(ui.celune, "input_mode", "text_to_speech") != "voice_conversion":
+            ui.safe_log(string("commands.voice_conversion_only"), "warning")
+            return
+
+        if len(args) != 1 or args[0].lower() not in {"on", "off"}:
+            ui.safe_log(string("commands.usage_vcdebug"), "warning")
+            return
+
+        if args[0].lower() == "on":
+            if getattr(ui, "_vc_debug_capture", None) is not None:
+                ui.safe_log(string("commands.vc_debug_already_enabled"), "warning")
+                return
+            try:
+                from ..vc_debug import VCDebugCapture
+
+                capture = VCDebugCapture()
+            except Exception as exc:
+                ui.safe_log(
+                    format_error_message(
+                        string("commands.vc_debug_start_failed"),
+                        exc,
+                        getattr(ui.celune, "log_level", "info"),
+                    ),
+                    "error",
+                )
+                return
+            ui._vc_debug_capture = capture
+            ui.safe_log(string("commands.vc_debug_started"))
+            return
+
+        if getattr(ui, "_vc_debug_capture", None) is None:
+            ui.safe_log(string("commands.vc_debug_not_enabled"), "warning")
+            return
+        ui.safe_log(string("commands.vc_debug_stopping"))
+        ui._stop_vc_debug_capture(announce=True)
         return
     if command == "xvectoronly":
         backend = ui.celune.backend

@@ -217,6 +217,7 @@ Commands are entered in the input box and start with `/`.
 | `/settings` | Open the configuration manager. ENTER saves nested YAML values and requests a silent launcher restart; ESC discards changes. |
 | `/vc FILE` | Submit a file for voice conversion; VC mode is required. |
 | <code>/vcmode talk&#124;sing</code> | Select ordinary speech or F0-conditioned singing. |
+| <code>/vcdebug on&#124;off</code> | Save raw microphone and converted VC audio to temporary AppData files. |
 | <code>/xvectoronly true&#124;false</code> | Toggle Qwen3 identity-only cloning. Qwen3 only. |
 | `/play PATH [VOLUME]` | Play a local/remote sound effect. Remote playback reports its playing status as soon as the audio is ready to queue. |
 | `/attach FILE...` | Add vision attachments; `/attach clear` removes them. |

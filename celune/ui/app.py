@@ -92,6 +92,7 @@ if TYPE_CHECKING:
     import numpy as np
     import numpy.typing as npt
 
+    from ..vc_debug import VCDebugCapture
     from . import resources as ui_resources
     from ..vc import (
         LiveVoiceActivityDetector,
@@ -824,6 +825,7 @@ class CeluneUIInteractionState:
     vc_recording_worker: Optional[threading.Thread] = None
     vc_recording_vad: Optional[LiveVoiceActivityDetector] = None
     vc_recording_component_lease: Optional[ComponentLockLease] = None
+    vc_debug_capture: Optional[VCDebugCapture] = None
     persona_recording_chunks: AudioChunks = field(default_factory=list)
     persona_recording_lock: threading.Lock = field(default_factory=threading.Lock)
     persona_recording_queue: Optional[queue_module.Queue[tuple[AudioChunk, bool]]] = (
@@ -1098,6 +1100,7 @@ class CeluneUI(App, CeluneUIMethodSurface):
     _vc_recording_component_lease = _forward_ui_property(
         "_interaction_state", "vc_recording_component_lease"
     )
+    _vc_debug_capture = _forward_ui_property("_interaction_state", "vc_debug_capture")
     _persona_recording_chunks = _forward_ui_property(
         "_interaction_state", "persona_recording_chunks"
     )

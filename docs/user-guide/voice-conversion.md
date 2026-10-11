@@ -51,6 +51,15 @@ it uses the built-in energy detector. VAD is always active during live capture.
 Use `/vcmode talk` for ordinary speech and `/vcmode sing` for F0-conditioned
 singing. The UI exposes a button for changing F0 mode.
 
+To inspect the live signal, run `/vcdebug on`, speak through live VC, stop the
+microphone stream, then run `/vcdebug off`. Celune saves the raw microphone
+capture and converted output as `microphone.flac` and `converted.flac` in a
+temporary folder under its AppData directory. Both files use 48 kHz, 24-bit
+FLAC. Debug capture writes asynchronously and does not change the audio sent to
+the converter or playback. Turn it off to finish exporting the files. The files
+remain there for inspection; delete the temporary folder when they are no
+longer needed.
+
 The live backend keeps overlap state between blocks. Call
 `convert_live_audio()` for each low-latency block and `stop_live_audio()` when
 the stream ends so that backend state is flushed. Stopping live conversion
@@ -68,3 +77,8 @@ the sample rate from the number of samples; use the returned metadata.
 Feedback protection stops a live capture when playback leakage creates a large
 RMS spike. If live capture stops unexpectedly, move the microphone away from
 speakers, lower output volume, or use headphones before changing VAD thresholds.
+
+## See also
+
+- [TUI commands](../interfaces/tui.md#slash-commands)
+- [Configuration](configuration.md)
