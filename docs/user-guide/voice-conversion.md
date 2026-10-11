@@ -7,8 +7,8 @@ while the engine is in VC mode.
 ## Backends
 
 The Seed-VC backend is the production conversion path. It supports
-reference-based conversion, pitch adjustment, optional F0 conditioning, and a
-low-latency live path.
+reference-based conversion, optional F0 conditioning, and a low-latency live
+path.
 
 Seed-VC's primary controls are:
 
@@ -19,7 +19,6 @@ Seed-VC's primary controls are:
 | inference CFG rate | 0.5 | Diffusion guidance. |
 | F0 condition | `false` | Talk mode by default; singing/intonation path when enabled. |
 | automatic F0 adjust | `false` | Aligns pitch for conversion. |
-| pitch shift | 0 | Semitones; UI range -12 through +12. |
 
 The active CEVOICE/CECHAR pack supplies the target reference WAV. A pack with
 no compatible WAV cannot be used as a VC target.
@@ -38,8 +37,8 @@ pipeline, and plays the converted output. Python callers can use
 an `AudioOutput` value back.
 
 The REST API exposes the same operation at `POST /v1/convert` as a multipart
-upload. Optional `pitch_shift` and `f0_condition` form fields override the
-runtime defaults for that request.
+upload. The optional `f0_condition` form field overrides the runtime default
+for that request.
 
 ## Live microphone conversion
 
@@ -50,8 +49,7 @@ limit. With the optional `live-vc-ai` extra, Celune uses Silero VAD; otherwise
 it uses the built-in energy detector. VAD is always active during live capture.
 
 Use `/vcmode talk` for ordinary speech and `/vcmode sing` for F0-conditioned
-singing. Use `/vcpitch <semitones>` or `/vcpitch clear` to adjust pitch. The UI
-also exposes buttons for F0 mode and pitch cycling.
+singing. The UI exposes a button for changing F0 mode.
 
 The live backend keeps overlap state between blocks. Call
 `convert_live_audio()` for each low-latency block and `stop_live_audio()` when

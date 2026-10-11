@@ -848,7 +848,6 @@ def _encode_value(value: WorkerValue, builder: _PayloadBuilder) -> object:
             "target_character": value.target_character,
             "target_references": [str(path) for path in value.target_references],
             "label": value.label,
-            "pitch_shift": value.pitch_shift,
             "f0_condition": value.f0_condition,
         }
     if isinstance(value, AudioOutput):
@@ -972,6 +971,7 @@ def _decode_value(value: object, payloads: Mapping[str, WorkerPayload]) -> Worke
             sample_rate = _typed_int(value.get("sample_rate"), "sample_rate")
             _typed_optional(value.get("target_voice"), str, "target_voice")
             _typed_optional(value.get("target_character"), str, "target_character")
+            # Older clients may still send this retired output pitch control.
             _typed_optional(value.get("pitch_shift"), int, "pitch_shift")
             _typed_optional(value.get("f0_condition"), bool, "f0_condition")
             return VoiceConversionRequest(
@@ -987,7 +987,6 @@ def _decode_value(value: object, payloads: Mapping[str, WorkerPayload]) -> Worke
                 label=_typed_string(
                     value.get("label", string("ui.audio_input_label")), "label"
                 ),
-                pitch_shift=value.get("pitch_shift"),
                 f0_condition=value.get("f0_condition"),
             )
         if value_type == "audio_output":

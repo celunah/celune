@@ -1198,16 +1198,6 @@ class _WebUiCommandHost:
         if backend is not None and available("f0_condition", obj=backend):
             backend.f0_condition = enabled
 
-    def set_vc_pitch_shift(self, value: int) -> None:
-        """Set the active VC pitch shift through the core state."""
-        from .vc import clamp_vc_pitch_shift
-
-        clamped = clamp_vc_pitch_shift(value)
-        self.celune.vc_pitch_shift = clamped
-        backend = getattr(self.celune, "vc_backend", None)
-        if backend is not None and available("pitch_shift", obj=backend):
-            backend.pitch_shift = clamped
-
     def open_settings_menu(self) -> None:
         """Report that configuration editing belongs to the Textual UI."""
         self.safe_log(string("commands.settings_unavailable"), "warning")
@@ -1772,14 +1762,12 @@ async def sfx(
 @api.post("/v1/convert", response_model=None)
 async def convert_audio(
     file: UploadFile = File(...),  # noqa: B008
-    pitch_shift: Optional[int] = Form(None),
     f0_condition: Optional[bool] = Form(None),
 ) -> Union[StreamingResponse, JSONResponse]:
     """Convert an uploaded source audio file through the active VC backend.
 
     Args:
         file: The uploaded source audio file to convert.
-        pitch_shift: Optional semitone adjustment applied for this conversion only.
         f0_condition: Optional override enabling singing mode pitch conditioning.
 
     Returns:
@@ -1830,7 +1818,6 @@ async def convert_audio(
             audio,
             sample_rate,
             label=filename,
-            pitch_shift=pitch_shift,
             f0_condition=f0_condition,
         )
     except Exception as error:

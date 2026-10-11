@@ -22,8 +22,6 @@ from .typing.backends import _StreamingSpeechModel
 if TYPE_CHECKING:
     from .celune import Celune
 
-VC_PITCH_SHIFT_MIN = -12
-VC_PITCH_SHIFT_MAX = 12
 VC_VAD_RMS_THRESHOLD = 0.005
 VC_VAD_HANGOVER_SECONDS = 0.3
 VC_VAD_PREROLL_SECONDS = 0.18
@@ -39,13 +37,10 @@ _LIVE_VAD_NEGATIVE_THRESHOLD = 0.35
 __all__ = [
     "VC_LIVE_CHUNK_OVERLAP_SECONDS",
     "VC_LIVE_CHUNK_SECONDS",
-    "VC_PITCH_SHIFT_MAX",
-    "VC_PITCH_SHIFT_MIN",
     "VC_VAD_HANGOVER_SECONDS",
     "VC_VAD_PREROLL_SECONDS",
     "VC_VAD_RMS_THRESHOLD",
     "LiveVoiceActivityDetector",
-    "clamp_vc_pitch_shift",
     "convert_audio",
     "convert_live_audio",
     "create_live_voice_activity_detector",
@@ -57,18 +52,6 @@ __all__ = [
     "vc_vad_hangover_frames",
     "vc_vad_preroll_frames",
 ]
-
-
-def clamp_vc_pitch_shift(value: int) -> int:
-    """Clamp one VC pitch shift to Celune's supported semitone range.
-
-    Args:
-        value: Requested semitone offset for voice conversion.
-
-    Returns:
-        int: The requested offset clamped to Celune's supported VC range.
-    """
-    return max(VC_PITCH_SHIFT_MIN, min(VC_PITCH_SHIFT_MAX, value))
 
 
 def normalize_vc_audio(audio: AudioChunk) -> AudioChunk:
@@ -100,7 +83,6 @@ def convert_audio(
     audio: np.ndarray,
     sample_rate: int,
     label: str = "audio input",
-    pitch_shift: Optional[int] = None,
     f0_condition: Optional[bool] = None,
 ) -> Optional[AudioOutput]:
     """Convert submitted audio and return the generated VC output."""
@@ -118,7 +100,6 @@ def convert_audio(
             audio=np.asarray(audio, dtype=np.float32),
             sample_rate=sample_rate,
             label=label,
-            pitch_shift=pitch_shift,
             f0_condition=f0_condition,
         ),
     )
@@ -129,7 +110,6 @@ def convert_live_audio(
     audio: np.ndarray,
     sample_rate: int,
     label: str = "audio input",
-    pitch_shift: Optional[int] = None,
     f0_condition: Optional[bool] = None,
 ) -> Optional[AudioOutput]:
     """Convert one low-latency live block through the active VC backend."""
@@ -138,7 +118,6 @@ def convert_live_audio(
             audio,
             sample_rate,
             label=label,
-            pitch_shift=pitch_shift,
             f0_condition=f0_condition,
         )
 
@@ -150,7 +129,6 @@ def convert_live_audio(
             audio=np.asarray(audio, dtype=np.float32),
             sample_rate=sample_rate,
             label=label,
-            pitch_shift=pitch_shift,
             f0_condition=f0_condition,
         ),
         live=True,

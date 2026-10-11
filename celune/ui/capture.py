@@ -34,7 +34,6 @@ __all__ = (
     "_finish_vc_submission_queue",
     "_flush_vc_recording_buffer_locked",
     "_flush_vc_recording_chunk_locked",
-    "_format_vc_pitch_shift",
     "_get_persona_speech_transcriber",
     "_hide_caption_widgets",
     "_is_voice_conversion_mode",
@@ -81,7 +80,6 @@ __all__ = (
     "safe_log_dev",
     "safe_status",
     "set_vc_f0_condition",
-    "set_vc_pitch_shift",
     "toggle_persona_recording",
     "tts_caption",
 )
@@ -670,26 +668,15 @@ def _is_voice_conversion_mode(self) -> bool:
     )
 
 
-def _format_vc_pitch_shift(value: int) -> str:
-    """Return one signed semitone label for the VC pitch control."""
-    return f"{value:+d}"
-
-
 def _set_vc_controls_visibility(self, visible: bool) -> None:
     """Show or hide the VC-only controls in the bottom input row."""
     if self.vc_mode_button is not None:
         self.vc_mode_button.display = visible
-    if self.vc_pitch_button is not None:
-        self.vc_pitch_button.display = visible
 
 
 def refresh_vc_controls(self) -> None:
     """Refresh VC control labels and enabled state from the current engine state."""
-    if (
-        self.vc_mode_button is None
-        or self.vc_pitch_button is None
-        or self.celune is None
-    ):
+    if self.vc_mode_button is None or self.celune is None:
         return
 
     is_vc_mode = self._is_voice_conversion_mode()
@@ -697,17 +684,11 @@ def refresh_vc_controls(self) -> None:
     if not is_vc_mode:
         self._cancel_vc_recording(announce=False)
     f0_condition = bool(getattr(self.celune, "vc_f0_condition", False))
-    pitch_shift = int(getattr(self.celune, "vc_pitch_shift", 0))
     self.vc_mode_button.label = _app.string(
         "ui.vc_mode_sing" if f0_condition else "ui.vc_mode_talk"
     )
-    self.vc_pitch_button.label = _app.string(
-        "ui.vc_pitch_button",
-        value=self._format_vc_pitch_shift(pitch_shift),
-    )
     controls_available = is_vc_mode and not self._input_locked
     self.vc_mode_button.actions = _app.ButtonActions(press=controls_available)
-    self.vc_pitch_button.actions = _app.ButtonActions(press=controls_available)
 
 
 def set_vc_f0_condition(self, enabled: bool, announce: bool = True) -> None:
@@ -734,35 +715,6 @@ def set_vc_f0_condition(self, enabled: bool, announce: bool = True) -> None:
             _app.string(
                 "ui.vc_mode_changed",
                 mode=_app.string("ui.vc_mode_sing" if enabled else "ui.vc_mode_talk"),
-            )
-        )
-
-
-def set_vc_pitch_shift(self, value: int, announce: bool = True) -> None:
-    """Update the active VC pitch-shift value in the UI and backend state.
-
-    Args:
-        value: The requested pitch shift in semitones before clamping.
-        announce: Whether to log the new pitch shift to the user.
-    """
-    if self.celune is None:
-        return
-
-    clamped = _app.clamp_vc_pitch_shift(value)
-    self.celune.vc_pitch_shift = clamped
-    backend = getattr(self.celune, "vc_backend", None)
-    if backend is not None:
-        from ..utils import available
-
-        if available("pitch_shift", obj=backend):
-            backend.pitch_shift = clamped
-    self.refresh_vc_controls()
-
-    if announce:
-        self.safe_log(
-            _app.string(
-                "ui.vc_pitch_changed",
-                value=self._format_vc_pitch_shift(clamped),
             )
         )
 

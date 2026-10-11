@@ -94,12 +94,9 @@ if TYPE_CHECKING:
 
     from . import resources as ui_resources
     from ..vc import (
-        VC_PITCH_SHIFT_MAX,
-        VC_PITCH_SHIFT_MIN,
         LiveVoiceActivityDetector,
         vc_input_rms,
         vc_input_has_voice,
-        clamp_vc_pitch_shift,
         vc_live_chunk_frames,
         vc_vad_preroll_frames,
         vc_vad_hangover_frames,
@@ -216,9 +213,6 @@ if TYPE_CHECKING:
         discard,
         is_april_fools,
         replace_ipa,
-        VC_PITCH_SHIFT_MAX,
-        VC_PITCH_SHIFT_MIN,
-        clamp_vc_pitch_shift,
         create_live_voice_activity_detector,
         vc_input_has_voice,
         vc_input_rms,
@@ -506,11 +500,8 @@ def _load_ui_runtime_dependencies() -> None:
     global LiveVoiceActivityDetector
     global PERSONA_SPEECH_END_DELAY_SECONDS
     global PERSONA_SPEECH_NO_INPUT_TIMEOUT_SECONDS
-    global VC_PITCH_SHIFT_MAX
-    global VC_PITCH_SHIFT_MIN
     global WhisperSegment
     global WhisperTranscriber
-    global clamp_vc_pitch_shift
     global config_path
     global discard
     global format_audio_device_name
@@ -550,12 +541,9 @@ def _load_ui_runtime_dependencies() -> None:
 
     from . import resources as ui_resources
     from ..vc import (
-        VC_PITCH_SHIFT_MAX,
-        VC_PITCH_SHIFT_MIN,
         LiveVoiceActivityDetector,
         vc_input_rms,
         vc_input_has_voice,
-        clamp_vc_pitch_shift,
         vc_live_chunk_frames,
         vc_vad_preroll_frames,
         vc_vad_hangover_frames,
@@ -730,7 +718,6 @@ class CeluneUIWidgetState:
     input_box: Optional[TextArea] = None
     style_button: Optional[VoiceButton] = None
     vc_mode_button: Optional[Button] = None
-    vc_pitch_button: Optional[Button] = None
     status: Optional[Label] = None
     resources: Optional[Label] = None
     caption: Optional[Label] = None
@@ -951,7 +938,6 @@ class CeluneUI(App, CeluneUIMethodSurface):
     input_box = _forward_ui_property("_widgets", "input_box")
     style_button = _forward_ui_property("_widgets", "style_button")
     vc_mode_button = _forward_ui_property("_widgets", "vc_mode_button")
-    vc_pitch_button = _forward_ui_property("_widgets", "vc_pitch_button")
     status = _forward_ui_property("_widgets", "status")
     resources = _forward_ui_property("_widgets", "resources")
     caption = _forward_ui_property("_widgets", "caption")

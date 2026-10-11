@@ -22,7 +22,6 @@ import torch
 import numpy.typing as npt
 from transformers.modeling_utils import PreTrainedModel
 
-from .vc import clamp_vc_pitch_shift
 from .i18n import string, set_locale, tagged_string, get_system_locale
 from .vram import (
     VramPreset,
@@ -436,7 +435,6 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
         backend: Optional[CoreBackendSpec] = None,
         tts_backend: Optional[CoreBackendSpec] = None,
         vc_backend: Optional[CoreBackendSpec] = None,
-        vc_pitch_shift: Optional[int] = None,
         vc_f0_condition: Optional[bool] = None,
         input_mode: Optional[str] = None,
         chunk_size: int = 0,  # defaulted to 0 because not all backends use this
@@ -595,11 +593,6 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
             tts_backend,
             vc_backend,
         )
-        self.vc_pitch_shift = (
-            0
-            if vc_pitch_shift is None
-            else clamp_vc_pitch_shift(_config_int(vc_pitch_shift, 0))
-        )
         self.vc_f0_condition = False if vc_f0_condition is None else vc_f0_condition
         select_voice_bundle(_config_str(config_value(config, "voice_bundle")))
         preset = resolve_vram_preset(config)
@@ -715,8 +708,6 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
                     resolved_vc_backend,
                     log=self.log_callback,
                 )
-                if available("pitch_shift", obj=self.vc_backend):
-                    self.vc_backend.pitch_shift = self.vc_pitch_shift
                 if available("f0_condition", obj=self.vc_backend):
                     self.vc_backend.f0_condition = self.vc_f0_condition
                 self.voice_conversion_backend = self.vc_backend.name
@@ -1514,8 +1505,6 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
             self._vc_backend_spec,
             log=self.log_callback,
         )
-        if available("pitch_shift", obj=candidate_backend):
-            candidate_backend.pitch_shift = self.vc_pitch_shift
         if available("f0_condition", obj=candidate_backend):
             candidate_backend.f0_condition = self.vc_f0_condition
         previous_backend = self.vc_backend
@@ -1686,8 +1675,6 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
             snapshot.restorable_vc_backend_spec,
             log=self.log_callback,
         )
-        if available("pitch_shift", obj=restored_vc_backend):
-            restored_vc_backend.pitch_shift = self.vc_pitch_shift
         if available("f0_condition", obj=restored_vc_backend):
             restored_vc_backend.f0_condition = self.vc_f0_condition
         if snapshot.loaded:
@@ -1917,8 +1904,6 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
                 if not self._track_reload_backend(candidate_vc_backend):
                     _close_backend(candidate_vc_backend)
                     return False
-                if available("pitch_shift", obj=candidate_vc_backend):
-                    candidate_vc_backend.pitch_shift = self.vc_pitch_shift
                 if available("f0_condition", obj=candidate_vc_backend):
                     candidate_vc_backend.f0_condition = self.vc_f0_condition
                 if previous_backend is not None:

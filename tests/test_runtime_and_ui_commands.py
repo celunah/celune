@@ -575,7 +575,6 @@ class TestUICommand(CeluneTestCase):
             dev=False,
             input_mode="text_to_speech",
             vc_f0_condition=False,
-            vc_pitch_shift=0,
             vc_backend=SimpleNamespace(),
         )
 
@@ -720,29 +719,17 @@ class TestUICommand(CeluneTestCase):
         self.ui.celune.set_backend_async.assert_not_called()
         assert self.logs[-1][1] == "warning"
 
-    def test_voice_conversion_commands_update_seedvc_state(self) -> None:
-        """Verify VC slash commands update engine and backend state."""
+    def test_voice_conversion_mode_command_updates_f0_conditioning(self) -> None:
+        """Verify the VC mode command updates engine and backend state."""
         self.ui.celune.input_mode = "voice_conversion"
-        self.ui.celune.vc_backend = SimpleNamespace(f0_condition=False, pitch_shift=0)
+        self.ui.celune.vc_backend = SimpleNamespace(f0_condition=False)
 
         self._process_command("vcmode", ["sing"])
-        self._process_command("vcpitch", ["-2"])
-        self._process_command("vcpitch", ["clear"])
 
         assert self.ui.celune.vc_f0_condition
         assert self.ui.celune.vc_backend.f0_condition
-        assert self.ui.celune.vc_pitch_shift == 0
-        assert self.ui.celune.vc_backend.pitch_shift == 0
-        assert self.logs[-3] == ("Voice conversion mode set to Sing.", "info")
-        assert self.logs[-2] == (
-            "Voice conversion pitch shift set to -2 semitones.",
-            "info",
-        )
-        assert self.logs[-1] == (
-            "Voice conversion pitch shift set to 0 semitones.",
-            "info",
-        )
-        assert self.ui.refresh_vc_controls.call_count == 3
+        assert self.logs[-1] == ("Voice conversion mode set to Sing.", "info")
+        assert self.ui.refresh_vc_controls.call_count == 1
 
     def test_vc_command_submits_audio_file_through_engine_pipeline(self) -> None:
         """Verify /vc decodes a file and submits it through Celune's VC pipeline."""
@@ -800,14 +787,11 @@ class TestUICommand(CeluneTestCase):
         self._process_command("vcmode", ["maybe"])
         assert self.logs[-1] == ("Usage: /vcmode <talk|sing>", "warning")
 
-        self._process_command("vcpitch", ["13"])
+        self._process_command("vcpitch", ["-2"])
         assert self.logs[-1] == (
-            string("commands.vcpitch_range", min_value=-12, max_value=12),
+            string("commands.unknown_command", command="vcpitch"),
             "warning",
         )
-
-        self._process_command("vcpitch", ["high"])
-        assert self.logs[-1] == ("Usage: /vcpitch <semitones|clear>", "warning")
 
     def test_vc_command_reports_decode_failure(self) -> None:
         """Verify /vc surfaces decode errors cleanly."""

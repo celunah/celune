@@ -23,7 +23,7 @@ from .constants import BASE_SR, APP_NAME
 from .exceptions import NotAvailableError
 from .typing.pipeline import SpeechStreamQueue
 from .persona.impl import compact_persona_history
-from .audio.dsp import split, resample_audio, pitch_shift_audio
+from .audio.dsp import split, resample_audio
 from .binding import install_class_functions, install_module_functions
 from .utils import (
     rng_replace,
@@ -431,7 +431,6 @@ def submit_audio(
     audio: np.ndarray,
     sample_rate: int,
     label: str = "audio input",
-    pitch_shift: Optional[int] = None,
     f0_condition: Optional[bool] = None,
     log_playback: bool = True,
     reset_ready_announcement: bool = True,
@@ -445,7 +444,6 @@ def submit_audio(
             audio=np.asarray(audio, dtype=np.float32),
             sample_rate=sample_rate,
             label=label,
-            pitch_shift=pitch_shift,
             f0_condition=f0_condition,
             log_playback=log_playback,
             reset_ready_announcement=reset_ready_announcement,
@@ -534,7 +532,6 @@ def convert_audio_input(
         target_character=getattr(engine, "current_character", None),
         target_references=target_references,
         label=request.label,
-        pitch_shift=0,
         f0_condition=(
             request.f0_condition
             if isinstance(request.f0_condition, bool)
@@ -551,23 +548,7 @@ def convert_audio_input(
         if callable(converter)
         else backend.convert(conversion_request)
     )
-    resolved_pitch_shift = (
-        request.pitch_shift
-        if isinstance(request.pitch_shift, int)
-        else getattr(engine, "vc_pitch_shift", 0)
-    )
-    if resolved_pitch_shift == 0:
-        return output
-
-    return AudioOutput(
-        audio=pitch_shift_audio(
-            np.asarray(output.audio, dtype=np.float32),
-            output.sample_rate,
-            resolved_pitch_shift,
-        ),
-        sample_rate=output.sample_rate,
-        label=output.label,
-    )
+    return output
 
 
 def stop_live_audio_input(engine: Celune) -> None:

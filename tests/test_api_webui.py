@@ -496,12 +496,9 @@ class TestApiWebUI(CeluneTestCase):
             ),
         )
 
-        source_update, pitch_update, mode_update, button_update = (
-            api._webui_vc_controls_update()
-        )
+        source_update, mode_update, button_update = api._webui_vc_controls_update()
 
         assert not source_update["interactive"]
-        assert not pitch_update["interactive"]
         assert not mode_update["interactive"]
         assert not button_update["interactive"]
 
@@ -514,12 +511,9 @@ class TestApiWebUI(CeluneTestCase):
             ),
         )
 
-        source_update, pitch_update, mode_update, button_update = (
-            api._webui_vc_controls_update()
-        )
+        source_update, mode_update, button_update = api._webui_vc_controls_update()
 
         assert source_update["interactive"]
-        assert pitch_update["interactive"]
         assert mode_update["interactive"]
         assert button_update["interactive"]
 
@@ -978,7 +972,6 @@ class TestApiWebUI(CeluneTestCase):
         ):
             source_value, browser_audio, *_rest = api._webui_convert_audio(
                 (44100, np.zeros((16, 2), dtype=np.float32)),
-                6.0,
                 "sing",
             )
 
@@ -995,7 +988,6 @@ class TestApiWebUI(CeluneTestCase):
             mock.ANY,
             44100,
             label="browser audio input",
-            pitch_shift=6,
             f0_condition=True,
         )
 

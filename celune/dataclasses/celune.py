@@ -72,7 +72,6 @@ class CeluneBackendState:
     vc_backend_spec: Optional[VCBackendRecipe] = None
     vc_backend: Optional[CeluneVCBackend] = None
     voice_conversion_backend: str = ""
-    vc_pitch_shift: int = 0
     vc_f0_condition: bool = False
     input_mode: str = "text_to_speech"
     chunk_size: int = 0
@@ -270,7 +269,6 @@ CELUNE_FORWARDED_PROPERTIES = (
         "_backend_state",
         "voice_conversion_backend",
     ),
-    ForwardedPropertySpec("vc_pitch_shift", "_backend_state", "vc_pitch_shift"),
     ForwardedPropertySpec("vc_f0_condition", "_backend_state", "vc_f0_condition"),
     ForwardedPropertySpec("input_mode", "_backend_state", "input_mode"),
     ForwardedPropertySpec("chunk_size", "_backend_state", "chunk_size"),

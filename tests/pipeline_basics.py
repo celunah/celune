@@ -859,7 +859,6 @@ class TestPipelineAsync(CeluneAsyncTestCase):
         convert_mock.assert_called_once()
         vc_request = convert_mock.call_args.args[0]
         assert vc_request.target_references == (Path("balanced.wav"),)
-        assert vc_request.pitch_shift == 0
         assert not vc_request.f0_condition
         q.assert_called_once()
         queued_audio = q.call_args.args[1]
@@ -925,24 +924,24 @@ class TestPipelineAsync(CeluneAsyncTestCase):
         assert np.all(np.isfinite(request.source_audio))
         assert float(np.max(np.abs(request.source_audio))) <= 0.95
 
-    def test_handle_audio_input_applies_engine_vc_pitch_shift_to_output(
+    def test_handle_audio_input_queues_vc_output_without_pitch_processing(
         self,
     ) -> None:
-        """Verify VC routing applies the configured pitch shift to converted output."""
+        """Verify Celune queues the converted waveform without pitch processing."""
         engine = make_pipeline_engine()
         engine.input_mode = "voice_conversion"
         engine.vc_backend = FakeVCBackend(log=lambda _msg, _severity="info": None)
         engine.current_voice = "balanced"
         engine.current_character = "Celune"
-        engine.vc_pitch_shift = -5
         request = AudioInputRequest(
             audio=np.ones((12, 2), dtype=np.float32),
             sample_rate=48000,
             label="mic test",
         )
+        expected_audio = np.full((12, 2), 0.4, dtype=np.float32)
         convert_mock = mock.Mock(
             return_value=SimpleNamespace(
-                audio=np.ones((12, 2), dtype=np.float32),
+                audio=expected_audio,
                 sample_rate=48000,
                 label="mic test",
             )
@@ -952,17 +951,15 @@ class TestPipelineAsync(CeluneAsyncTestCase):
 
         with (
             mock.patch("celune.speech.default_loader", return_value=loader),
-            mock.patch("celune.speech.queue_sfx_audio", return_value=True),
             mock.patch(
-                "celune.speech.pitch_shift_audio",
-                return_value=np.ones((12, 2), dtype=np.float32) * 0.25,
-            ) as shift_audio,
+                "celune.speech.queue_sfx_audio",
+                return_value=True,
+            ) as queue_mock,
         ):
             result = pipeline.handle_audio_input(cast(Celune, engine), request)
 
         assert result
-        assert convert_mock.call_args.args[0].pitch_shift == 0
-        shift_audio.assert_called_once_with(mock.ANY, 48000, -5)
+        assert np.array_equal(queue_mock.call_args.args[1], expected_audio)
 
     def test_handle_audio_input_passes_engine_vc_f0_condition_to_vc_backend(
         self,

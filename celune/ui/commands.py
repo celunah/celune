@@ -13,11 +13,6 @@ from collections.abc import Callable, Awaitable
 
 import soundfile as sf
 
-from ..vc import (
-    VC_PITCH_SHIFT_MAX,
-    VC_PITCH_SHIFT_MIN,
-    clamp_vc_pitch_shift,
-)
 from ..i18n import string, tagged_string
 from ..vram import vram_report_int, format_vram_bytes, runtime_vram_report
 from ..utils import (
@@ -306,20 +301,6 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
             )
         )
 
-    def set_vc_pitch_shift(svalue: int) -> None:
-        setter = getattr(ui, "set_vc_pitch_shift", None)
-        if callable(setter):
-            setter(svalue)
-            return
-
-        clamped = clamp_vc_pitch_shift(svalue)
-        ui.celune.vc_pitch_shift = clamped
-        vc_backend = getattr(ui.celune, "vc_backend", None)
-        if vc_backend is not None and available("pitch_shift", obj=vc_backend):
-            vc_backend.pitch_shift = clamped
-        refresh_vc_controls()
-        ui.safe_log(string("commands.vcpitch_set", value=clamped))
-
     if command == "help":
         ui.safe_log(string("commands.help_header", app_name=APP_NAME))
         ui.safe_log(string("commands.help_available"))
@@ -340,7 +321,6 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
         if getattr(ui.celune, "input_mode", "text_to_speech") == "voice_conversion":
             ui.safe_log(string("commands.help_vc"))
             ui.safe_log(string("commands.help_vcmode"))
-            ui.safe_log(string("commands.help_vcpitch"))
 
         if ui.celune.backend.name == "qwen3":
             ui.safe_log(string("commands.help_xvectoronly"))
@@ -792,39 +772,6 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
             return
 
         ui.safe_log(string("commands.usage_vcmode"), "warning")
-        return
-    if command == "vcpitch":
-        if getattr(ui.celune, "input_mode", "text_to_speech") != "voice_conversion":
-            ui.safe_log(string("commands.voice_conversion_only"), "warning")
-            return
-
-        if not args:
-            ui.safe_log(string("commands.usage_vcpitch"), "warning")
-            return
-
-        raw_value = args[0].lower()
-        if raw_value == "clear":
-            set_vc_pitch_shift(0)
-            return
-
-        try:
-            semitones = int(raw_value)
-        except ValueError:
-            ui.safe_log(string("commands.usage_vcpitch"), "warning")
-            return
-
-        if not VC_PITCH_SHIFT_MIN <= semitones <= VC_PITCH_SHIFT_MAX:
-            ui.safe_log(
-                string(
-                    "commands.vcpitch_range",
-                    min_value=VC_PITCH_SHIFT_MIN,
-                    max_value=VC_PITCH_SHIFT_MAX,
-                ),
-                "warning",
-            )
-            return
-
-        set_vc_pitch_shift(semitones)
         return
     if command == "xvectoronly":
         backend = ui.celune.backend

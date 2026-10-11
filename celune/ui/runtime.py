@@ -932,11 +932,6 @@ def compose() -> _app.ComposeResult:
                 id="vc-mode",
                 actions=_app.ButtonActions(press=False),
             )
-            yield _app.Button(
-                _app.string("ui.vc_pitch_button", value="+0"),
-                id="vc-pitch",
-                actions=_app.ButtonActions(press=False),
-            )
         with _app.Horizontal(id="bottom"):
             yield _app.Label("", id="status")
             yield _app.Label("", id="resources")
@@ -963,7 +958,6 @@ def on_mount(self) -> None:
     self.caption = self.query_one("#caption", _app.Label)
     self.style_button = self.query_one("#style", _app.VoiceButton)
     self.vc_mode_button = self.query_one("#vc-mode", _app.Button)
-    self.vc_pitch_button = self.query_one("#vc-pitch", _app.Button)
     self.progress_bar = self.query_one("#progress", _app.ProgressBar)
     self.progress_label = self.query_one("#progress-label", _app.ProgressLabel)
     self.header = self.query_one("#header", _app.Label)

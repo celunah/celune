@@ -166,7 +166,7 @@ CELUNE_CSS = """
         border: round $primary;
     }
 
-    #style, #vc-mode, #vc-pitch {
+    #style, #vc-mode {
         width: 14;
         height: 3;
         border: round $primary;
@@ -189,7 +189,7 @@ CELUNE_CSS = """
         color: $secondary;
     }
 
-    #style:focus, #style:hover, #style.-active, #vc-mode:focus, #vc-mode:hover, #vc-mode.-active, #vc-pitch:focus, #vc-pitch:hover, #vc-pitch.-active, #input:hover {
+    #style:focus, #style:hover, #style.-active, #vc-mode:focus, #vc-mode:hover, #vc-mode.-active, #input:hover {
         border: round $foreground;
         background: $background;
         background-tint: transparent;

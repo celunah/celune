@@ -18,7 +18,6 @@ class CeluneVCBackend(ABC):
 
     name: str = "unknown"
     is_fake: bool = False
-    pitch_shift: int
     f0_condition: bool
     log_level: LogLevel = "info"
 

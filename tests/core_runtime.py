@@ -1500,24 +1500,7 @@ class TestCeluneCore(CeluneTestCase):
         assert output.label == "fixture"
         assert output.audio.shape == (16, 2)
         convert_input.assert_called_once()
-        submitted_request = convert_input.call_args.args[1]
-        assert submitted_request.pitch_shift is None
         queue_sfx.assert_not_called()
-
-    def test_convert_audio_accepts_pitch_shift_override(self) -> None:
-        """Verify direct conversion forwards one pitch-shift override."""
-        celune = self._make_celune({})
-        celune.input_mode = "voice_conversion"
-        celune.vc_backend = FakeVCBackend(log=lambda _msg, _severity="info": None)
-        audio = np.ones((16, 2), dtype=np.float32)
-
-        with mock.patch(
-            "celune.speech.convert_audio_input", return_value=None
-        ) as convert_input:
-            celune.convert_audio(audio, 32000, label="fixture", pitch_shift=7)
-
-        submitted_request = convert_input.call_args.args[1]
-        assert submitted_request.pitch_shift == 7
 
     def test_convert_audio_accepts_f0_condition_override(self) -> None:
         """Verify direct conversion forwards one f0 conditioning override."""
@@ -1533,29 +1516,6 @@ class TestCeluneCore(CeluneTestCase):
 
         submitted_request = convert_input.call_args.args[1]
         assert submitted_request.f0_condition
-
-    def test_constructor_uses_runtime_vc_pitch_shift_default(self) -> None:
-        """Verify VC pitch shift starts at its runtime default."""
-        with (
-            mock.patch("celune.celune.AudioRGBGlow", FakeGlow),
-            mock.patch("celune.celune.default_loader", return_value=None),
-            mock.patch("celune.celune.persona_is_available", return_value=False),
-            mock.patch(
-                "celune.celune.resolve_vc_backend",
-                return_value=FakeVCBackend(
-                    log=lambda _msg, _severity="info": None,
-                ),
-            ) as resolve_vc,
-        ):
-            celune = Celune(
-                config={"mode": "voice_conversion"},
-                tts_backend=FakeBackend,
-            )
-            self.addCleanup(self._close_celune, celune)
-
-        resolve_vc.assert_called_once()
-        assert resolve_vc.call_args.args[0] == "seed-vc"
-        assert celune.vc_pitch_shift == 0
 
     def test_constructor_uses_runtime_vc_f0_default(self) -> None:
         """Verify F0 conditioning starts at its runtime default."""

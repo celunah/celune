@@ -33,9 +33,8 @@ selecting a voice wakes her first. The menu lists every readable `.cevoice` and
 `.cechar` CEVOICE/CECHAR pack as one character row. Left/Right cycles the voice
 entry when a pack has multiple entries; single-entry packs omit the bracketed
 value. Confirming a row hot-loads that pack and voice. In VC mode
-the mode button toggles talk/sing F0 conditioning and the pitch button cycles
-the pitch-shift value. Touch users can use these visible buttons rather than
-keyboard shortcuts.
+the mode button toggles talk/sing F0 conditioning. Touch users can use this
+visible button rather than keyboard shortcuts.
 
 The mounted WebUI delegates its `ALT+R` recording shortcut to these same
 runtime capture paths and exposes a compact voice button beside its text input;
@@ -218,7 +217,6 @@ Commands are entered in the input box and start with `/`.
 | `/settings` | Open the configuration manager. ENTER saves nested YAML values and requests a silent launcher restart; ESC discards changes. |
 | `/vc FILE` | Submit a file for voice conversion; VC mode is required. |
 | <code>/vcmode talk&#124;sing</code> | Select ordinary speech or F0-conditioned singing. |
-| <code>/vcpitch SEMITONES&#124;clear</code> | Set -12 through +12 semitones or reset to 0. |
 | <code>/xvectoronly true&#124;false</code> | Toggle Qwen3 identity-only cloning. Qwen3 only. |
 | `/play PATH [VOLUME]` | Play a local/remote sound effect. Remote playback reports its playing status as soon as the audio is ready to queue. |
 | `/attach FILE...` | Add vision attachments; `/attach clear` removes them. |

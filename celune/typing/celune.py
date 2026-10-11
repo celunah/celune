@@ -371,7 +371,6 @@ class CeluneStateAccessors:
     _vc_backend_spec: Optional[VCBackendRecipe]
     vc_backend: Optional[CeluneVCBackend]
     voice_conversion_backend: str
-    vc_pitch_shift: int
     vc_f0_condition: bool
     mode: OperationMode
     input_mode: str

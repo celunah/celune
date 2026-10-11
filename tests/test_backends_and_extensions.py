@@ -1050,13 +1050,13 @@ class TestBackend(CeluneTestCase):
             )
 
     @pytest.mark.parametrize(
-        ("cache_live_runtime", "pitch_shift", "length_adjust"),
-        ((False, 0, 1.0), (True, 2, 1.0), (True, 0, 1.5)),
+        ("cache_live_runtime", "active_live_session", "length_adjust"),
+        ((False, False, 1.0), (True, True, 1.0), (True, False, 1.5)),
     )
     def test_seedvc_offline_conversion_falls_back_to_wrapper(
         self,
         cache_live_runtime: bool,
-        pitch_shift: int,
+        active_live_session: bool,
         length_adjust: float,
     ) -> None:
         """Verify first-use and unsupported requests retain wrapper conversion."""
@@ -1074,6 +1074,8 @@ class TestBackend(CeluneTestCase):
                 tuple[SeedVCModelValue, ...],
                 ("model", "semantic", "vocoder", "campplus", "mel", {}),
             )
+            if active_live_session:
+                backend._live_session_key = (Path("live.wav"), 24000)
 
         class FakeWrapper:
             """Minimal Seed-VC wrapper stand-in for one backend test."""
@@ -1113,7 +1115,6 @@ class TestBackend(CeluneTestCase):
                     target_character="Celune",
                     target_references=(target,),
                     label="fixture audio",
-                    pitch_shift=pitch_shift,
                 )
             )
 
@@ -1123,7 +1124,7 @@ class TestBackend(CeluneTestCase):
         assert output.audio.tolist() == [0.25, -0.25]
         assert not captured["stream_output"]
         assert not captured["f0_condition"]
-        assert captured["pitch_shift"] == pitch_shift
+        assert captured["pitch_shift"] == 0
 
     def test_seedvc_offline_conversion_reuses_cached_live_models(self) -> None:
         """Verify non-F0 file conversion reuses the loaded native model set."""
@@ -1335,55 +1336,6 @@ class TestBackend(CeluneTestCase):
         assert captured_stdout.getvalue() == ""
         assert captured_stderr.getvalue() == ""
         assert output.shape == (4,)
-
-    def test_seedvc_backend_uses_configured_pitch_shift_for_wrapper_requests(
-        self,
-    ) -> None:
-        """Verify Seed-VC forwards its configured pitch shift into wrapper requests."""
-        backend = CeluneSeedVCBackend(
-            log=lambda _msg, _severity="info": None,
-            pitch_shift=-6,
-        )
-        captured: dict[str, Union[str, int, float, bool]] = {}
-
-        class FakeWrapper:
-            """Minimal Seed-VC wrapper stand-in for request override coverage."""
-
-            @staticmethod
-            def convert_voice(**kwargs):
-                """Return a generator-style conversion result for backend tests.
-
-                Args:
-                    kwargs: Wrapper arguments forwarded from the backend under test.
-
-                Returns:
-                    Generator[None, None, npt.NDArray[np.float32]]: One generator whose return value carries the
-                    converted waveform.
-                """
-                captured.update(kwargs)
-
-                def result_generator() -> Generator[None, None, AudioChunk]:
-                    yield from ()
-                    return np.array([0.1, -0.1], dtype=np.float32)
-
-                return result_generator()
-
-        backend._wrapper = FakeWrapper()
-
-        with tempfile.TemporaryDirectory() as temp_dir:
-            target = Path(temp_dir) / "target.wav"
-            sf.write(target, np.zeros((16,), dtype=np.float32), 24000)
-
-            backend.convert(
-                VoiceConversionRequest(
-                    source_audio=np.ones((12, 2), dtype=np.float32),
-                    sample_rate=24000,
-                    target_references=(target,),
-                    pitch_shift=9,
-                )
-            )
-
-        assert captured["pitch_shift"] == 9
 
     def test_seedvc_backend_prefers_request_f0_condition_over_backend_default(
         self,

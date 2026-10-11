@@ -132,11 +132,9 @@ class CeluneUIMethodSurface:
     on_uilog_message: Callable[..., None]
     safe_log_dev: Callable[..., None]
     _is_voice_conversion_mode: Callable[..., bool]
-    _format_vc_pitch_shift: Callable[..., str]
     _set_vc_controls_visibility: Callable[..., None]
     refresh_vc_controls: Callable[..., None]
     set_vc_f0_condition: Callable[..., None]
-    set_vc_pitch_shift: Callable[..., None]
     _persona_recording_active: Callable[..., bool]
     _acquire_recording_component_lease: Callable[
         ..., tuple[bool, Optional[ComponentLockLease]]

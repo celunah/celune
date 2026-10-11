@@ -1320,7 +1320,6 @@ class TestBackendEnvironment(CeluneTestCase):
                     "target_character": None,
                     "target_references": [],
                     "label": "audio input",
-                    "pitch_shift": None,
                     "f0_condition": None,
                 },
             ],

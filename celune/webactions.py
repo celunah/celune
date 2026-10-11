@@ -22,7 +22,6 @@ from .speech import prepare_playback_audio
 from .binding import install_module_functions
 from .persona.impl import persona_talkback_enabled
 from .typing.aliases import AudioChunk, AudioChunks
-from .vc import VC_PITCH_SHIFT_MAX, VC_PITCH_SHIFT_MIN
 from .typing.api import WebUiAudioValue, WebUiInputAudioValue, WebUiUpdate
 from .webui import (
     _append_webui_error,
@@ -257,7 +256,6 @@ def _webui_speak(
 
 def _webui_convert_audio(
     source_audio: WebUiInputAudioValue,
-    pitch_shift: float = 0.0,
     conversion_mode: str = "talk",
 ) -> tuple[
     WebUiInputAudioValue,
@@ -315,7 +313,6 @@ def _webui_convert_audio(
             audio,
             sample_rate,
             label="browser audio input",
-            pitch_shift=round(pitch_shift),
             f0_condition=conversion_mode.strip().lower() == "sing",
         )
     except Exception as error:
@@ -727,15 +724,6 @@ def _build_webui() -> gr.Blocks:
                         waveform_options=_webui_audio_waveform_options(),
                         elem_id="celune-source-audio",
                     )
-                    vc_pitch_shift = gr.Slider(
-                        minimum=VC_PITCH_SHIFT_MIN,
-                        maximum=VC_PITCH_SHIFT_MAX,
-                        step=1,
-                        value=0,
-                        label=string("webui.pitch_shift_label"),
-                        info=string("webui.pitch_shift_info"),
-                        interactive=False,
-                    )
                     vc_mode = gr.Radio(
                         choices=[
                             ("Talk", "talk"),
@@ -780,7 +768,7 @@ def _build_webui() -> gr.Blocks:
         )
         timer.tick(  # type: ignore[missing-attribute]
             _webui_vc_controls_update,
-            outputs=[source_audio, vc_pitch_shift, vc_mode, convert_button],
+            outputs=[source_audio, vc_mode, convert_button],
             show_progress="hidden",
         )
         timer.tick(  # type: ignore[missing-attribute]
@@ -795,7 +783,7 @@ def _build_webui() -> gr.Blocks:
         )
         demo.load(  # type: ignore[missing-attribute]
             _webui_vc_controls_update,
-            outputs=[source_audio, vc_pitch_shift, vc_mode, convert_button],
+            outputs=[source_audio, vc_mode, convert_button],
             show_progress="hidden",
         )
         demo.load(  # type: ignore[missing-attribute]
@@ -843,7 +831,7 @@ def _build_webui() -> gr.Blocks:
         )
         convert_button.click(  # type: ignore[missing-attribute]
             _webui_convert_audio,
-            inputs=[source_audio, vc_pitch_shift, vc_mode],
+            inputs=[source_audio, vc_mode],
             outputs=[
                 source_audio,
                 converted_audio,

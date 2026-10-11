@@ -284,13 +284,11 @@ The conversion endpoint accepts multipart form data:
 ```bash
 curl -X POST http://127.0.0.1:2060/v1/convert \
   -F "file=@input.wav" \
-  -F "pitch_shift=-2" \
   -F "f0_condition=false" \
   --output converted.flac
 ```
 
-`file` is required. `pitch_shift` is an optional integer override and
-`f0_condition` is an optional boolean override. The endpoint returns `audio/flac`
+`file` is required. `f0_condition` is an optional boolean override. The endpoint returns `audio/flac`
 when conversion succeeds, `409` when VC mode is not active or the engine is
 busy, `400` for malformed audio/fields, `413` when the upload limit is
 exceeded, and `500` when the conversion backend raises an internal request

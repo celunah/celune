@@ -63,7 +63,6 @@ class AudioInputRequest:
     audio: npt.NDArray[np.float32]
     sample_rate: int
     label: str = "audio input"
-    pitch_shift: Optional[int] = None
     f0_condition: Optional[bool] = None
     log_playback: bool = True
     reset_ready_announcement: bool = True
@@ -79,7 +78,6 @@ class VoiceConversionRequest:
     target_character: Optional[str] = None
     target_references: tuple[Path, ...] = ()
     label: str = "audio input"
-    pitch_shift: Optional[int] = None
     f0_condition: Optional[bool] = None
 
 

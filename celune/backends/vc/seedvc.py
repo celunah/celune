@@ -99,7 +99,6 @@ class CeluneSeedVCBackend(CeluneVCBackend):
         inference_cfg_rate: float = 0.5,
         f0_condition: bool = False,
         auto_f0_adjust: bool = True,
-        pitch_shift: int = 0,
     ) -> None:
         super().__init__(log=log)
         self.diffusion_steps = diffusion_steps
@@ -107,7 +106,6 @@ class CeluneSeedVCBackend(CeluneVCBackend):
         self.inference_cfg_rate = inference_cfg_rate
         self.f0_condition = f0_condition
         self.auto_f0_adjust = auto_f0_adjust
-        self.pitch_shift = pitch_shift
         self._wrapper: Optional[_SeedVCWrapper] = None
         self._live_module: Optional[_SeedVCRealtimeModule] = None
         self._prepared_live_module: Optional[_SeedVCRealtimeModule] = None
@@ -745,7 +743,6 @@ class CeluneSeedVCBackend(CeluneVCBackend):
                         target_character=request.target_character,
                         target_references=request.target_references,
                         label=request.label,
-                        pitch_shift=request.pitch_shift,
                         f0_condition=True,
                     )
                 )
@@ -804,7 +801,7 @@ class CeluneSeedVCBackend(CeluneVCBackend):
         """
         if not request.target_references:
             raise ValueError(string("seedvc.target_reference_required"))
-        if self.length_adjust != 1.0 or request.pitch_shift not in (None, 0):
+        if self.length_adjust != 1.0:
             return None
 
         reference_path = request.target_references[0]
@@ -893,9 +890,7 @@ class CeluneSeedVCBackend(CeluneVCBackend):
                     inference_cfg_rate=self.inference_cfg_rate,
                     f0_condition=f0_condition,
                     auto_f0_adjust=self.auto_f0_adjust,
-                    pitch_shift=request.pitch_shift
-                    if request.pitch_shift is not None
-                    else 0,
+                    pitch_shift=0,
                     stream_output=False,
                 )
             )

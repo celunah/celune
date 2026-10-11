@@ -62,7 +62,7 @@ status and diagnostic text stays in the loading screen or main log.
 4. The backend generates chunks, locally or through a CEDTS worker.
 5. The smart buffer and contention monitor decide when to start and how much
    output reserve to maintain.
-6. Audio is resampled/normalized, optionally pitch-shifted or reverberated.
+6. Audio is resampled/normalized and optionally reverberated.
 7. A persistent playback input reader feeds the mixer, and a persistent audio
    writer drains mixed blocks to the sounddevice stream. The mixer yields
    briefly after each submitted block so the writer can keep its reserve moving

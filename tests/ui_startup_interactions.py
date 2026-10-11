@@ -1053,8 +1053,8 @@ class TestUIStartup(_TestUIStartup):
         available.assert_called_once_with()
         thread_cls.return_value.start.assert_called_once()
 
-    def test_change_input_state_reveals_vc_buttons_after_backend_switch(self) -> None:
-        """Verify VC controls appear when the UI unlocks into voice conversion mode."""
+    def test_change_input_state_reveals_vc_mode_after_backend_switch(self) -> None:
+        """Verify the VC mode control appears after switching to voice conversion."""
         ui = CeluneUI()
         ui.input_box = TextArea()
         ui.style_button = VoiceButton(
@@ -1062,18 +1062,15 @@ class TestUIStartup(_TestUIStartup):
             actions=ButtonActions(press=False, hold=False),
         )
         ui.vc_mode_button = Button(string("ui.vc_mode_talk"))
-        ui.vc_pitch_button = Button(string("ui.vc_pitch_button", value="+0"))
         ui.resources = cast(Label, None)
         ui._input_locked = True
         ui.vc_mode_button.display = False
-        ui.vc_pitch_button.display = False
         ui.celune = cast(
             Celune,
             SimpleNamespace(
                 config={},
                 vc_backend=SimpleNamespace(),
                 vc_f0_condition=False,
-                vc_pitch_shift=0,
             ),
         )
 
@@ -1081,9 +1078,7 @@ class TestUIStartup(_TestUIStartup):
             ui.change_input_state(locked=False)
 
         assert ui.vc_mode_button.display
-        assert ui.vc_pitch_button.display
         assert ui.vc_mode_button.actions == ButtonActions(press=True)
-        assert ui.vc_pitch_button.actions == ButtonActions(press=True)
         thread_cls.return_value.start.assert_called_once()
 
     def test_placeholder_uses_loaded_persona_not_runtime_capability(self) -> None:
@@ -1145,57 +1140,48 @@ class TestUIStartup(_TestUIStartup):
 
         assert ui.normal_input_placeholder() == string("ui.voice_changer_placeholder")
 
-    def test_refresh_vc_controls_hides_buttons_outside_voice_conversion_mode(
+    def test_refresh_vc_controls_hides_mode_button_outside_voice_conversion_mode(
         self,
     ) -> None:
         """Verify VC-only buttons collapse away while the UI is in TTS mode."""
         ui = CeluneUI()
         ui.vc_mode_button = Button(string("ui.vc_mode_talk"))
-        ui.vc_pitch_button = Button(string("ui.vc_pitch_button", value="+0"))
         ui._cancel_vc_recording = mock.Mock()
         ui.celune = cast(
             Celune,
             SimpleNamespace(
                 vc_backend=None,
                 vc_f0_condition=False,
-                vc_pitch_shift=0,
             ),
         )
 
         ui.refresh_vc_controls()
 
         assert not ui.vc_mode_button.display
-        assert not ui.vc_pitch_button.display
         assert ui.vc_mode_button.actions == ButtonActions(press=False)
-        assert ui.vc_pitch_button.actions == ButtonActions(press=False)
         ui._cancel_vc_recording.assert_called_once_with(announce=False)
 
-    def test_refresh_vc_controls_shows_buttons_in_voice_conversion_mode(
+    def test_refresh_vc_controls_shows_mode_button_in_voice_conversion_mode(
         self,
     ) -> None:
         """Verify VC-only buttons return when a VC backend is active."""
         ui = CeluneUI()
         ui._input_locked = False
         ui.vc_mode_button = Button(string("ui.vc_mode_talk"))
-        ui.vc_pitch_button = Button(string("ui.vc_pitch_button", value="+0"))
         ui._cancel_vc_recording = mock.Mock()
         ui.celune = cast(
             Celune,
             SimpleNamespace(
                 vc_backend=SimpleNamespace(),
                 vc_f0_condition=True,
-                vc_pitch_shift=3,
             ),
         )
 
         ui.refresh_vc_controls()
 
         assert ui.vc_mode_button.display
-        assert ui.vc_pitch_button.display
         assert ui.vc_mode_button.label == string("ui.vc_mode_sing")
-        assert ui.vc_pitch_button.label == string("ui.vc_pitch_button", value="+3")
         assert ui.vc_mode_button.actions == ButtonActions(press=True)
-        assert ui.vc_pitch_button.actions == ButtonActions(press=True)
         ui._cancel_vc_recording.assert_not_called()
 
     def test_runtime_logger_warning_is_routed_into_ui_logs(self) -> None:

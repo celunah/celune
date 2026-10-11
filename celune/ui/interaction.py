@@ -1342,15 +1342,6 @@ def on_button_pressed(self, event: _app.Button.Pressed) -> None:
             )
         return
 
-    if event.button == self.vc_pitch_button:
-        if self._is_voice_conversion_mode():
-            current_value = int(getattr(celune, "vc_pitch_shift", 0))
-            next_value = current_value + 1
-            if next_value > _app.VC_PITCH_SHIFT_MAX:
-                next_value = _app.VC_PITCH_SHIFT_MIN
-            self.set_vc_pitch_shift(next_value)
-        return
-
     if event.button != self.style_button:
         return
 
