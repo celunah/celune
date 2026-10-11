@@ -325,11 +325,12 @@ Browser playback is returned as 16-bit PCM; Celune's engine continues to use
 normalized float32 audio internally.
 The WebUI exposes the active voice as a compact button beside the text input;
 clicking it cycles through the available voices using the same Core switching
-path as the TUI. It does not expose the TUI's settings editor. When live
-Persona or VC capture is available, press `ALT+R` to toggle recording; the same
-shortcut is shown in the bottom-right resource area. If the API extra is absent,
-the REST/WebUI surface cannot be started, but the core Python/TUI runtime
-remains separate.
+path as the TUI. The voice and VC conversion buttons follow the active Celune
+palette, including their disabled, hover, and keyboard-focus states. The WebUI
+does not expose the TUI's settings editor. When live Persona or VC capture is
+available, press `ALT+R` to toggle recording; the same shortcut is shown in the
+bottom-right resource area. If the API extra is absent, the REST/WebUI surface
+cannot be started, but the core Python/TUI runtime remains separate.
 
 ## Embedding the server
 
