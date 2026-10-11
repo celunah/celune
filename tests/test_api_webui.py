@@ -2,14 +2,16 @@
 """Tests for Celune's browser-facing API UI."""
 
 import asyncio
-from typing import cast
 from queue import Queue
+from typing import cast
 from unittest import mock
+from collections import deque
 from types import SimpleNamespace
 
 import numpy as np
 from starlette.requests import Request
 from starlette.responses import Response
+from starlette.types import Send, Scope, Message, Receive
 
 from celune import api
 from celune.i18n import string
@@ -47,9 +49,17 @@ class TestApiWebUI(CeluneTestCase):
         self.previous_timed_update_received_at = api.webui_timed_update_received_at
         self.previous_timed_update_source = api.webui_timed_update_source
         self.previous_auth_token = api.auth_token
+        self.previous_rate_limit_hits = {
+            key: list(hits) for key, hits in api.rate_limit_hits.items()
+        }
+        self.previous_webui_auth_sessions = dict(api.webui_auth_sessions)
         self.previous_logs = list(api.webui_log_lines)
         api.bound_celune = None
         api.auth_token = None
+        with api.rate_limit_lock:
+            api.rate_limit_hits.clear()
+        with api.webui_auth_sessions_lock:
+            api.webui_auth_sessions.clear()
         api.webui_log_lines.clear()
         api.webui_logs_seeded = True
         api.webui_resource_page = 0
@@ -100,6 +110,17 @@ class TestApiWebUI(CeluneTestCase):
         api.webui_timed_update_received_at = self.previous_timed_update_received_at
         api.webui_timed_update_source = self.previous_timed_update_source
         api.auth_token = self.previous_auth_token
+        with api.rate_limit_lock:
+            api.rate_limit_hits.clear()
+            api.rate_limit_hits.update(
+                {
+                    key: deque(hits)
+                    for key, hits in self.previous_rate_limit_hits.items()
+                }
+            )
+        with api.webui_auth_sessions_lock:
+            api.webui_auth_sessions.clear()
+            api.webui_auth_sessions.update(self.previous_webui_auth_sessions)
         api.webui_log_lines.clear()
         api.webui_log_lines.extend(self.previous_logs)
 
@@ -109,14 +130,20 @@ class TestApiWebUI(CeluneTestCase):
         return Response("ok")
 
     @staticmethod
-    def _request(path: str, method: str = "GET") -> Request:
+    def _request(
+        path: str,
+        method: str = "GET",
+        headers: tuple[tuple[str, str], ...] = (),
+    ) -> Request:
         """Build one lightweight test request."""
         return Request(
             {
                 "type": "http",
                 "method": method,
                 "path": path,
-                "headers": [],
+                "headers": [
+                    (name.lower().encode(), value.encode()) for name, value in headers
+                ],
                 "query_string": b"",
                 "client": ("127.0.0.1", 2060),
                 "scheme": "http",
@@ -142,7 +169,7 @@ class TestApiWebUI(CeluneTestCase):
         """Verify safe read-only routes stay reachable even when API auth is enabled."""
         api.auth_token = "secret"
 
-        for path in ("/", "/favicon.ico", "/v1", "/v1/version", "/ui"):
+        for path in ("/", "/favicon.ico", "/v1", "/v1/version"):
             response = asyncio.run(
                 api.api_security(
                     self._request(path),
@@ -150,6 +177,169 @@ class TestApiWebUI(CeluneTestCase):
                 )
             )
             assert response.status_code == 200, path
+
+    def test_api_security_shows_blocking_key_prompt_for_webui_root(self) -> None:
+        """Verify the protected WebUI root serves Celune's key prompt."""
+        api.auth_token = "secret"
+
+        response = asyncio.run(
+            api.api_security(self._request("/ui"), self._passthrough_response)
+        )
+
+        assert response.status_code == 200
+        assert 'aria-modal="true"' in bytes(response.body).decode()
+        assert (
+            string("api.webui_auth_title", app_name=api.APP_NAME)
+            in bytes(response.body).decode()
+        )
+        assert response.headers["cache-control"] == "no-store"
+
+    def test_api_security_rejects_webui_actions_without_a_session(self) -> None:
+        """Verify deleting the prompt cannot authorize a WebUI action request."""
+        api.auth_token = "secret"
+
+        response = asyncio.run(
+            api.api_security(
+                self._request("/ui/run/speak", method="POST"),
+                self._passthrough_response,
+            )
+        )
+
+        assert response.status_code == 401
+        assert response.headers["WWW-Authenticate"] == "Bearer"
+
+    def test_api_security_accepts_a_webui_session_cookie(self) -> None:
+        """Verify an authenticated browser session can use WebUI actions."""
+        api.auth_token = "secret"
+        session_id = api._new_ui_session()
+
+        response = asyncio.run(
+            api.api_security(
+                self._request(
+                    "/ui/run/speak",
+                    method="POST",
+                    headers=(
+                        ("cookie", f"{api.WEBUI_AUTH_COOKIE}={session_id}"),
+                        ("origin", "http://127.0.0.1:2060"),
+                    ),
+                ),
+                self._passthrough_response,
+            )
+        )
+
+        assert response.status_code == 200
+
+    def test_api_security_rejects_cross_origin_webui_actions(self) -> None:
+        """Verify browser sessions cannot authorize cross-origin actions."""
+        api.auth_token = "secret"
+        session_id = api._new_ui_session()
+
+        response = asyncio.run(
+            api.api_security(
+                self._request(
+                    "/ui/run/speak",
+                    method="POST",
+                    headers=(
+                        ("cookie", f"{api.WEBUI_AUTH_COOKIE}={session_id}"),
+                        ("origin", "http://attacker.example"),
+                    ),
+                ),
+                self._passthrough_response,
+            )
+        )
+
+        assert response.status_code == 403
+
+    def test_webui_authentication_exchanges_key_for_http_only_cookie(self) -> None:
+        """Verify the configured key creates an opaque, scoped browser cookie."""
+        api.auth_token = "secret"
+        response = asyncio.run(
+            api.authenticate_webui(
+                api.WebUiAuthRequest(api_key="secret"),
+                self._request("/ui/authenticate", method="POST"),
+            )
+        )
+
+        assert response.status_code == 200
+        cookie = response.headers["set-cookie"]
+        assert f"{api.WEBUI_AUTH_COOKIE}=" in cookie
+        assert "HttpOnly" in cookie
+        assert "Path=/ui" in cookie
+        assert "SameSite=strict" in cookie
+
+    def test_webui_authentication_rejects_an_invalid_key(self) -> None:
+        """Verify an incorrect application key does not create a session."""
+        api.auth_token = "secret"
+        response = asyncio.run(
+            api.authenticate_webui(
+                api.WebUiAuthRequest(api_key="incorrect"),
+                self._request("/ui/authenticate", method="POST"),
+            )
+        )
+
+        assert response.status_code == 401
+        assert (
+            string("api.webui_auth_invalid", app_name=api.APP_NAME)
+            in bytes(response.body).decode()
+        )
+        assert "set-cookie" not in response.headers
+
+    def test_webui_websocket_rejects_missing_authentication(self) -> None:
+        """Verify unauthenticated WebUI WebSockets never reach Gradio."""
+        api.auth_token = "secret"
+        reached_gradio = False
+        sent_messages: list[Message] = []
+
+        async def downstream(
+            _scope: Scope,
+            _receive: Receive,
+            _send: Send,
+        ) -> None:
+            nonlocal reached_gradio
+            reached_gradio = True
+
+        async def receive() -> Message:
+            return {"type": "websocket.connect"}
+
+        async def send(message: Message) -> None:
+            sent_messages.append(message)
+
+        scope: Scope = {
+            "type": "websocket",
+            "path": "/ui/queue/join",
+            "headers": [],
+            "client": ("127.0.0.1", 2060),
+            "scheme": "ws",
+            "server": ("127.0.0.1", 2060),
+            "subprotocols": [],
+            "query_string": b"",
+        }
+        middleware = api.WebUiWebSocketSecurityMiddleware(downstream)
+        asyncio.run(middleware(scope, receive, send))
+
+        assert not reached_gradio
+        assert sent_messages == [{"type": "websocket.close", "code": 4401}]
+
+        session_id = api._new_ui_session()
+        scope["headers"] = [
+            (
+                b"cookie",
+                f"{api.WEBUI_AUTH_COOKIE}={session_id}".encode(),
+            ),
+            (b"origin", b"http://attacker.example"),
+        ]
+        sent_messages.clear()
+        asyncio.run(middleware(scope, receive, send))
+
+        assert not reached_gradio
+        assert sent_messages == [{"type": "websocket.close", "code": 4401}]
+
+        scope["headers"][1] = (b"origin", b"http://127.0.0.1:2060")
+        sent_messages.clear()
+        asyncio.run(middleware(scope, receive, send))
+
+        assert reached_gradio
+        assert not sent_messages
 
     def test_api_security_requires_token_for_generating_routes(self) -> None:
         """Verify protected API routes still reject unauthenticated requests."""

@@ -34,6 +34,7 @@ X-Celune-Token: YOUR_TOKEN
 | `GET` | `/v1` | Return Celune's current status. |
 | `GET` | `/v1/version` | Return the running Celune version. |
 | `GET` | `/` | Redirect to the mounted WebUI at `/ui`. |
+| `POST` | `/ui/authenticate` | Exchange the configured API key for a browser WebUI session. |
 | `POST` | `/v1/think` | Ask Celune to think through Persona and reply asynchronously through her normal speech pipeline. |
 | `POST` | `/v1/speak` | Queue speech and keep the HTTP request open until `audio/flac` is ready. |
 | `POST` | `/v1/speak/async` | Queue speech and return `202 Accepted` immediately with a job ID. |
@@ -309,10 +310,11 @@ or:
 X-Celune-Token: YOUR_TOKEN
 ```
 
-The configured per-minute rate limit applies to API calls. Failed validation,
-busy-state, missing-job, and backend errors are returned as JSON with an HTTP
-status instead of exposing raw internal tracebacks. Async jobs are retained in
-memory for 15 minutes and are not persisted across a restart.
+The configured per-minute rate limit applies to API calls, WebUI actions, and
+WebUI WebSocket connections. Failed validation, busy-state, missing-job, and
+backend errors are returned as JSON with an HTTP status instead of exposing raw
+internal tracebacks. Async jobs are retained in memory for 15 minutes and are
+not persisted across a restart.
 
 ## WebUI behavior
 
@@ -323,6 +325,29 @@ timed state updates are delivered through the CEDTS frontend update channel;
 the browser keeps a polling fallback for reconnects and standalone API hosts.
 Browser playback is returned as 16-bit PCM; Celune's engine continues to use
 normalized float32 audio internally.
+
+When an API key is configured, opening `/ui` displays a blocking Celune key
+prompt. Submitting the key sends it to `POST /ui/authenticate` in a JSON
+`api_key` field. A valid key creates an opaque, `HttpOnly`, `SameSite=Strict`
+cookie scoped to `/ui` for eight hours. The session is held in memory and ends
+when it expires, the API key changes, or Celune restarts. The API key is not
+stored in the URL or browser storage. The API security middleware checks the
+session on WebUI HTTP actions and WebSocket connections; requests without a
+valid API key or session receive `401`, even if the prompt is removed from the
+page with browser developer tools. The authentication request is rate limited,
+and browser writes and WebSocket connections must come from the same origin.
+
+The browser submits this body to `POST /ui/authenticate`:
+
+```json
+{"api_key":"YOUR_TOKEN"}
+```
+
+`api_key` must contain 1 to 4096 characters. A valid key returns
+`{"authenticated":true}` with the session cookie. An invalid key returns
+`401`, a cross-origin request returns `403`, and an attempt over the configured
+request limit returns `429`.
+
 The WebUI exposes the active voice as a compact button beside the text input;
 clicking it cycles through the available voices using the same Core switching
 path as the TUI. The voice and VC conversion buttons follow the active Celune

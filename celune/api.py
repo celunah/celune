@@ -4,6 +4,7 @@
 # pylint: disable=ungrouped-imports
 
 import os
+import html
 import json
 import time
 import uuid
@@ -11,23 +12,30 @@ import errno
 import socket
 import asyncio
 import inspect
+import secrets
 import datetime
 import textwrap
 import threading
 import contextlib
 from hmac import compare_digest
+from urllib.parse import urlsplit
+from dataclasses import field, dataclass
+from collections import deque, defaultdict
 from typing import (
     Union,
     Literal,
     Optional,
 )
-from collections import deque, defaultdict
-from dataclasses import field, dataclass
 from collections.abc import Callable, Iterator, Awaitable
 
+import uvicorn
 import numpy as np
 import gradio as gr
-import uvicorn
+from pydantic import Field, BaseModel
+from starlette.datastructures import Headers
+from starlette.concurrency import run_in_threadpool
+from starlette.types import Send, Scope, ASGIApp, Receive
+from starlette.middleware.base import RequestResponseEndpoint
 from fastapi import (
     File,
     Form,
@@ -38,76 +46,73 @@ from fastapi import (
     HTTPException,
     WebSocketDisconnect,
 )
-from pydantic import Field, BaseModel
 from fastapi.responses import (
     Response,
     FileResponse,
+    HTMLResponse,
     JSONResponse,
     RedirectResponse,
     StreamingResponse,
 )
-from starlette.concurrency import run_in_threadpool
-from starlette.middleware.base import RequestResponseEndpoint
 
-from . import __version__
-from .ui import resources as ui_resources
 from .i18n import string
-from .paths import project_root
 from .theme import colors
-from .utils import available, format_error_message
 from .celune import Celune
+from .paths import project_root
 from .cevoice import default_loader
+from .typing.aliases import LogLevel
+from .audio.dsp import resample_audio
+from .constants import BASE_SR, APP_NAME
+from .ui import resources as ui_resources
+from .typing.common import JSONSerializable
+from . import webui, webactions, __version__
+from .exceptions import TaskSubscriptionClosed
+from .extensions.events import EventDispatcher
 from .speech import (
     prepare_playback_audio,
 )
-from .audio.dsp import resample_audio
-from .constants import BASE_SR, APP_NAME
-from .exceptions import TaskSubscriptionClosed
+from .utils import available, format_error_message
+from .typing.events import EventName, EventCallback
 from .typing.api import (
     TaskStatus,
     TaskEventName,
     TaskCommandName,
 )
-from .typing.common import JSONSerializable
-from .typing.events import EventName, EventCallback
-from .typing.aliases import LogLevel
-from .extensions.events import EventDispatcher
-from . import webactions, webui
 from .webactions import (
     _build_webui,
+    _webui_speak,
+    _webui_run_command,
     _decode_uploaded_audio,
     _voice_conversion_unavailable_response,
-    _webui_run_command,
-    _webui_speak,
 )
 from .webui import (
-    _append_webui_log,
-    _collect_speech_job,
-    _flac_bytes,
-    _forget_speech_job,
-    _publish_active_task_log,
-    _publish_task_event,
-    _remember_speech_job,
-    _seed_webui_logs,
-    _set_active_speech_task,
-    _set_webui_status,
-    _speech_job_snapshot,
-    _strip_webui_log_prefix,
-    _subscribe_to_speech_job,
-    _subscribe_webui_events,
-    _subscribe_webui_timed_updates,
-    _task_status,
-    _unsubscribe_from_speech_job,
-    _update_speech_job,
-    _webui_input_placeholder,
-    _webui_snapshot,
-    _webui_theme_html,
-    _webui_vc_mode_active,
-    _wrap_celune_callbacks,
     api_log,
+    _flac_bytes,
     audio_bytes,
+    _task_status,
     require_celune,
     stream_headers,
+    _webui_snapshot,
+    _seed_webui_logs,
+    _append_webui_log,
+    _set_webui_status,
+    _webui_theme_html,
+    _forget_speech_job,
+    _update_speech_job,
+    _collect_speech_job,
+    _publish_task_event,
+    _remember_speech_job,
+    _speech_job_snapshot,
+    _webui_vc_mode_active,
+    _wrap_celune_callbacks,
+    _set_active_speech_task,
+    _strip_webui_log_prefix,
+    _subscribe_webui_events,
+    _publish_active_task_log,
+    _subscribe_to_speech_job,
+    _webui_input_placeholder,
+    _unsubscribe_from_speech_job,
+    _subscribe_webui_timed_updates,
 )
 
 _receive_webui_timed_update = webui._receive_webui_timed_update
@@ -123,6 +128,11 @@ CeluneUI = webui.CeluneUI
 UiTimedUpdate = webui.UiTimedUpdate
 
 api = FastAPI(title=f"{APP_NAME}API")
+WEBUI_AUTH_PATH = "/ui/authenticate"
+WEBUI_AUTH_COOKIE = "celune_webui_session"
+WEBUI_AUTH_SESSION_SECONDS = 8 * 60 * 60
+webui_auth_sessions_lock = threading.Lock()
+webui_auth_sessions: dict[str, float] = {}
 bound_celune: Optional[Celune] = None
 auth_token: Optional[str] = None
 rate_limit_per_minute = 60
@@ -974,7 +984,11 @@ def configure_api_security(
     """
     global auth_token, rate_limit_per_minute
 
-    auth_token = _clean_token(token) or _env_auth_token()
+    configured_token = _clean_token(token) or _env_auth_token()
+    if configured_token != auth_token:
+        with webui_auth_sessions_lock:
+            webui_auth_sessions.clear()
+    auth_token = configured_token
     rate_limit_per_minute = max(0, requests_per_minute)
     with rate_limit_lock:
         rate_limit_hits.clear()
@@ -1000,19 +1014,29 @@ def resolve_api_host(token: Optional[str] = None, host: Optional[str] = None) ->
 
 def _request_token(request: Request) -> Optional[str]:
     """Extract the bearer or app token from a request."""
-    auth_header = request.headers.get("authorization", "")
+    return _headers_token(request.headers)
+
+
+def _headers_token(headers: Headers) -> Optional[str]:
+    """Extract the bearer or app token from request headers."""
+    auth_header = headers.get("authorization", "")
     scheme, _, value = auth_header.partition(" ")
     if scheme.lower() == "bearer" and value:
         return value.strip()
-    return _clean_token(request.headers.get("x-celune-token"))
+    return _clean_token(headers.get("x-celune-token"))
+
+
+def _headers_authenticated(headers: Headers) -> bool:
+    """Return whether request headers carry the configured API token."""
+    if auth_token is None:
+        return True
+    given = _headers_token(headers)
+    return given is not None and compare_digest(given, auth_token)
 
 
 def _authenticated(request: Request) -> bool:
     """Return whether the request carries the configured API token."""
-    if auth_token is None:
-        return True
-    given = _request_token(request)
-    return given is not None and compare_digest(given, auth_token)
+    return _headers_authenticated(request.headers)
 
 
 def is_browser_ui_request(request: Request) -> bool:
@@ -1033,9 +1057,6 @@ def _is_public_api_request(request: Request) -> bool:
     method = request.method.upper()
     path = request.url.path.rstrip("/") or "/"
 
-    if is_browser_ui_request(request):
-        return True
-
     return method == "GET" and path in {
         "/",
         "/favicon.ico",
@@ -1051,17 +1072,16 @@ def _rate_limit_key(request: Request) -> str:
     return request.client.host
 
 
-def _rate_limited(request: Request) -> bool:
-    """Return whether the request exceeds the configured rate limit."""
+def _rate_limited_client(client_key: str) -> bool:
+    """Return whether a client exceeds the configured rate limit."""
     if rate_limit_per_minute <= 0:
         return False
 
     now = time.monotonic()
     window_start = now - 60.0
-    key = _rate_limit_key(request)
 
     with rate_limit_lock:
-        hits = rate_limit_hits[key]
+        hits = rate_limit_hits[client_key]
         while hits and hits[0] < window_start:
             hits.popleft()
 
@@ -1070,6 +1090,254 @@ def _rate_limited(request: Request) -> bool:
 
         hits.append(now)
         return False
+
+
+def _rate_limited(request: Request) -> bool:
+    """Return whether the request exceeds the configured rate limit."""
+    return _rate_limited_client(_rate_limit_key(request))
+
+
+def _ui_session_valid(session_id: Optional[str]) -> bool:
+    """Return whether an opaque WebUI session cookie is still active."""
+    if not session_id:
+        return False
+
+    now = time.monotonic()
+    with webui_auth_sessions_lock:
+        expires_at = webui_auth_sessions.get(session_id)
+        if expires_at is None:
+            return False
+        if expires_at <= now:
+            del webui_auth_sessions[session_id]
+            return False
+    return True
+
+
+def _new_ui_session() -> str:
+    """Create an opaque WebUI session with a bounded in-memory lifetime."""
+    now = time.monotonic()
+    session_id = secrets.token_urlsafe(32)
+    with webui_auth_sessions_lock:
+        expired_sessions = [
+            existing_id
+            for existing_id, expires_at in webui_auth_sessions.items()
+            if expires_at <= now
+        ]
+        for existing_id in expired_sessions:
+            del webui_auth_sessions[existing_id]
+        webui_auth_sessions[session_id] = now + WEBUI_AUTH_SESSION_SECONDS
+    return session_id
+
+
+def _webui_authenticated(connection: Union[Request, WebSocket]) -> bool:
+    """Return whether a WebUI connection has an API token or active session."""
+    if auth_token is None or _headers_authenticated(connection.headers):
+        return True
+    return _ui_session_valid(connection.cookies.get(WEBUI_AUTH_COOKIE))
+
+
+def _same_origin(connection: Union[Request, WebSocket]) -> bool:
+    """Return whether a browser supplied origin matches this API host."""
+    origin = connection.headers.get("origin")
+    if origin is None:
+        return False
+
+    try:
+        parsed_origin = urlsplit(origin)
+        parsed_request = urlsplit(str(connection.url))
+        origin_port = parsed_origin.port
+        request_port = parsed_request.port
+        origin_host = parsed_origin.hostname
+        request_host = parsed_request.hostname
+    except ValueError:
+        return False
+
+    connection_scheme = {"ws": "http", "wss": "https"}.get(
+        parsed_request.scheme,
+        parsed_request.scheme,
+    )
+    if (
+        parsed_origin.username is not None
+        or parsed_origin.password is not None
+        or parsed_origin.path
+        or parsed_origin.scheme != connection_scheme
+    ):
+        return False
+
+    default_port = {"http": 80, "https": 443}.get(connection_scheme)
+    return (
+        origin_host is not None
+        and origin_host.lower() == (request_host or "").lower()
+        and (origin_port if origin_port is not None else default_port)
+        == (request_port if request_port is not None else default_port)
+    )
+
+
+def _unauthorized_response() -> JSONResponse:
+    """Build the shared unauthorized response for protected requests."""
+    return JSONResponse(
+        status_code=401,
+        content={
+            "error": "unauthorized",
+            "message": string("api.unauthorized"),
+        },
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+
+def _rate_limit_response() -> JSONResponse:
+    """Build the shared rate limit response for protected requests."""
+    current_time = datetime.datetime.now(datetime.UTC)
+    next_minute = current_time.replace(second=0, microsecond=0) + datetime.timedelta(
+        minutes=1
+    )
+    retry_after = (next_minute - current_time).total_seconds()
+    return JSONResponse(
+        status_code=429,
+        content={
+            "error": "ratelimit_exceeded",
+            "message": string("api.rate_limit"),
+        },
+        headers={"Retry-After": str(retry_after)},
+    )
+
+
+def _webui_auth_page() -> str:
+    """Build the standalone, blocking WebUI API-key prompt."""
+    values = {
+        "app_name": APP_NAME,
+        "title": string("api.webui_auth_title", app_name=APP_NAME),
+        "message": string("api.webui_auth_message", app_name=APP_NAME),
+        "placeholder": string("api.webui_auth_placeholder"),
+        "submit": string("api.webui_auth_submit"),
+        "invalid": string("api.webui_auth_invalid", app_name=APP_NAME),
+    }
+    safe_values = {key: html.escape(value) for key, value in values.items()}
+    return (
+        textwrap.dedent(
+            """
+        <!doctype html>
+        <html lang="en">
+        <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1">
+          <meta name="color-scheme" content="dark">
+          <title>__TITLE__</title>
+          <style>
+            :root {
+              color-scheme: dark;
+              font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+              background: #1d1826;
+              color: #f7f3ff;
+              font-synthesis: none;
+            }
+            * { box-sizing: border-box; }
+            body {
+              display: grid;
+              min-height: 100vh;
+              margin: 0;
+              place-items: center;
+              background: radial-gradient(ellipse at 50% 0%, #393047, #1d1826 62%);
+            }
+            main {
+              display: grid;
+              min-height: 100vh;
+              width: 100%;
+              padding: 24px;
+              place-items: center;
+              background: rgb(18 15 24 / 45%);
+            }
+            section {
+              width: min(100%, 440px);
+              padding: 36px;
+              border: 1px solid rgb(206 186 255 / 24%);
+              border-radius: 20px;
+              background: #241e2f;
+              box-shadow: 0 24px 90px rgb(0 0 0 / 45%);
+            }
+            .eyebrow { color: #cebaff; font-size: .82rem; letter-spacing: .16em; }
+            h1 { margin: 12px 0; font-size: clamp(1.6rem, 5vw, 2.1rem); }
+            p { color: #d4cddd; line-height: 1.55; }
+            label { display: block; margin: 24px 0 8px; font-size: .9rem; }
+            input, button {
+              width: 100%;
+              min-height: 48px;
+              border-radius: 10px;
+              font: inherit;
+            }
+            input {
+              padding: 0 14px;
+              border: 1px solid #675d77;
+              background: #191520;
+              color: #fff;
+            }
+            input:focus-visible, button:focus-visible { outline: 3px solid #cebaff; outline-offset: 3px; }
+            button {
+              margin-top: 14px;
+              border: 0;
+              background: #cebaff;
+              color: #241e2f;
+              cursor: pointer;
+              font-weight: 700;
+            }
+            button:disabled { cursor: wait; opacity: .7; }
+            #error { min-height: 1.5em; color: #ff999e; }
+            @media (max-width: 480px) { section { padding: 28px 22px; } }
+          </style>
+        </head>
+        <body>
+          <main>
+            <section role="dialog" aria-modal="true" aria-labelledby="title">
+              <div class="eyebrow">__APP_NAME__</div>
+              <h1 id="title">__TITLE__</h1>
+              <p>__MESSAGE__</p>
+              <form id="key-form">
+                <label for="api-key">__PLACEHOLDER__</label>
+                <input id="api-key" name="api_key" type="password" autocomplete="current-password" required autofocus>
+                <button id="submit" type="submit">__SUBMIT__</button>
+                <p id="error" role="status" aria-live="polite"></p>
+              </form>
+            </section>
+          </main>
+          <script>
+            const form = document.querySelector("#key-form");
+            const input = document.querySelector("#api-key");
+            const button = document.querySelector("#submit");
+            const error = document.querySelector("#error");
+            form.addEventListener("submit", async (event) => {
+              event.preventDefault();
+              button.disabled = true;
+              error.textContent = "";
+              try {
+                const response = await fetch("/ui/authenticate", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ api_key: input.value }),
+                });
+                if (response.ok) {
+                  window.location.replace("/ui");
+                  return;
+                }
+                const result = await response.json();
+                error.textContent = result.message || "__INVALID__";
+              } catch {
+                error.textContent = "__INVALID__";
+              } finally {
+                button.disabled = false;
+              }
+            });
+          </script>
+        </body>
+        </html>
+        """
+        )
+        .replace("__APP_NAME__", safe_values["app_name"])
+        .replace("__TITLE__", safe_values["title"])
+        .replace("__MESSAGE__", safe_values["message"])
+        .replace("__PLACEHOLDER__", safe_values["placeholder"])
+        .replace("__SUBMIT__", safe_values["submit"])
+        .replace("__INVALID__", safe_values["invalid"])
+    )
 
 
 @api.middleware("http")
@@ -1089,33 +1357,78 @@ async def api_security(
     if _is_public_api_request(request):
         return await call_next(request)
 
+    if is_browser_ui_request(request):
+        if auth_token is None:
+            return await call_next(request)
+
+        path = request.url.path.rstrip("/")
+        if path == WEBUI_AUTH_PATH and request.method.upper() == "POST":
+            if not _same_origin(request):
+                return JSONResponse(status_code=403, content={"error": "forbidden"})
+            if _rate_limited(request):
+                return _rate_limit_response()
+            return await call_next(request)
+
+        if not _webui_authenticated(request):
+            if request.method.upper() == "GET" and path == "/ui":
+                return HTMLResponse(
+                    _webui_auth_page(),
+                    headers={
+                        "Cache-Control": "no-store",
+                        "Content-Security-Policy": (
+                            "default-src 'none'; style-src 'unsafe-inline'; "
+                            "script-src 'unsafe-inline'; connect-src 'self'; "
+                            "base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
+                        ),
+                        "Referrer-Policy": "no-referrer",
+                        "X-Frame-Options": "DENY",
+                    },
+                )
+            return _unauthorized_response()
+
+        if request.method.upper() not in {"GET", "HEAD", "OPTIONS"}:
+            if not _same_origin(request):
+                return JSONResponse(status_code=403, content={"error": "forbidden"})
+            if _rate_limited(request):
+                return _rate_limit_response()
+        return await call_next(request)
+
     if not _authenticated(request):
-        return JSONResponse(
-            status_code=401,
-            content={
-                "error": "unauthorized",
-                "message": string("api.unauthorized"),
-            },
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+        return _unauthorized_response()
 
     if _rate_limited(request):
-        current_time = datetime.datetime.now(datetime.UTC)
-        next_minute = current_time.replace(
-            second=0, microsecond=0
-        ) + datetime.timedelta(minutes=1)
-        retry_after = (next_minute - current_time).total_seconds()
-
-        return JSONResponse(
-            status_code=429,
-            content={
-                "error": "ratelimit_exceeded",
-                "message": string("api.rate_limit"),
-            },
-            headers={"Retry-After": str(retry_after)},
-        )
+        return _rate_limit_response()
 
     return await call_next(request)
+
+
+class WebUiWebSocketSecurityMiddleware:
+    """Protect mounted WebUI WebSockets with the API token or browser session."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(
+        self,
+        scope: Scope,
+        receive: Receive,
+        send: Send,
+    ) -> None:
+        path = str(scope.get("path", "")).rstrip("/")
+        is_webui = path == "/ui" or path.startswith("/ui/")
+        if scope["type"] == "websocket" and is_webui and auth_token is not None:
+            websocket = WebSocket(scope, receive, send)
+            if not _webui_authenticated(websocket) or not _same_origin(websocket):
+                await send({"type": "websocket.close", "code": 4401})
+                return
+            client = websocket.client
+            if client is not None and _rate_limited_client(client.host):
+                await send({"type": "websocket.close", "code": 4429})
+                return
+        await self.app(scope, receive, send)
+
+
+api.add_middleware(WebUiWebSocketSecurityMiddleware)
 
 
 def bind_celune(celune: Celune) -> None:
@@ -1313,6 +1626,12 @@ class VoiceRequest(BaseModel):
     voice_name: str = Field(min_length=1)
 
 
+class WebUiAuthRequest(BaseModel):
+    """Request body used to establish an authenticated WebUI session."""
+
+    api_key: str = Field(min_length=1, max_length=4096)
+
+
 class ActionResponse(BaseModel):
     """Generic accepted control response."""
 
@@ -1324,6 +1643,42 @@ class TaskCancelResponse(BaseModel):
 
     task_id: str
     status: Literal["cancelled"] = "cancelled"
+
+
+@api.post(WEBUI_AUTH_PATH, include_in_schema=False)
+async def authenticate_webui(
+    body: WebUiAuthRequest,
+    request: Request,
+) -> Response:
+    """Exchange the configured application key for a WebUI session cookie."""
+    provided_key = _clean_token(body.api_key)
+    if auth_token is None:
+        return JSONResponse(status_code=404, content={"error": "not_found"})
+    if provided_key is None or not compare_digest(provided_key, auth_token):
+        return JSONResponse(
+            status_code=401,
+            content={
+                "error": "unauthorized",
+                "message": string("api.webui_auth_invalid", app_name=APP_NAME),
+            },
+            headers={"Cache-Control": "no-store"},
+        )
+
+    response = JSONResponse(
+        status_code=200,
+        content={"authenticated": True},
+        headers={"Cache-Control": "no-store"},
+    )
+    response.set_cookie(
+        WEBUI_AUTH_COOKIE,
+        _new_ui_session(),
+        max_age=WEBUI_AUTH_SESSION_SECONDS,
+        path="/ui",
+        secure=request.url.scheme == "https",
+        httponly=True,
+        samesite="strict",
+    )
+    return response
 
 
 async def _cancel_speech_job(job_id: str) -> bool:
