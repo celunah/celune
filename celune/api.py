@@ -9,6 +9,7 @@ import json
 import time
 import uuid
 import errno
+import base64
 import socket
 import asyncio
 import inspect
@@ -17,25 +18,21 @@ import datetime
 import textwrap
 import threading
 import contextlib
-from hmac import compare_digest
-from urllib.parse import urlsplit
-from dataclasses import field, dataclass
-from collections import deque, defaultdict
 from typing import (
     Union,
     Literal,
     Optional,
 )
+from functools import lru_cache
+from hmac import compare_digest
+from urllib.parse import urlsplit
+from dataclasses import field, dataclass
+from collections import deque, defaultdict
 from collections.abc import Callable, Iterator, Awaitable
 
 import uvicorn
 import numpy as np
 import gradio as gr
-from pydantic import Field, BaseModel
-from starlette.datastructures import Headers
-from starlette.concurrency import run_in_threadpool
-from starlette.types import Send, Scope, ASGIApp, Receive
-from starlette.middleware.base import RequestResponseEndpoint
 from fastapi import (
     File,
     Form,
@@ -54,37 +51,12 @@ from fastapi.responses import (
     RedirectResponse,
     StreamingResponse,
 )
+from pydantic import Field, BaseModel
+from starlette.datastructures import Headers
+from starlette.concurrency import run_in_threadpool
+from starlette.types import Send, Scope, ASGIApp, Receive
+from starlette.middleware.base import RequestResponseEndpoint
 
-from .i18n import string
-from .theme import colors
-from .celune import Celune
-from .paths import project_root
-from .cevoice import default_loader
-from .typing.aliases import LogLevel
-from .audio.dsp import resample_audio
-from .constants import BASE_SR, APP_NAME
-from .ui import resources as ui_resources
-from .typing.common import JSONSerializable
-from . import webui, webactions, __version__
-from .exceptions import TaskSubscriptionClosed
-from .extensions.events import EventDispatcher
-from .speech import (
-    prepare_playback_audio,
-)
-from .utils import available, format_error_message
-from .typing.events import EventName, EventCallback
-from .typing.api import (
-    TaskStatus,
-    TaskEventName,
-    TaskCommandName,
-)
-from .webactions import (
-    _build_webui,
-    _webui_speak,
-    _webui_run_command,
-    _decode_uploaded_audio,
-    _voice_conversion_unavailable_response,
-)
 from .webui import (
     api_log,
     _flac_bytes,
@@ -114,6 +86,37 @@ from .webui import (
     _unsubscribe_from_speech_job,
     _subscribe_webui_timed_updates,
 )
+from .speech import (
+    prepare_playback_audio,
+)
+from .i18n import string
+from .theme import colors
+from .typing.api import (
+    TaskStatus,
+    TaskEventName,
+    TaskCommandName,
+)
+from .webactions import (
+    _build_webui,
+    _webui_speak,
+    _webui_run_command,
+    _decode_uploaded_audio,
+    _voice_conversion_unavailable_response,
+)
+from .celune import Celune
+from .paths import project_root
+from .cevoice import default_loader
+from .typing.aliases import LogLevel
+from .audio.dsp import resample_audio
+from .constants import BASE_SR, APP_NAME
+from .ui import resources as ui_resources
+from .typing.common import JSONSerializable
+from . import webui, webactions, __version__
+from .exceptions import TaskSubscriptionClosed
+from .extensions.events import EventDispatcher
+from .utils import available, format_error_message
+from .typing.events import EventName, EventCallback
+
 
 _receive_webui_timed_update = webui._receive_webui_timed_update
 _webui_audio_waveform_options = webui._webui_audio_waveform_options
@@ -128,7 +131,7 @@ CeluneUI = webui.CeluneUI
 UiTimedUpdate = webui.UiTimedUpdate
 
 api = FastAPI(title=f"{APP_NAME}API")
-WEBUI_AUTH_PATH = "/ui/authenticate"
+WEBUI_AUTH_PATH = "/ui/key"
 WEBUI_AUTH_COOKIE = "celune_webui_session"
 WEBUI_AUTH_SESSION_SECONDS = 8 * 60 * 60
 webui_auth_sessions_lock = threading.Lock()
@@ -378,16 +381,46 @@ WEBUI_HEAD = textwrap.dedent(
         window.__celuneLogAutoscrollObserver = observer;
       }
 
+      function updateConnectionToastState() {
+        const connectionLostTitle = "Connection Lost";
+        const connectionLostMessage = "Connection to the server was lost.";
+        let hasConnectionLost = false;
+        const errorToasts = document.querySelectorAll(
+          '[data-testid="toast-body"].error',
+        );
+
+        for (const toast of errorToasts) {
+          const title = toast.querySelector(
+            ".toast-title-row span",
+          )?.textContent?.trim();
+          const message = toast.querySelector(".toast-message-text")?.textContent;
+          const isConnectionLost = Boolean(
+            title === connectionLostTitle
+            && message?.trim().startsWith(connectionLostMessage),
+          );
+          toast.classList.toggle("celune-gradio-connection-lost", isConnectionLost);
+          hasConnectionLost ||= isConnectionLost;
+        }
+
+        document.body.classList.toggle(
+          "celune-gradio-connection-lost",
+          hasConnectionLost,
+        );
+      }
+
       const pageObserver = new MutationObserver(() => {
         installLogObserver();
+        updateConnectionToastState();
       });
 
       function startLogAutoscroll() {
         installLogObserver();
         pageObserver.observe(document.body, {
           childList: true,
+          characterData: true,
           subtree: true,
         });
+        updateConnectionToastState();
         window.setInterval(installLogObserver, 500);
       }
 
@@ -685,7 +718,14 @@ WEBUI_CSS = textwrap.dedent(
         background-color: var(--celune-primary, #cebaff) !important;
     }
 
-    .toast-body.error {
+    body.celune-gradio-connection-lost .toast-messages {
+        height: 100vh;
+        width: 100vw;
+        place-items: center;
+        justify-content: center;
+    }
+
+    .toast-body.error.celune-gradio-connection-lost {
         position: fixed;
         background: color-mix(
             in srgb,
@@ -696,22 +736,15 @@ WEBUI_CSS = textwrap.dedent(
         top: 0;
     }
 
-    .toast-header {
+    .toast-body.error.celune-gradio-connection-lost .toast-header {
         display: none !important;
     }
 
-    .toast-messages {
-        height: 100vh;
-        width: 100vw;
-        place-items: center;
-        justify-content: center;
-    }
-
-    .toast-message-text.error {
+    .toast-body.error.celune-gradio-connection-lost .toast-message-text.error {
         font-size: 0;
     }
 
-    .toast-message-text.error::before {
+    .toast-body.error.celune-gradio-connection-lost .toast-message-text.error::before {
         content: __CELUNE_CONNECTION_LOST_MESSAGE__;
         font-size: 16px;
         color: var(--celune-error, #f07178);
@@ -1057,12 +1090,7 @@ def _is_public_api_request(request: Request) -> bool:
     method = request.method.upper()
     path = request.url.path.rstrip("/") or "/"
 
-    return method == "GET" and path in {
-        "/",
-        "/favicon.ico",
-        "/v1",
-        "/v1/version",
-    }
+    return method == "GET" and path in {"/", "/favicon.ico"}
 
 
 def _rate_limit_key(request: Request) -> str:
@@ -1202,6 +1230,53 @@ def _rate_limit_response() -> JSONResponse:
     )
 
 
+@lru_cache(maxsize=1)
+def _webui_auth_font_css() -> str:
+    """Return the bundled Celune fonts as inline font-face rules."""
+    font_directory = project_root() / "resources" / "fonts"
+    font_data = {
+        "outfit_regular": base64.b64encode(
+            (font_directory / "outfit-400.ttf").read_bytes()
+        ).decode("ascii"),
+        "outfit_bold": base64.b64encode(
+            (font_directory / "outfit-700.ttf").read_bytes()
+        ).decode("ascii"),
+        "michroma": base64.b64encode(
+            (font_directory / "michroma-400.ttf").read_bytes()
+        ).decode("ascii"),
+    }
+    return (
+        textwrap.dedent(
+            """
+            @font-face {
+              font-family: Outfit;
+              font-style: normal;
+              font-weight: 400;
+              font-display: swap;
+              src: url("data:font/ttf;base64,__OUTFIT_REGULAR__") format("truetype");
+            }
+            @font-face {
+              font-family: Outfit;
+              font-style: normal;
+              font-weight: 700;
+              font-display: swap;
+              src: url("data:font/ttf;base64,__OUTFIT_BOLD__") format("truetype");
+            }
+            @font-face {
+              font-family: Michroma;
+              font-style: normal;
+              font-weight: 400;
+              font-display: swap;
+              src: url("data:font/ttf;base64,__MICHROMA__") format("truetype");
+            }
+            """
+        )
+        .replace("__OUTFIT_REGULAR__", font_data["outfit_regular"])
+        .replace("__OUTFIT_BOLD__", font_data["outfit_bold"])
+        .replace("__MICHROMA__", font_data["michroma"])
+    )
+
+
 def _webui_auth_page() -> str:
     """Build the standalone, blocking WebUI API-key prompt."""
     values = {
@@ -1224,12 +1299,12 @@ def _webui_auth_page() -> str:
           <meta name="color-scheme" content="dark">
           <title>__TITLE__</title>
           <style>
+            __FONT_FACES__
             :root {
               color-scheme: dark;
-              font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+              font-family: Outfit, ui-sans-serif, system-ui, sans-serif;
               background: #1d1826;
               color: #f7f3ff;
-              font-synthesis: none;
             }
             * { box-sizing: border-box; }
             body {
@@ -1256,7 +1331,14 @@ def _webui_auth_page() -> str:
               box-shadow: 0 24px 90px rgb(0 0 0 / 45%);
             }
             .eyebrow { color: #cebaff; font-size: .82rem; letter-spacing: .16em; }
-            h1 { margin: 12px 0; font-size: clamp(1.6rem, 5vw, 2.1rem); }
+            h1 {
+              margin: 12px 0;
+              font-family: Michroma, sans-serif;
+              font-size: clamp(1.15rem, 4vw, 1.55rem);
+              font-weight: 400;
+              letter-spacing: .015em;
+              -webkit-text-stroke: .015em currentColor;
+            }
             p { color: #d4cddd; line-height: 1.55; }
             label { display: block; margin: 24px 0 8px; font-size: .9rem; }
             input, button {
@@ -1309,7 +1391,7 @@ def _webui_auth_page() -> str:
               button.disabled = true;
               error.textContent = "";
               try {
-                const response = await fetch("/ui/authenticate", {
+                const response = await fetch("/ui/key", {
                   method: "POST",
                   headers: { "Content-Type": "application/json" },
                   body: JSON.stringify({ api_key: input.value }),
@@ -1331,6 +1413,7 @@ def _webui_auth_page() -> str:
         </html>
         """
         )
+        .replace("__FONT_FACES__", _webui_auth_font_css())
         .replace("__APP_NAME__", safe_values["app_name"])
         .replace("__TITLE__", safe_values["title"])
         .replace("__MESSAGE__", safe_values["message"])
@@ -1362,6 +1445,21 @@ async def api_security(
             return await call_next(request)
 
         path = request.url.path.rstrip("/")
+        if path == WEBUI_AUTH_PATH and request.method.upper() == "GET":
+            return HTMLResponse(
+                _webui_auth_page(),
+                headers={
+                    "Cache-Control": "no-store",
+                    "Content-Security-Policy": (
+                        "default-src 'none'; style-src 'unsafe-inline'; "
+                        "script-src 'unsafe-inline'; connect-src 'self'; font-src data:; "
+                        "base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
+                    ),
+                    "Referrer-Policy": "no-referrer",
+                    "X-Frame-Options": "DENY",
+                },
+            )
+
         if path == WEBUI_AUTH_PATH and request.method.upper() == "POST":
             if not _same_origin(request):
                 return JSONResponse(status_code=403, content={"error": "forbidden"})
@@ -1371,18 +1469,10 @@ async def api_security(
 
         if not _webui_authenticated(request):
             if request.method.upper() == "GET" and path == "/ui":
-                return HTMLResponse(
-                    _webui_auth_page(),
-                    headers={
-                        "Cache-Control": "no-store",
-                        "Content-Security-Policy": (
-                            "default-src 'none'; style-src 'unsafe-inline'; "
-                            "script-src 'unsafe-inline'; connect-src 'self'; "
-                            "base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
-                        ),
-                        "Referrer-Policy": "no-referrer",
-                        "X-Frame-Options": "DENY",
-                    },
+                return RedirectResponse(
+                    "/ui/key",
+                    status_code=307,
+                    headers={"Cache-Control": "no-store"},
                 )
             return _unauthorized_response()
 
@@ -2291,7 +2381,11 @@ def run_api(
     bind_host = resolve_api_host(token=auth_token, host=host)
 
     def _default_started(bhost: str, bport: int) -> None:
-        message = f"{APP_NAME} API has started on http://{bhost}:{bport}"
+        message = string(
+            "celune.api_started",
+            app_name=APP_NAME,
+            url=f"http://{bhost}:{bport}",
+        )
         if celune is not None:
             celune.log(message)
         else:
@@ -2325,6 +2419,8 @@ def start_api(
     token: Optional[str] = None,
     requests_per_minute: int = 60,
     startup_timeout: float = 5.0,
+    on_started: Optional[Callable[[str, int], None]] = None,
+    defer_startup_log: bool = False,
 ) -> threading.Thread:
     """Start the API in a background thread.
 
@@ -2335,6 +2431,8 @@ def start_api(
         token: Token required for API requests.
         requests_per_minute: Maximum requests allowed per client each minute.
         startup_timeout: Seconds to wait for startup confirmation.
+        on_started: Optional callback after the server socket begins listening.
+        defer_startup_log: Leave startup URL reporting to ``on_started``.
 
     Returns:
         threading.Thread: The daemon thread running the API server.
@@ -2344,7 +2442,16 @@ def start_api(
     failed = threading.Event()
 
     def _started(bind_host: str, bind_port: int) -> None:
-        celune.log(f"{APP_NAME} API has started on http://{bind_host}:{bind_port}")
+        if not defer_startup_log or on_started is None:
+            celune.log(
+                string(
+                    "celune.api_started",
+                    app_name=APP_NAME,
+                    url=f"http://{bind_host}:{bind_port}",
+                )
+            )
+        if on_started is not None:
+            on_started(bind_host, bind_port)
         started.set()
 
     def _runner() -> None:

@@ -2,10 +2,14 @@
 """Tests for Celune's browser-facing API UI."""
 
 import asyncio
+from typing import (
+    Optional,
+    cast,
+)
 from queue import Queue
-from typing import cast
 from unittest import mock
 from collections import deque
+from collections.abc import Callable
 from types import SimpleNamespace
 
 import numpy as np
@@ -17,7 +21,6 @@ from celune import api
 from celune.i18n import string
 from celune.celune import Celune
 from celune.pipeline import SpeechStreamQueue
-
 from .support import CeluneTestCase
 
 
@@ -165,11 +168,11 @@ class TestApiWebUI(CeluneTestCase):
         assert api.is_browser_ui_request(ui_request)
         assert not api.is_browser_ui_request(api_request)
 
-    def test_api_security_allows_public_read_only_routes_without_token(self) -> None:
-        """Verify safe read-only routes stay reachable even when API auth is enabled."""
+    def test_api_security_only_leaves_the_root_and_favicon_public(self) -> None:
+        """Verify status and version routes require a key with API auth enabled."""
         api.auth_token = "secret"
 
-        for path in ("/", "/favicon.ico", "/v1", "/v1/version"):
+        for path in ("/", "/favicon.ico"):
             response = asyncio.run(
                 api.api_security(
                     self._request(path),
@@ -178,12 +181,30 @@ class TestApiWebUI(CeluneTestCase):
             )
             assert response.status_code == 200, path
 
-    def test_api_security_shows_blocking_key_prompt_for_webui_root(self) -> None:
-        """Verify the protected WebUI root serves Celune's key prompt."""
+        for path in ("/v1", "/v1/version"):
+            response = asyncio.run(
+                api.api_security(self._request(path), self._passthrough_response)
+            )
+            assert response.status_code == 401, path
+
+    def test_unauthenticated_webui_root_redirects_to_the_key_prompt(self) -> None:
+        """Verify the protected WebUI root redirects to its standalone key page."""
         api.auth_token = "secret"
 
         response = asyncio.run(
             api.api_security(self._request("/ui"), self._passthrough_response)
+        )
+
+        assert response.status_code == 307
+        assert response.headers["location"] == "/ui/key"
+        assert response.headers["cache-control"] == "no-store"
+
+    def test_key_prompt_is_served_from_the_ui_key_path(self) -> None:
+        """Verify the standalone key prompt is served at the documented path."""
+        api.auth_token = "secret"
+
+        response = asyncio.run(
+            api.api_security(self._request("/ui/key"), self._passthrough_response)
         )
 
         assert response.status_code == 200
@@ -192,6 +213,12 @@ class TestApiWebUI(CeluneTestCase):
             string("api.webui_auth_title", app_name=api.APP_NAME)
             in bytes(response.body).decode()
         )
+        page = bytes(response.body).decode()
+        assert 'fetch("/ui/key"' in page
+        assert "font-family: Outfit" in page
+        assert "font-family: Michroma" in page
+        assert "data:font/ttf;base64," in page
+        assert "font-src data:;" in response.headers["content-security-policy"]
         assert response.headers["cache-control"] == "no-store"
 
     def test_api_security_rejects_webui_actions_without_a_session(self) -> None:
@@ -256,7 +283,7 @@ class TestApiWebUI(CeluneTestCase):
         response = asyncio.run(
             api.authenticate_webui(
                 api.WebUiAuthRequest(api_key="secret"),
-                self._request("/ui/authenticate", method="POST"),
+                self._request("/ui/key", method="POST"),
             )
         )
 
@@ -273,7 +300,7 @@ class TestApiWebUI(CeluneTestCase):
         response = asyncio.run(
             api.authenticate_webui(
                 api.WebUiAuthRequest(api_key="incorrect"),
-                self._request("/ui/authenticate", method="POST"),
+                self._request("/ui/key", method="POST"),
             )
         )
 
@@ -799,14 +826,24 @@ class TestApiWebUI(CeluneTestCase):
         assert "min-height: 0;" in api.WEBUI_CSS
         assert '.standard-player input[type="range"]' in api.WEBUI_CSS
         assert ".minimal-audio-player button:hover" in api.WEBUI_CSS
-        assert ".toast-body.error" in api.WEBUI_CSS
-        assert ".toast-message-text.error::before" in api.WEBUI_CSS
-        assert 'content: "Celune is currently unavailable.";' in api.WEBUI_CSS
         assert (
             "@media (max-width: 768px), (any-pointer: coarse), (hover: none)"
             in api.WEBUI_CSS
         )
         assert "margin-top: auto;" not in api.WEBUI_CSS
+
+    def test_webui_connection_toast_styles_only_gradio_disconnects(self) -> None:
+        """Verify only Gradio connection-loss toasts get Celune's unavailable style."""
+        assert '"Connection Lost"' in api.WEBUI_HEAD
+        assert '"Connection to the server was lost."' in api.WEBUI_HEAD
+        assert ".toast-body.error.celune-gradio-connection-lost" in api.WEBUI_CSS
+        assert (
+            ".toast-body.error.celune-gradio-connection-lost "
+            ".toast-message-text.error::before"
+        ) in api.WEBUI_CSS
+        assert 'content: "Celune is currently unavailable.";' in api.WEBUI_CSS
+        assert "\n.toast-message-text.error {" not in api.WEBUI_CSS
+        assert "body.celune-gradio-connection-lost .toast-messages" in api.WEBUI_CSS
 
     def test_webui_audio_waveform_options_follow_primary_color(self) -> None:
         """Verify Gradio audio waveform colors are driven by Celune's primary color."""
@@ -1379,3 +1416,34 @@ class TestApiWebUI(CeluneTestCase):
             "API port 2060 is already in use.",
             "warning",
         )
+
+    @staticmethod
+    def test_start_api_can_defer_its_startup_log_to_the_callback() -> None:
+        """Verify deferred startup logging lets callbacks report alternate URLs."""
+        celune = SimpleNamespace(log=mock.Mock(), dev=False)
+        on_started = mock.Mock()
+
+        def fake_run_api(
+            _celune: Optional[Celune],
+            host: Optional[str],
+            port: int,
+            token: Optional[str],
+            requests_per_minute: int,
+            on_started: Optional[Callable[[str, int], None]],
+        ) -> None:
+            assert token is None
+            assert requests_per_minute == 60
+            assert on_started is not None
+            on_started(host or "127.0.0.1", port)
+
+        with mock.patch("celune.api.run_api", side_effect=fake_run_api):
+            thread = api.start_api(
+                cast(Celune, celune),
+                host="127.0.0.1",
+                on_started=on_started,
+                defer_startup_log=True,
+            )
+            thread.join(timeout=1.0)
+
+        on_started.assert_called_once_with("127.0.0.1", 2060)
+        celune.log.assert_not_called()

@@ -208,16 +208,18 @@ Sleep is a lifecycle feature, not a process shutdown.
 ```yaml
 api:
   enabled: true
-  host: 127.0.0.1
+  access: same_machine
   port: 2060
   token: null
   rate_limit_per_minute: 60
 ```
 
-Keep the API on loopback when no authentication token is configured. A token
-may be supplied in YAML or through `CELUNE_API_TOKEN`; authenticated network
-binding is documented in [REST API](../API.md). The API extra is required for
-FastAPI/Gradio deployment.
+Celune creates and persists an API key automatically when `token` is `null` and
+`CELUNE_API_TOKEN` is unset.
+Use `access: same_machine` for localhost, `same_network` for LAN devices, or
+`everyone` for a temporary public Cloudflare tunnel. The API extra is required
+for FastAPI/Gradio deployment. See [REST API](../API.md) for key storage,
+network binding, tunnel shutdown, and browser authentication details.
 
 ## Persona and memory
 

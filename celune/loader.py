@@ -14,25 +14,6 @@ import torch
 from transformers.modeling_utils import PreTrainedModel
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 
-from .i18n import string, tagged_string
-from .backends.tts import CeluneBackend
-from .threads import run_in_daemon_thread
-from .persona.impl import persona_enabled
-from .dataclasses.events import ReadyEvent
-from .binding import install_class_functions
-from .constants import APP_NAME, NORMALIZER_MODEL_ID
-from .pipeline import (
-    saved_output_speech_seconds,
-)
-from .runtime import validate_runtime, log_runtime_banner
-from .typing.celune import Generative, NormalizerTokenizer
-from .modeling import normalizer_device, load_normalizer_components
-from .pipeline import (
-    force_stop_speech as force_stop_pipeline,
-)
-from .vram import vram_profile_fits, resolve_vram_preset, validate_vram_preset
-from .cevoice import default_loader, bundle_display_name, announce_default_bundle
-from .exceptions import WarmupError, BackendError, NotAvailableError, RuntimeCheckError
 from .utils import (
     discard,
     format_error,
@@ -41,6 +22,23 @@ from .utils import (
     is_port_usable,
     format_error_message,
 )
+from .pipeline import (
+    force_stop_speech as force_stop_pipeline,
+    saved_output_speech_seconds,
+)
+from .i18n import string, tagged_string
+from .backends.tts import CeluneBackend
+from .threads import run_in_daemon_thread
+from .persona.impl import persona_enabled
+from .dataclasses.events import ReadyEvent
+from .binding import install_class_functions
+from .constants import APP_NAME, NORMALIZER_MODEL_ID
+from .runtime import validate_runtime, log_runtime_banner
+from .typing.celune import Generative, NormalizerTokenizer
+from .modeling import normalizer_device, load_normalizer_components
+from .vram import vram_profile_fits, resolve_vram_preset, validate_vram_preset
+from .cevoice import default_loader, bundle_display_name, announce_default_bundle
+from .exceptions import WarmupError, BackendError, NotAvailableError, RuntimeCheckError
 
 __all__ = (
     "_start_configured_api",
@@ -275,7 +273,7 @@ def load(self, raise_on_error: bool = False, skip_runtime_check: bool = False) -
 
 def _start_configured_api(self) -> None:
     """Start the API from config without blocking Celune startup."""
-    enabled, host, port, token, requests_per_minute = self._api_settings()
+    enabled, host, port, token, requests_per_minute, access_level = self._api_settings()
     if not enabled or self._api_thread is not None:
         return
 
@@ -308,6 +306,25 @@ def _start_configured_api(self) -> None:
         self.log(string("celune.api_unavailable", app_name=APP_NAME), "warning")
         return
 
+    on_started = None
+    if access_level == "everyone":
+        from .cloudflared import CloudflaredQuickTunnel
+
+        def start_public_tunnel(api_host: str, api_port: int) -> None:
+            """Start the public tunnel after the local API socket is ready."""
+            tunnel = self._api_tunnel
+            if tunnel is None or not tunnel.start(api_port):
+                self.log(
+                    string(
+                        "celune.api_started",
+                        app_name=APP_NAME,
+                        url=f"http://{api_host}:{api_port}",
+                    )
+                )
+
+        self._api_tunnel = CloudflaredQuickTunnel(self.log)
+        on_started = start_public_tunnel
+
     try:
         self._api_thread = start_api(
             self,
@@ -315,6 +332,8 @@ def _start_configured_api(self) -> None:
             port=port,
             token=token,
             requests_per_minute=requests_per_minute,
+            on_started=on_started,
+            defer_startup_log=access_level == "everyone",
         )
     except Exception as error:
         self.log(

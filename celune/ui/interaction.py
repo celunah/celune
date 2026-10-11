@@ -6,21 +6,21 @@ from __future__ import annotations
 import os
 import re
 import sys
-import queue as queue_module
 import shlex
 import types
 import ctypes
 import asyncio
 import threading
 import contextlib
-from copy import deepcopy
 from uuid import uuid4
-from typing import TYPE_CHECKING, Optional, cast
+from copy import deepcopy
+import queue as queue_module
 from collections.abc import Callable, Iterator
+from typing import TYPE_CHECKING, Optional, cast
 
 from . import app as _app
-from ..binding import install_class_functions
 from ..constants import SIGTSTP, APP_NAME
+from ..binding import install_class_functions
 
 if TYPE_CHECKING:
     from ..vc_debug import VCDebugSaveResult
@@ -694,6 +694,7 @@ def _config_autocomplete(
         return (True, False)
 
     candidates: dict[tuple[str, ...], tuple[_app.JSONSerializable, ...]] = {
+        ("api", "access"): ("same_machine", "same_network", "everyone"),
         ("backend",): (
             None,
             "mini",

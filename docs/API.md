@@ -6,14 +6,40 @@ The API is enabled by default in `default_config.yaml`:
 ```yaml
 api:
   enabled: true
-  host: 127.0.0.1
+  access: same_machine
   port: 2060
   token: null
   rate_limit_per_minute: 60
 ```
 
-If no token is configured, Celune binds the API to `127.0.0.1`.
-If a token is configured through `api.token` or `CELUNE_API_TOKEN`, Celune can bind to `0.0.0.0`.
+## Access and authentication
+
+Celune generates a key automatically when `api.token` and
+`CELUNE_API_TOKEN` are unset. The generated key uses the `C-` prefix followed
+by 25 uppercase base-36 characters, and persists in Celune's app-data
+`api.key` file. The helper `celune.api_key.get_or_create_api_key()` returns
+that key to Python integrations; `celune.api_key.generate_api_key()` creates
+a new key without storing it.
+
+Choose `api.access` to control where Celune listens:
+
+| Value | Listener | Reach |
+| --- | --- | --- |
+| `same_machine` | `127.0.0.1` | Programs and browsers on this computer. |
+| `same_network` | `0.0.0.0` | Other devices that can reach this computer on the local network. |
+| `everyone` | `127.0.0.1` plus `cloudflared` | A temporary public Cloudflare Quick Tunnel. |
+
+The `same_network` mode may need a host-firewall rule for local devices. Router
+port forwarding is needed only if you also want to reach that listener from
+outside the local network. The `everyone` mode requires `cloudflared` on `PATH`;
+Celune stops the quick-tunnel process when it closes. If `cloudflared` is
+unavailable, Celune keeps the API on loopback and reports that the public
+tunnel did not start.
+
+When the API starts in `everyone` mode, Celune uses the Cloudflare URL in its
+startup message when `cloudflared` publishes it within ten seconds. If the
+tunnel fails or does not publish a URL by then, the startup message uses the
+loopback API URL; a public URL that appears later is logged separately.
 
 The API is an optional core extra. Install it with `uv sync --extra api` (or
 include `--all-extras` during Linux development). Keep a network-facing listener
@@ -27,6 +53,40 @@ Authorization: Bearer YOUR_TOKEN
 X-Celune-Token: YOUR_TOKEN
 ```
 
+## API key helpers
+
+`celune.api_key.generate_api_key() -> str` creates a new key using Python's
+cryptographic `secrets` generator. It takes no arguments and does not write to
+disk:
+
+```python
+from celune.api_key import generate_api_key
+
+new_key = generate_api_key()
+```
+
+`celune.api_key.get_or_create_api_key(configured_key: Optional[str] = None, path: Optional[Path] = None) -> str`
+uses a configured key first, then `CELUNE_API_TOKEN`, and otherwise loads or
+creates the persisted generated key. Its optional `path` argument selects a
+different key file:
+
+```python
+from celune.api_key import get_or_create_api_key
+
+api_key = get_or_create_api_key()
+```
+
+`celune.paths.api_key_path(create_parent: bool = False) -> Path` returns the
+default key-file path. Set `create_parent=True` when the caller will create or
+write the file:
+
+```python
+from celune.paths import api_key_path
+
+key_file = api_key_path()
+api_key = key_file.read_text(encoding="utf-8").strip()
+```
+
 ## Endpoints
 
 | Method | Path | Description |
@@ -34,7 +94,8 @@ X-Celune-Token: YOUR_TOKEN
 | `GET` | `/v1` | Return Celune's current status. |
 | `GET` | `/v1/version` | Return the running Celune version. |
 | `GET` | `/` | Redirect to the mounted WebUI at `/ui`. |
-| `POST` | `/ui/authenticate` | Exchange the configured API key for a browser WebUI session. |
+| `GET` | `/ui/key` | Show the WebUI API-key prompt. |
+| `POST` | `/ui/key` | Exchange the API key for a browser WebUI session. |
 | `POST` | `/v1/think` | Ask Celune to think through Persona and reply asynchronously through her normal speech pipeline. |
 | `POST` | `/v1/speak` | Queue speech and keep the HTTP request open until `audio/flac` is ready. |
 | `POST` | `/v1/speak/async` | Queue speech and return `202 Accepted` immediately with a job ID. |
@@ -45,9 +106,10 @@ X-Celune-Token: YOUR_TOKEN
 | `POST` | `/v1/sfx` | Upload and play a sound effect. |
 | `POST` | `/v1/convert` | Upload audio for voice conversion in VC mode. |
 
-`/v1` and `/v1/version` are JSON endpoints. The root redirect is useful when a
-browser opens the API port; programmatic clients should call the `/v1` paths
-directly. `/ui` is the Gradio WebUI mounted by the optional API runtime.
+`/v1` and `/v1/version` are authenticated JSON endpoints. The root redirect is
+useful when a browser opens the API port; programmatic clients should call the
+`/v1` paths directly. `/ui` is the Gradio WebUI mounted by the optional API
+runtime.
 
 ## Request and response shapes
 
@@ -326,18 +388,20 @@ the browser keeps a polling fallback for reconnects and standalone API hosts.
 Browser playback is returned as 16-bit PCM; Celune's engine continues to use
 normalized float32 audio internally.
 
-When an API key is configured, opening `/ui` displays a blocking Celune key
-prompt. Submitting the key sends it to `POST /ui/authenticate` in a JSON
-`api_key` field. A valid key creates an opaque, `HttpOnly`, `SameSite=Strict`
-cookie scoped to `/ui` for eight hours. The session is held in memory and ends
-when it expires, the API key changes, or Celune restarts. The API key is not
-stored in the URL or browser storage. The API security middleware checks the
-session on WebUI HTTP actions and WebSocket connections; requests without a
-valid API key or session receive `401`, even if the prompt is removed from the
-page with browser developer tools. The authentication request is rate limited,
-and browser writes and WebSocket connections must come from the same origin.
+Unauthenticated access to `/ui` redirects to `/ui/key`, which displays a
+blocking Celune key prompt. Submitting the key sends it to `POST /ui/key` in a
+JSON `api_key` field. A valid key creates an opaque, `HttpOnly`,
+`SameSite=Strict` cookie scoped to `/ui` for eight hours, then the browser
+returns to `/ui`. The session is held in memory and ends when it expires, the
+API key changes, or Celune restarts. The API key is not stored in the URL or
+browser storage. The API security middleware checks the session on WebUI HTTP
+actions and WebSocket connections; requests without a valid API key or session
+receive `401`, even if the prompt is removed from the page with browser
+developer tools. API routes, including read-only status and version routes,
+also require the API key. The authentication request is rate limited, and
+browser writes and WebSocket connections must come from the same origin.
 
-The browser submits this body to `POST /ui/authenticate`:
+The browser submits this body to `POST /ui/key`:
 
 ```json
 {"api_key":"YOUR_TOKEN"}
@@ -370,10 +434,19 @@ thread = start_api(celune, host="127.0.0.1", port=2060)
 ```
 
 `run_api()` blocks in Uvicorn. `start_api()` starts a daemon thread and waits
-for startup confirmation. The supporting calls `bind_celune()`,
+for startup confirmation; its optional `on_started(host, port)` callback runs
+when the socket starts listening. Startup logging reports the listener URL by
+default. Set `defer_startup_log=True` with an `on_started` callback when that
+callback reports a different public URL; without a callback, Celune still logs
+the listener URL. The supporting calls `bind_celune()`,
 `configure_api_security()`, `resolve_api_host()`, `audio_bytes()`, and
 `stream_headers()` are the existing integration hooks for custom hosts; use
 them instead of mounting a second FastAPI app around the engine. Core callback
 properties are single-registration slots: assigning the same callable to the
 same callback property again raises `ValueError`, so integrations should
 replace a handler only when they intentionally change the callback.
+
+## See also
+
+- [Configuration](user-guide/configuration.md) for the API access setting.
+- [Validation](development/validation.md) for the repository verification commands.
