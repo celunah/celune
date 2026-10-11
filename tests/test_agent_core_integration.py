@@ -16,11 +16,11 @@ from celune.constants import PERSONA_DEFAULT_MODEL_ID
 from celune.typing.persona import PersonaClientResponse
 from celune.typing.agent import NeedleToolCall, NeedleToolCatalog
 from celune.agent.tools import AgentStatusTool, production_agent_tool_schemas
-from celune.speech import deliver_persona_response as celune_deliver_persona_response
 from celune.agent.needle.impl import (
     NeedleHandler,
     NeedleToolSelector,
 )
+from celune.speech import deliver_persona_response as celune_deliver_persona_response
 from celune.dataclasses.events import (
     AgentTaskFinishedEvent,
     AgentTaskStateChangedEvent,

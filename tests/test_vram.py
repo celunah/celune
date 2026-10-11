@@ -6,11 +6,13 @@ from unittest import mock
 import torch
 from torch import nn
 
+from celune.typing.common import Config
+from celune.constants import VRAM_BUDGETS
+from celune.celune import _tts_quantization_enabled
 from celune.vram import (
     VRAM_PROFILES,
     VramProfile,
     backend_allowed,
-    _cuda_total_capacity_bytes,
     vram_profile_key,
     format_vram_bytes,
     vram_profile_fits,
@@ -19,13 +21,10 @@ from celune.vram import (
     validate_vram_preset,
     is_cuda_out_of_memory,
     component_memory_usage,
+    _cuda_total_capacity_bytes,
     _windows_shared_memory_capacity_bytes,
     _windows_shared_memory_headroom_bytes,
 )
-
-from celune.constants import VRAM_BUDGETS
-from celune.typing.common import Config
-from celune.celune import _tts_quantization_enabled
 
 from .support import CeluneTestCase
 

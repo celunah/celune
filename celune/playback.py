@@ -32,6 +32,20 @@ from .typing.aliases import AudioChunk, AudioChunks
 from .constants import BASE_SR, APP_NAME, PipelineStates
 from .paths import project_root, temp_data_dir, running_compiled
 from .binding import install_class_functions, install_module_functions
+from .dataclasses.pipeline import (
+    SpeechTiming,
+    PlaybackChunk,
+    PlaybackSourceDone,
+    CaptionPlaybackState,
+    CaptionPlaybackSegment,
+)
+from .typing.locks import (
+    ComponentLockName,
+    ComponentLockOwner,
+    ComponentBusyResult,
+    ComponentLockAcquisition,
+    ComponentLockRequirement,
+)
 from .pipelinecore import (
     _SFX_DUCK_GAIN,
     _LEGACY_BUFFER_SECONDS,
@@ -49,20 +63,6 @@ from .pipelinecore import (
     _SMART_BUFFER_MIN_SPEED_SAMPLE_SECONDS,
     _SMART_BUFFER_PROTECTED_PLAYBACK_SECONDS,
     _monotonic_time,
-)
-from .typing.locks import (
-    ComponentLockName,
-    ComponentLockOwner,
-    ComponentBusyResult,
-    ComponentLockAcquisition,
-    ComponentLockRequirement,
-)
-from .dataclasses.pipeline import (
-    SpeechTiming,
-    PlaybackChunk,
-    PlaybackSourceDone,
-    CaptionPlaybackState,
-    CaptionPlaybackSegment,
 )
 
 if TYPE_CHECKING:

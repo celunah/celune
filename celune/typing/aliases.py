@@ -12,8 +12,8 @@ from .common import JSONSerializable
 
 if TYPE_CHECKING:
     import numpy as np
-    import numpy.typing as npt
     import sounddevice as sd
+    import numpy.typing as npt
     from torch import Tensor
 
     # noinspection PyPep8Naming

@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from .app import CeluneUI
     from .headless import CeluneHeadlessUI
-    from .terminal import LogRedirect, SelectMenu, SelectMenuOption, SelectMenuWidget
+    from .terminal import SelectMenu, LogRedirect, SelectMenuOption, SelectMenuWidget
     from .protocols import CeluneBaseUI, CeluneTextualUI, CeluneHeadlessBaseUI
 
 __all__ = [

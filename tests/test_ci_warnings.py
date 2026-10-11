@@ -7,7 +7,6 @@ import contextlib
 import importlib.util
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT_PATH = ROOT / "scripts" / "ci_warnings.py"
 SPEC = importlib.util.spec_from_file_location("ci_warnings_script", SCRIPT_PATH)

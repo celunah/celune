@@ -8,8 +8,8 @@ import sys
 import json
 import subprocess
 from pathlib import Path
-from collections.abc import Sequence
 from typing import Optional, cast
+from collections.abc import Sequence
 
 _VERSION_PATTERN = re.compile(r'^version\s*=\s*"([^"]+)"$', re.MULTILINE)
 

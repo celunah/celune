@@ -15,6 +15,7 @@ from git.exc import GitError
 
 from celune import i18n, updater, namedays
 from celune.vcs import get_revision, is_git_checkout
+
 from .platform import LINUX_ONLY
 from .support import CeluneTestCase
 

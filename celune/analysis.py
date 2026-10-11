@@ -5,23 +5,24 @@ import pathlib
 import warnings
 import threading
 import contextlib
-from typing import Optional, cast
 from pathlib import Path
+from typing import Optional, cast
 from collections.abc import Callable
 
-import numpy as np
-import numpy.typing as npt
 import torch
 import librosa
 import matplotlib
-from matplotlib import colors as mcolors
+import numpy as np
+import numpy.typing as npt
 from matplotlib import pyplot as plt
-from matplotlib import rcParams, font_manager
+from matplotlib import colors as mcolors
 from matplotlib.projections import PolarAxes
+from matplotlib import rcParams, font_manager
 
 from .i18n import string
-from .paths import huggingface_progress
 from .utils import run_async
+from .typing.aliases import AudioChunk
+from .paths import huggingface_progress
 from .compat import torchao_compatibility
 from .cevoice import ManifestValue, default_loader
 from .constants import (
@@ -29,7 +30,6 @@ from .constants import (
     VOICE_EMBEDDING_MODEL,
     remote_code_model_revision,
 )
-from .typing.aliases import AudioChunk
 from .typing.analysis import (
     TextConfig,
     VoiceMatch,

@@ -1,11 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for Celune's localization database contract."""
 
+import re
 import ast
 import json
-import re
 from pathlib import Path
-
 
 _LANGUAGE_FILE = Path("celune/lang/en.json")
 _EXCEPTION_PLACEHOLDER = re.compile(r"\{(?:error|detail|reason)\}")

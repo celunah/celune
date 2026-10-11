@@ -9,13 +9,14 @@ from tempfile import TemporaryDirectory
 import torch
 import pytest
 from safetensors.torch import save_file
+
+from celune.typing.agent import AgentTool
+from celune.agent.needle.models import NeedleRoPE, NeedleModel, NeedleConfig
 from celune.agent.needle.impl import (
     NeedleHandler,
     _parse_selection,
     convert_needle_safetensors,
 )
-from celune.typing.agent import AgentTool
-from celune.agent.needle.models import NeedleModel, NeedleConfig, NeedleRoPE
 
 
 class TestNeedleModel:  # pylint: disable=attribute-defined-outside-init

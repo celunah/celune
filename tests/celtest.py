@@ -29,16 +29,16 @@ is absent. The plugin has no dependency on the host project's package.
 
 from __future__ import annotations
 
-import ast
 import re
+import ast
 import sys
 import time
 import tomllib
 import warnings
 from pathlib import Path
-from dataclasses import dataclass, field
-from collections.abc import Callable, Generator, Mapping
-from typing import Optional, ParamSpec, Protocol, TypeVar, cast
+from dataclasses import field, dataclass
+from collections.abc import Mapping, Callable, Generator
+from typing import TypeVar, Optional, Protocol, ParamSpec, cast
 
 import pytest
 
