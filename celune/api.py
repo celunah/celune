@@ -7,17 +7,18 @@ import json
 import time
 import uuid
 import errno
+import base64
 import socket
 import asyncio
-import base64
 import inspect
 import secrets
 import binascii
 import datetime
-import ipaddress
 import tempfile
+import ipaddress
 import threading
 import contextlib
+
 from typing import (
     Union,
     Literal,
@@ -33,8 +34,8 @@ from collections import abc, deque, defaultdict
 
 import fastapi
 import uvicorn
-import gradio as gr
 import numpy as np
+import gradio as gr
 from pydantic import Field, BaseModel
 from starlette import types, concurrency, datastructures
 from starlette.middleware import base as middleware_base
@@ -749,13 +750,11 @@ def _client_address(connection: Union[Request, WebSocket]) -> Optional[str]:
     return peer_address.compressed
 
 
-def _rate_limit_key(connection: Union[Request, WebSocket]) -> str:
-    """Return a request-type-specific client key used for rate limiting."""
-    address = _client_address(connection) or "unknown"
-    path = connection.url.path.rstrip("/")
+def _rate_limit_key(request: Request) -> str:
+    """Return the client key used for HTTP request rate limiting."""
+    address = _client_address(request) or "unknown"
+    path = request.url.path.rstrip("/")
     if path == "/ui" or path.startswith("/ui/"):
-        if isinstance(connection, WebSocket):
-            return f"webui-ws:{address}"
         return f"webui:{address}"
     return address
 
@@ -1239,11 +1238,6 @@ class WebUiWebSocketSecurityMiddleware:
             websocket = WebSocket(scope, receive, send)
             if not _webui_authenticated(websocket) or not _same_origin(websocket):
                 await send({"type": "websocket.close", "code": 4401})
-                return
-            if websocket.client is not None and _rate_limited_client(
-                _rate_limit_key(websocket)
-            ):
-                await send({"type": "websocket.close", "code": 4429})
                 return
         await self.app(scope, receive, send)
 

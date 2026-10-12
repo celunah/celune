@@ -400,13 +400,15 @@ or:
 X-Celune-Token: YOUR_API_KEY
 ```
 
-The configured per-minute rate limit applies independently to API calls, WebUI
-actions, and WebUI WebSocket connections. WebSocket reconnects do not consume
-the WebUI action budget. Read-only Gradio background refresh callbacks do not
-count against the action limit. Failed validation, busy-state, missing-job, and
-backend errors are returned as JSON with an HTTP status instead of exposing raw
-internal tracebacks. Async jobs are retained in memory for 15 minutes and are
-not persisted across a restart.
+The configured per-minute rate limit applies independently to API calls and
+WebUI HTTP actions. WebSocket connection and reconnection events do not count
+toward either request limit; authenticated WebSocket connections still require
+a valid session or API key and a same-origin request. Read-only Gradio
+background refresh callbacks do not count against the WebUI action limit.
+Failed validation, busy-state, missing-job, and backend errors are returned as
+JSON with an HTTP status instead of exposing raw internal tracebacks. Async
+jobs are retained in memory for 15 minutes and are not persisted across a
+restart.
 
 ## WebUI behavior
 
