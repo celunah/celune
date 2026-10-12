@@ -258,3 +258,11 @@ class InvalidCheckpoint(ModelContractError):
 
 class _EmptyClassifierOutput(ValueError):
     """Identify a response that contains an empty structured-output field."""
+
+
+class _EspeakExecutableNotFound(FileNotFoundError):
+    """Identify eSpeak NG launch failures for a concise user warning."""
+
+
+class _OnnxRuntimeNotFound(ImportError):
+    """Identify a missing ONNX Runtime install for a concise user warning."""

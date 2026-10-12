@@ -18,15 +18,16 @@ from typing import TYPE_CHECKING, Optional, Protocol, cast
 import numpy as np
 from iso639.exceptions import InvalidLanguageValue, DeprecatedLanguageValue
 
-from .i18n import string
 from .constants import BASE_SR
-from .utils import format_error_message
+from .i18n import string
 from .audio.resampling import resample_audio
-from .typing.pipeline import SpeechStreamQueue
-from .typing.aliases import LogLevel, AudioChunks
+from .utils import format_error_message
 from .registry.consent import require_model_consent
 from .registry.other import CAPTION_ALIGNMENT_MODEL_ID
+from .typing.aliases import LogLevel, AudioChunks
+from .typing.pipeline import SpeechStreamQueue
 from .dataclasses.pipeline import SpeechTiming, CaptionAlignmentSection
+from .exceptions import _EspeakExecutableNotFound, _OnnxRuntimeNotFound
 
 if TYPE_CHECKING:
     from .celune import Celune
@@ -69,14 +70,6 @@ class _InferenceSession(Protocol):
         input_feed: Mapping[str, np.ndarray],
     ) -> Sequence[np.ndarray]:
         """Evaluate the ONNX graph."""
-
-
-class _EspeakExecutableNotFound(FileNotFoundError):
-    """Identify eSpeak NG launch failures for a concise user warning."""
-
-
-class _OnnxRuntimeNotFound(ImportError):
-    """Identify a missing ONNX Runtime install for a concise user warning."""
 
 
 class CaptionAligner:
