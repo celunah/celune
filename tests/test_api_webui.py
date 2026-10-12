@@ -1,20 +1,22 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for Celune's browser-facing API UI."""
 
+import re
 import asyncio
-from queue import Queue
-from types import SimpleNamespace
 from typing import (
     Optional,
     cast,
 )
+from queue import Queue
 from unittest import mock
+from types import SimpleNamespace
 from collections import abc, deque
 
 import numpy as np
-from starlette.types import Send, Scope, Message, Receive
+from fastapi.testclient import TestClient
 from starlette.requests import Request
 from starlette.responses import Response
+from starlette.types import Send, Scope, Message, Receive
 
 from celune import api
 from celune.i18n import string
@@ -934,6 +936,50 @@ class TestApiWebUI(CeluneTestCase):
         assert "function showConsent(model)" in script
         assert "style.textContent" not in script
         assert "/ui/assets/fonts/outfit-400.ttf" in stylesheet
+
+    def test_celune_assets_are_served_before_the_gradio_mount(self) -> None:
+        """Verify recognized Celune assets remain available to the browser UI."""
+        response = asyncio.run(
+            api.api_security(
+                self._request("/ui/assets/webui.js"),
+                self._passthrough_response,
+            )
+        )
+
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("text/javascript")
+        assert bytes(response.body).replace(b"\r\n", b"\n").decode() == (
+            webui.read_webui_asset("webui.js").replace("\r\n", "\n")
+        )
+
+    def test_gradio_hashed_assets_reach_the_mounted_application(self) -> None:
+        """Verify Gradio's hashed assets are not captured by Celune's asset handler."""
+        with TestClient(api.api) as client:
+            page = client.get("/ui/")
+            assert page.status_code == 200
+
+            gradio_assets = re.findall(
+                r"""(?:src|href)=["']((?:\./|/ui/)assets/index-[^"']+\.(?:css|js))["']""",
+                page.text,
+            )
+            assert {path.rsplit(".", 1)[-1] for path in gradio_assets} >= {
+                "css",
+                "js",
+            }
+
+            asset_paths = [
+                f"/ui/{path.removeprefix('./')}" if path.startswith("./") else path
+                for path in gradio_assets
+            ]
+            responses = [client.get(path) for path in asset_paths]
+
+        assert all(response.status_code == 200 for response in responses)
+        assert all(
+            response.headers["content-type"].startswith(
+                ("text/css", "text/javascript", "application/javascript")
+            )
+            for response in responses
+        )
 
     def test_webui_audio_waveform_options_follow_primary_color(self) -> None:
         """Verify Gradio audio waveform colors are driven by Celune's primary color."""

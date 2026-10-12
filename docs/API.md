@@ -416,6 +416,11 @@ the browser keeps a polling fallback for reconnects and standalone API hosts.
 Browser playback is returned as 16-bit PCM; Celune's engine continues to use
 normalized float32 audio internally.
 
+Celune serves its page scripts, styles, and bundled fonts under `/ui/assets/`.
+Gradio serves its own hashed JavaScript and CSS bundles from that same path
+through the mounted application. A reverse proxy or Cloudflare Tunnel must
+forward `/ui/assets/` requests to Celune without rewriting their paths.
+
 Unauthenticated access to `/ui` redirects to `/ui/key`, which displays a
 blocking API-key prompt. Submitting the key sends it to `POST /ui/key` in a
 JSON `api_key` field. A valid key creates an opaque, `HttpOnly`,

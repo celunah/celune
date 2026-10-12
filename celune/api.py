@@ -953,6 +953,13 @@ async def api_security(
         return await call_next(request)
 
     if is_browser_ui_request(request):
+        path = request.url.path.rstrip("/")
+        if path.startswith("/ui/assets/") and request.method.upper() == "GET":
+            asset_name = path.removeprefix("/ui/assets/")
+            asset_response = _webui_asset_response(asset_name)
+            if asset_response is not None:
+                return asset_response
+
         if auth_token is None:
             model_request_token = enter_api_model_request()
             try:
@@ -960,7 +967,6 @@ async def api_security(
             finally:
                 exit_api_model_request(model_request_token)
 
-        path = request.url.path.rstrip("/")
         if path.startswith("/ui/assets/") and request.method.upper() == "GET":
             return await call_next(request)
         if path == WEBUI_AUTH_PATH and request.method.upper() == "GET":
@@ -1519,9 +1525,8 @@ def models() -> dict[str, object]:
     }
 
 
-@api.get("/ui/assets/{asset_name:path}", include_in_schema=False)
-def webui_asset(asset_name: str) -> Response:
-    """Serve a fixed WebUI asset or bundled font file."""
+def _webui_asset_response(asset_name: str) -> Optional[Response]:
+    """Build a response for a Celune-owned WebUI asset, if it is recognized."""
     if asset_name == "theme.css":
         return Response(
             content=webui_theme_style,
@@ -1530,7 +1535,7 @@ def webui_asset(asset_name: str) -> Response:
         )
     asset = webui.webui_asset_response_data(asset_name)
     if asset is None:
-        return Response(status_code=404)
+        return None
     content, media_type = asset
     return Response(
         content=content,
