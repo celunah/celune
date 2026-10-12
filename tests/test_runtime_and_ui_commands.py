@@ -738,7 +738,7 @@ class TestUICommand(CeluneTestCase):
         self.ui._vc_debug_capture = None
         self.ui._stop_vc_debug_capture = mock.Mock(return_value=True)
 
-        with mock.patch("celune.vc_debug.VCDebugCapture", return_value=capture):
+        with mock.patch("celune.vc.VCDebugCapture", return_value=capture):
             self._process_command("vcdebug", ["on"])
 
         assert self.ui._vc_debug_capture is capture

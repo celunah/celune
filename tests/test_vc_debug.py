@@ -9,7 +9,7 @@ from pathlib import Path
 import numpy as np
 import soundfile as sf
 
-from celune.vc_debug import VCDebugCapture, VCDebugSaveResult
+from celune.vc import VCDebugCapture, VCDebugSaveResult
 
 
 def test_vc_debug_capture_exports_original_levels_as_48k_pcm24_flac(
@@ -17,7 +17,7 @@ def test_vc_debug_capture_exports_original_levels_as_48k_pcm24_flac(
     monkeypatch,
 ) -> None:
     """Keep raw input and converted levels in separate diagnostic files."""
-    monkeypatch.setattr("celune.vc_debug.app_data_dir", lambda **_kwargs: tmp_path)
+    monkeypatch.setattr("celune.vc.app_data_dir", lambda **_kwargs: tmp_path)
     capture = VCDebugCapture()
     microphone_time = np.arange(2400, dtype=np.float32) / 24000
     converted_time = np.arange(2205, dtype=np.float32) / 22050
@@ -83,7 +83,7 @@ def test_vc_debug_stop_waits_for_inflight_converted_audio(
     monkeypatch,
 ) -> None:
     """Include the last conversion result when capture is stopped mid-call."""
-    monkeypatch.setattr("celune.vc_debug.app_data_dir", lambda **_kwargs: tmp_path)
+    monkeypatch.setattr("celune.vc.app_data_dir", lambda **_kwargs: tmp_path)
     capture = VCDebugCapture()
     results: list[VCDebugSaveResult] = []
     completed = threading.Event()
@@ -109,7 +109,7 @@ def test_vc_debug_capture_without_audio_removes_empty_directory(
     monkeypatch,
 ) -> None:
     """Avoid leaving an empty temporary directory when no mic data arrived."""
-    monkeypatch.setattr("celune.vc_debug.app_data_dir", lambda **_kwargs: tmp_path)
+    monkeypatch.setattr("celune.vc.app_data_dir", lambda **_kwargs: tmp_path)
     capture = VCDebugCapture()
     result: list[VCDebugSaveResult] = []
     completed = threading.Event()
@@ -131,7 +131,7 @@ def test_vc_debug_shutdown_can_discard_a_stalled_conversion(
     monkeypatch,
 ) -> None:
     """Let application shutdown finish even if conversion never returns."""
-    monkeypatch.setattr("celune.vc_debug.app_data_dir", lambda **_kwargs: tmp_path)
+    monkeypatch.setattr("celune.vc.app_data_dir", lambda **_kwargs: tmp_path)
     capture = VCDebugCapture()
     results: list[VCDebugSaveResult] = []
     completed = threading.Event()

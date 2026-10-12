@@ -17,8 +17,8 @@ api:
 Celune generates a key automatically when `api.token` and
 `CELUNE_API_TOKEN` are unset. The generated key uses the `C-` prefix followed
 by 25 uppercase base-36 characters, and persists in Celune's app-data
-`api.key` file. The helper `celune.api_key.get_or_create_api_key()` returns
-that key to Python integrations; `celune.api_key.generate_api_key()` creates
+`api.key` file. The helper `celune.api.get_or_create_api_key()` returns
+that key to Python integrations; `celune.api.generate_api_key()` creates
 a new key without storing it.
 
 Choose `api.access` to control where Celune listens:
@@ -55,23 +55,23 @@ X-Celune-Token: YOUR_API_KEY
 
 ## API key helpers
 
-`celune.api_key.generate_api_key() -> str` creates a new key using Python's
+`celune.api.generate_api_key() -> str` creates a new key using Python's
 cryptographic `secrets` generator. It takes no arguments and does not write to
 disk:
 
 ```python
-from celune.api_key import generate_api_key
+from celune.api import generate_api_key
 
 new_key = generate_api_key()
 ```
 
-`celune.api_key.get_or_create_api_key(configured_key: Optional[str] = None, path: Optional[Path] = None) -> str`
+`celune.api.get_or_create_api_key(configured_key: Optional[str] = None, path: Optional[Path] = None) -> str`
 uses a configured key first, then `CELUNE_API_TOKEN`, and otherwise loads or
 creates the persisted generated key. Its optional `path` argument selects a
 different key file:
 
 ```python
-from celune.api_key import get_or_create_api_key
+from celune.api import get_or_create_api_key
 
 api_key = get_or_create_api_key()
 ```

@@ -70,7 +70,7 @@ Repository = "https://github.com/celunah/celune"
 Issues = "https://github.com/celunah/celune/issues"
 
 [tool.setuptools.package-data]
-celune = ["lang/*.json", "webui_assets/*"]
+celune = ["lang/*.json", "assets/*"]
 
 [tool.setuptools.data-files]
 voices = ["voices/*.cevoice"]
