@@ -3,9 +3,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Literal, Optional
-
+from dataclasses import dataclass
 
 ModelCategory = Literal["tts", "llm", "asr", "other"]
 
@@ -44,6 +43,17 @@ class ModelMetadata:
             or self.terms_review_required
         )
 
+    @property
+    def commercial_use_allowed(self) -> bool:
+        """Return whether reviewed metadata confirms commercial use is allowed."""
+        return (
+            self.license_id is not None
+            and self.license_url is not None
+            and self.non_commercial is False
+            and self.research_only is False
+            and not self.terms_review_required
+        )
+
     def to_dict(self, *, consented: Optional[bool] = None) -> dict[str, object]:
         """Return the public API representation of this model."""
         result: dict[str, object] = {
@@ -55,6 +65,7 @@ class ModelMetadata:
             "license_url": self.license_url,
             "non_commercial": self.non_commercial,
             "research_only": self.research_only,
+            "commercial_use_allowed": self.commercial_use_allowed,
             "repository_url": self.repository_url,
             "roles": list(self.roles),
             "tier": self.tier,

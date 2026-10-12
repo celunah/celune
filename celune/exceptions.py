@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Celune exception classes."""
 
+from typing import TYPE_CHECKING, Union, Optional, Protocol
 from pathlib import Path
-from typing import Union, Optional, Protocol, TYPE_CHECKING
 
 from .typing.common import JSON
 
@@ -203,6 +203,21 @@ class ModelConsentRequired(RuntimeError, CeluneError):
 
 class ModelConsentDeclined(ModelConsentRequired):
     """A model load was rejected because the user declined its terms."""
+
+
+class ModelCommercialUseRestricted(PermissionError, CeluneError):
+    """A model's reviewed terms do not permit or confirm commercial use."""
+
+    def __init__(self, metadata: "ModelMetadata") -> None:
+        from .i18n import string
+
+        self.metadata = metadata
+        super().__init__(
+            string(
+                "registry.commercial_use_blocked",
+                model_name=metadata.display_name,
+            )
+        )
 
 
 class _CheckpointDType(Protocol):

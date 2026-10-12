@@ -14,6 +14,7 @@ before the interface opens. `celune config view` prints the active file and
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `backend` | `null` | TTS or VC backend name. `null` lets Celune choose its normal backend. |
+| `commercial` | `false` | Declare commercial use. Celune then allows only models whose reviewed terms confirm commercial use. |
 | `quantize` | `true` | Try contract-approved TTS weight-only quantization: INT8 on Ampere and FP8 on sm89 or newer, with BF16 recovery. LuxTTS is excluded. |
 | `quantize_kv_cache` | `true` | Store supported Persona, Qwen3, FireRedTTS3, and VoxCPM2 cache prefixes in INT8 on Ampere or FP8 on `sm89+`; use `false` to keep their native cache dtype. |
 | `voice_bundle` | `default` | CEVOICE/CECHAR name or path. |
@@ -34,6 +35,11 @@ before the interface opens. `celune config view` prints the active file and
 `backend`, `voice_bundle`, and `mode` are the three settings that most directly
 change runtime behavior. Backend-specific settings should stay in their
 documented namespace instead of being duplicated at the top level.
+
+Set `commercial: true` when Celune is used commercially. Models marked
+non-commercial or research-only, models with unknown license restrictions, and
+models whose terms still need review are blocked before download or load. With
+`commercial: false`, Celune uses the normal model license consent flow.
 
 ### VRAM budgets and profiles
 

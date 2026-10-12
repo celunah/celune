@@ -57,6 +57,7 @@ from .exceptions import (
     ModelConsentDeclined,
     ModelConsentRequired,
     TaskSubscriptionClosed,
+    ModelCommercialUseRestricted,
 )
 from .typing.api import (
     TaskStatus,
@@ -110,6 +111,7 @@ from .registry.consent import (
     record_model_consent,
     exit_api_model_request,
     pending_model_consents,
+    commercial_mode_enabled,
     enter_api_model_request,
     model_metadata_for_revision,
 )
@@ -254,6 +256,24 @@ async def model_consent_required_response(
         status_code=428,
         content={
             "error": "model_consent_required",
+            "model": metadata.to_dict(consented=consent_status(metadata)),
+        },
+    )
+
+
+@api.exception_handler(ModelCommercialUseRestricted)
+async def model_commercial_use_restricted_response(
+    request: Request,
+    error: ModelCommercialUseRestricted,
+) -> JSONResponse:
+    """Reject a model operation that conflicts with commercial-use mode."""
+    del request
+    metadata = error.metadata
+    return JSONResponse(
+        status_code=403,
+        content={
+            "error": "commercial_model_restricted",
+            "message": str(error),
             "model": metadata.to_dict(consented=consent_status(metadata)),
         },
     )
@@ -1488,13 +1508,14 @@ def models() -> dict[str, object]:
         }
     )
     return {
+        "commercial_mode": commercial_mode_enabled(),
         "models": [
             _model_consent_document(metadata)
             for metadata in sorted(
                 catalog.values(),
                 key=lambda item: (item.category, item.model_id),
             )
-        ]
+        ],
     }
 
 

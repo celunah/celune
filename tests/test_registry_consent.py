@@ -4,28 +4,33 @@
 import re
 import json
 import asyncio
+from types import SimpleNamespace
 from typing import cast
 from pathlib import Path
 from unittest import mock
-from types import SimpleNamespace
 
 from starlette.requests import Request
 
 from celune import api
 from celune.i18n import string
+from celune.registry import ALL_MODELS, get_model_metadata
+from celune.exceptions import (
+    ModelConsentDeclined,
+    ModelConsentRequired,
+    ModelCommercialUseRestricted,
+)
 from celune.backends.vc import seedvc
+from celune.agent.needle import checkpoints as needle_checkpoints
+from celune.cedts.remote import RemoteBackendProxy
+from celune.registry.other import OTHER_MODELS
 from celune.registry.consent import (
     ModelConsentStore,
     consent_prompt_text,
+    set_commercial_mode,
     record_model_consent,
     require_model_consent,
     resolve_model_metadata,
 )
-from celune.registry.other import OTHER_MODELS
-from celune.cedts.remote import RemoteBackendProxy
-from celune.registry import ALL_MODELS, get_model_metadata
-from celune.agent.needle import checkpoints as needle_checkpoints
-from celune.exceptions import ModelConsentDeclined, ModelConsentRequired
 
 
 def test_catalogs_have_unique_pinned_models_and_explicit_unknown_terms() -> None:
@@ -49,6 +54,55 @@ def test_catalogs_have_unique_pinned_models_and_explicit_unknown_terms() -> None
     assert unknown.non_commercial is None
     assert unknown.research_only is None
     assert unknown.requires_consent
+
+
+def test_commercial_mode_requires_reviewed_commercial_terms() -> None:
+    """Allow clear catalog entries and block restricted or unknown terms."""
+    commercially_allowed = next(
+        metadata
+        for metadata in ALL_MODELS
+        if metadata.commercial_use_allowed and not metadata.requires_consent
+    )
+    research_only = get_model_metadata("FireRedTeam/FireRedTTS3")
+    unknown = resolve_model_metadata("custom/model", "c" * 40)
+    assert research_only is not None
+
+    set_commercial_mode(True)
+    try:
+        assert (
+            require_model_consent(commercially_allowed.model_id) == commercially_allowed
+        )
+        for metadata in (research_only, unknown):
+            with mock.patch(
+                "celune.registry.consent._STORE.has_acknowledged",
+                return_value=True,
+            ):
+                try:
+                    require_model_consent(metadata.model_id, metadata.revision)
+                except ModelCommercialUseRestricted as error:
+                    assert error.metadata == metadata
+                else:
+                    raise AssertionError(
+                        "commercial mode allowed model terms that were not cleared"
+                    )
+        with mock.patch(
+            "celune.registry.consent._STORE.set_acknowledged"
+        ) as save_acknowledgement:
+            try:
+                record_model_consent(
+                    research_only.model_id,
+                    research_only.revision,
+                    True,
+                )
+            except ModelCommercialUseRestricted:
+                pass
+            else:
+                raise AssertionError(
+                    "commercially restricted model consent was recorded"
+                )
+            save_acknowledgement.assert_not_called()
+    finally:
+        set_commercial_mode(False)
 
 
 def test_consent_store_is_bound_to_one_exact_revision(tmp_path: Path) -> None:
@@ -235,6 +289,32 @@ def test_missing_consent_uses_http_428_and_decline_uses_http_403() -> None:
     assert required_payload["model"]["model_id"] == metadata.model_id
 
 
+def test_commercial_policy_uses_http_403() -> None:
+    """Verify a restricted model returns an actionable commercial-mode error."""
+    metadata = get_model_metadata("FireRedTeam/FireRedTTS3")
+    assert metadata is not None
+    set_commercial_mode(True)
+    try:
+        model_listing = api.models()
+        response = asyncio.run(
+            api.model_commercial_use_restricted_response(
+                cast(Request, None),
+                ModelCommercialUseRestricted(metadata),
+            )
+        )
+    finally:
+        set_commercial_mode(False)
+
+    payload = json.loads(bytes(response.body).decode("utf-8"))
+    assert response.status_code == 403
+    assert payload["error"] == "commercial_model_restricted"
+    assert payload["model"]["commercial_use_allowed"] is False
+    assert model_listing["commercial_mode"] is True
+    listed_models = cast(list[dict[str, object]], model_listing["models"])
+    restricted_models = {cast(str, model["model_id"]): model for model in listed_models}
+    assert restricted_models[metadata.model_id]["commercial_use_allowed"] is False
+
+
 def test_declining_terms_does_not_create_an_acknowledgement(tmp_path: Path) -> None:
     """Verify a declined decision leaves later model operations blocked."""
     metadata = get_model_metadata("Plachta/ASTRAL-quantization")
@@ -275,5 +355,25 @@ def test_worker_proxy_does_not_load_before_consent(tmp_path: Path) -> None:
             pass
         else:
             raise AssertionError("worker-backed load proceeded without consent")
+
+    proxy._request.assert_not_called()
+
+
+def test_worker_proxy_blocks_commercially_restricted_models() -> None:
+    """Verify commercial policy is enforced before worker model-load IPC."""
+    proxy = object.__new__(RemoteBackendProxy)
+    proxy._request = mock.Mock()
+    metadata = get_model_metadata("FireRedTeam/FireRedTTS3")
+    assert metadata is not None
+    set_commercial_mode(True)
+    try:
+        try:
+            proxy.load_model(metadata.model_id)
+        except ModelCommercialUseRestricted:
+            pass
+        else:
+            raise AssertionError("commercially restricted worker model was loaded")
+    finally:
+        set_commercial_mode(False)
 
     proxy._request.assert_not_called()
