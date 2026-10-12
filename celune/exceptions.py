@@ -1,10 +1,13 @@
 # SPDX-License-Identifier: Apache-2.0
 """Celune exception classes."""
 
-from typing import Union, Optional, Protocol
 from pathlib import Path
+from typing import Union, Optional, Protocol, TYPE_CHECKING
 
 from .typing.common import JSON
+
+if TYPE_CHECKING:
+    from .registry.types import ModelMetadata
 
 
 class CeluneError(Exception):
@@ -188,6 +191,18 @@ class NeedleSelectionError(ValueError, CeluneError):
 
 class ModelContractError(RuntimeError, CeluneError):
     """A TTS model artifact or loaded state violates its backend contract."""
+
+
+class ModelConsentRequired(RuntimeError, CeluneError):
+    """A model cannot be loaded until the user acknowledges its terms."""
+
+    def __init__(self, metadata: "ModelMetadata") -> None:
+        self.metadata = metadata
+        super().__init__("model license consent is required")
+
+
+class ModelConsentDeclined(ModelConsentRequired):
+    """A model load was rejected because the user declined its terms."""
 
 
 class _CheckpointDType(Protocol):

@@ -1,0 +1,26 @@
+
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>__TITLE__</title>
+  <link rel="stylesheet" href="/ui/assets/api_key.css">
+</head>
+<body>
+  <main>
+    <section role="dialog" aria-modal="true" aria-labelledby="title">
+      <h1 id="title">__TITLE__</h1>
+      <p>__MESSAGE__</p>
+      <form id="key-form" data-invalid-message="__INVALID__" data-error-message="__ERROR__">
+        <label for="api-key">__PLACEHOLDER__</label>
+        <input id="api-key" name="api_key" type="password" autocomplete="current-password" required autofocus>
+        <button id="submit" type="submit">__SUBMIT__</button>
+        <p id="error" role="status" aria-live="polite"></p>
+      </form>
+    </section>
+  </main>
+  <script src="/ui/assets/api_key.js" defer></script>
+</body>
+</html>

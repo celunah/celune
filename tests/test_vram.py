@@ -6,9 +6,6 @@ from unittest import mock
 import torch
 from torch import nn
 
-from celune.typing.common import Config
-from celune.constants import VRAM_BUDGETS
-from celune.celune import _tts_quantization_enabled
 from celune.vram import (
     VRAM_PROFILES,
     VramProfile,
@@ -25,6 +22,9 @@ from celune.vram import (
     _windows_shared_memory_capacity_bytes,
     _windows_shared_memory_headroom_bytes,
 )
+from celune.typing.common import Config
+from celune.constants import VRAM_BUDGETS
+from celune.celune import _tts_quantization_enabled
 
 from .support import CeluneTestCase
 
@@ -252,9 +252,6 @@ class TestVram(CeluneTestCase):
             ),
             mock.patch(
                 "celune.vram._cuda_total_capacity_bytes", return_value=28 * 1024**3
-            ),
-            mock.patch(
-                "celune.vram._cached_hub_revision", return_value=whisper_revision
             ),
             mock.patch.dict("celune.vram.os.environ", {"CELUNE_TTS_QUANTIZE": "true"}),
         ):

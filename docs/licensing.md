@@ -17,3 +17,9 @@ Before redistributing a build, voice pack, model cache, or generated bundle:
 The `docs/` pages describe interfaces and file formats; they do not grant
 rights to redistribute models or voice recordings. The lore-only
 `resources/about/about-celune.md` is not a technical license notice.
+
+Celune's model catalog records each built-in model's Hugging Face revision,
+license source, and known restrictions. Restricted, unknown-license, and
+unreviewed models require acknowledgement for the exact revision before Celune
+downloads or loads them. See [Model registry and license consent](development/model-registry.md)
+for the catalog and consent contract.

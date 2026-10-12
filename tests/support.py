@@ -8,11 +8,6 @@ import queue
 import importlib
 import threading
 import contextlib
-from re import Pattern
-from pathlib import Path
-from unittest import TestCase, mock
-from collections.abc import Callable, Iterable, Iterator, Container
-from types import ModuleType, TracebackType, SimpleNamespace, MappingProxyType
 from typing import (
     TYPE_CHECKING,
     Self,
@@ -23,6 +18,11 @@ from typing import (
     TypedDict,
     cast,
 )
+from re import Pattern
+from pathlib import Path
+from unittest import TestCase, mock
+from collections.abc import Callable, Iterable, Iterator, Container
+from types import ModuleType, TracebackType, SimpleNamespace, MappingProxyType
 
 import numpy as np
 import numpy.typing as npt
@@ -309,6 +309,12 @@ class FakeBackend(CeluneBackend):
             FakeModel: A dictionary describing the requested fake model.
         """
         return {"model_id": model_id, "kwargs": kwargs}
+
+    def load_default_model(self) -> FakeModel:
+        """Return a fake model without resolving a synthetic Hub repository."""
+        model = self.load_model(self.default_model_id)
+        self.model = model
+        return model
 
     def generate_stream(
         self, model: FakeModel, **kwargs: JSONSerializable

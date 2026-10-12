@@ -20,6 +20,7 @@ from celune import api
 from celune.i18n import string
 from celune.celune import Celune
 from celune.pipeline import SpeechStreamQueue
+
 from .support import CeluneTestCase
 
 
@@ -161,6 +162,26 @@ class TestApiWebUI(CeluneTestCase):
         assert api.is_browser_ui_request(ui_request)
         assert not api.is_browser_ui_request(api_request)
 
+    def test_browser_requests_mark_model_loads_as_api_requests_without_a_key(
+        self,
+    ) -> None:
+        """Verify unauthenticated local WebUI calls can show the browser consent gate."""
+        from celune.registry.consent import _API_MODEL_REQUEST
+
+        async def inspect_request(_request: Request) -> Response:
+            assert _API_MODEL_REQUEST.get()
+            return Response("ok")
+
+        response = asyncio.run(
+            api.api_security(
+                self._request("/ui/models/pending"),
+                inspect_request,
+            )
+        )
+
+        assert response.status_code == 200
+        assert not _API_MODEL_REQUEST.get()
+
     def test_api_security_only_leaves_the_root_and_favicon_public(self) -> None:
         """Verify status and version routes require a key with API auth enabled."""
         api.auth_token = "secret"
@@ -207,17 +228,23 @@ class TestApiWebUI(CeluneTestCase):
         assert "This interface requires an API key. Enter it below to continue." in page
         assert '<label for="api-key">API key</label>' in page
         assert '<button id="submit" type="submit">Continue</button>' in page
-        assert (
-            'response.status === 401 ? "Invalid API key" : '
-            '"An error occurred while authenticating"'
-        ) in page
-        assert "#error { display: none;" in page
-        assert "#error:not(:empty) { display: block; }" in page
-        assert 'fetch("/ui/key"' in page
-        assert "font-family: Outfit" in page
-        assert "font-family: Michroma" in page
-        assert "data:font/ttf;base64," in page
-        assert "font-src data:;" in response.headers["content-security-policy"]
+        assert 'data-invalid-message="Invalid API key"' in page
+        assert 'data-error-message="An error occurred while authenticating"' in page
+        assert '<link rel="stylesheet" href="/ui/assets/api_key.css">' in page
+        assert '<script src="/ui/assets/api_key.js" defer></script>' in page
+        assert "<style>" not in page
+        stylesheet = api.read_webui_asset("api_key.css")
+        script = api.read_webui_asset("api_key.js")
+        assert "#error { display: none;" in stylesheet
+        assert "#error:not(:empty) { display: block; }" in stylesheet
+        assert 'fetch("/ui/key"' in script
+        assert "font-family: Outfit" in stylesheet
+        assert "font-family: Michroma" in stylesheet
+        assert "/ui/assets/fonts/outfit-400.ttf" in stylesheet
+        security_policy = response.headers["content-security-policy"]
+        assert "style-src 'self'" in security_policy
+        assert "script-src 'self'" in security_policy
+        assert "font-src 'self'" in security_policy
         assert response.headers["cache-control"] == "no-store"
 
     def test_api_security_rejects_webui_actions_without_a_session(self) -> None:
@@ -455,7 +482,7 @@ class TestApiWebUI(CeluneTestCase):
             ) = api.webui_snapshot()
 
         assert "Ready to speak." in logs_html
-        assert "--celune-ui-accent:" in status_html
+        assert "--celune-ui-accent:" in api.webui_theme_style
         assert "style=" in logs_html
         assert "Idle" in status_html
         assert "10.66/11.94" in resources_html
@@ -878,8 +905,9 @@ class TestApiWebUI(CeluneTestCase):
 
     def test_webui_connection_toast_styles_only_gradio_disconnects(self) -> None:
         """Verify only Gradio connection-loss toasts get Celune's unavailable style."""
-        assert '"Connection Lost"' in api.WEBUI_HEAD
-        assert '"Connection to the server was lost."' in api.WEBUI_HEAD
+        webui_script = api.read_webui_asset("webui.js")
+        assert '"Connection Lost"' in webui_script
+        assert '"Connection to the server was lost."' in webui_script
         assert ".toast-body.error.celune-gradio-connection-lost" in api.WEBUI_CSS
         assert (
             ".toast-body.error.celune-gradio-connection-lost "
@@ -888,6 +916,19 @@ class TestApiWebUI(CeluneTestCase):
         assert 'content: "Celune is currently unavailable.";' in api.WEBUI_CSS
         assert "\n.toast-message-text.error {" not in api.WEBUI_CSS
         assert "body.celune-gradio-connection-lost .toast-messages" in api.WEBUI_CSS
+
+    def test_webui_assets_keep_markup_scripts_and_styles_separate(self) -> None:
+        """Verify WebUI behavior is served from standalone packaged assets."""
+        head = api.read_webui_asset("head.html")
+        script = api.read_webui_asset("webui.js")
+        stylesheet = api.read_webui_asset("webui.css")
+
+        assert 'href="/ui/assets/theme.css"' in head
+        assert 'src="/ui/assets/webui.js"' in head
+        assert "#celune-model-consent" in stylesheet
+        assert "function showConsent(model)" in script
+        assert "style.textContent" not in script
+        assert "/ui/assets/fonts/outfit-400.ttf" in stylesheet
 
     def test_webui_audio_waveform_options_follow_primary_color(self) -> None:
         """Verify Gradio audio waveform colors are driven by Celune's primary color."""
@@ -901,11 +942,12 @@ class TestApiWebUI(CeluneTestCase):
 
     def test_webui_head_installs_log_autoscroll(self) -> None:
         """Verify the WebUI head installs auto-scroll behavior for the log pane."""
-        assert "#celune-log-panel pre" in api.WEBUI_HEAD
-        assert "MutationObserver" in api.WEBUI_HEAD
-        assert "isNearLogBottom" in api.WEBUI_HEAD
-        assert "__celuneLogAutoscrollFollow" in api.WEBUI_HEAD
-        assert "scrollTop = logElement.scrollHeight" in api.WEBUI_HEAD
+        script = api.read_webui_asset("webui.js")
+        assert "#celune-log-panel pre" in script
+        assert "MutationObserver" in script
+        assert "isNearLogBottom" in script
+        assert "__celuneLogAutoscrollFollow" in script
+        assert "scrollTop = logElement.scrollHeight" in script
 
     def test_webui_log_buffer_deduplicates_adjacent_callback_entries(self) -> None:
         """Verify overlapping log forwarding cannot print one WebUI line twice."""
@@ -1397,23 +1439,25 @@ class TestApiWebUI(CeluneTestCase):
         """Verify browser error statuses no longer switch the full UI palette."""
         api.set_webui_status("I can't speak right now.", "error")
 
-        theme_html = api.webui_theme_html()
+        api.configure_webui_theme()
+        theme_css = api.webui_theme_style
 
         assert (
             api.colors.THEME.background or api.colors.DEFAULT_BACKGROUND
-        ) in theme_html
-        assert api.colors.ERROR_BACKGROUND not in theme_html
+        ) in theme_css
+        assert api.colors.ERROR_BACKGROUND not in theme_css
 
     def test_webui_nonfatal_error_status_keeps_normal_theme(self) -> None:
         """Verify non-fatal browser errors do not switch the UI into the fatal palette."""
         api.set_webui_status("I can't change my voice right now.", "error")
 
-        theme_html = api.webui_theme_html()
+        api.configure_webui_theme()
+        theme_css = api.webui_theme_style
 
         assert (
             api.colors.THEME.background or api.colors.DEFAULT_BACKGROUND
-        ) in theme_html
-        assert api.colors.ERROR_BACKGROUND not in theme_html
+        ) in theme_css
+        assert api.colors.ERROR_BACKGROUND not in theme_css
 
     def test_webui_wrapped_fatal_glow_requests_api_shutdown(self) -> None:
         """Verify fatal glow stops the API/WebUI surface instead of tinting it red."""

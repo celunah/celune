@@ -1,0 +1,86 @@
+@font-face {
+  font-family: Outfit;
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/ui/assets/fonts/outfit-400.ttf") format("truetype");
+}
+@font-face {
+  font-family: Outfit;
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("/ui/assets/fonts/outfit-700.ttf") format("truetype");
+}
+@font-face {
+  font-family: Michroma;
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/ui/assets/fonts/michroma-400.ttf") format("truetype");
+}
+    :root {
+      color-scheme: dark;
+      font-family: Outfit, ui-sans-serif, system-ui, sans-serif;
+      background: #1d1826;
+      color: #f7f3ff;
+    }
+    * { box-sizing: border-box; }
+    body {
+      display: grid;
+      min-height: 100vh;
+      margin: 0;
+      place-items: center;
+      background: radial-gradient(ellipse at 50% 0%, #393047, #1d1826 62%);
+    }
+    main {
+      display: grid;
+      min-height: 100vh;
+      width: 100%;
+      padding: 24px;
+      place-items: center;
+      background: rgb(18 15 24 / 45%);
+    }
+    section {
+      width: min(100%, 440px);
+      padding: 36px;
+      border: 1px solid rgb(206 186 255 / 24%);
+      border-radius: 20px;
+      background: #241e2f;
+      box-shadow: 0 24px 90px rgb(0 0 0 / 45%);
+    }
+    h1 {
+      margin: 12px 0;
+      font-family: Michroma, sans-serif;
+      font-size: clamp(1.15rem, 4vw, 1.55rem);
+      font-weight: 400;
+      letter-spacing: .015em;
+      -webkit-text-stroke: .015em currentColor;
+    }
+    p { color: #d4cddd; line-height: 1.55; }
+    label { display: block; margin: 24px 0 8px; font-size: .9rem; }
+    input, button {
+      width: 100%;
+      min-height: 48px;
+      border-radius: 10px;
+      font: inherit;
+    }
+    input {
+      padding: 0 14px;
+      border: 1px solid #675d77;
+      background: #191520;
+      color: #fff;
+    }
+    input:focus-visible, button:focus-visible { outline: 3px solid #cebaff; outline-offset: 3px; }
+    button {
+      margin-top: 14px;
+      border: 0;
+      background: #cebaff;
+      color: #241e2f;
+      cursor: pointer;
+      font-weight: 700;
+    }
+    button:disabled { cursor: wait; opacity: .7; }
+    #error { display: none; margin: 12px 0 0; color: #ff999e; }
+    #error:not(:empty) { display: block; }
+    @media (max-width: 480px) { section { padding: 28px 22px; } }

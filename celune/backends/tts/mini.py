@@ -5,8 +5,8 @@ import time
 import inspect
 import tempfile
 import contextlib
-from typing import Optional, cast
 from pathlib import Path
+from typing import Optional, cast
 from collections.abc import Mapping, Callable, Iterator
 
 import yaml
@@ -14,15 +14,24 @@ import numpy as np
 from pocket_tts import TTSModel
 from huggingface_hub import snapshot_download
 
-from .base import CeluneBackend, cached_hf_snapshot_path
 from ...i18n import string
-from ...paths import temp_data_dir, huggingface_progress, huggingface_hub_cache_dir
+from ...registry.tts import (
+    MINI_VOICE_MODELS,
+    TTS_DEFAULT_VOICE,
+    MINI_DEFAULT_LANGUAGE,
+    MINI_LANGUAGE_ALIASES,
+    MINI_SUPPORTED_LANGUAGES,
+    MINI_LANGUAGE_MODEL_VARIANTS,
+    ModelContract,
+)
 from ...utils import custom_assert
 from ...cevoice import CEVoiceLoader, default_loader
-from .contracts import ModelContract
-from .contracts import model_contract as resolve_model_contract
+from ...registry.consent import require_model_consent
 from ...typing.aliases import AudioChunk, AudioChunks
+from .base import CeluneBackend, cached_hf_snapshot_path
 from ...typing.backends import MiniModel, MiniPromptState
+from ...registry.tts import model_contract as resolve_model_contract
+from ...paths import temp_data_dir, huggingface_progress, huggingface_hub_cache_dir
 
 
 class Mini(CeluneBackend[TTSModel]):
@@ -31,15 +40,10 @@ class Mini(CeluneBackend[TTSModel]):
     name: str = "mini"
     uses_voice_bundles: bool = True
     chunk_rate: float = 12.5
-    supported_languages: tuple[str, ...] = ("en", "fr", "de", "it", "pt", "es")
+    supported_languages: tuple[str, ...] = MINI_SUPPORTED_LANGUAGES
 
-    voice_models: Optional[Mapping[str, str]] = {
-        "balanced": "lunahr/pocket-tts-ungated",
-        "calm": "lunahr/pocket-tts-ungated",
-        "bold": "lunahr/pocket-tts-ungated",
-        "upbeat": "lunahr/pocket-tts-ungated",
-    }
-    default_voice: Optional[str] = "balanced"
+    voice_models: Optional[Mapping[str, str]] = MINI_VOICE_MODELS
+    default_voice: Optional[str] = TTS_DEFAULT_VOICE
 
     def __init__(
         self,
@@ -118,15 +122,8 @@ class Mini(CeluneBackend[TTSModel]):
         Returns:
             str: A language-specific model identifier, or ``"en"`` if no match was found.
         """
-        alias_to_code: Mapping[str, str] = {
-            "english": "en",
-            "french": "fr",
-            "german": "de",
-            "italian": "it",
-            "portuguese": "pt",
-            "spanish": "es",
-        }
-        fallback = "en"
+        alias_to_code = MINI_LANGUAGE_ALIASES
+        fallback = MINI_DEFAULT_LANGUAGE
 
         if not lang:
             return fallback
@@ -150,16 +147,7 @@ class Mini(CeluneBackend[TTSModel]):
 
     def _resolve_language_name(self, lang: Optional[str] = "en") -> str:
         """Return the Pocket TTS language variant expected for this backend."""
-        code_to_model: Mapping[str, str] = {
-            "en": "english",
-            "fr": "french",
-            "de": "german",
-            "it": "italian",
-            "pt": "portuguese",
-            "es": "spanish",
-        }
-
-        return code_to_model[self.resolve_generation_language(lang)]
+        return MINI_LANGUAGE_MODEL_VARIANTS[self.resolve_generation_language(lang)]
 
     def _resolve_snapshot_language_dir(
         self, snapshot_path: str, lang: str = "en"
@@ -333,6 +321,7 @@ class Mini(CeluneBackend[TTSModel]):
         Returns:
             Optional[TTSModel]: A Celune-compatible Pocket TTS model object.
         """
+        metadata = require_model_consent(model_id)
         requested_language = self.resolve_generation_language(
             cast(Optional[str], kwargs.pop("lang", kwargs.pop("language", None)))
         )
@@ -344,6 +333,7 @@ class Mini(CeluneBackend[TTSModel]):
             with huggingface_progress(self.report_progress):
                 snapshot_path = snapshot_download(
                     repo_id=model_id,
+                    revision=metadata.revision,
                     cache_dir=str(huggingface_hub_cache_dir(create=True)),
                 )
 

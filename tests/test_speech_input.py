@@ -10,16 +10,16 @@ import pytest
 import numpy as np
 from textual import events
 
-from celune.ui.app import CeluneUI, ButtonActions
-from celune.typing.persona import _WhisperProcessor
 from celune.persona.asr import (
     PERSONA_SPEECH_NO_INPUT_TIMEOUT_SECONDS,
     WhisperTranscriber,
 )
-from celune.constants import (
+from celune.registry.asr import (
     DEFAULT_PERSONA_SPEECH_MODEL_ID,
     DEFAULT_PERSONA_SPEECH_MODEL_REVISION,
 )
+from celune.ui.app import CeluneUI, ButtonActions
+from celune.typing.persona import _WhisperProcessor
 
 from .support import CeluneTestCase
 
@@ -33,6 +33,7 @@ class TestSpeechInput(CeluneTestCase):
 
     def test_whisper_transcriber_uses_configured_model_lazily(self) -> None:
         """Verify transcription loads the selected Hugging Face model on demand."""
+        revision = "a" * 40
         fake_processor = mock.Mock()
         fake_features = mock.Mock()
         fake_features.to.return_value = fake_features
@@ -48,6 +49,10 @@ class TestSpeechInput(CeluneTestCase):
         fake_model.generate.return_value = [[1]]
         with (
             mock.patch("torch.cuda.is_available", return_value=True),
+            mock.patch(
+                "celune.persona.asr.require_model_consent",
+                return_value=SimpleNamespace(revision=revision),
+            ),
             mock.patch(
                 "transformers.AutoModelForSpeechSeq2Seq.from_pretrained",
                 return_value=fake_model,
@@ -73,8 +78,12 @@ class TestSpeechInput(CeluneTestCase):
             quantization_config=mock.ANY,
             low_cpu_mem_usage=True,
             device_map="auto",
+            revision=revision,
         )
-        processor_factory.assert_called_once_with("openai/whisper-small")
+        processor_factory.assert_called_once_with(
+            "openai/whisper-small",
+            revision=revision,
+        )
         assert fake_processor.call_args.args[0].ndim == 1
         assert fake_processor.call_args.args[0].shape == (1600,)
         assert fake_processor.call_args.kwargs["sampling_rate"] == 16000

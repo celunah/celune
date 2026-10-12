@@ -16,7 +16,6 @@ import inspect
 import secrets
 import binascii
 import datetime
-import textwrap
 import threading
 import contextlib
 from typing import (
@@ -25,7 +24,6 @@ from typing import (
     Optional,
 )
 from hashlib import sha256
-from functools import lru_cache
 from urllib.parse import urlsplit
 from dataclasses import field, dataclass
 from collections import deque, defaultdict
@@ -70,7 +68,6 @@ from .webui import (
     _seed_webui_logs,
     _append_webui_log,
     _set_webui_status,
-    _webui_theme_html,
     _forget_speech_job,
     _update_speech_job,
     _collect_speech_job,
@@ -105,19 +102,36 @@ from .webactions import (
     _decode_uploaded_audio,
     _voice_conversion_unavailable_response,
 )
+from .exceptions import (
+    ModelConsentDeclined,
+    ModelConsentRequired,
+    TaskSubscriptionClosed,
+)
 from .celune import Celune
 from .paths import project_root
+from .registry.consent import (
+    consent_details,
+    consent_prompt_text,
+    consent_status,
+    enter_api_model_request,
+    exit_api_model_request,
+    model_metadata_for_revision,
+    pending_model_consents,
+    record_model_consent,
+    registered_models,
+)
 from .cevoice import default_loader
 from .typing.aliases import LogLevel
 from .audio.dsp import resample_audio
 from .constants import BASE_SR, APP_NAME
 from .ui import resources as ui_resources
+from .registry.types import ModelMetadata
 from .typing.common import JSONSerializable
 from . import webui, webactions, __version__
-from .exceptions import TaskSubscriptionClosed
 from .extensions.events import EventDispatcher
 from .utils import available, format_error_message
 from .typing.events import EventName, EventCallback
+from .webui_assets import read_webui_asset, webui_asset_response_data
 
 _receive_webui_timed_update = webui._receive_webui_timed_update
 _webui_audio_waveform_options = webui._webui_audio_waveform_options
@@ -132,6 +146,42 @@ CeluneUI = webui.CeluneUI
 UiTimedUpdate = webui.UiTimedUpdate
 
 api = FastAPI(title=f"{APP_NAME}API")
+
+
+@api.exception_handler(ModelConsentRequired)
+async def model_consent_required_response(
+    request: Request,
+    error: ModelConsentRequired,
+) -> JSONResponse:
+    """Return structured model terms when an operation needs acknowledgement."""
+    del request
+    metadata = error.metadata
+    return JSONResponse(
+        status_code=428,
+        content={
+            "error": "model_consent_required",
+            "model": metadata.to_dict(consented=consent_status(metadata)),
+        },
+    )
+
+
+@api.exception_handler(ModelConsentDeclined)
+async def model_consent_declined_response(
+    request: Request,
+    error: ModelConsentDeclined,
+) -> JSONResponse:
+    """Reject an operation after the user declines model terms."""
+    del request
+    return JSONResponse(
+        status_code=403,
+        content={
+            "error": "model_consent_declined",
+            "message": string("registry.consent_declined"),
+            "model": error.metadata.to_dict(consented=False),
+        },
+    )
+
+
 WEBUI_AUTH_PATH = "/ui/key"
 WEBUI_AUTH_COOKIE = "celune_webui_session"
 WEBUI_AUTH_SESSION_SECONDS = 30 * 24 * 60 * 60
@@ -230,6 +280,14 @@ class TaskCommandResponse(BaseModel):
     status: str
 
 
+class ModelConsentRequest(BaseModel):
+    """Exact-revision user decision submitted by an API or WebUI client."""
+
+    model_id: str = Field(min_length=3, max_length=256)
+    revision: str = Field(pattern=r"^[0-9a-f]{40}$")
+    accepted: bool
+
+
 @dataclass
 class TaskSubscription:
     """Event-loop-owned queue with a thread-safe event publisher."""
@@ -308,553 +366,8 @@ def _run_async_runtime_call(
     raise RuntimeError("synchronous runtime calls cannot run on an active event loop")
 
 
-WEBUI_HEAD = textwrap.dedent(
-    """
-    <link rel="icon" type="image/x-icon" href="/favicon.ico">
-    <link rel="shortcut icon" type="image/x-icon" href="/favicon.ico">
-    <script>
-    (() => {
-      if (window.__celuneLogAutoscrollInstalled) {
-        return;
-      }
-      window.__celuneLogAutoscrollInstalled = true;
-
-      const logScrollThreshold = 24;
-
-      function isNearLogBottom(logElement) {
-        return logElement.scrollHeight - logElement.scrollTop - logElement.clientHeight
-          <= logScrollThreshold;
-      }
-
-      function scrollLogToBottom() {
-        const logElement = document.querySelector("#celune-log-panel pre");
-        if (!logElement) {
-          return;
-        }
-        logElement.scrollTop = logElement.scrollHeight;
-      }
-
-      function updateLogFollowState(event) {
-        window.__celuneLogAutoscrollFollow = isNearLogBottom(event.currentTarget);
-      }
-
-      function installLogObserver() {
-        const logElement = document.querySelector("#celune-log-panel pre");
-        if (!logElement) {
-          return;
-        }
-
-        if (window.__celuneLogAutoscrollTarget === logElement) {
-          return;
-        }
-
-        const previousLogElement = window.__celuneLogAutoscrollTarget;
-        if (previousLogElement) {
-          window.__celuneLogAutoscrollFollow = isNearLogBottom(previousLogElement);
-        } else if (typeof window.__celuneLogAutoscrollFollow !== "boolean") {
-          window.__celuneLogAutoscrollFollow = true;
-        }
-
-        window.__celuneLogAutoscrollTarget = logElement;
-        logElement.addEventListener("scroll", updateLogFollowState, {
-          passive: true,
-        });
-        if (window.__celuneLogAutoscrollFollow) {
-          window.requestAnimationFrame(scrollLogToBottom);
-        }
-
-        if (window.__celuneLogAutoscrollObserver) {
-          window.__celuneLogAutoscrollObserver.disconnect();
-        }
-
-        const observer = new MutationObserver(() => {
-          if (window.__celuneLogAutoscrollFollow) {
-            scrollLogToBottom();
-          }
-        });
-        observer.observe(logElement, {
-          childList: true,
-          characterData: true,
-          subtree: true,
-        });
-        window.__celuneLogAutoscrollObserver = observer;
-      }
-
-      function updateConnectionToastState() {
-        const connectionLostTitle = "Connection Lost";
-        const connectionLostMessage = "Connection to the server was lost.";
-        let hasConnectionLost = false;
-        const errorToasts = document.querySelectorAll(
-          '[data-testid="toast-body"].error',
-        );
-
-        for (const toast of errorToasts) {
-          const title = toast.querySelector(
-            ".toast-title-row span",
-          )?.textContent?.trim();
-          const message = toast.querySelector(".toast-message-text")?.textContent;
-          const isConnectionLost = Boolean(
-            title === connectionLostTitle
-            && message?.trim().startsWith(connectionLostMessage),
-          );
-          toast.classList.toggle("celune-gradio-connection-lost", isConnectionLost);
-          hasConnectionLost ||= isConnectionLost;
-        }
-
-        document.body.classList.toggle(
-          "celune-gradio-connection-lost",
-          hasConnectionLost,
-        );
-      }
-
-      const pageObserver = new MutationObserver(() => {
-        installLogObserver();
-        updateConnectionToastState();
-      });
-
-      function startLogAutoscroll() {
-        installLogObserver();
-        pageObserver.observe(document.body, {
-          childList: true,
-          characterData: true,
-          subtree: true,
-        });
-        updateConnectionToastState();
-        window.setInterval(installLogObserver, 500);
-      }
-
-      if (document.readyState === "loading") {
-        document.addEventListener("DOMContentLoaded", startLogAutoscroll, {
-          once: true,
-        });
-      } else {
-        startLogAutoscroll();
-      }
-    })();
-
-    (() => {
-      function handleRecordingShortcut(event) {
-        if (
-          !event.altKey
-          || event.ctrlKey
-          || event.metaKey
-          || event.key.toLowerCase() !== "r"
-        ) {
-          return;
-        }
-
-        const recordButton = document.querySelector(
-          "#celune-record-hotkey button, button#celune-record-hotkey",
-        );
-        if (!recordButton || recordButton.disabled) {
-          return;
-        }
-
-        event.preventDefault();
-        recordButton.click();
-      }
-
-      document.addEventListener("keydown", handleRecordingShortcut);
-    })();
-    </script>
-    """
-)
-
-WEBUI_CSS = textwrap.dedent(
-    """
-    @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@100..900&display=swap');
-    @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@100..800&display=swap');
-
-    html,
-    body,
-    gradio-app {
-        --color-accent: var(--celune-primary, #cebaff) !important;
-        --body-text-color: var(--celune-secondary, #a595cc) !important;
-        --block-label-text-color: var(--celune-primary, #cebaff) !important;
-        --block-title-text-color: var(--celune-primary, #cebaff) !important;
-        --block-info-text-color: var(--celune-secondary, #a595cc) !important;
-        /* the Celune "accent" color in CSS is actually considered as Celune tertiary */
-        --body-text-color-subdued: var(--celune-accent, #7c7099) !important;
-        background: var(--celune-ui-bg, var(--celune-background, #1d1826)) !important;
-    }
-
-    .column {
-        place-content: center;
-    }
-
-    .gradio-container {
-        background: var(--celune-ui-bg, var(--celune-background, #1d1826));
-        font-family: Outfit, sans-serif !important;
-        height: 100dvh;
-        overflow: hidden;
-    }
-    
-    .gradio-container .tab-container::after {
-        display: none;
-    }
-
-    .gradio-container > .main,
-    .gradio-container .wrap,
-    .gradio-container .block,
-    .gradio-container .form,
-    .gradio-container label,
-    .gradio-container label.selected,
-    .gradio-container .tab-like-container,
-    .gradio-container .tab-like-container input,
-    .gradio-container .loading-container,
-    .gradio-container .loading-container > div,
-    .gradio-container button[role="tab"]:hover {
-        background: var(--celune-ui-bg, var(--celune-background, #1d1826)) !important;
-    }
-
-    .main {
-        flex: 1 1 auto !important;
-        min-height: 0;
-    }
-
-    body {
-        font-family: Outfit, sans-serif;
-    }
-
-    #celune-shell {
-        display: flex;
-        flex-direction: column;
-        gap: 0.75rem;
-        height: calc(100dvh - 2rem);
-        min-height: 0;
-        background: var(--celune-ui-bg, var(--celune-background, #1d1826));
-    }
-
-    #celune-header {
-        display: flex;
-        place-items: center;
-    }
-
-    #celune-header .line {
-        width: 100%;
-        background: var(--celune-ui-accent, var(--celune-primary, #cebaff));
-        height: 2px;
-    }
-
-    #celune-header .title {
-        font-weight: bold;
-        padding: 0 2em;
-        color: var(--celune-ui-accent, var(--celune-primary, #cebaff));
-    }
-
-    #celune-style button,
-    #celune-send button,
-    #celune-convert button,
-    button#celune-style,
-    button#celune-send,
-    button#celune-convert {
-        background: var(--celune-button-bg, #3a304c) !important;
-        border: 1px solid var(--celune-ui-accent, var(--celune-primary, #cebaff)) !important;
-        border-radius: 4px;
-        color: var(--celune-ui-accent, var(--celune-primary, #cebaff)) !important;
-        opacity: 1 !important;
-    }
-
-    #celune-style button:hover:not(:disabled),
-    #celune-send button:hover:not(:disabled),
-    #celune-convert button:hover:not(:disabled),
-    button#celune-style:hover:not(:disabled),
-    button#celune-send:hover:not(:disabled),
-    button#celune-convert:hover:not(:disabled) {
-        background: var(--celune-button-hover, #443a56) !important;
-    }
-
-    #celune-style button:disabled,
-    #celune-send button:disabled,
-    #celune-convert button:disabled,
-    button#celune-style:disabled,
-    button#celune-send:disabled,
-    button#celune-convert:disabled {
-        background: color-mix(
-            in srgb,
-            var(--celune-button-bg, #3a304c) 72%,
-            var(--celune-ui-bg, var(--celune-background, #1d1826))
-        ) !important;
-        border-color: var(--celune-accent, #7c7099) !important;
-        color: var(--celune-secondary, #a595cc) !important;
-        cursor: not-allowed;
-    }
-
-    #celune-style button:focus-visible,
-    #celune-send button:focus-visible,
-    #celune-convert button:focus-visible,
-    button#celune-style:focus-visible,
-    button#celune-send:focus-visible,
-    button#celune-convert:focus-visible {
-        outline: 2px solid var(--celune-ui-accent, var(--celune-primary, #cebaff));
-        outline-offset: 2px;
-    }
-
-    #celune-log-panel {
-        border: 2px solid var(--celune-ui-accent, var(--celune-primary, #cebaff));
-        background: var(--celune-ui-bg, var(--celune-background, #1d1826));
-        padding: 1em;
-        border-radius: 8px;
-        max-height: min(75dvh, calc(100dvh - 20rem));
-        overflow: hidden;
-        flex: 1 1 auto;
-        min-height: 0;
-    }
-
-    #celune-log-panel pre {
-        font-family: "JetBrains Mono", monospace;
-        color: var(--celune-ui-accent, var(--celune-primary, #cebaff));
-        white-space: pre-wrap;
-        margin: 0;
-        max-height: min(calc(75dvh - 2em), calc(75dvh - 15rem));
-        height: 100%;
-        overflow-y: auto;
-        padding-right: 0.75em;
-        scrollbar-gutter: stable both-edges;
-        scrollbar-color: var(--celune-ui-accent, var(--celune-primary, #cebaff))
-            var(--celune-ui-bg, var(--celune-background, #1d1826));
-    }
-
-    #celune-input textarea {
-        background: var(--celune-ui-input-bg, var(--celune-input-bg, #3a304c));
-        color: var(--celune-ui-accent, var(--celune-primary, #cebaff));
-        border-radius: 4px;
-        scrollbar-color: var(--celune-ui-accent, var(--celune-primary, #cebaff))
-            var(--celune-ui-bg, var(--celune-background, #1d1826));
-    }
-
-    #celune-input textarea::placeholder {
-        color: var(--celune-placeholder, #9c88ce);
-    }
-
-    #celune-resources .footer-block {
-        text-align: right;
-        color: var(--celune-ui-accent, var(--celune-primary, #cebaff));
-    }
-
-    .webui-recording-hint {
-        margin-top: 0.25rem;
-        font-size: 0.9rem;
-    }
-
-    #celune-record-hotkey {
-        display: none !important;
-    }
-
-    .webui-desktop-only {
-        display: inline !important;
-        color: inherit;
-    }
-
-    .webui-mobile-only {
-        display: none !important;
-        color: inherit;
-    }
-
-    #celune-actions {
-        gap: 0.75rem;
-    }
-
-    #celune-send button,
-    button#celune-send {
-        min-height: 2.75rem;
-    }
-
-    #celune-input-row, #celune-footer {
-        padding: 0 1em;
-    }
-
-    #celune-send,
-    button#celune-send {
-        display: none;
-    }
-
-    #celune-log-panel pre::-webkit-scrollbar,
-    #celune-input textarea::-webkit-scrollbar {
-        width: 0.8rem;
-    }
-
-    #celune-log-panel pre::-webkit-scrollbar-track,
-    #celune-input textarea::-webkit-scrollbar-track {
-        background: var(--celune-ui-bg, var(--celune-background, #1d1826));
-    }
-
-    #celune-log-panel pre::-webkit-scrollbar-thumb,
-    #celune-input textarea::-webkit-scrollbar-thumb {
-        background: var(--celune-ui-accent, var(--celune-primary, #cebaff));
-        border-radius: 999px;
-        border: 2px solid var(--celune-ui-bg, var(--celune-background, #1d1826));
-    }
-
-    .gradio-container .minimal-audio-player button:hover,
-    .gradio-container .minimal-audio-player button:focus,
-    .gradio-container .standard-player button:hover,
-    .gradio-container .standard-player button:focus,
-    .gradio-container .controls .icon:hover,
-    .gradio-container .controls .icon:focus,
-    .gradio-container .controls .action:hover,
-    .gradio-container .controls .action:focus,
-    .gradio-container .controls .playback:hover,
-    .gradio-container .controls .playback:focus,
-    .gradio-container .controls .text-button:hover,
-    .gradio-container .controls .text-button:focus {
-        color: var(--celune-primary, #cebaff) !important;
-        border-color: var(--celune-primary, #cebaff) !important;
-    }
-
-    .gradio-container .standard-player input[type="range"],
-    .gradio-container .minimal-audio-player input[type="range"] {
-        accent-color: var(--celune-primary, #cebaff) !important;
-    }
-
-    .gradio-container .standard-player input[type="range"]::-webkit-slider-thumb,
-    .gradio-container .minimal-audio-player input[type="range"]::-webkit-slider-thumb {
-        background-color: var(--celune-primary, #cebaff) !important;
-    }
-
-    .gradio-container .standard-player input[type="range"]::-moz-range-thumb,
-    .gradio-container .minimal-audio-player input[type="range"]::-moz-range-thumb {
-        background-color: var(--celune-primary, #cebaff) !important;
-    }
-
-    body.celune-gradio-connection-lost .toast-messages {
-        height: 100vh;
-        width: 100vw;
-        place-items: center;
-        justify-content: center;
-    }
-
-    .toast-body.error.celune-gradio-connection-lost {
-        position: fixed;
-        background: color-mix(
-            in srgb,
-            var(--celune-background, #1d1826) 90%,
-            transparent 10%
-        ) !important;
-        border: none;
-        top: 0;
-    }
-
-    .toast-body.error.celune-gradio-connection-lost .toast-header {
-        display: none !important;
-    }
-
-    .toast-body.error.celune-gradio-connection-lost .toast-message-text.error {
-        font-size: 0;
-    }
-
-    .toast-body.error.celune-gradio-connection-lost .toast-message-text.error::before {
-        content: __CELUNE_CONNECTION_LOST_MESSAGE__;
-        font-size: 16px;
-        color: var(--celune-error, #f07178);
-    }
-
-    input[type="number"] {
-        -webkit-appearance: textfield !important;
-        appearance: textfield !important;
-    }
-
-    input[type="number"]::-webkit-inner-spin-button,
-    input[type="number"]::-webkit-outer-spin-button {
-        -webkit-appearance: none;
-        appearance: none;
-        margin: 0;
-    }
-
-    input[type="radio"][aria-checked="false"][disabled] {
-        background: color-mix(
-            var(--celune-background) 90%,
-            var(--celune-primary) 10%
-        );
-    }
-
-    input[type="range"]::-moz-range-thumb {
-        background: var(--celune-primary) !important;
-        border-color: var(--celune-primary) !important;
-    }
-
-    input[type="range"]::-moz-range-track {
-        background: var(--celune-accent) !important;
-    }
-
-    input[type="range"]::-webkit-slider-runnable-track {
-        background: var(--celune-accent) !important;
-    }
-
-    input[type="range"]::-webkit-slider-thumb {
-        -webkit-appearance: none;
-        appearance: none;
-        background: var(--celune-primary) !important;
-        border: none !important;
-    }
-
-    input[type="range"] {
-        -webkit-appearance: none;
-        appearance: none;
-    }
-
-    @media (max-width: 768px), (any-pointer: coarse), (hover: none) {
-        .gradio-container {
-            height: 100dvh;
-            overflow: hidden;
-        }
-
-        #celune-shell {
-            height: calc(100dvh - 8rem);
-            min-height: 0;
-        }
-
-        #celune-input-row {
-            flex-direction: column;
-        }
-
-        #celune-actions {
-            display: flex;
-            flex-direction: row;
-            width: 100%;
-            flex-wrap: nowrap;
-            gap: 0;
-        }
-
-        #celune-actions > * {
-            flex: 1 1 0 !important;
-            min-width: 0 !important;
-        }
-
-        button#celune-send {
-            width: 100%;
-        }
-
-        button#celune-send {
-            display: flex;
-        }
-
-        #celune-input textarea, #celune-input textarea::placeholder {
-            text-align: center;
-        }
-
-        #celune-log-panel {
-            max-height: min(52dvh, calc(100dvh - 12rem));
-        }
-
-        #celune-log-panel pre {
-            max-height: min(calc(52dvh - 2em), calc(100dvh - 14rem));
-        }
-
-        button#celune-send {
-            border-radius: 4px;
-        }
-
-        .webui-desktop-only {
-            display: none !important;
-        }
-
-        .webui-mobile-only {
-            display: inline !important;
-        }
-    }
-    """
-).replace(
+WEBUI_HEAD = read_webui_asset("head.html")
+WEBUI_CSS = read_webui_asset("webui.css").replace(
     "__CELUNE_CONNECTION_LOST_MESSAGE__",
     json.dumps(string("webui.connection_lost", app_name=APP_NAME), ensure_ascii=False),
 )
@@ -907,27 +420,22 @@ def _configure_webui_theme() -> None:
     button_bg = colors.blend(primary, background, 0.72)
     button_hover = colors.blend(primary, background, 0.6)
     input_bg = colors.blend(primary, background, 0.78)
-
-    webui_theme_style = (
-        "<style>"
-        ":root {"
-        f"--celune-background: {background};"
-        f"--celune-primary: {primary};"
-        f"--celune-error: {error};"
-        f"--celune-foreground: {foreground};"
-        f"--celune-secondary: {secondary};"
-        f"--celune-accent: {accent};"
-        f"--celune-ui-accent: {primary};"
-        f"--celune-ui-bg: {background};"
-        f"--celune-ui-input-bg: {input_bg};"
-        f"--celune-sleeping: {sleeping};"
-        f"--celune-button-bg: {button_bg};"
-        f"--celune-button-hover: {button_hover};"
-        f"--celune-input-bg: {input_bg};"
-        f"--celune-placeholder: {secondary};"
-        "}"
-        "</style>"
-    )
+    theme_css = read_webui_asset("theme.css")
+    theme_values = {
+        "BACKGROUND": background,
+        "PRIMARY": primary,
+        "ERROR": error,
+        "FOREGROUND": foreground,
+        "SECONDARY": secondary,
+        "ACCENT": accent,
+        "INPUT_BG": input_bg,
+        "SLEEPING": sleeping,
+        "BUTTON_BG": button_bg,
+        "BUTTON_HOVER": button_hover,
+    }
+    for key, value in theme_values.items():
+        theme_css = theme_css.replace(f"__{key}__", value)
+    webui_theme_style = theme_css
 
 
 class StartedServer(uvicorn.Server):
@@ -1297,53 +805,6 @@ def _rate_limit_response() -> JSONResponse:
     )
 
 
-@lru_cache(maxsize=1)
-def _webui_auth_font_css() -> str:
-    """Return the bundled Celune fonts as inline font-face rules."""
-    font_directory = project_root() / "resources" / "fonts"
-    font_data = {
-        "outfit_regular": base64.b64encode(
-            (font_directory / "outfit-400.ttf").read_bytes()
-        ).decode("ascii"),
-        "outfit_bold": base64.b64encode(
-            (font_directory / "outfit-700.ttf").read_bytes()
-        ).decode("ascii"),
-        "michroma": base64.b64encode(
-            (font_directory / "michroma-400.ttf").read_bytes()
-        ).decode("ascii"),
-    }
-    return (
-        textwrap.dedent(
-            """
-            @font-face {
-              font-family: Outfit;
-              font-style: normal;
-              font-weight: 400;
-              font-display: swap;
-              src: url("data:font/ttf;base64,__OUTFIT_REGULAR__") format("truetype");
-            }
-            @font-face {
-              font-family: Outfit;
-              font-style: normal;
-              font-weight: 700;
-              font-display: swap;
-              src: url("data:font/ttf;base64,__OUTFIT_BOLD__") format("truetype");
-            }
-            @font-face {
-              font-family: Michroma;
-              font-style: normal;
-              font-weight: 400;
-              font-display: swap;
-              src: url("data:font/ttf;base64,__MICHROMA__") format("truetype");
-            }
-            """
-        )
-        .replace("__OUTFIT_REGULAR__", font_data["outfit_regular"])
-        .replace("__OUTFIT_BOLD__", font_data["outfit_bold"])
-        .replace("__MICHROMA__", font_data["michroma"])
-    )
-
-
 def _webui_auth_page() -> str:
     """Build the standalone, blocking WebUI API-key prompt."""
     values = {
@@ -1354,139 +815,10 @@ def _webui_auth_page() -> str:
         "invalid": string("api.webui_auth_invalid"),
         "error": string("api.webui_auth_error"),
     }
-    safe_values = {key: html.escape(value) for key, value in values.items()}
-    return (
-        textwrap.dedent(
-            """
-        <!doctype html>
-        <html lang="en">
-        <head>
-          <meta charset="utf-8">
-          <meta name="viewport" content="width=device-width, initial-scale=1">
-          <meta name="color-scheme" content="dark">
-          <title>__TITLE__</title>
-          <style>
-            __FONT_FACES__
-            :root {
-              color-scheme: dark;
-              font-family: Outfit, ui-sans-serif, system-ui, sans-serif;
-              background: #1d1826;
-              color: #f7f3ff;
-            }
-            * { box-sizing: border-box; }
-            body {
-              display: grid;
-              min-height: 100vh;
-              margin: 0;
-              place-items: center;
-              background: radial-gradient(ellipse at 50% 0%, #393047, #1d1826 62%);
-            }
-            main {
-              display: grid;
-              min-height: 100vh;
-              width: 100%;
-              padding: 24px;
-              place-items: center;
-              background: rgb(18 15 24 / 45%);
-            }
-            section {
-              width: min(100%, 440px);
-              padding: 36px;
-              border: 1px solid rgb(206 186 255 / 24%);
-              border-radius: 20px;
-              background: #241e2f;
-              box-shadow: 0 24px 90px rgb(0 0 0 / 45%);
-            }
-            h1 {
-              margin: 12px 0;
-              font-family: Michroma, sans-serif;
-              font-size: clamp(1.15rem, 4vw, 1.55rem);
-              font-weight: 400;
-              letter-spacing: .015em;
-              -webkit-text-stroke: .015em currentColor;
-            }
-            p { color: #d4cddd; line-height: 1.55; }
-            label { display: block; margin: 24px 0 8px; font-size: .9rem; }
-            input, button {
-              width: 100%;
-              min-height: 48px;
-              border-radius: 10px;
-              font: inherit;
-            }
-            input {
-              padding: 0 14px;
-              border: 1px solid #675d77;
-              background: #191520;
-              color: #fff;
-            }
-            input:focus-visible, button:focus-visible { outline: 3px solid #cebaff; outline-offset: 3px; }
-            button {
-              margin-top: 14px;
-              border: 0;
-              background: #cebaff;
-              color: #241e2f;
-              cursor: pointer;
-              font-weight: 700;
-            }
-            button:disabled { cursor: wait; opacity: .7; }
-            #error { display: none; margin: 12px 0 0; color: #ff999e; }
-            #error:not(:empty) { display: block; }
-            @media (max-width: 480px) { section { padding: 28px 22px; } }
-          </style>
-        </head>
-        <body>
-          <main>
-            <section role="dialog" aria-modal="true" aria-labelledby="title">
-              <h1 id="title">__TITLE__</h1>
-              <p>__MESSAGE__</p>
-              <form id="key-form">
-                <label for="api-key">__PLACEHOLDER__</label>
-                <input id="api-key" name="api_key" type="password" autocomplete="current-password" required autofocus>
-                <button id="submit" type="submit">__SUBMIT__</button>
-                <p id="error" role="status" aria-live="polite"></p>
-              </form>
-            </section>
-          </main>
-          <script>
-            const form = document.querySelector("#key-form");
-            const input = document.querySelector("#api-key");
-            const button = document.querySelector("#submit");
-            const error = document.querySelector("#error");
-            form.addEventListener("submit", async (event) => {
-              event.preventDefault();
-              button.disabled = true;
-              error.textContent = "";
-              try {
-                const response = await fetch("/ui/key", {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ api_key: input.value }),
-                });
-                if (response.ok) {
-                  window.location.replace("/ui");
-                  return;
-                }
-                error.textContent = response.status === 401 ? "__INVALID__" : "__ERROR__";
-                return;
-              } catch {
-                error.textContent = "__ERROR__";
-              } finally {
-                button.disabled = false;
-              }
-            });
-          </script>
-        </body>
-        </html>
-        """
-        )
-        .replace("__FONT_FACES__", _webui_auth_font_css())
-        .replace("__TITLE__", safe_values["title"])
-        .replace("__MESSAGE__", safe_values["message"])
-        .replace("__PLACEHOLDER__", safe_values["placeholder"])
-        .replace("__SUBMIT__", safe_values["submit"])
-        .replace("__INVALID__", safe_values["invalid"])
-        .replace("__ERROR__", safe_values["error"])
-    )
+    page = read_webui_asset("api_key.html")
+    for key, value in values.items():
+        page = page.replace(f"__{key.upper()}__", html.escape(value))
+    return page
 
 
 @api.middleware("http")
@@ -1508,17 +840,23 @@ async def api_security(
 
     if is_browser_ui_request(request):
         if auth_token is None:
-            return await call_next(request)
+            model_request_token = enter_api_model_request()
+            try:
+                return await call_next(request)
+            finally:
+                exit_api_model_request(model_request_token)
 
         path = request.url.path.rstrip("/")
+        if path.startswith("/ui/assets/") and request.method.upper() == "GET":
+            return await call_next(request)
         if path == WEBUI_AUTH_PATH and request.method.upper() == "GET":
             return HTMLResponse(
                 _webui_auth_page(),
                 headers={
                     "Cache-Control": "no-store",
                     "Content-Security-Policy": (
-                        "default-src 'none'; style-src 'unsafe-inline'; "
-                        "script-src 'unsafe-inline'; connect-src 'self'; font-src data:; "
+                        "default-src 'none'; style-src 'self'; "
+                        "script-src 'self'; connect-src 'self'; font-src 'self'; "
                         "base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
                     ),
                     "Referrer-Policy": "no-referrer",
@@ -1547,7 +885,11 @@ async def api_security(
                 return JSONResponse(status_code=403, content={"error": "forbidden"})
             if _rate_limited(request):
                 return _rate_limit_response()
-        response = await call_next(request)
+        model_request_token = enter_api_model_request()
+        try:
+            response = await call_next(request)
+        finally:
+            exit_api_model_request(model_request_token)
         return _refresh_ui_session_cookie(request, response)
 
     if not _authenticated(request):
@@ -1556,7 +898,11 @@ async def api_security(
     if _rate_limited(request):
         return _rate_limit_response()
 
-    return await call_next(request)
+    model_request_token = enter_api_model_request()
+    try:
+        return await call_next(request)
+    finally:
+        exit_api_model_request(model_request_token)
 
 
 class WebUiWebSocketSecurityMiddleware:
@@ -1743,7 +1089,6 @@ class _WebUiCommandHost:
 
 
 configure_webui_theme = _configure_webui_theme
-webui_theme_html = _webui_theme_html
 strip_webui_log_prefix = _strip_webui_log_prefix
 set_webui_status = _set_webui_status
 wrap_celune_callbacks = _wrap_celune_callbacks
@@ -2007,6 +1352,111 @@ def version() -> VersionResponse:
         VersionResponse: The underlying app version the API is connected to.
     """
     return VersionResponse(version=f"{APP_NAME} {__version__}")
+
+
+def _model_consent_document(
+    metadata: ModelMetadata,
+    *,
+    include_prompt: bool = False,
+) -> dict[str, object]:
+    """Serialize catalog metadata and localized confirmation details."""
+    consented = not metadata.requires_consent or consent_status(metadata)
+    document = metadata.to_dict(consented=consented)
+    if include_prompt:
+        prompt, instruction = consent_prompt_text(metadata)
+        document.update(
+            {
+                "prompt": prompt,
+                "instruction": instruction,
+                "details": list(consent_details(metadata)),
+                "source_url": metadata.license_url or metadata.repository_url,
+                "entry_hint": string("registry.consent_entry_hint"),
+                "consent_phrase": string("registry.consent_phrase"),
+                "accept_label": string("registry.consent_accept"),
+                "decline_label": string("registry.consent_decline"),
+                "accepted_message": string("registry.consent_accepted_retry"),
+                "declined_message": string("registry.consent_declined"),
+                "submit_failed_message": string("registry.consent_submit_failed"),
+            }
+        )
+    return document
+
+
+@api.get("/v1/models")
+def models() -> dict[str, object]:
+    """List built-in models, pinned revisions, terms and consent state."""
+    catalog = {metadata.model_id: metadata for metadata in registered_models()}
+    catalog.update(
+        {
+            metadata.model_id: metadata
+            for metadata in pending_model_consents()
+            if metadata.model_id not in catalog
+        }
+    )
+    return {
+        "models": [
+            _model_consent_document(metadata)
+            for metadata in sorted(
+                catalog.values(),
+                key=lambda item: (item.category, item.model_id),
+            )
+        ]
+    }
+
+
+@api.get("/ui/assets/{asset_name:path}", include_in_schema=False)
+def webui_asset(asset_name: str) -> Response:
+    """Serve a fixed WebUI asset or bundled font file."""
+    if asset_name == "theme.css":
+        return Response(
+            content=webui_theme_style,
+            media_type="text/css",
+            headers={"Cache-Control": "no-store"},
+        )
+    asset = webui_asset_response_data(asset_name)
+    if asset is None:
+        return Response(status_code=404)
+    content, media_type = asset
+    return Response(
+        content=content,
+        media_type=media_type,
+        headers={"Cache-Control": "public, max-age=3600"},
+    )
+
+
+def _submit_model_consent(body: ModelConsentRequest) -> dict[str, object]:
+    """Apply one exact-revision acknowledgement submitted by a client."""
+    metadata = model_metadata_for_revision(body.model_id, body.revision)
+    record_model_consent(body.model_id, body.revision, body.accepted)
+    return {
+        "accepted": body.accepted,
+        "model": _model_consent_document(metadata),
+    }
+
+
+@api.post("/v1/models/consent")
+def submit_model_consent(body: ModelConsentRequest) -> dict[str, object]:
+    """Acknowledge model terms for one exact Hugging Face commit."""
+    return _submit_model_consent(body)
+
+
+@api.get("/ui/models/pending", include_in_schema=False)
+def webui_pending_model_consents() -> dict[str, object]:
+    """Return localized pending prompts to the authenticated browser UI."""
+    pending = pending_model_consents()
+    return {
+        "pending": [
+            _model_consent_document(metadata, include_prompt=True)
+            for metadata in pending
+        ],
+        "status": (string("registry.waiting_status") if pending else webui_status_text),
+    }
+
+
+@api.post("/ui/models/consent", include_in_schema=False)
+def webui_submit_model_consent(body: ModelConsentRequest) -> dict[str, object]:
+    """Submit the browser UI's decision for one exact model revision."""
+    return _submit_model_consent(body)
 
 
 @api.post("/v1/speak", response_model=None)

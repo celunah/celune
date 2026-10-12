@@ -105,11 +105,36 @@ api_key = key_file.read_text(encoding="utf-8").strip()
 | `POST` | `/v1/voice` | Change the active voice. |
 | `POST` | `/v1/sfx` | Upload and play a sound effect. |
 | `POST` | `/v1/convert` | Upload audio for voice conversion in VC mode. |
+| `GET` | `/v1/models` | List built-in models, pinned revisions, license details, and consent state. |
+| `POST` | `/v1/models/consent` | Record consent for one exact model revision. |
 
 `/v1` and `/v1/version` are authenticated JSON endpoints. The root redirect is
 useful when a browser opens the API port; programmatic clients should call the
 `/v1` paths directly. `/ui` is the Gradio WebUI mounted by the optional API
 runtime.
+
+## Model terms and consent
+
+Before loading a restricted, unregistered, unknown-license, or unreviewed model,
+Celune asks for consent to that exact Hugging Face commit. The Textual UI shows
+the localized license prompt and keeps its bottom-left status at
+`registry.waiting_status` while it waits. The WebUI displays an obstructing
+consent modal with license details, restriction flags, and the source link.
+
+`GET /v1/models` lists the built-in catalog, including model ID, display name,
+category, pinned revision, license and license URL, non-commercial and
+research-only flags, and consent state. Custom model metadata is included in a
+`428 Precondition Required` response when an operation first needs consent.
+
+`POST /v1/models/consent` accepts a model ID, a full commit SHA, and an
+`accepted` boolean. A successful acknowledgement is stored in Celune app data
+for that exact model and revision. If the model changes revision, it requires a
+new acknowledgement. After a `428` response, submit consent and retry the
+operation. A declined decision returns `403 Forbidden` and the affected load
+does not continue.
+
+See [Model registry and license consent](development/model-registry.md) for
+catalog ownership, revision pinning, and consent workflow details.
 
 ## Request and response shapes
 

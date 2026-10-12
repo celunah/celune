@@ -394,6 +394,11 @@ def traceback_path(create_parent: bool = False) -> Path:
     return path
 
 
+def model_consent_path() -> Path:
+    """Return the app-data path used for model-license acknowledgements."""
+    return app_data_dir() / "model-consents.json"
+
+
 def main_window_log_path(create_parent: bool = False) -> Path:
     """Return the persisted main-window log file path.
 

@@ -1,0 +1,491 @@
+@font-face {
+  font-family: Outfit;
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/ui/assets/fonts/outfit-400.ttf") format("truetype");
+}
+@font-face {
+  font-family: Outfit;
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("/ui/assets/fonts/outfit-700.ttf") format("truetype");
+}
+@font-face {
+  font-family: Michroma;
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/ui/assets/fonts/michroma-400.ttf") format("truetype");
+}
+
+html,
+    body,
+    gradio-app {
+        --color-accent: var(--celune-primary, #cebaff) !important;
+        --body-text-color: var(--celune-secondary, #a595cc) !important;
+        --block-label-text-color: var(--celune-primary, #cebaff) !important;
+        --block-title-text-color: var(--celune-primary, #cebaff) !important;
+        --block-info-text-color: var(--celune-secondary, #a595cc) !important;
+        /* the Celune "accent" color in CSS is actually considered as Celune tertiary */
+        --body-text-color-subdued: var(--celune-accent, #7c7099) !important;
+        background: var(--celune-ui-bg, var(--celune-background, #1d1826)) !important;
+    }
+
+    .column {
+        place-content: center;
+    }
+
+    .gradio-container {
+        background: var(--celune-ui-bg, var(--celune-background, #1d1826));
+        font-family: Outfit, sans-serif !important;
+        height: 100dvh;
+        overflow: hidden;
+    }
+
+    .gradio-container .tab-container::after {
+        display: none;
+    }
+
+    .gradio-container > .main,
+    .gradio-container .wrap,
+    .gradio-container .block,
+    .gradio-container .form,
+    .gradio-container label,
+    .gradio-container label.selected,
+    .gradio-container .tab-like-container,
+    .gradio-container .tab-like-container input,
+    .gradio-container .loading-container,
+    .gradio-container .loading-container > div,
+    .gradio-container button[role="tab"]:hover {
+        background: var(--celune-ui-bg, var(--celune-background, #1d1826)) !important;
+    }
+
+    .main {
+        flex: 1 1 auto !important;
+        min-height: 0;
+    }
+
+    body {
+        font-family: Outfit, sans-serif;
+    }
+
+    #celune-shell {
+        display: flex;
+        flex-direction: column;
+        gap: 0.75rem;
+        height: calc(100dvh - 2rem);
+        min-height: 0;
+        background: var(--celune-ui-bg, var(--celune-background, #1d1826));
+    }
+
+    #celune-header {
+        display: flex;
+        place-items: center;
+    }
+
+    #celune-header .line {
+        width: 100%;
+        background: var(--celune-ui-accent, var(--celune-primary, #cebaff));
+        height: 2px;
+    }
+
+    #celune-header .title {
+        font-weight: bold;
+        padding: 0 2em;
+        color: var(--celune-ui-accent, var(--celune-primary, #cebaff));
+    }
+
+    #celune-style button,
+    #celune-send button,
+    #celune-convert button,
+    button#celune-style,
+    button#celune-send,
+    button#celune-convert {
+        background: var(--celune-button-bg, #3a304c) !important;
+        border: 1px solid var(--celune-ui-accent, var(--celune-primary, #cebaff)) !important;
+        border-radius: 4px;
+        color: var(--celune-ui-accent, var(--celune-primary, #cebaff)) !important;
+        opacity: 1 !important;
+    }
+
+    #celune-style button:hover:not(:disabled),
+    #celune-send button:hover:not(:disabled),
+    #celune-convert button:hover:not(:disabled),
+    button#celune-style:hover:not(:disabled),
+    button#celune-send:hover:not(:disabled),
+    button#celune-convert:hover:not(:disabled) {
+        background: var(--celune-button-hover, #443a56) !important;
+    }
+
+    #celune-style button:disabled,
+    #celune-send button:disabled,
+    #celune-convert button:disabled,
+    button#celune-style:disabled,
+    button#celune-send:disabled,
+    button#celune-convert:disabled {
+        background: color-mix(
+            in srgb,
+            var(--celune-button-bg, #3a304c) 72%,
+            var(--celune-ui-bg, var(--celune-background, #1d1826))
+        ) !important;
+        border-color: var(--celune-accent, #7c7099) !important;
+        color: var(--celune-secondary, #a595cc) !important;
+        cursor: not-allowed;
+    }
+
+    #celune-style button:focus-visible,
+    #celune-send button:focus-visible,
+    #celune-convert button:focus-visible,
+    button#celune-style:focus-visible,
+    button#celune-send:focus-visible,
+    button#celune-convert:focus-visible {
+        outline: 2px solid var(--celune-ui-accent, var(--celune-primary, #cebaff));
+        outline-offset: 2px;
+    }
+
+    #celune-log-panel {
+        border: 2px solid var(--celune-ui-accent, var(--celune-primary, #cebaff));
+        background: var(--celune-ui-bg, var(--celune-background, #1d1826));
+        padding: 1em;
+        border-radius: 8px;
+        max-height: min(75dvh, calc(100dvh - 20rem));
+        overflow: hidden;
+        flex: 1 1 auto;
+        min-height: 0;
+    }
+
+    #celune-log-panel pre {
+        font-family: "JetBrains Mono", monospace;
+        color: var(--celune-ui-accent, var(--celune-primary, #cebaff));
+        white-space: pre-wrap;
+        margin: 0;
+        max-height: min(calc(75dvh - 2em), calc(75dvh - 15rem));
+        height: 100%;
+        overflow-y: auto;
+        padding-right: 0.75em;
+        scrollbar-gutter: stable both-edges;
+        scrollbar-color: var(--celune-ui-accent, var(--celune-primary, #cebaff))
+            var(--celune-ui-bg, var(--celune-background, #1d1826));
+    }
+
+    #celune-input textarea {
+        background: var(--celune-ui-input-bg, var(--celune-input-bg, #3a304c));
+        color: var(--celune-ui-accent, var(--celune-primary, #cebaff));
+        border-radius: 4px;
+        scrollbar-color: var(--celune-ui-accent, var(--celune-primary, #cebaff))
+            var(--celune-ui-bg, var(--celune-background, #1d1826));
+    }
+
+    #celune-input textarea::placeholder {
+        color: var(--celune-placeholder, #9c88ce);
+    }
+
+    #celune-resources .footer-block {
+        text-align: right;
+        color: var(--celune-ui-accent, var(--celune-primary, #cebaff));
+    }
+
+    .webui-recording-hint {
+        margin-top: 0.25rem;
+        font-size: 0.9rem;
+    }
+
+    #celune-record-hotkey {
+        display: none !important;
+    }
+
+    .webui-desktop-only {
+        display: inline !important;
+        color: inherit;
+    }
+
+    .webui-mobile-only {
+        display: none !important;
+        color: inherit;
+    }
+
+    #celune-actions {
+        gap: 0.75rem;
+    }
+
+    #celune-send button,
+    button#celune-send {
+        min-height: 2.75rem;
+    }
+
+    #celune-input-row, #celune-footer {
+        padding: 0 1em;
+    }
+
+    #celune-send,
+    button#celune-send {
+        display: none;
+    }
+
+    #celune-log-panel pre::-webkit-scrollbar,
+    #celune-input textarea::-webkit-scrollbar {
+        width: 0.8rem;
+    }
+
+    #celune-log-panel pre::-webkit-scrollbar-track,
+    #celune-input textarea::-webkit-scrollbar-track {
+        background: var(--celune-ui-bg, var(--celune-background, #1d1826));
+    }
+
+    #celune-log-panel pre::-webkit-scrollbar-thumb,
+    #celune-input textarea::-webkit-scrollbar-thumb {
+        background: var(--celune-ui-accent, var(--celune-primary, #cebaff));
+        border-radius: 999px;
+        border: 2px solid var(--celune-ui-bg, var(--celune-background, #1d1826));
+    }
+
+    .gradio-container .minimal-audio-player button:hover,
+    .gradio-container .minimal-audio-player button:focus,
+    .gradio-container .standard-player button:hover,
+    .gradio-container .standard-player button:focus,
+    .gradio-container .controls .icon:hover,
+    .gradio-container .controls .icon:focus,
+    .gradio-container .controls .action:hover,
+    .gradio-container .controls .action:focus,
+    .gradio-container .controls .playback:hover,
+    .gradio-container .controls .playback:focus,
+    .gradio-container .controls .text-button:hover,
+    .gradio-container .controls .text-button:focus {
+        color: var(--celune-primary, #cebaff) !important;
+        border-color: var(--celune-primary, #cebaff) !important;
+    }
+
+    .gradio-container .standard-player input[type="range"],
+    .gradio-container .minimal-audio-player input[type="range"] {
+        accent-color: var(--celune-primary, #cebaff) !important;
+    }
+
+    .gradio-container .standard-player input[type="range"]::-webkit-slider-thumb,
+    .gradio-container .minimal-audio-player input[type="range"]::-webkit-slider-thumb {
+        background-color: var(--celune-primary, #cebaff) !important;
+    }
+
+    .gradio-container .standard-player input[type="range"]::-moz-range-thumb,
+    .gradio-container .minimal-audio-player input[type="range"]::-moz-range-thumb {
+        background-color: var(--celune-primary, #cebaff) !important;
+    }
+
+    body.celune-gradio-connection-lost .toast-messages {
+        height: 100vh;
+        width: 100vw;
+        place-items: center;
+        justify-content: center;
+    }
+
+    .toast-body.error.celune-gradio-connection-lost {
+        position: fixed;
+        background: color-mix(
+            in srgb,
+            var(--celune-background, #1d1826) 90%,
+            transparent 10%
+        ) !important;
+        border: none;
+        top: 0;
+    }
+
+    .toast-body.error.celune-gradio-connection-lost .toast-header {
+        display: none !important;
+    }
+
+    .toast-body.error.celune-gradio-connection-lost .toast-message-text.error {
+        font-size: 0;
+    }
+
+    .toast-body.error.celune-gradio-connection-lost .toast-message-text.error::before {
+        content: __CELUNE_CONNECTION_LOST_MESSAGE__;
+        font-size: 16px;
+        color: var(--celune-error, #f07178);
+    }
+
+#celune-model-consent {
+  position: fixed;
+  inset: 0;
+  z-index: 1000000;
+  display: grid;
+  place-items: center;
+  padding: 1.5rem;
+  background: color-mix(in srgb, var(--celune-background, #1d1826) 94%, black);
+  color: var(--celune-foreground, #fff);
+}
+
+#celune-model-consent section {
+  width: min(42rem, 100%);
+  max-height: 90dvh;
+  overflow: auto;
+  padding: 2rem;
+  border: 1px solid var(--celune-primary, #cebaff);
+  border-radius: 1rem;
+  background: var(--celune-background, #1d1826);
+  box-shadow: 0 1rem 4rem #0008;
+}
+
+#celune-model-consent p {
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+#celune-model-consent a {
+  color: var(--celune-primary, #cebaff);
+}
+
+#celune-model-consent input {
+  width: 100%;
+  box-sizing: border-box;
+  margin: .5rem 0 1rem;
+  padding: .8rem;
+  border-radius: .6rem;
+}
+
+#celune-model-consent .actions {
+  display: flex;
+  gap: .75rem;
+}
+
+#celune-model-consent button {
+  flex: 1;
+  min-height: 2.75rem;
+  border: 0;
+  border-radius: .6rem;
+  font: inherit;
+  cursor: pointer;
+}
+
+#celune-model-consent button:disabled {
+  opacity: .55;
+  cursor: not-allowed;
+}
+
+#celune-model-consent [data-role="accept"] {
+  background: var(--celune-primary, #cebaff);
+  color: #17121f;
+}
+
+#celune-model-consent [data-role="decline"] {
+  border: 1px solid var(--celune-primary, #cebaff);
+  background: transparent;
+  color: var(--celune-foreground, #fff);
+}
+
+.celune-consent-notice {
+  position: fixed;
+  right: 1rem;
+  bottom: 1rem;
+  z-index: 1000001;
+  padding: 1rem;
+  border: 1px solid var(--celune-primary, #cebaff);
+  border-radius: .75rem;
+  background: var(--celune-background, #1d1826);
+  color: var(--celune-foreground, #fff);
+}
+
+    input[type="number"] {
+        -webkit-appearance: textfield !important;
+        appearance: textfield !important;
+    }
+
+    input[type="number"]::-webkit-inner-spin-button,
+    input[type="number"]::-webkit-outer-spin-button {
+        -webkit-appearance: none;
+        appearance: none;
+        margin: 0;
+    }
+
+    input[type="radio"][aria-checked="false"][disabled] {
+        background: color-mix(
+            var(--celune-background) 90%,
+            var(--celune-primary) 10%
+        );
+    }
+
+    input[type="range"]::-moz-range-thumb {
+        background: var(--celune-primary) !important;
+        border-color: var(--celune-primary) !important;
+    }
+
+    input[type="range"]::-moz-range-track {
+        background: var(--celune-accent) !important;
+    }
+
+    input[type="range"]::-webkit-slider-runnable-track {
+        background: var(--celune-accent) !important;
+    }
+
+    input[type="range"]::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        appearance: none;
+        background: var(--celune-primary) !important;
+        border: none !important;
+    }
+
+    input[type="range"] {
+        -webkit-appearance: none;
+        appearance: none;
+    }
+
+    @media (max-width: 768px), (any-pointer: coarse), (hover: none) {
+        .gradio-container {
+            height: 100dvh;
+            overflow: hidden;
+        }
+
+        #celune-shell {
+            height: calc(100dvh - 8rem);
+            min-height: 0;
+        }
+
+        #celune-input-row {
+            flex-direction: column;
+        }
+
+        #celune-actions {
+            display: flex;
+            flex-direction: row;
+            width: 100%;
+            flex-wrap: nowrap;
+            gap: 0;
+        }
+
+        #celune-actions > * {
+            flex: 1 1 0 !important;
+            min-width: 0 !important;
+        }
+
+        button#celune-send {
+            width: 100%;
+        }
+
+        button#celune-send {
+            display: flex;
+        }
+
+        #celune-input textarea, #celune-input textarea::placeholder {
+            text-align: center;
+        }
+
+        #celune-log-panel {
+            max-height: min(52dvh, calc(100dvh - 12rem));
+        }
+
+        #celune-log-panel pre {
+            max-height: min(calc(52dvh - 2em), calc(100dvh - 14rem));
+        }
+
+        button#celune-send {
+            border-radius: 4px;
+        }
+
+        .webui-desktop-only {
+            display: none !important;
+        }
+
+        .webui-mobile-only {
+            display: inline !important;
+        }
+    }

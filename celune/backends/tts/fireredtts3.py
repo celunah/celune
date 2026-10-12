@@ -19,26 +19,28 @@ import torchaudio
 import numpy as np
 from huggingface_hub import snapshot_download
 
-if TYPE_CHECKING:
-    from transformers.cache_utils import Cache
-    from transformers.configuration_utils import PreTrainedConfig
-
-from ...i18n import string
-from ...typing.aliases import AudioChunk
-from ...typing.backends import BackendModel
-from ...kv_cache import create_quantized_kv_cache
-from ...cevoice import CEVoiceLoader, default_loader
-from ...paths import (
-    runtime_data_dir,
-    huggingface_progress,
-    huggingface_hub_cache_dir,
-)
 from .base import (
     CeluneBackend,
     _to_numpy_audio,
     local_hf_offline_mode,
     cached_hf_snapshot_path,
 )
+from ...paths import (
+    runtime_data_dir,
+    huggingface_progress,
+    huggingface_hub_cache_dir,
+)
+from ...i18n import string
+from ...typing.aliases import AudioChunk
+from ...typing.backends import BackendModel
+from ...kv_cache import create_quantized_kv_cache
+from ...cevoice import CEVoiceLoader, default_loader
+from ...registry.consent import require_model_consent
+from ...registry.tts import TTS_DEFAULT_VOICE, FIREREDTTS3_MODEL_ID
+
+if TYPE_CHECKING:
+    from transformers.cache_utils import Cache
+    from transformers.configuration_utils import PreTrainedConfig
 
 __all__ = ["FireRedTTS3"]
 
@@ -551,8 +553,8 @@ class FireRedTTS3(CeluneBackend[_FireRedModel]):
     # 4 RedAE frames @ 25 Hz
     chunk_rate: float = 6.25
     max_new_tokens: int = 400
-    default_voice: Optional[str] = "balanced"
-    model_repo: str = "FireRedTeam/FireRedTTS3"
+    default_voice: Optional[str] = TTS_DEFAULT_VOICE
+    model_repo: str = FIREREDTTS3_MODEL_ID
     supported_languages: tuple[str, ...] = (
         "ar",
         "yue",
@@ -983,19 +985,21 @@ class FireRedTTS3(CeluneBackend[_FireRedModel]):
     def load_model(self, model_id: str, **kwargs) -> _FireRedModel:
         """Load FireRedTTS3 model assets and configure its BF16 path."""
         del kwargs
+        metadata = require_model_consent(model_id)
         available, path = self.model_is_available_locally(model_id)
         if not available or path is None:
             self.log(string("tts.model_download_start"), "info")
             with huggingface_progress(self.report_progress):
                 path = snapshot_download(
                     repo_id=model_id,
+                    revision=metadata.revision,
                     cache_dir=str(huggingface_hub_cache_dir(create=True)),
                 )
 
         source_root = self._ensure_source_root()
         self.report_progress(0, 4)
         with (
-            local_hf_offline_mode() if available else contextlib.nullcontext(),
+            local_hf_offline_mode(),
             self._source_context(source_root),
             self._suppress_backend_output(),
         ):

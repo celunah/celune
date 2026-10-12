@@ -16,22 +16,35 @@ import numpy as np
 import soundfile as sf
 from huggingface_hub import snapshot_download
 
-from ...i18n import string
-from ...utils import custom_assert
-from ...typing.aliases import AudioChunk
-from ...typing.backends import BackendModel
-from ...cevoice import CEVoiceLoader, default_loader
-from ...paths import temp_data_dir, huggingface_progress, huggingface_hub_cache_dir
 from .base import (
     CeluneBackend,
     _to_numpy_audio,
     local_hf_offline_mode,
     cached_hf_snapshot_path,
 )
+from ...i18n import string
+from ...registry.tts import (
+    LUXTTS_MODEL_ID as _LUXTTS_MODEL_ID,
+)
+from ...registry.tts import (
+    TTS_DEFAULT_VOICE,
+    LUXTTS_VOICE_MODELS,
+)
+from ...registry.tts import (
+    LUXTTS_CPU_TRANSCRIBER_MODEL_ID as _LUXTTS_CPU_TRANSCRIBER_MODEL_ID,
+)
+from ...registry.tts import (
+    LUXTTS_GPU_TRANSCRIBER_MODEL_ID as _LUXTTS_GPU_TRANSCRIBER_MODEL_ID,
+)
+from ...utils import custom_assert
+from ...typing.aliases import AudioChunk
+from ...typing.backends import BackendModel
+from ...cevoice import CEVoiceLoader, default_loader
+from ...registry.consent import require_model_consent
+from ...paths import temp_data_dir, huggingface_progress, huggingface_hub_cache_dir
 
 __all__ = ["LuxTTS"]
 
-_LUXTTS_MODEL_ID = "YatharthS/LuxTTS"
 _LUXTTS_TRANSCRIBER_FILES = [
     "config.json",
     "generation_config.json",
@@ -44,8 +57,6 @@ _LUXTTS_TRANSCRIBER_FILES = [
     "tokenizer_config.json",
     "vocab.json",
 ]
-_LUXTTS_CPU_TRANSCRIBER_MODEL_ID = "openai/whisper-tiny"
-_LUXTTS_GPU_TRANSCRIBER_MODEL_ID = "openai/whisper-base"
 _LUXTTS_CPU_MODEL_FILES = [
     "tokens.txt",
     "text_encoder.onnx",
@@ -319,13 +330,8 @@ class LuxTTS(CeluneBackend[_LuxTTSModel]):
     uses_voice_bundles: bool = True
     chunk_rate: float = 1.0
     supported_languages: tuple[str, ...] = ("en",)
-    voice_models: ClassVar[Optional[Mapping[str, str]]] = {
-        "balanced": _LUXTTS_MODEL_ID,
-        "calm": _LUXTTS_MODEL_ID,
-        "bold": _LUXTTS_MODEL_ID,
-        "upbeat": _LUXTTS_MODEL_ID,
-    }
-    default_voice: Optional[str] = "balanced"
+    voice_models: ClassVar[Optional[Mapping[str, str]]] = LUXTTS_VOICE_MODELS
+    default_voice: Optional[str] = TTS_DEFAULT_VOICE
 
     def __init__(
         self,
@@ -446,15 +452,22 @@ class LuxTTS(CeluneBackend[_LuxTTSModel]):
     def load_model(self, model_id: str, **kwargs) -> _LuxTTSModel:
         """Load LuxTTS on CUDA when available, otherwise use its CPU path."""
         del kwargs
+        metadata = require_model_consent(model_id)
         device = _runtime_device()
         available, snapshot_path = self.model_is_available_locally(model_id)
-        target = snapshot_path if available and snapshot_path is not None else model_id
-        if not available:
+        if not available or snapshot_path is None:
             self.log(string("tts.model_download_start"), "info")
+            with huggingface_progress(self.report_progress):
+                snapshot_path = snapshot_download(
+                    repo_id=model_id,
+                    revision=metadata.revision,
+                    cache_dir=str(huggingface_hub_cache_dir(create=True)),
+                )
+        target = snapshot_path
 
         runtime_class = _load_runtime_class()
         with (
-            local_hf_offline_mode(available),
+            local_hf_offline_mode(),
             huggingface_progress(self.report_progress),
             self._suppress_backend_output(),
         ):
@@ -476,6 +489,7 @@ class LuxTTS(CeluneBackend[_LuxTTSModel]):
         """Ensure LuxTTS and its selected Whisper transcriber are cached."""
         super().preload_models()
         transcriber_model_id = _transcriber_model_id(_runtime_device())
+        transcriber_metadata = require_model_consent(transcriber_model_id)
         available, _ = cached_hf_snapshot_path(
             transcriber_model_id,
             _LUXTTS_TRANSCRIBER_FILES,
@@ -494,6 +508,7 @@ class LuxTTS(CeluneBackend[_LuxTTSModel]):
         with huggingface_progress(self.report_progress):
             snapshot_download(
                 repo_id=transcriber_model_id,
+                revision=transcriber_metadata.revision,
                 cache_dir=str(huggingface_hub_cache_dir(create=True)),
             )
 

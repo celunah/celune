@@ -12,8 +12,6 @@ import torch
 import pytest
 from safetensors.torch import save_file
 
-from celune.typing.common import JSONSerializable
-from celune.agent.needle.models import NeedleModel, NeedleConfig
 from celune.agent.needle.checkpoints import (
     NEEDLE_PICKLE_FILE,
     NeedleCheckpointError,
@@ -22,6 +20,12 @@ from celune.agent.needle.checkpoints import (
     prepare_needle_checkpoint,
     validate_needle_safetensors,
 )
+from celune.typing.common import JSONSerializable
+from celune.registry.consent import ModelConsentStore
+from celune.agent.needle.models import NeedleModel, NeedleConfig
+
+_TEST_MODEL_ID = "test/model"
+_TEST_MODEL_REVISION = "a" * 40
 
 
 def _config_values() -> dict[str, JSONSerializable]:
@@ -65,6 +69,14 @@ def _write_checkpoint(
     return validate_needle_safetensors(path, values)
 
 
+@pytest.fixture(autouse=True)
+def _acknowledge_synthetic_model(monkeypatch, tmp_path: Path) -> None:
+    """Give checkpoint tests explicit consent for their synthetic repository."""
+    store = ModelConsentStore(tmp_path / "consent.json")
+    store.set_acknowledged(_TEST_MODEL_ID, _TEST_MODEL_REVISION, True)
+    monkeypatch.setattr("celune.registry.consent._STORE", store)
+
+
 class TestNeedleCheckpointValidation:
     """Verify strict validation and typed failures for checkpoint artifacts."""
 
@@ -79,8 +91,8 @@ class TestNeedleCheckpointValidation:
             inventory = _write_checkpoint(source_path, values)
 
             prepared = prepare_needle_checkpoint(
-                "test/model",
-                "revision-1",
+                _TEST_MODEL_ID,
+                _TEST_MODEL_REVISION,
                 root / "cache",
                 source_path=source_path,
                 config_path=config_path,
@@ -162,8 +174,8 @@ class TestNeedleCheckpointValidation:
 
             with pytest.raises(NeedleCheckpointError):
                 prepare_needle_checkpoint(
-                    "test/model",
-                    "revision-1",
+                    _TEST_MODEL_ID,
+                    _TEST_MODEL_REVISION,
                     root / "cache",
                     source_filename="unsupported.bin",
                     source_path=source_path,
@@ -172,8 +184,8 @@ class TestNeedleCheckpointValidation:
 
             with pytest.raises(NeedleCheckpointError):
                 prepare_needle_checkpoint(
-                    "test/model",
-                    "revision-1",
+                    _TEST_MODEL_ID,
+                    _TEST_MODEL_REVISION,
                     root / "cache",
                     source_path=source_path,
                     config_path=config_path,
@@ -192,8 +204,8 @@ class TestNeedleCheckpointValidation:
 
             with pytest.raises(NeedleUnsupportedConverterError):
                 prepare_needle_checkpoint(
-                    "test/model",
-                    "revision-1",
+                    _TEST_MODEL_ID,
+                    _TEST_MODEL_REVISION,
                     root / "cache",
                     source_filename=NEEDLE_PICKLE_FILE,
                     source_path=source_path,
@@ -210,8 +222,8 @@ class TestNeedleCheckpointValidation:
 
             with pytest.raises(NeedleUnsupportedConverterError):
                 prepare_needle_checkpoint(
-                    "test/model",
-                    "revision-1",
+                    _TEST_MODEL_ID,
+                    _TEST_MODEL_REVISION,
                     root / "cache",
                     source_filename=NEEDLE_PICKLE_FILE,
                     source_path=source_path,
@@ -239,8 +251,8 @@ class TestNeedleCheckpointValidation:
 
             with pytest.raises(NeedleCheckpointError):
                 prepare_needle_checkpoint(
-                    "test/model",
-                    "revision-1",
+                    _TEST_MODEL_ID,
+                    _TEST_MODEL_REVISION,
                     root / "cache",
                     source_filename=NEEDLE_PICKLE_FILE,
                     source_path=source_path,
@@ -269,8 +281,8 @@ class TestNeedleCheckpointValidation:
                 _write_checkpoint(destination, target_config)
 
             first = prepare_needle_checkpoint(
-                "test/model",
-                "revision-1",
+                _TEST_MODEL_ID,
+                _TEST_MODEL_REVISION,
                 cache_path,
                 source_filename=NEEDLE_PICKLE_FILE,
                 source_path=source_path,
@@ -279,8 +291,8 @@ class TestNeedleCheckpointValidation:
                 converter_version="converter-1",
             )
             second = prepare_needle_checkpoint(
-                "test/model",
-                "revision-1",
+                _TEST_MODEL_ID,
+                _TEST_MODEL_REVISION,
                 cache_path,
                 source_filename=NEEDLE_PICKLE_FILE,
                 source_path=source_path,
@@ -299,8 +311,8 @@ class TestNeedleCheckpointValidation:
 
             source_path.write_bytes(b"legacy checkpoint v2")
             prepare_needle_checkpoint(
-                "test/model",
-                "revision-1",
+                _TEST_MODEL_ID,
+                _TEST_MODEL_REVISION,
                 cache_path,
                 source_filename=NEEDLE_PICKLE_FILE,
                 source_path=source_path,
@@ -311,8 +323,8 @@ class TestNeedleCheckpointValidation:
             assert len(calls) == 2
 
             prepare_needle_checkpoint(
-                "test/model",
-                "revision-1",
+                _TEST_MODEL_ID,
+                _TEST_MODEL_REVISION,
                 cache_path,
                 source_filename=NEEDLE_PICKLE_FILE,
                 source_path=source_path,

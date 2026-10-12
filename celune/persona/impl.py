@@ -8,22 +8,9 @@ import contextlib
 from typing import Optional
 from collections.abc import Mapping, Generator
 
-from ..i18n import string
-from ..config import Config
-from ..vram import resolve_vram_preset
-from ..typing.aliases import LogCallback
-from .capabilities import PersonaCapabilities
-from ..typing.common import JSON, JSONSerializable
-from .runtime import PersonaRuntime, response_to_json, request_from_json
 from ..modes import (
     mode_allows_persona,
     resolve_operation_mode,
-)
-from ..typing.persona import (
-    PersonaModel,
-    PersonaTokenizer,
-    PersonaEngineView,
-    PersonaClientResponse,
 )
 from ..cevoice import (
     CEVoicePersona,
@@ -35,11 +22,23 @@ from ..constants import (
     PERSONA_COMPACT_AT,
     PERSONA_CONTEXT_SPACE,
     DEFAULT_PERSONA_CONTEXT,
-    PERSONA_DEFAULT_MODEL_ID,
     PERSONA_HISTORY_MESSAGES,
     DEFAULT_PERSONA_DESCRIPTION,
-    persona_model_tier,
 )
+from ..i18n import string
+from ..config import Config
+from ..typing.persona import (
+    PersonaModel,
+    PersonaTokenizer,
+    PersonaEngineView,
+    PersonaClientResponse,
+)
+from ..vram import resolve_vram_preset
+from ..typing.aliases import LogCallback
+from .capabilities import PersonaCapabilities
+from ..typing.common import JSON, JSONSerializable
+from ..registry.llm import PERSONA_DEFAULT_MODEL_ID, persona_model_tier
+from .runtime import PersonaRuntime, response_to_json, request_from_json
 
 PERSONA_QUANTIZATION = "4bit"
 _CONVERSATION_SUMMARY_SYSTEM_PROMPT = (

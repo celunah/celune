@@ -75,6 +75,7 @@ nav:
       - Backends: development/backends.md
       - Docs standard: development/documentation.md
       - Testing: development/testing.md
+      - Model registry: development/model-registry.md
       - Voice and pack design: development/voice-analysis.md
       - Validation: development/validation.md
       - Packaging: development/packaging.md

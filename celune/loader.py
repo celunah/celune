@@ -26,19 +26,26 @@ from .pipeline import (
     force_stop_speech as force_stop_pipeline,
     saved_output_speech_seconds,
 )
+from .exceptions import (
+    BackendError,
+    ModelConsentRequired,
+    NotAvailableError,
+    RuntimeCheckError,
+    WarmupError,
+)
+from .constants import APP_NAME
 from .i18n import string, tagged_string
 from .backends.tts import CeluneBackend
 from .threads import run_in_daemon_thread
 from .persona.impl import persona_enabled
 from .dataclasses.events import ReadyEvent
 from .binding import install_class_functions
-from .constants import APP_NAME, NORMALIZER_MODEL_ID
+from .registry.other import NORMALIZER_MODEL_ID
 from .runtime import validate_runtime, log_runtime_banner
 from .typing.celune import Generative, NormalizerTokenizer
 from .modeling import normalizer_device, load_normalizer_components
 from .vram import vram_profile_fits, resolve_vram_preset, validate_vram_preset
 from .cevoice import default_loader, bundle_display_name, announce_default_bundle
-from .exceptions import WarmupError, BackendError, NotAvailableError, RuntimeCheckError
 
 __all__ = (
     "_start_configured_api",
@@ -187,6 +194,8 @@ def load(self, raise_on_error: bool = False, skip_runtime_check: bool = False) -
             self.model = self.backend.load_default_model()
             active_voice = self.current_voice or self.voices[0]
             self.model_name = self.backend.model_id_for_voice(active_voice)
+        except ModelConsentRequired:
+            raise
         except Exception as e:
             self.fatal()
             self.log(

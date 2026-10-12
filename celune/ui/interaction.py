@@ -1438,6 +1438,8 @@ def on_button_pressed(self, event: _app.Button.Pressed) -> None:
 
 def on_unmount(self) -> None:
     """Unload Celune."""
+    from ..registry.consent import set_model_consent_handler
+
     response_queue = self._agent_test_response_queue
     if response_queue is not None:
         self._agent_test_response_queue = None
@@ -1448,6 +1450,7 @@ def on_unmount(self) -> None:
         self.cur_state = "exiting"
     self._run_shutdown_step(self._cancel_sleep_timer)
     self._run_shutdown_step(self._clear_caption_timers)
+    self._run_shutdown_step(lambda: set_model_consent_handler(None))
     self._run_shutdown_step(
         lambda: self._set_terminal_status(
             "restarting" if restarting else "exiting",

@@ -5,19 +5,12 @@ from __future__ import annotations
 
 import threading
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Union, Optional, cast
 from collections.abc import Mapping, Callable, Sequence
+from typing import TYPE_CHECKING, Union, Optional, cast
 
 import torch
 import numpy as np
 
-from ..audio.dsp import resample_audio
-from ..typing.aliases import AudioChunk
-from ..paths import huggingface_progress
-from ..constants import (
-    DEFAULT_PERSONA_SPEECH_MODEL_ID,
-    DEFAULT_PERSONA_SPEECH_MODEL_REVISION,
-)
 from ..typing.persona import (
     WhisperScalar,
     WhisperSegmentPayload,
@@ -25,6 +18,13 @@ from ..typing.persona import (
     _WhisperModel,
     _WhisperProcessor,
 )
+from ..audio.dsp import resample_audio
+from ..typing.aliases import AudioChunk
+from ..paths import huggingface_progress
+from ..registry import get_model_metadata
+from ..registry.consent import require_model_consent
+from ..registry.asr import DEFAULT_PERSONA_SPEECH_MODEL_ID
+from ..exceptions import ModelConsentDeclined, ModelConsentRequired
 
 if TYPE_CHECKING:
     # noinspection PyPep8Naming
@@ -69,11 +69,8 @@ class WhisperTranscriber:
         ] = None,
     ) -> None:
         self.model_id = model_id.strip() or DEFAULT_PERSONA_SPEECH_MODEL_ID
-        self._revision = (
-            DEFAULT_PERSONA_SPEECH_MODEL_REVISION
-            if self.model_id == DEFAULT_PERSONA_SPEECH_MODEL_ID
-            else None
-        )
+        metadata = get_model_metadata(self.model_id)
+        self._revision = metadata.revision if metadata is not None else None
         self.language = language.strip() if language and language.strip() else None
         self._processor: Optional[_WhisperProcessor] = None
         self._model: Optional[_WhisperModel] = None
@@ -107,6 +104,9 @@ class WhisperTranscriber:
         with self._load_lock:
             if self._processor is not None and self._model is not None:
                 return
+
+            metadata = require_model_consent(self.model_id)
+            self._revision = metadata.revision
 
             from transformers import (
                 AutoProcessor,
@@ -462,6 +462,8 @@ class WhisperTranscriber:
                 WHISPER_SAMPLE_RATE,
                 return_segments=True,
             )
+        except (ModelConsentDeclined, ModelConsentRequired):
+            raise
         except (RuntimeError, TypeError, ValueError):
             return ()
         return result if isinstance(result, tuple) else ()

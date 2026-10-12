@@ -8,18 +8,14 @@ from typing import Union, Optional, cast
 
 import pytest
 
-from celune.i18n import string
 from celune.utils import discard
 from celune.typing.common import JSON
 from celune.persona import impl, runtime
+from celune.registry import get_model_metadata
+from celune.exceptions import ModelConsentRequired
 from celune.typing.aliases import RecordedKwargValue
-from celune.constants import (
-    APP_NAME,
-    PERSONA_MODELS,
-    PERSONA_DEFAULT_MODEL_ID,
-    persona_model_tier,
-    remote_code_model_revision,
-)
+from celune.registry.revisions import remote_code_model_revision
+from celune.registry.llm import LLM_MODELS, PERSONA_DEFAULT_MODEL_ID, persona_model_tier
 
 from .support import CeluneTestCase
 
@@ -349,71 +345,42 @@ class TestPersonaApi(CeluneTestCase):
         assert backend.supports_vision
 
     def test_trusted_model_revision_allows_abliterated_qwen_vl_model(self) -> None:
-        """Verify the pinned abliterated Qwen VL derivative is trusted."""
+        """Verify the registry includes a pinned abliterated Qwen VL derivative."""
         model_id = "huihui-ai/Huihui-Qwen3-VL-4B-Instruct-abliterated"
         revision = cast(str, remote_code_model_revision(model_id))
-        self.assertEqual(
-            runtime.PersonaBackend._resolve_model_revision(model_id),
-            revision,
-        )
+        metadata = get_model_metadata(model_id)
+        assert metadata is not None
+        self.assertEqual(metadata.revision, revision)
+        self.assertEqual(metadata.tier, persona_model_tier(model_id))
 
     def test_persona_registry_derives_supported_variants_and_tiers(self) -> None:
-        """Verify each compact registry entry expands to both trusted model IDs."""
+        """Verify every Persona catalog entry has a pinned revision and tier."""
         self.assertEqual(
-            tuple(
-                (definition["model"], definition["organization"], definition["tier"])
-                for definition in PERSONA_MODELS
-            ),
-            (
-                ("Qwen3-VL-4B-Instruct", "Qwen", "standard"),
-                ("Qwen3-VL-8B-Instruct", "Qwen", "smart"),
-                ("Qwen3-VL-8B-Thinking", "Qwen", "smart"),
-                ("Qwen3.5-4B", "Qwen", "standard"),
-                ("Qwen3.5-9B", "Qwen", "smart"),
-                ("gemma-4-E2B-it", "google", "standard"),
-                ("gemma-4-E4B-it", "google", "smart"),
-            ),
+            len(LLM_MODELS),
+            14,
         )
 
-        for definition in PERSONA_MODELS:
-            official_id = f"{definition['organization']}/{definition['model']}"
-            abliterated_id = f"huihui-ai/Huihui-{definition['model']}-abliterated"
+        for metadata in LLM_MODELS:
             self.assertEqual(
-                remote_code_model_revision(official_id),
-                definition["revisions"]["official"],
+                remote_code_model_revision(metadata.model_id), metadata.revision
             )
-            self.assertEqual(
-                remote_code_model_revision(abliterated_id),
-                definition["revisions"]["abliterated"],
-            )
-            self.assertEqual(persona_model_tier(official_id), definition["tier"])
-            self.assertEqual(persona_model_tier(abliterated_id), definition["tier"])
+            self.assertEqual(persona_model_tier(metadata.model_id), metadata.tier)
 
-    def test_load_warns_for_unknown_remote_code_models(self) -> None:
-        """Verify Persona warns before loading an unknown model."""
+    def test_load_requires_consent_for_unknown_models_before_loading(self) -> None:
+        """Verify unregistered Persona repositories stop before model loading."""
         backend = runtime.PersonaBackend()
         with (
-            self._mock_qwen_vl_load(
-                processor=_FakeProcessor(tokenizer=_FakeTokenizer()),
-                model=mock.Mock(),
-                tokenizer=_FakeTokenizer(),
-            ) as loaders,
-            mock.patch.object(runtime._LOGGER, "warning") as warning,
+            mock.patch("huggingface_hub.HfApi") as hub_api,
+            mock.patch.object(runtime.AutoConfig, "from_pretrained") as config_loader,
+            mock.patch("celune.registry.consent._STORE") as store,
+            mock.patch("celune.registry.consent._PENDING_CONSENTS", {}),
+            self.assertRaises(ModelConsentRequired),
         ):
+            hub_api.return_value.model_info.return_value.sha = "a" * 40
+            store.has_acknowledged.return_value = False
             backend.load("untrusted/example", "none")
 
-        warning.assert_called_once_with(
-            string(
-                "persona.unsupported_model",
-                model_id="untrusted/example",
-                app_name=APP_NAME,
-            )
-        )
-        loaders["config_loader"].assert_called_once_with(
-            "untrusted/example",
-            trust_remote_code=True,
-            revision="main",
-        )
+        config_loader.assert_not_called()
 
     def test_load_treats_multimodal_processor_as_vision_capable(self) -> None:
         """Verify multimodal processors are accepted even without chat templates."""
