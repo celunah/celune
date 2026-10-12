@@ -8,9 +8,8 @@ from typing import (
 )
 from queue import Queue
 from unittest import mock
-from collections import deque
-from collections.abc import Callable
 from types import SimpleNamespace
+from collections import abc, deque
 
 import numpy as np
 from starlette.requests import Request
@@ -21,7 +20,6 @@ from celune import api
 from celune.i18n import string
 from celune.celune import Celune
 from celune.pipeline import SpeechStreamQueue
-
 from .support import CeluneTestCase
 
 
@@ -56,14 +54,11 @@ class TestApiWebUI(CeluneTestCase):
         self.previous_rate_limit_hits = {
             key: list(hits) for key, hits in api.rate_limit_hits.items()
         }
-        self.previous_webui_auth_sessions = dict(api.webui_auth_sessions)
         self.previous_logs = list(api.webui_log_lines)
         api.bound_celune = None
         api.auth_token = None
         with api.rate_limit_lock:
             api.rate_limit_hits.clear()
-        with api.webui_auth_sessions_lock:
-            api.webui_auth_sessions.clear()
         api.webui_log_lines.clear()
         api.webui_logs_seeded = True
         api.webui_resource_page = 0
@@ -122,9 +117,6 @@ class TestApiWebUI(CeluneTestCase):
                     for key, hits in self.previous_rate_limit_hits.items()
                 }
             )
-        with api.webui_auth_sessions_lock:
-            api.webui_auth_sessions.clear()
-            api.webui_auth_sessions.update(self.previous_webui_auth_sessions)
         api.webui_log_lines.clear()
         api.webui_log_lines.extend(self.previous_logs)
 
@@ -264,6 +256,52 @@ class TestApiWebUI(CeluneTestCase):
 
         assert response.status_code == 200
 
+    def test_webui_session_survives_restart_but_is_bound_to_the_api_key(self) -> None:
+        """Verify signed browser sessions persist until the application key changes."""
+        api.auth_token = "secret"
+        session_id = api._new_ui_session()
+
+        api.configure_api_security(token="secret")
+        assert api._ui_session_valid(session_id)
+
+        replacement = "A" if session_id[-1] != "A" else "B"
+        assert not api._ui_session_valid(f"{session_id[:-1]}{replacement}")
+
+        api.configure_api_security(token="rotated")
+        assert not api._ui_session_valid(session_id)
+
+    def test_webui_session_expires(self) -> None:
+        """Verify an expired signed browser session cannot authorize a client."""
+        api.auth_token = "secret"
+        session_id = api._encode_ui_session("c" * 32, expires_at=99)
+
+        with mock.patch("celune.api.time.time", return_value=100):
+            assert not api._ui_session_valid(session_id)
+
+    def test_webui_session_refresh_keeps_the_same_browser_client(self) -> None:
+        """Verify active browser sessions refresh before expiry for that client."""
+        api.auth_token = "secret"
+        client_id = "c" * 32
+        expires_at = int(api.time.time()) + api.WEBUI_AUTH_SESSION_SECONDS // 4
+        session_id = api._encode_ui_session(client_id, expires_at)
+
+        response = asyncio.run(
+            api.api_security(
+                self._request(
+                    "/ui",
+                    headers=(("cookie", f"{api.WEBUI_AUTH_COOKIE}={session_id}"),),
+                ),
+                self._passthrough_response,
+            )
+        )
+
+        refreshed_cookie = response.headers["set-cookie"].split(";", 1)[0]
+        refreshed_session = refreshed_cookie.split("=", 1)[1]
+        refreshed_details = api._ui_session_details(refreshed_session)
+        assert refreshed_details is not None
+        assert refreshed_details[0] == client_id
+        assert refreshed_details[1] > expires_at
+
     def test_api_security_rejects_cross_origin_webui_actions(self) -> None:
         """Verify browser sessions cannot authorize cross-origin actions."""
         api.auth_token = "secret"
@@ -298,6 +336,7 @@ class TestApiWebUI(CeluneTestCase):
         assert response.status_code == 200
         cookie = response.headers["set-cookie"]
         assert f"{api.WEBUI_AUTH_COOKIE}=" in cookie
+        assert "secret" not in cookie
         assert "HttpOnly" in cookie
         assert "Path=/ui" in cookie
         assert "SameSite=strict" in cookie
@@ -1434,7 +1473,7 @@ class TestApiWebUI(CeluneTestCase):
             port: int,
             token: Optional[str],
             requests_per_minute: int,
-            on_started: Optional[Callable[[str, int], None]],
+            on_started: Optional[abc.Callable[[str, int], None]],
         ) -> None:
             assert token is None
             assert requests_per_minute == 60

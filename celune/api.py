@@ -14,6 +14,7 @@ import socket
 import asyncio
 import inspect
 import secrets
+import binascii
 import datetime
 import textwrap
 import threading
@@ -23,11 +24,12 @@ from typing import (
     Literal,
     Optional,
 )
+from hashlib import sha256
 from functools import lru_cache
-from hmac import compare_digest
 from urllib.parse import urlsplit
 from dataclasses import field, dataclass
 from collections import deque, defaultdict
+from hmac import compare_digest, new as hmac_new
 from collections.abc import Callable, Iterator, Awaitable
 
 import uvicorn
@@ -132,9 +134,7 @@ UiTimedUpdate = webui.UiTimedUpdate
 api = FastAPI(title=f"{APP_NAME}API")
 WEBUI_AUTH_PATH = "/ui/key"
 WEBUI_AUTH_COOKIE = "celune_webui_session"
-WEBUI_AUTH_SESSION_SECONDS = 8 * 60 * 60
-webui_auth_sessions_lock = threading.Lock()
-webui_auth_sessions: dict[str, float] = {}
+WEBUI_AUTH_SESSION_SECONDS = 30 * 24 * 60 * 60
 bound_celune: Optional[Celune] = None
 auth_token: Optional[str] = None
 rate_limit_per_minute = 60
@@ -1016,11 +1016,7 @@ def configure_api_security(
     """
     global auth_token, rate_limit_per_minute
 
-    configured_token = _clean_token(token) or _env_auth_token()
-    if configured_token != auth_token:
-        with webui_auth_sessions_lock:
-            webui_auth_sessions.clear()
-    auth_token = configured_token
+    auth_token = _clean_token(token) or _env_auth_token()
     rate_limit_per_minute = max(0, requests_per_minute)
     with rate_limit_lock:
         rate_limit_hits.clear()
@@ -1124,36 +1120,108 @@ def _rate_limited(request: Request) -> bool:
     return _rate_limited_client(_rate_limit_key(request))
 
 
+def _ui_session_signature(payload: bytes) -> bytes:
+    """Sign a WebUI session payload with the active application key."""
+    if auth_token is None:
+        return b""
+    return hmac_new(
+        auth_token.encode("utf-8"),
+        b"Celune WebUI session v1\0" + payload,
+        sha256,
+    ).digest()
+
+
+def _encode_ui_session(client_id: str, expires_at: int) -> str:
+    """Create a signed, restart-safe cookie for one browser client."""
+    payload = f"v1:{expires_at}:{client_id}".encode("ascii")
+    encoded_payload = base64.urlsafe_b64encode(payload).rstrip(b"=")
+    signature = base64.urlsafe_b64encode(_ui_session_signature(payload)).rstrip(b"=")
+    return f"{encoded_payload.decode('ascii')}.{signature.decode('ascii')}"
+
+
+def _ui_session_details(session: Optional[str]) -> Optional[tuple[str, int]]:
+    """Return the client ID and expiry for a valid signed WebUI cookie."""
+    if auth_token is None or session is None or len(session) > 512:
+        return None
+    try:
+        encoded_payload, encoded_signature = session.split(".", 1)
+        payload = base64.b64decode(
+            encoded_payload.encode("ascii") + b"=" * (-len(encoded_payload) % 4),
+            altchars=b"-_",
+            validate=True,
+        )
+        signature = base64.b64decode(
+            encoded_signature.encode("ascii") + b"=" * (-len(encoded_signature) % 4),
+            altchars=b"-_",
+            validate=True,
+        )
+    except (binascii.Error, UnicodeEncodeError, ValueError):
+        return None
+
+    if not compare_digest(signature, _ui_session_signature(payload)):
+        return None
+
+    try:
+        session_version, raw_expiry, client_id = payload.decode("ascii").split(":", 2)
+        expires_at = int(raw_expiry)
+    except (UnicodeDecodeError, ValueError):
+        return None
+
+    now = int(time.time())
+    if (
+        session_version != "v1"
+        or len(client_id) < 32
+        or expires_at <= now
+        or expires_at > now + WEBUI_AUTH_SESSION_SECONDS
+    ):
+        return None
+    return client_id, expires_at
+
+
+def _new_ui_session(client_id: Optional[str] = None) -> str:
+    """Create a signed WebUI session that survives Celune restarts."""
+    if auth_token is None:
+        return ""
+    return _encode_ui_session(
+        client_id or secrets.token_urlsafe(32),
+        int(time.time()) + WEBUI_AUTH_SESSION_SECONDS,
+    )
+
+
 def _ui_session_valid(session_id: Optional[str]) -> bool:
-    """Return whether an opaque WebUI session cookie is still active."""
-    if not session_id:
-        return False
-
-    now = time.monotonic()
-    with webui_auth_sessions_lock:
-        expires_at = webui_auth_sessions.get(session_id)
-        if expires_at is None:
-            return False
-        if expires_at <= now:
-            del webui_auth_sessions[session_id]
-            return False
-    return True
+    """Return whether a signed WebUI session cookie is still active."""
+    return _ui_session_details(session_id) is not None
 
 
-def _new_ui_session() -> str:
-    """Create an opaque WebUI session with a bounded in-memory lifetime."""
-    now = time.monotonic()
-    session_id = secrets.token_urlsafe(32)
-    with webui_auth_sessions_lock:
-        expired_sessions = [
-            existing_id
-            for existing_id, expires_at in webui_auth_sessions.items()
-            if expires_at <= now
-        ]
-        for existing_id in expired_sessions:
-            del webui_auth_sessions[existing_id]
-        webui_auth_sessions[session_id] = now + WEBUI_AUTH_SESSION_SECONDS
-    return session_id
+def _set_ui_session_cookie(
+    response: Response,
+    request: Request,
+    session: str,
+) -> None:
+    """Set a browser-scoped cookie for a validated WebUI client."""
+    response.set_cookie(
+        WEBUI_AUTH_COOKIE,
+        session,
+        max_age=WEBUI_AUTH_SESSION_SECONDS,
+        path="/ui",
+        secure=request.url.scheme == "https",
+        httponly=True,
+        samesite="strict",
+    )
+
+
+def _refresh_ui_session_cookie(request: Request, response: Response) -> Response:
+    """Extend an active browser session near its expiry without asking again."""
+    details = _ui_session_details(request.cookies.get(WEBUI_AUTH_COOKIE))
+    if details is None:
+        return response
+
+    client_id, expires_at = details
+    if expires_at - int(time.time()) > WEBUI_AUTH_SESSION_SECONDS // 2:
+        return response
+
+    _set_ui_session_cookie(response, request, _new_ui_session(client_id))
+    return response
 
 
 def _webui_authenticated(connection: Union[Request, WebSocket]) -> bool:
@@ -1479,7 +1547,8 @@ async def api_security(
                 return JSONResponse(status_code=403, content={"error": "forbidden"})
             if _rate_limited(request):
                 return _rate_limit_response()
-        return await call_next(request)
+        response = await call_next(request)
+        return _refresh_ui_session_cookie(request, response)
 
     if not _authenticated(request):
         return _unauthorized_response()
@@ -1757,15 +1826,7 @@ async def authenticate_webui(
         content={"authenticated": True},
         headers={"Cache-Control": "no-store"},
     )
-    response.set_cookie(
-        WEBUI_AUTH_COOKIE,
-        _new_ui_session(),
-        max_age=WEBUI_AUTH_SESSION_SECONDS,
-        path="/ui",
-        secure=request.url.scheme == "https",
-        httponly=True,
-        samesite="strict",
-    )
+    _set_ui_session_cookie(response, request, _new_ui_session())
     return response
 
 

@@ -391,15 +391,18 @@ normalized float32 audio internally.
 Unauthenticated access to `/ui` redirects to `/ui/key`, which displays a
 blocking API-key prompt. Submitting the key sends it to `POST /ui/key` in a
 JSON `api_key` field. A valid key creates an opaque, `HttpOnly`,
-`SameSite=Strict` cookie scoped to `/ui` for eight hours, then the browser
-returns to `/ui`. The session is held in memory and ends when it expires, the
-API key changes, or Celune restarts. The API key is not stored in the URL or
-browser storage. The API security middleware checks the session on WebUI HTTP
-actions and WebSocket connections; requests without a valid API key or session
-receive `401`, even if the prompt is removed from the page with browser
-developer tools. API routes, including read-only status and version routes,
-also require the API key. The authentication request is rate limited, and
-browser writes and WebSocket connections must come from the same origin.
+`SameSite=Strict` cookie scoped to `/ui` for 30 days, then the browser returns
+to `/ui`. The signed cookie carries a random browser client ID and expiry, not
+the API key, and remains valid across Celune restarts. Active sessions are
+extended as the browser uses the WebUI. Changing the API key invalidates
+existing sessions; another browser without its own cookie still sees the key
+prompt. The API key is not stored in the URL or browser storage. The API
+security middleware checks the session on WebUI HTTP actions and WebSocket
+connections; requests without a valid API key or session receive `401`, even
+if the prompt is removed from the page with browser developer tools. API
+routes, including read-only status and version routes, also require the API
+key. The authentication request is rate limited, and browser writes and
+WebSocket connections must come from the same origin.
 
 The browser submits this body to `POST /ui/key`:
 
