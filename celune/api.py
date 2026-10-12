@@ -7,65 +7,56 @@ import json
 import time
 import uuid
 import errno
-import base64
 import socket
 import asyncio
+import base64
 import inspect
 import secrets
 import binascii
 import datetime
+import ipaddress
 import tempfile
 import threading
 import contextlib
-from hmac import new as hmac_new
-from hmac import compare_digest
 from typing import (
     Union,
     Literal,
     Optional,
 )
-from hashlib import sha256
 from pathlib import Path
-from collections import abc, deque, defaultdict
-from dataclasses import field, dataclass
+from hashlib import sha256
+from hmac import compare_digest
+from hmac import new as hmac_new
 from urllib.parse import urlsplit
+from dataclasses import field, dataclass
+from collections import abc, deque, defaultdict
 
-import numpy as np
-import gradio as gr
 import fastapi
 import uvicorn
+import gradio as gr
+import numpy as np
 from pydantic import Field, BaseModel
 from starlette import types, concurrency, datastructures
 from starlette.middleware import base as middleware_base
 
-from . import __version__
-from .ui import resources as ui_resources
-from .i18n import string
-from .paths import api_key_path, project_root
-from .theme import colors
-from .utils import available, format_error_message
-from .webui import actions as webactions
-from .webui import runtime as webui
-from .celune import Celune
 from .speech import (
     prepare_playback_audio,
 )
-from .cevoice import default_loader
-from .audio.dsp import resample_audio
-from .constants import BASE_SR, APP_NAME
+from .i18n import string
+from . import __version__
 from .exceptions import (
     ModelConsentDeclined,
     ModelConsentRequired,
     TaskSubscriptionClosed,
     ModelCommercialUseRestricted,
 )
+from .theme import colors
 from .typing.api import (
     TaskStatus,
     TaskEventName,
     TaskCommandName,
 )
-from .typing.common import JSONSerializable
-from .typing.events import EventName, EventCallback
+from .celune import Celune
 from .webui.actions import (
     _build_webui,
     _webui_speak,
@@ -101,8 +92,6 @@ from .webui.runtime import (
     _unsubscribe_from_speech_job,
     _subscribe_webui_timed_updates,
 )
-from .registry.types import ModelMetadata
-from .typing.aliases import LogLevel
 from .registry.consent import (
     consent_status,
     consent_details,
@@ -115,7 +104,19 @@ from .registry.consent import (
     enter_api_model_request,
     model_metadata_for_revision,
 )
+from .cevoice import default_loader
+from .webui import runtime as webui
+from .typing.aliases import LogLevel
+from .audio.dsp import resample_audio
+from .webui import actions as webactions
+from .constants import BASE_SR, APP_NAME
+from .registry.types import ModelMetadata
+from .ui import resources as ui_resources
+from .typing.common import JSONSerializable
 from .extensions.events import EventDispatcher
+from .utils import available, format_error_message
+from .typing.events import EventName, EventCallback
+from .paths import api_key_path, project_root, app_data_dir
 
 Callable = abc.Callable
 Iterator = abc.Iterator
@@ -299,11 +300,25 @@ async def model_consent_declined_response(
 WEBUI_AUTH_PATH = "/ui/key"
 WEBUI_AUTH_COOKIE = "celune_webui_session"
 WEBUI_AUTH_SESSION_SECONDS = 30 * 24 * 60 * 60
+WEBUI_POLL_SNAPSHOT_API_NAME = "webui_poll_snapshot"
+WEBUI_POLL_VC_API_NAME = "webui_poll_vc_controls"
+WEBUI_POLL_RECORDING_API_NAME = "webui_poll_recording_control"
+WEBUI_POLL_API_NAMES = frozenset(
+    {
+        WEBUI_POLL_SNAPSHOT_API_NAME,
+        WEBUI_POLL_VC_API_NAME,
+        WEBUI_POLL_RECORDING_API_NAME,
+    }
+)
+WEBUI_AUTH_CLIENTS_FILENAME = "webui-auth-clients.json"
+WEBUI_AUTH_CLIENT_LIMIT = 1024
 bound_celune: Optional[Celune] = None
 auth_token: Optional[str] = None
 rate_limit_per_minute = 60
 rate_limit_lock = threading.Lock()
 rate_limit_hits: defaultdict[str, deque[float]] = defaultdict(deque)
+webui_auth_clients_lock = threading.Lock()
+webui_auth_clients: Optional[dict[str, int]] = None
 max_sfx_upload_bytes = 25 * 1024 * 1024
 speech_jobs_lock = threading.Lock()
 speech_jobs: dict[str, "SpeechJob"] = {}
@@ -710,11 +725,39 @@ def _is_public_api_request(request: Request) -> bool:
     return method == "GET" and path in {"/", "/favicon.ico"}
 
 
-def _rate_limit_key(request: Request) -> str:
-    """Return the client key used for rate limiting."""
-    if request.client is None:
-        return "unknown"
-    return request.client.host
+def _client_address(connection: Union[Request, WebSocket]) -> Optional[str]:
+    """Return a client IP while accepting Cloudflare identity only from its proxy."""
+    client = connection.client
+    if client is None:
+        return None
+
+    peer = client.host
+    try:
+        peer_address = ipaddress.ip_address(peer)
+    except ValueError:
+        return peer
+
+    forwarded_address = connection.headers.get("cf-connecting-ip", "").strip()
+    if forwarded_address:
+        try:
+            cloudflare_address = ipaddress.ip_address(forwarded_address)
+        except ValueError:
+            return peer_address.compressed
+        if peer_address.is_loopback or peer_address == cloudflare_address:
+            return cloudflare_address.compressed
+
+    return peer_address.compressed
+
+
+def _rate_limit_key(connection: Union[Request, WebSocket]) -> str:
+    """Return a request-type-specific client key used for rate limiting."""
+    address = _client_address(connection) or "unknown"
+    path = connection.url.path.rstrip("/")
+    if path == "/ui" or path.startswith("/ui/"):
+        if isinstance(connection, WebSocket):
+            return f"webui-ws:{address}"
+        return f"webui:{address}"
+    return address
 
 
 def _rate_limited_client(client_key: str) -> bool:
@@ -742,6 +785,22 @@ def _rate_limited(request: Request) -> bool:
     return _rate_limited_client(_rate_limit_key(request))
 
 
+def _is_webui_poll_callback(request: Request) -> bool:
+    """Return whether a POST belongs to a read-only Gradio refresh callback."""
+    if request.method.upper() != "POST":
+        return False
+
+    path = request.url.path.rstrip("/")
+    if not path.startswith("/ui/"):
+        return False
+
+    return any(
+        path.endswith(f"/{route}/{api_name}")
+        for api_name in WEBUI_POLL_API_NAMES
+        for route in ("run", "call")
+    ) or any(path.endswith(f"/call/v2/{api_name}") for api_name in WEBUI_POLL_API_NAMES)
+
+
 def _ui_session_signature(payload: bytes) -> bytes:
     """Sign a WebUI session payload with the active application key."""
     if auth_token is None:
@@ -751,6 +810,130 @@ def _ui_session_signature(payload: bytes) -> bytes:
         b"Celune WebUI session v1\0" + payload,
         sha256,
     ).digest()
+
+
+def _webui_auth_client_cache_path() -> Path:
+    """Return the app-data path for authenticated WebUI client fingerprints."""
+    return app_data_dir() / WEBUI_AUTH_CLIENTS_FILENAME
+
+
+def _load_webui_auth_clients_locked() -> dict[str, int]:
+    """Load unexpired client fingerprints while holding their cache lock."""
+    global webui_auth_clients
+    if webui_auth_clients is not None:
+        return webui_auth_clients
+
+    try:
+        cached_data = json.loads(
+            _webui_auth_client_cache_path().read_text(encoding="utf-8")
+        )
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        cached_data = {}
+
+    now = int(time.time())
+    clients: dict[str, int] = {}
+    if isinstance(cached_data, dict):
+        for fingerprint, expires_at in cached_data.items():
+            if (
+                isinstance(fingerprint, str)
+                and isinstance(expires_at, int)
+                and not isinstance(expires_at, bool)
+                and expires_at > now
+            ):
+                clients[fingerprint] = expires_at
+
+    webui_auth_clients = clients
+    return clients
+
+
+def _persist_webui_auth_clients_locked(clients: dict[str, int]) -> None:
+    """Write client fingerprints atomically without storing source addresses."""
+    path = _webui_auth_client_cache_path()
+    temporary_path = path.with_name(f"{path.name}.tmp")
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary_path.write_text(
+            json.dumps(clients, separators=(",", ":")),
+            encoding="utf-8",
+        )
+        if os.name != "nt":
+            os.chmod(temporary_path, 0o600)
+        os.replace(temporary_path, path)
+    except OSError:
+        try:
+            temporary_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+def _webui_auth_client_fingerprint(
+    connection: Union[Request, WebSocket],
+) -> Optional[str]:
+    """Create a keyed fingerprint from a client's address and browser headers."""
+    if auth_token is None:
+        return None
+    address = _client_address(connection)
+    if address is None:
+        return None
+
+    client_headers = (
+        connection.headers.get("user-agent", "")[:512],
+        connection.headers.get("accept-language", "")[:256],
+        connection.headers.get("accept", "")[:256],
+        connection.headers.get("sec-ch-ua", "")[:256],
+        connection.headers.get("sec-ch-ua-mobile", "")[:32],
+        connection.headers.get("sec-ch-ua-platform", "")[:128],
+    )
+    client_data = "\0".join((address, *client_headers)).encode("utf-8")
+    return hmac_new(
+        auth_token.encode("utf-8"),
+        b"Celune WebUI client cache v1\0" + client_data,
+        sha256,
+    ).hexdigest()
+
+
+def _webui_auth_client_cached(connection: Union[Request, WebSocket]) -> bool:
+    """Return whether this client has a persisted, unexpired WebUI grant."""
+    fingerprint = _webui_auth_client_fingerprint(connection)
+    if fingerprint is None:
+        return False
+
+    with webui_auth_clients_lock:
+        clients = _load_webui_auth_clients_locked()
+        expires_at = clients.get(fingerprint)
+        if expires_at is None:
+            return False
+        if expires_at <= int(time.time()):
+            del clients[fingerprint]
+            _persist_webui_auth_clients_locked(clients)
+            return False
+        return True
+
+
+def _remember_webui_auth_client(connection: Union[Request, WebSocket]) -> None:
+    """Remember an authenticated client for the browser-session lifetime."""
+    global webui_auth_clients
+    fingerprint = _webui_auth_client_fingerprint(connection)
+    if fingerprint is None:
+        return
+
+    now = int(time.time())
+    with webui_auth_clients_lock:
+        clients = _load_webui_auth_clients_locked()
+        clients = {
+            key: expires_at for key, expires_at in clients.items() if expires_at > now
+        }
+        clients[fingerprint] = now + WEBUI_AUTH_SESSION_SECONDS
+        if len(clients) > WEBUI_AUTH_CLIENT_LIMIT:
+            clients = dict(
+                sorted(
+                    clients.items(),
+                    key=lambda item: item[1],
+                    reverse=True,
+                )[:WEBUI_AUTH_CLIENT_LIMIT]
+            )
+        webui_auth_clients = clients
+        _persist_webui_auth_clients_locked(clients)
 
 
 def _encode_ui_session(client_id: str, expires_at: int) -> str:
@@ -836,12 +1019,15 @@ def _refresh_ui_session_cookie(request: Request, response: Response) -> Response
     """Extend an active browser session near its expiry without asking again."""
     details = _ui_session_details(request.cookies.get(WEBUI_AUTH_COOKIE))
     if details is None:
+        if _webui_auth_client_cached(request):
+            _set_ui_session_cookie(response, request, _new_ui_session())
         return response
 
     client_id, expires_at = details
     if expires_at - int(time.time()) > WEBUI_AUTH_SESSION_SECONDS // 2:
         return response
 
+    _remember_webui_auth_client(request)
     _set_ui_session_cookie(response, request, _new_ui_session(client_id))
     return response
 
@@ -850,7 +1036,11 @@ def _webui_authenticated(connection: Union[Request, WebSocket]) -> bool:
     """Return whether a WebUI connection has an API token or active session."""
     if auth_token is None or _headers_authenticated(connection.headers):
         return True
-    return _ui_session_valid(connection.cookies.get(WEBUI_AUTH_COOKIE))
+    if _ui_session_valid(connection.cookies.get(WEBUI_AUTH_COOKIE)):
+        if not _webui_auth_client_cached(connection):
+            _remember_webui_auth_client(connection)
+        return True
+    return _webui_auth_client_cached(connection)
 
 
 def _same_origin(connection: Union[Request, WebSocket]) -> bool:
@@ -970,6 +1160,12 @@ async def api_security(
         if path.startswith("/ui/assets/") and request.method.upper() == "GET":
             return await call_next(request)
         if path == WEBUI_AUTH_PATH and request.method.upper() == "GET":
+            if _webui_authenticated(request):
+                return RedirectResponse(
+                    "/ui",
+                    status_code=307,
+                    headers={"Cache-Control": "no-store"},
+                )
             return HTMLResponse(
                 _webui_auth_page(),
                 headers={
@@ -1003,7 +1199,7 @@ async def api_security(
         if request.method.upper() not in {"GET", "HEAD", "OPTIONS"}:
             if not _same_origin(request):
                 return JSONResponse(status_code=403, content={"error": "forbidden"})
-            if _rate_limited(request):
+            if not _is_webui_poll_callback(request) and _rate_limited(request):
                 return _rate_limit_response()
         model_request_token = enter_api_model_request()
         try:
@@ -1044,8 +1240,9 @@ class WebUiWebSocketSecurityMiddleware:
             if not _webui_authenticated(websocket) or not _same_origin(websocket):
                 await send({"type": "websocket.close", "code": 4401})
                 return
-            client = websocket.client
-            if client is not None and _rate_limited_client(client.host):
+            if websocket.client is not None and _rate_limited_client(
+                _rate_limit_key(websocket)
+            ):
                 await send({"type": "websocket.close", "code": 4429})
                 return
         await self.app(scope, receive, send)
@@ -1291,6 +1488,7 @@ async def authenticate_webui(
         content={"authenticated": True},
         headers={"Cache-Control": "no-store"},
     )
+    _remember_webui_auth_client(request)
     _set_ui_session_cookie(response, request, _new_ui_session())
     return response
 

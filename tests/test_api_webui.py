@@ -2,12 +2,15 @@
 """Tests for Celune's browser-facing API UI."""
 
 import re
+import shutil
 import asyncio
+import tempfile
 from typing import (
     Optional,
     cast,
 )
 from queue import Queue
+from pathlib import Path
 from unittest import mock
 from types import SimpleNamespace
 from collections import abc, deque
@@ -20,8 +23,8 @@ from starlette.types import Send, Scope, Message, Receive
 
 from celune import api
 from celune.i18n import string
-from celune.webui import runtime as webui
 from celune.celune import Celune
+from celune.webui import runtime as webui
 from celune.pipeline import SpeechStreamQueue
 
 from .support import CeluneTestCase
@@ -55,6 +58,16 @@ class TestApiWebUI(CeluneTestCase):
         self.previous_timed_update_received_at = api.webui_timed_update_received_at
         self.previous_timed_update_source = api.webui_timed_update_source
         self.previous_auth_token = api.auth_token
+        self.previous_webui_auth_clients = api.webui_auth_clients
+        self.webui_auth_cache_directory = Path(tempfile.mkdtemp())
+        self.webui_auth_cache_path_patcher = mock.patch.object(
+            api,
+            "_webui_auth_client_cache_path",
+            return_value=self.webui_auth_cache_directory
+            / api.WEBUI_AUTH_CLIENTS_FILENAME,
+        )
+        self.webui_auth_cache_path_patcher.start()
+        api.webui_auth_clients = None
         self.previous_rate_limit_hits = {
             key: list(hits) for key, hits in api.rate_limit_hits.items()
         }
@@ -113,6 +126,8 @@ class TestApiWebUI(CeluneTestCase):
         api.webui_timed_update_received_at = self.previous_timed_update_received_at
         api.webui_timed_update_source = self.previous_timed_update_source
         api.auth_token = self.previous_auth_token
+        with api.webui_auth_clients_lock:
+            api.webui_auth_clients = self.previous_webui_auth_clients
         with api.rate_limit_lock:
             api.rate_limit_hits.clear()
             api.rate_limit_hits.update(
@@ -123,6 +138,8 @@ class TestApiWebUI(CeluneTestCase):
             )
         api.webui_log_lines.clear()
         api.webui_log_lines.extend(self.previous_logs)
+        self.webui_auth_cache_path_patcher.stop()
+        shutil.rmtree(self.webui_auth_cache_directory)
 
     @staticmethod
     async def _passthrough_response(_request: Request) -> Response:
@@ -134,6 +151,7 @@ class TestApiWebUI(CeluneTestCase):
         path: str,
         method: str = "GET",
         headers: tuple[tuple[str, str], ...] = (),
+        client: tuple[str, int] = ("127.0.0.1", 2060),
     ) -> Request:
         """Build one lightweight test request."""
         return Request(
@@ -145,7 +163,7 @@ class TestApiWebUI(CeluneTestCase):
                     (name.lower().encode(), value.encode()) for name, value in headers
                 ],
                 "query_string": b"",
-                "client": ("127.0.0.1", 2060),
+                "client": client,
                 "scheme": "http",
                 "server": ("127.0.0.1", 2060),
             }
@@ -285,6 +303,182 @@ class TestApiWebUI(CeluneTestCase):
         )
 
         assert response.status_code == 200
+
+    def test_webui_auth_client_cache_survives_a_tunnel_hostname_change(self) -> None:
+        """Verify an authenticated browser is recognized at a new tunnel host."""
+        api.auth_token = "secret"
+        client_headers = (
+            ("cf-connecting-ip", "198.51.100.24"),
+            ("user-agent", "Example Browser 1.0"),
+            ("accept-language", "en-US,en;q=0.9"),
+            ("accept", "text/html,application/xhtml+xml"),
+            ("sec-ch-ua", '"Example";v="1"'),
+            ("sec-ch-ua-mobile", "?0"),
+            ("sec-ch-ua-platform", '"Windows"'),
+            ("host", "first-tunnel.trycloudflare.com"),
+        )
+        login_response = asyncio.run(
+            api.authenticate_webui(
+                api.WebUiAuthRequest(api_key="secret"),
+                self._request("/ui/key", method="POST", headers=client_headers),
+            )
+        )
+        assert login_response.status_code == 200
+
+        cache_path = api._webui_auth_client_cache_path()
+        cache_content = cache_path.read_text(encoding="utf-8")
+        assert "198.51.100.24" not in cache_content
+        assert "Example Browser" not in cache_content
+        assert "secret" not in cache_content
+
+        api.webui_auth_clients = None
+        next_host_headers = tuple(
+            (name, "second-tunnel.trycloudflare.com" if name == "host" else value)
+            for name, value in client_headers
+        )
+        resumed_response = asyncio.run(
+            api.api_security(
+                self._request("/ui", headers=next_host_headers),
+                self._passthrough_response,
+            )
+        )
+        assert resumed_response.status_code == 200
+        assert f"{api.WEBUI_AUTH_COOKIE}=" in resumed_response.headers["set-cookie"]
+
+        other_client_headers = tuple(
+            (name, "198.51.100.25" if name == "cf-connecting-ip" else value)
+            for name, value in next_host_headers
+        )
+        other_client_response = asyncio.run(
+            api.api_security(
+                self._request("/ui", headers=other_client_headers),
+                self._passthrough_response,
+            )
+        )
+        assert other_client_response.status_code == 307
+        assert other_client_response.headers["location"] == "/ui/key"
+
+    def test_webui_poll_callbacks_do_not_consume_the_action_rate_limit(self) -> None:
+        """Verify read-only Gradio refresh callbacks do not exhaust action limits."""
+        api.auth_token = "secret"
+        session_id = api._new_ui_session()
+        browser_headers = (
+            ("cookie", f"{api.WEBUI_AUTH_COOKIE}={session_id}"),
+            ("origin", "http://127.0.0.1:2060"),
+        )
+
+        with mock.patch.object(api, "rate_limit_per_minute", 1):
+            with api.rate_limit_lock:
+                api.rate_limit_hits["127.0.0.1"].append(api.time.monotonic())
+
+            for api_name in api.WEBUI_POLL_API_NAMES:
+                poll_response = asyncio.run(
+                    api.api_security(
+                        self._request(
+                            f"/ui/gradio_api/run/{api_name}",
+                            method="POST",
+                            headers=browser_headers,
+                        ),
+                        self._passthrough_response,
+                    )
+                )
+                assert poll_response.status_code == 200
+
+            first_action = asyncio.run(
+                api.api_security(
+                    self._request(
+                        "/ui/gradio_api/queue/join",
+                        method="POST",
+                        headers=browser_headers,
+                    ),
+                    self._passthrough_response,
+                )
+            )
+            limited_action = asyncio.run(
+                api.api_security(
+                    self._request(
+                        "/ui/gradio_api/queue/join",
+                        method="POST",
+                        headers=browser_headers,
+                    ),
+                    self._passthrough_response,
+                )
+            )
+
+        assert first_action.status_code == 200
+        assert limited_action.status_code == 429
+
+    def test_webui_websocket_limit_does_not_block_actions(self) -> None:
+        """Verify WebSocket reconnects cannot consume the WebUI action budget."""
+        api.auth_token = "secret"
+        session_id = api._new_ui_session()
+        reached_gradio = False
+
+        async def downstream(
+            _scope: Scope,
+            _receive: Receive,
+            _send: Send,
+        ) -> None:
+            nonlocal reached_gradio
+            reached_gradio = True
+
+        async def receive() -> Message:
+            return {"type": "websocket.connect"}
+
+        async def send(_message: Message) -> None:
+            return None
+
+        scope: Scope = {
+            "type": "websocket",
+            "path": "/ui/queue/join",
+            "headers": [
+                (
+                    b"cookie",
+                    f"{api.WEBUI_AUTH_COOKIE}={session_id}".encode(),
+                ),
+                (b"origin", b"http://127.0.0.1:2060"),
+            ],
+            "client": ("127.0.0.1", 2060),
+            "scheme": "ws",
+            "server": ("127.0.0.1", 2060),
+            "subprotocols": [],
+            "query_string": b"",
+        }
+        middleware = api.WebUiWebSocketSecurityMiddleware(downstream)
+        browser_headers = (
+            ("cookie", f"{api.WEBUI_AUTH_COOKIE}={session_id}"),
+            ("origin", "http://127.0.0.1:2060"),
+        )
+
+        with mock.patch.object(api, "rate_limit_per_minute", 1):
+            asyncio.run(middleware(scope, receive, send))
+            first_action = asyncio.run(
+                api.api_security(
+                    self._request(
+                        "/ui/gradio_api/queue/join",
+                        method="POST",
+                        headers=browser_headers,
+                    ),
+                    self._passthrough_response,
+                )
+            )
+
+        assert reached_gradio
+        assert first_action.status_code == 200
+
+    def test_cloudflare_client_address_is_only_trusted_from_local_proxy(self) -> None:
+        """Verify a remote peer cannot spoof the WebUI's client identity."""
+        forwarded_headers = (("cf-connecting-ip", "198.51.100.24"),)
+
+        tunnel_request = self._request("/ui", headers=forwarded_headers)
+        direct_request = self._request(
+            "/ui",
+            headers=forwarded_headers,
+            client=("192.0.2.10", 3000),
+        )
+
+        assert api._client_address(tunnel_request) == "198.51.100.24"
+        assert api._client_address(direct_request) == "192.0.2.10"
 
     def test_webui_session_survives_restart_but_is_bound_to_the_api_key(self) -> None:
         """Verify signed browser sessions persist until the application key changes."""
@@ -1437,6 +1631,14 @@ class TestApiWebUI(CeluneTestCase):
         """Verify the browser UI separates TTS and VC into distinct tabs."""
         demo = api._build_webui()
         config = demo.config
+        assert all(
+            api.webui_theme_style not in str(component)
+            for component in config.get("components", [])
+        )
+        theme_stylesheet = api._webui_asset_response("theme.css")
+        assert theme_stylesheet is not None
+        assert theme_stylesheet.body == api.webui_theme_style.encode("utf-8")
+        assert theme_stylesheet.headers["content-type"].startswith("text/css")
         tab_labels = [
             component.get("label") or component.get("props", {}).get("label")
             for component in config.get("components", [])
@@ -1460,6 +1662,16 @@ class TestApiWebUI(CeluneTestCase):
         assert "celune-record-hotkey" in component_ids
         assert "Usage may differ. Some Celune features may not be available." in str(
             config
+        )
+        polling_dependencies = {
+            dependency.get("api_name"): dependency
+            for dependency in config.get("dependencies", [])
+            if dependency.get("api_name") in api.WEBUI_POLL_API_NAMES
+        }
+        assert set(polling_dependencies) == api.WEBUI_POLL_API_NAMES
+        assert all(
+            dependency.get("queue") is False
+            for dependency in polling_dependencies.values()
         )
 
     def test_webui_snapshot_probes_runtime_status_and_rotates_resources(self) -> None:
