@@ -238,10 +238,10 @@ $env:CL = $null
 $env:_CL_ = $null
 
 $compileCommands = @(
-    "cl /nologo /O2 /GL /GS /guard:cf /W4 /DNDEBUG /I`"$launcherDir`" /c /Fo:`"$($launcherObjects[0])`" `"$($launcherSources[0])`"",
-    "cl /nologo /O2 /GL /GS /guard:cf /W4 /DNDEBUG /I`"$launcherDir`" /c /Fo:`"$($launcherObjects[1])`" `"$($launcherSources[1])`"",
-    "cl /nologo /O2 /GL /GS /guard:cf /W4 /DNDEBUG /I`"$launcherDir`" /c /Fo:`"$($launcherObjects[2])`" `"$($launcherSources[2])`"",
-    "cl /nologo /O2 /GL /GS /guard:cf /W4 /DNDEBUG /DSODIUM_STATIC /DSODIUM_EXPORT= /I`"$launcherDir`" /I`"$sodiumInclude`" /c /Fo:`"$($launcherObjects[3])`" `"$($launcherSources[3])`"",
+    "cl /nologo /O2 /GL /GS /guard:cf /W4 /MD /DNDEBUG /I`"$launcherDir`" /c /Fo:`"$($launcherObjects[0])`" `"$($launcherSources[0])`"",
+    "cl /nologo /O2 /GL /GS /guard:cf /W4 /MD /DNDEBUG /I`"$launcherDir`" /c /Fo:`"$($launcherObjects[1])`" `"$($launcherSources[1])`"",
+    "cl /nologo /O2 /GL /GS /guard:cf /W4 /MD /DNDEBUG /I`"$launcherDir`" /c /Fo:`"$($launcherObjects[2])`" `"$($launcherSources[2])`"",
+    "cl /nologo /O2 /GL /GS /guard:cf /W4 /MD /DNDEBUG /DSODIUM_STATIC /DSODIUM_EXPORT= /I`"$launcherDir`" /I`"$sodiumInclude`" /c /Fo:`"$($launcherObjects[3])`" `"$($launcherSources[3])`"",
     "cl /nologo /O2 /GL /GS /guard:cf /W4 /DNDEBUG /Fe:`"$launcherExe`" `"$($launcherObjects[0])`" `"$($launcherObjects[1])`" `"$($launcherObjects[2])`" `"$($launcherObjects[3])`" `"$launcherRes`" `"$sodiumLibrary`" bcrypt.lib /link /LTCG /OPT:REF /OPT:ICF /DYNAMICBASE /NXCOMPAT"
 )
 $compileCmd = "call `"$vsDevCmd`" -arch=amd64 -host_arch=amd64 >nul && " + ($compileCommands -join " && ")
@@ -257,8 +257,8 @@ $signatureTestObjects = @(
 )
 $signatureTestSource = Join-Path $repoRoot "tests\launcher_signature_test.c"
 $signatureTestCommands = @(
-    "cl /nologo /O2 /W4 /DSODIUM_STATIC /DSODIUM_EXPORT= /I`"$launcherDir`" /I`"$sodiumInclude`" /c /Fo:`"$($signatureTestObjects[0])`" `"$signatureTestSource`"",
-    "cl /nologo /O2 /W4 /DSODIUM_STATIC /DSODIUM_EXPORT= /I`"$launcherDir`" /I`"$sodiumInclude`" /c /Fo:`"$($signatureTestObjects[1])`" `"$($launcherSources[3])`"",
+    "cl /nologo /O2 /W4 /MD /DSODIUM_STATIC /DSODIUM_EXPORT= /I`"$launcherDir`" /I`"$sodiumInclude`" /c /Fo:`"$($signatureTestObjects[0])`" `"$signatureTestSource`"",
+    "cl /nologo /O2 /W4 /MD /DSODIUM_STATIC /DSODIUM_EXPORT= /I`"$launcherDir`" /I`"$sodiumInclude`" /c /Fo:`"$($signatureTestObjects[1])`" `"$launcherSources[3]`"",
     "cl /nologo /Fe:`"$signatureTestExe`" `"$($signatureTestObjects[0])`" `"$($signatureTestObjects[1])`" `"$sodiumLibrary`" bcrypt.lib",
     "`"$signatureTestExe`""
 )
@@ -296,8 +296,21 @@ if ($env:CELUNE_RELEASE_SIGNING_KEY_FILE) {
 if ($env:CELUNE_REQUIRE_RELEASE_SIGNATURE -eq "1") {
     $manifestArguments += "--require-signature"
 }
-& uv @manifestArguments
-if ($LASTEXITCODE -ne 0) {
+$previousPythonPath = $env:PYTHONPATH
+if ($previousPythonPath) {
+    $env:PYTHONPATH = "$repoRoot$([IO.Path]::PathSeparator)$previousPythonPath"
+}
+else {
+    $env:PYTHONPATH = $repoRoot
+}
+try {
+    & uv @manifestArguments
+    $manifestExitCode = $LASTEXITCODE
+}
+finally {
+    $env:PYTHONPATH = $previousPythonPath
+}
+if ($manifestExitCode -ne 0) {
     throw "Failed to write the update manifest."
 }
 

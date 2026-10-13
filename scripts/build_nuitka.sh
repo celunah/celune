@@ -193,7 +193,7 @@ if [[ "${CELUNE_REQUIRE_RELEASE_SIGNATURE:-0}" == "1" ]]; then
     manifest_arguments+=(--require-signature)
 fi
 
-uv run python "$manifest_script" \
+PYTHONPATH="$repo_root${PYTHONPATH:+:$PYTHONPATH}" uv run python "$manifest_script" \
     "${manifest_arguments[@]}"
 
 (
