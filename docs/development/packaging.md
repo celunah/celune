@@ -33,12 +33,24 @@ remains available for source development and source-based launches; a Python
 3.14 `.venv` cannot run the compiled 3.13 executable.
 
 Windows builds use Nuitka, Visual Studio C++ tools, the launcher C sources,
-the project icon/resource, and `scripts/write_update_manifest.py`. The Windows
-script refreshes `resources/vcruntime140.dll` from the configured Visual Studio
-14.44.35112 CRT installation, includes Windows runtime DLLs during Nuitka
-compilation, places that exact DLL beside both release executables, and adds it
-to the update manifest and archive. Linux builds need GCC, `appimagetool`, and
-`zip`, then produce the executable, AppImage, and archive. Before replacing
+static libsodium from the `x64-windows-static-md` vcpkg triplet, the project
+icon/resource, and `scripts/write_update_manifest.py`. Linux builds use GCC,
+`libsodium-dev`, `pkg-config`, `appimagetool`, and `zip`. Both release launchers
+link libsodium statically. Install the native crypto dependency before building:
+
+```powershell
+vcpkg install libsodium:x64-windows-static-md
+```
+
+```bash
+sudo apt-get install -y libsodium-dev pkg-config
+```
+
+The Windows script refreshes `resources/vcruntime140.dll` from the configured
+Visual Studio 14.44.35112 CRT installation, includes Windows runtime DLLs during
+Nuitka compilation, places that exact DLL beside both release executables, and
+adds it to the update manifest and archive. Linux builds produce the executable,
+AppImage, and archive. Before replacing
 Windows build artifacts, the script force-stops existing Celune processes,
 waits up to thirty seconds for their process handles to exit, and retries
 transient locked-file cleanup for up to five seconds. A persistent lock still
@@ -123,12 +135,13 @@ that internal command directly; it is a launcher protocol.
 Compatible release ZIPs carry `celune-update.json` and its detached
 `celune-update.sig` Ed25519 signature. The signature covers the exact manifest
 bytes; the manifest contains SHA-256 digests for the shipped executables and
-runtime files. The updater verifies the signature before accepting a release
-ZIP, and the compiled runtime verifies the signed manifest and listed files at
-startup. A present but invalid signature rejects startup. When no signature is
-present, startup warns that the copy is unsigned and continues; this keeps
-legacy JSON-manifest bundles usable. The updater still rejects unsigned remote
-release ZIPs.
+runtime files. The C launcher verifies the signature and the selected runtime
+digest before starting that runtime. The Python entrypoint independently
+verifies the signature and every listed file during startup. A present but
+invalid signature or a mismatched runtime digest rejects startup. When no
+signature is present, the C launcher allows startup and Python warns that the
+copy is unsigned; this keeps legacy JSON-manifest bundles usable. The updater
+still rejects unsigned remote release ZIPs.
 
 Release signing uses the trusted private key whose public key is embedded in
 Celune. Keep the private key outside the repository and limit access to release
@@ -146,7 +159,8 @@ export CELUNE_REQUIRE_RELEASE_SIGNATURE=1
 bash scripts/build_nuitka.sh
 ```
 
-The build fails when signature enforcement is enabled without a key. Publishing
+The native C signature tests run as part of both platform launcher builds. The
+build fails when signature enforcement is enabled without a key. Publishing
 compiled release assets must use signed ZIPs and preserve the detached
 `celune-update.sig` file. Unsigned CI build artifacts are for build validation
 and cannot be installed through the signed updater path. Historical ZIP releases

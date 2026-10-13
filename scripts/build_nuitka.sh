@@ -54,6 +54,7 @@ launcher_sources=(
     "$repo_root/launcher/launcher.c"
     "$repo_root/launcher/unix/runtime.c"
     "$repo_root/launcher/unix/terminal.c"
+    "$repo_root/launcher/signature.c"
 )
 for launcher_source in "${launcher_sources[@]}"; do
     if [[ ! -f "$launcher_source" ]]; then
@@ -72,6 +73,20 @@ if ! command -v gcc >/dev/null 2>&1; then
     exit 1
 fi
 
+if ! command -v pkg-config >/dev/null 2>&1 || ! pkg-config --exists libsodium; then
+    echo "libsodium development files and pkg-config are required to build the Linux launcher." >&2
+    exit 1
+fi
+
+sodium_libdir="$(pkg-config --variable=libdir libsodium)"
+sodium_archive="$sodium_libdir/libsodium.a"
+if [[ ! -f "$sodium_archive" ]]; then
+    echo "The static libsodium archive was not found: $sodium_archive" >&2
+    exit 1
+fi
+read -r -a sodium_cflags <<< "$(pkg-config --cflags libsodium)"
+read -r -a sodium_private_flags <<< "$(pkg-config --static --libs-only-other libsodium)"
+
 if ! command -v appimagetool >/dev/null 2>&1; then
     echo "appimagetool is required to create the AppImage." >&2
     exit 1
@@ -83,6 +98,18 @@ if ! command -v zip >/dev/null 2>&1; then
 fi
 
 mkdir -p "$UV_CACHE_DIR"
+
+signature_test="$(mktemp)"
+trap 'rm -f "$signature_test"' EXIT
+gcc -O2 -Wall -Wextra -Wpedantic \
+	"${sodium_cflags[@]}" -I"$repo_root/launcher" \
+	-o "$signature_test" \
+	"$repo_root/tests/launcher_signature_test.c" \
+	"$repo_root/launcher/signature.c" \
+	"$sodium_archive" "${sodium_private_flags[@]}"
+(cd "$repo_root" && "$signature_test")
+rm -f "$signature_test"
+trap - EXIT
 
 python3 "$repo_root/scripts/root.py"
 
@@ -105,7 +132,9 @@ uv run --python "$build_python" python -m nuitka \
 
 gcc -O2 -s -Wall -Wextra -Wpedantic \
 	-DNDEBUG -D_FORTIFY_SOURCE=3 -fstack-protector-strong \
-	-flto -I"$repo_root/launcher" -Wl,-z,relro,-z,now -o "$output_dir/celune" "${launcher_sources[@]}"
+	-flto "${sodium_cflags[@]}" -I"$repo_root/launcher" \
+	-Wl,-z,relro,-z,now -o "$output_dir/celune" \
+	"${launcher_sources[@]}" "$sodium_archive" "${sodium_private_flags[@]}"
 chmod +x "$output_dir/celune" "$output_dir/celune-bin"
 
 rm -rf "$output_dir/nuitka_main.build"

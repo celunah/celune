@@ -1,4 +1,5 @@
 #include "launcher_platform.h"
+#include "signature.h"
 
 #include <windows.h>
 
@@ -1169,6 +1170,11 @@ int launcher_run(int argc, char **argv) {
 
     if (!lookup_file_exists(target)) {
         report_lookup_failure();
+        return 1;
+    }
+
+    if (launcher_verify_bundle_target(target) == LAUNCHER_BUNDLE_INVALID) {
+        printfe("celune rejected a runtime with an invalid or corrupted release signature\n");
         return 1;
     }
 

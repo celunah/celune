@@ -1,6 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 
 #include "launcher_platform.h"
+#include "signature.h"
 
 #include <unistd.h>
 #include <sys/wait.h>
@@ -817,6 +818,11 @@ int launcher_run(int argc, char **argv) {
     }
 
     if (access(target, X_OK) == 0) {
+        if (launcher_verify_bundle_target(target) == LAUNCHER_BUNDLE_INVALID) {
+            printfe("celune rejected a runtime with an invalid or corrupted release signature\n");
+            return 1;
+        }
+
         int launcher_pipe[2];
         if (pipe(launcher_pipe) != 0) {
             perror("pipe failed");

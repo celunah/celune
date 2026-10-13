@@ -11,10 +11,21 @@ $templateExe = Join-Path $repoRoot "celune.exe"
 $iconIco = Join-Path $repoRoot "resources\celune.ico"
 $vcruntimeSource = "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Redist\MSVC\14.44.35112\x64\Microsoft.VC143.CRT\vcruntime140.dll"
 $vcruntimeAsset = Join-Path $repoRoot "resources\vcruntime140.dll"
+$vcpkgRoot = $env:VCPKG_ROOT
+if (-not $vcpkgRoot) {
+    $vcpkgRoot = $env:VCPKG_INSTALLATION_ROOT
+}
+if (-not $vcpkgRoot) {
+    $vcpkgRoot = "C:\vcpkg"
+}
+$sodiumTripletRoot = Join-Path $vcpkgRoot "installed\x64-windows-static-md"
+$sodiumInclude = Join-Path $sodiumTripletRoot "include"
+$sodiumLibrary = Join-Path $sodiumTripletRoot "lib\libsodium.lib"
 $launcherSources = @(
     (Join-Path $launcherDir "launcher.c"),
     (Join-Path $launcherDir "windows\runtime.c"),
-    (Join-Path $launcherDir "windows\terminal.c")
+    (Join-Path $launcherDir "windows\terminal.c"),
+    (Join-Path $launcherDir "signature.c")
 )
 $launcherRes = Join-Path $repoRoot "resources\celune.res"
 $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
@@ -132,6 +143,11 @@ if (-not (Test-Path $manifestScript)) {
     throw "The update manifest script was not found."
 }
 
+if (-not (Test-Path (Join-Path $sodiumInclude "sodium.h")) -or
+    -not (Test-Path $sodiumLibrary)) {
+    throw "Install libsodium with vcpkg using the x64-windows-static-md triplet."
+}
+
 & python (Join-Path $repoRoot "scripts\root.py")
 if ($LASTEXITCODE -ne 0) {
     throw "Failed to update .celune-root."
@@ -201,7 +217,8 @@ $launcherExe = Join-Path $outputDir "celune.exe"
 $launcherObjects = @(
     (Join-Path $outputDir "launcher_main.obj"),
     (Join-Path $outputDir "launcher_windows_runtime.obj"),
-    (Join-Path $outputDir "launcher_windows_terminal.obj")
+    (Join-Path $outputDir "launcher_windows_terminal.obj"),
+    (Join-Path $outputDir "launcher_signature.obj")
 )
 if (-not (Test-Path $vswhere)) {
     throw "vswhere.exe was not found."
@@ -224,12 +241,34 @@ $compileCommands = @(
     "cl /nologo /O2 /GL /GS /guard:cf /W4 /DNDEBUG /I`"$launcherDir`" /c /Fo:`"$($launcherObjects[0])`" `"$($launcherSources[0])`"",
     "cl /nologo /O2 /GL /GS /guard:cf /W4 /DNDEBUG /I`"$launcherDir`" /c /Fo:`"$($launcherObjects[1])`" `"$($launcherSources[1])`"",
     "cl /nologo /O2 /GL /GS /guard:cf /W4 /DNDEBUG /I`"$launcherDir`" /c /Fo:`"$($launcherObjects[2])`" `"$($launcherSources[2])`"",
-    "cl /nologo /O2 /GL /GS /guard:cf /W4 /DNDEBUG /Fe:`"$launcherExe`" `"$($launcherObjects[0])`" `"$($launcherObjects[1])`" `"$($launcherObjects[2])`" `"$launcherRes`" /link /LTCG /OPT:REF /OPT:ICF /DYNAMICBASE /NXCOMPAT"
+    "cl /nologo /O2 /GL /GS /guard:cf /W4 /DNDEBUG /DSODIUM_STATIC /DSODIUM_EXPORT= /I`"$launcherDir`" /I`"$sodiumInclude`" /c /Fo:`"$($launcherObjects[3])`" `"$($launcherSources[3])`"",
+    "cl /nologo /O2 /GL /GS /guard:cf /W4 /DNDEBUG /Fe:`"$launcherExe`" `"$($launcherObjects[0])`" `"$($launcherObjects[1])`" `"$($launcherObjects[2])`" `"$($launcherObjects[3])`" `"$launcherRes`" `"$sodiumLibrary`" bcrypt.lib /link /LTCG /OPT:REF /OPT:ICF /DYNAMICBASE /NXCOMPAT"
 )
 $compileCmd = "call `"$vsDevCmd`" -arch=amd64 -host_arch=amd64 >nul && " + ($compileCommands -join " && ")
 & cmd /c $compileCmd
 if ($LASTEXITCODE -ne 0) {
     throw "Failed to compile the Windows launcher."
+}
+
+$signatureTestExe = Join-Path $outputDir "launcher_signature_test.exe"
+$signatureTestObjects = @(
+    (Join-Path $outputDir "launcher_signature_test.obj"),
+    (Join-Path $outputDir "launcher_signature_test_impl.obj")
+)
+$signatureTestSource = Join-Path $repoRoot "tests\launcher_signature_test.c"
+$signatureTestCommands = @(
+    "cl /nologo /O2 /W4 /DSODIUM_STATIC /DSODIUM_EXPORT= /I`"$launcherDir`" /I`"$sodiumInclude`" /c /Fo:`"$($signatureTestObjects[0])`" `"$signatureTestSource`"",
+    "cl /nologo /O2 /W4 /DSODIUM_STATIC /DSODIUM_EXPORT= /I`"$launcherDir`" /I`"$sodiumInclude`" /c /Fo:`"$($signatureTestObjects[1])`" `"$($launcherSources[3])`"",
+    "cl /nologo /Fe:`"$signatureTestExe`" `"$($signatureTestObjects[0])`" `"$($signatureTestObjects[1])`" `"$sodiumLibrary`" bcrypt.lib",
+    "`"$signatureTestExe`""
+)
+$signatureTestCmd = "call `"$vsDevCmd`" -arch=amd64 -host_arch=amd64 >nul && " + ($signatureTestCommands -join " && ")
+& cmd /c $signatureTestCmd
+if ($LASTEXITCODE -ne 0) {
+    throw "The native launcher signature tests failed."
+}
+foreach ($signatureTestArtifact in $signatureTestObjects + @($signatureTestExe)) {
+    Remove-BuildArtifact -Path $signatureTestArtifact
 }
 
 $manifestArguments = @(
