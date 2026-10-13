@@ -17,35 +17,18 @@ import subprocess
 import urllib.parse
 import urllib.request
 import collections.abc
-from collections import deque
-from difflib import SequenceMatcher
 from typing import TYPE_CHECKING, Union, Optional, cast
+from difflib import SequenceMatcher
+from collections import deque
 
 import numpy as np
 
 from .i18n import string
-from .utils import available
 from .locks import ComponentLockManager
-from .typing.common import JSONSerializable
-from .typing.pipeline import SpeechStreamQueue
-from .typing.aliases import AudioChunk, AudioChunks
-from .constants import BASE_SR, APP_NAME, PipelineStates
 from .paths import project_root, temp_data_dir, running_compiled
+from .utils import available
 from .binding import install_class_functions, install_module_functions
-from .dataclasses.pipeline import (
-    SpeechTiming,
-    PlaybackChunk,
-    PlaybackSourceDone,
-    CaptionPlaybackState,
-    CaptionPlaybackSegment,
-)
-from .typing.locks import (
-    ComponentLockName,
-    ComponentLockOwner,
-    ComponentBusyResult,
-    ComponentLockAcquisition,
-    ComponentLockRequirement,
-)
+from .constants import BASE_SR, APP_NAME, PipelineStates
 from .pipelinecore import (
     _SFX_DUCK_GAIN,
     _LEGACY_BUFFER_SECONDS,
@@ -63,6 +46,24 @@ from .pipelinecore import (
     _SMART_BUFFER_MIN_SPEED_SAMPLE_SECONDS,
     _SMART_BUFFER_PROTECTED_PLAYBACK_SECONDS,
     _monotonic_time,
+)
+from .typing.locks import (
+    ComponentLockName,
+    ComponentLockOwner,
+    ComponentBusyResult,
+    ComponentLockAcquisition,
+    ComponentLockRequirement,
+)
+from .typing.common import JSONSerializable
+from .typing.aliases import AudioChunk, AudioChunks
+from .typing.pipeline import SpeechStreamQueue
+from .dataclasses.events import StateChangedEvent
+from .dataclasses.pipeline import (
+    SpeechTiming,
+    PlaybackChunk,
+    PlaybackSourceDone,
+    CaptionPlaybackState,
+    CaptionPlaybackSegment,
 )
 
 if TYPE_CHECKING:
@@ -273,6 +274,7 @@ def release_pipeline(engine: Celune, playback_idle: bool = True) -> None:
         engine: The Celune engine that owns the playback pipeline.
         playback_idle: Whether playback should be marked fully idle now.
     """
+    state_event: Optional[StateChangedEvent] = None
     with engine.say_lock:
         manager = getattr(engine, "component_locks", None)
         owner = getattr(engine, "_pipeline_lock_owner", None)
@@ -285,7 +287,7 @@ def release_pipeline(engine: Celune, playback_idle: bool = True) -> None:
             if engine.cur_state not in {"error", "stopped"} and not getattr(
                 engine, "test_finished", False
             ):
-                engine.cur_state = "idle"
+                state_event = engine._update_cur_state("idle")
         engine.log("[LOCK] released", loglevel="verbose")
         engine.log(
             "[LOCK] release complete "
@@ -294,6 +296,8 @@ def release_pipeline(engine: Celune, playback_idle: bool = True) -> None:
             f"audio_queue={engine.audio_queue.qsize()}",
             loglevel="debug",
         )
+    if state_event is not None:
+        engine._emit_event("state_changed", state_event)
 
 
 def _acquire_pipeline(self: Celune, action: str) -> bool:
@@ -313,23 +317,30 @@ def _next_playback_source_id(engine: Celune) -> int:
     return source_id
 
 
-def _register_overlay_playback(engine: Celune) -> None:
+def _register_overlay_playback(
+    engine: Celune,
+) -> Optional[StateChangedEvent]:
     """Mark the mixer busy for a newly queued non-speech playback source."""
-    _register_overlay_playback_state(engine, reset_ready_announcement=True)
+    return _register_overlay_playback_state(
+        engine,
+        reset_ready_announcement=True,
+    )
 
 
 def _register_overlay_playback_state(
     engine: Celune,
     *,
     reset_ready_announcement: bool,
-) -> None:
+) -> Optional[StateChangedEvent]:
     """Mark the mixer busy for overlay playback with optional ready reset."""
+    state_event = None
     with engine.say_lock:
         if not engine.locked:
-            engine.cur_state = "speaking"
+            state_event = engine._update_cur_state("speaking")
         engine.playback_done.clear()
         if reset_ready_announcement:
             engine._ready_announced = False
+    return state_event
 
 
 def _playback_source_statuses(engine: Celune) -> dict[int, str]:

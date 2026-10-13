@@ -86,7 +86,8 @@ preserving existing two-argument progress callbacks.
 Output failures clear the source maps, mark
 playback complete, and release any held pipeline lease.
 Automatic sleep also waits for every registered playback source, including SFX
-overlays, before unloading runtime state.
+overlays, before unloading runtime state. If an unload fails, the model-ready
+signal is still released and Celune remains asleep so the wake path can recover.
 
 ## Async coordination and blocking boundaries
 

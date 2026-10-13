@@ -82,3 +82,7 @@ Payloads are typed dataclasses. The important fields are:
 
 An exception in one callback is logged and does not stop dispatch to the other
 callbacks. Always unsubscribe callbacks owned by a short-lived integration.
+Playback's `idle` transition is dispatched after releasing the pipeline lock,
+and readiness-overlay `speaking` is dispatched after its completion marker is
+queued. Subscribers can interact with the speech API without blocking those
+pipeline operations.
