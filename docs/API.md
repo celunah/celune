@@ -401,14 +401,15 @@ X-Celune-Token: YOUR_API_KEY
 ```
 
 The configured per-minute rate limit applies independently to API calls and
-WebUI HTTP actions. WebSocket connection and reconnection events do not count
-toward either request limit; authenticated WebSocket connections still require
-a valid session or API key and a same-origin request. Read-only Gradio
-background refresh callbacks do not count against the WebUI action limit.
-Failed validation, busy-state, missing-job, and backend errors are returned as
-JSON with an HTTP status instead of exposing raw internal tracebacks. Async
-jobs are retained in memory for 15 minutes and are not persisted across a
-restart.
+WebUI generation actions. WebSocket connection and reconnection events do not
+count toward either request limit; authenticated WebSocket connections still
+require a valid session or API key and a same-origin request. Only WebUI speech
+and conversion submissions consume the WebUI generation limit. Polling,
+page-load refreshes, voice and recording controls, and other Gradio transport
+requests do not consume it. Failed validation, busy-state, missing-job, and
+backend errors are returned as JSON with an HTTP status instead of exposing raw
+internal tracebacks. Async jobs are retained in memory for 15 minutes and are
+not persisted across a restart.
 
 ## WebUI behavior
 
@@ -421,10 +422,11 @@ Browser playback is returned as 16-bit PCM; Celune's engine continues to use
 normalized float32 audio internally.
 
 Celune links a standalone stylesheet that applies the active palette as CSS.
-The three read-only background
-refresh callbacks use direct, unqueued requests and are excluded from the
-per-minute action limit; speech, conversion, and other WebUI actions remain
-limited.
+The footer displays Celune's status without a second caption or progress line.
+Polling, page-load refreshes, and voice or recording controls use direct,
+unqueued requests that do not consume the generation limit. Speech and
+conversion submissions remain limited; Gradio's other UI transport requests
+do not consume that budget.
 
 Celune serves its page scripts, styles, and bundled fonts under `/ui/assets/`.
 Gradio serves its own hashed JavaScript and CSS bundles from that same path

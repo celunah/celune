@@ -152,8 +152,13 @@ class TestApiWebUI(CeluneTestCase):
         method: str = "GET",
         headers: tuple[tuple[str, str], ...] = (),
         client: tuple[str, int] = ("127.0.0.1", 2060),
+        body: bytes = b"",
     ) -> Request:
         """Build one lightweight test request."""
+
+        async def receive() -> Message:
+            return {"type": "http.request", "body": body, "more_body": False}
+
         return Request(
             {
                 "type": "http",
@@ -166,7 +171,8 @@ class TestApiWebUI(CeluneTestCase):
                 "client": client,
                 "scheme": "http",
                 "server": ("127.0.0.1", 2060),
-            }
+            },
+            receive,
         )
 
     def test_root_redirects_to_browser_ui(self) -> None:
@@ -358,8 +364,10 @@ class TestApiWebUI(CeluneTestCase):
         assert other_client_response.status_code == 307
         assert other_client_response.headers["location"] == "/ui/key"
 
-    def test_webui_poll_callbacks_do_not_consume_the_action_rate_limit(self) -> None:
-        """Verify read-only Gradio refresh callbacks do not exhaust action limits."""
+    def test_webui_automatic_callbacks_do_not_consume_generation_rate_limit(
+        self,
+    ) -> None:
+        """Verify automatic Gradio callbacks do not consume the generation quota."""
         api.auth_token = "secret"
         session_id = api._new_ui_session()
         browser_headers = (
@@ -367,15 +375,39 @@ class TestApiWebUI(CeluneTestCase):
             ("origin", "http://127.0.0.1:2060"),
         )
 
-        with mock.patch.object(api, "rate_limit_per_minute", 1):
+        dependencies = api._build_webui().config.get("dependencies", [])
+        generation_indices = {
+            dependency["api_name"]: dependency["id"]
+            for dependency in dependencies
+            if dependency.get("api_name") in api.WEBUI_GENERATION_API_NAMES
+        }
+        automatic_fn_index = next(
+            dependency["id"]
+            for dependency in dependencies
+            if dependency.get("api_name") in api.WEBUI_RATE_LIMIT_EXEMPT_API_NAMES
+        )
+
+        with mock.patch.object(api, "rate_limit_per_minute", 3):
             with api.rate_limit_lock:
-                api.rate_limit_hits["127.0.0.1"].append(api.time.monotonic())
+                api.rate_limit_hits["webui:127.0.0.1"].append(api.time.monotonic())
 
             for api_name in api.WEBUI_POLL_API_NAMES:
+                for route in ("run", "api", "call"):
+                    poll_response = asyncio.run(
+                        api.api_security(
+                            self._request(
+                                f"/ui/gradio_api/{route}/{api_name}",
+                                method="POST",
+                                headers=browser_headers,
+                            ),
+                            self._passthrough_response,
+                        )
+                    )
+                    assert poll_response.status_code == 200
                 poll_response = asyncio.run(
                     api.api_security(
                         self._request(
-                            f"/ui/gradio_api/run/{api_name}",
+                            f"/ui/gradio_api/call/v2/{api_name}",
                             method="POST",
                             headers=browser_headers,
                         ),
@@ -384,12 +416,41 @@ class TestApiWebUI(CeluneTestCase):
                 )
                 assert poll_response.status_code == 200
 
+            automatic_action = asyncio.run(
+                api.api_security(
+                    self._request(
+                        "/ui/gradio_api/queue/join",
+                        method="POST",
+                        headers=browser_headers,
+                        body=f'{{"fn_index":{automatic_fn_index}}}'.encode(),
+                    ),
+                    self._passthrough_response,
+                )
+            )
+            assert automatic_action.status_code == 200
+
+            generation_response = asyncio.run(
+                api.api_security(
+                    self._request(
+                        f"/ui/gradio_api/run/{api.WEBUI_SPEAK_INPUT_API_NAME}",
+                        method="POST",
+                        headers=browser_headers,
+                    ),
+                    self._passthrough_response,
+                )
+            )
+
             first_action = asyncio.run(
                 api.api_security(
                     self._request(
                         "/ui/gradio_api/queue/join",
                         method="POST",
                         headers=browser_headers,
+                        body=(
+                            f'{{"fn_index":'
+                            f"{generation_indices[api.WEBUI_SPEAK_INPUT_API_NAME]}"
+                            "}"
+                        ).encode(),
                     ),
                     self._passthrough_response,
                 )
@@ -400,11 +461,17 @@ class TestApiWebUI(CeluneTestCase):
                         "/ui/gradio_api/queue/join",
                         method="POST",
                         headers=browser_headers,
+                        body=(
+                            f'{{"fn_index":'
+                            f"{generation_indices[api.WEBUI_SPEAK_BUTTON_API_NAME]}"
+                            "}"
+                        ).encode(),
                     ),
                     self._passthrough_response,
                 )
             )
 
+        assert generation_response.status_code == 200
         assert first_action.status_code == 200
         assert limited_action.status_code == 429
 
@@ -812,8 +879,9 @@ class TestApiWebUI(CeluneTestCase):
         api.webui_progress_current = 1.0
         api.webui_progress_total = 1.0
         _status = api._webui_status_html()
-        assert "Hello there" in _status
-        assert "50%" in _status
+        assert string("status.speaking") in _status
+        assert "Hello there" not in _status
+        assert "50%" not in _status
         assert "100%" not in _status
 
         celune.error_callback("backend failed")
@@ -1663,16 +1731,32 @@ class TestApiWebUI(CeluneTestCase):
         assert "Usage may differ. Some Celune features may not be available." in str(
             config
         )
-        polling_dependencies = {
+        exempt_dependencies = {
             dependency.get("api_name"): dependency
             for dependency in config.get("dependencies", [])
-            if dependency.get("api_name") in api.WEBUI_POLL_API_NAMES
+            if dependency.get("api_name") in api.WEBUI_RATE_LIMIT_EXEMPT_API_NAMES
         }
-        assert set(polling_dependencies) == api.WEBUI_POLL_API_NAMES
+        assert set(exempt_dependencies) == api.WEBUI_RATE_LIMIT_EXEMPT_API_NAMES
         assert all(
             dependency.get("queue") is False
-            for dependency in polling_dependencies.values()
+            for dependency in exempt_dependencies.values()
         )
+        generation_dependencies = {
+            dependency.get("api_name"): dependency
+            for dependency in config.get("dependencies", [])
+            if dependency.get("api_name") in api.WEBUI_GENERATION_API_NAMES
+        }
+        assert set(generation_dependencies) == api.WEBUI_GENERATION_API_NAMES
+        assert all(
+            dependency.get("queue") is not False
+            for dependency in generation_dependencies.values()
+        )
+        queued_dependencies = {
+            dependency.get("api_name")
+            for dependency in config.get("dependencies", [])
+            if dependency.get("queue") is not False
+        }
+        assert queued_dependencies == api.WEBUI_GENERATION_API_NAMES
 
     def test_webui_snapshot_probes_runtime_status_and_rotates_resources(self) -> None:
         """Verify footer polling refreshes status and rotates the resource page."""

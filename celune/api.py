@@ -304,11 +304,36 @@ WEBUI_AUTH_SESSION_SECONDS = 30 * 24 * 60 * 60
 WEBUI_POLL_SNAPSHOT_API_NAME = "webui_poll_snapshot"
 WEBUI_POLL_VC_API_NAME = "webui_poll_vc_controls"
 WEBUI_POLL_RECORDING_API_NAME = "webui_poll_recording_control"
+WEBUI_LOAD_SNAPSHOT_API_NAME = "webui_load_snapshot"
+WEBUI_LOAD_VC_API_NAME = "webui_load_vc_controls"
+WEBUI_LOAD_RECORDING_API_NAME = "webui_load_recording_control"
+WEBUI_CYCLE_VOICE_API_NAME = "webui_cycle_voice"
+WEBUI_TOGGLE_RECORDING_API_NAME = "webui_toggle_recording"
+WEBUI_SPEAK_INPUT_API_NAME = "webui_speak_input"
+WEBUI_SPEAK_BUTTON_API_NAME = "webui_speak_button"
+WEBUI_CONVERT_API_NAME = "webui_convert_audio"
 WEBUI_POLL_API_NAMES = frozenset(
     {
         WEBUI_POLL_SNAPSHOT_API_NAME,
         WEBUI_POLL_VC_API_NAME,
         WEBUI_POLL_RECORDING_API_NAME,
+    }
+)
+WEBUI_GENERATION_API_NAMES = frozenset(
+    {
+        WEBUI_SPEAK_INPUT_API_NAME,
+        WEBUI_SPEAK_BUTTON_API_NAME,
+        WEBUI_CONVERT_API_NAME,
+    }
+)
+_webui_generation_fn_indices: frozenset[int] = frozenset()
+WEBUI_RATE_LIMIT_EXEMPT_API_NAMES = WEBUI_POLL_API_NAMES | frozenset(
+    {
+        WEBUI_LOAD_SNAPSHOT_API_NAME,
+        WEBUI_LOAD_VC_API_NAME,
+        WEBUI_LOAD_RECORDING_API_NAME,
+        WEBUI_CYCLE_VOICE_API_NAME,
+        WEBUI_TOGGLE_RECORDING_API_NAME,
     }
 )
 WEBUI_AUTH_CLIENTS_FILENAME = "webui-auth-clients.json"
@@ -784,8 +809,22 @@ def _rate_limited(request: Request) -> bool:
     return _rate_limited_client(_rate_limit_key(request))
 
 
-def _is_webui_poll_callback(request: Request) -> bool:
-    """Return whether a POST belongs to a read-only Gradio refresh callback."""
+def _configure_webui_generation_fn_indices(
+    dependencies: abc.Sequence[abc.Mapping[str, object]],
+) -> None:
+    """Record Gradio dependency IDs for speech and conversion actions."""
+    global _webui_generation_fn_indices
+    _webui_generation_fn_indices = frozenset(
+        dependency_id
+        for dependency in dependencies
+        if isinstance(dependency.get("api_name"), str)
+        and dependency.get("api_name") in WEBUI_GENERATION_API_NAMES
+        and isinstance((dependency_id := dependency.get("id")), int)
+    )
+
+
+async def _is_webui_generation_request(request: Request) -> bool:
+    """Return whether a POST can start speech or voice-conversion generation."""
     if request.method.upper() != "POST":
         return False
 
@@ -793,11 +832,27 @@ def _is_webui_poll_callback(request: Request) -> bool:
     if not path.startswith("/ui/"):
         return False
 
+    if path.endswith("/queue/join"):
+        try:
+            payload = await request.json()
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return False
+        if not isinstance(payload, dict):
+            return False
+        fn_index = payload.get("fn_index")
+        return (
+            isinstance(fn_index, int)
+            and not isinstance(fn_index, bool)
+            and fn_index in _webui_generation_fn_indices
+        )
+
     return any(
         path.endswith(f"/{route}/{api_name}")
-        for api_name in WEBUI_POLL_API_NAMES
-        for route in ("run", "call")
-    ) or any(path.endswith(f"/call/v2/{api_name}") for api_name in WEBUI_POLL_API_NAMES)
+        for api_name in WEBUI_GENERATION_API_NAMES
+        for route in ("run", "api", "call")
+    ) or any(
+        path.endswith(f"/call/v2/{api_name}") for api_name in WEBUI_GENERATION_API_NAMES
+    )
 
 
 def _ui_session_signature(payload: bytes) -> bytes:
@@ -1198,7 +1253,7 @@ async def api_security(
         if request.method.upper() not in {"GET", "HEAD", "OPTIONS"}:
             if not _same_origin(request):
                 return JSONResponse(status_code=403, content={"error": "forbidden"})
-            if not _is_webui_poll_callback(request) and _rate_limited(request):
+            if await _is_webui_generation_request(request) and _rate_limited(request):
                 return _rate_limit_response()
         model_request_token = enter_api_model_request()
         try:

@@ -994,19 +994,9 @@ def _webui_logs_html() -> str:
 def _webui_status_html() -> str:
     """Render the footer status cell."""
     color = _webui_status_color(_api.webui_status_severity)
-    details: list[str] = []
-    if _api.webui_caption_active and _api.webui_caption_text:
-        details.append(
-            f'<div class="webui-caption">{escape(_api.webui_caption_text)}</div>'
-        )
-        if _api.webui_caption_progress > 0.0:
-            details.append(
-                f'<div class="webui-caption-progress">{round(_api.webui_caption_progress * 100):d}%</div>'
-            )
-    detail_html = "".join(details)
     return (
         '<div class="footer-block" '
-        f'style="color: {color};">{escape(_api.webui_status_text)}{detail_html}</div>'
+        f'style="color: {color};">{escape(_api.webui_status_text)}</div>'
     )
 
 
