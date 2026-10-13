@@ -163,6 +163,13 @@ When publishing a future release, rename the signed build output to this
 versioned name and retain the unsigned original name only when preserving an
 existing release asset.
 
+The `signed` suffix means that Celune's custom Ed25519 bundle anti-tamper
+signature verifies against the public key embedded in Celune. It does not mean
+that the executable has a CA-issued or Authenticode code-signing certificate.
+The original ZIPs, which keep their existing names without the `-signed` suffix,
+are unsigned because they have no Celune bundle signature; legacy copies remain
+allowed with a startup warning.
+
 The published Windows and Linux ZIPs from v4.1.0 through v5.0.0 have signed
 counterparts. Their original ZIP assets remain unchanged as unsigned copies.
 Earlier source-only releases did not publish compatible update ZIPs.
