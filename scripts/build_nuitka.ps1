@@ -258,7 +258,7 @@ $signatureTestObjects = @(
 $signatureTestSource = Join-Path $repoRoot "tests\launcher_signature_test.c"
 $signatureTestCommands = @(
     "cl /nologo /O2 /W4 /MD /DSODIUM_STATIC /DSODIUM_EXPORT= /I`"$launcherDir`" /I`"$sodiumInclude`" /c /Fo:`"$($signatureTestObjects[0])`" `"$signatureTestSource`"",
-    "cl /nologo /O2 /W4 /MD /DSODIUM_STATIC /DSODIUM_EXPORT= /I`"$launcherDir`" /I`"$sodiumInclude`" /c /Fo:`"$($signatureTestObjects[1])`" `"$launcherSources[3]`"",
+    "cl /nologo /O2 /W4 /MD /DSODIUM_STATIC /DSODIUM_EXPORT= /I`"$launcherDir`" /I`"$sodiumInclude`" /c /Fo:`"$($signatureTestObjects[1])`" `"$($launcherSources[3])`"",
     "cl /nologo /Fe:`"$signatureTestExe`" `"$($signatureTestObjects[0])`" `"$($signatureTestObjects[1])`" `"$sodiumLibrary`" bcrypt.lib",
     "`"$signatureTestExe`""
 )
