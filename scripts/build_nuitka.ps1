@@ -251,6 +251,12 @@ $manifestArguments = @(
     "--file",
     "vcruntime140.dll"
 )
+if ($env:CELUNE_RELEASE_SIGNING_KEY_FILE) {
+    $manifestArguments += @("--signing-key", $env:CELUNE_RELEASE_SIGNING_KEY_FILE)
+}
+if ($env:CELUNE_REQUIRE_RELEASE_SIGNATURE -eq "1") {
+    $manifestArguments += "--require-signature"
+}
 & uv @manifestArguments
 if ($LASTEXITCODE -ne 0) {
     throw "Failed to write the update manifest."
@@ -258,12 +264,16 @@ if ($LASTEXITCODE -ne 0) {
 
 Push-Location $outputDir
 try {
-    Compress-Archive -Path @(
+    $archiveFiles = @(
         "celune.exe",
         "celune-bin.exe",
         "vcruntime140.dll",
         "celune-update.json"
-    ) -DestinationPath $archivePath -Force
+    )
+    if (Test-Path (Join-Path $outputDir "celune-update.sig")) {
+        $archiveFiles += "celune-update.sig"
+    }
+    Compress-Archive -Path $archiveFiles -DestinationPath $archivePath -Force
 }
 finally {
     Pop-Location

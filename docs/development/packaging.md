@@ -49,11 +49,12 @@ Typical output files are:
 
 | Platform | Artifacts |
 | --- | --- |
-| Windows | `bin/celune.exe`, `bin/celune-bin.exe`, `bin/vcruntime140.dll`, `bin/celune-update.json`, `bin/Celune-win-x64.zip` |
-| Linux | `bin/celune`, `bin/celune-bin`, `bin/celune.AppImage`, `bin/celune-update.json`, `bin/Celune-linux-x64.zip` |
+| Windows | `bin/celune.exe`, `bin/celune-bin.exe`, `bin/vcruntime140.dll`, `bin/celune-update.json`, optional `bin/celune-update.sig`, `bin/Celune-win-x64.zip` |
+| Linux | `bin/celune`, `bin/celune-bin`, `bin/celune.AppImage`, `bin/celune-update.json`, optional `bin/celune-update.sig`, `bin/Celune-linux-x64.zip` |
 
 The Windows archive contains `celune.exe`, `celune-bin.exe`,
-`vcruntime140.dll`, and `celune-update.json`. It does not contain the legacy
+`vcruntime140.dll`, and `celune-update.json`; signed builds also include
+`celune-update.sig`. It does not contain the legacy
 `celune-bin.cmd` compatibility wrapper; the native launcher owns the runtime
 environment setup. The launcher checks for AVX in native C before starting
 Python on x86-64,
@@ -116,6 +117,57 @@ Celune when no manifest is present, and uses the existing update helper and
 internal `__apply_update` command when the compiled bundle contains a manifest.
 The UI terminal title changes to `Restarting` before the handoff. Do not call
 that internal command directly; it is a launcher protocol.
+
+### Release signatures
+
+Compatible release ZIPs carry `celune-update.json` and its detached
+`celune-update.sig` Ed25519 signature. The signature covers the exact manifest
+bytes; the manifest contains SHA-256 digests for the shipped executables and
+runtime files. The updater verifies the signature before accepting a release
+ZIP, and the compiled runtime verifies the signed manifest and listed files at
+startup. A present but invalid signature rejects startup. When no signature is
+present, startup warns that the copy is unsigned and continues; this keeps
+legacy JSON-manifest bundles usable. The updater still rejects unsigned remote
+release ZIPs.
+
+Release signing uses the trusted private key whose public key is embedded in
+Celune. Keep the private key outside the repository and limit access to release
+maintainers. Set both environment variables before building a release archive:
+
+```powershell
+$env:CELUNE_RELEASE_SIGNING_KEY_FILE = "C:\path\to\release-ed25519-private.pem"
+$env:CELUNE_REQUIRE_RELEASE_SIGNATURE = "1"
+powershell -ExecutionPolicy Bypass -File scripts\build_nuitka.ps1
+```
+
+```bash
+export CELUNE_RELEASE_SIGNING_KEY_FILE="$HOME/keys/release-ed25519-private.pem"
+export CELUNE_REQUIRE_RELEASE_SIGNATURE=1
+bash scripts/build_nuitka.sh
+```
+
+The build fails when signature enforcement is enabled without a key. Publishing
+compiled release assets must use signed ZIPs and preserve the detached
+`celune-update.sig` file. Unsigned CI build artifacts are for build validation
+and cannot be installed through the signed updater path. Historical ZIP releases
+with compatible update metadata must retain their version and file contents and
+gain a signed manifest and sidecar when migrated; precompiled legacy clients do
+not verify signatures themselves.
+
+The published Windows and Linux ZIPs from v4.1.0 through v5.0.0 have been
+retroactively signed. Earlier source-only releases did not publish compatible
+update ZIPs.
+
+### Signature troubleshooting
+
+If Celune reports invalid update metadata, confirm that the archive contains
+both update files, that the signature was made with the matching release key,
+and that every manifest-listed file still matches its SHA-256 digest. Rebuild
+the archive from the matching release output rather than editing a signed ZIP.
+
+## See also
+
+- [Source map](../reference/source-map.md)
 
 ## Documentation deployment
 

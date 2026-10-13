@@ -53,6 +53,7 @@ dependencies = [
     "psutil",
     "platformdirs",
     "pyyaml",
+    "cryptography>=46",
     # Used to get repository information.
     # The Celune repository is used to update the software in place as needed.
     "GitPython>=3.1.59,<4.0",

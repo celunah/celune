@@ -369,6 +369,7 @@
     "cli.update_download_failed": "Could not download the release ZIP.",
     "cli.update_invalid_release": "the release ZIP has invalid update metadata",
     "cli.update_missing_metadata": "downloaded artifact is missing update metadata",
+    "cli.unsigned_release_warning": "warning: this copy of {app_name} is unsigned and has not been verified",
     "cli.update_unpack_failed": "Could not unpack the release ZIP.",
     "cli.update_unsafe_zip_member_path": "unsafe ZIP member path: {member}",
     "cli.update_unsafe_zip_symbolic_link": "unsafe ZIP symbolic link: {member}",

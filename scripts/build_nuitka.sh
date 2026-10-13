@@ -148,20 +148,35 @@ esac
 ARCH="$appimage_arch" appimagetool "$app_dir" "$output_dir/celune.AppImage"
 rm -rf "$app_dir"
 
-uv run python "$manifest_script" \
-    --output-dir "$output_dir" \
-    --version "$version" \
-    --revision "$revision" \
-    --artifact "Celune-linux-$appimage_arch" \
-    --file celune \
-    --file celune-bin \
+manifest_arguments=(
+    --output-dir "$output_dir"
+    --version "$version"
+    --revision "$revision"
+    --artifact "Celune-linux-$appimage_arch"
+    --file celune
+    --file celune-bin
     --file celune.AppImage
+)
+if [[ -n "${CELUNE_RELEASE_SIGNING_KEY_FILE:-}" ]]; then
+    manifest_arguments+=(--signing-key "$CELUNE_RELEASE_SIGNING_KEY_FILE")
+fi
+if [[ "${CELUNE_REQUIRE_RELEASE_SIGNATURE:-0}" == "1" ]]; then
+    manifest_arguments+=(--require-signature)
+fi
+
+uv run python "$manifest_script" \
+    "${manifest_arguments[@]}"
 
 (
     cd "$output_dir"
-    zip -q -9 -j "$archive_path" \
+    archive_files=(
         celune \
         celune-bin \
         celune.AppImage \
         celune-update.json
+    )
+    if [[ -f celune-update.sig ]]; then
+        archive_files+=(celune-update.sig)
+    fi
+    zip -q -9 -j "$archive_path" "${archive_files[@]}"
 )

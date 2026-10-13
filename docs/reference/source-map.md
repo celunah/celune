@@ -11,6 +11,8 @@ own. It is the index to use when a feature needs a precise code entrypoint.
 | `celune/exceptions.py` | Canonical Celune-owned exception hierarchy and structured failure metadata. |
 | `celune/celune.py` | Singleton engine, lifecycle, backend/voice switching, Persona, agent, and public calls. |
 | `celune/entrypoint.py` | CLI dispatch, startup, doctor, config commands, updates, and headless/interactive handoff. |
+| `celune/updater.py` | Signed compiled updates, Git updates, and launcher handoff. |
+| `celune/signature.py` | Ed25519 release manifest signing and verification. |
 | `main.py` | Lightweight interpreter-safe launcher. |
 | `celune/config.py` | Config coercion, merge/default behavior, logging, device, and environment lookup. |
 | `celune/constants.py` | Names, sample-rate/VRAM/context constants, model registry, and exit codes. |
