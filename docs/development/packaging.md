@@ -154,9 +154,18 @@ with compatible update metadata must retain their version and file contents and
 gain a signed manifest and sidecar when migrated; precompiled legacy clients do
 not verify signatures themselves.
 
-The published Windows and Linux ZIPs from v4.1.0 through v5.0.0 have been
-retroactively signed. Earlier source-only releases did not publish compatible
-update ZIPs.
+For each compatible GitHub release, keep the original ZIP under its existing
+name as the unsigned archive and publish a second archive named
+`Celune-{platform}-x64-{tag}-signed.zip`, for example
+`Celune-win-x64-v5.0.0-signed.zip`. The updater selects only the signed archive
+whose name matches the release tag; it ignores the original unsigned archive.
+When publishing a future release, rename the signed build output to this
+versioned name and retain the unsigned original name only when preserving an
+existing release asset.
+
+The published Windows and Linux ZIPs from v4.1.0 through v5.0.0 have signed
+counterparts. Their original ZIP assets remain unchanged as unsigned copies.
+Earlier source-only releases did not publish compatible update ZIPs.
 
 ### Signature troubleshooting
 

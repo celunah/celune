@@ -385,6 +385,56 @@ class TestUpdater(CeluneTestCase):
             assert release.version == "4.5.0"
             assert release.asset_url == "https://example.com/celune.zip"
 
+    def test_parse_release_selects_only_versioned_signed_archive(self) -> None:
+        """Verify updates select the signed archive matching the release tag."""
+        with mock.patch(
+            "celune.updater._platform_artifact_name",
+            return_value="Celune-win-x64",
+        ):
+            release = updater._parse_release(
+                {
+                    "tag_name": "v5.0.0",
+                    "assets": [
+                        {
+                            "name": "Celune-win-x64-v5.0.0.zip",
+                            "browser_download_url": "https://example.com/unsigned.zip",
+                        },
+                        {
+                            "name": "Celune-win-x64-v4.3.2-signed.zip",
+                            "browser_download_url": "https://example.com/wrong-version.zip",
+                        },
+                        {
+                            "name": "Celune-win-x64-v5.0.0-signed.zip",
+                            "browser_download_url": "https://example.com/signed.zip",
+                        },
+                    ],
+                }
+            )
+
+        assert release is not None
+        assert release.asset_url == "https://example.com/signed.zip"
+
+    def test_parse_release_ignores_unsigned_archive(self) -> None:
+        """Verify releases without a signed archive cannot be used for updates."""
+        with mock.patch(
+            "celune.updater._platform_artifact_name",
+            return_value="Celune-win-x64",
+        ):
+            release = updater._parse_release(
+                {
+                    "tag_name": "v5.0.0",
+                    "assets": [
+                        {
+                            "name": "Celune-win-x64-v5.0.0.zip",
+                            "browser_download_url": "https://example.com/unsigned.zip",
+                        }
+                    ],
+                }
+            )
+
+        assert release is not None
+        assert release.asset_url == ""
+
     def test_check_for_update_returns_none_for_dirty_worktree(self) -> None:
         """Verify dirty repositories suppress update prompts.
 

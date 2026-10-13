@@ -12,30 +12,30 @@ import time
 import ctypes
 import locale
 import shutil
+import subprocess
+import tempfile
 import hashlib
 import zipfile
-import tempfile
-import subprocess
 import urllib.request
 from dataclasses import dataclass
-from typing import Optional, Union
 from pathlib import Path, PurePosixPath, PureWindowsPath
+from typing import Optional, Union
 
 from git.exc import GitError
 
+from . import __version__
+from .i18n import string
+from .exceptions import UpdateError
+from .paths import project_root, running_compiled
+from .constants import APP_NAME, CELUNE_UA
+from .typing.common import JSONSerializable
+from .signature import SIGNATURE_NAME, load_signature, verify_manifest_signature
 from .vcs import (
     UPSTREAM_REPOSITORY_URL,
     is_git_checkout,
     _open_repository,
     git_checkout_hint,
 )
-from .i18n import string
-from . import __version__
-from .exceptions import UpdateError
-from .constants import APP_NAME, CELUNE_UA
-from .typing.common import JSONSerializable
-from .paths import project_root, running_compiled
-from .signature import SIGNATURE_NAME, load_signature, verify_manifest_signature
 
 REMOTE_URL = f"{UPSTREAM_REPOSITORY_URL}.git"
 RELEASES_API_URL = "https://api.github.com/repos/celunah/celune/releases?per_page=100"
@@ -133,7 +133,7 @@ def _parse_release(raw: JSONSerializable) -> Optional[ReleaseInfo]:
     asset_url = ""
     assets = raw.get("assets")
     if isinstance(assets, list):
-        expected_name = f"{_platform_artifact_name()}.zip"
+        expected_name = f"{_platform_artifact_name()}-{tag}-signed.zip"
         for asset in assets:
             if not isinstance(asset, dict):
                 continue
