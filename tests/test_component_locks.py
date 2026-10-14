@@ -2,7 +2,6 @@
 """Focused tests for Celune's typed component ownership boundary."""
 
 from typing import cast
-
 from types import SimpleNamespace
 
 import pytest

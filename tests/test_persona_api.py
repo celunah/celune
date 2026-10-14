@@ -8,6 +8,11 @@ from typing import Union, Optional, cast
 
 import pytest
 
+from celune.i18n import string
+from celune.utils import discard
+from celune.typing.common import JSON
+from celune.persona import impl, runtime
+from celune.typing.aliases import RecordedKwargValue
 from celune.constants import (
     APP_NAME,
     PERSONA_MODELS,
@@ -15,11 +20,6 @@ from celune.constants import (
     persona_model_tier,
     remote_code_model_revision,
 )
-from celune.i18n import string
-from celune.utils import discard
-from celune.typing.common import JSON
-from celune.persona import impl, runtime
-from celune.typing.aliases import RecordedKwargValue
 
 from .support import CeluneTestCase
 

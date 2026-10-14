@@ -21,13 +21,6 @@ from textual import events
 from textual.widget import Widget
 from textual.widgets import Label, RichLog, TextArea, ProgressBar
 
-from celune.ui.app import (
-    Button,
-    CeluneUI,
-    VoiceButton,
-    ButtonActions,
-    ProgressLabel,
-)
 from celune.i18n import string
 from celune.theme import colors
 from celune.utils import discard
@@ -38,6 +31,13 @@ from tests.support import FakeBackend
 from celune.ui.theme import severity_color
 from celune.ui import resources as ui_resources
 from celune.typing.common import JSONSerializable
+from celune.ui.app import (
+    Button,
+    CeluneUI,
+    VoiceButton,
+    ButtonActions,
+    ProgressLabel,
+)
 
 from .ui_startup_foundation import TestUIStartup as _TestUIStartup
 

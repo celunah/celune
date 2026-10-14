@@ -16,9 +16,9 @@ import numpy.typing as npt
 from openrgb import OpenRGBClient
 from openrgb.utils import RGBColor
 
-from .theme.colors import ERROR
-from .typing.common import RGB
 from .constants import BASE_SR
+from .typing.common import RGB
+from .theme.colors import ERROR
 from .utils import to_rgb, discard, lunar_info, is_celune_day, range_interpolated
 
 if TYPE_CHECKING:

@@ -13,8 +13,8 @@ import pytest
 from celune import utils, config
 from celune.typing.common import JSON, JSONSerializable
 
-from .support import CeluneTestCase
 from .platform import WINDOWS_ONLY
+from .support import CeluneTestCase
 
 
 class TestConfig(CeluneTestCase):

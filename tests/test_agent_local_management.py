@@ -3,10 +3,10 @@
 
 from __future__ import annotations
 
-from contextlib import nullcontext
 from typing import cast
 from pathlib import Path
 from unittest import mock
+from contextlib import nullcontext
 
 from celune.celune import Celune
 from celune.typing.modes import OperationMode
@@ -17,6 +17,7 @@ from celune.agent.tools import (
     local_management_tools,
     local_management_tool_schemas,
 )
+
 from .support import CeluneTestCase
 
 

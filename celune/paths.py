@@ -6,11 +6,11 @@ import sys
 import time
 import shutil
 import sysconfig
-import contextlib
 import threading
+import contextlib
 from pathlib import Path
+from typing import Union, Literal, Optional
 from collections.abc import Callable, Generator
-from typing import Literal, Optional, Union
 
 from .constants import APP_NAME, APP_SLUG
 

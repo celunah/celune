@@ -22,6 +22,9 @@ from huggingface_hub import hf_hub_download
 from sentencepiece import SentencePieceProcessor
 
 from .models import NeedleModel, NeedleConfig
+from ...typing.common import JSONSerializable
+from ...paths import huggingface_hub_cache_dir
+from ...exceptions import NeedleSelectionError
 from .checkpoints import (
     NEEDLE_MODEL_ID,
     NEEDLE_CONFIG_FILE,
@@ -34,10 +37,6 @@ from .checkpoints import (
     _expected_dtype,
     prepare_needle_checkpoint,
 )
-
-from ...typing.common import JSONSerializable
-from ...exceptions import NeedleSelectionError
-from ...paths import huggingface_hub_cache_dir
 from ...typing.agent import (
     AgentTool,
     AgentOutput,

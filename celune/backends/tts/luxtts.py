@@ -1,27 +1,27 @@
 # SPDX-License-Identifier: Apache-2.0
 """LuxTTS backend implementation for Celune."""
 
-import contextlib
-import hashlib
-import math
 import os
+import math
 import time
+import hashlib
+import contextlib
 from pathlib import Path
 from types import MethodType
-from collections.abc import Callable, Generator, Iterator, Mapping
-from typing import ClassVar, Optional, Protocol, Union, cast
+from typing import Union, ClassVar, Optional, Protocol, cast
+from collections.abc import Mapping, Callable, Iterator, Generator
 
+import torch
 import numpy as np
 import soundfile as sf
-import torch
 from huggingface_hub import snapshot_download
 
-from ...cevoice import CEVoiceLoader, default_loader
 from ...i18n import string
-from ...paths import huggingface_hub_cache_dir, huggingface_progress, temp_data_dir
+from ...utils import custom_assert
 from ...typing.aliases import AudioChunk
 from ...typing.backends import BackendModel
-from ...utils import custom_assert
+from ...cevoice import CEVoiceLoader, default_loader
+from ...paths import temp_data_dir, huggingface_progress, huggingface_hub_cache_dir
 from .base import (
     CeluneBackend,
     _to_numpy_audio,

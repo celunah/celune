@@ -7,8 +7,8 @@ import sys
 import math
 import contextlib
 from pathlib import Path
-from dataclasses import dataclass
 from typing import Optional, cast
+from dataclasses import dataclass
 from collections.abc import Mapping, Iterator
 
 import torch
@@ -16,14 +16,16 @@ import psutil
 from torch import nn
 
 from .i18n import string
+from .paths import huggingface_hub_cache_dir
+from .typing.common import JSON, VramTier, JSONSerializable
 from .constants import (
     TIERS,
     APP_NAME,
     VRAM_BUDGETS,
     VRAM_REQUIREMENTS,
     AGENT_CONTEXT_SPACE,
-    PERSONA_CONTEXT_SPACE,
     NORMALIZER_MODEL_ID,
+    PERSONA_CONTEXT_SPACE,
     VRAM_SYSTEM_RESERVE_GIB,
     PERSONA_DEFAULT_MODEL_ID,
     DEFAULT_PERSONA_SPEECH_MODEL_ID,
@@ -31,8 +33,6 @@ from .constants import (
     persona_model_tier,
     remote_code_model_revision,
 )
-from .paths import huggingface_hub_cache_dir
-from .typing.common import JSON, VramTier, JSONSerializable
 
 QWEN3_0_6B_MODEL = "Qwen/Qwen3-TTS-12Hz-0.6B-Base"
 QWEN3_1_7B_MODEL = "Qwen/Qwen3-TTS-12Hz-1.7B-Base"

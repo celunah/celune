@@ -7,48 +7,43 @@ import re
 import sys
 import tempfile
 import textwrap
-import contextlib
-import threading
 import importlib
+import threading
+import contextlib
 from pathlib import Path
 from unittest import mock
 from typing import Union, Optional, cast
 from types import ModuleType, SimpleNamespace
 from collections.abc import Iterator, Generator
 
-import pytest
 import torch
+import pytest
 import numpy as np
 import soundfile as sf
 
 from celune.i18n import string
-from celune.celune import Celune
 from celune.utils import discard
+from celune.celune import Celune
 from celune.typing.aliases import AudioChunk
+from celune.backends.vc import (
+    resolve_vc_backend,
+)
 from celune.backends.vc.seedvc import CeluneSeedVCBackend
 from celune.extensions.manager import CeluneExtensionManager
 from celune.dataclasses.pipeline import VoiceConversionRequest
 from celune.extensions.base import CeluneContext, CeluneExtension
 from celune.backends.tts import BACKEND_MANIFESTS, resolve_backend
+from celune.backends.vc import (
+    BACKEND_MANIFESTS as VC_BACKEND_MANIFESTS,
+)
 from celune.exceptions import (
     InvalidExtensionError,
     ExtensionAlreadyRegisteredError,
-)
-from celune.backends.vc import (
-    BACKEND_MANIFESTS as VC_BACKEND_MANIFESTS,
-    resolve_vc_backend,
 )
 from celune.typing.backends import (
     BackendModel,
     SeedVCModelValue,
     _SeedVCRealtimeModule,
-)
-from celune.backends.tts.luxtts import (
-    LuxTTS,
-    _LuxTTSModel,
-    _set_vocoder_silence_feature,
-    _install_vocoder_decode_guard,
-    _install_cpu_duration_correction,
 )
 from celune.backends.tts.fireredtts3 import (
     FireRedTTS3,
@@ -57,7 +52,13 @@ from celune.backends.tts.fireredtts3 import (
     _create_firered_model,
     _FireRedIncrementalDecoder,
 )
-
+from celune.backends.tts.luxtts import (
+    LuxTTS,
+    _LuxTTSModel,
+    _set_vocoder_silence_feature,
+    _install_vocoder_decode_guard,
+    _install_cpu_duration_correction,
+)
 from .support import (
     FakeBackend,
     FakeVCBackend,

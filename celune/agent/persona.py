@@ -8,6 +8,9 @@ from dataclasses import replace
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, cast
 
+from ..typing.persona import PersonaClientResponse
+from ..conversation import _extract_persona_text, build_persona_request
+from ..persona.impl import compact_persona_history, persona_history_messages
 from ..typing.agent import (
     ToolResult,
     AgentOutput,
@@ -19,9 +22,6 @@ from ..typing.locks import (
     ComponentLockOwner,
     ComponentLockRequirement,
 )
-from ..typing.persona import PersonaClientResponse
-from ..conversation import _extract_persona_text, build_persona_request
-from ..persona.impl import compact_persona_history, persona_history_messages
 
 if TYPE_CHECKING:
     from ..celune import Celune

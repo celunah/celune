@@ -19,20 +19,15 @@ import pytest
 import numpy as np
 import numpy.typing as npt
 
-from celune.celune import Celune
 from celune.utils import discard
-from celune import pipeline, speech
+from celune.celune import Celune
+from celune import speech, pipeline
 from celune.constants import PipelineStates
 from celune.typing.aliases import AudioChunk
 from celune.typing.locks import ComponentLockName
 from celune import conversation as conversation_module
 from celune.typing.common import JSON, JSONSerializable
 from celune.persona.capabilities import PersonaCapabilities
-from celune.cevoice import (
-    CEVoicePersona,
-    PersonaIdentity,
-    PersonaStyleValues,
-)
 from celune.typing.agent import (
     AgentTask,
     AgentContext,
@@ -42,14 +37,19 @@ from celune.dataclasses.pipeline import (
     SpeechRequest,
     AudioInputRequest,
 )
+from celune.cevoice import (
+    CEVoicePersona,
+    PersonaIdentity,
+    PersonaStyleValues,
+)
 
 from .platform import LINUX_ONLY, WINDOWS_ONLY
 from .support import (
     FakeStream,
     FakeVCBackend,
     CeluneTestCase,
-    make_voice_loader,
     CeluneAsyncTestCase,
+    make_voice_loader,
     make_pipeline_engine,
 )
 

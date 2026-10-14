@@ -1,16 +1,15 @@
 """Celune pytest configuration and worker isolation."""
 # SPDX-License-Identifier: Apache-2.0
 
-import atexit
 import os
+import atexit
 import shutil
 import tempfile
-from collections.abc import Iterator
 from pathlib import Path
-from typing import Literal, Optional, Union
+from collections.abc import Iterator
+from typing import Union, Literal, Optional
 
 import pytest
-
 
 pytest_plugins = ("tests.celtest",)
 

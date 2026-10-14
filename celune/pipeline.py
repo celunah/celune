@@ -25,6 +25,9 @@ import soundfile as sf
 import sounddevice as sd
 import pyrubberband as rb
 
+from .paths import (
+    outputs_dir,
+)
 from .i18n import string, tagged_string
 from .config import resolve_audio_device
 from .typing.common import JSONSerializable
@@ -33,19 +36,41 @@ from .analysis import _schedule_voice_analysis
 from .typing.pipeline import SpeechStreamQueue
 from .contention import _PlaybackContentionMonitor
 from .typing.aliases import AudioChunk, AudioChunks
-from .exceptions import BackendError, NotAvailableError
 from .captions import _build_caption_alignment_sections
+from .exceptions import BackendError, NotAvailableError
 from .vram import is_cuda_out_of_memory, release_cuda_after_oom
+from .constants import (
+    BASE_SR,
+    APP_NAME,
+    APP_SLUG,
+)
 from .conversation import _think_persona, _effective_voice_prompt
 from .threads import run_in_daemon_thread as _run_in_daemon_thread
 from .prepared import play_prepared_speech, finish_tutorial_audio_capture
-from .paths import (
-    outputs_dir,
-)
 from .utils import (
     discard,
     format_number,
     format_error_message,
+)
+from .dataclasses.pipeline import (
+    SpeechTiming,
+    PlaybackChunk,
+    SpeechRequest,
+    PlaybackSourceDone,
+)
+from .pipelinecore import (
+    _PIPELINE_CPU_YIELD_SECONDS,
+    _PLAYBACK_BUFFER_STARTUP_GRACE_SECONDS,
+    _monotonic_time,
+)
+from .audio.dsp import (
+    soften,
+    to_48khz,
+    error_signal,
+    working_signal,
+    sleeping_signal,
+    readiness_signal,
+    is_silent_utterance,
 )
 from .metadata import (
     _write_celune_flac,
@@ -60,7 +85,6 @@ from .playback import (
     _apply_source_gain,
     _youtube_sfx_title,
     _pipeline_cpu_config,
-    _should_apply_contention_buffering,
     _queue_playback_done,
     _download_youtube_sfx,
     _playback_source_meta,
@@ -81,31 +105,7 @@ from .playback import (
     _flush_buffered_speech_chunks,
     _notify_speech_playback_finished,
     _record_caption_playback_segment,
-)
-from .constants import (
-    BASE_SR,
-    APP_NAME,
-    APP_SLUG,
-)
-from .audio.dsp import (
-    soften,
-    to_48khz,
-    error_signal,
-    working_signal,
-    sleeping_signal,
-    readiness_signal,
-    is_silent_utterance,
-)
-from .pipelinecore import (
-    _PIPELINE_CPU_YIELD_SECONDS,
-    _PLAYBACK_BUFFER_STARTUP_GRACE_SECONDS,
-    _monotonic_time,
-)
-from .dataclasses.pipeline import (
-    SpeechTiming,
-    PlaybackChunk,
-    SpeechRequest,
-    PlaybackSourceDone,
+    _should_apply_contention_buffering,
 )
 
 if TYPE_CHECKING:

@@ -10,9 +10,31 @@ from uuid import uuid4
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Optional, cast
 
+from .i18n import string
+from .utils import format_error_message
+from .threads import run_in_daemon_thread
+from .persona.paths import persona_override_files
+from .typing.common import JSON, JSONSerializable
+from .persona.emotion import PersonaEmotionAnalyzer
+from .persona.capabilities import PersonaCapabilities
+from .typing.persona import PersonaModel, PersonaTokenizer
+from .binding import install_class_functions, install_module_functions
+from .persona.memory import PersonaMemoryStore, classifier_memory_candidates
+from .typing.locks import (
+    ComponentLockName,
+    ComponentLockOwner,
+    ComponentLockRequirement,
+)
+from .typing.agent import (
+    ToolCall,
+    AgentRoute,
+    AgentContext,
+    AgentToolSchema,
+    AgentClassificationFailureKind,
+)
 from .cevoice import (
-    bundle_character_name,
     default_loader,
+    bundle_character_name,
     persona_files_from_bundle,
     persona_metadata_from_manifest,
 )
@@ -23,57 +45,35 @@ from .constants import (
     AGENT_ROUTING_MAX_NEW_TOKENS,
     PERSONA_MEMORY_EMBEDDING_MODEL,
 )
-from .i18n import string
-from .persona.impl import (
-    default_persona_age,
-    default_persona_context,
-    default_persona_gender,
-    default_persona_persona,
-    compact_persona_history,
-    pack_identity_text,
-    pack_persona_lines,
-    pack_persona_text,
-    persona_active_character_name,
-    persona_config,
-    persona_context_size,
-    persona_debug_overrides_enabled,
-    persona_enabled,
-    persona_history_messages,
-    persona_model_id,
-    persona_pending_attachments,
-    persona_quantization,
-    persona_session_summary,
-    persona_style_traits,
-)
-from .typing.agent import (
-    AgentContext,
-    AgentClassificationFailureKind,
-    AgentRoute,
-    AgentToolSchema,
-    ToolCall,
-)
-from .typing.locks import (
-    ComponentLockName,
-    ComponentLockOwner,
-    ComponentLockRequirement,
-)
 from .persona.prompts import (
-    CharacterProfile,
     PersonaCard,
     PersonaContext,
+    CharacterProfile,
     PersonaPromptBuilder,
     PersonaSourceMaterial,
     RetrievedMemoryBundle,
 )
-from .utils import format_error_message
-from .threads import run_in_daemon_thread
-from .persona.paths import persona_override_files
-from .typing.common import JSON, JSONSerializable
-from .persona.emotion import PersonaEmotionAnalyzer
-from .persona.capabilities import PersonaCapabilities
-from .typing.persona import PersonaModel, PersonaTokenizer
-from .binding import install_class_functions, install_module_functions
-from .persona.memory import PersonaMemoryStore, classifier_memory_candidates
+from .persona.impl import (
+    persona_config,
+    persona_enabled,
+    persona_model_id,
+    pack_persona_text,
+    pack_identity_text,
+    pack_persona_lines,
+    default_persona_age,
+    persona_context_size,
+    persona_quantization,
+    persona_style_traits,
+    default_persona_gender,
+    compact_persona_history,
+    default_persona_context,
+    default_persona_persona,
+    persona_session_summary,
+    persona_history_messages,
+    persona_pending_attachments,
+    persona_active_character_name,
+    persona_debug_overrides_enabled,
+)
 
 if TYPE_CHECKING:
     from .celune import Celune

@@ -4,8 +4,9 @@
 from typing import cast
 from unittest import mock
 
-import numpy as np
 import pytest
+import numpy as np
+
 from celune.audio import dsp
 from celune.theme import colors
 from celune.constants import UtteranceLoudnessTier
