@@ -34,6 +34,19 @@ if ($signingKeyFile -and -not (Test-Path -LiteralPath $signingKeyFile -PathType 
 if ($requireSignature -and -not $signingKeyFile) {
     throw "A release signing key is required when signature enforcement is enabled."
 }
+$rootSigningKeyFile = $env:CELUNE_RELEASE_ROOT_KEY_FILE
+if (-not $rootSigningKeyFile) {
+    if ($env:LOCALAPPDATA) {
+        $rootSigningKeyFile = Join-Path $env:LOCALAPPDATA "Celune\keys\release-ed25519-private.pem"
+    }
+    else {
+        $rootSigningKeyFile = Join-Path $HOME ".celune\release-signing-key.pem"
+    }
+}
+if (($requireSignature -or $signingKeyFile) -and
+    -not (Test-Path -LiteralPath $rootSigningKeyFile -PathType Leaf)) {
+    throw "The release keyring root file was not found: $rootSigningKeyFile"
+}
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $outputDir = Join-Path $repoRoot "bin"
@@ -342,6 +355,13 @@ else {
     $env:PYTHONPATH = $repoRoot
 }
 try {
+    if ($requireSignature -or $signingKeyFile) {
+        & uv run python (Join-Path $repoRoot "scripts\append_release_keyring.py") `
+            $launcherExe --root-key $rootSigningKeyFile
+        if ($LASTEXITCODE -ne 0) {
+            throw "Failed to append the trusted release keyring to the launcher."
+        }
+    }
     & uv @manifestArguments
     $manifestExitCode = $LASTEXITCODE
 }

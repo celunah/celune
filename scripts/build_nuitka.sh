@@ -28,6 +28,11 @@ if [[ "$require_signature" == "1" && -z "$signing_key_file" ]]; then
     echo "A release signing key is required when signature enforcement is enabled." >&2
     exit 1
 fi
+root_signing_key_file="${CELUNE_RELEASE_ROOT_KEY_FILE:-${HOME:-}/.celune/release-signing-key.pem}"
+if [[ ("$require_signature" == "1" || -n "$signing_key_file") && ! -f "$root_signing_key_file" ]]; then
+    echo "The release keyring root file was not found: $root_signing_key_file" >&2
+    exit 1
+fi
 
 export CFLAGS="-O2 -DNDEBUG -fstack-protector-strong -D_FORTIFY_SOURCE=3"
 export CXXFLAGS="$CFLAGS"
@@ -167,6 +172,12 @@ gcc -O2 -s -Wall -Wextra -Wpedantic \
 	-Wl,-z,relro,-z,now -o "$output_dir/celune" \
 	"${launcher_sources[@]}" "$sodium_archive" "${sodium_private_flags[@]}"
 chmod +x "$output_dir/celune" "$output_dir/celune-bin"
+
+if [[ "$require_signature" == "1" || -n "$signing_key_file" ]]; then
+    PYTHONPATH="$repo_root${PYTHONPATH:+:$PYTHONPATH}" uv run python \
+        "$repo_root/scripts/append_release_keyring.py" \
+        "$output_dir/celune" --root-key "$root_signing_key_file"
+fi
 
 rm -rf "$output_dir/nuitka_main.build"
 

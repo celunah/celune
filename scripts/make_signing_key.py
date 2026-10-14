@@ -1,16 +1,15 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
-"""Create a private release key and register its public key with both verifiers."""
+"""Create a private release key and add its public key to the signed catalog."""
 
 from __future__ import annotations
 
-import ast
 import os
 import sys
 import json
 import stat
-import argparse
 import hashlib
+import argparse
 import tempfile
 import subprocess
 from pathlib import Path
@@ -52,24 +51,12 @@ def _key_id(public_key: bytes) -> str:
 
 
 def _load_trusted_keys(path: Path) -> dict[str, str]:
-    """Read and validate the Python verifier's public-key registry."""
-    source = ast.parse(path.read_text(encoding="utf-8"))
-    assignment = next(
-        (
-            node
-            for node in source.body
-            if isinstance(node, ast.AnnAssign)
-            and isinstance(node.target, ast.Name)
-            and node.target.id == "TRUSTED_RELEASE_KEYS_HEX"
-        ),
-        None,
-    )
-    if assignment is None or assignment.value is None:
-        raise ValueError("the trusted release key registry is missing")
-
-    keys = ast.literal_eval(assignment.value)
+    """Read and validate the JSON release-key catalog."""
+    keys = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(keys, dict):
-        raise TypeError("the trusted release key registry must be a dictionary")
+        raise TypeError("the trusted release key catalog must be a dictionary")
+    if len(keys) > 128:
+        raise ValueError("the trusted release key catalog contains too many keys")
     validated: dict[str, str] = {}
     for key_id, public_key_hex in keys.items():
         if not isinstance(key_id, str) or not isinstance(public_key_hex, str):
@@ -81,48 +68,9 @@ def _load_trusted_keys(path: Path) -> dict[str, str]:
     return validated
 
 
-def _render_python_registry(keys: dict[str, str]) -> str:
-    """Render the canonical Python public-key registry source."""
-    entries = json.dumps(dict(sorted(keys.items())), indent=4)
-    return (
-        "# SPDX-License-Identifier: Apache-2.0\n"
-        '"""Trusted release public keys used by the Python bundle verifier."""\n\n'
-        f"TRUSTED_RELEASE_KEYS_HEX: dict[str, str] = {entries}\n"
-    )
-
-
-def _render_launcher_registry(keys: dict[str, str]) -> str:
-    """Render the native launcher's embedded public-key registry."""
-    entries = []
-    for key_id, public_key_hex in sorted(keys.items()):
-        byte_values = bytes.fromhex(public_key_hex)
-        byte_rows = [
-            "            "
-            + ", ".join(f"0x{value:02x}" for value in byte_values[index : index + 8])
-            for index in range(0, len(byte_values), 8)
-        ]
-        entries.append(
-            "    {\n"
-            f'        "{key_id}",\n'
-            "        {\n" + ",\n".join(byte_rows) + ",\n"
-            "        },\n"
-            "    },"
-        )
-    return (
-        "/* SPDX-License-Identifier: Apache-2.0 */\n"
-        "#ifndef CELUNE_RELEASE_KEYS_H\n"
-        "#define CELUNE_RELEASE_KEYS_H\n\n"
-        "typedef struct {\n"
-        "    const char *key_id;\n"
-        "    unsigned char public_key[32];\n"
-        "} LauncherTrustedReleaseKey;\n\n"
-        "static const LauncherTrustedReleaseKey launcher_trusted_release_keys[] = {\n"
-        + "\n".join(entries)
-        + "\n};\n\n"
-        "#define LAUNCHER_TRUSTED_RELEASE_KEY_COUNT \\\n"
-        "    (sizeof(launcher_trusted_release_keys) / sizeof(launcher_trusted_release_keys[0]))\n\n"
-        "#endif\n"
-    )
+def _render_key_catalog(keys: dict[str, str]) -> str:
+    """Render the canonical release-key catalog."""
+    return json.dumps(dict(sorted(keys.items())), indent=2) + "\n"
 
 
 def _write_bytes_atomically(path: Path, contents: bytes) -> None:
@@ -207,7 +155,7 @@ def make_signing_key(
     output_path: Path,
     project_root: Optional[Path] = None,
 ) -> str:
-    """Create a protected Ed25519 key and add its public key to both verifiers.
+    """Create a protected Ed25519 key and add its public key to the catalog.
 
     Args:
         output_path: Destination for the private PEM file; existing files are never replaced.
@@ -219,11 +167,10 @@ def make_signing_key(
     Raises:
         FileExistsError: if the private-key destination already exists.
         OSError: if a key or trust registry cannot be written.
-        ValueError: if the current trust registry is invalid or the key directory is unsafe.
+        ValueError: if the catalog is invalid or the key directory is unsafe.
     """
     repository = project_root or _repository_root()
-    python_registry = repository / "celune" / "release_keys.py"
-    launcher_registry = repository / "launcher" / "release_keys.h"
+    key_catalog = repository / "celune" / "release_keyring.json"
     requested_destination = output_path.expanduser().absolute()
     if requested_destination.is_symlink():
         raise ValueError("the signing key destination cannot be a symbolic link")
@@ -237,9 +184,8 @@ def make_signing_key(
     if destination.exists():
         raise FileExistsError(destination)
 
-    trusted_keys = _load_trusted_keys(python_registry)
-    original_python_registry = python_registry.read_bytes()
-    original_launcher_registry = launcher_registry.read_bytes()
+    trusted_keys = _load_trusted_keys(key_catalog)
+    original_key_catalog = key_catalog.read_bytes()
 
     private_key = Ed25519PrivateKey.generate()
     public_key = private_key.public_key().public_bytes(
@@ -259,17 +205,9 @@ def make_signing_key(
 
     _write_private_key(destination, private_key_pem)
     try:
-        _write_source_atomically(
-            python_registry,
-            _render_python_registry(trusted_keys),
-        )
-        _write_source_atomically(
-            launcher_registry,
-            _render_launcher_registry(trusted_keys),
-        )
+        _write_source_atomically(key_catalog, _render_key_catalog(trusted_keys))
     except Exception:
-        _write_bytes_atomically(python_registry, original_python_registry)
-        _write_bytes_atomically(launcher_registry, original_launcher_registry)
+        _write_bytes_atomically(key_catalog, original_key_catalog)
         destination.unlink(missing_ok=True)
         raise
     return identifier

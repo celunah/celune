@@ -146,13 +146,24 @@ that internal command directly; it is a launcher protocol.
 Compatible release ZIPs carry `celune-update.json` and its detached
 `celune-update.sig` Ed25519 signature. The signature covers the exact manifest
 bytes; the manifest contains SHA-256 digests for the shipped executables and
-runtime files. The C launcher verifies the signature and the selected runtime
-digest before starting that runtime. The Python entrypoint independently
-verifies the signature and every listed file during startup. A present but
+runtime files. Signed launchers carry a root-signed public-key catalog in a
+trailer after the executable image. The C launcher reads that keyring from its
+own file, verifies the manifest signature and selected runtime digest, then
+starts the runtime. The Python entrypoint independently reads the same launcher
+trailer and verifies the signature and every listed file during startup. A present but
 invalid signature or a mismatched runtime digest rejects startup. When no
 signature is present, the C launcher allows startup and Python warns that the
 copy is unsigned; this keeps legacy JSON-manifest bundles usable. The updater
 still rejects unsigned remote release ZIPs.
+
+The public keys that sign manifests live in `celune/release_keyring.json`.
+Only the Ed25519 keyring root remains pinned in the C and Python verifier
+sources; the root signs the catalog before the builder appends it to the
+launcher. A missing or invalid trailer rejects a signed bundle. This lets a
+future release add a signing key without recompiling a list of keys into both
+verifiers. The root private key is required to create the trailer. Previously
+published launchers keep their original key lists; releases that must remain
+verifiable by those launchers must use a key they already trust.
 
 Create a release key once from the checkout that will build the release:
 
@@ -169,19 +180,19 @@ The script creates an unencrypted Ed25519 PEM key at
 `~/.celune/release-signing-key.pem` on Linux. It refuses to overwrite an
 existing file, restricts file access to the current account, rejects
 destinations inside the checkout, and does not print private-key contents. It
-also adds the public key to
-`celune/release_keys.py` and `launcher/release_keys.h`, while preserving
-previously trusted public keys. Include those public-key changes in the source
-used to build the signed package.
-Clients built before a new public key was added do not trust that key. For key
-rotation, distribute a transition build signed by a key those clients already
-trust before signing later releases with the new key.
+also adds the public key to `celune/release_keyring.json`, preserving previously
+catalogued keys. Include the updated catalog in the source used to build the
+signed package. The root private key signs the catalog trailer, so a launcher
+can authenticate newly catalogued release keys without embedding each key in
+its source.
 
 The build scripts use their platform's default private-key path when called
 with `signed`. On Windows, that is the `%LOCALAPPDATA%` path above. For another
 key location, pass it to `--output` and set
 `CELUNE_RELEASE_SIGNING_KEY_FILE` to the same path before building. The existing
-`CELUNE_REQUIRE_RELEASE_SIGNATURE=1` setting also continues to require signing:
+`CELUNE_REQUIRE_RELEASE_SIGNATURE=1` setting also continues to require signing.
+`CELUNE_RELEASE_ROOT_KEY_FILE` can select a separately stored root key; by
+default it uses the platform's standard key path above:
 
 ```powershell
 uv run python scripts\make_signing_key.py --output "C:\path\to\release-ed25519-private.pem"
@@ -214,7 +225,8 @@ signed archive whose name matches the release tag; it ignores the original
 unsigned archive.
 
 The `signed` suffix means that Celune's custom Ed25519 bundle anti-tamper
-signature verifies against the public key embedded in Celune. It does not mean
+signature verifies against the root-authenticated keyring appended to the
+launcher. It does not mean
 that the executable has a CA-issued or Authenticode code-signing certificate.
 The original ZIPs, which keep their existing names without the `-signed` suffix,
 are unsigned because they have no Celune bundle signature; legacy copies remain

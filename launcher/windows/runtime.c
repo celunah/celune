@@ -1173,7 +1173,12 @@ int launcher_run(int argc, char **argv) {
         return 1;
     }
 
-    if (launcher_verify_bundle_target(target) == LAUNCHER_BUNDLE_INVALID) {
+    if (!SetEnvironmentVariableA("CELUNE_LAUNCHER_EXE", launcher)) {
+        printfe("Celune could not configure its launcher path.\n");
+        return 1;
+    }
+
+    if (launcher_verify_bundle_target(target, launcher) == LAUNCHER_BUNDLE_INVALID) {
         printfe("celune rejected a runtime with an invalid or corrupted release signature\n");
         return 1;
     }

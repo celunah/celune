@@ -3,6 +3,7 @@
 #include <sodium.h>
 
 #include <errno.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -13,6 +14,15 @@
 #define SIGNATURE_LIMIT 4096U
 #define SIGNATURE_BASE64_LENGTH 88U
 #define PATH_BUFFER_SIZE 4096U
+#define KEYRING_PAYLOAD_MAGIC "CELUNE-KEYRING-1"
+#define KEYRING_TRAILER_MAGIC "CELUNE-KEYS-END1"
+#define KEYRING_KEY_ID_SIZE 24U
+#define KEYRING_ENTRY_SIZE (KEYRING_KEY_ID_SIZE + crypto_sign_PUBLICKEYBYTES)
+#define KEYRING_SIGNATURE_SIZE crypto_sign_BYTES
+#define KEYRING_FOOTER_SIZE (8U + 16U)
+#define KEYRING_MAX_BODY_SIZE \
+    (16U + 2U + LAUNCHER_KEYRING_MAX_ENTRIES * KEYRING_ENTRY_SIZE + \
+     KEYRING_SIGNATURE_SIZE)
 
 static int read_limited_file(
     const char *path,
@@ -168,6 +178,191 @@ static int hex_value(unsigned char character) {
         return (int)(character - 'a') + 10;
     }
     return -1;
+}
+
+static uint64_t read_little_endian_u64(const unsigned char bytes[8]) {
+    uint64_t value = 0U;
+    for (size_t index = 0U; index < 8U; index++) {
+        value |= (uint64_t)bytes[index] << (index * 8U);
+    }
+    return value;
+}
+
+static int valid_release_key(
+    const unsigned char public_key[crypto_sign_PUBLICKEYBYTES],
+    const unsigned char key_id[KEYRING_KEY_ID_SIZE]
+) {
+    unsigned char digest[crypto_hash_sha256_BYTES];
+    char expected_key_id[KEYRING_KEY_ID_SIZE + 1U];
+    if (crypto_hash_sha256(digest, public_key, crypto_sign_PUBLICKEYBYTES) != 0) {
+        return 0;
+    }
+    int written = snprintf(
+        expected_key_id,
+        sizeof(expected_key_id),
+        "ed25519-%02x%02x%02x%02x%02x%02x%02x%02x",
+        digest[0], digest[1], digest[2], digest[3],
+        digest[4], digest[5], digest[6], digest[7]
+    );
+    sodium_memzero(digest, sizeof(digest));
+    return written == (int)KEYRING_KEY_ID_SIZE &&
+        sodium_memcmp(expected_key_id, key_id, KEYRING_KEY_ID_SIZE) == 0;
+}
+
+int launcher_decode_signed_keyring_data(
+    const unsigned char *body,
+    size_t body_size,
+    const unsigned char root_public_key[crypto_sign_PUBLICKEYBYTES],
+    LauncherTrustedReleaseKey keys[LAUNCHER_KEYRING_MAX_ENTRIES],
+    size_t *key_count
+) {
+    static const unsigned char payload_magic[] = KEYRING_PAYLOAD_MAGIC;
+    if (body == NULL || root_public_key == NULL || keys == NULL ||
+        key_count == NULL || sodium_init() < 0) {
+        return 0;
+    }
+    sodium_memzero(keys, LAUNCHER_KEYRING_MAX_ENTRIES * sizeof(*keys));
+    *key_count = 0U;
+    size_t minimum_size = sizeof(payload_magic) - 1U + 2U +
+        KEYRING_ENTRY_SIZE + KEYRING_SIGNATURE_SIZE;
+    if (body_size < minimum_size || body_size > KEYRING_MAX_BODY_SIZE ||
+        memcmp(body, payload_magic, sizeof(payload_magic) - 1U) != 0) {
+        return 0;
+    }
+    size_t payload_size = body_size - KEYRING_SIGNATURE_SIZE;
+    size_t count_offset = sizeof(payload_magic) - 1U;
+    size_t count = (size_t)body[count_offset] |
+        ((size_t)body[count_offset + 1U] << 8U);
+    if (count == 0U || count > LAUNCHER_KEYRING_MAX_ENTRIES ||
+        payload_size != count_offset + 2U + count * KEYRING_ENTRY_SIZE ||
+        crypto_sign_verify_detached(
+            body + payload_size,
+            body,
+            (unsigned long long)payload_size,
+            root_public_key
+        ) != 0) {
+        return 0;
+    }
+
+    size_t offset = count_offset + 2U;
+    for (size_t index = 0U; index < count; index++) {
+        const unsigned char *key_id = body + offset;
+        const unsigned char *public_key = key_id + KEYRING_KEY_ID_SIZE;
+        if (!valid_release_key(public_key, key_id)) {
+            sodium_memzero(keys, LAUNCHER_KEYRING_MAX_ENTRIES * sizeof(*keys));
+            return 0;
+        }
+        for (size_t prior = 0U; prior < index; prior++) {
+            if (sodium_memcmp(
+                    keys[prior].key_id,
+                    key_id,
+                    KEYRING_KEY_ID_SIZE
+                ) == 0) {
+                sodium_memzero(keys, LAUNCHER_KEYRING_MAX_ENTRIES * sizeof(*keys));
+                return 0;
+            }
+        }
+        memcpy(keys[index].key_id, key_id, KEYRING_KEY_ID_SIZE);
+        keys[index].key_id[KEYRING_KEY_ID_SIZE] = '\0';
+        memcpy(keys[index].public_key, public_key, crypto_sign_PUBLICKEYBYTES);
+        offset += KEYRING_ENTRY_SIZE;
+    }
+    *key_count = count;
+    return 1;
+}
+
+int launcher_decode_appended_keyring_data(
+    const unsigned char *trailer_data,
+    size_t trailer_size,
+    const unsigned char root_public_key[crypto_sign_PUBLICKEYBYTES],
+    LauncherTrustedReleaseKey keys[LAUNCHER_KEYRING_MAX_ENTRIES],
+    size_t *key_count
+) {
+    static const unsigned char trailer_magic[] = KEYRING_TRAILER_MAGIC;
+    if (trailer_data == NULL || root_public_key == NULL || keys == NULL ||
+        key_count == NULL) {
+        return 0;
+    }
+    sodium_memzero(keys, LAUNCHER_KEYRING_MAX_ENTRIES * sizeof(*keys));
+    *key_count = 0U;
+    if (trailer_size < KEYRING_FOOTER_SIZE) {
+        return 0;
+    }
+    const unsigned char *footer = trailer_data + trailer_size - KEYRING_FOOTER_SIZE;
+    uint64_t body_size = read_little_endian_u64(footer);
+    if (memcmp(
+            footer + 8U,
+            trailer_magic,
+            sizeof(trailer_magic) - 1U
+        ) != 0 ||
+        body_size > KEYRING_MAX_BODY_SIZE ||
+        body_size != trailer_size - KEYRING_FOOTER_SIZE) {
+        return 0;
+    }
+    return launcher_decode_signed_keyring_data(
+        trailer_data,
+        (size_t)body_size,
+        root_public_key,
+        keys,
+        key_count
+    );
+}
+
+int launcher_read_appended_keyring(
+    const char *launcher_path,
+    LauncherTrustedReleaseKey keys[LAUNCHER_KEYRING_MAX_ENTRIES],
+    size_t *key_count
+) {
+    if (launcher_path == NULL || keys == NULL || key_count == NULL ||
+        sodium_init() < 0) {
+        return 0;
+    }
+    *key_count = 0U;
+
+    FILE *file = fopen(launcher_path, "rb");
+    if (file == NULL || fseek(file, 0, SEEK_END) != 0) {
+        if (file != NULL) {
+            fclose(file);
+        }
+        return 0;
+    }
+    long file_size = ftell(file);
+    if (file_size < (long)KEYRING_FOOTER_SIZE ||
+        fseek(file, -(long)KEYRING_FOOTER_SIZE, SEEK_END) != 0) {
+        fclose(file);
+        return 0;
+    }
+
+    unsigned char footer[KEYRING_FOOTER_SIZE];
+    if (fread(footer, 1U, sizeof(footer), file) != sizeof(footer)) {
+        fclose(file);
+        return 0;
+    }
+    uint64_t body_size_u64 = read_little_endian_u64(footer);
+    if (body_size_u64 > KEYRING_MAX_BODY_SIZE ||
+        body_size_u64 > (uint64_t)file_size - KEYRING_FOOTER_SIZE) {
+        fclose(file);
+        return 0;
+    }
+    size_t body_size = (size_t)body_size_u64;
+    size_t trailer_size = body_size + KEYRING_FOOTER_SIZE;
+    unsigned char trailer[KEYRING_MAX_BODY_SIZE + KEYRING_FOOTER_SIZE];
+    if (fseek(file, -(long)trailer_size, SEEK_END) != 0 ||
+        fread(trailer, 1U, trailer_size, file) != trailer_size) {
+        fclose(file);
+        return 0;
+    }
+    fclose(file);
+
+    int decoded = launcher_decode_appended_keyring_data(
+        trailer,
+        trailer_size,
+        launcher_release_keyring_root,
+        keys,
+        key_count
+    );
+    sodium_memzero(trailer, sizeof(trailer));
+    return decoded;
 }
 
 static const unsigned char *find_bytes(
@@ -364,8 +559,11 @@ static int sidecar_path(
     return name_size >= 0 && (size_t)name_size < PATH_BUFFER_SIZE;
 }
 
-LauncherBundleStatus launcher_verify_bundle_target(const char *target_path) {
-    if (target_path == NULL) {
+LauncherBundleStatus launcher_verify_bundle_target(
+    const char *target_path,
+    const char *launcher_path
+) {
+    if (target_path == NULL || launcher_path == NULL) {
         return LAUNCHER_BUNDLE_INVALID;
     }
 
@@ -408,23 +606,32 @@ LauncherBundleStatus launcher_verify_bundle_target(const char *target_path) {
         launcher_hash_file(target_path, target_digest);
     LauncherBundleStatus result = LAUNCHER_BUNDLE_INVALID;
     if (files_ready) {
-        for (size_t key_index = 0U;
-             key_index < LAUNCHER_TRUSTED_RELEASE_KEY_COUNT;
-             key_index++) {
-            result = launcher_verify_manifest_data(
-                manifest_data,
-                manifest_size,
-                signature_data,
-                signature_size,
-                target_name,
-                target_digest,
-                launcher_trusted_release_keys[key_index].public_key,
-                launcher_trusted_release_keys[key_index].key_id
-            );
-            if (result == LAUNCHER_BUNDLE_VALID) {
-                break;
+        LauncherTrustedReleaseKey trusted_keys[LAUNCHER_KEYRING_MAX_ENTRIES];
+        size_t trusted_key_count = 0U;
+        if (launcher_read_appended_keyring(
+                launcher_path,
+                trusted_keys,
+                &trusted_key_count
+            )) {
+            for (size_t key_index = 0U;
+                 key_index < trusted_key_count;
+                 key_index++) {
+                result = launcher_verify_manifest_data(
+                    manifest_data,
+                    manifest_size,
+                    signature_data,
+                    signature_size,
+                    target_name,
+                    target_digest,
+                    trusted_keys[key_index].public_key,
+                    trusted_keys[key_index].key_id
+                );
+                if (result == LAUNCHER_BUNDLE_VALID) {
+                    break;
+                }
             }
         }
+        sodium_memzero(trusted_keys, sizeof(trusted_keys));
     }
 
     free(signature_data);

@@ -12,7 +12,7 @@ own. It is the index to use when a feature needs a precise code entrypoint.
 | `celune/celune.py` | Singleton engine, lifecycle, backend/voice switching, Persona, agent, and public calls. |
 | `celune/entrypoint.py` | CLI dispatch, startup, doctor, config commands, updates, and headless/interactive handoff. |
 | `celune/updater.py` | Signed compiled updates, Git updates, and launcher handoff. |
-| `celune/signature.py` | Ed25519 release manifest signing and verification. |
+| `celune/signature.py` | Ed25519 manifest verification and appended keyring handling. |
 | `main.py` | Lightweight interpreter-safe launcher. |
 | `celune/config.py` | Config coercion, merge/default behavior, logging, device, and environment lookup. |
 | `celune/constants.py` | Names, sample-rate/VRAM/context constants, model registry, and exit codes. |
@@ -100,11 +100,13 @@ own. It is the index to use when a feature needs a precise code entrypoint.
 | `scripts/run_ci.py` | Canonical Windows-safe CI process wrapper. |
 | `scripts/update_docstrings.py` | Docstring coverage helper; inspect its diff for mechanical collateral. |
 | `scripts/build_nuitka.ps1` / `.sh` | Windows/Linux launcher builds. |
-| `scripts/make_signing_key.py` | Protected release-key creation and public-key registration. |
+| `scripts/make_signing_key.py` | Protected release-key creation and catalog registration. |
+| `scripts/append_release_keyring.py` | Root-sign and append the release-key catalog to the launcher. |
 | `scripts/celune-bin.cmd` | Windows compiled-binary handoff. |
 | `scripts/ci_warnings.py` | CI warning annotations. |
 | `scripts/write_update_manifest.py` | Release update metadata. |
-| `celune/release_keys.py` / `launcher/release_keys.h` | Trusted Python and native release public keys. |
+| `celune/release_keyring.json` | Public manifest-signing key catalog embedded in signed launcher trailers. |
+| `celune/release_keys.py` / `launcher/release_keys.h` | Pinned keyring root trust anchors for Python and C. |
 | `celune/lang/` | Localized runtime strings. |
 | `voices/` | Bundled CEVOICE packs. |
 

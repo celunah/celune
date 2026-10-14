@@ -16,7 +16,7 @@ from types import SimpleNamespace
 from collections import abc, deque
 
 import numpy as np
-from fastapi.testclient import TestClient
+import fastapi.testclient
 from starlette.requests import Request
 from starlette.responses import Response
 from starlette.types import Send, Scope, Message, Receive
@@ -26,7 +26,6 @@ from celune.i18n import string
 from celune.celune import Celune
 from celune.webui import runtime as webui
 from celune.pipeline import SpeechStreamQueue
-
 from .support import CeluneTestCase
 
 
@@ -555,8 +554,10 @@ class TestApiWebUI(CeluneTestCase):
         api.configure_api_security(token="secret")
         assert api._ui_session_valid(session_id)
 
-        replacement = "A" if session_id[-1] != "A" else "B"
-        assert not api._ui_session_valid(f"{session_id[:-1]}{replacement}")
+        payload, encoded_signature = session_id.split(".", 1)
+        replacement = "A" if encoded_signature[0] != "A" else "B"
+        changed_signature = replacement + encoded_signature[1:]
+        assert not api._ui_session_valid(f"{payload}.{changed_signature}")
 
         api.configure_api_security(token="rotated")
         assert not api._ui_session_valid(session_id)
@@ -1216,7 +1217,7 @@ class TestApiWebUI(CeluneTestCase):
 
     def test_gradio_hashed_assets_reach_the_mounted_application(self) -> None:
         """Verify Gradio's hashed assets are not captured by Celune's asset handler."""
-        with TestClient(api.api) as client:
+        with fastapi.testclient.TestClient(api.api) as client:
             page = client.get("/ui/")
             assert page.status_code == 200
 

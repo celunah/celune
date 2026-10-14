@@ -3,8 +3,8 @@
 
 from __future__ import annotations
 
-import json
 import hashlib
+import json
 from pathlib import Path
 
 import pytest
@@ -22,8 +22,62 @@ def _trusted_test_key(monkeypatch: pytest.MonkeyPatch) -> Ed25519PrivateKey:
         serialization.PublicFormat.Raw,
     )
     key_id = signature.signing_key_id(public_key)
-    monkeypatch.setitem(signature._TRUSTED_RELEASE_KEYS, key_id, public_key)
+    monkeypatch.setattr(
+        signature,
+        "_runtime_release_keys",
+        lambda: {key_id: public_key},
+    )
     return private_key
+
+
+def test_appended_keyring_requires_root_signature(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Read a trusted keyring trailer and reject a modified trailer signature."""
+    root_key = Ed25519PrivateKey.generate()
+    root_public_key = root_key.public_key().public_bytes(
+        serialization.Encoding.Raw,
+        serialization.PublicFormat.Raw,
+    )
+    root_id = signature.signing_key_id(root_public_key)
+    release_key = Ed25519PrivateKey.generate()
+    release_public_key = release_key.public_key().public_bytes(
+        serialization.Encoding.Raw,
+        serialization.PublicFormat.Raw,
+    )
+    release_id = signature.signing_key_id(release_public_key)
+    monkeypatch.setattr(signature, "_ROOT_PUBLIC_KEY", root_public_key)
+    monkeypatch.setattr(
+        signature,
+        "_load_source_release_keys",
+        lambda: {root_id: root_public_key, release_id: release_public_key},
+    )
+    root_path = tmp_path / "root.pem"
+    root_path.write_bytes(
+        root_key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
+        )
+    )
+    executable = tmp_path / "celune"
+    executable.write_bytes(b"binary payload")
+    signature.append_trusted_keyring(executable, root_path)
+
+    assert signature.read_appended_keyring(executable) == {
+        root_id: root_public_key,
+        release_id: release_public_key,
+    }
+    first_size = executable.stat().st_size
+    signature.append_trusted_keyring(executable, root_path)
+    assert executable.stat().st_size == first_size
+
+    corrupted_trailer = bytearray(executable.read_bytes())
+    corrupted_trailer[-signature.KEYRING_FOOTER_SIZE - 1] ^= 1
+    executable.write_bytes(corrupted_trailer)
+    with pytest.raises(ValueError, match="root signature"):
+        signature.read_appended_keyring(executable)
 
 
 def _manifest_data(files: dict[str, str]) -> bytes:

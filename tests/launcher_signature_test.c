@@ -3,6 +3,7 @@
 
 #include <sodium.h>
 
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -54,6 +55,12 @@ int main(int argc, char **argv) {
         0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
         0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f
     };
+    static const unsigned char root_seed[crypto_sign_SEEDBYTES] = {
+        0x1f, 0x1e, 0x1d, 0x1c, 0x1b, 0x1a, 0x19, 0x18,
+        0x17, 0x16, 0x15, 0x14, 0x13, 0x12, 0x11, 0x10,
+        0x0f, 0x0e, 0x0d, 0x0c, 0x0b, 0x0a, 0x09, 0x08,
+        0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01, 0x00
+    };
     static const unsigned char payload[] = "Celune launcher signature test";
     static const char target_name[] = "celune-signature-test.bin";
     static const char key_id[] = "ed25519-test-key";
@@ -65,6 +72,72 @@ int main(int argc, char **argv) {
     CHECK(sodium_init() >= 0);
     CHECK(crypto_sign_seed_keypair(public_key, secret_key, seed) == 0);
     CHECK(crypto_hash_sha256(target_digest, payload, sizeof(payload) - 1U) == 0);
+
+    unsigned char root_public_key[crypto_sign_PUBLICKEYBYTES];
+    unsigned char root_secret_key[crypto_sign_SECRETKEYBYTES];
+    unsigned char key_id_digest[crypto_hash_sha256_BYTES];
+    CHECK(crypto_sign_seed_keypair(root_public_key, root_secret_key, root_seed) == 0);
+    unsigned char keyring_payload[16U + 2U + 24U + crypto_sign_PUBLICKEYBYTES];
+    memcpy(keyring_payload, "CELUNE-KEYRING-1", 16U);
+    keyring_payload[16] = 1U;
+    keyring_payload[17] = 0U;
+    CHECK(crypto_hash_sha256(key_id_digest, public_key, sizeof(public_key)) == 0);
+    int key_id_length = snprintf(
+        (char *)keyring_payload + 18U,
+        25U,
+        "ed25519-%02x%02x%02x%02x%02x%02x%02x%02x",
+        key_id_digest[0], key_id_digest[1], key_id_digest[2], key_id_digest[3],
+        key_id_digest[4], key_id_digest[5], key_id_digest[6], key_id_digest[7]
+    );
+    CHECK(key_id_length == 24);
+    memcpy(keyring_payload + 42U, public_key, sizeof(public_key));
+    unsigned char keyring_body[sizeof(keyring_payload) + crypto_sign_BYTES];
+    memcpy(keyring_body, keyring_payload, sizeof(keyring_payload));
+    unsigned long long keyring_signature_size = 0U;
+    CHECK(crypto_sign_detached(
+              keyring_body + sizeof(keyring_payload),
+              &keyring_signature_size,
+              keyring_payload,
+              sizeof(keyring_payload),
+              root_secret_key
+          ) == 0);
+    CHECK(keyring_signature_size == crypto_sign_BYTES);
+    LauncherTrustedReleaseKey decoded_keys[LAUNCHER_KEYRING_MAX_ENTRIES];
+    size_t decoded_key_count = 0U;
+    unsigned char appended_trailer[
+        sizeof(keyring_body) + 8U + sizeof("CELUNE-KEYS-END1") - 1U
+    ];
+    memcpy(appended_trailer, keyring_body, sizeof(keyring_body));
+    uint64_t body_size = sizeof(keyring_body);
+    for (size_t index = 0U; index < 8U; index++) {
+        appended_trailer[sizeof(keyring_body) + index] =
+            (unsigned char)(body_size >> (index * 8U));
+    }
+    memcpy(
+        appended_trailer + sizeof(keyring_body) + 8U,
+        "CELUNE-KEYS-END1",
+        sizeof("CELUNE-KEYS-END1") - 1U
+    );
+    CHECK(launcher_decode_appended_keyring_data(
+              appended_trailer,
+              sizeof(appended_trailer),
+              root_public_key,
+              decoded_keys,
+              &decoded_key_count
+          ));
+    CHECK(decoded_key_count == 1U);
+    CHECK(memcmp(decoded_keys[0].public_key, public_key, sizeof(public_key)) == 0);
+    appended_trailer[sizeof(keyring_body) - 1U] ^= 0x01U;
+    CHECK(!launcher_decode_appended_keyring_data(
+              appended_trailer,
+              sizeof(appended_trailer),
+              root_public_key,
+              decoded_keys,
+              &decoded_key_count
+          ));
+    appended_trailer[sizeof(keyring_body) - 1U] ^= 0x01U;
+    sodium_memzero(root_secret_key, sizeof(root_secret_key));
+    sodium_memzero(key_id_digest, sizeof(key_id_digest));
 
     char digest_hex[crypto_hash_sha256_BYTES * 2U + 1U];
     for (size_t index = 0U; index < sizeof(target_digest); index++) {
