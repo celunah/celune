@@ -8,6 +8,8 @@ import queue
 import importlib
 import threading
 import contextlib
+from re import Pattern
+from types import ModuleType, TracebackType, SimpleNamespace, MappingProxyType
 from typing import (
     TYPE_CHECKING,
     Self,
@@ -18,22 +20,20 @@ from typing import (
     TypedDict,
     cast,
 )
-from re import Pattern
 from pathlib import Path
 from unittest import TestCase, mock
 from collections.abc import Callable, Iterable, Iterator, Container
-from types import ModuleType, TracebackType, SimpleNamespace, MappingProxyType
 
 import numpy as np
 import numpy.typing as npt
 
+from celune.locks import ComponentLockManager
 from celune.utils import discard
 from celune.constants import PipelineStates
-from celune.typing.aliases import AudioChunk
-from celune.locks import ComponentLockManager
 from celune.typing.common import JSONSerializable
-from celune.backends.tts.base import CeluneBackend
+from celune.typing.aliases import AudioChunk
 from celune.backends.vc.base import CeluneVCBackend
+from celune.backends.tts.base import CeluneBackend
 from celune.dataclasses.pipeline import AudioOutput, VoiceConversionRequest
 
 if TYPE_CHECKING:
@@ -504,6 +504,12 @@ def make_pipeline_engine() -> SimpleNamespace:
     engine._pipeline_lock_owner = None
     engine._last_component_busy = None
     engine.cur_state = "idle"
+
+    def update_cur_state(state: str) -> None:
+        engine.cur_state = state
+
+    engine._update_cur_state = update_cur_state
+    engine._emit_event = mock.Mock()
     engine.exit_requested = False
     engine.stream = None
     engine._stream = None

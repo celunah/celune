@@ -53,6 +53,7 @@ dependencies = [
     "psutil",
     "platformdirs",
     "pyyaml",
+    "cryptography>=46",
     # Used to get repository information.
     # The Celune repository is used to update the software in place as needed.
     "GitPython>=3.1.59,<4.0",
@@ -70,7 +71,7 @@ Repository = "https://github.com/celunah/celune"
 Issues = "https://github.com/celunah/celune/issues"
 
 [tool.setuptools.package-data]
-celune = ["lang/*.json", "assets/*"]
+celune = ["lang/*.json", "assets/*", "release_keyring.json"]
 
 [tool.setuptools.data-files]
 voices = ["voices/*.cevoice"]

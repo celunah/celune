@@ -12,23 +12,24 @@ import time
 import ctypes
 import locale
 import shutil
+import subprocess
+import tempfile
 import hashlib
 import zipfile
-import tempfile
-import subprocess
 import urllib.request
 from dataclasses import dataclass
-from typing import Union, Optional
 from pathlib import Path, PurePosixPath, PureWindowsPath
+from typing import Optional, Union
 
 from git.exc import GitError
 
-from .i18n import string
 from . import __version__
-from .constants import CELUNE_UA
+from .i18n import string
 from .exceptions import UpdateError
-from .typing.common import JSONSerializable
 from .paths import project_root, running_compiled
+from .constants import APP_NAME, CELUNE_UA
+from .typing.common import JSONSerializable
+from .signature import SIGNATURE_NAME, load_signature, verify_manifest_signature
 from .vcs import (
     UPSTREAM_REPOSITORY_URL,
     is_git_checkout,
@@ -79,6 +80,8 @@ class BundleManifest:
     revision: str
     artifact: str
     files: dict[str, str]
+    signature_required: bool = False
+    signature_verified: bool = False
 
 
 @dataclass(frozen=True)
@@ -130,7 +133,7 @@ def _parse_release(raw: JSONSerializable) -> Optional[ReleaseInfo]:
     asset_url = ""
     assets = raw.get("assets")
     if isinstance(assets, list):
-        expected_name = f"{_platform_artifact_name()}.zip"
+        expected_name = f"{_platform_artifact_name()}-{tag}-signed.zip"
         for asset in assets:
             if not isinstance(asset, dict):
                 continue
@@ -374,7 +377,11 @@ def _bundle_checksums(
     return checksums
 
 
-def _parse_bundle_manifest(raw: JSONSerializable) -> Optional[BundleManifest]:
+def _parse_bundle_manifest(
+    raw: JSONSerializable,
+    *,
+    signature_verified: bool = False,
+) -> Optional[BundleManifest]:
     """Convert raw JSON-like data into bundle metadata."""
     if not isinstance(raw, dict):
         return None
@@ -383,11 +390,13 @@ def _parse_bundle_manifest(raw: JSONSerializable) -> Optional[BundleManifest]:
     revision = raw.get("revision")
     artifact = raw.get("artifact")
     files = raw.get("files")
+    signature_required = raw.get("signature_required", False)
     if not (
         isinstance(version, str)
         and isinstance(revision, str)
         and isinstance(artifact, str)
         and isinstance(files, dict)
+        and isinstance(signature_required, bool)
     ):
         return None
 
@@ -404,6 +413,43 @@ def _parse_bundle_manifest(raw: JSONSerializable) -> Optional[BundleManifest]:
         revision=revision,
         artifact=artifact,
         files=normalized_files,
+        signature_required=signature_required,
+        signature_verified=signature_verified,
+    )
+
+
+def _parse_bundle_manifest_data(
+    manifest_data: bytes,
+    signature_data: Optional[bytes],
+    *,
+    require_signature: bool = False,
+) -> Optional[BundleManifest]:
+    """Parse manifest bytes after enforcing their declared signature policy."""
+    try:
+        raw_manifest = json.loads(manifest_data)
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(raw_manifest, dict):
+        return None
+
+    signature_required = raw_manifest.get("signature_required", False)
+    if not isinstance(signature_required, bool):
+        return None
+    if require_signature and not signature_required:
+        return None
+
+    signature_verified = False
+    if require_signature or signature_required or signature_data is not None:
+        if signature_data is None or not verify_manifest_signature(
+            manifest_data,
+            signature_data,
+        ):
+            return None
+        signature_verified = True
+
+    return _parse_bundle_manifest(
+        raw_manifest,
+        signature_verified=signature_verified,
     )
 
 
@@ -413,10 +459,13 @@ def _load_local_bundle_manifest(
     """Load the local compiled bundle manifest when available."""
     manifest_file = _manifest_path(bundle_dir)
     try:
-        payload = json.loads(manifest_file.read_text(encoding="utf-8"))
-    except (FileNotFoundError, OSError, json.JSONDecodeError):
+        manifest_data = manifest_file.read_bytes()
+    except OSError:
         return None
-    return _parse_bundle_manifest(payload)
+    return _parse_bundle_manifest_data(
+        manifest_data,
+        load_signature(manifest_file.with_name(SIGNATURE_NAME)),
+    )
 
 
 def _download_to_file(url: str, destination: Path) -> None:
@@ -439,19 +488,33 @@ def _download_release_zip(release: ReleaseInfo, destination: Path) -> None:
     _download_to_file(release.asset_url, destination)
 
 
-def _manifest_from_zip(zip_path: Path) -> Optional[BundleManifest]:
+def _manifest_from_zip(
+    zip_path: Path,
+    *,
+    require_signature: bool = False,
+) -> Optional[BundleManifest]:
     """Load bundled update metadata from an artifact ZIP file."""
     try:
         with zipfile.ZipFile(zip_path) as archive:
+            manifest_data: Optional[bytes] = None
+            signature_data: Optional[bytes] = None
             for name in archive.namelist():
-                if Path(name).name != UPDATE_MANIFEST_NAME:
-                    continue
-                with archive.open(name) as handle:
-                    payload = json.loads(handle.read().decode("utf-8"))
-                return _parse_bundle_manifest(payload)
-    except (OSError, zipfile.BadZipFile, json.JSONDecodeError):
+                basename = Path(name).name
+                if basename == UPDATE_MANIFEST_NAME:
+                    with archive.open(name) as handle:
+                        manifest_data = handle.read()
+                elif basename == SIGNATURE_NAME:
+                    with archive.open(name) as handle:
+                        signature_data = handle.read()
+            if manifest_data is None:
+                return None
+            return _parse_bundle_manifest_data(
+                manifest_data,
+                signature_data,
+                require_signature=require_signature,
+            )
+    except (OSError, zipfile.BadZipFile, RuntimeError):
         return None
-    return None
 
 
 def _read_remote_bundle_manifest(release: ReleaseInfo) -> Optional[BundleManifest]:
@@ -463,7 +526,7 @@ def _read_remote_bundle_manifest(release: ReleaseInfo) -> Optional[BundleManifes
             _download_release_zip(release, zip_path)
         except (OSError, UpdateError):
             return None
-        return _manifest_from_zip(zip_path)
+        return _manifest_from_zip(zip_path, require_signature=True)
 
 
 def _compiled_bundle_matches_manifest(
@@ -473,6 +536,43 @@ def _compiled_bundle_matches_manifest(
     """Return whether the installed bundle matches the supplied manifest."""
     local_files = _bundle_checksums(bundle_dir, list(manifest.files))
     return bool(local_files) and local_files == manifest.files
+
+
+def verify_local_bundle(bundle_dir: Optional[Path] = None) -> None:
+    """Verify a signed compiled install or warn when it has no signature.
+
+    Args:
+        bundle_dir: Optional directory containing the compiled Celune bundle.
+
+    Raises:
+        UpdateError: the local manifest signature or a required file is invalid
+    """
+    resolved_bundle = bundle_dir or _bundle_dir()
+    manifest_path = _manifest_path(resolved_bundle)
+    signature_path = manifest_path.with_name(SIGNATURE_NAME)
+    if not signature_path.is_file():
+        print(
+            string("cli.unsigned_release_warning", app_name=APP_NAME),
+            file=sys.stderr,
+        )
+        return
+
+    try:
+        manifest_data = manifest_path.read_bytes()
+        signature_data = signature_path.read_bytes()
+    except OSError as exc:
+        raise UpdateError(string("cli.update_invalid_release")) from exc
+
+    manifest = _parse_bundle_manifest_data(
+        manifest_data,
+        signature_data,
+        require_signature=True,
+    )
+    if manifest is None or not _compiled_bundle_matches_manifest(
+        resolved_bundle,
+        manifest,
+    ):
+        raise UpdateError(string("cli.update_invalid_release"))
 
 
 def _release_manifest_matches(
@@ -670,7 +770,7 @@ def _apply_compiled_update(install_dir: Optional[Path] = None) -> None:
         except OSError as exc:
             raise UpdateError(string("cli.update_download_failed")) from exc
 
-        release_manifest = _manifest_from_zip(zip_path)
+        release_manifest = _manifest_from_zip(zip_path, require_signature=True)
         if release_manifest is None or not _release_manifest_matches(
             release, release_manifest
         ):
@@ -692,7 +792,7 @@ def update_to_latest(install_dir: Optional[Path] = None) -> None:
         install_dir: Optional compiled-install directory to replace in place.
 
     Raises:
-        UpdateError: Raised when the repository or packaged install cannot be updated safely.
+        UpdateError: if the repository or packaged install cannot be updated safely
     """
     if running_compiled() or install_dir is not None:
         _apply_compiled_update(install_dir=install_dir)

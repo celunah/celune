@@ -158,30 +158,32 @@ def enter_sleep_mode(self) -> bool:
 
     self._ready_announced = False
     self.model_ready.clear()
-    self.progress_callback(0, 1)
+    try:
+        self.progress_callback(0, 1)
 
-    with (
-        self._wake_background_lock,
-        self._model_lock,
-    ):
-        if unload["persona"]:
-            self._unload_persona_state()
+        with (
+            self._wake_background_lock,
+            self._model_lock,
+        ):
+            if unload["persona"]:
+                self._unload_persona_state()
 
-        if unload["tts"]:
-            self.unload_runtime_state(
-                include_normalizer=unload["normalizer"],
-                include_vc=unload["vc"],
-                close_backends=True,
-                release_cuda_cache=False,
-            )
-            self.model_name = ""
-        elif unload["normalizer"]:
-            self.unload_normalizer_state(release_cuda_cache=False)
+            if unload["tts"]:
+                self.unload_runtime_state(
+                    include_normalizer=unload["normalizer"],
+                    include_vc=unload["vc"],
+                    close_backends=True,
+                    release_cuda_cache=False,
+                )
+                self.model_name = ""
+            elif unload["normalizer"]:
+                self.unload_normalizer_state(release_cuda_cache=False)
 
-        if unload["vc"] and not unload["tts"] and self.vc_backend is not None:
-            _core._dispose_backend(self.vc_backend, release_cuda_cache=False)
+            if unload["vc"] and not unload["tts"] and self.vc_backend is not None:
+                _core._dispose_backend(self.vc_backend, release_cuda_cache=False)
+    finally:
+        self.model_ready.set()
 
-    self.model_ready.set()
     self.log("[SLEEP] enter complete model_ready=True", loglevel="debug")
     return True
 

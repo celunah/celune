@@ -800,23 +800,33 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
         Args:
             value: The new runtime-state label to store.
         """
+        event = self._update_cur_state(value)
+        if event is not None:
+            self._emit_event("state_changed", event)
+
+    def _update_cur_state(self, value: str) -> Optional[StateChangedEvent]:
+        """Store a runtime state and return its event without dispatching it.
+
+        Args:
+            value: The new runtime-state label to store.
+
+        Returns:
+            Optional[StateChangedEvent]: The transition event, if the state changed.
+        """
         if self.test_finished and value != "stopped":
-            return
+            return None
         old_state = self._runtime_state.cur_state
         self._runtime_state.cur_state = value
         if old_state == value:
-            return
+            return None
         self.log(
             f"[STATE] transition old={old_state} new={value}",
             loglevel="debug",
         )
-        self._emit_event(
-            "state_changed",
-            StateChangedEvent(
-                celune=self,
-                old_state=old_state,
-                new_state=value,
-            ),
+        return StateChangedEvent(
+            celune=self,
+            old_state=old_state,
+            new_state=value,
         )
 
     def finish_test_mode(

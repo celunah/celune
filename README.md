@@ -74,9 +74,11 @@ Please note that Celune 4.3.2 and older are still licensed under the MIT license
 
 ## Voices and samples
 
-Listen to the complete [voice sample gallery](https://celune.readthedocs.io/en/latest/development/samples/), with native audio players for the current and historical recordings. The page also documents the sample text, generation metadata, and model settings.
+This section was moved to Celune's documentation page.
 
-The current FLAC recordings use the Classic Remastered voice pack. Historical WAV recordings remain available for comparison with earlier voices and backend revisions.
+Current voice samples are available in the [voice sample gallery](https://celune.readthedocs.io/en/latest/development/samples/), including both new and old recordings of her voice, and details on how it was created.
+
+The current examples are recorded with Celune's Classic Remastered voice pack, with old recordings still available for reference.
 
 ## Voice packs
 
@@ -162,8 +164,7 @@ will be unavailable.
 
 ## VRAM presets & requirements
 
-Celune reserves 2 GiB for the system and other GPU users. The presets name the
-minimum total GPU capacity; the remaining budget is available to Celune:
+Celune leaves a 2 GB leeway in the host's memory to protect the system and other applications from memory exhaustion. Please note that this may affect her capabilities.
 
 | Preset   | Total VRAM    | Allocated budget |
 | -------- | ------------: | ---------------: |
@@ -195,8 +196,7 @@ cloned copy of Celune.
 
 Copies obtained via `Download ZIP` will not work.
 
-Alternatively, run `scripts/build_nuitka.ps1` or `scripts/build_nuitka.sh` to build Celune binaries by yourself,
-depending on your platform.
+To manually compile Celune, run `scripts/build_nuitka.ps1` or `scripts/build_nuitka.sh` instead, depending on your platform.
 
 Don't have a copy yet? Run the following commands:
 
@@ -231,6 +231,7 @@ uv --version
 # environment the first time it is used.
 
 # Run
+# It is recommended to double check the environment with `celune doctor`.
 # Command Prompt users
 bin\celune
 

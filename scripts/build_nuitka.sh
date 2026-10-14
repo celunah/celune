@@ -2,6 +2,38 @@
 # SPDX-License-Identifier: Apache-2.0
 set -euo pipefail
 
+if (( $# > 1 )); then
+    echo "Usage: scripts/build_nuitka.sh [signed]" >&2
+    exit 2
+fi
+build_mode="${1:-unsigned}"
+if [[ "$build_mode" != "unsigned" && "$build_mode" != "signed" ]]; then
+    echo "Build mode must be 'unsigned' or 'signed'." >&2
+    exit 2
+fi
+
+signing_key_file="${CELUNE_RELEASE_SIGNING_KEY_FILE:-}"
+require_signature="${CELUNE_REQUIRE_RELEASE_SIGNATURE:-0}"
+if [[ "$build_mode" == "signed" ]]; then
+    require_signature=1
+fi
+if [[ "$require_signature" == "1" ]]; then
+    signing_key_file="${signing_key_file:-${HOME:?HOME must be set for signed builds}/.celune/release-signing-key.pem}"
+fi
+if [[ -n "$signing_key_file" && ! -f "$signing_key_file" ]]; then
+    echo "The release signing key file was not found: $signing_key_file" >&2
+    exit 1
+fi
+if [[ "$require_signature" == "1" && -z "$signing_key_file" ]]; then
+    echo "A release signing key is required when signature enforcement is enabled." >&2
+    exit 1
+fi
+root_signing_key_file="${CELUNE_RELEASE_ROOT_KEY_FILE:-${HOME:-}/.celune/release-signing-key.pem}"
+if [[ ("$require_signature" == "1" || -n "$signing_key_file") && ! -f "$root_signing_key_file" ]]; then
+    echo "The release keyring root file was not found: $root_signing_key_file" >&2
+    exit 1
+fi
+
 export CFLAGS="-O2 -DNDEBUG -fstack-protector-strong -D_FORTIFY_SOURCE=3"
 export CXXFLAGS="$CFLAGS"
 export LDFLAGS="-Wl,-z,relro,-z,now"
@@ -9,7 +41,11 @@ export LDFLAGS="-Wl,-z,relro,-z,now"
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 output_dir="$repo_root/bin"
 build_python="3.13"
-archive_path="$output_dir/Celune-linux-x64.zip"
+archive_name="Celune-linux-x64.zip"
+if [[ "$build_mode" == "signed" || -n "$signing_key_file" ]]; then
+    archive_name="Celune-linux-x64-signed.zip"
+fi
+archive_path="$output_dir/$archive_name"
 manifest_script="$repo_root/scripts/write_update_manifest.py"
 app_dir="$output_dir/Celune.AppDir"
 desktop_src="$repo_root/Celune.AppDir/celune.desktop"
@@ -54,6 +90,7 @@ launcher_sources=(
     "$repo_root/launcher/launcher.c"
     "$repo_root/launcher/unix/runtime.c"
     "$repo_root/launcher/unix/terminal.c"
+    "$repo_root/launcher/signature.c"
 )
 for launcher_source in "${launcher_sources[@]}"; do
     if [[ ! -f "$launcher_source" ]]; then
@@ -72,6 +109,20 @@ if ! command -v gcc >/dev/null 2>&1; then
     exit 1
 fi
 
+if ! command -v pkg-config >/dev/null 2>&1 || ! pkg-config --exists libsodium; then
+    echo "libsodium development files and pkg-config are required to build the Linux launcher." >&2
+    exit 1
+fi
+
+sodium_libdir="$(pkg-config --variable=libdir libsodium)"
+sodium_archive="$sodium_libdir/libsodium.a"
+if [[ ! -f "$sodium_archive" ]]; then
+    echo "The static libsodium archive was not found: $sodium_archive" >&2
+    exit 1
+fi
+read -r -a sodium_cflags <<< "$(pkg-config --cflags libsodium)"
+read -r -a sodium_private_flags <<< "$(pkg-config --static --libs-only-other libsodium)"
+
 if ! command -v appimagetool >/dev/null 2>&1; then
     echo "appimagetool is required to create the AppImage." >&2
     exit 1
@@ -83,6 +134,18 @@ if ! command -v zip >/dev/null 2>&1; then
 fi
 
 mkdir -p "$UV_CACHE_DIR"
+
+signature_test="$(mktemp)"
+trap 'rm -f "$signature_test"' EXIT
+gcc -O2 -Wall -Wextra -Wpedantic \
+	"${sodium_cflags[@]}" -I"$repo_root/launcher" \
+	-o "$signature_test" \
+	"$repo_root/tests/launcher_signature_test.c" \
+	"$repo_root/launcher/signature.c" \
+	"$sodium_archive" "${sodium_private_flags[@]}"
+(cd "$repo_root" && "$signature_test")
+rm -f "$signature_test"
+trap - EXIT
 
 python3 "$repo_root/scripts/root.py"
 
@@ -105,8 +168,16 @@ uv run --python "$build_python" python -m nuitka \
 
 gcc -O2 -s -Wall -Wextra -Wpedantic \
 	-DNDEBUG -D_FORTIFY_SOURCE=3 -fstack-protector-strong \
-	-flto -I"$repo_root/launcher" -Wl,-z,relro,-z,now -o "$output_dir/celune" "${launcher_sources[@]}"
+	-flto "${sodium_cflags[@]}" -I"$repo_root/launcher" \
+	-Wl,-z,relro,-z,now -o "$output_dir/celune" \
+	"${launcher_sources[@]}" "$sodium_archive" "${sodium_private_flags[@]}"
 chmod +x "$output_dir/celune" "$output_dir/celune-bin"
+
+if [[ "$require_signature" == "1" || -n "$signing_key_file" ]]; then
+    PYTHONPATH="$repo_root${PYTHONPATH:+:$PYTHONPATH}" uv run python \
+        "$repo_root/scripts/append_release_keyring.py" \
+        "$output_dir/celune" --root-key "$root_signing_key_file"
+fi
 
 rm -rf "$output_dir/nuitka_main.build"
 
@@ -148,20 +219,35 @@ esac
 ARCH="$appimage_arch" appimagetool "$app_dir" "$output_dir/celune.AppImage"
 rm -rf "$app_dir"
 
-uv run python "$manifest_script" \
-    --output-dir "$output_dir" \
-    --version "$version" \
-    --revision "$revision" \
-    --artifact "Celune-linux-$appimage_arch" \
-    --file celune \
-    --file celune-bin \
+manifest_arguments=(
+    --output-dir "$output_dir"
+    --version "$version"
+    --revision "$revision"
+    --artifact "Celune-linux-$appimage_arch"
+    --file celune
+    --file celune-bin
     --file celune.AppImage
+)
+if [[ -n "$signing_key_file" ]]; then
+    manifest_arguments+=(--signing-key "$signing_key_file")
+fi
+if [[ "$require_signature" == "1" ]]; then
+    manifest_arguments+=(--require-signature)
+fi
+
+PYTHONPATH="$repo_root${PYTHONPATH:+:$PYTHONPATH}" uv run python "$manifest_script" \
+    "${manifest_arguments[@]}"
 
 (
     cd "$output_dir"
-    zip -q -9 -j "$archive_path" \
+    archive_files=(
         celune \
         celune-bin \
         celune.AppImage \
         celune-update.json
+    )
+    if [[ -f celune-update.sig ]]; then
+        archive_files+=(celune-update.sig)
+    fi
+    zip -q -9 -j "$archive_path" "${archive_files[@]}"
 )

@@ -5,21 +5,25 @@ import json
 import queue
 import tempfile
 import threading
+from types import MappingProxyType
+from typing import Optional, cast
 from pathlib import Path
 from unittest import mock
-from typing import Optional, cast
-from types import MappingProxyType
 from collections.abc import Callable
 
-import pytest
 import numpy as np
+import pytest
 
+from celune import i18n, cevoice
 from celune.agent import (
     AgentRequest,
     AgentSession,
     AgentTaskState,
     AgentCancellationReason,
 )
+from celune.utils import discard
+from celune.celune import Celune
+from celune.config import Config
 from celune.pipeline import (
     close as close_pipeline,
     play_signal,
@@ -27,15 +31,16 @@ from celune.pipeline import (
     handle_audio_input,
     convert_audio_input,
 )
-from celune import i18n, cevoice
-from celune.utils import discard
-from celune.celune import Celune
-from celune.config import Config
+from celune.exceptions import BackendError, CEDTSTimeoutError
+from celune.cloudflared import CloudflaredQuickTunnel
+from celune.persona.impl import persona_quantization
 from celune.typing.locks import (
     ComponentLockName,
     ComponentLockOwner,
     ComponentLockRequirement,
 )
+from celune.typing.common import JSONSerializable
+from celune.persona.emotion import PersonaEmotionAnalyzer
 from celune.dataclasses.celune import (
     CeluneAudioState,
     CeluneModelState,
@@ -45,11 +50,7 @@ from celune.dataclasses.celune import (
     CeluneCallbackState,
     CelunePipelineState,
 )
-from celune.typing.common import JSONSerializable
-from celune.persona.impl import persona_quantization
-from celune.cloudflared import CloudflaredQuickTunnel
-from celune.persona.emotion import PersonaEmotionAnalyzer
-from celune.exceptions import BackendError, CEDTSTimeoutError
+from celune.dataclasses.events import StateChangedEvent
 
 from .support import (
     FakeGlow,
@@ -948,6 +949,44 @@ class TestCeluneCore(CeluneTestCase):
 
         assert celune.cur_state == "error"
         assert not celune.locked
+
+    def test_playback_state_events_dispatch_after_releasing_say_lock(self) -> None:
+        """Verify completion and overlay callbacks run outside the pipeline lock."""
+        celune = self._make_celune({})
+        lock_availability: list[tuple[str, bool]] = []
+        queued_markers: list[bool] = []
+
+        def check_lock(event: StateChangedEvent) -> None:
+            acquired = celune.say_lock.acquire(blocking=False)
+            lock_availability.append((event.new_state, acquired))
+            if acquired:
+                celune.say_lock.release()
+
+        celune.cur_state = "generating"
+        celune.locked = True
+        celune._event_dispatcher.subscribe("state_changed", check_lock)
+        release_pipeline(celune)
+
+        celune.locked = False
+        with (
+            mock.patch(
+                "celune.pipeline.readiness_signal",
+                return_value=np.zeros((8, 2), dtype=np.float32),
+            ),
+            mock.patch("celune.pipeline._register_playback_source"),
+            mock.patch("celune.pipeline._queue_playback_chunk"),
+            mock.patch(
+                "celune.pipeline._queue_playback_done",
+                side_effect=lambda *_args, **_kwargs: queued_markers.append(True),
+            ),
+        ):
+            assert play_signal(celune, "readiness")
+
+        assert lock_availability == [("idle", True), ("speaking", True)]
+        assert queued_markers == [True]
+        celune._event_dispatcher.unsubscribe("state_changed", check_lock)
+        celune.playback_done.set()
+        celune.cur_state = "idle"
 
     def test_persona_mode_controls_persona_input_mode(self) -> None:
         """Verify the operation mode controls Persona without legacy switches."""
