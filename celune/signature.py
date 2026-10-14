@@ -5,8 +5,8 @@ from __future__ import annotations
 
 import json
 import base64
-import binascii
 import hashlib
+import binascii
 from pathlib import Path
 from typing import Optional
 
@@ -17,13 +17,14 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
     Ed25519PublicKey,
 )
 
+from .release_keys import TRUSTED_RELEASE_KEYS_HEX
+
 SIGNATURE_NAME = "celune-update.sig"
 SIGNATURE_FORMAT = 1
 SIGNATURE_ALGORITHM = "Ed25519"
 _TRUSTED_RELEASE_KEYS = {
-    "ed25519-0f15a9d5751e0a3a": base64.b64decode(
-        "RpX/CCbky4/0vS2VGjQnwfLVNJH1Khr8gHM8QBBn5lE="
-    ),
+    key_id: bytes.fromhex(public_key_hex)
+    for key_id, public_key_hex in TRUSTED_RELEASE_KEYS_HEX.items()
 }
 
 

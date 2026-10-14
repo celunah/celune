@@ -1,10 +1,48 @@
 # SPDX-License-Identifier: Apache-2.0
+param(
+    [Parameter(Position = 0)]
+    [string]$Mode
+)
+
 $ErrorActionPreference = "Stop"
+
+if ([string]::IsNullOrWhiteSpace($Mode)) {
+    $Mode = "unsigned"
+}
+if ($Mode -cne "unsigned" -and $Mode -cne "signed") {
+    throw "Build mode must be 'unsigned' or 'signed'."
+}
+
+$signingKeyFile = $env:CELUNE_RELEASE_SIGNING_KEY_FILE
+$requireSignature = $env:CELUNE_REQUIRE_RELEASE_SIGNATURE -eq "1"
+if ($Mode -eq "signed") {
+    $requireSignature = $true
+}
+if ($requireSignature) {
+    if (-not $signingKeyFile) {
+        if ($env:LOCALAPPDATA) {
+            $signingKeyFile = Join-Path $env:LOCALAPPDATA "Celune\keys\release-ed25519-private.pem"
+        }
+        else {
+            $signingKeyFile = Join-Path $HOME ".celune\release-signing-key.pem"
+        }
+    }
+}
+if ($signingKeyFile -and -not (Test-Path -LiteralPath $signingKeyFile -PathType Leaf)) {
+    throw "The release signing key file was not found: $signingKeyFile"
+}
+if ($requireSignature -and -not $signingKeyFile) {
+    throw "A release signing key is required when signature enforcement is enabled."
+}
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $outputDir = Join-Path $repoRoot "bin"
 $buildPython = "3.13"
-$archivePath = Join-Path $outputDir "Celune-win-x64.zip"
+$archiveName = "Celune-win-x64.zip"
+if ($Mode -eq "signed" -or $signingKeyFile) {
+    $archiveName = "Celune-win-x64-signed.zip"
+}
+$archivePath = Join-Path $outputDir $archiveName
 $launcherDir = Join-Path $repoRoot "launcher"
 $manifestScript = Join-Path $repoRoot "scripts\write_update_manifest.py"
 $templateExe = Join-Path $repoRoot "celune.exe"
@@ -290,10 +328,10 @@ $manifestArguments = @(
     "--file",
     "vcruntime140.dll"
 )
-if ($env:CELUNE_RELEASE_SIGNING_KEY_FILE) {
-    $manifestArguments += @("--signing-key", $env:CELUNE_RELEASE_SIGNING_KEY_FILE)
+if ($signingKeyFile) {
+    $manifestArguments += @("--signing-key", $signingKeyFile)
 }
-if ($env:CELUNE_REQUIRE_RELEASE_SIGNATURE -eq "1") {
+if ($requireSignature) {
     $manifestArguments += "--require-signature"
 }
 $previousPythonPath = $env:PYTHONPATH

@@ -7,19 +7,12 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "release_keys.h"
+
 #define MANIFEST_LIMIT (1024U * 1024U)
 #define SIGNATURE_LIMIT 4096U
 #define SIGNATURE_BASE64_LENGTH 88U
 #define PATH_BUFFER_SIZE 4096U
-
-static const unsigned char release_public_key[crypto_sign_PUBLICKEYBYTES] = {
-    0x46, 0x95, 0xff, 0x08, 0x26, 0xe4, 0xcb, 0x8f,
-    0xf4, 0xbd, 0x2d, 0x95, 0x1a, 0x34, 0x27, 0xc1,
-    0xf2, 0xd5, 0x34, 0x91, 0xf5, 0x2a, 0x1a, 0xfc,
-    0x80, 0x73, 0x3c, 0x40, 0x10, 0x67, 0xe6, 0x51
-};
-
-static const char release_key_id[] = "ed25519-0f15a9d5751e0a3a";
 
 static int read_limited_file(
     const char *path,
@@ -415,16 +408,23 @@ LauncherBundleStatus launcher_verify_bundle_target(const char *target_path) {
         launcher_hash_file(target_path, target_digest);
     LauncherBundleStatus result = LAUNCHER_BUNDLE_INVALID;
     if (files_ready) {
-        result = launcher_verify_manifest_data(
-            manifest_data,
-            manifest_size,
-            signature_data,
-            signature_size,
-            target_name,
-            target_digest,
-            release_public_key,
-            release_key_id
-        );
+        for (size_t key_index = 0U;
+             key_index < LAUNCHER_TRUSTED_RELEASE_KEY_COUNT;
+             key_index++) {
+            result = launcher_verify_manifest_data(
+                manifest_data,
+                manifest_size,
+                signature_data,
+                signature_size,
+                target_name,
+                target_digest,
+                launcher_trusted_release_keys[key_index].public_key,
+                launcher_trusted_release_keys[key_index].key_id
+            );
+            if (result == LAUNCHER_BUNDLE_VALID) {
+                break;
+            }
+        }
     }
 
     free(signature_data);

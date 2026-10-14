@@ -15,6 +15,17 @@ powershell -ExecutionPolicy Bypass -File scripts\build_nuitka.ps1
 bash scripts/build_nuitka.sh
 ```
 
+Pass `signed` to either build script to require a signed update manifest and
+write a signed ZIP with a `-signed` suffix:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\build_nuitka.ps1 signed
+```
+
+```bash
+bash scripts/build_nuitka.sh signed
+```
+
 ## Python build target
 
 Celune source installations support Python 3.12 through 3.14. Compiled
@@ -61,8 +72,8 @@ Typical output files are:
 
 | Platform | Artifacts |
 | --- | --- |
-| Windows | `bin/celune.exe`, `bin/celune-bin.exe`, `bin/vcruntime140.dll`, `bin/celune-update.json`, optional `bin/celune-update.sig`, `bin/Celune-win-x64.zip` |
-| Linux | `bin/celune`, `bin/celune-bin`, `bin/celune.AppImage`, `bin/celune-update.json`, optional `bin/celune-update.sig`, `bin/Celune-linux-x64.zip` |
+| Windows | `bin/celune.exe`, `bin/celune-bin.exe`, `bin/vcruntime140.dll`, `bin/celune-update.json`, optional `bin/celune-update.sig`, `bin/Celune-win-x64.zip` or `bin/Celune-win-x64-signed.zip` |
+| Linux | `bin/celune`, `bin/celune-bin`, `bin/celune.AppImage`, `bin/celune-update.json`, optional `bin/celune-update.sig`, `bin/Celune-linux-x64.zip` or `bin/Celune-linux-x64-signed.zip` |
 
 The Windows archive contains `celune.exe`, `celune-bin.exe`,
 `vcruntime140.dll`, and `celune-update.json`; signed builds also include
@@ -143,25 +154,50 @@ signature is present, the C launcher allows startup and Python warns that the
 copy is unsigned; this keeps legacy JSON-manifest bundles usable. The updater
 still rejects unsigned remote release ZIPs.
 
-Release signing uses the trusted private key whose public key is embedded in
-Celune. Keep the private key outside the repository and limit access to release
-maintainers. Set both environment variables before building a release archive:
+Create a release key once from the checkout that will build the release:
 
 ```powershell
-$env:CELUNE_RELEASE_SIGNING_KEY_FILE = "C:\path\to\release-ed25519-private.pem"
-$env:CELUNE_REQUIRE_RELEASE_SIGNATURE = "1"
-powershell -ExecutionPolicy Bypass -File scripts\build_nuitka.ps1
+uv run python scripts\make_signing_key.py
 ```
 
 ```bash
+uv run python scripts/make_signing_key.py
+```
+
+The script creates an unencrypted Ed25519 PEM key at
+`%LOCALAPPDATA%\Celune\keys\release-ed25519-private.pem` on Windows and
+`~/.celune/release-signing-key.pem` on Linux. It refuses to overwrite an
+existing file, restricts file access to the current account, rejects
+destinations inside the checkout, and does not print private-key contents. It
+also adds the public key to
+`celune/release_keys.py` and `launcher/release_keys.h`, while preserving
+previously trusted public keys. Include those public-key changes in the source
+used to build the signed package.
+Clients built before a new public key was added do not trust that key. For key
+rotation, distribute a transition build signed by a key those clients already
+trust before signing later releases with the new key.
+
+The build scripts use their platform's default private-key path when called
+with `signed`. On Windows, that is the `%LOCALAPPDATA%` path above. For another
+key location, pass it to `--output` and set
+`CELUNE_RELEASE_SIGNING_KEY_FILE` to the same path before building. The existing
+`CELUNE_REQUIRE_RELEASE_SIGNATURE=1` setting also continues to require signing:
+
+```powershell
+uv run python scripts\make_signing_key.py --output "C:\path\to\release-ed25519-private.pem"
+$env:CELUNE_RELEASE_SIGNING_KEY_FILE = "C:\path\to\release-ed25519-private.pem"
+powershell -ExecutionPolicy Bypass -File scripts\build_nuitka.ps1 signed
+```
+
+```bash
+uv run python scripts/make_signing_key.py --output "$HOME/keys/release-ed25519-private.pem"
 export CELUNE_RELEASE_SIGNING_KEY_FILE="$HOME/keys/release-ed25519-private.pem"
-export CELUNE_REQUIRE_RELEASE_SIGNATURE=1
-bash scripts/build_nuitka.sh
+bash scripts/build_nuitka.sh signed
 ```
 
 The native C signature tests run as part of both platform launcher builds. The
-build fails when signature enforcement is enabled without a key. Publishing
-compiled release assets must use signed ZIPs and preserve the detached
+build fails before compilation when signed mode has no key. Publishing compiled
+release assets must use signed ZIPs and preserve the detached
 `celune-update.sig` file. Unsigned CI build artifacts are for build validation
 and cannot be installed through the signed updater path. Historical ZIP releases
 with compatible update metadata must retain their version and file contents and
@@ -171,11 +207,11 @@ not verify signatures themselves.
 For each compatible GitHub release, keep the original ZIP under its existing
 name as the unsigned archive and publish a second archive named
 `Celune-{platform}-x64-{tag}-signed.zip`, for example
-`Celune-win-x64-v5.0.0-signed.zip`. The updater selects only the signed archive
-whose name matches the release tag; it ignores the original unsigned archive.
-When publishing a future release, rename the signed build output to this
-versioned name and retain the unsigned original name only when preserving an
-existing release asset.
+`Celune-win-x64-v5.0.0-signed.zip`. Signed builds now produce a
+`Celune-win-x64-signed.zip` or `Celune-linux-x64-signed.zip` package; rename it
+to the versioned release name before publishing. The updater selects only the
+signed archive whose name matches the release tag; it ignores the original
+unsigned archive.
 
 The `signed` suffix means that Celune's custom Ed25519 bundle anti-tamper
 signature verifies against the public key embedded in Celune. It does not mean

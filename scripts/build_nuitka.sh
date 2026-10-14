@@ -2,6 +2,33 @@
 # SPDX-License-Identifier: Apache-2.0
 set -euo pipefail
 
+if (( $# > 1 )); then
+    echo "Usage: scripts/build_nuitka.sh [signed]" >&2
+    exit 2
+fi
+build_mode="${1:-unsigned}"
+if [[ "$build_mode" != "unsigned" && "$build_mode" != "signed" ]]; then
+    echo "Build mode must be 'unsigned' or 'signed'." >&2
+    exit 2
+fi
+
+signing_key_file="${CELUNE_RELEASE_SIGNING_KEY_FILE:-}"
+require_signature="${CELUNE_REQUIRE_RELEASE_SIGNATURE:-0}"
+if [[ "$build_mode" == "signed" ]]; then
+    require_signature=1
+fi
+if [[ "$require_signature" == "1" ]]; then
+    signing_key_file="${signing_key_file:-${HOME:?HOME must be set for signed builds}/.celune/release-signing-key.pem}"
+fi
+if [[ -n "$signing_key_file" && ! -f "$signing_key_file" ]]; then
+    echo "The release signing key file was not found: $signing_key_file" >&2
+    exit 1
+fi
+if [[ "$require_signature" == "1" && -z "$signing_key_file" ]]; then
+    echo "A release signing key is required when signature enforcement is enabled." >&2
+    exit 1
+fi
+
 export CFLAGS="-O2 -DNDEBUG -fstack-protector-strong -D_FORTIFY_SOURCE=3"
 export CXXFLAGS="$CFLAGS"
 export LDFLAGS="-Wl,-z,relro,-z,now"
@@ -9,7 +36,11 @@ export LDFLAGS="-Wl,-z,relro,-z,now"
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 output_dir="$repo_root/bin"
 build_python="3.13"
-archive_path="$output_dir/Celune-linux-x64.zip"
+archive_name="Celune-linux-x64.zip"
+if [[ "$build_mode" == "signed" || -n "$signing_key_file" ]]; then
+    archive_name="Celune-linux-x64-signed.zip"
+fi
+archive_path="$output_dir/$archive_name"
 manifest_script="$repo_root/scripts/write_update_manifest.py"
 app_dir="$output_dir/Celune.AppDir"
 desktop_src="$repo_root/Celune.AppDir/celune.desktop"
@@ -186,10 +217,10 @@ manifest_arguments=(
     --file celune-bin
     --file celune.AppImage
 )
-if [[ -n "${CELUNE_RELEASE_SIGNING_KEY_FILE:-}" ]]; then
-    manifest_arguments+=(--signing-key "$CELUNE_RELEASE_SIGNING_KEY_FILE")
+if [[ -n "$signing_key_file" ]]; then
+    manifest_arguments+=(--signing-key "$signing_key_file")
 fi
-if [[ "${CELUNE_REQUIRE_RELEASE_SIGNATURE:-0}" == "1" ]]; then
+if [[ "$require_signature" == "1" ]]; then
     manifest_arguments+=(--require-signature)
 fi
 
