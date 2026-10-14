@@ -1,10 +1,12 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for Persona long-term memory persistence and retrieval."""
 
+import datetime
 import tempfile
 from pathlib import Path
-from typing import Optional, Union
 from unittest import mock
+from dataclasses import replace
+from typing import Optional, Union
 from collections.abc import Sequence
 
 import numpy as np
@@ -22,6 +24,7 @@ class StubEmbeddingMemoryStore(PersonaMemoryStore):
         *,
         semantic_similarity_threshold: float = 0.62,
         fallback_token_overlap_threshold: int = 1,
+        automatic_max_age_days: Optional[int] = 60,
         embedding_model: str = "stub",
         embedding_map: Optional[dict[str, tuple[float, ...]]] = None,
     ) -> None:
@@ -29,6 +32,7 @@ class StubEmbeddingMemoryStore(PersonaMemoryStore):
             storage_dir=storage_dir,
             semantic_similarity_threshold=semantic_similarity_threshold,
             fallback_token_overlap_threshold=fallback_token_overlap_threshold,
+            automatic_max_age_days=automatic_max_age_days,
             embedding_model=embedding_model,
         )
         self.embedding_map = embedding_map or {}
@@ -51,8 +55,14 @@ class TestPersonaMemory(CeluneTestCase):
                 "Celune",
                 "remember that my test word is moonlight",
             )
+            duplicate = first.remember(
+                "Celune",
+                "MY TEST WORD IS MOONLIGHT",
+            )
 
             assert len(saved) == 1
+            assert duplicate is not None
+            assert duplicate.id == saved[0].id
             assert saved[0].content == "my test word is moonlight"
             assert saved[0].explicit
 
@@ -62,6 +72,64 @@ class TestPersonaMemory(CeluneTestCase):
             assert len(records) == 1
             assert records[0].content == "my test word is moonlight"
             assert records[0].explicit
+
+    def test_semantic_duplicates_update_one_existing_record(self) -> None:
+        """Verify paraphrased duplicate memories do not create extra records."""
+        first = "The user is working on your 3D presence"
+        paraphrase = (
+            "User is working on a 3D model representing the assistant's presence"
+        )
+        second_embedding = (0.98, (1 - 0.98**2) ** 0.5, 0.0)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = StubEmbeddingMemoryStore(
+                storage_dir=temp_dir,
+                embedding_map={first: (1.0, 0.0, 0.0), paraphrase: second_embedding},
+            )
+            original = store.remember("Celune", first)
+            assert original is not None
+
+            duplicate = store.remember("Celune", paraphrase)
+
+            assert duplicate is not None
+            assert duplicate.id == original.id
+            assert len(store.load_records("Celune")) == 1
+
+    def test_old_inferred_memories_expire_but_explicit_memories_remain(self) -> None:
+        """Verify inferred memory age is independent of retrieval timestamps."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = StubEmbeddingMemoryStore(storage_dir=temp_dir)
+            store.return_none = True
+            inferred = store.remember(
+                "Celune", "the user's project is lighthouse refactor"
+            )
+            explicit = store.remember(
+                "Celune",
+                "the user's favorite color is blue",
+                explicit=True,
+            )
+            assert inferred is not None
+            assert explicit is not None
+
+            now = datetime.datetime.now(datetime.UTC)
+            stale_timestamp = (now - datetime.timedelta(days=61)).isoformat()
+            recent_use = now.isoformat()
+            store.save_records(
+                "Celune",
+                [
+                    replace(record, updated_at=stale_timestamp, last_used_at=recent_use)
+                    for record in (inferred, explicit)
+                ],
+            )
+
+            retrieved = store.retrieve(
+                "Celune", "tell me about my project and favorite color"
+            )
+
+            assert [record.id for record in retrieved] == [explicit.id]
+            assert {record.id for record in store.load_records("Celune")} == {
+                inferred.id,
+                explicit.id,
+            }
 
     def test_broad_explicit_memory_language_is_accepted(self) -> None:
         """Verify natural save-intent phrases create explicit memories."""

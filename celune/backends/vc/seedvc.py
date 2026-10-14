@@ -5,9 +5,9 @@ import gc
 import os
 import sys
 import tempfile
-import importlib
 import threading
 import contextlib
+import importlib
 import importlib.util
 from pathlib import Path
 import importlib.metadata
@@ -21,20 +21,20 @@ import numpy as np
 import soundfile as sf
 
 from ...i18n import string
+from ...utils import available
 from .base import CeluneVCBackend
+from ...typing.aliases import AudioChunk, SeedVCGenerator
+from ...dataclasses.pipeline import AudioOutput, VoiceConversionRequest
 from ...paths import (
     configure_numba_cache,
     huggingface_progress,
     huggingface_hub_cache_dir,
 )
-from ...typing.aliases import AudioChunk, SeedVCGenerator
-from ...utils import available
 from ...typing.backends import (
     SeedVCModelValue,
     _SeedVCRealtimeModule,
     _SeedVCWrapper,
 )
-from ...dataclasses.pipeline import AudioOutput, VoiceConversionRequest
 
 __all__ = ["CeluneSeedVCBackend"]
 
@@ -94,12 +94,11 @@ class CeluneSeedVCBackend(CeluneVCBackend):
     def __init__(
         self,
         log: Callable[[str, str], None],
-        diffusion_steps: int = 30,
+        diffusion_steps: int = 20,
         length_adjust: float = 1.0,
         inference_cfg_rate: float = 0.5,
         f0_condition: bool = False,
         auto_f0_adjust: bool = True,
-        pitch_shift: int = 0,
     ) -> None:
         super().__init__(log=log)
         self.diffusion_steps = diffusion_steps
@@ -107,7 +106,6 @@ class CeluneSeedVCBackend(CeluneVCBackend):
         self.inference_cfg_rate = inference_cfg_rate
         self.f0_condition = f0_condition
         self.auto_f0_adjust = auto_f0_adjust
-        self.pitch_shift = pitch_shift
         self._wrapper: Optional[_SeedVCWrapper] = None
         self._live_module: Optional[_SeedVCRealtimeModule] = None
         self._prepared_live_module: Optional[_SeedVCRealtimeModule] = None
@@ -560,7 +558,13 @@ class CeluneSeedVCBackend(CeluneVCBackend):
         ]
         return aligned[: self._live_block_frame]
 
-    def _convert_live_block(self, model_audio: AudioChunk) -> AudioChunk:
+    def _convert_live_block(
+        self,
+        model_audio: AudioChunk,
+        *,
+        diffusion_steps: int = _LIVE_DIFFUSION_STEPS,
+        inference_cfg_rate: float = _LIVE_INFERENCE_CFG_RATE,
+    ) -> AudioChunk:
         """Run one fixed-size block through Seed-VC's native live function."""
         if self._live_module is None or self._live_model_set is None:
             raise RuntimeError(string("seedvc.live_model_invalid"))
@@ -582,8 +586,8 @@ class CeluneSeedVCBackend(CeluneVCBackend):
                 self._live_skip_head,
                 self._live_skip_tail,
                 self._live_return_length,
-                _LIVE_DIFFUSION_STEPS,
-                _LIVE_INFERENCE_CFG_RATE,
+                diffusion_steps,
+                inference_cfg_rate,
                 _LIVE_MAX_PROMPT_SECONDS,
                 _LIVE_CONTEXT_DIFFERENCE_SECONDS,
             )
@@ -739,7 +743,6 @@ class CeluneSeedVCBackend(CeluneVCBackend):
                         target_character=request.target_character,
                         target_references=request.target_references,
                         label=request.label,
-                        pitch_shift=request.pitch_shift,
                         f0_condition=True,
                     )
                 )
@@ -783,6 +786,75 @@ class CeluneSeedVCBackend(CeluneVCBackend):
             label=request.label,
         )
 
+    def _convert_offline_with_live_runtime(
+        self,
+        request: VoiceConversionRequest,
+    ) -> Optional[AudioOutput]:
+        """Reuse cached native models for a compatible non-F0 file conversion.
+
+        Args:
+            request: Offline conversion input and its target voice reference.
+
+        Returns:
+            Optional[AudioOutput]: Converted audio, or ``None`` when the native
+                model is unavailable, active, or cannot honor this request.
+        """
+        if not request.target_references:
+            raise ValueError(string("seedvc.target_reference_required"))
+        if self.length_adjust != 1.0:
+            return None
+
+        reference_path = request.target_references[0]
+        source_audio = self._mix_to_mono(request.source_audio)
+        with self._wrapper_lock:
+            realtime_module = self._live_module
+            model_set = self._live_model_set
+            if realtime_module is None or model_set is None:
+                return None
+            if self._live_session_key is not None:
+                return None
+
+            self._initialize_live_session(
+                realtime_module,
+                model_set,
+                reference_path,
+                request.sample_rate,
+            )
+            try:
+                model_audio = self._resample_live_audio(
+                    source_audio,
+                    request.sample_rate,
+                    self._live_model_sample_rate,
+                )
+                source_frames = len(model_audio)
+                if source_frames <= 0:
+                    converted_audio = np.zeros(0, dtype=np.float32)
+                else:
+                    padding_frames = (-source_frames) % self._live_block_frame
+                    if padding_frames:
+                        model_audio = np.pad(model_audio, (0, padding_frames))
+
+                    converted_blocks: list[AudioChunk] = []
+                    for start in range(0, len(model_audio), self._live_block_frame):
+                        converted_blocks.append(
+                            self._convert_live_block(
+                                model_audio[start : start + self._live_block_frame],
+                                diffusion_steps=self.diffusion_steps,
+                                inference_cfg_rate=self.inference_cfg_rate,
+                            )
+                        )
+                    converted_audio = np.concatenate(converted_blocks)[:source_frames]
+                    converted_audio = self._normalize_live_output(converted_audio)
+                output_sample_rate = self._live_model_sample_rate
+            finally:
+                self._clear_live_session()
+
+        return AudioOutput(
+            audio=converted_audio,
+            sample_rate=output_sample_rate,
+            label=request.label,
+        )
+
     def convert(self, request: VoiceConversionRequest) -> AudioOutput:
         """Convert source audio into the currently selected reference voice.
 
@@ -798,10 +870,15 @@ class CeluneSeedVCBackend(CeluneVCBackend):
         if not request.target_references:
             raise ValueError(string("seedvc.target_reference_required"))
 
+        f0_condition = self._resolve_f0_condition(request, self.f0_condition)
+        if not f0_condition:
+            live_output = self._convert_offline_with_live_runtime(request)
+            if live_output is not None:
+                return live_output
+
         target_reference = request.target_references[0]
         wrapper = self._get_wrapper()
         source_audio = self._mix_to_mono(request.source_audio)
-        f0_condition = self._resolve_f0_condition(request, self.f0_condition)
 
         with _TemporaryWaveFile(source_audio, request.sample_rate) as source_path:
             result = self._drain_generator_return_value(
@@ -813,9 +890,7 @@ class CeluneSeedVCBackend(CeluneVCBackend):
                     inference_cfg_rate=self.inference_cfg_rate,
                     f0_condition=f0_condition,
                     auto_f0_adjust=self.auto_f0_adjust,
-                    pitch_shift=request.pitch_shift
-                    if request.pitch_shift is not None
-                    else 0,
+                    pitch_shift=0,
                     stream_output=False,
                 )
             )

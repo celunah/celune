@@ -4,11 +4,10 @@
 from __future__ import annotations
 
 from uuid import uuid4
+from dataclasses import replace
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, cast
 
-from ..typing.persona import PersonaClientResponse
-from ..conversation import _extract_persona_text, build_persona_request
 from ..typing.agent import (
     ToolResult,
     AgentOutput,
@@ -20,6 +19,9 @@ from ..typing.locks import (
     ComponentLockOwner,
     ComponentLockRequirement,
 )
+from ..typing.persona import PersonaClientResponse
+from ..conversation import _extract_persona_text, build_persona_request
+from ..persona.impl import compact_persona_history, persona_history_messages
 
 if TYPE_CHECKING:
     from ..celune import Celune
@@ -53,6 +55,45 @@ class PersonaAgentBridge:
         """Return the structured tool result to Persona for the final reply."""
         del result
         return self._generate(context, terminal=True)
+
+    def compact(self, context: AgentContext) -> AgentContext:
+        """Compact Persona history and drop stale task-history references."""
+        task = context.task
+        if task is None:
+            return context
+
+        lease = None
+        manager = getattr(self.engine, "component_locks", None)
+        summarize = True
+        if manager is not None:
+            acquisition, lease = manager.try_acquire_lease(
+                (ComponentLockRequirement(ComponentLockName.VLM),),
+                ComponentLockOwner(
+                    operation_id=f"agent-compact:{task.task_id}:{task.generation}",
+                    task_id=task.task_id,
+                    session_id=task.session_id,
+                    generation_id=task.generation,
+                ),
+            )
+            summarize = acquisition.acquired
+        try:
+            released_tokens = compact_persona_history(
+                self.engine,
+                context_size=task.config.context_size,
+                compact_at=task.config.compact_at,
+                force=True,
+                summarize=summarize,
+            )
+        finally:
+            if lease is not None:
+                lease.release()
+        request = replace(
+            task.request,
+            history=tuple(persona_history_messages(self.engine)),
+        )
+        task.request = request
+        task.update_context_tokens(max(0, task.context_tokens - released_tokens))
+        return replace(context, request=request)
 
     def _generate(self, context: AgentContext, *, terminal: bool) -> AgentOutput:
         """Generate one Persona response through the existing request boundary."""
@@ -99,7 +140,16 @@ class PersonaAgentBridge:
             )
             response = cast(PersonaClientResponse, post(json=payload))
             response.raise_for_status()
-            spoken_text = _extract_persona_text(response.json())
+            response_payload = response.json()
+            prompt_tokens = getattr(response, "prompt_tokens", None)
+            completion_tokens = getattr(response, "completion_tokens", None)
+            if (
+                context.task is not None
+                and isinstance(prompt_tokens, int)
+                and isinstance(completion_tokens, int)
+            ):
+                context.task.update_context_tokens(prompt_tokens + completion_tokens)
+            spoken_text = _extract_persona_text(response_payload)
             if not spoken_text:
                 raise RuntimeError("Persona returned an empty agent response")
             return {

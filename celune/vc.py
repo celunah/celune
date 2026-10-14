@@ -3,32 +3,32 @@
 
 from __future__ import annotations
 
+import queue as queue_module
 import importlib
 import threading
 import contextlib
-import queue as queue_module
 from typing import TYPE_CHECKING, Optional, cast
 
-import torch
 import numpy as np
+import torch
 from scipy import signal
 
-from .binding import install_class_functions
-from .dataclasses.pipeline import AudioInputRequest, AudioOutput
 from .i18n import string
+from .binding import install_class_functions
 from .typing.aliases import AudioChunk
 from .typing.backends import _StreamingSpeechModel
+from .dataclasses.pipeline import AudioOutput, AudioInputRequest
 
 if TYPE_CHECKING:
     from .celune import Celune
 
-VC_PITCH_SHIFT_MIN = -3
-VC_PITCH_SHIFT_MAX = 3
 VC_VAD_RMS_THRESHOLD = 0.005
 VC_VAD_HANGOVER_SECONDS = 0.3
 VC_VAD_PREROLL_SECONDS = 0.18
 VC_LIVE_CHUNK_SECONDS = 0.18
 VC_LIVE_CHUNK_OVERLAP_SECONDS = 0.0
+VC_PLAYBACK_ATTENUATION_DB = 2.0
+VC_PLAYBACK_GAIN = 10.0 ** (-VC_PLAYBACK_ATTENUATION_DB / 20.0)
 _VC_AUDIO_PEAK = 0.95
 
 _LIVE_VAD_TARGET_SAMPLE_RATE = 16000
@@ -39,13 +39,12 @@ _LIVE_VAD_NEGATIVE_THRESHOLD = 0.35
 __all__ = [
     "VC_LIVE_CHUNK_OVERLAP_SECONDS",
     "VC_LIVE_CHUNK_SECONDS",
-    "VC_PITCH_SHIFT_MAX",
-    "VC_PITCH_SHIFT_MIN",
+    "VC_PLAYBACK_ATTENUATION_DB",
+    "VC_PLAYBACK_GAIN",
     "VC_VAD_HANGOVER_SECONDS",
     "VC_VAD_PREROLL_SECONDS",
     "VC_VAD_RMS_THRESHOLD",
     "LiveVoiceActivityDetector",
-    "clamp_vc_pitch_shift",
     "convert_audio",
     "convert_live_audio",
     "create_live_voice_activity_detector",
@@ -57,18 +56,6 @@ __all__ = [
     "vc_vad_hangover_frames",
     "vc_vad_preroll_frames",
 ]
-
-
-def clamp_vc_pitch_shift(value: int) -> int:
-    """Clamp one VC pitch shift to Celune's supported semitone range.
-
-    Args:
-        value: Requested semitone offset for voice conversion.
-
-    Returns:
-        int: The requested offset clamped to Celune's supported VC range.
-    """
-    return max(VC_PITCH_SHIFT_MIN, min(VC_PITCH_SHIFT_MAX, value))
 
 
 def normalize_vc_audio(audio: AudioChunk) -> AudioChunk:
@@ -100,7 +87,6 @@ def convert_audio(
     audio: np.ndarray,
     sample_rate: int,
     label: str = "audio input",
-    pitch_shift: Optional[int] = None,
     f0_condition: Optional[bool] = None,
 ) -> Optional[AudioOutput]:
     """Convert submitted audio and return the generated VC output."""
@@ -118,7 +104,6 @@ def convert_audio(
             audio=np.asarray(audio, dtype=np.float32),
             sample_rate=sample_rate,
             label=label,
-            pitch_shift=pitch_shift,
             f0_condition=f0_condition,
         ),
     )
@@ -129,7 +114,6 @@ def convert_live_audio(
     audio: np.ndarray,
     sample_rate: int,
     label: str = "audio input",
-    pitch_shift: Optional[int] = None,
     f0_condition: Optional[bool] = None,
 ) -> Optional[AudioOutput]:
     """Convert one low-latency live block through the active VC backend."""
@@ -138,7 +122,6 @@ def convert_live_audio(
             audio,
             sample_rate,
             label=label,
-            pitch_shift=pitch_shift,
             f0_condition=f0_condition,
         )
 
@@ -150,7 +133,6 @@ def convert_live_audio(
             audio=np.asarray(audio, dtype=np.float32),
             sample_rate=sample_rate,
             label=label,
-            pitch_shift=pitch_shift,
             f0_condition=f0_condition,
         ),
         live=True,

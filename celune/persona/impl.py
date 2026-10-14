@@ -8,14 +8,12 @@ import contextlib
 from typing import Optional
 from collections.abc import Mapping, Generator
 
-from ..i18n import string
-from ..vram import resolve_vram_preset
+from .capabilities import PersonaCapabilities
+from .runtime import PersonaRuntime, response_to_json, request_from_json
 from ..modes import (
     mode_allows_persona,
     resolve_operation_mode,
 )
-from ..config import Config
-from .runtime import PersonaRuntime, response_to_json, request_from_json
 from ..cevoice import (
     CEVoicePersona,
     default_loader,
@@ -29,16 +27,19 @@ from ..constants import (
     PERSONA_DEFAULT_MODEL_ID,
     PERSONA_HISTORY_MESSAGES,
     DEFAULT_PERSONA_DESCRIPTION,
+    persona_model_tier,
 )
-from .capabilities import PersonaCapabilities
-from ..typing.common import JSON, JSONSerializable
-from ..typing.aliases import LogCallback
+from ..i18n import string
+from ..config import Config
 from ..typing.persona import (
+    PersonaClientResponse,
+    PersonaEngineView,
     PersonaModel,
     PersonaTokenizer,
-    PersonaEngineView,
-    PersonaClientResponse,
 )
+from ..vram import resolve_vram_preset
+from ..typing.aliases import LogCallback
+from ..typing.common import JSON, JSONSerializable
 
 PERSONA_QUANTIZATION = "4bit"
 _CONVERSATION_SUMMARY_SYSTEM_PROMPT = (
@@ -116,7 +117,11 @@ class PersonaClient:
         request = request_from_json(json)
         with self._capture_backend_output():
             response = self.runtime.generate(request)
-        return PersonaClientResponse(response_to_json(response))
+        return PersonaClientResponse(
+            response_to_json(response),
+            prompt_tokens=response.prompt_tokens,
+            completion_tokens=response.completion_tokens,
+        )
 
     def classify_memory(
         self, json: dict[str, JSONSerializable]
@@ -221,10 +226,10 @@ def persona_config(config: Mapping[str, JSONSerializable]) -> Config:
 
 
 def persona_context_size(config: Mapping[str, JSONSerializable]) -> int:
-    """Return Persona's configured prompt context size."""
+    """Return Persona's configured prompt context size capped for 12 GB hardware."""
     value = persona_config(config).get("context_size")
     return (
-        value
+        min(value, PERSONA_CONTEXT_SPACE)
         if isinstance(value, int) and not isinstance(value, bool) and value > 0
         else PERSONA_CONTEXT_SPACE
     )
@@ -654,15 +659,36 @@ def _vlm_persona_summary(
     )
 
 
-def compact_persona_history(engine: PersonaEngineView) -> None:
+def compact_persona_history(
+    engine: PersonaEngineView,
+    *,
+    context_size: Optional[int] = None,
+    compact_at: Optional[int] = None,
+    force: bool = False,
+    summarize: bool = True,
+) -> int:
     """Compact older Persona turns through a neutral VLM summary request.
 
     Args:
         engine: Celune-like runtime whose Persona history should be summarized.
+        context_size: Optional context ceiling used to calculate the threshold.
+        compact_at: Optional compaction percentage for this context.
+        force: Compact eligible old turns even when the threshold is not reached.
+        summarize: Whether to request a neutral VLM summary before pruning.
+
+    Returns:
+        int: Estimated number of history tokens released by compaction.
     """
     history = getattr(engine, "persona_history", None)
     if not isinstance(history, list):
-        return
+        return 0
+
+    history_tokens_before = _estimated_persona_history_tokens(history)
+    previous_summary = persona_session_summary(engine)
+    summary_tokens_before = 0
+    if previous_summary:
+        summary_tokens_before = max(1, len(previous_summary) // 4)
+    before_tokens = history_tokens_before + summary_tokens_before
 
     config = getattr(engine, "config", {})
     if not isinstance(config, Mapping):
@@ -670,13 +696,28 @@ def compact_persona_history(engine: PersonaEngineView) -> None:
     limit = persona_short_term_history_limit(engine)
     if limit <= 0:
         history.clear()
-        return
-    compact_threshold = persona_context_size(config) * persona_compact_at(config) // 100
+        return history_tokens_before
+    effective_context_size = (
+        context_size
+        if isinstance(context_size, int)
+        and not isinstance(context_size, bool)
+        and context_size > 0
+        else persona_context_size(config)
+    )
+    effective_compact_at = (
+        compact_at
+        if isinstance(compact_at, int)
+        and not isinstance(compact_at, bool)
+        and 1 <= compact_at <= 100
+        else persona_compact_at(config)
+    )
+    compact_threshold = effective_context_size * effective_compact_at // 100
     if (
-        len(history) <= limit
+        not force
+        and len(history) <= limit
         and _estimated_persona_history_tokens(history) < compact_threshold
     ):
-        return
+        return 0
 
     raw_memory = (
         persona_config(config).get("memory") if isinstance(config, Mapping) else None
@@ -685,14 +726,19 @@ def compact_persona_history(engine: PersonaEngineView) -> None:
     enabled = memory.get("context_compaction_enabled", True)
     if isinstance(enabled, bool) and not enabled:
         del history[:-limit]
-        return
+        after_tokens = _estimated_persona_history_tokens(history)
+        if previous_summary:
+            after_tokens += summary_tokens_before
+        return max(
+            0,
+            before_tokens - after_tokens,
+        )
 
     keep_recent = memory.get("context_compaction_keep_recent_messages", min(limit, 8))
     if isinstance(keep_recent, bool) or not isinstance(keep_recent, (int, float)):
         keep_recent = min(limit, 8)
     keep_count = max(1, min(limit, int(keep_recent), len(history) - 1))
 
-    previous_summary = persona_session_summary(engine)
     old_messages: list[dict[str, str]] = []
     for message in history[:-keep_count]:
         if not isinstance(message, dict):
@@ -712,15 +758,26 @@ def compact_persona_history(engine: PersonaEngineView) -> None:
     ):
         maximum_characters = 1200
     maximum_characters = max(240, int(maximum_characters))
-    summary = _vlm_persona_summary(
-        engine,
+    summary = ""
+    if summarize:
+        summary = _vlm_persona_summary(
+            engine,
+            previous_summary,
+            old_messages,
+            maximum_characters,
+        )
+    summary = summary or _build_persona_summary(
         previous_summary,
         old_messages,
         maximum_characters,
-    ) or _build_persona_summary(previous_summary, old_messages, maximum_characters)
+    )
 
     engine.persona_session_summary = summary
     del history[:-keep_count]
+    after_tokens = _estimated_persona_history_tokens(history)
+    if summary:
+        after_tokens += max(1, len(summary) // 4)
+    return max(0, before_tokens - after_tokens)
 
 
 def persona_attachment_source(path: str) -> str:
@@ -789,7 +846,10 @@ def persona_enabled(config: Mapping[str, JSONSerializable]) -> bool:
     preset = resolve_vram_preset(config)
     if not mode_allows_persona(mode):
         return False
-    return preset.persona_enabled
+    if not preset.persona_enabled:
+        return False
+    model_tier = persona_model_tier(persona_model_id(config))
+    return not (preset.tier == "high" and model_tier == "smart")
 
 
 def persona_talkback_enabled(config: Mapping[str, JSONSerializable]) -> bool:

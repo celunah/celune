@@ -3,14 +3,13 @@
 
 from __future__ import annotations
 
-from contextlib import nullcontext
 import json
 from types import SimpleNamespace
-from unittest import mock
 from typing import TYPE_CHECKING, cast
+from unittest import mock
+from contextlib import nullcontext
 
 from celune.i18n import string
-from celune.typing.common import JSONSerializable
 from celune.agent import (
     AgentRoute,
     AgentRuntime,
@@ -29,6 +28,7 @@ from celune.agent import (
     AgentInputClassification,
     AgentClassificationFailureKind,
 )
+from celune.typing.common import JSONSerializable
 
 if TYPE_CHECKING:
     from celune.celune import Celune
@@ -214,7 +214,7 @@ class TestAgentRouting:  # pylint: disable=attribute-defined-outside-init
     def test_incompatible_vram_disables_agent_routing(self) -> None:
         """Do not route agent tasks when the selected preset is too small."""
         self.engine.mode = "agent"
-        self.engine.config = {"mode": "agent", "vram": "high"}
+        self.engine.config = {"mode": "agent", "vram": "medium"}
 
         result = self.router.route("Delete the fixture.", persona_ready=True)
 

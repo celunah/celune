@@ -4,19 +4,22 @@
 # Import groups follow Celune's project-specific Ruff ordering.
 # pylint: disable=ungrouped-imports
 
+import json as _json
 import tempfile
 import threading
-import json as _json
-from pathlib import Path
-from unittest import mock
 from types import SimpleNamespace
 from typing import Optional, cast
+from pathlib import Path
+from unittest import mock
 from collections.abc import Iterator
 
-import pytest
 import numpy as np
+import pytest
 
 from celune import pipeline
+from celune.i18n import string
+from celune.utils import discard
+from celune.celune import Celune
 from celune.cevoice import (
     CEVoice,
     CEVoiceLoader,
@@ -25,9 +28,8 @@ from celune.cevoice import (
     PersonaStyleValues,
     persona_files_from_bundle,
 )
-from celune.i18n import string
-from celune.celune import Celune
-from celune.utils import discard
+from celune.constants import PipelineStates
+from celune.persona.impl import compact_persona_history
 from celune.typing.agent import (
     ToolCall,
     AgentTask,
@@ -39,16 +41,16 @@ from celune.typing.agent import (
     AgentToolDangerLevel,
     AgentToolArgumentSchema,
 )
-from celune.constants import PipelineStates
-from celune.typing.aliases import AudioChunk
-from celune.persona.impl import compact_persona_history
 from celune.typing.common import JSON, JSONSerializable
-from celune.persona.capabilities import PersonaCapabilities
+from celune.typing.aliases import AudioChunk
 from celune.persona.prompts import PersonaPromptBuilder, render_markdown_subsection
+from celune.dataclasses.pipeline import CaptionAlignmentSection
+from celune.persona.capabilities import PersonaCapabilities
+
 from .support import make_pipeline_engine
 from .platform import LINUX_ONLY, WINDOWS_ONLY
-from .test_persona_memory import StubEmbeddingMemoryStore
 from .pipeline_basics import TestPipelineAsync as _TestPipelineAsync
+from .test_persona_memory import StubEmbeddingMemoryStore
 
 
 @pytest.mark.anyio
@@ -502,13 +504,19 @@ class TestPipelineAsync(_TestPipelineAsync):
 
         self.assertNotIn("You are Celune, commonly called Cel.", prompt)
 
-    def test_agent_prompt_context_uses_existing_task_and_tool_contracts(self) -> None:
-        """Verify task context and tool metadata are available without runtime authority."""
+    def test_agent_prompt_context_excludes_persona_memory_and_history(self) -> None:
+        """Verify agent prompts use task data without Persona memory context."""
         engine = make_pipeline_engine()
         engine.config = {}
         engine.current_character = "Fixture"
         engine.current_voice = "balanced"
         engine.voice_bundle_is_default = False
+        engine.persona_history = [
+            {"role": "user", "content": "Old conversation detail."},
+            {"role": "assistant", "content": "Stale assistant claim."},
+        ]
+        engine.persona_session_summary = "Stale conversation summary."
+        engine.retrieved_long_term_memory = ["Stale long-term memory."]
 
         request = AgentRequest("Check whether the process is running.")
         task = AgentTask(task_id="task-1", session_id="default", request=request)
@@ -556,7 +564,10 @@ class TestPipelineAsync(_TestPipelineAsync):
         self.assertIn('"state": "queued"', prompt)
         self.assertIn('"output": "running"', prompt)
         self.assertIn("runtime remains authoritative", prompt)
-        self.assertLess(prompt.index("<memory>"), prompt.index("<agent_context>"))
+        self.assertNotIn("\n\n<memory>\n", prompt)
+        self.assertNotIn("<conversation_summary>", prompt)
+        self.assertNotIn("Stale long-term memory", prompt)
+        self.assertNotIn("Stale conversation summary", prompt)
 
         payload = pipeline.build_persona_request(
             cast(Celune, engine),
@@ -568,6 +579,9 @@ class TestPipelineAsync(_TestPipelineAsync):
         messages = cast(list[JSON], payload["messages"])
         self.assertEqual(payload["system"], messages[0]["content"])
         self.assertEqual(cast(str, payload["system"]).count("<agent_context>"), 1)
+        self.assertEqual(len(messages), 2)
+        self.assertNotIn("Old conversation detail", str(messages))
+        self.assertNotIn("Stale assistant claim", str(messages))
 
     def test_named_celune_custom_pack_does_not_use_default_identity(self) -> None:
         """Verify custom packs named Celune do not inherit default identity fields."""
@@ -932,6 +946,14 @@ class TestPipelineAsync(_TestPipelineAsync):
             engine.current_voice = "balanced"
             engine.vision = FakeVision()
             engine.dev = False
+            engine.persona_history = [
+                {"role": "user", "content": "My dog is named Luna."},
+                {
+                    "role": "assistant",
+                    "content": "You are building a 3D presence and spec sheet.",
+                },
+            ]
+            engine.persona_session_summary = "You are building a 3D presence."
             store = StubEmbeddingMemoryStore(storage_dir=temp_dir)
             store.return_none = True
             engine.persona_memory_store = store
@@ -962,7 +984,10 @@ class TestPipelineAsync(_TestPipelineAsync):
             for debug_overrides in (False, True):
                 engine = make_pipeline_engine()
                 engine.config = {
-                    "persona": {"debug_overrides": debug_overrides},
+                    "persona": {
+                        "debug_overrides": debug_overrides,
+                        "memory": {"automatic_max_age_days": 14},
+                    },
                 }
                 with mock.patch(
                     "celune.persona.memory.persona_data_dir",
@@ -971,6 +996,7 @@ class TestPipelineAsync(_TestPipelineAsync):
                     store = pipeline._persona_memory_store(cast(Celune, engine))
 
                 assert store is not None
+                assert store.automatic_max_age_days == 14
                 assert (
                     store._path_for_character("Celune")
                     == Path(temp_dir) / "celune" / "memory" / "records.json"
@@ -1055,6 +1081,10 @@ class TestPipelineAsync(_TestPipelineAsync):
 
             classifier_payload = cast(FakeVision, engine.vision).classifier_payload
             assert classifier_payload is not None
+            classifier_context = cast(str, classifier_payload["user"])
+            assert "I recently adopted a dog named Luna." in classifier_context
+            assert "3D presence" not in classifier_context
+            assert "I understand." not in classifier_context
             records = store.load_records("Celune")
 
         assert [record.content for record in records] == [
@@ -1281,6 +1311,7 @@ class TestPipelineAsync(_TestPipelineAsync):
         release_alignment = threading.Event()
         alignment_timed_out = False
         generated_during_alignment = False
+        alignment_calls: list[tuple[str, tuple[CaptionAlignmentSection, ...]]] = []
 
         def generate_stream(
             model: mock.Mock, **kwargs: JSONSerializable
@@ -1334,9 +1365,11 @@ class TestPipelineAsync(_TestPipelineAsync):
             sample_rate: int,
             transcript: str,
             language: Optional[str],
+            alignment_sections: tuple[CaptionAlignmentSection, ...] = (),
         ) -> tuple[tuple[float, float], ...]:
             nonlocal alignment_timed_out
             events.append(f"align:{transcript}:flushes={flush_mock.call_count}")
+            alignment_calls.append((transcript, alignment_sections))
             alignment_started.set()
             assert audio.ndim == 1
             assert sample_rate == 48000
@@ -1388,13 +1421,24 @@ class TestPipelineAsync(_TestPipelineAsync):
         )
         self.assertTrue(generated_during_alignment)
         self.assertFalse(alignment_timed_out)
-        self.assertIn("align:normalized first:flushes=0", events)
-        self.assertIn("align:normalized second:flushes=0", events)
+        self.assertIn(
+            "align:normalized first normalized second:flushes=0",
+            events,
+        )
+        self.assertEqual(
+            alignment_calls[0],
+            (
+                "normalized first normalized second",
+                (
+                    CaptionAlignmentSection(0, 8, 0, 2, 0, 1),
+                    CaptionAlignmentSection(8, 16, 2, 4, 1, 2),
+                ),
+            ),
+        )
         caption_states = pipeline._playback_caption_states(cast(Celune, engine))
         caption_state = next(iter(caption_states.values()))
-        self.assertEqual(len(caption_state.segments), 2)
-        self.assertEqual(caption_state.segments[0].word_start_frames, (0,))
-        self.assertEqual(caption_state.segments[1].word_start_frames, (0,))
+        self.assertEqual(len(caption_state.segments), 1)
+        self.assertEqual(len(caption_state.segments[0].word_start_frames), 2)
 
     @pytest.mark.parametrize(
         "error_message",

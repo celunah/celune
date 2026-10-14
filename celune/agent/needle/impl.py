@@ -21,9 +21,6 @@ from safetensors.torch import load_file
 from huggingface_hub import hf_hub_download
 from sentencepiece import SentencePieceProcessor
 
-from ...typing.common import JSONSerializable
-from ...paths import huggingface_hub_cache_dir
-from ...exceptions import NeedleSelectionError
 from .models import NeedleModel, NeedleConfig
 from .checkpoints import (
     NEEDLE_MODEL_ID,
@@ -34,10 +31,14 @@ from .checkpoints import (
     NEEDLE_TOKENIZER_FILE,
     NeedlePickleConverter,
     NeedlePreparedCheckpoint,
+    _expected_dtype,
     prepare_needle_checkpoint,
 )
+
+from ...typing.common import JSONSerializable
+from ...exceptions import NeedleSelectionError
+from ...paths import huggingface_hub_cache_dir
 from ...typing.agent import (
-    ToolCall,
     AgentTool,
     AgentOutput,
     AgentContext,
@@ -120,15 +121,16 @@ def _parse_single_selection(
     text: str,
     original_names: Mapping[str, str],
 ) -> NeedleToolCall:
-    """Parse exactly one JSON tool call from a Needle response."""
+    """Parse the first JSON tool call from a Needle response."""
     candidates = _json_candidates(text.replace("<tool_call>", ""))
     if not candidates:
         raise NeedleSelectionError("Needle returned malformed or empty JSON")
     candidate = candidates[0]
-    values = candidate if isinstance(candidate, list) else [candidate]
-    if len(values) != 1:
-        raise NeedleSelectionError("Needle returned multiple tool calls")
-    value = values[0]
+    if isinstance(candidate, list):
+        if not candidate:
+            raise NeedleSelectionError("Needle returned malformed or empty JSON")
+        candidate = candidate[0]
+    value = candidate
     if not isinstance(value, dict):
         raise NeedleSelectionError("Needle returned a malformed tool call")
     name = value.get("name")
@@ -276,7 +278,7 @@ class NeedleHandler:
         selected_device = torch.device(
             device or ("cuda" if torch.cuda.is_available() else "cpu")
         )
-        model = NeedleModel(config)
+        model = NeedleModel(config).to(dtype=_expected_dtype(config_data))
         normalized_state = cast(
             dict[str, torch.Tensor],
             torch.load(converted_path, map_location="cpu", weights_only=True),
@@ -493,8 +495,8 @@ class NeedleToolSelector:
         context: AgentContext,
         output: AgentOutput,
         /,
-    ) -> Optional[ToolCall]:
-        """Select and schema-validate one tool without executing it."""
+    ) -> Optional[Union[ValidatedToolCall, Sequence[ValidatedToolCall]]]:
+        """Select and validate tool candidates without executing them."""
         intent = output.get("response")
         if not isinstance(intent, str) or not intent.strip():
             raise NeedleSelectionError(
@@ -505,14 +507,17 @@ class NeedleToolSelector:
             schemas=self.schemas,
             available_only=True,
         )
-        selection = self.handler.select_one_tool(
+        selection = self.handler.select_tools(
             intent,
             catalog,
             max_new_tokens=self.max_new_tokens,
         )
         if context.task is not None and context.task.is_terminal:
             return None
-        return self._validate_selection(selection)
+        if not selection:
+            raise NeedleSelectionError("Needle returned no valid tool calls")
+        validated = [self._validate_selection(call) for call in selection]
+        return validated[0] if len(validated) == 1 else validated
 
     def _validate_selection(self, selection: NeedleToolCall) -> ValidatedToolCall:
         """Validate one restored canonical call against registered schemas."""

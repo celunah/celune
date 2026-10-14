@@ -7,25 +7,25 @@ import contextlib
 from typing import Optional, cast
 from collections.abc import Mapping, Callable, Iterator, Generator
 
-import loguru
 import numpy as np
+import loguru
 from transformers import AutoTokenizer
 from dots_tts.runtime import DotsTtsRuntime
 
-from ...utils import available, discard, custom_assert
-from ...i18n import string
-from ...typing.backends import _LoguruLogger
-from ...cevoice import CEVoiceLoader, default_loader
-from ...paths import huggingface_progress
-from ...typing.aliases import AudioChunk, AudioChunks
-from .base import (
-    _to_numpy_audio as normalize_streamed_audio,
-)
 from .base import (
     CeluneBackend,
     local_hf_offline_mode,
     cached_hf_snapshot_path,
 )
+from .base import (
+    _to_numpy_audio as normalize_streamed_audio,
+)
+from ...i18n import string
+from ...paths import huggingface_progress
+from ...utils import discard, available, custom_assert
+from ...cevoice import CEVoiceLoader, default_loader
+from ...typing.aliases import AudioChunk, AudioChunks
+from ...typing.backends import _LoguruLogger
 
 
 class DotsTtsMF(CeluneBackend[DotsTtsRuntime]):
@@ -80,8 +80,9 @@ class DotsTtsMF(CeluneBackend[DotsTtsRuntime]):
         self,
         log: Callable[[str, str], None],
         fatal: Optional[Callable[[], None]] = None,
+        quantize: bool = True,
     ) -> None:
-        super().__init__(log=log, fatal=fatal)
+        super().__init__(log=log, fatal=fatal, quantize=quantize)
         self._validate_refs()
 
     @staticmethod
@@ -229,6 +230,7 @@ class DotsTtsMF(CeluneBackend[DotsTtsRuntime]):
         )
 
         target = path if available and path is not None else model_id
+        quantize_on_cpu = getattr(self, "quantization_mode", None) is not None
         if target == model_id:
             self.log(string("tts.model_download_start"), "info")
 
@@ -237,15 +239,51 @@ class DotsTtsMF(CeluneBackend[DotsTtsRuntime]):
             huggingface_progress(self.report_progress),
             self._suppress_backend_output(),
         ):
-            self.model = DotsTtsRuntime.from_pretrained(
-                target,
-                precision=precision,
-                optimize=optimize,
-                max_generate_length=max_generate_length,
-            )
+            if quantize_on_cpu:
+                self.model = self._load_quantized_runtime(
+                    target,
+                    model_id=model_id,
+                    precision=precision,
+                    optimize=optimize,
+                    max_generate_length=max_generate_length,
+                )
+            else:
+                self.model = DotsTtsRuntime.from_pretrained(
+                    target,
+                    precision=precision,
+                    optimize=optimize,
+                    max_generate_length=max_generate_length,
+                )
             self._fix_checkpoint_tokenizer(self.model)
 
+        if not quantize_on_cpu:
+            self.model = self.apply_runtime_quantization(self.model, model_id)
         return self.model
+
+    def _load_quantized_runtime(
+        self,
+        target: str,
+        *,
+        model_id: str,
+        precision: str,
+        optimize: bool,
+        max_generate_length: int,
+    ) -> DotsTtsRuntime:
+        """Quantize dots.tts on CPU before its runtime moves the model to CUDA."""
+        import torch
+        from dots_tts.models.dots_tts.model import DotsTtsModel
+
+        pretrained_path = DotsTtsRuntime._resolve_pretrained_path(target)
+        loaded_model = DotsTtsModel.from_pretrained(pretrained_path)
+        loaded_model.core.to(dtype=torch.bfloat16)
+        loaded_model = self.apply_runtime_quantization(loaded_model, model_id)
+        return DotsTtsRuntime(
+            model=loaded_model,
+            pretrained_path=pretrained_path,
+            precision=precision,
+            optimize=optimize,
+            max_generate_length=max_generate_length,
+        )
 
     _to_numpy_audio = staticmethod(normalize_streamed_audio)
 

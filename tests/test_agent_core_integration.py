@@ -3,18 +3,18 @@
 
 from __future__ import annotations
 
-from contextlib import nullcontext
-from typing import Optional, cast
 from unittest import mock
+from typing import Optional, cast
+from contextlib import nullcontext
 from collections.abc import Mapping, Sequence
 
 from celune.celune import Celune
-from celune.constants import PERSONA_DEFAULT_MODEL_ID
 from celune.typing.aliases import LogLevel
-from celune.typing.agent import NeedleToolCall, NeedleToolCatalog
 from celune.persona.impl import PersonaClient
 from celune.typing.common import JSONSerializable
+from celune.constants import PERSONA_DEFAULT_MODEL_ID
 from celune.typing.persona import PersonaClientResponse
+from celune.typing.agent import NeedleToolCall, NeedleToolCatalog
 from celune.agent.tools import AgentStatusTool, production_agent_tool_schemas
 from celune.speech import deliver_persona_response as celune_deliver_persona_response
 from celune.agent.needle.impl import (
@@ -53,7 +53,7 @@ from celune.agent import (
     AgentClassificationFailureKind,
 )
 
-from .support import CeluneTestCase, FakeGlow, FakeBackend
+from .support import FakeGlow, FakeBackend, CeluneTestCase
 
 
 class _PersonaResponse:
@@ -165,15 +165,15 @@ class _SpeakNeedleHandler:
             available_only=available_only,
         )
 
-    def select_one_tool(
+    def select_tools(
         self,
         query: str,
         tools: NeedleToolCatalog,
         max_new_tokens: int = 96,
-    ) -> NeedleToolCall:
-        """Select the registered speak tool without model or network work."""
+    ) -> list[NeedleToolCall]:
+        """Return the registered speak call without model or network work."""
         del query, tools, max_new_tokens
-        return {"name": "speak", "arguments": {"text": "hello"}}
+        return [{"name": "speak", "arguments": {"text": "hello"}}]
 
     def close(self) -> None:
         """Match the lifecycle method of a loaded Needle handler."""

@@ -2,9 +2,10 @@
 """Tests for optional IPA caption alignment."""
 
 import json
+import threading
+from types import SimpleNamespace
 from pathlib import Path
 from unittest import mock
-from types import SimpleNamespace
 
 import numpy as np
 
@@ -25,6 +26,94 @@ def test_map_word_timings_maps_normalized_text_within_its_chunk() -> None:
         ((0.1, 0.3), (0.5, 0.9)),
         1.0,
     ) == ((0.1, 0.25), (0.25, 0.4), (0.4, 0.65), (0.65, 0.9))
+
+
+def test_map_section_word_timings_keeps_word_mapping_inside_passages() -> None:
+    """Map display words independently inside their known audio passages."""
+    sections = (
+        captions.CaptionAlignmentSection(0, 48_000, 0, 1, 0, 2),
+        captions.CaptionAlignmentSection(48_000, 96_000, 1, 2, 2, 3),
+    )
+
+    assert captions.map_section_word_timings(
+        ("first", "passage", "second"),
+        ((0.1, 0.4), (1.1, 1.4)),
+        sections,
+        2.0,
+        48_000,
+    ) == ((0.1, 0.25), (0.25, 0.4), (1.1, 1.4))
+
+
+def test_build_caption_alignment_sections_combines_text_and_audio_boundaries() -> None:
+    """Keep each generated text chunk inside its known combined-audio range."""
+    transcript, sections = captions._build_caption_alignment_sections(
+        "first passage second line",
+        (
+            (0, 48_000, "first passage"),
+            (48_000, 96_000, "second line"),
+        ),
+    )
+
+    assert transcript == "first passage second line"
+    assert sections == (
+        captions.CaptionAlignmentSection(0, 48_000, 0, 2, 0, 2),
+        captions.CaptionAlignmentSection(48_000, 96_000, 2, 4, 2, 4),
+    )
+
+
+def test_build_caption_alignment_sections_merges_empty_display_ranges() -> None:
+    """Keep all transcript words covered when chunks outnumber display ranges."""
+    transcript, sections = captions._build_caption_alignment_sections(
+        "one two",
+        (
+            (0, 48_000, "one"),
+            (48_000, 96_000, "two"),
+            (96_000, 144_000, "three"),
+        ),
+    )
+
+    assert transcript == "one two three"
+    assert sections == (
+        captions.CaptionAlignmentSection(0, 48_000, 0, 1, 0, 1),
+        captions.CaptionAlignmentSection(48_000, 144_000, 1, 3, 1, 2),
+    )
+
+
+def test_caption_aligner_constrains_ctc_to_tutorial_passages() -> None:
+    """Align each known tutorial passage inside one full-model inference."""
+    vocab = {"<pad>": 0, "a": 1, "b": 2}
+    logits = np.full((1, 10, len(vocab)), -10.0, dtype=np.float32)
+    logits[0, :, 0] = 0.0
+    logits[0, 1, 1] = 10.0
+    logits[0, 7, 2] = 10.0
+    session = mock.Mock()
+    session.run.return_value = (logits,)
+    aligner = captions.CaptionAligner()
+    sections = (
+        captions.CaptionAlignmentSection(0, 4_800, 0, 1, 0, 1),
+        captions.CaptionAlignmentSection(4_800, 9_600, 1, 2, 1, 2),
+    )
+    waveform = np.linspace(-0.5, 0.5, 9_600, dtype=np.float32)
+
+    with (
+        mock.patch.object(aligner, "_load_model", return_value=(session, vocab)),
+        mock.patch(
+            "celune.captions._phonemize",
+            return_value=(("a",), ("b",)),
+        ) as phonemize,
+    ):
+        aligned = aligner.align_words(
+            waveform,
+            48_000,
+            "first second",
+            "en-US",
+            sections,
+        )
+
+    assert aligned[0][0] < 0.1
+    assert aligned[1][0] > 0.1
+    phonemize.assert_called_once_with("first second", "en-us")
+    session.run.assert_called_once()
 
 
 def test_align_chunk_word_start_frames_reports_alignment_errors() -> None:
@@ -50,10 +139,121 @@ def test_align_chunk_word_start_frames_reports_alignment_errors() -> None:
     assert logger.call_args.args[1] == "warning"
 
 
+def test_missing_espeak_logs_a_warning_without_traceback() -> None:
+    """Report a missing eSpeak executable as a concise warning."""
+    logger = mock.Mock()
+    aligner = captions.CaptionAligner()
+
+    with (
+        mock.patch("celune.captions.get_caption_aligner", return_value=aligner),
+        mock.patch(
+            "celune.captions.subprocess.run",
+            side_effect=FileNotFoundError("espeak-ng"),
+        ),
+    ):
+        assert (
+            captions.align_chunk_word_start_frames(
+                (np.ones(12, dtype=np.float32),),
+                48000,
+                "hello",
+                ("hello",),
+                "en-US",
+                logger,
+                "info",
+            )
+            is None
+        )
+
+    assert logger.call_args.args == (
+        captions.string("ui.caption_espeak_not_found"),
+        "warning",
+    )
+
+
+def test_missing_onnxruntime_logs_a_warning_without_traceback() -> None:
+    """Report an absent ONNX Runtime extra as a concise warning."""
+    logger = mock.Mock()
+    aligner = captions.CaptionAligner()
+
+    def load_module(module_name: str) -> object:
+        if module_name == "huggingface_hub":
+            return SimpleNamespace()
+        if module_name == "onnxruntime":
+            raise ModuleNotFoundError(
+                "No module named 'onnxruntime'",
+                name="onnxruntime",
+            )
+        raise AssertionError(f"unexpected optional module: {module_name}")
+
+    with (
+        mock.patch("celune.captions.get_caption_aligner", return_value=aligner),
+        mock.patch(
+            "celune.captions.subprocess.run",
+            return_value=SimpleNamespace(stdout="hɛloʊ\n"),
+        ),
+        mock.patch.object(
+            captions.importlib,
+            "import_module",
+            side_effect=load_module,
+        ),
+    ):
+        assert (
+            captions.align_chunk_word_start_frames(
+                (np.ones(12, dtype=np.float32),),
+                48000,
+                "hello",
+                ("hello",),
+                "en-US",
+                logger,
+                "info",
+            )
+            is None
+        )
+
+    assert logger.call_args.args == (
+        captions.string("ui.caption_onnxruntime_not_found"),
+        "warning",
+    )
+
+
+def test_caption_aligner_preloads_model_in_background_once() -> None:
+    """Prepare the alignment model asynchronously and only once."""
+    aligner = captions.CaptionAligner()
+    loading_started = threading.Event()
+    allow_load_to_finish = threading.Event()
+    model_ready = threading.Event()
+    messages: list[tuple[str, str]] = []
+
+    def load_model() -> tuple[mock.Mock, dict[str, int]]:
+        loading_started.set()
+        allow_load_to_finish.wait()
+        return mock.Mock(), {}
+
+    def log(message: str, severity: str) -> None:
+        messages.append((message, severity))
+        if message == captions.string("ui.caption_alignment_ready"):
+            model_ready.set()
+
+    with mock.patch.object(aligner, "_load_model", side_effect=load_model) as load:
+        aligner.preload(log, "info")
+        try:
+            assert loading_started.wait(timeout=2)
+            aligner.preload(log, "info")
+            assert load.call_count == 1
+        finally:
+            allow_load_to_finish.set()
+
+    assert model_ready.wait(timeout=2)
+    assert messages == [
+        (captions.string("ui.caption_alignment_loading"), "info"),
+        (captions.string("ui.caption_alignment_ready"), "info"),
+    ]
+
+
 def test_caption_aligner_loads_model_lazily_and_aligns_ipa(
     tmp_path: Path,
 ) -> None:
-    """Load the selected acoustic model only when IPA alignment is requested."""
+    """Load the acoustic model on demand when startup preload is not used."""
     vocab = {"<pad>": 0, "h": 1, "ɛ": 2, "l": 3, "o": 4, "ʊ": 5}
     vocab_path = tmp_path / "vocab.json"
     vocab_path.write_text(json.dumps(vocab), encoding="utf-8")
@@ -67,9 +267,13 @@ def test_caption_aligner_loads_model_lazily_and_aligns_ipa(
     session.get_outputs.return_value = (SimpleNamespace(name="logits"),)
     session.run.return_value = (logits,)
     inference_session = mock.Mock(return_value=session)
+    session_options = SimpleNamespace(log_severity_level=2)
     download = mock.Mock(side_effect=("model.onnx", str(vocab_path)))
     hub = SimpleNamespace(hf_hub_download=download)
-    runtime = SimpleNamespace(InferenceSession=inference_session)
+    runtime = SimpleNamespace(
+        InferenceSession=inference_session,
+        SessionOptions=mock.Mock(return_value=session_options),
+    )
     aligner = captions.CaptionAligner()
     waveform = np.linspace(-0.5, 0.5, 14400, dtype=np.float32)
 
@@ -106,8 +310,10 @@ def test_caption_aligner_loads_model_lazily_and_aligns_ipa(
     ]
     inference_session.assert_called_once_with(
         "model.onnx",
+        sess_options=session_options,
         providers=["CPUExecutionProvider"],
     )
+    assert session_options.log_severity_level == 3
     assert session.run.call_count == 2
     assert espeak.call_args.args[0] == [
         "espeak-ng",

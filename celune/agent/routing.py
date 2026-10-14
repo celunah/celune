@@ -8,18 +8,14 @@ from uuid import uuid4
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Optional, cast
 
-from ..i18n import string
 from .runtime import AgentRuntime
+from ..i18n import string
 from ..modes import mode_allows_agents
 from ..vram import agent_vram_compatible
+from ..exceptions import _EmptyClassifierOutput
 from ..typing.common import JSON, JSONSerializable
 from ..typing.persona import PersonaClientResponse
 from ..conversation import build_agent_classification_request
-from ..typing.locks import (
-    ComponentLockName,
-    ComponentLockOwner,
-    ComponentLockRequirement,
-)
 from ..typing.agent import (
     AgentTask,
     AgentRoute,
@@ -37,14 +33,14 @@ from ..typing.agent import (
     AgentClassificationFailure,
     AgentClassificationFailureKind,
 )
-from ..utils import format_error_message
+from ..typing.locks import (
+    ComponentLockName,
+    ComponentLockOwner,
+    ComponentLockRequirement,
+)
 
 if TYPE_CHECKING:
     from ..celune import Celune
-
-
-class _EmptyClassifierOutput(ValueError):
-    """Identify a response that contains an empty structured-output field."""
 
 
 class AgentInputRouter:
@@ -569,14 +565,13 @@ class AgentInputRouter:
         if callable(log):
             log_level = getattr(self.engine, "log_level", "info")
             if log_level in {"verbose", "debug"}:
-                log(
-                    format_error_message(
-                        string("agent.classifier_failed"),
-                        error,
-                        log_level,
-                    )
+                reason = (
+                    f"{type(error).__name__}: {error}"
                     if error is not None
-                    else f"{string('agent.classifier_failed')}: {detail or kind.value}",
+                    else detail or kind.value
+                )
+                log(
+                    f"{string('agent.classifier_failed')} {reason}",
                     "warning",
                     loglevel="verbose",
                 )
