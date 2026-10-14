@@ -14,26 +14,16 @@ from typing import IO, Optional, cast
 from collections import OrderedDict, deque
 from collections.abc import Callable, Generator
 
-from celune.cedts import remote, worker
-from celune.typing.worker import (
-    WorkerValue,
-    WorkerMessage,
-)
-from celune.typing.backends import (
-    BackendModel,
-    _BackendRuntime,
-)
-from celune.backends.environment import (
-    BACKEND_MANIFESTS,
-    BackendManifest,
-    BackendEnvironment,
-)
 from celune.exceptions import (
     CEDTSError,
     BackendError,
     CEDTSEOFError,
     CEDTSTimeoutError,
     CEDTSProtocolError,
+)
+from celune.typing.worker import (
+    WorkerValue,
+    WorkerMessage,
 )
 from celune.cedts.protocol import (
     CEDTSLimits,
@@ -46,11 +36,21 @@ from celune.cedts.protocol import (
     limits_from_capabilities,
     validate_payload_descriptors,
 )
+from celune.typing.backends import (
+    BackendModel,
+    _BackendRuntime,
+)
+from celune.cedts import remote, worker
+from celune.backends.environment import (
+    BACKEND_MANIFESTS,
+    BackendManifest,
+    BackendEnvironment,
+)
 
-from .backend_processes import ShutdownProcess
 from .backend_environment_and_cedts import (
     TestBackendEnvironment as _TestBackendEnvironment,
 )
+from .backend_processes import ShutdownProcess
 
 
 class TestBackendEnvironment(_TestBackendEnvironment):
@@ -109,7 +109,8 @@ class TestBackendEnvironment(_TestBackendEnvironment):
         proxy = object.__new__(remote.RemoteBackendProxy)
         proxy._request = mock.Mock(return_value=7)
 
-        handle = proxy.load_model("slow-model")
+        with mock.patch("celune.registry.consent.require_model_consent"):
+            handle = proxy.load_model("slow-model")
 
         self.assertEqual(handle.identifier, 7)
         proxy._request.assert_called_once_with(

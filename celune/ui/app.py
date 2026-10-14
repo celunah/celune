@@ -6,13 +6,10 @@
 from __future__ import annotations
 
 import sys
-import queue as queue_module
 import asyncio
 import logging
 import itertools
 import threading
-from io import TextIOWrapper
-from types import ModuleType
 from typing import (
     TYPE_CHECKING,
     Never,
@@ -26,11 +23,12 @@ from typing import (
     final,
 )
 from pathlib import Path
+import queue as queue_module
+from io import TextIOWrapper
+from types import ModuleType
 from dataclasses import field, dataclass
 from collections.abc import Callable, Iterator
 
-from textual import work, events
-from rich.text import Text
 from textual.app import (
     App,
     ReturnType,
@@ -39,42 +37,48 @@ from textual.app import (
     ScreenStackError,
     AutopilotCallbackType,
 )
-from textual.color import Color
-from textual.theme import Theme
-from textual.timer import Timer
-from textual.screen import ModalScreen
-from textual.widget import Widget
-from textual.message import Message
+from rich.text import Text
 from textual.widgets import (
+    Input,
     Label,
     RichLog,
+    Static,
     TextArea,
     ProgressBar,
 )
 from textual.widgets import (
     Button as TextualButton,
 )
+from textual.color import Color
+from textual.theme import Theme
+from textual.timer import Timer
+from textual import work, events
+from textual.widget import Widget
+from textual.message import Message
+from textual.screen import ModalScreen
+from textual.binding import BindingType
 from textual.css.query import NoMatches
 from textual.css.types import EdgeStyle
 from textual.containers import Vertical, Horizontal
 
-from ..i18n import string, tagged_string
-from .theme import CELUNE_CSS, severity_color
-from .compat import install_textual_timer_sleep
-from .loading import CeluneLoadingScreen
-from ..threads import run_in_daemon_thread
-from .terminal import SelectMenuOption, SelectMenuWidget
-from ..watchdog import launcher_loss_requested
-from ..constants import BASE_SR, SIGTSTP, APP_NAME, ExitCodes
-from ..typing.ui import CeluneUIMethodSurface
-from ..typing.agent import AgentTaskState
 from ..typing.locks import (
     ComponentLockName,
     ComponentLockOwner,
     ComponentLockRequirement,
 )
+from ..i18n import string, tagged_string
+from .loading import CeluneLoadingScreen
+from ..typing.agent import AgentTaskState
+from ..registry.types import ModelMetadata
+from ..threads import run_in_daemon_thread
 from ..typing.common import JSONSerializable
+from .theme import CELUNE_CSS, severity_color
+from ..typing.ui import CeluneUIMethodSurface
+from ..watchdog import launcher_loss_requested
+from .compat import install_textual_timer_sleep
 from ..typing.config import AudioDeviceInfoValue
+from .terminal import SelectMenuOption, SelectMenuWidget
+from ..constants import BASE_SR, SIGTSTP, APP_NAME, ExitCodes
 from ..theme.defaults import default_theme_family, default_error_theme_family
 
 install_textual_timer_sleep()
@@ -454,6 +458,109 @@ class SelectMenuOverlay(ModalScreen[None]):
     def on_click(self, event: events.Click) -> None:
         """Consume clicks outside the menu popup."""
         event.stop()
+
+
+class ModelConsentScreen(ModalScreen[bool]):
+    """Require an exact typed acknowledgement before Celune loads a model."""
+
+    BINDINGS: ClassVar[list[BindingType]] = [("escape", "decline", "Decline")]
+    DEFAULT_CSS = """
+    ModelConsentScreen {
+        align: center middle;
+        background: $background 90%;
+    }
+    #model-consent-panel {
+        width: 82%;
+        max-width: 88;
+        max-height: 90%;
+        height: auto;
+        padding: 1 2;
+        border: round $accent;
+        background: $surface;
+    }
+    #model-consent-prompt {
+        height: auto;
+        margin-bottom: 1;
+    }
+    #model-consent-detail {
+        height: auto;
+        color: $text-muted;
+    }
+    #model-consent-phrase {
+        margin-top: 1;
+    }
+    #model-consent-actions {
+        height: auto;
+        margin-top: 1;
+        align-horizontal: right;
+    }
+    """
+
+    def __init__(
+        self,
+        prompt: str,
+        instruction: str,
+        details: tuple[str, ...],
+        entry_hint: str,
+        consent_phrase: str,
+        accept_label: str,
+        decline_label: str,
+    ) -> None:
+        super().__init__()
+        self.prompt = prompt
+        self.instruction = instruction
+        self.details = details
+        self.entry_hint = entry_hint
+        self.consent_phrase = consent_phrase
+        self.accept_label = accept_label
+        self.decline_label = decline_label
+
+    def compose(self) -> ComposeResult:
+        """Yield the license source, restriction details and decision controls."""
+        with Vertical(id="model-consent-panel"):
+            yield Static(self.prompt, id="model-consent-prompt")
+            yield Static(self.instruction)
+            for detail in self.details:
+                yield Static(detail, classes="model-consent-detail")
+            yield Input(
+                placeholder=self.entry_hint,
+                id="model-consent-phrase",
+            )
+            with Horizontal(id="model-consent-actions"):
+                yield TextualButton(
+                    self.decline_label,
+                    id="model-consent-decline",
+                    variant="default",
+                )
+                yield TextualButton(
+                    self.accept_label,
+                    id="model-consent-accept",
+                    variant="primary",
+                    disabled=True,
+                )
+
+    def on_mount(self) -> None:
+        """Focus the exact phrase field when the consent screen opens."""
+        self.query_one(Input).focus()
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        """Enable consent only after the requested phrase is typed verbatim."""
+        self.query_one("#model-consent-accept", TextualButton).disabled = (
+            event.value != self.consent_phrase
+        )
+
+    def on_button_pressed(self, event: TextualButton.Pressed) -> None:
+        """Return the decision selected by the user."""
+        if event.button.id == "model-consent-accept":
+            if self.query_one(Input).value == self.consent_phrase:
+                self.dismiss(True)
+            return
+        if event.button.id == "model-consent-decline":
+            self.dismiss(False)
+
+    def action_decline(self) -> None:
+        """Reject the pending model load when the user presses Escape."""
+        self.dismiss(False)
 
 
 def indent(text: str, spaces: int, direction: str = "left") -> str:
@@ -1396,10 +1503,69 @@ class CeluneUI(App, CeluneUIMethodSurface):
             daemon=True,
         ).start()
 
+    def _request_model_consent(self, metadata: ModelMetadata) -> bool:
+        """Show one blocking consent screen while model work waits in its thread."""
+        from ..registry.consent import consent_details, consent_prompt_text
+
+        prompt, instruction = consent_prompt_text(metadata)
+        screen = ModelConsentScreen(
+            prompt=prompt,
+            instruction=instruction,
+            details=consent_details(metadata),
+            entry_hint=string("registry.consent_entry_hint"),
+            consent_phrase=string("registry.consent_phrase"),
+            accept_label=string("registry.consent_accept"),
+            decline_label=string("registry.consent_decline"),
+        )
+        response = threading.Event()
+        decision: list[Optional[bool]] = [None]
+        waiting_status = string("registry.waiting_status")
+        from ..registry.consent import consent_status, pending_model_consents
+
+        def show_screen() -> None:
+            """Present the modal and route its result to the waiting thread."""
+            self.safe_status(waiting_status, "warning")
+
+            def on_consent_result(accepted: Optional[bool]) -> None:
+                """Wake the model-loading worker with the user's decision."""
+                decision[0] = accepted
+                response.set()
+
+            self.push_screen(screen, on_consent_result)
+
+        self._run_on_ui_thread(show_screen)
+        browser_accepted = False
+        while not response.wait(0.2):
+            if consent_status(metadata):
+                browser_accepted = True
+                self._run_on_ui_thread(
+                    lambda: self.pop_screen() if self.screen is screen else None
+                )
+                break
+            if not any(
+                pending.model_id == metadata.model_id
+                and pending.revision == metadata.revision
+                for pending in pending_model_consents()
+            ):
+                self._run_on_ui_thread(
+                    lambda: self.pop_screen() if self.screen is screen else None
+                )
+                break
+            if self.cur_state == "exiting":
+                return False
+
+        if self._status_text == waiting_status:
+            self.safe_status(string("ui.idle_status"))
+        return browser_accepted or decision[0] is True
+
     def _load_tts(self) -> None:
         """Load the app runtime."""
         if self.cur_state == "exiting":
             return
+        from ..exceptions import ModelConsentDeclined
+        from ..registry.consent import set_model_consent_handler
+
+        set_model_consent_handler(self._request_model_consent)
         self._latest_startup_error = None
         try:
             loaded = self.celune.load()
@@ -1464,6 +1630,17 @@ class CeluneUI(App, CeluneUIMethodSurface):
                 self.error(string("ui.app_could_not_start", app_name=APP_NAME))
                 self._show_loading_error(failure_message)
                 self._finish_test_startup(False, failure_message)
+        except ModelConsentDeclined:
+            if self.cur_state == "exiting":
+                return
+            self.cur_state = "error"
+            message = string("registry.consent_declined")
+            self.celune.fatal()
+            self.change_input_state(locked=True)
+            self.change_voice_lock_state(locked=True)
+            self.safe_status(message, "warning")
+            self._show_loading_error(message)
+            self._finish_test_startup(False, message)
         except Exception as e:
             if self.cur_state == "exiting":
                 return

@@ -5,16 +5,17 @@ from typing import Union, Optional
 from collections.abc import Mapping, Callable
 
 import torch
-from transformers import AutoTokenizer, AutoModelForCausalLM
 from transformers.modeling_utils import PreTrainedModel
+from transformers import AutoTokenizer, AutoModelForCausalLM
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 
 from .i18n import string
 from .vram import resolve_vram_preset
-from .paths import huggingface_progress
-from .constants import NORMALIZER_MODEL_ID
 from .backends.tts import CeluneBackend
+from .paths import huggingface_progress
 from .typing.common import JSONSerializable
+from .registry.other import NORMALIZER_MODEL_ID
+from .registry.consent import require_model_consent
 
 NORMALIZER_SPECIAL_TOKENS = ("<|im_start|>", "<|im_end|>", "<NORM>")
 NORMALIZER_DEVICE = "cpu"
@@ -60,15 +61,21 @@ def load_normalizer_components(
     else:
         backend_obj = backend
 
+    metadata = require_model_consent(NORMALIZER_MODEL_ID)
     available, path = backend_obj.model_is_available_locally(NORMALIZER_MODEL_ID)
     model_ref = path if available and path is not None else NORMALIZER_MODEL_ID
+    model_options: dict[str, str] = {}
+    if model_ref == NORMALIZER_MODEL_ID:
+        model_options["revision"] = metadata.revision
 
     if available:
         log(string("modeling.normalizer_cached"), "info")
 
     with huggingface_progress(progress_callback):
         tokenizer = AutoTokenizer.from_pretrained(
-            model_ref, extra_special_tokens=list(NORMALIZER_SPECIAL_TOKENS)
+            model_ref,
+            extra_special_tokens=list(NORMALIZER_SPECIAL_TOKENS),
+            **model_options,
         )
 
         if tokenizer is None:
@@ -81,5 +88,6 @@ def load_normalizer_components(
             model_ref,
             dtype=torch.bfloat16,
             device_map=device_map,
+            **model_options,
         )
     return tokenizer, llm

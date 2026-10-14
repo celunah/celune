@@ -5,31 +5,32 @@ from __future__ import annotations
 
 import json
 import queue
-import string as string_module
 import importlib
 import itertools
 import threading
 import subprocess
 import unicodedata
-from typing import TYPE_CHECKING, Optional, Protocol, cast
 from pathlib import Path
+import string as string_module
 from collections.abc import Mapping, Callable, Sequence
+from typing import TYPE_CHECKING, Optional, Protocol, cast
 
 import numpy as np
 from iso639.exceptions import InvalidLanguageValue, DeprecatedLanguageValue
 
 from .i18n import string
-from .utils import format_error_message
 from .constants import BASE_SR
-from .typing.aliases import LogLevel, AudioChunks
-from .typing.pipeline import SpeechStreamQueue
+from .utils import format_error_message
 from .audio.resampling import resample_audio
+from .typing.pipeline import SpeechStreamQueue
+from .typing.aliases import LogLevel, AudioChunks
+from .registry.consent import require_model_consent
+from .registry.other import CAPTION_ALIGNMENT_MODEL_ID
 from .dataclasses.pipeline import SpeechTiming, CaptionAlignmentSection
 
 if TYPE_CHECKING:
     from .celune import Celune
 
-_ALIGNMENT_MODEL_ID = "sadda-speech/wav2vec2-espeak-ctc"
 _MODEL_SAMPLE_RATE = 16000
 _MODEL_FRAME_RATE = 50.0
 _ONNX_LOG_SEVERITY_ERROR = 3
@@ -44,6 +45,13 @@ class _NamedModelValue(Protocol):
     """ONNX Runtime input or output metadata."""
 
     name: str
+
+
+class _HubDownload(Protocol):
+    """Subset of the Hugging Face download helper used by the aligner."""
+
+    def __call__(self, repo_id: str, filename: str, *, revision: str) -> str:
+        """Download a repository file from an exact commit revision."""
 
 
 class _InferenceSession(Protocol):
@@ -225,9 +233,19 @@ class CaptionAligner:
                     if error.name != "onnxruntime":
                         raise
                     raise _OnnxRuntimeNotFound("onnxruntime") from error
-                download = cast(Callable[[str, str], str], hub.hf_hub_download)
-                model_path = download(_ALIGNMENT_MODEL_ID, "model.onnx")
-                vocab_path = download(_ALIGNMENT_MODEL_ID, "vocab.json")
+                metadata = require_model_consent(CAPTION_ALIGNMENT_MODEL_ID)
+                revision = metadata.revision
+                download = cast(_HubDownload, hub.hf_hub_download)
+                model_path = download(
+                    CAPTION_ALIGNMENT_MODEL_ID,
+                    "model.onnx",
+                    revision=revision,
+                )
+                vocab_path = download(
+                    CAPTION_ALIGNMENT_MODEL_ID,
+                    "vocab.json",
+                    revision=revision,
+                )
                 vocab = cast(
                     dict[str, int],
                     json.loads(Path(vocab_path).read_text(encoding="utf-8")),

@@ -4,16 +4,18 @@
 import torch
 import pytest
 
-from celune.exceptions import InvalidCheckpoint, ModelContractError
-from celune.backends.tts.contracts import (
+from celune.registry.tts import (
     MODEL_CONTRACTS,
     QuantizationRule,
     RuntimeDtypeRule,
     TensorInventoryContract,
     model_contract,
+)
+from celune.backends.tts.contracts import (
     _canonical_inventory,
     validate_model_state,
 )
+from celune.exceptions import InvalidCheckpoint, ModelContractError
 
 
 def test_all_tts_contracts_have_pinned_artifacts() -> None:

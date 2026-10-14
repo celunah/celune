@@ -22,36 +22,24 @@ import numpy as np
 import soundfile as sf
 
 from celune.i18n import string
-from celune.utils import discard
-from celune.celune import Celune
-from celune.typing.aliases import AudioChunk
-from celune.backends.vc import (
-    resolve_vc_backend,
-)
-from celune.backends.vc.seedvc import CeluneSeedVCBackend
-from celune.extensions.manager import CeluneExtensionManager
-from celune.dataclasses.pipeline import VoiceConversionRequest
-from celune.extensions.base import CeluneContext, CeluneExtension
-from celune.backends.tts import BACKEND_MANIFESTS, resolve_backend
-from celune.backends.vc import (
-    BACKEND_MANIFESTS as VC_BACKEND_MANIFESTS,
-)
 from celune.exceptions import (
     InvalidExtensionError,
     ExtensionAlreadyRegisteredError,
+)
+from celune.celune import Celune
+from celune.utils import discard
+from celune.backends.vc import (
+    resolve_vc_backend,
+)
+from celune.backends.vc import (
+    BACKEND_MANIFESTS as VC_BACKEND_MANIFESTS,
 )
 from celune.typing.backends import (
     BackendModel,
     SeedVCModelValue,
     _SeedVCRealtimeModule,
 )
-from celune.backends.tts.fireredtts3 import (
-    FireRedTTS3,
-    _FireRedModel,
-    _FireRedRedAE,
-    _create_firered_model,
-    _FireRedIncrementalDecoder,
-)
+from celune.registry import MODEL_BY_ID
 from celune.backends.tts.luxtts import (
     LuxTTS,
     _LuxTTSModel,
@@ -59,6 +47,22 @@ from celune.backends.tts.luxtts import (
     _install_vocoder_decode_guard,
     _install_cpu_duration_correction,
 )
+from celune.typing.aliases import AudioChunk
+from celune.backends.tts.fireredtts3 import (
+    FireRedTTS3,
+    _FireRedModel,
+    _FireRedRedAE,
+    _create_firered_model,
+    _FireRedIncrementalDecoder,
+)
+from celune.backends.tts.base import CeluneBackend
+from celune.registry.tts import QWEN3_DEFAULT_MODEL_ID
+from celune.backends.vc.seedvc import CeluneSeedVCBackend
+from celune.extensions.manager import CeluneExtensionManager
+from celune.dataclasses.pipeline import VoiceConversionRequest
+from celune.extensions.base import CeluneContext, CeluneExtension
+from celune.backends.tts import BACKEND_MANIFESTS, resolve_backend
+
 from .support import (
     FakeBackend,
     FakeVCBackend,
@@ -74,18 +78,27 @@ from .support import (
 class TestBackend(CeluneTestCase):
     """Tests for backend base behavior and backend resolution."""
 
+    def setUp(self) -> None:
+        """Keep synthetic Seed-VC backend tests independent of model consent."""
+        consent_patch = mock.patch(
+            "celune.backends.vc.seedvc._require_seedvc_model_consents"
+        )
+        consent_patch.start()
+        self.addCleanup(consent_patch.stop)
+
     def test_tts_load_oom_does_not_retry_unquantized_model(self) -> None:
         """Verify CUDA OOM releases a partial load without retrying BF16."""
         backend = FakeBackend(quantize=True)
         backend.quantization_attempted = True
         oom = torch.cuda.OutOfMemoryError("CUDA out of memory")
         with (
+            mock.patch("celune.registry.consent.require_model_consent"),
             mock.patch.object(backend, "load_model", side_effect=oom) as load,
             mock.patch.object(backend, "unload_model") as unload,
             mock.patch("celune.backends.tts.base.release_cuda_after_oom") as release,
             pytest.raises(torch.cuda.OutOfMemoryError),
         ):
-            backend.load_default_model()
+            CeluneBackend.load_default_model(backend)
 
         load.assert_called_once()
         unload.assert_called_once()
@@ -114,6 +127,7 @@ class TestBackend(CeluneTestCase):
 
         download.assert_called_once_with(
             repo_id="lunahr/pocket-tts-ungated",
+            revision=MODEL_BY_ID["lunahr/pocket-tts-ungated"].revision,
             cache_dir=str(Path("C:/celune/huggingface/hub")),
         )
 
@@ -171,6 +185,7 @@ class TestBackend(CeluneTestCase):
         )
         download.assert_called_once_with(
             repo_id=transcriber_model_id,
+            revision=MODEL_BY_ID[transcriber_model_id].revision,
             cache_dir=str(Path("C:/celune/huggingface/hub")),
         )
 
@@ -1393,7 +1408,7 @@ class TestBackend(CeluneTestCase):
     ) -> None:
         """Verify Celune redirects Seed-VC downloads into the shared Hugging Face cache."""
         backend = CeluneSeedVCBackend(log=lambda _msg, _severity="info": None)
-        captured: list[tuple[str, str, str]] = []
+        captured: list[tuple[str, str, str, Optional[str]]] = []
 
         fake_hf_utils = ModuleType("seed_vc.hf_utils")
         fake_wrapper = ModuleType("seed_vc.seed_vc_wrapper")
@@ -1402,8 +1417,9 @@ class TestBackend(CeluneTestCase):
             repo_id: str,
             filename: str,
             cache_dir: str,
+            revision: Optional[str] = None,
         ) -> str:
-            captured.append((repo_id, filename, cache_dir))
+            captured.append((repo_id, filename, cache_dir, revision))
             return str(Path(cache_dir) / filename)
 
         setattr(fake_hf_utils, "hf_hub_download", fake_hf_hub_download)  # noqa: B010
@@ -1452,6 +1468,7 @@ class TestBackend(CeluneTestCase):
                 "funasr/campplus",
                 "campplus_cn_common.bin",
                 str(expected_cache_dir),
+                "e4b6ede7ce16997aff4ae69fbca1f0175e2afede",
             )
         ]
 
@@ -1778,7 +1795,7 @@ class TestBackend(CeluneTestCase):
                 backend = qwen3_cls(
                     log=lambda _msg, _severity="info": None, quantize=False
                 )
-                assert backend.load_model("Qwen/test") is model
+                assert backend.load_model(QWEN3_DEFAULT_MODEL_ID) is model
                 assert os.environ["NUMBA_CACHE_DIR"] == str(tmp_path / "numba")
 
             from_pretrained.assert_called_once_with(str(tmp_path / "snapshot"))

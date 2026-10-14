@@ -10,33 +10,33 @@ import secrets
 import threading
 import contextlib
 import unittest.mock
-from abc import ABC, abstractmethod
 from typing import (
     Union,
     Optional,
     cast,
 )
 from pathlib import Path
+from abc import ABC, abstractmethod
 from collections.abc import Mapping, Callable, Iterator, Generator
 
-import numpy as np
 import torch
+import numpy as np
 import soundfile as sf
 from huggingface_hub import snapshot_download
 
 from ...i18n import string
-from ...vram import backend_vram_report, is_cuda_out_of_memory, release_cuda_after_oom
-from ...paths import temp_data_dir, huggingface_progress, huggingface_hub_cache_dir
 from ...utils import discard
-from ...cevoice import CEVoiceLoader, default_loader
-from .contracts import ModelContract
-from .contracts import model_contract as resolve_model_contract
+from ...typing.common import JSON
 from ...constants import N_A_NUMERIC
 from ...exceptions import BackendError
-from .quantization import QuantizationMode, quantization_mode, quantize_component
-from ...typing.common import JSON
-from ...typing.aliases import LogLevel, AudioChunk, RuntimeValue
+from ...registry.tts import ModelContract
 from ...typing.backends import BackendModel
+from ...cevoice import CEVoiceLoader, default_loader
+from ...typing.aliases import LogLevel, AudioChunk, RuntimeValue
+from ...registry.tts import model_contract as resolve_model_contract
+from .quantization import QuantizationMode, quantization_mode, quantize_component
+from ...paths import temp_data_dir, huggingface_progress, huggingface_hub_cache_dir
+from ...vram import backend_vram_report, is_cuda_out_of_memory, release_cuda_after_oom
 
 __all__ = [
     "BackendModel",
@@ -97,13 +97,16 @@ def _call_runtime_hook_if_present(value: RuntimeValue, name: str) -> bool:
 
 
 def cached_hf_snapshot_path(
-    model: str, expected_files: list[str]
+    model: str,
+    expected_files: list[str],
+    revision: Optional[str] = None,
 ) -> tuple[bool, Optional[str]]:
     """Return whether a cached Hugging Face cache path for a model is available and usable.
 
     Args:
         model: The model ID to return a cache path for.
         expected_files: The files that are expected to already exist in the cache path, if found.
+        revision: Exact commit to inspect when the model is not built in.
 
     Returns:
         tuple[bool, Optional[str]]: Whether there is a usable cache path for the model, and its location.
@@ -112,14 +115,19 @@ def cached_hf_snapshot_path(
         str(huggingface_hub_cache_dir()),
         f"models--{model.replace('/', '--')}",
     )
-    refs_main = os.path.join(model_dir, "refs", "main")
     snapshot_dir = os.path.join(model_dir, "snapshots")
+    from ...registry import get_model_metadata
 
-    if not os.path.exists(refs_main):
-        return False, None
-
-    with open(refs_main, encoding="utf-8") as f:
-        commit = f.read().strip()
+    metadata = get_model_metadata(model)
+    commit = metadata.revision if metadata is not None else revision
+    if metadata is not None and revision is not None and revision != metadata.revision:
+        raise ValueError("built-in model cache lookup requires its registry revision")
+    if commit is None:
+        refs_main = os.path.join(model_dir, "refs", "main")
+        if not os.path.exists(refs_main):
+            return False, None
+        with open(refs_main, encoding="utf-8") as f:
+            commit = f.read().strip()
 
     snapshot_path = os.path.join(snapshot_dir, commit)
     if not os.path.isdir(snapshot_path):
@@ -617,6 +625,10 @@ class CeluneBackend[ModelT](ABC):
         if self.model_name is None:
             raise ValueError(f"{self.name} does not have a configured model to load")
 
+        from ...registry.consent import require_model_consent
+
+        require_model_consent(self.model_name)
+
         try:
             self.model = self.load_model(self.model_name)
         except Exception as error:
@@ -674,14 +686,19 @@ class CeluneBackend[ModelT](ABC):
 
     def preload_models(self) -> None:
         """Ensure all required models are available locally."""
+        from ...registry.consent import require_model_consent
+
+        cache_dir = huggingface_hub_cache_dir(create=True)
         for model_id in self.all_model_ids:
+            metadata = require_model_consent(model_id)
             available, _ = self.model_is_available_locally(model_id)
             if not available:
                 self.log(string("tts.model_downloading", model_id=model_id), "info")
                 with huggingface_progress(self.report_progress):
                     snapshot_download(
                         repo_id=model_id,
-                        cache_dir=str(huggingface_hub_cache_dir(create=True)),
+                        revision=metadata.revision,
+                        cache_dir=str(cache_dir),
                     )
             else:
                 self.log(string("tts.model_available", model_id=model_id), "info")

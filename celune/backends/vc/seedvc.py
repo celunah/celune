@@ -20,21 +20,23 @@ import torchaudio
 import numpy as np
 import soundfile as sf
 
-from ...i18n import string
-from ...utils import available
-from .base import CeluneVCBackend
-from ...typing.aliases import AudioChunk, SeedVCGenerator
-from ...dataclasses.pipeline import AudioOutput, VoiceConversionRequest
-from ...typing.backends import (
-    SeedVCModelValue,
-    _SeedVCWrapper,
-    _SeedVCRealtimeModule,
-)
 from ...paths import (
     huggingface_progress,
     configure_numba_cache,
     huggingface_hub_cache_dir,
 )
+from ...i18n import string
+from ...utils import available
+from ...typing.backends import (
+    SeedVCModelValue,
+    _SeedVCWrapper,
+    _SeedVCRealtimeModule,
+)
+from .base import CeluneVCBackend
+from ...registry import OTHER_MODELS
+from ...registry.consent import require_model_consent
+from ...typing.aliases import AudioChunk, SeedVCGenerator
+from ...dataclasses.pipeline import AudioOutput, VoiceConversionRequest
 
 __all__ = ["CeluneSeedVCBackend"]
 
@@ -48,6 +50,13 @@ _LIVE_INFERENCE_CFG_RATE = 0.7
 _LIVE_MAX_PROMPT_SECONDS = 3.0
 _F0_LIVE_OVERLAP_SECONDS = 0.04
 _LIVE_OUTPUT_PEAK = 0.95
+
+
+def _require_seedvc_model_consents() -> None:
+    """Check terms for every repository loaded by the Seed-VC runtime."""
+    for metadata in OTHER_MODELS:
+        if "seed_vc" in metadata.roles:
+            require_model_consent(metadata.model_id)
 
 
 class _TemporaryWaveFile:
@@ -165,11 +174,13 @@ class CeluneSeedVCBackend(CeluneVCBackend):
             model_filename: str = "pytorch_model.bin",
             config_filename: Optional[str] = None,
         ):
+            metadata = require_model_consent(repo_id)
             cache_dir.mkdir(parents=True, exist_ok=True)
             model_path = hf_hub_download(
                 repo_id=repo_id,
                 filename=model_filename,
                 cache_dir=str(cache_dir),
+                revision=metadata.revision,
             )
             if config_filename is None:
                 return model_path
@@ -178,6 +189,7 @@ class CeluneSeedVCBackend(CeluneVCBackend):
                 repo_id=repo_id,
                 filename=config_filename,
                 cache_dir=str(cache_dir),
+                revision=metadata.revision,
             )
             return model_path, config_path
 
@@ -200,6 +212,7 @@ class CeluneSeedVCBackend(CeluneVCBackend):
 
     def _get_wrapper(self) -> _SeedVCWrapper:
         """Return a cached Seed-VC wrapper instance."""
+        _require_seedvc_model_consents()
         with self._wrapper_lock:
             if self._wrapper is None:
                 wrapper_type = self._load_wrapper_type()
@@ -212,6 +225,7 @@ class CeluneSeedVCBackend(CeluneVCBackend):
         self,
     ) -> tuple[_SeedVCRealtimeModule, tuple[SeedVCModelValue, ...]]:
         """Return the cached native Seed-VC real-time module and model set."""
+        _require_seedvc_model_consents()
         with self._wrapper_lock:
             if self._live_module is None or self._live_model_set is None:
                 configure_numba_cache()

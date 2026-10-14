@@ -4,30 +4,35 @@
 # pylint: disable=ungrouped-imports
 
 import os
+import html
 import json
 import time
 import uuid
 import errno
+import base64
 import socket
 import asyncio
 import inspect
+import secrets
+import binascii
 import datetime
-import textwrap
 import threading
 import contextlib
-from hmac import compare_digest
 from typing import (
     Union,
     Literal,
     Optional,
 )
-from collections import deque, defaultdict
+from hashlib import sha256
+from urllib.parse import urlsplit
 from dataclasses import field, dataclass
+from collections import deque, defaultdict
+from hmac import compare_digest, new as hmac_new
 from collections.abc import Callable, Iterator, Awaitable
 
+import uvicorn
 import numpy as np
 import gradio as gr
-import uvicorn
 from fastapi import (
     File,
     Form,
@@ -38,77 +43,95 @@ from fastapi import (
     HTTPException,
     WebSocketDisconnect,
 )
-from pydantic import Field, BaseModel
 from fastapi.responses import (
     Response,
     FileResponse,
+    HTMLResponse,
     JSONResponse,
     RedirectResponse,
     StreamingResponse,
 )
+from pydantic import Field, BaseModel
+from starlette.datastructures import Headers
 from starlette.concurrency import run_in_threadpool
+from starlette.types import Send, Scope, ASGIApp, Receive
 from starlette.middleware.base import RequestResponseEndpoint
 
-from . import __version__
-from .ui import resources as ui_resources
-from .i18n import string
-from .paths import project_root
-from .theme import colors
-from .utils import available, format_error_message
-from .celune import Celune
-from .cevoice import default_loader
+from .webui import (
+    api_log,
+    _flac_bytes,
+    audio_bytes,
+    _task_status,
+    require_celune,
+    stream_headers,
+    _webui_snapshot,
+    _seed_webui_logs,
+    _append_webui_log,
+    _set_webui_status,
+    _forget_speech_job,
+    _update_speech_job,
+    _collect_speech_job,
+    _publish_task_event,
+    _remember_speech_job,
+    _speech_job_snapshot,
+    _webui_vc_mode_active,
+    _wrap_celune_callbacks,
+    _set_active_speech_task,
+    _strip_webui_log_prefix,
+    _subscribe_webui_events,
+    _publish_active_task_log,
+    _subscribe_to_speech_job,
+    _webui_input_placeholder,
+    _unsubscribe_from_speech_job,
+    _subscribe_webui_timed_updates,
+)
 from .speech import (
     prepare_playback_audio,
 )
-from .audio.dsp import resample_audio
-from .constants import BASE_SR, APP_NAME
-from .exceptions import TaskSubscriptionClosed
+from .i18n import string
+from .theme import colors
 from .typing.api import (
     TaskStatus,
     TaskEventName,
     TaskCommandName,
 )
-from .typing.common import JSONSerializable
-from .typing.events import EventName, EventCallback
-from .typing.aliases import LogLevel
-from .extensions.events import EventDispatcher
-from . import webactions, webui
 from .webactions import (
     _build_webui,
+    _webui_speak,
+    _webui_run_command,
     _decode_uploaded_audio,
     _voice_conversion_unavailable_response,
-    _webui_run_command,
-    _webui_speak,
 )
-from .webui import (
-    _append_webui_log,
-    _collect_speech_job,
-    _flac_bytes,
-    _forget_speech_job,
-    _publish_active_task_log,
-    _publish_task_event,
-    _remember_speech_job,
-    _seed_webui_logs,
-    _set_active_speech_task,
-    _set_webui_status,
-    _speech_job_snapshot,
-    _strip_webui_log_prefix,
-    _subscribe_to_speech_job,
-    _subscribe_webui_events,
-    _subscribe_webui_timed_updates,
-    _task_status,
-    _unsubscribe_from_speech_job,
-    _update_speech_job,
-    _webui_input_placeholder,
-    _webui_snapshot,
-    _webui_theme_html,
-    _webui_vc_mode_active,
-    _wrap_celune_callbacks,
-    api_log,
-    audio_bytes,
-    require_celune,
-    stream_headers,
+from .exceptions import (
+    ModelConsentDeclined,
+    ModelConsentRequired,
+    TaskSubscriptionClosed,
 )
+from .celune import Celune
+from .paths import project_root
+from .registry.consent import (
+    consent_details,
+    consent_prompt_text,
+    consent_status,
+    enter_api_model_request,
+    exit_api_model_request,
+    model_metadata_for_revision,
+    pending_model_consents,
+    record_model_consent,
+    registered_models,
+)
+from .cevoice import default_loader
+from .typing.aliases import LogLevel
+from .audio.dsp import resample_audio
+from .constants import BASE_SR, APP_NAME
+from .ui import resources as ui_resources
+from .registry.types import ModelMetadata
+from .typing.common import JSONSerializable
+from . import webui, webactions, __version__
+from .extensions.events import EventDispatcher
+from .utils import available, format_error_message
+from .typing.events import EventName, EventCallback
+from .webui_assets import read_webui_asset, webui_asset_response_data
 
 _receive_webui_timed_update = webui._receive_webui_timed_update
 _webui_audio_waveform_options = webui._webui_audio_waveform_options
@@ -123,6 +146,45 @@ CeluneUI = webui.CeluneUI
 UiTimedUpdate = webui.UiTimedUpdate
 
 api = FastAPI(title=f"{APP_NAME}API")
+
+
+@api.exception_handler(ModelConsentRequired)
+async def model_consent_required_response(
+    request: Request,
+    error: ModelConsentRequired,
+) -> JSONResponse:
+    """Return structured model terms when an operation needs acknowledgement."""
+    del request
+    metadata = error.metadata
+    return JSONResponse(
+        status_code=428,
+        content={
+            "error": "model_consent_required",
+            "model": metadata.to_dict(consented=consent_status(metadata)),
+        },
+    )
+
+
+@api.exception_handler(ModelConsentDeclined)
+async def model_consent_declined_response(
+    request: Request,
+    error: ModelConsentDeclined,
+) -> JSONResponse:
+    """Reject an operation after the user declines model terms."""
+    del request
+    return JSONResponse(
+        status_code=403,
+        content={
+            "error": "model_consent_declined",
+            "message": string("registry.consent_declined"),
+            "model": error.metadata.to_dict(consented=False),
+        },
+    )
+
+
+WEBUI_AUTH_PATH = "/ui/key"
+WEBUI_AUTH_COOKIE = "celune_webui_session"
+WEBUI_AUTH_SESSION_SECONDS = 30 * 24 * 60 * 60
 bound_celune: Optional[Celune] = None
 auth_token: Optional[str] = None
 rate_limit_per_minute = 60
@@ -218,6 +280,14 @@ class TaskCommandResponse(BaseModel):
     status: str
 
 
+class ModelConsentRequest(BaseModel):
+    """Exact-revision user decision submitted by an API or WebUI client."""
+
+    model_id: str = Field(min_length=3, max_length=256)
+    revision: str = Field(pattern=r"^[0-9a-f]{40}$")
+    accepted: bool
+
+
 @dataclass
 class TaskSubscription:
     """Event-loop-owned queue with a thread-safe event publisher."""
@@ -296,523 +366,8 @@ def _run_async_runtime_call(
     raise RuntimeError("synchronous runtime calls cannot run on an active event loop")
 
 
-WEBUI_HEAD = textwrap.dedent(
-    """
-    <link rel="icon" type="image/x-icon" href="/favicon.ico">
-    <link rel="shortcut icon" type="image/x-icon" href="/favicon.ico">
-    <script>
-    (() => {
-      if (window.__celuneLogAutoscrollInstalled) {
-        return;
-      }
-      window.__celuneLogAutoscrollInstalled = true;
-
-      const logScrollThreshold = 24;
-
-      function isNearLogBottom(logElement) {
-        return logElement.scrollHeight - logElement.scrollTop - logElement.clientHeight
-          <= logScrollThreshold;
-      }
-
-      function scrollLogToBottom() {
-        const logElement = document.querySelector("#celune-log-panel pre");
-        if (!logElement) {
-          return;
-        }
-        logElement.scrollTop = logElement.scrollHeight;
-      }
-
-      function updateLogFollowState(event) {
-        window.__celuneLogAutoscrollFollow = isNearLogBottom(event.currentTarget);
-      }
-
-      function installLogObserver() {
-        const logElement = document.querySelector("#celune-log-panel pre");
-        if (!logElement) {
-          return;
-        }
-
-        if (window.__celuneLogAutoscrollTarget === logElement) {
-          return;
-        }
-
-        const previousLogElement = window.__celuneLogAutoscrollTarget;
-        if (previousLogElement) {
-          window.__celuneLogAutoscrollFollow = isNearLogBottom(previousLogElement);
-        } else if (typeof window.__celuneLogAutoscrollFollow !== "boolean") {
-          window.__celuneLogAutoscrollFollow = true;
-        }
-
-        window.__celuneLogAutoscrollTarget = logElement;
-        logElement.addEventListener("scroll", updateLogFollowState, {
-          passive: true,
-        });
-        if (window.__celuneLogAutoscrollFollow) {
-          window.requestAnimationFrame(scrollLogToBottom);
-        }
-
-        if (window.__celuneLogAutoscrollObserver) {
-          window.__celuneLogAutoscrollObserver.disconnect();
-        }
-
-        const observer = new MutationObserver(() => {
-          if (window.__celuneLogAutoscrollFollow) {
-            scrollLogToBottom();
-          }
-        });
-        observer.observe(logElement, {
-          childList: true,
-          characterData: true,
-          subtree: true,
-        });
-        window.__celuneLogAutoscrollObserver = observer;
-      }
-
-      const pageObserver = new MutationObserver(() => {
-        installLogObserver();
-      });
-
-      function startLogAutoscroll() {
-        installLogObserver();
-        pageObserver.observe(document.body, {
-          childList: true,
-          subtree: true,
-        });
-        window.setInterval(installLogObserver, 500);
-      }
-
-      if (document.readyState === "loading") {
-        document.addEventListener("DOMContentLoaded", startLogAutoscroll, {
-          once: true,
-        });
-      } else {
-        startLogAutoscroll();
-      }
-    })();
-
-    (() => {
-      function handleRecordingShortcut(event) {
-        if (
-          !event.altKey
-          || event.ctrlKey
-          || event.metaKey
-          || event.key.toLowerCase() !== "r"
-        ) {
-          return;
-        }
-
-        const recordButton = document.querySelector(
-          "#celune-record-hotkey button, button#celune-record-hotkey",
-        );
-        if (!recordButton || recordButton.disabled) {
-          return;
-        }
-
-        event.preventDefault();
-        recordButton.click();
-      }
-
-      document.addEventListener("keydown", handleRecordingShortcut);
-    })();
-    </script>
-    """
-)
-
-WEBUI_CSS = textwrap.dedent(
-    """
-    @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@100..900&display=swap');
-    @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@100..800&display=swap');
-
-    html,
-    body,
-    gradio-app {
-        --color-accent: var(--celune-primary, #cebaff) !important;
-        --body-text-color: var(--celune-secondary, #a595cc) !important;
-        --block-label-text-color: var(--celune-primary, #cebaff) !important;
-        --block-title-text-color: var(--celune-primary, #cebaff) !important;
-        --block-info-text-color: var(--celune-secondary, #a595cc) !important;
-        /* the Celune "accent" color in CSS is actually considered as Celune tertiary */
-        --body-text-color-subdued: var(--celune-accent, #7c7099) !important;
-        background: var(--celune-ui-bg, var(--celune-background, #1d1826)) !important;
-    }
-
-    .column {
-        place-content: center;
-    }
-
-    .gradio-container {
-        background: var(--celune-ui-bg, var(--celune-background, #1d1826));
-        font-family: Outfit, sans-serif !important;
-        height: 100dvh;
-        overflow: hidden;
-    }
-    
-    .gradio-container .tab-container::after {
-        display: none;
-    }
-
-    .gradio-container > .main,
-    .gradio-container .wrap,
-    .gradio-container .block,
-    .gradio-container .form,
-    .gradio-container label,
-    .gradio-container label.selected,
-    .gradio-container .tab-like-container,
-    .gradio-container .tab-like-container input,
-    .gradio-container .loading-container,
-    .gradio-container .loading-container > div,
-    .gradio-container button[role="tab"]:hover {
-        background: var(--celune-ui-bg, var(--celune-background, #1d1826)) !important;
-    }
-
-    .main {
-        flex: 1 1 auto !important;
-        min-height: 0;
-    }
-
-    body {
-        font-family: Outfit, sans-serif;
-    }
-
-    #celune-shell {
-        display: flex;
-        flex-direction: column;
-        gap: 0.75rem;
-        height: calc(100dvh - 2rem);
-        min-height: 0;
-        background: var(--celune-ui-bg, var(--celune-background, #1d1826));
-    }
-
-    #celune-header {
-        display: flex;
-        place-items: center;
-    }
-
-    #celune-header .line {
-        width: 100%;
-        background: var(--celune-ui-accent, var(--celune-primary, #cebaff));
-        height: 2px;
-    }
-
-    #celune-header .title {
-        font-weight: bold;
-        padding: 0 2em;
-        color: var(--celune-ui-accent, var(--celune-primary, #cebaff));
-    }
-
-    #celune-style button,
-    #celune-send button,
-    #celune-convert button,
-    button#celune-style,
-    button#celune-send,
-    button#celune-convert {
-        background: var(--celune-button-bg, #3a304c) !important;
-        border: 1px solid var(--celune-ui-accent, var(--celune-primary, #cebaff)) !important;
-        border-radius: 4px;
-        color: var(--celune-ui-accent, var(--celune-primary, #cebaff)) !important;
-        opacity: 1 !important;
-    }
-
-    #celune-style button:hover:not(:disabled),
-    #celune-send button:hover:not(:disabled),
-    #celune-convert button:hover:not(:disabled),
-    button#celune-style:hover:not(:disabled),
-    button#celune-send:hover:not(:disabled),
-    button#celune-convert:hover:not(:disabled) {
-        background: var(--celune-button-hover, #443a56) !important;
-    }
-
-    #celune-style button:disabled,
-    #celune-send button:disabled,
-    #celune-convert button:disabled,
-    button#celune-style:disabled,
-    button#celune-send:disabled,
-    button#celune-convert:disabled {
-        background: color-mix(
-            in srgb,
-            var(--celune-button-bg, #3a304c) 72%,
-            var(--celune-ui-bg, var(--celune-background, #1d1826))
-        ) !important;
-        border-color: var(--celune-accent, #7c7099) !important;
-        color: var(--celune-secondary, #a595cc) !important;
-        cursor: not-allowed;
-    }
-
-    #celune-style button:focus-visible,
-    #celune-send button:focus-visible,
-    #celune-convert button:focus-visible,
-    button#celune-style:focus-visible,
-    button#celune-send:focus-visible,
-    button#celune-convert:focus-visible {
-        outline: 2px solid var(--celune-ui-accent, var(--celune-primary, #cebaff));
-        outline-offset: 2px;
-    }
-
-    #celune-log-panel {
-        border: 2px solid var(--celune-ui-accent, var(--celune-primary, #cebaff));
-        background: var(--celune-ui-bg, var(--celune-background, #1d1826));
-        padding: 1em;
-        border-radius: 8px;
-        max-height: min(75dvh, calc(100dvh - 20rem));
-        overflow: hidden;
-        flex: 1 1 auto;
-        min-height: 0;
-    }
-
-    #celune-log-panel pre {
-        font-family: "JetBrains Mono", monospace;
-        color: var(--celune-ui-accent, var(--celune-primary, #cebaff));
-        white-space: pre-wrap;
-        margin: 0;
-        max-height: min(calc(75dvh - 2em), calc(75dvh - 15rem));
-        height: 100%;
-        overflow-y: auto;
-        padding-right: 0.75em;
-        scrollbar-gutter: stable both-edges;
-        scrollbar-color: var(--celune-ui-accent, var(--celune-primary, #cebaff))
-            var(--celune-ui-bg, var(--celune-background, #1d1826));
-    }
-
-    #celune-input textarea {
-        background: var(--celune-ui-input-bg, var(--celune-input-bg, #3a304c));
-        color: var(--celune-ui-accent, var(--celune-primary, #cebaff));
-        border-radius: 4px;
-        scrollbar-color: var(--celune-ui-accent, var(--celune-primary, #cebaff))
-            var(--celune-ui-bg, var(--celune-background, #1d1826));
-    }
-
-    #celune-input textarea::placeholder {
-        color: var(--celune-placeholder, #9c88ce);
-    }
-
-    #celune-resources .footer-block {
-        text-align: right;
-        color: var(--celune-ui-accent, var(--celune-primary, #cebaff));
-    }
-
-    .webui-recording-hint {
-        margin-top: 0.25rem;
-        font-size: 0.9rem;
-    }
-
-    #celune-record-hotkey {
-        display: none !important;
-    }
-
-    .webui-desktop-only {
-        display: inline !important;
-        color: inherit;
-    }
-
-    .webui-mobile-only {
-        display: none !important;
-        color: inherit;
-    }
-
-    #celune-actions {
-        gap: 0.75rem;
-    }
-
-    #celune-send button,
-    button#celune-send {
-        min-height: 2.75rem;
-    }
-
-    #celune-input-row, #celune-footer {
-        padding: 0 1em;
-    }
-
-    #celune-send,
-    button#celune-send {
-        display: none;
-    }
-
-    #celune-log-panel pre::-webkit-scrollbar,
-    #celune-input textarea::-webkit-scrollbar {
-        width: 0.8rem;
-    }
-
-    #celune-log-panel pre::-webkit-scrollbar-track,
-    #celune-input textarea::-webkit-scrollbar-track {
-        background: var(--celune-ui-bg, var(--celune-background, #1d1826));
-    }
-
-    #celune-log-panel pre::-webkit-scrollbar-thumb,
-    #celune-input textarea::-webkit-scrollbar-thumb {
-        background: var(--celune-ui-accent, var(--celune-primary, #cebaff));
-        border-radius: 999px;
-        border: 2px solid var(--celune-ui-bg, var(--celune-background, #1d1826));
-    }
-
-    .gradio-container .minimal-audio-player button:hover,
-    .gradio-container .minimal-audio-player button:focus,
-    .gradio-container .standard-player button:hover,
-    .gradio-container .standard-player button:focus,
-    .gradio-container .controls .icon:hover,
-    .gradio-container .controls .icon:focus,
-    .gradio-container .controls .action:hover,
-    .gradio-container .controls .action:focus,
-    .gradio-container .controls .playback:hover,
-    .gradio-container .controls .playback:focus,
-    .gradio-container .controls .text-button:hover,
-    .gradio-container .controls .text-button:focus {
-        color: var(--celune-primary, #cebaff) !important;
-        border-color: var(--celune-primary, #cebaff) !important;
-    }
-
-    .gradio-container .standard-player input[type="range"],
-    .gradio-container .minimal-audio-player input[type="range"] {
-        accent-color: var(--celune-primary, #cebaff) !important;
-    }
-
-    .gradio-container .standard-player input[type="range"]::-webkit-slider-thumb,
-    .gradio-container .minimal-audio-player input[type="range"]::-webkit-slider-thumb {
-        background-color: var(--celune-primary, #cebaff) !important;
-    }
-
-    .gradio-container .standard-player input[type="range"]::-moz-range-thumb,
-    .gradio-container .minimal-audio-player input[type="range"]::-moz-range-thumb {
-        background-color: var(--celune-primary, #cebaff) !important;
-    }
-
-    .toast-body.error {
-        position: fixed;
-        background: color-mix(
-            in srgb,
-            var(--celune-background, #1d1826) 90%,
-            transparent 10%
-        ) !important;
-        border: none;
-        top: 0;
-    }
-
-    .toast-header {
-        display: none !important;
-    }
-
-    .toast-messages {
-        height: 100vh;
-        width: 100vw;
-        place-items: center;
-        justify-content: center;
-    }
-
-    .toast-message-text.error {
-        font-size: 0;
-    }
-
-    .toast-message-text.error::before {
-        content: __CELUNE_CONNECTION_LOST_MESSAGE__;
-        font-size: 16px;
-        color: var(--celune-error, #f07178);
-    }
-
-    input[type="number"] {
-        -webkit-appearance: textfield !important;
-        appearance: textfield !important;
-    }
-
-    input[type="number"]::-webkit-inner-spin-button,
-    input[type="number"]::-webkit-outer-spin-button {
-        -webkit-appearance: none;
-        appearance: none;
-        margin: 0;
-    }
-
-    input[type="radio"][aria-checked="false"][disabled] {
-        background: color-mix(
-            var(--celune-background) 90%,
-            var(--celune-primary) 10%
-        );
-    }
-
-    input[type="range"]::-moz-range-thumb {
-        background: var(--celune-primary) !important;
-        border-color: var(--celune-primary) !important;
-    }
-
-    input[type="range"]::-moz-range-track {
-        background: var(--celune-accent) !important;
-    }
-
-    input[type="range"]::-webkit-slider-runnable-track {
-        background: var(--celune-accent) !important;
-    }
-
-    input[type="range"]::-webkit-slider-thumb {
-        -webkit-appearance: none;
-        appearance: none;
-        background: var(--celune-primary) !important;
-        border: none !important;
-    }
-
-    input[type="range"] {
-        -webkit-appearance: none;
-        appearance: none;
-    }
-
-    @media (max-width: 768px), (any-pointer: coarse), (hover: none) {
-        .gradio-container {
-            height: 100dvh;
-            overflow: hidden;
-        }
-
-        #celune-shell {
-            height: calc(100dvh - 8rem);
-            min-height: 0;
-        }
-
-        #celune-input-row {
-            flex-direction: column;
-        }
-
-        #celune-actions {
-            display: flex;
-            flex-direction: row;
-            width: 100%;
-            flex-wrap: nowrap;
-            gap: 0;
-        }
-
-        #celune-actions > * {
-            flex: 1 1 0 !important;
-            min-width: 0 !important;
-        }
-
-        button#celune-send {
-            width: 100%;
-        }
-
-        button#celune-send {
-            display: flex;
-        }
-
-        #celune-input textarea, #celune-input textarea::placeholder {
-            text-align: center;
-        }
-
-        #celune-log-panel {
-            max-height: min(52dvh, calc(100dvh - 12rem));
-        }
-
-        #celune-log-panel pre {
-            max-height: min(calc(52dvh - 2em), calc(100dvh - 14rem));
-        }
-
-        button#celune-send {
-            border-radius: 4px;
-        }
-
-        .webui-desktop-only {
-            display: none !important;
-        }
-
-        .webui-mobile-only {
-            display: inline !important;
-        }
-    }
-    """
-).replace(
+WEBUI_HEAD = read_webui_asset("head.html")
+WEBUI_CSS = read_webui_asset("webui.css").replace(
     "__CELUNE_CONNECTION_LOST_MESSAGE__",
     json.dumps(string("webui.connection_lost", app_name=APP_NAME), ensure_ascii=False),
 )
@@ -865,27 +420,22 @@ def _configure_webui_theme() -> None:
     button_bg = colors.blend(primary, background, 0.72)
     button_hover = colors.blend(primary, background, 0.6)
     input_bg = colors.blend(primary, background, 0.78)
-
-    webui_theme_style = (
-        "<style>"
-        ":root {"
-        f"--celune-background: {background};"
-        f"--celune-primary: {primary};"
-        f"--celune-error: {error};"
-        f"--celune-foreground: {foreground};"
-        f"--celune-secondary: {secondary};"
-        f"--celune-accent: {accent};"
-        f"--celune-ui-accent: {primary};"
-        f"--celune-ui-bg: {background};"
-        f"--celune-ui-input-bg: {input_bg};"
-        f"--celune-sleeping: {sleeping};"
-        f"--celune-button-bg: {button_bg};"
-        f"--celune-button-hover: {button_hover};"
-        f"--celune-input-bg: {input_bg};"
-        f"--celune-placeholder: {secondary};"
-        "}"
-        "</style>"
-    )
+    theme_css = read_webui_asset("theme.css")
+    theme_values = {
+        "BACKGROUND": background,
+        "PRIMARY": primary,
+        "ERROR": error,
+        "FOREGROUND": foreground,
+        "SECONDARY": secondary,
+        "ACCENT": accent,
+        "INPUT_BG": input_bg,
+        "SLEEPING": sleeping,
+        "BUTTON_BG": button_bg,
+        "BUTTON_HOVER": button_hover,
+    }
+    for key, value in theme_values.items():
+        theme_css = theme_css.replace(f"__{key}__", value)
+    webui_theme_style = theme_css
 
 
 class StartedServer(uvicorn.Server):
@@ -1000,19 +550,29 @@ def resolve_api_host(token: Optional[str] = None, host: Optional[str] = None) ->
 
 def _request_token(request: Request) -> Optional[str]:
     """Extract the bearer or app token from a request."""
-    auth_header = request.headers.get("authorization", "")
+    return _headers_token(request.headers)
+
+
+def _headers_token(headers: Headers) -> Optional[str]:
+    """Extract the bearer or app token from request headers."""
+    auth_header = headers.get("authorization", "")
     scheme, _, value = auth_header.partition(" ")
     if scheme.lower() == "bearer" and value:
         return value.strip()
-    return _clean_token(request.headers.get("x-celune-token"))
+    return _clean_token(headers.get("x-celune-token"))
+
+
+def _headers_authenticated(headers: Headers) -> bool:
+    """Return whether request headers carry the configured API token."""
+    if auth_token is None:
+        return True
+    given = _headers_token(headers)
+    return given is not None and compare_digest(given, auth_token)
 
 
 def _authenticated(request: Request) -> bool:
     """Return whether the request carries the configured API token."""
-    if auth_token is None:
-        return True
-    given = _request_token(request)
-    return given is not None and compare_digest(given, auth_token)
+    return _headers_authenticated(request.headers)
 
 
 def is_browser_ui_request(request: Request) -> bool:
@@ -1033,15 +593,7 @@ def _is_public_api_request(request: Request) -> bool:
     method = request.method.upper()
     path = request.url.path.rstrip("/") or "/"
 
-    if is_browser_ui_request(request):
-        return True
-
-    return method == "GET" and path in {
-        "/",
-        "/favicon.ico",
-        "/v1",
-        "/v1/version",
-    }
+    return method == "GET" and path in {"/", "/favicon.ico"}
 
 
 def _rate_limit_key(request: Request) -> str:
@@ -1051,17 +603,16 @@ def _rate_limit_key(request: Request) -> str:
     return request.client.host
 
 
-def _rate_limited(request: Request) -> bool:
-    """Return whether the request exceeds the configured rate limit."""
+def _rate_limited_client(client_key: str) -> bool:
+    """Return whether a client exceeds the configured rate limit."""
     if rate_limit_per_minute <= 0:
         return False
 
     now = time.monotonic()
     window_start = now - 60.0
-    key = _rate_limit_key(request)
 
     with rate_limit_lock:
-        hits = rate_limit_hits[key]
+        hits = rate_limit_hits[client_key]
         while hits and hits[0] < window_start:
             hits.popleft()
 
@@ -1070,6 +621,204 @@ def _rate_limited(request: Request) -> bool:
 
         hits.append(now)
         return False
+
+
+def _rate_limited(request: Request) -> bool:
+    """Return whether the request exceeds the configured rate limit."""
+    return _rate_limited_client(_rate_limit_key(request))
+
+
+def _ui_session_signature(payload: bytes) -> bytes:
+    """Sign a WebUI session payload with the active application key."""
+    if auth_token is None:
+        return b""
+    return hmac_new(
+        auth_token.encode("utf-8"),
+        b"Celune WebUI session v1\0" + payload,
+        sha256,
+    ).digest()
+
+
+def _encode_ui_session(client_id: str, expires_at: int) -> str:
+    """Create a signed, restart-safe cookie for one browser client."""
+    payload = f"v1:{expires_at}:{client_id}".encode("ascii")
+    encoded_payload = base64.urlsafe_b64encode(payload).rstrip(b"=")
+    signature = base64.urlsafe_b64encode(_ui_session_signature(payload)).rstrip(b"=")
+    return f"{encoded_payload.decode('ascii')}.{signature.decode('ascii')}"
+
+
+def _ui_session_details(session: Optional[str]) -> Optional[tuple[str, int]]:
+    """Return the client ID and expiry for a valid signed WebUI cookie."""
+    if auth_token is None or session is None or len(session) > 512:
+        return None
+    try:
+        encoded_payload, encoded_signature = session.split(".", 1)
+        payload = base64.b64decode(
+            encoded_payload.encode("ascii") + b"=" * (-len(encoded_payload) % 4),
+            altchars=b"-_",
+            validate=True,
+        )
+        signature = base64.b64decode(
+            encoded_signature.encode("ascii") + b"=" * (-len(encoded_signature) % 4),
+            altchars=b"-_",
+            validate=True,
+        )
+    except (binascii.Error, UnicodeEncodeError, ValueError):
+        return None
+
+    if not compare_digest(signature, _ui_session_signature(payload)):
+        return None
+
+    try:
+        session_version, raw_expiry, client_id = payload.decode("ascii").split(":", 2)
+        expires_at = int(raw_expiry)
+    except (UnicodeDecodeError, ValueError):
+        return None
+
+    now = int(time.time())
+    if (
+        session_version != "v1"
+        or len(client_id) < 32
+        or expires_at <= now
+        or expires_at > now + WEBUI_AUTH_SESSION_SECONDS
+    ):
+        return None
+    return client_id, expires_at
+
+
+def _new_ui_session(client_id: Optional[str] = None) -> str:
+    """Create a signed WebUI session that survives Celune restarts."""
+    if auth_token is None:
+        return ""
+    return _encode_ui_session(
+        client_id or secrets.token_urlsafe(32),
+        int(time.time()) + WEBUI_AUTH_SESSION_SECONDS,
+    )
+
+
+def _ui_session_valid(session_id: Optional[str]) -> bool:
+    """Return whether a signed WebUI session cookie is still active."""
+    return _ui_session_details(session_id) is not None
+
+
+def _set_ui_session_cookie(
+    response: Response,
+    request: Request,
+    session: str,
+) -> None:
+    """Set a browser-scoped cookie for a validated WebUI client."""
+    response.set_cookie(
+        WEBUI_AUTH_COOKIE,
+        session,
+        max_age=WEBUI_AUTH_SESSION_SECONDS,
+        path="/ui",
+        secure=request.url.scheme == "https",
+        httponly=True,
+        samesite="strict",
+    )
+
+
+def _refresh_ui_session_cookie(request: Request, response: Response) -> Response:
+    """Extend an active browser session near its expiry without asking again."""
+    details = _ui_session_details(request.cookies.get(WEBUI_AUTH_COOKIE))
+    if details is None:
+        return response
+
+    client_id, expires_at = details
+    if expires_at - int(time.time()) > WEBUI_AUTH_SESSION_SECONDS // 2:
+        return response
+
+    _set_ui_session_cookie(response, request, _new_ui_session(client_id))
+    return response
+
+
+def _webui_authenticated(connection: Union[Request, WebSocket]) -> bool:
+    """Return whether a WebUI connection has an API token or active session."""
+    if auth_token is None or _headers_authenticated(connection.headers):
+        return True
+    return _ui_session_valid(connection.cookies.get(WEBUI_AUTH_COOKIE))
+
+
+def _same_origin(connection: Union[Request, WebSocket]) -> bool:
+    """Return whether a browser supplied origin matches this API host."""
+    origin = connection.headers.get("origin")
+    if origin is None:
+        return False
+
+    try:
+        parsed_origin = urlsplit(origin)
+        parsed_request = urlsplit(str(connection.url))
+        origin_port = parsed_origin.port
+        request_port = parsed_request.port
+        origin_host = parsed_origin.hostname
+        request_host = parsed_request.hostname
+    except ValueError:
+        return False
+
+    connection_scheme = {"ws": "http", "wss": "https"}.get(
+        parsed_request.scheme,
+        parsed_request.scheme,
+    )
+    if (
+        parsed_origin.username is not None
+        or parsed_origin.password is not None
+        or parsed_origin.path
+        or parsed_origin.scheme != connection_scheme
+    ):
+        return False
+
+    default_port = {"http": 80, "https": 443}.get(connection_scheme)
+    return (
+        origin_host is not None
+        and origin_host.lower() == (request_host or "").lower()
+        and (origin_port if origin_port is not None else default_port)
+        == (request_port if request_port is not None else default_port)
+    )
+
+
+def _unauthorized_response() -> JSONResponse:
+    """Build the shared unauthorized response for protected requests."""
+    return JSONResponse(
+        status_code=401,
+        content={
+            "error": "unauthorized",
+            "message": string("api.unauthorized"),
+        },
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+
+def _rate_limit_response() -> JSONResponse:
+    """Build the shared rate limit response for protected requests."""
+    current_time = datetime.datetime.now(datetime.UTC)
+    next_minute = current_time.replace(second=0, microsecond=0) + datetime.timedelta(
+        minutes=1
+    )
+    retry_after = (next_minute - current_time).total_seconds()
+    return JSONResponse(
+        status_code=429,
+        content={
+            "error": "ratelimit_exceeded",
+            "message": string("api.rate_limit"),
+        },
+        headers={"Retry-After": str(retry_after)},
+    )
+
+
+def _webui_auth_page() -> str:
+    """Build the standalone, blocking WebUI API-key prompt."""
+    values = {
+        "title": string("api.webui_auth_title"),
+        "message": string("api.webui_auth_message"),
+        "placeholder": string("api.webui_auth_placeholder"),
+        "submit": string("api.webui_auth_submit"),
+        "invalid": string("api.webui_auth_invalid"),
+        "error": string("api.webui_auth_error"),
+    }
+    page = read_webui_asset("api_key.html")
+    for key, value in values.items():
+        page = page.replace(f"__{key.upper()}__", html.escape(value))
+    return page
 
 
 @api.middleware("http")
@@ -1089,33 +838,100 @@ async def api_security(
     if _is_public_api_request(request):
         return await call_next(request)
 
+    if is_browser_ui_request(request):
+        if auth_token is None:
+            model_request_token = enter_api_model_request()
+            try:
+                return await call_next(request)
+            finally:
+                exit_api_model_request(model_request_token)
+
+        path = request.url.path.rstrip("/")
+        if path.startswith("/ui/assets/") and request.method.upper() == "GET":
+            return await call_next(request)
+        if path == WEBUI_AUTH_PATH and request.method.upper() == "GET":
+            return HTMLResponse(
+                _webui_auth_page(),
+                headers={
+                    "Cache-Control": "no-store",
+                    "Content-Security-Policy": (
+                        "default-src 'none'; style-src 'self'; "
+                        "script-src 'self'; connect-src 'self'; font-src 'self'; "
+                        "base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
+                    ),
+                    "Referrer-Policy": "no-referrer",
+                    "X-Frame-Options": "DENY",
+                },
+            )
+
+        if path == WEBUI_AUTH_PATH and request.method.upper() == "POST":
+            if not _same_origin(request):
+                return JSONResponse(status_code=403, content={"error": "forbidden"})
+            if _rate_limited(request):
+                return _rate_limit_response()
+            return await call_next(request)
+
+        if not _webui_authenticated(request):
+            if request.method.upper() == "GET" and path == "/ui":
+                return RedirectResponse(
+                    "/ui/key",
+                    status_code=307,
+                    headers={"Cache-Control": "no-store"},
+                )
+            return _unauthorized_response()
+
+        if request.method.upper() not in {"GET", "HEAD", "OPTIONS"}:
+            if not _same_origin(request):
+                return JSONResponse(status_code=403, content={"error": "forbidden"})
+            if _rate_limited(request):
+                return _rate_limit_response()
+        model_request_token = enter_api_model_request()
+        try:
+            response = await call_next(request)
+        finally:
+            exit_api_model_request(model_request_token)
+        return _refresh_ui_session_cookie(request, response)
+
     if not _authenticated(request):
-        return JSONResponse(
-            status_code=401,
-            content={
-                "error": "unauthorized",
-                "message": string("api.unauthorized"),
-            },
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+        return _unauthorized_response()
 
     if _rate_limited(request):
-        current_time = datetime.datetime.now(datetime.UTC)
-        next_minute = current_time.replace(
-            second=0, microsecond=0
-        ) + datetime.timedelta(minutes=1)
-        retry_after = (next_minute - current_time).total_seconds()
+        return _rate_limit_response()
 
-        return JSONResponse(
-            status_code=429,
-            content={
-                "error": "ratelimit_exceeded",
-                "message": string("api.rate_limit"),
-            },
-            headers={"Retry-After": str(retry_after)},
-        )
+    model_request_token = enter_api_model_request()
+    try:
+        return await call_next(request)
+    finally:
+        exit_api_model_request(model_request_token)
 
-    return await call_next(request)
+
+class WebUiWebSocketSecurityMiddleware:
+    """Protect mounted WebUI WebSockets with the API token or browser session."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(
+        self,
+        scope: Scope,
+        receive: Receive,
+        send: Send,
+    ) -> None:
+        path = str(scope.get("path", "")).rstrip("/")
+        is_webui = path == "/ui" or path.startswith("/ui/")
+        if scope["type"] == "websocket" and is_webui and auth_token is not None:
+            websocket = WebSocket(scope, receive, send)
+            if not _webui_authenticated(websocket) or not _same_origin(websocket):
+                await send({"type": "websocket.close", "code": 4401})
+                return
+            client = websocket.client
+            if client is not None and _rate_limited_client(client.host):
+                await send({"type": "websocket.close", "code": 4429})
+                return
+        await self.app(scope, receive, send)
+
+
+api.add_middleware(WebUiWebSocketSecurityMiddleware)
 
 
 def bind_celune(celune: Celune) -> None:
@@ -1273,7 +1089,6 @@ class _WebUiCommandHost:
 
 
 configure_webui_theme = _configure_webui_theme
-webui_theme_html = _webui_theme_html
 strip_webui_log_prefix = _strip_webui_log_prefix
 set_webui_status = _set_webui_status
 wrap_celune_callbacks = _wrap_celune_callbacks
@@ -1313,6 +1128,12 @@ class VoiceRequest(BaseModel):
     voice_name: str = Field(min_length=1)
 
 
+class WebUiAuthRequest(BaseModel):
+    """Request body used to establish an authenticated WebUI session."""
+
+    api_key: str = Field(min_length=1, max_length=4096)
+
+
 class ActionResponse(BaseModel):
     """Generic accepted control response."""
 
@@ -1324,6 +1145,34 @@ class TaskCancelResponse(BaseModel):
 
     task_id: str
     status: Literal["cancelled"] = "cancelled"
+
+
+@api.post(WEBUI_AUTH_PATH, include_in_schema=False)
+async def authenticate_webui(
+    body: WebUiAuthRequest,
+    request: Request,
+) -> Response:
+    """Exchange the configured application key for a WebUI session cookie."""
+    provided_key = _clean_token(body.api_key)
+    if auth_token is None:
+        return JSONResponse(status_code=404, content={"error": "not_found"})
+    if provided_key is None or not compare_digest(provided_key, auth_token):
+        return JSONResponse(
+            status_code=401,
+            content={
+                "error": "unauthorized",
+                "message": string("api.webui_auth_invalid"),
+            },
+            headers={"Cache-Control": "no-store"},
+        )
+
+    response = JSONResponse(
+        status_code=200,
+        content={"authenticated": True},
+        headers={"Cache-Control": "no-store"},
+    )
+    _set_ui_session_cookie(response, request, _new_ui_session())
+    return response
 
 
 async def _cancel_speech_job(job_id: str) -> bool:
@@ -1503,6 +1352,111 @@ def version() -> VersionResponse:
         VersionResponse: The underlying app version the API is connected to.
     """
     return VersionResponse(version=f"{APP_NAME} {__version__}")
+
+
+def _model_consent_document(
+    metadata: ModelMetadata,
+    *,
+    include_prompt: bool = False,
+) -> dict[str, object]:
+    """Serialize catalog metadata and localized confirmation details."""
+    consented = not metadata.requires_consent or consent_status(metadata)
+    document = metadata.to_dict(consented=consented)
+    if include_prompt:
+        prompt, instruction = consent_prompt_text(metadata)
+        document.update(
+            {
+                "prompt": prompt,
+                "instruction": instruction,
+                "details": list(consent_details(metadata)),
+                "source_url": metadata.license_url or metadata.repository_url,
+                "entry_hint": string("registry.consent_entry_hint"),
+                "consent_phrase": string("registry.consent_phrase"),
+                "accept_label": string("registry.consent_accept"),
+                "decline_label": string("registry.consent_decline"),
+                "accepted_message": string("registry.consent_accepted_retry"),
+                "declined_message": string("registry.consent_declined"),
+                "submit_failed_message": string("registry.consent_submit_failed"),
+            }
+        )
+    return document
+
+
+@api.get("/v1/models")
+def models() -> dict[str, object]:
+    """List built-in models, pinned revisions, terms and consent state."""
+    catalog = {metadata.model_id: metadata for metadata in registered_models()}
+    catalog.update(
+        {
+            metadata.model_id: metadata
+            for metadata in pending_model_consents()
+            if metadata.model_id not in catalog
+        }
+    )
+    return {
+        "models": [
+            _model_consent_document(metadata)
+            for metadata in sorted(
+                catalog.values(),
+                key=lambda item: (item.category, item.model_id),
+            )
+        ]
+    }
+
+
+@api.get("/ui/assets/{asset_name:path}", include_in_schema=False)
+def webui_asset(asset_name: str) -> Response:
+    """Serve a fixed WebUI asset or bundled font file."""
+    if asset_name == "theme.css":
+        return Response(
+            content=webui_theme_style,
+            media_type="text/css",
+            headers={"Cache-Control": "no-store"},
+        )
+    asset = webui_asset_response_data(asset_name)
+    if asset is None:
+        return Response(status_code=404)
+    content, media_type = asset
+    return Response(
+        content=content,
+        media_type=media_type,
+        headers={"Cache-Control": "public, max-age=3600"},
+    )
+
+
+def _submit_model_consent(body: ModelConsentRequest) -> dict[str, object]:
+    """Apply one exact-revision acknowledgement submitted by a client."""
+    metadata = model_metadata_for_revision(body.model_id, body.revision)
+    record_model_consent(body.model_id, body.revision, body.accepted)
+    return {
+        "accepted": body.accepted,
+        "model": _model_consent_document(metadata),
+    }
+
+
+@api.post("/v1/models/consent")
+def submit_model_consent(body: ModelConsentRequest) -> dict[str, object]:
+    """Acknowledge model terms for one exact Hugging Face commit."""
+    return _submit_model_consent(body)
+
+
+@api.get("/ui/models/pending", include_in_schema=False)
+def webui_pending_model_consents() -> dict[str, object]:
+    """Return localized pending prompts to the authenticated browser UI."""
+    pending = pending_model_consents()
+    return {
+        "pending": [
+            _model_consent_document(metadata, include_prompt=True)
+            for metadata in pending
+        ],
+        "status": (string("registry.waiting_status") if pending else webui_status_text),
+    }
+
+
+@api.post("/ui/models/consent", include_in_schema=False)
+def webui_submit_model_consent(body: ModelConsentRequest) -> dict[str, object]:
+    """Submit the browser UI's decision for one exact model revision."""
+    return _submit_model_consent(body)
 
 
 @api.post("/v1/speak", response_model=None)
@@ -1936,7 +1890,11 @@ def run_api(
     bind_host = resolve_api_host(token=auth_token, host=host)
 
     def _default_started(bhost: str, bport: int) -> None:
-        message = f"{APP_NAME} API has started on http://{bhost}:{bport}"
+        message = string(
+            "celune.api_started",
+            app_name=APP_NAME,
+            url=f"http://{bhost}:{bport}",
+        )
         if celune is not None:
             celune.log(message)
         else:
@@ -1970,6 +1928,8 @@ def start_api(
     token: Optional[str] = None,
     requests_per_minute: int = 60,
     startup_timeout: float = 5.0,
+    on_started: Optional[Callable[[str, int], None]] = None,
+    defer_startup_log: bool = False,
 ) -> threading.Thread:
     """Start the API in a background thread.
 
@@ -1980,6 +1940,8 @@ def start_api(
         token: Token required for API requests.
         requests_per_minute: Maximum requests allowed per client each minute.
         startup_timeout: Seconds to wait for startup confirmation.
+        on_started: Optional callback after the server socket begins listening.
+        defer_startup_log: Leave startup URL reporting to ``on_started``.
 
     Returns:
         threading.Thread: The daemon thread running the API server.
@@ -1989,7 +1951,16 @@ def start_api(
     failed = threading.Event()
 
     def _started(bind_host: str, bind_port: int) -> None:
-        celune.log(f"{APP_NAME} API has started on http://{bind_host}:{bind_port}")
+        if not defer_startup_log or on_started is None:
+            celune.log(
+                string(
+                    "celune.api_started",
+                    app_name=APP_NAME,
+                    url=f"http://{bind_host}:{bind_port}",
+                )
+            )
+        if on_started is not None:
+            on_started(bind_host, bind_port)
         started.set()
 
     def _runner() -> None:

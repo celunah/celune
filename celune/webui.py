@@ -13,37 +13,37 @@ from html import escape
 from typing import Union, Optional, cast
 from collections.abc import Callable, Iterator
 
-import numpy as np  # pylint: disable=ungrouped-imports
 import gradio as gr
 import soundfile as sf
 import numpy.typing as npt
 from fastapi import HTTPException
+import numpy as np  # pylint: disable=ungrouped-imports
 
-from . import api as _api
-from .ui import resources as ui_resources
 from .i18n import string
-from .paths import main_window_log_path
+from . import api as _api
 from .theme import colors
-from .utils import available, format_error_message
 from .ui.app import CeluneUI
-from .binding import install_module_functions
-from .cedts.ui import UiTimedUpdate, ui_timed_update_channel
-from .playback import current_playback_status
-from .constants import BASE_SR, APP_NAME
-from .typing.api import WEBUI_UNSET as _WEBUI_UNSET
-from .typing.api import TaskStatus, WebUiUpdate
-from .typing.api import WebUiUnset as _WebUiUnset
-from .persona.impl import persona_enabled, persona_talkback_enabled
-from .typing.events import EventName, EventCallback
-from .typing.aliases import LogLevel, AudioChunks
-from .typing.pipeline import SpeechStreamQueue
-from .extensions.events import EventDispatcher
 from .dataclasses.events import (
     AgentTaskFinishedEvent,
     AgentChoiceRequestedEvent,
     AgentTaskStateChangedEvent,
     AgentApprovalRequestedEvent,
 )
+from .paths import main_window_log_path
+from .constants import BASE_SR, APP_NAME
+from .ui import resources as ui_resources
+from .binding import install_module_functions
+from .playback import current_playback_status
+from .typing.pipeline import SpeechStreamQueue
+from .extensions.events import EventDispatcher
+from .typing.api import TaskStatus, WebUiUpdate
+from .typing.api import WebUiUnset as _WebUiUnset
+from .typing.aliases import LogLevel, AudioChunks
+from .utils import available, format_error_message
+from .typing.api import WEBUI_UNSET as _WEBUI_UNSET
+from .typing.events import EventName, EventCallback
+from .cedts.ui import UiTimedUpdate, ui_timed_update_channel
+from .persona.impl import persona_enabled, persona_talkback_enabled
 
 __all__ = (
     "_append_webui_error",
@@ -95,7 +95,6 @@ __all__ = (
     "_webui_status_color",
     "_webui_status_html",
     "_webui_submit_snapshot",
-    "_webui_theme_html",
     "_webui_vc_controls_update",
     "_webui_vc_mode_active",
     "_wrap_celune_callbacks",
@@ -237,26 +236,6 @@ def _webui_status_color(severity: str) -> str:
         colors.SEVERITY_COLORS["celune"],
     )
     return palette.get(severity, palette["info"])
-
-
-def _webui_theme_html() -> str:
-    """Render runtime CSS variables for the browser UI theme."""
-    severity = "info"
-    accent = _webui_status_color(severity)
-    theme = colors.THEME
-    if _api.webui_active_theme_name == "celune_light":
-        theme = colors.THEME_LIGHT
-    elif _api.webui_active_theme_name == "celune_april_fools":
-        theme = colors.THEME_APRIL_FOOLS
-    background = theme.background or colors.DEFAULT_BACKGROUND
-    input_bg = colors.blend(accent, background, 0.78)
-    return (
-        "<style>:root {"
-        f"--celune-ui-accent: {accent};"
-        f"--celune-ui-bg: {background};"
-        f"--celune-ui-input-bg: {input_bg};"
-        "}</style>"
-    )
 
 
 def _webui_log_line_html(message: str, severity: str = "info") -> str:
@@ -1023,7 +1002,6 @@ def _webui_status_html() -> str:
             )
     detail_html = "".join(details)
     return (
-        f"{_webui_theme_html()}"
         '<div class="footer-block" '
         f'style="color: {color};">{escape(_api.webui_status_text)}{detail_html}</div>'
     )

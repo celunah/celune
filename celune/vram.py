@@ -6,36 +6,30 @@ import os
 import sys
 import math
 import contextlib
-from pathlib import Path
-from typing import Optional, cast
 from dataclasses import dataclass
+from typing import Optional, cast
 from collections.abc import Mapping, Iterator
 
 import torch
 import psutil
 from torch import nn
 
-from .i18n import string
-from .paths import huggingface_hub_cache_dir
-from .typing.common import JSON, VramTier, JSONSerializable
 from .constants import (
     TIERS,
     APP_NAME,
     VRAM_BUDGETS,
     VRAM_REQUIREMENTS,
     AGENT_CONTEXT_SPACE,
-    NORMALIZER_MODEL_ID,
     PERSONA_CONTEXT_SPACE,
     VRAM_SYSTEM_RESERVE_GIB,
-    PERSONA_DEFAULT_MODEL_ID,
-    DEFAULT_PERSONA_SPEECH_MODEL_ID,
-    DEFAULT_PERSONA_SPEECH_MODEL_REVISION,
-    persona_model_tier,
-    remote_code_model_revision,
 )
-
-QWEN3_0_6B_MODEL = "Qwen/Qwen3-TTS-12Hz-0.6B-Base"
-QWEN3_1_7B_MODEL = "Qwen/Qwen3-TTS-12Hz-1.7B-Base"
+from .i18n import string
+from .registry.other import NORMALIZER_MODEL_ID
+from .registry.asr import DEFAULT_PERSONA_SPEECH_MODEL_ID
+from .registry.revisions import remote_code_model_revision
+from .typing.common import JSON, VramTier, JSONSerializable
+from .registry.tts import QWEN3_06B_MODEL_ID, QWEN3_17B_MODEL_ID
+from .registry.llm import PERSONA_DEFAULT_MODEL_ID, persona_model_tier
 
 TEST_BACKENDS = ("fake", "counting")
 KNOWN_TTS_BACKENDS = (
@@ -128,30 +122,6 @@ def _cuda_total_capacity_bytes() -> int:
     return dedicated_bytes + _windows_shared_memory_capacity_bytes()
 
 
-def _cached_hub_revision(model_id: str) -> str:
-    """Return the cached commit selected by the model's ``main`` reference."""
-    if "/" not in model_id:
-        return "unknown"
-
-    configured_cache = os.environ.get("HF_HUB_CACHE")
-    configured_home = os.environ.get("HF_HOME")
-    cache_root = (
-        Path(configured_cache)
-        if configured_cache
-        else Path(configured_home) / "hub"
-        if configured_home
-        else huggingface_hub_cache_dir()
-    )
-    revision_path = (
-        cache_root / f"models--{model_id.replace('/', '--')}" / "refs" / "main"
-    )
-    with contextlib.suppress(OSError, UnicodeError):
-        revision = revision_path.read_text(encoding="utf-8").strip()
-        if revision:
-            return revision
-    return "unknown"
-
-
 def is_cuda_out_of_memory(error: BaseException) -> bool:
     """Return whether an exception reports a CUDA allocation failure."""
     out_of_memory_type = getattr(torch.cuda, "OutOfMemoryError", None)
@@ -175,7 +145,7 @@ def vram_profile_key(
     config: Optional[Mapping[str, JSONSerializable]],
 ) -> tuple[str, ...]:
     """Return the exact hardware and model configuration key for profile lookup."""
-    from .backends.tts.contracts import MODEL_CONTRACTS
+    from .registry.tts import MODEL_CONTRACTS
 
     values = config or {}
     preset = resolve_vram_preset(config)
@@ -217,14 +187,10 @@ def vram_profile_key(
     )
     speech_revision = "no-whisper-revision"
     if persona_active:
-        speech_revision = (
-            DEFAULT_PERSONA_SPEECH_MODEL_REVISION
-            if speech_model_id == DEFAULT_PERSONA_SPEECH_MODEL_ID
-            else "unknown"
-        )
+        speech_revision = remote_code_model_revision(speech_model_id) or "unknown"
     normalizer_enabled = bool(values.get("use_normalizer", False))
     normalizer_revision = (
-        _cached_hub_revision(NORMALIZER_MODEL_ID)
+        remote_code_model_revision(NORMALIZER_MODEL_ID) or "unknown"
         if normalizer_enabled
         else "no-normalizer-revision"
     )
@@ -710,7 +676,7 @@ def resolve_vram_preset(
             tier="low",
             default_backend="mini",
             allow_voxcpm2="voxcpm2" in BACKENDS_ALLOWED["low"],
-            qwen3_clone_model_id=QWEN3_0_6B_MODEL,
+            qwen3_clone_model_id=QWEN3_06B_MODEL_ID,
             persona_enabled=False,
             persona_quantization="4bit",
             normalizer_device="cpu",
@@ -721,7 +687,7 @@ def resolve_vram_preset(
             tier="medium",
             default_backend="qwen3",
             allow_voxcpm2="voxcpm2" in BACKENDS_ALLOWED["medium"],
-            qwen3_clone_model_id=QWEN3_1_7B_MODEL,
+            qwen3_clone_model_id=QWEN3_17B_MODEL_ID,
             persona_enabled=False,
             persona_quantization="4bit",
             normalizer_device="cpu",
@@ -732,7 +698,7 @@ def resolve_vram_preset(
             tier="high",
             default_backend="qwen3",
             allow_voxcpm2="voxcpm2" in BACKENDS_ALLOWED["high"],
-            qwen3_clone_model_id=QWEN3_1_7B_MODEL,
+            qwen3_clone_model_id=QWEN3_17B_MODEL_ID,
             persona_enabled=True,
             persona_quantization="4bit",
             normalizer_device="cpu",
@@ -742,7 +708,7 @@ def resolve_vram_preset(
         tier="xhigh",
         default_backend="qwen3",
         allow_voxcpm2="voxcpm2" in BACKENDS_ALLOWED["xhigh"],
-        qwen3_clone_model_id=QWEN3_1_7B_MODEL,
+        qwen3_clone_model_id=QWEN3_17B_MODEL_ID,
         persona_enabled=True,
         persona_quantization="8bit",
         normalizer_device="cuda",

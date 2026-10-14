@@ -79,7 +79,9 @@ is breadth-first, so progress levels are processed in ascending order. Level
 transitions repaint immediately; repeated updates within one level are
 throttled. The loading screen's terminal-title and early-shutdown helpers stay
 lightweight, so exiting before runtime initialization cannot enter an undefined
-or heavy runtime-import path.
+or heavy runtime-import path. Ctrl+C stops an active runtime search, and the
+launcher failure screen handles errors from the default, `start`, and `run`
+operations; other CLI commands return their own exit status directly.
 When the automatic lookup should be bypassed, the compiled launchers accept
 `CELUNE_ROOT=/path/to/celune`, `--root /path/to/celune`, or
 `--root=/path/to/celune`. The selected path must identify a valid Celune root;

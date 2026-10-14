@@ -3,13 +3,14 @@
 
 import json
 import threading
-from types import SimpleNamespace
 from pathlib import Path
 from unittest import mock
+from types import SimpleNamespace
 
 import numpy as np
 
 from celune import captions
+from celune.registry import get_model_metadata
 
 
 def test_map_word_timings_keeps_aligned_boundaries() -> None:
@@ -304,9 +305,19 @@ def test_caption_aligner_loads_model_lazily_and_aligns_ipa(
         mock.call("huggingface_hub"),
         mock.call("onnxruntime"),
     ]
+    metadata = get_model_metadata(captions.CAPTION_ALIGNMENT_MODEL_ID)
+    assert metadata is not None
     assert download.call_args_list == [
-        mock.call("sadda-speech/wav2vec2-espeak-ctc", "model.onnx"),
-        mock.call("sadda-speech/wav2vec2-espeak-ctc", "vocab.json"),
+        mock.call(
+            metadata.model_id,
+            "model.onnx",
+            revision=metadata.revision,
+        ),
+        mock.call(
+            metadata.model_id,
+            "vocab.json",
+            revision=metadata.revision,
+        ),
     ]
     inference_session.assert_called_once_with(
         "model.onnx",

@@ -11,24 +11,27 @@ import torch
 import numpy as np
 from voxcpm import VoxCPM
 from transformers import AutoTokenizer
+from huggingface_hub import snapshot_download
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 
-from . import get_version
-from ...i18n import string
-from ...constants import BASE_SR
-from ...paths import huggingface_progress
-from ...utils import available, custom_assert
-from ...cevoice import CEVoiceLoader, default_loader
-from ...typing.aliases import AudioChunk, AudioChunks
-from .base import (
-    _to_numpy_audio as normalize_streamed_audio,
-)
-from .voxcpm_cache import _VoxCPMModel, install_voxcpm_quantized_cache
 from .base import (
     CeluneBackend,
     local_hf_offline_mode,
     cached_hf_snapshot_path,
 )
+from .base import (
+    _to_numpy_audio as normalize_streamed_audio,
+)
+from . import get_version
+from ...i18n import string
+from ...constants import BASE_SR
+from ...utils import available, custom_assert
+from ...cevoice import CEVoiceLoader, default_loader
+from ...registry.consent import require_model_consent
+from ...typing.aliases import AudioChunk, AudioChunks
+from ...registry.tts import TTS_DEFAULT_VOICE, VOXCPM2_VOICE_MODELS
+from ...paths import huggingface_progress, huggingface_hub_cache_dir
+from .voxcpm_cache import _VoxCPMModel, install_voxcpm_quantized_cache
 
 _VOXCPM_RUNTIME_KV_CACHE_LENGTH = 2048
 
@@ -90,12 +93,7 @@ class VoxCPM2(CeluneBackend[VoxCPM]):
         "vi",
     )
 
-    voice_models: Optional[Mapping[str, str]] = {
-        "balanced": "openbmb/VoxCPM2",
-        "calm": "openbmb/VoxCPM2",
-        "bold": "openbmb/VoxCPM2",
-        "upbeat": "openbmb/VoxCPM2",
-    }
+    voice_models: Optional[Mapping[str, str]] = VOXCPM2_VOICE_MODELS
 
     # fallback values for packs that omit cfg_scale
     voice_cfg: Mapping[str, float] = {
@@ -104,7 +102,7 @@ class VoxCPM2(CeluneBackend[VoxCPM]):
         "bold": 2.4,
         "upbeat": 2.4,
     }
-    default_voice: Optional[str] = "balanced"
+    default_voice: Optional[str] = TTS_DEFAULT_VOICE
 
     def __init__(
         self,
@@ -237,7 +235,16 @@ class VoxCPM2(CeluneBackend[VoxCPM]):
         Returns:
             VoxCPM: The loaded VoxCPM2 model instance.
         """
+        metadata = require_model_consent(model_id)
         available, path = self.model_is_available_locally(model_id)
+        if not available or path is None:
+            self.log(string("tts.model_download_start"), "info")
+            with huggingface_progress(self.report_progress):
+                path = snapshot_download(
+                    repo_id=model_id,
+                    revision=metadata.revision,
+                    cache_dir=str(huggingface_hub_cache_dir(create=True)),
+                )
         quantize_on_cpu = getattr(self, "quantization_mode", None) is not None
         optimize = bool(kwargs.get("optimize", False))
         load_optimize = optimize and not quantize_on_cpu
@@ -265,29 +272,16 @@ class VoxCPM2(CeluneBackend[VoxCPM]):
         # torch.backends.cudnn.deterministic = True
         # torch.use_deterministic_algorithms(True)
 
-        if available and path is not None:
-            with (
-                local_hf_offline_mode(),
-                huggingface_progress(self.report_progress),
-                self._suppress_backend_output(),
-            ):
-                self.model = VoxCPM.from_pretrained(
-                    path,
-                    **load_kwargs,
-                )
-                self._install_checkpoint_tokenizer(self.model, path)
-        else:
-            self.log(string("tts.model_download_start"), "info")
-            with (
-                huggingface_progress(self.report_progress),
-                self._suppress_backend_output(),
-            ):
-                self.model = VoxCPM.from_pretrained(
-                    model_id,
-                    **load_kwargs,
-                )
-                _, path = self.model_is_available_locally(model_id)
-                self._install_checkpoint_tokenizer(self.model, path)
+        with (
+            local_hf_offline_mode(),
+            huggingface_progress(self.report_progress),
+            self._suppress_backend_output(),
+        ):
+            self.model = VoxCPM.from_pretrained(
+                path,
+                **load_kwargs,
+            )
+            self._install_checkpoint_tokenizer(self.model, path)
         self._resize_runtime_caches(self.model)
         self.model = self.apply_runtime_quantization(self.model, model_id)
         if quantize_on_cpu:

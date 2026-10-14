@@ -7,10 +7,11 @@ import contextlib
 from typing import Optional, cast
 from collections.abc import Mapping, Callable, Iterator, Generator
 
-import numpy as np
 import loguru
+import numpy as np
 from transformers import AutoTokenizer
 from dots_tts.runtime import DotsTtsRuntime
+from huggingface_hub import snapshot_download
 
 from .base import (
     CeluneBackend,
@@ -21,11 +22,13 @@ from .base import (
     _to_numpy_audio as normalize_streamed_audio,
 )
 from ...i18n import string
-from ...paths import huggingface_progress
-from ...utils import discard, available, custom_assert
-from ...cevoice import CEVoiceLoader, default_loader
-from ...typing.aliases import AudioChunk, AudioChunks
 from ...typing.backends import _LoguruLogger
+from ...cevoice import CEVoiceLoader, default_loader
+from ...registry.consent import require_model_consent
+from ...typing.aliases import AudioChunk, AudioChunks
+from ...utils import discard, available, custom_assert
+from ...paths import huggingface_progress, huggingface_hub_cache_dir
+from ...registry.tts import TTS_DEFAULT_VOICE, DOTS_TTS_VOICE_MODELS
 
 
 class DotsTtsMF(CeluneBackend[DotsTtsRuntime]):
@@ -68,13 +71,8 @@ class DotsTtsMF(CeluneBackend[DotsTtsRuntime]):
         "vi",
     )
 
-    voice_models: Optional[Mapping[str, str]] = {
-        "balanced": "rednote-hilab/dots.tts-mf",
-        "calm": "rednote-hilab/dots.tts-mf",
-        "bold": "rednote-hilab/dots.tts-mf",
-        "upbeat": "rednote-hilab/dots.tts-mf",
-    }
-    default_voice: Optional[str] = "balanced"
+    voice_models: Optional[Mapping[str, str]] = DOTS_TTS_VOICE_MODELS
+    default_voice: Optional[str] = TTS_DEFAULT_VOICE
 
     def __init__(
         self,
@@ -222,20 +220,26 @@ class DotsTtsMF(CeluneBackend[DotsTtsRuntime]):
         Returns:
             DotsTtsRuntime: The loaded dots.tts runtime instance.
         """
+        metadata = require_model_consent(model_id)
         available, path = self.model_is_available_locally(model_id)
+        if not available or path is None:
+            self.log(string("tts.model_download_start"), "info")
+            with huggingface_progress(self.report_progress):
+                path = snapshot_download(
+                    repo_id=model_id,
+                    revision=metadata.revision,
+                    cache_dir=str(huggingface_hub_cache_dir(create=True)),
+                )
         precision = kwargs.get("precision", "bfloat16")
         optimize = bool(kwargs.get("optimize", False))
         max_generate_length = int(
             kwargs.get("max_generate_length", self.max_new_tokens)
         )
 
-        target = path if available and path is not None else model_id
+        target = path
         quantize_on_cpu = getattr(self, "quantization_mode", None) is not None
-        if target == model_id:
-            self.log(string("tts.model_download_start"), "info")
-
         with (
-            local_hf_offline_mode(available and path is not None),
+            local_hf_offline_mode(),
             huggingface_progress(self.report_progress),
             self._suppress_backend_output(),
         ):

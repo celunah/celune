@@ -7,9 +7,6 @@ from typing import Optional, cast
 from collections.abc import Mapping, Sequence
 
 from .i18n import string
-from .constants import APP_NAME
-from .typing.aliases import LogLevel
-from .typing.common import Config, JSONSerializable
 from .typing.config import (
     AudioHostApi,
     AudioDeviceConfig,
@@ -17,6 +14,9 @@ from .typing.config import (
     AudioDeviceInfoValue,
     AudioDeviceQueryResult,
 )
+from .constants import APP_NAME
+from .typing.aliases import LogLevel
+from .typing.common import Config, JSONSerializable
 
 ENABLED_ENV_VALUES = {"1", "true", "on", "yes", "enabled"}
 LOG_LEVELS: tuple[LogLevel, ...] = ("info", "verbose", "debug")
@@ -447,7 +447,7 @@ def merge_missing_defaults(
         defaults: Default configuration fields to merge into ``config``.
 
     Returns:
-        tuple[Config, bool]: The merged configuration and whether any fields were added.
+        tuple[Config, bool]: The merged configuration and whether it changed.
     """
     merged: Config = {}
     changed = False
@@ -457,7 +457,30 @@ def merge_missing_defaults(
             if key not in defaults:
                 changed = True
                 continue
+
+            migrated_api_access = False
+            default_value = defaults[key]
+            if (
+                key == "api"
+                and isinstance(current_value, dict)
+                and isinstance(default_value, dict)
+                and "access" in default_value
+                and "access" not in current_value
+                and "host" in current_value
+            ):
+                current_api = deepcopy(current_value)
+                legacy_host = str(current_api.pop("host")).strip().casefold()
+                current_api["access"] = (
+                    "same_machine"
+                    if legacy_host in {"", "localhost", "127.0.0.1", "::1"}
+                    else "same_network"
+                )
+                current_value = current_api
+                migrated_api_access = True
+
             merged[key] = deepcopy(current_value)
+            if migrated_api_access:
+                changed = True
 
     for key, default_value in defaults.items():
         if key not in merged:

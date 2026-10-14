@@ -6,12 +6,11 @@ from __future__ import annotations
 from typing import Optional, cast
 
 from ..i18n import string
-from .needle import NeedleToolSelector
-from ..paths import huggingface_progress
-from ..utils import format_error_message
-from ..speech import deliver_persona_response
-from ..binding import install_class_functions
-from ..exceptions import NeedleSelectionError
+from ..exceptions import (
+    ModelConsentDeclined,
+    ModelConsentRequired,
+    NeedleSelectionError,
+)
 from ..typing.agent import (
     ToolCall,
     AgentOutput,
@@ -29,6 +28,11 @@ from ..typing.agent import (
     AgentClassificationResult,
     AgentClassificationFailure,
 )
+from .needle import NeedleToolSelector
+from ..paths import huggingface_progress
+from ..utils import format_error_message
+from ..speech import deliver_persona_response
+from ..binding import install_class_functions
 
 __all__ = (
     "_execute_agent_tool",
@@ -152,6 +156,8 @@ def _load_agent_tool_selector(self) -> AgentToolSelector:
                 self._agent_tools,
                 schemas=self._agent_tool_schemas,
             )
+    except (ModelConsentDeclined, ModelConsentRequired):
+        raise
     except Exception as exc:
         self._agent_needle_error = str(exc)
         self.log(

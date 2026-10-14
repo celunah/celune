@@ -16,16 +16,16 @@ import torch
 from safetensors import safe_open
 from huggingface_hub import hf_hub_download
 
-from .models import NeedleModel, NeedleConfig
-from ...paths import huggingface_hub_cache_dir
-from ...typing.common import JSON, JSONSerializable
 from ...exceptions import (
     NeedleCheckpointError,
     NeedleUnsupportedConverterError,
 )
+from .models import NeedleModel, NeedleConfig
+from ...paths import huggingface_hub_cache_dir
+from ...typing.common import JSON, JSONSerializable
+from ...registry.consent import require_model_consent
+from ...registry.other import NEEDLE_MODEL_ID, NEEDLE_MODEL_REVISION
 
-NEEDLE_MODEL_ID = "Cactus-Compute/needle"
-NEEDLE_MODEL_REVISION = "5f89b4307696d669c3df1d38ae057e6e1728b107"
 NEEDLE_CONFIG_FILE = "config.json"
 NEEDLE_WEIGHTS_FILE = "model.safetensors"
 NEEDLE_PICKLE_FILE = "needle.pkl"
@@ -415,6 +415,8 @@ def prepare_needle_checkpoint(
         raise NeedleCheckpointError(
             "Needle model_id, revision, and converter_version must be non-empty"
         )
+    metadata = require_model_consent(model_id, revision)
+    revision = metadata.revision
     cache_root = cache_dir or huggingface_hub_cache_dir(create=True)
     cache_root.mkdir(parents=True, exist_ok=True)
     resolved_config = config_path or _download(

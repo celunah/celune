@@ -4,15 +4,16 @@
 import gc
 import importlib
 import contextlib
-from typing import Literal, Optional, Protocol, cast
 from collections.abc import Callable
+from typing import Literal, Optional, Protocol, cast
 
 import torch
 from torch import nn
 
-from ...compat import torchao_compatibility
-from .contracts import QuantizationRule, ModelComponentContract, validate_model_state
 from ...exceptions import BackendError
+from ...compat import torchao_compatibility
+from .contracts import validate_model_state
+from ...registry.tts import QuantizationRule, ModelComponentContract
 
 __all__ = [
     "QuantizationMode",

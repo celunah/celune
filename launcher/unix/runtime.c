@@ -381,6 +381,10 @@ static int search_directory_contents(
     size_t repo_root_size,
     struct search_queue *queue
 ) {
+    if (launcher_startup_was_interrupted()) {
+        return 0;
+    }
+
     unsigned long long now = monotonic_milliseconds();
     if (now >= search_deadline) {
         search_limit = SEARCH_LIMIT_TIME;
@@ -414,12 +418,18 @@ static int search_directory_contents(
     int found = 0;
     struct dirent *entry;
     while (1) {
+        if (launcher_startup_was_interrupted()) {
+            break;
+        }
         unsigned long long read_now = monotonic_milliseconds();
         if (read_now >= search_deadline || read_now >= read_deadline) {
             search_limit = SEARCH_LIMIT_TIME;
             break;
         }
         entry = readdir(search);
+        if (launcher_startup_was_interrupted()) {
+            break;
+        }
         if (entry == NULL) {
             if (monotonic_milliseconds() >= read_deadline &&
                 search_limit == SEARCH_LIMIT_NONE) {
@@ -492,7 +502,7 @@ static int search_runtime_directory(
     }
 
     int found = 0;
-    while (queue.next < queue.count) {
+    while (queue.next < queue.count && !launcher_startup_was_interrupted()) {
         struct search_queue_entry entry = queue.entries[queue.next++];
         found = search_directory_contents(
             entry.path,
@@ -624,6 +634,10 @@ static int resolve_runtime_location(
         "/"
     };
     for (size_t index = 0; index < sizeof(environment_roots) / sizeof(environment_roots[0]); index++) {
+        if (launcher_startup_was_interrupted()) {
+            clear_search_status();
+            return 0;
+        }
         if (environment_roots[index] == NULL) {
             continue;
         }
@@ -636,6 +650,10 @@ static int resolve_runtime_location(
                 repo_root_size
         );
         if (search_limit == SEARCH_ROOT_NOT_CELUNE) {
+            clear_search_status();
+            return 0;
+        }
+        if (launcher_startup_was_interrupted()) {
             clear_search_status();
             return 0;
         }
@@ -770,15 +788,21 @@ int launcher_run(int argc, char **argv) {
             printfe("Celune could not use the requested root: %s\n", root_override);
             return 1;
         }
-    } else if (!resolve_runtime_location(
-                   base,
-                   target,
-                   sizeof(target),
-                   repo_root,
-                   sizeof(repo_root)
-               ) && !find_repo_root(base, repo_root, sizeof(repo_root))) {
-        report_lookup_failure();
-        return 1;
+    } else {
+        int runtime_found = resolve_runtime_location(
+            base,
+            target,
+            sizeof(target),
+            repo_root,
+            sizeof(repo_root)
+        );
+        if (launcher_startup_was_interrupted()) {
+            return 128 + SIGINT;
+        }
+        if (!runtime_found && !find_repo_root(base, repo_root, sizeof(repo_root))) {
+            report_lookup_failure();
+            return 1;
+        }
     }
 
     int python_len = snprintf(python, sizeof(python), "%s/.venv/bin/python", repo_root);

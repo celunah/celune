@@ -1,0 +1,16 @@
+:root {
+  --celune-background: __BACKGROUND__;
+  --celune-primary: __PRIMARY__;
+  --celune-error: __ERROR__;
+  --celune-foreground: __FOREGROUND__;
+  --celune-secondary: __SECONDARY__;
+  --celune-accent: __ACCENT__;
+  --celune-ui-accent: __PRIMARY__;
+  --celune-ui-bg: __BACKGROUND__;
+  --celune-ui-input-bg: __INPUT_BG__;
+  --celune-sleeping: __SLEEPING__;
+  --celune-button-bg: __BUTTON_BG__;
+  --celune-button-hover: __BUTTON_HOVER__;
+  --celune-input-bg: __INPUT_BG__;
+  --celune-placeholder: __SECONDARY__;
+}

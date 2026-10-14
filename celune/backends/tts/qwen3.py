@@ -9,14 +9,21 @@ from collections.abc import Callable, Iterator
 
 import torch
 from faster_qwen3_tts import FasterQwen3TTS
+from huggingface_hub import snapshot_download
 from faster_qwen3_tts import __version__ as qwen3_ver
 
+from ...paths import (
+    huggingface_progress,
+    configure_numba_cache,
+    huggingface_hub_cache_dir,
+)
 from ...i18n import string
 from ...typing.aliases import AudioChunk
 from ...utils import available, custom_assert
 from ...cevoice import CEVoiceLoader, default_loader
-from ...paths import huggingface_progress, configure_numba_cache
+from ...registry.consent import require_model_consent
 from ...kv_cache import QuantizedKVCache, create_quantized_kv_cache
+from ...registry.tts import TTS_DEFAULT_VOICE, QWEN3_DEFAULT_MODEL_ID
 from .base import CeluneBackend, local_hf_offline_mode, cached_hf_snapshot_path
 
 
@@ -89,8 +96,8 @@ class Qwen3(CeluneBackend[FasterQwen3TTS]):
     # this may be reassigned to a different size model as needed
     # low VRAM presets use 0.6B model
     # medium and above VRAM presets use 1.7B model
-    clone_model: str = "Qwen/Qwen3-TTS-12Hz-1.7B-Base"
-    default_voice: Optional[str] = "balanced"
+    clone_model: str = QWEN3_DEFAULT_MODEL_ID
+    default_voice: Optional[str] = TTS_DEFAULT_VOICE
 
     def __init__(
         self,
@@ -216,16 +223,20 @@ class Qwen3(CeluneBackend[FasterQwen3TTS]):
         Returns:
             FasterQwen3TTS: The loaded Qwen3 TTS model instance.
         """
+        metadata = require_model_consent(model_id)
         available, path = self.model_is_available_locally(model_id)
-        configure_numba_cache()
-
-        if available and path is not None:
-            with local_hf_offline_mode(), huggingface_progress(self.report_progress):
-                self.model = FasterQwen3TTS.from_pretrained(path)
-        else:
+        if not available or path is None:
             self.log(string("tts.model_download_start"), "info")
             with huggingface_progress(self.report_progress):
-                self.model = FasterQwen3TTS.from_pretrained(model_id)
+                path = snapshot_download(
+                    repo_id=model_id,
+                    revision=metadata.revision,
+                    cache_dir=str(huggingface_hub_cache_dir(create=True)),
+                )
+        configure_numba_cache()
+
+        with local_hf_offline_mode(), huggingface_progress(self.report_progress):
+            self.model = FasterQwen3TTS.from_pretrained(path)
         self.model = self.apply_runtime_quantization(self.model, model_id)
         return self.model
 
