@@ -21,6 +21,7 @@ from transformers.modeling_utils import PreTrainedModel
 
 from .paths import temp_data_dir
 from .chroma import AudioRGBGlow
+from . import pipeline as _pipeline
 from .vc import clamp_vc_pitch_shift
 from .typing.aliases import LogLevel
 from .locks import ComponentLockLease
@@ -77,18 +78,13 @@ from .vram import (
     resolve_vram_preset,
     resolve_backend_name,
 )
+
+# Import pipeline before speech because its initialization installs speech functions.
 from .speech import (
     play as play_pipeline,
     close as close_pipeline,
     queue_sfx_audio,
     stop_live_audio_input,
-)
-from .pipeline import (
-    clear_queue,
-    close_stream,
-    generation_worker_job,
-    playback_worker_job,
-    split_text,
 )
 from .agent.tools import (
     agent_test_tools,
@@ -834,7 +830,7 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
                         self.log_level,
                     )
                 )
-        clear_queue(self.persona_queue)
+        _pipeline.clear_queue(self.persona_queue)
 
         active_task = self.agent_runtime.get_active_task("default")
         if active_task is not None:
@@ -883,8 +879,8 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
                 self._speech_generation = getattr(self, "_speech_generation", 0) + 1
                 self._playback_generation = getattr(self, "_playback_generation", 0) + 1
                 self.utterance_force_stop.set()
-                clear_queue(self.text_queue)
-                clear_queue(self.audio_queue)
+                _pipeline.clear_queue(self.text_queue)
+                _pipeline.clear_queue(self.audio_queue)
                 self.text_queue.put(self.sentinel)
                 self.audio_queue.put(self.sentinel)
         except Exception as exc:
@@ -897,7 +893,7 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
             )
 
         try:
-            close_stream(self, abort=True)
+            _pipeline.close_stream(self, abort=True)
         except Exception as exc:
             errors.append(
                 format_error_message(
@@ -1158,7 +1154,7 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
     @staticmethod
     def _clear_queue(q: queue.Queue) -> None:
         """Drain all pending items from a queue."""
-        clear_queue(q)
+        _pipeline.clear_queue(q)
 
     def _acquire_component_lease(
         self,
@@ -1277,7 +1273,7 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
 
     def _close_stream(self, abort: bool = False) -> None:
         """Close the current audio stream if one exists."""
-        close_stream(self, abort=abort)
+        _pipeline.close_stream(self, abort=abort)
 
     def _unload_persona_state(self) -> None:
         """Release Persona state while reserving the model lifecycle resource."""
@@ -2440,16 +2436,16 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
 
     def _split_text(self, text: str) -> list[str]:
         """Split text into chunks."""
-        return split_text(self, text)
+        return _pipeline.split_text(self, text)
 
     async def _pipeline_jobs(self) -> None:
         """Run Celune's speech pipeline workers as async jobs."""
-        playback_task = asyncio.create_task(playback_worker_job(self))
+        playback_task = asyncio.create_task(_pipeline.playback_worker_job(self))
         if self._is_voice_conversion_mode():
             await playback_task
             return
 
-        generation_task = asyncio.create_task(generation_worker_job(self))
+        generation_task = asyncio.create_task(_pipeline.generation_worker_job(self))
         await asyncio.gather(generation_task, playback_task)
 
     def _run_pipeline_jobs(self) -> None:
