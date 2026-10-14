@@ -70,7 +70,7 @@ jobs:
       - name: Install build tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc wget zip desktop-file-utils libfuse2
+          sudo apt-get install -y gcc wget zip desktop-file-utils libfuse2 libsodium-dev pkg-config
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7
@@ -110,6 +110,10 @@ jobs:
       - name: Sync dependencies
         shell: powershell
         run: python .\scripts\ci_warnings.py -- uv sync --dev --extra api
+
+      - name: Install static libsodium
+        shell: powershell
+        run: vcpkg install libsodium:x64-windows-static-md
 
       - name: Build Windows launcher artifacts
         shell: powershell

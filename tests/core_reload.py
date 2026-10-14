@@ -810,6 +810,42 @@ class TestCeluneCore(_TestCeluneCore):
         self.assertIsNone(celune.llm)
         self.assertIsNone(celune.tokenizer)
 
+    def test_sleep_unload_failure_restores_model_readiness(self) -> None:
+        """Verify a failed sleep unload does not strand readiness waiters."""
+        celune = self._make_celune({})
+        celune.loaded = True
+        celune.locked = False
+        celune.cur_state = "idle"
+        celune._sleep_config = mock.Mock(
+            return_value=(
+                True,
+                10,
+                {
+                    "persona": False,
+                    "normalizer": False,
+                    "tts": True,
+                    "vc": True,
+                },
+            )
+        )
+        celune.unload_runtime_state = mock.Mock(
+            side_effect=RuntimeError("backend unload failed")
+        )
+
+        with pytest.raises(RuntimeError, match="backend unload failed"):
+            celune.enter_sleep_mode()
+
+        assert celune.sleeping
+        assert not celune.loaded
+        assert celune.cur_state == "sleeping"
+        assert celune.model_ready.is_set()
+        celune.unload_runtime_state.assert_called_once_with(
+            include_normalizer=False,
+            include_vc=True,
+            close_backends=True,
+            release_cuda_cache=False,
+        )
+
     def test_stale_normalizer_load_does_not_restore_released_references(self) -> None:
         """Verify background normalizer loads cannot repopulate state after unload."""
         celune = self._make_celune({})

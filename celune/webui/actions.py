@@ -9,14 +9,11 @@ import textwrap
 from typing import Optional, cast
 from collections.abc import Callable, Iterator, Awaitable
 
-import numpy as np
 import gradio as gr
+import numpy as np
 import soundfile as sf
 from fastapi.responses import JSONResponse
 
-from .. import api as _api
-from ..i18n import string, tagged_string
-from ..ui.app import CeluneUI
 from .runtime import (
     _webui_snapshot,
     _webui_logs_html,
@@ -31,11 +28,14 @@ from .runtime import (
     _webui_vc_controls_update,
     _webui_audio_waveform_options,
 )
-from ..binding import install_module_functions
+from .. import api as _api
+from ..ui.app import CeluneUI
+from ..i18n import string, tagged_string
 from ..constants import BASE_SR, APP_NAME
-from ..typing.api import WebUiUpdate, WebUiAudioValue, WebUiInputAudioValue
+from ..binding import install_module_functions
 from ..persona.impl import persona_talkback_enabled
 from ..typing.aliases import AudioChunk, AudioChunks
+from ..typing.api import WebUiUpdate, WebUiAudioValue, WebUiInputAudioValue
 
 __all__ = (
     "_build_webui",
@@ -648,7 +648,6 @@ def _build_webui() -> gr.Blocks:
         title=APP_NAME,
         fill_height=True,
     ) as demo:
-        gr.HTML(_api.webui_theme_style)
         with gr.Column(elem_id="celune-shell"):
             with gr.Tabs():
                 with gr.Tab(string("webui.tts_tab_label")):
@@ -765,31 +764,43 @@ def _build_webui() -> gr.Blocks:
         timer.tick(  # type: ignore[missing-attribute]
             _webui_snapshot,
             outputs=[logs, status, resources, voice_button, send_button, input_box],
+            api_name=_api.WEBUI_POLL_SNAPSHOT_API_NAME,
+            queue=False,
             show_progress="hidden",
         )
         timer.tick(  # type: ignore[missing-attribute]
             _webui_vc_controls_update,
             outputs=[source_audio, vc_mode, convert_button],
+            api_name=_api.WEBUI_POLL_VC_API_NAME,
+            queue=False,
             show_progress="hidden",
         )
         timer.tick(  # type: ignore[missing-attribute]
             _webui_record_button_update,
             outputs=[record_hotkey],
+            api_name=_api.WEBUI_POLL_RECORDING_API_NAME,
+            queue=False,
             show_progress="hidden",
         )
         demo.load(  # type: ignore[missing-attribute]
             _webui_snapshot,
             outputs=[logs, status, resources, voice_button, send_button, input_box],
+            api_name=_api.WEBUI_LOAD_SNAPSHOT_API_NAME,
+            queue=False,
             show_progress="hidden",
         )
         demo.load(  # type: ignore[missing-attribute]
             _webui_vc_controls_update,
             outputs=[source_audio, vc_mode, convert_button],
+            api_name=_api.WEBUI_LOAD_VC_API_NAME,
+            queue=False,
             show_progress="hidden",
         )
         demo.load(  # type: ignore[missing-attribute]
             _webui_record_button_update,
             outputs=[record_hotkey],
+            api_name=_api.WEBUI_LOAD_RECORDING_API_NAME,
+            queue=False,
             show_progress="hidden",
         )
         input_box.submit(  # type: ignore[missing-attribute]
@@ -804,6 +815,7 @@ def _build_webui() -> gr.Blocks:
                 voice_button,
                 send_button,
             ],
+            api_name=_api.WEBUI_SPEAK_INPUT_API_NAME,
             show_progress="hidden",
         )
         send_button.click(  # type: ignore[missing-attribute]
@@ -818,16 +830,21 @@ def _build_webui() -> gr.Blocks:
                 voice_button,
                 send_button,
             ],
+            api_name=_api.WEBUI_SPEAK_BUTTON_API_NAME,
             show_progress="hidden",
         )
         voice_button.click(  # type: ignore[missing-attribute]
             _webui_cycle_voice,
             outputs=[logs, status, resources, voice_button, send_button, input_box],
+            api_name=_api.WEBUI_CYCLE_VOICE_API_NAME,
+            queue=False,
             show_progress="hidden",
         )
         record_hotkey.click(  # type: ignore[missing-attribute]
             _webui_toggle_recording,
             outputs=[logs, status, resources, voice_button, send_button, input_box],
+            api_name=_api.WEBUI_TOGGLE_RECORDING_API_NAME,
+            queue=False,
             show_progress="hidden",
         )
         convert_button.click(  # type: ignore[missing-attribute]
@@ -842,9 +859,11 @@ def _build_webui() -> gr.Blocks:
                 voice_button,
                 send_button,
             ],
+            api_name=_api.WEBUI_CONVERT_API_NAME,
             show_progress="hidden",
         )
 
+    _api._configure_webui_generation_fn_indices(demo.config.get("dependencies", []))
     return demo
 
 

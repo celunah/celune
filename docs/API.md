@@ -400,8 +400,13 @@ or:
 X-Celune-Token: YOUR_API_KEY
 ```
 
-The configured per-minute rate limit applies to API calls, WebUI actions, and
-WebUI WebSocket connections. Failed validation, busy-state, missing-job, and
+The configured per-minute rate limit applies independently to API calls and
+WebUI generation actions. WebSocket connection and reconnection events do not
+count toward either request limit; authenticated WebSocket connections still
+require a valid session or API key and a same-origin request. Only WebUI speech
+and conversion submissions consume the WebUI generation limit. Polling,
+page-load refreshes, voice and recording controls, and other Gradio transport
+requests do not consume it. Failed validation, busy-state, missing-job, and
 backend errors are returned as JSON with an HTTP status instead of exposing raw
 internal tracebacks. Async jobs are retained in memory for 15 minutes and are
 not persisted across a restart.
@@ -415,6 +420,18 @@ timed state updates are delivered through the CEDTS frontend update channel;
 the browser keeps a polling fallback for reconnects and standalone API hosts.
 Browser playback is returned as 16-bit PCM; Celune's engine continues to use
 normalized float32 audio internally.
+
+Celune links a standalone stylesheet that applies the active palette as CSS.
+The footer displays Celune's status without a second caption or progress line.
+Polling, page-load refreshes, and voice or recording controls use direct,
+unqueued requests that do not consume the generation limit. Speech and
+conversion submissions remain limited; Gradio's other UI transport requests
+do not consume that budget.
+
+Celune serves its page scripts, styles, and bundled fonts under `/ui/assets/`.
+Gradio serves its own hashed JavaScript and CSS bundles from that same path
+through the mounted application. A reverse proxy or Cloudflare Tunnel must
+forward `/ui/assets/` requests to Celune without rewriting their paths.
 
 Unauthenticated access to `/ui` redirects to `/ui/key`, which displays a
 blocking API-key prompt. Submitting the key sends it to `POST /ui/key` in a
@@ -431,6 +448,17 @@ if the prompt is removed from the page with browser developer tools. API
 routes, including read-only status and version routes, also require the API
 key. The authentication request is rate limited, and browser writes and
 WebSocket connections must come from the same origin.
+
+Celune also remembers a successful browser authentication for 30 days in its
+app-data directory. The record is a keyed fingerprint of the client's
+resolved address (Cloudflare's forwarded address when tunneled) and browser
+request headers; it does not contain the API key, address, or raw headers. This
+lets the same client pass the gate after a Quick Tunnel hostname changes and
+receive a fresh host-scoped cookie. A different address or browser signature
+still receives the key prompt. Changing networks or browser settings can change
+that signature and require the key again. Two clients behind one public address
+with identical browser headers cannot be distinguished by the server and share
+this remembered grant.
 
 The browser submits this body to `POST /ui/key`:
 
