@@ -2,14 +2,19 @@
 """Tests for Celune's browser-facing API UI."""
 
 import asyncio
-from typing import cast
+from typing import (
+    Optional,
+    cast,
+)
 from queue import Queue
 from unittest import mock
 from types import SimpleNamespace
+from collections import abc, deque
 
 import numpy as np
 from starlette.requests import Request
 from starlette.responses import Response
+from starlette.types import Send, Scope, Message, Receive
 
 from celune import api
 from celune.i18n import string
@@ -47,9 +52,14 @@ class TestApiWebUI(CeluneTestCase):
         self.previous_timed_update_received_at = api.webui_timed_update_received_at
         self.previous_timed_update_source = api.webui_timed_update_source
         self.previous_auth_token = api.auth_token
+        self.previous_rate_limit_hits = {
+            key: list(hits) for key, hits in api.rate_limit_hits.items()
+        }
         self.previous_logs = list(api.webui_log_lines)
         api.bound_celune = None
         api.auth_token = None
+        with api.rate_limit_lock:
+            api.rate_limit_hits.clear()
         api.webui_log_lines.clear()
         api.webui_logs_seeded = True
         api.webui_resource_page = 0
@@ -100,6 +110,14 @@ class TestApiWebUI(CeluneTestCase):
         api.webui_timed_update_received_at = self.previous_timed_update_received_at
         api.webui_timed_update_source = self.previous_timed_update_source
         api.auth_token = self.previous_auth_token
+        with api.rate_limit_lock:
+            api.rate_limit_hits.clear()
+            api.rate_limit_hits.update(
+                {
+                    key: deque(hits)
+                    for key, hits in self.previous_rate_limit_hits.items()
+                }
+            )
         api.webui_log_lines.clear()
         api.webui_log_lines.extend(self.previous_logs)
 
@@ -109,14 +127,20 @@ class TestApiWebUI(CeluneTestCase):
         return Response("ok")
 
     @staticmethod
-    def _request(path: str, method: str = "GET") -> Request:
+    def _request(
+        path: str,
+        method: str = "GET",
+        headers: tuple[tuple[str, str], ...] = (),
+    ) -> Request:
         """Build one lightweight test request."""
         return Request(
             {
                 "type": "http",
                 "method": method,
                 "path": path,
-                "headers": [],
+                "headers": [
+                    (name.lower().encode(), value.encode()) for name, value in headers
+                ],
                 "query_string": b"",
                 "client": ("127.0.0.1", 2060),
                 "scheme": "http",
@@ -138,11 +162,31 @@ class TestApiWebUI(CeluneTestCase):
         assert api.is_browser_ui_request(ui_request)
         assert not api.is_browser_ui_request(api_request)
 
-    def test_api_security_allows_public_read_only_routes_without_token(self) -> None:
-        """Verify safe read-only routes stay reachable even when API auth is enabled."""
+    def test_browser_requests_mark_model_loads_as_api_requests_without_a_key(
+        self,
+    ) -> None:
+        """Verify unauthenticated local WebUI calls can show the browser consent gate."""
+        from celune.registry.consent import _API_MODEL_REQUEST
+
+        async def inspect_request(_request: Request) -> Response:
+            assert _API_MODEL_REQUEST.get()
+            return Response("ok")
+
+        response = asyncio.run(
+            api.api_security(
+                self._request("/ui/models/pending"),
+                inspect_request,
+            )
+        )
+
+        assert response.status_code == 200
+        assert not _API_MODEL_REQUEST.get()
+
+    def test_api_security_only_leaves_the_root_and_favicon_public(self) -> None:
+        """Verify status and version routes require a key with API auth enabled."""
         api.auth_token = "secret"
 
-        for path in ("/", "/favicon.ico", "/v1", "/v1/version", "/ui"):
+        for path in ("/", "/favicon.ico"):
             response = asyncio.run(
                 api.api_security(
                     self._request(path),
@@ -150,6 +194,250 @@ class TestApiWebUI(CeluneTestCase):
                 )
             )
             assert response.status_code == 200, path
+
+        for path in ("/v1", "/v1/version"):
+            response = asyncio.run(
+                api.api_security(self._request(path), self._passthrough_response)
+            )
+            assert response.status_code == 401, path
+
+    def test_unauthenticated_webui_root_redirects_to_the_key_prompt(self) -> None:
+        """Verify the protected WebUI root redirects to its standalone key page."""
+        api.auth_token = "secret"
+
+        response = asyncio.run(
+            api.api_security(self._request("/ui"), self._passthrough_response)
+        )
+
+        assert response.status_code == 307
+        assert response.headers["location"] == "/ui/key"
+        assert response.headers["cache-control"] == "no-store"
+
+    def test_key_prompt_is_served_from_the_ui_key_path(self) -> None:
+        """Verify the standalone key prompt is served at the documented path."""
+        api.auth_token = "secret"
+
+        response = asyncio.run(
+            api.api_security(self._request("/ui/key"), self._passthrough_response)
+        )
+
+        assert response.status_code == 200
+        assert 'aria-modal="true"' in bytes(response.body).decode()
+        page = bytes(response.body).decode()
+        assert '<h1 id="title">API key required</h1>' in page
+        assert "This interface requires an API key. Enter it below to continue." in page
+        assert '<label for="api-key">API key</label>' in page
+        assert '<button id="submit" type="submit">Continue</button>' in page
+        assert 'data-invalid-message="Invalid API key"' in page
+        assert 'data-error-message="An error occurred while authenticating"' in page
+        assert '<link rel="stylesheet" href="/ui/assets/api_key.css">' in page
+        assert '<script src="/ui/assets/api_key.js" defer></script>' in page
+        assert "<style>" not in page
+        stylesheet = api.read_webui_asset("api_key.css")
+        script = api.read_webui_asset("api_key.js")
+        assert "#error { display: none;" in stylesheet
+        assert "#error:not(:empty) { display: block; }" in stylesheet
+        assert 'fetch("/ui/key"' in script
+        assert "font-family: Outfit" in stylesheet
+        assert "font-family: Michroma" in stylesheet
+        assert "/ui/assets/fonts/outfit-400.ttf" in stylesheet
+        security_policy = response.headers["content-security-policy"]
+        assert "style-src 'self'" in security_policy
+        assert "script-src 'self'" in security_policy
+        assert "font-src 'self'" in security_policy
+        assert response.headers["cache-control"] == "no-store"
+
+    def test_api_security_rejects_webui_actions_without_a_session(self) -> None:
+        """Verify deleting the prompt cannot authorize a WebUI action request."""
+        api.auth_token = "secret"
+
+        response = asyncio.run(
+            api.api_security(
+                self._request("/ui/run/speak", method="POST"),
+                self._passthrough_response,
+            )
+        )
+
+        assert response.status_code == 401
+        assert response.headers["WWW-Authenticate"] == "Bearer"
+        assert string("api.unauthorized") in bytes(response.body).decode()
+
+    def test_api_security_accepts_a_webui_session_cookie(self) -> None:
+        """Verify an authenticated browser session can use WebUI actions."""
+        api.auth_token = "secret"
+        session_id = api._new_ui_session()
+
+        response = asyncio.run(
+            api.api_security(
+                self._request(
+                    "/ui/run/speak",
+                    method="POST",
+                    headers=(
+                        ("cookie", f"{api.WEBUI_AUTH_COOKIE}={session_id}"),
+                        ("origin", "http://127.0.0.1:2060"),
+                    ),
+                ),
+                self._passthrough_response,
+            )
+        )
+
+        assert response.status_code == 200
+
+    def test_webui_session_survives_restart_but_is_bound_to_the_api_key(self) -> None:
+        """Verify signed browser sessions persist until the application key changes."""
+        api.auth_token = "secret"
+        session_id = api._new_ui_session()
+
+        api.configure_api_security(token="secret")
+        assert api._ui_session_valid(session_id)
+
+        replacement = "A" if session_id[-1] != "A" else "B"
+        assert not api._ui_session_valid(f"{session_id[:-1]}{replacement}")
+
+        api.configure_api_security(token="rotated")
+        assert not api._ui_session_valid(session_id)
+
+    def test_webui_session_expires(self) -> None:
+        """Verify an expired signed browser session cannot authorize a client."""
+        api.auth_token = "secret"
+        session_id = api._encode_ui_session("c" * 32, expires_at=99)
+
+        with mock.patch("celune.api.time.time", return_value=100):
+            assert not api._ui_session_valid(session_id)
+
+    def test_webui_session_refresh_keeps_the_same_browser_client(self) -> None:
+        """Verify active browser sessions refresh before expiry for that client."""
+        api.auth_token = "secret"
+        client_id = "c" * 32
+        expires_at = int(api.time.time()) + api.WEBUI_AUTH_SESSION_SECONDS // 4
+        session_id = api._encode_ui_session(client_id, expires_at)
+
+        response = asyncio.run(
+            api.api_security(
+                self._request(
+                    "/ui",
+                    headers=(("cookie", f"{api.WEBUI_AUTH_COOKIE}={session_id}"),),
+                ),
+                self._passthrough_response,
+            )
+        )
+
+        refreshed_cookie = response.headers["set-cookie"].split(";", 1)[0]
+        refreshed_session = refreshed_cookie.split("=", 1)[1]
+        refreshed_details = api._ui_session_details(refreshed_session)
+        assert refreshed_details is not None
+        assert refreshed_details[0] == client_id
+        assert refreshed_details[1] > expires_at
+
+    def test_api_security_rejects_cross_origin_webui_actions(self) -> None:
+        """Verify browser sessions cannot authorize cross-origin actions."""
+        api.auth_token = "secret"
+        session_id = api._new_ui_session()
+
+        response = asyncio.run(
+            api.api_security(
+                self._request(
+                    "/ui/run/speak",
+                    method="POST",
+                    headers=(
+                        ("cookie", f"{api.WEBUI_AUTH_COOKIE}={session_id}"),
+                        ("origin", "http://attacker.example"),
+                    ),
+                ),
+                self._passthrough_response,
+            )
+        )
+
+        assert response.status_code == 403
+
+    def test_webui_authentication_exchanges_key_for_http_only_cookie(self) -> None:
+        """Verify the configured key creates an opaque, scoped browser cookie."""
+        api.auth_token = "secret"
+        response = asyncio.run(
+            api.authenticate_webui(
+                api.WebUiAuthRequest(api_key="secret"),
+                self._request("/ui/key", method="POST"),
+            )
+        )
+
+        assert response.status_code == 200
+        cookie = response.headers["set-cookie"]
+        assert f"{api.WEBUI_AUTH_COOKIE}=" in cookie
+        assert "secret" not in cookie
+        assert "HttpOnly" in cookie
+        assert "Path=/ui" in cookie
+        assert "SameSite=strict" in cookie
+
+    def test_webui_authentication_rejects_an_invalid_key(self) -> None:
+        """Verify an incorrect application key does not create a session."""
+        api.auth_token = "secret"
+        response = asyncio.run(
+            api.authenticate_webui(
+                api.WebUiAuthRequest(api_key="incorrect"),
+                self._request("/ui/key", method="POST"),
+            )
+        )
+
+        assert response.status_code == 401
+        assert string("api.webui_auth_invalid") in bytes(response.body).decode()
+        assert "set-cookie" not in response.headers
+
+    def test_webui_websocket_rejects_missing_authentication(self) -> None:
+        """Verify unauthenticated WebUI WebSockets never reach Gradio."""
+        api.auth_token = "secret"
+        reached_gradio = False
+        sent_messages: list[Message] = []
+
+        async def downstream(
+            _scope: Scope,
+            _receive: Receive,
+            _send: Send,
+        ) -> None:
+            nonlocal reached_gradio
+            reached_gradio = True
+
+        async def receive() -> Message:
+            return {"type": "websocket.connect"}
+
+        async def send(message: Message) -> None:
+            sent_messages.append(message)
+
+        scope: Scope = {
+            "type": "websocket",
+            "path": "/ui/queue/join",
+            "headers": [],
+            "client": ("127.0.0.1", 2060),
+            "scheme": "ws",
+            "server": ("127.0.0.1", 2060),
+            "subprotocols": [],
+            "query_string": b"",
+        }
+        middleware = api.WebUiWebSocketSecurityMiddleware(downstream)
+        asyncio.run(middleware(scope, receive, send))
+
+        assert not reached_gradio
+        assert sent_messages == [{"type": "websocket.close", "code": 4401}]
+
+        session_id = api._new_ui_session()
+        scope["headers"] = [
+            (
+                b"cookie",
+                f"{api.WEBUI_AUTH_COOKIE}={session_id}".encode(),
+            ),
+            (b"origin", b"http://attacker.example"),
+        ]
+        sent_messages.clear()
+        asyncio.run(middleware(scope, receive, send))
+
+        assert not reached_gradio
+        assert sent_messages == [{"type": "websocket.close", "code": 4401}]
+
+        scope["headers"][1] = (b"origin", b"http://127.0.0.1:2060")
+        sent_messages.clear()
+        asyncio.run(middleware(scope, receive, send))
+
+        assert reached_gradio
+        assert not sent_messages
 
     def test_api_security_requires_token_for_generating_routes(self) -> None:
         """Verify protected API routes still reject unauthenticated requests."""
@@ -194,7 +482,7 @@ class TestApiWebUI(CeluneTestCase):
             ) = api.webui_snapshot()
 
         assert "Ready to speak." in logs_html
-        assert "--celune-ui-accent:" in status_html
+        assert "--celune-ui-accent:" in api.webui_theme_style
         assert "style=" in logs_html
         assert "Idle" in status_html
         assert "10.66/11.94" in resources_html
@@ -609,14 +897,38 @@ class TestApiWebUI(CeluneTestCase):
         assert "min-height: 0;" in api.WEBUI_CSS
         assert '.standard-player input[type="range"]' in api.WEBUI_CSS
         assert ".minimal-audio-player button:hover" in api.WEBUI_CSS
-        assert ".toast-body.error" in api.WEBUI_CSS
-        assert ".toast-message-text.error::before" in api.WEBUI_CSS
-        assert 'content: "Celune is currently unavailable.";' in api.WEBUI_CSS
         assert (
             "@media (max-width: 768px), (any-pointer: coarse), (hover: none)"
             in api.WEBUI_CSS
         )
         assert "margin-top: auto;" not in api.WEBUI_CSS
+
+    def test_webui_connection_toast_styles_only_gradio_disconnects(self) -> None:
+        """Verify only Gradio connection-loss toasts get Celune's unavailable style."""
+        webui_script = api.read_webui_asset("webui.js")
+        assert '"Connection Lost"' in webui_script
+        assert '"Connection to the server was lost."' in webui_script
+        assert ".toast-body.error.celune-gradio-connection-lost" in api.WEBUI_CSS
+        assert (
+            ".toast-body.error.celune-gradio-connection-lost "
+            ".toast-message-text.error::before"
+        ) in api.WEBUI_CSS
+        assert 'content: "Celune is currently unavailable.";' in api.WEBUI_CSS
+        assert "\n.toast-message-text.error {" not in api.WEBUI_CSS
+        assert "body.celune-gradio-connection-lost .toast-messages" in api.WEBUI_CSS
+
+    def test_webui_assets_keep_markup_scripts_and_styles_separate(self) -> None:
+        """Verify WebUI behavior is served from standalone packaged assets."""
+        head = api.read_webui_asset("head.html")
+        script = api.read_webui_asset("webui.js")
+        stylesheet = api.read_webui_asset("webui.css")
+
+        assert 'href="/ui/assets/theme.css"' in head
+        assert 'src="/ui/assets/webui.js"' in head
+        assert "#celune-model-consent" in stylesheet
+        assert "function showConsent(model)" in script
+        assert "style.textContent" not in script
+        assert "/ui/assets/fonts/outfit-400.ttf" in stylesheet
 
     def test_webui_audio_waveform_options_follow_primary_color(self) -> None:
         """Verify Gradio audio waveform colors are driven by Celune's primary color."""
@@ -630,11 +942,12 @@ class TestApiWebUI(CeluneTestCase):
 
     def test_webui_head_installs_log_autoscroll(self) -> None:
         """Verify the WebUI head installs auto-scroll behavior for the log pane."""
-        assert "#celune-log-panel pre" in api.WEBUI_HEAD
-        assert "MutationObserver" in api.WEBUI_HEAD
-        assert "isNearLogBottom" in api.WEBUI_HEAD
-        assert "__celuneLogAutoscrollFollow" in api.WEBUI_HEAD
-        assert "scrollTop = logElement.scrollHeight" in api.WEBUI_HEAD
+        script = api.read_webui_asset("webui.js")
+        assert "#celune-log-panel pre" in script
+        assert "MutationObserver" in script
+        assert "isNearLogBottom" in script
+        assert "__celuneLogAutoscrollFollow" in script
+        assert "scrollTop = logElement.scrollHeight" in script
 
     def test_webui_log_buffer_deduplicates_adjacent_callback_entries(self) -> None:
         """Verify overlapping log forwarding cannot print one WebUI line twice."""
@@ -1126,23 +1439,25 @@ class TestApiWebUI(CeluneTestCase):
         """Verify browser error statuses no longer switch the full UI palette."""
         api.set_webui_status("I can't speak right now.", "error")
 
-        theme_html = api.webui_theme_html()
+        api.configure_webui_theme()
+        theme_css = api.webui_theme_style
 
         assert (
             api.colors.THEME.background or api.colors.DEFAULT_BACKGROUND
-        ) in theme_html
-        assert api.colors.ERROR_BACKGROUND not in theme_html
+        ) in theme_css
+        assert api.colors.ERROR_BACKGROUND not in theme_css
 
     def test_webui_nonfatal_error_status_keeps_normal_theme(self) -> None:
         """Verify non-fatal browser errors do not switch the UI into the fatal palette."""
         api.set_webui_status("I can't change my voice right now.", "error")
 
-        theme_html = api.webui_theme_html()
+        api.configure_webui_theme()
+        theme_css = api.webui_theme_style
 
         assert (
             api.colors.THEME.background or api.colors.DEFAULT_BACKGROUND
-        ) in theme_html
-        assert api.colors.ERROR_BACKGROUND not in theme_html
+        ) in theme_css
+        assert api.colors.ERROR_BACKGROUND not in theme_css
 
     def test_webui_wrapped_fatal_glow_requests_api_shutdown(self) -> None:
         """Verify fatal glow stops the API/WebUI surface instead of tinting it red."""
@@ -1189,3 +1504,34 @@ class TestApiWebUI(CeluneTestCase):
             "API port 2060 is already in use.",
             "warning",
         )
+
+    @staticmethod
+    def test_start_api_can_defer_its_startup_log_to_the_callback() -> None:
+        """Verify deferred startup logging lets callbacks report alternate URLs."""
+        celune = SimpleNamespace(log=mock.Mock(), dev=False)
+        on_started = mock.Mock()
+
+        def fake_run_api(
+            _celune: Optional[Celune],
+            host: Optional[str],
+            port: int,
+            token: Optional[str],
+            requests_per_minute: int,
+            on_started: Optional[abc.Callable[[str, int], None]],
+        ) -> None:
+            assert token is None
+            assert requests_per_minute == 60
+            assert on_started is not None
+            on_started(host or "127.0.0.1", port)
+
+        with mock.patch("celune.api.run_api", side_effect=fake_run_api):
+            thread = api.start_api(
+                cast(Celune, celune),
+                host="127.0.0.1",
+                on_started=on_started,
+                defer_startup_log=True,
+            )
+            thread.join(timeout=1.0)
+
+        on_started.assert_called_once_with("127.0.0.1", 2060)
+        celune.log.assert_not_called()

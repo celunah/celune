@@ -132,7 +132,7 @@ These variables are useful for diagnostics and deployment:
 | `CELUNE_LOG_LEVEL` | Initial log level: `info`, `verbose`, or `debug`. |
 | `CELUNE_BACKEND` | Overrides the configured backend name. |
 | `CELUNE_HEADLESS` | Overrides `headless`; enabled values start without Textual. |
-| `CELUNE_API_TOKEN` | Supplies the API bearer token when config does not contain one. |
+| `CELUNE_API_TOKEN` | Supplies the API key as a bearer token when config does not contain one. |
 | `CELUNE_LAUNCHER` | Marks a launch as owned by the Celune launcher. |
 | `CELUNE_OVERRIDE_CELINE_DAY` | Bypasses the name-day startup pause used by the app. |
 | `CELUNE_THEME` | Overrides the selected UI theme. |

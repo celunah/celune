@@ -8,13 +8,14 @@ from unittest.mock import patch
 import torch
 from torch import nn
 
-from celune.compat import torchao_compatibility
-from celune.backends.tts.contracts import (
+from celune.registry.tts import (
     ModelContract,
     QuantizationRule,
     RuntimeDtypeRule,
     ModelComponentContract,
     TensorInventoryContract,
+)
+from celune.backends.tts.contracts import (
     _canonical_inventory,
     _inventory_from_state,
 )
@@ -23,6 +24,7 @@ from celune.backends.tts.quantization import (
     quantization_mode,
     quantize_component,
 )
+from celune.compat import torchao_compatibility
 
 
 def test_torchao_quant_api_syntax_warning_is_suppressed() -> None:
@@ -108,7 +110,7 @@ def test_quantization_mode_keeps_bfloat16_when_disabled() -> None:
 
 def test_quantization_policy_only_targets_contract_layer_families() -> None:
     """Keep boundaries out of the contract-selected quantization set."""
-    from celune.backends.tts.contracts import model_contract
+    from celune.registry.tts import model_contract
     from celune.backends.tts.quantization import _is_safe_linear
 
     contract = model_contract(
@@ -152,7 +154,7 @@ def test_quantization_components_prefer_declared_nested_module() -> None:
 
 def test_pocket_contract_names_its_runtime_quantization_root() -> None:
     """Keep Pocket TTS's contract component aligned with its loaded module."""
-    from celune.backends.tts.contracts import model_contract
+    from celune.registry.tts import model_contract
 
     contract = model_contract(
         "mini",

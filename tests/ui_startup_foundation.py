@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for runtime validation and lightweight UI commands."""
 
-# Import groups follow Celune's project-specific Ruff ordering.
+# Import groups follow Celune's project-specific ordering.
 # pylint: disable=ungrouped-imports
 
 import sys
@@ -24,6 +24,15 @@ from textual.app import App
 from textual.containers import Vertical
 from textual.widgets import Label, Static, RichLog, TextArea, ProgressBar
 
+from celune.ui.app import (
+    Button,
+    CeluneUI,
+    VoiceButton,
+    UILogMessage,
+    ButtonActions,
+    ProgressLabel,
+    CeluneLoadingScreen,
+)
 from celune.theme import colors
 from celune.utils import discard
 from celune.celune import Celune
@@ -35,15 +44,6 @@ from celune.ui import resources as ui_resources
 from celune.ui.headless import CeluneHeadlessUI
 from tests.support import FakeBackend, CeluneTestCase
 from celune.constants import APP_NAME, COST_EQUIVALENTS, ExitCodes
-from celune.ui.app import (
-    Button,
-    CeluneUI,
-    VoiceButton,
-    UILogMessage,
-    ButtonActions,
-    ProgressLabel,
-    CeluneLoadingScreen,
-)
 
 
 class TestUIStartup(CeluneTestCase):
@@ -272,6 +272,25 @@ class TestUIStartup(CeluneTestCase):
         )
         assert menu.return_value is False
         assert ui._settings_paths == (("backend",), ("persona", "context_size"))
+
+    def test_settings_menu_offers_the_api_access_levels(self) -> None:
+        """Verify the API setting exposes Celune's three network-access modes."""
+        ui = CeluneUI()
+        ui.celune = cast(
+            Celune,
+            SimpleNamespace(config={"api": {"access": "same_machine"}}),
+        )
+
+        with mock.patch.object(ui, "_show_menu") as show_menu:
+            ui.open_settings_menu()
+
+        option = show_menu.call_args.args[0].options[0]
+        assert option.autocomplete_values == (
+            "same_machine",
+            "same_network",
+            "everyone",
+        )
+        assert "REST API" in option.explanation
 
     def test_settings_menu_saves_values_and_requests_pending_restart(self) -> None:
         """Verify ENTER's settings result writes YAML and returns exit code 7."""

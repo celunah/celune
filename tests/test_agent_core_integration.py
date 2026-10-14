@@ -8,24 +8,6 @@ from typing import Optional, cast
 from contextlib import nullcontext
 from collections.abc import Mapping, Sequence
 
-from celune.celune import Celune
-from celune.typing.aliases import LogLevel
-from celune.persona.impl import PersonaClient
-from celune.typing.common import JSONSerializable
-from celune.constants import PERSONA_DEFAULT_MODEL_ID
-from celune.typing.persona import PersonaClientResponse
-from celune.typing.agent import NeedleToolCall, NeedleToolCatalog
-from celune.agent.tools import AgentStatusTool, production_agent_tool_schemas
-from celune.agent.needle.impl import (
-    NeedleHandler,
-    NeedleToolSelector,
-)
-from celune.speech import deliver_persona_response as celune_deliver_persona_response
-from celune.dataclasses.events import (
-    AgentTaskFinishedEvent,
-    AgentTaskStateChangedEvent,
-    AgentApprovalRequestedEvent,
-)
 from celune.agent import (
     ToolCall,
     AgentTool,
@@ -52,6 +34,24 @@ from celune.agent import (
     AgentClassificationFailure,
     AgentClassificationFailureKind,
 )
+from celune.celune import Celune
+from celune.agent.needle.impl import (
+    NeedleHandler,
+    NeedleToolSelector,
+)
+from celune.dataclasses.events import (
+    AgentTaskFinishedEvent,
+    AgentTaskStateChangedEvent,
+    AgentApprovalRequestedEvent,
+)
+from celune.typing.aliases import LogLevel
+from celune.persona.impl import PersonaClient
+from celune.typing.common import JSONSerializable
+from celune.typing.persona import PersonaClientResponse
+from celune.registry.llm import PERSONA_DEFAULT_MODEL_ID
+from celune.typing.agent import NeedleToolCall, NeedleToolCatalog
+from celune.agent.tools import AgentStatusTool, production_agent_tool_schemas
+from celune.speech import deliver_persona_response as celune_deliver_persona_response
 
 from .support import FakeGlow, FakeBackend, CeluneTestCase
 

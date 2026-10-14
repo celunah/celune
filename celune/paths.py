@@ -367,6 +367,18 @@ def config_path(create_parent: bool = False) -> Path:
     return path
 
 
+def api_key_path(create_parent: bool = False) -> Path:
+    """Return the private file path used for Celune's generated API key.
+
+    Args:
+        create_parent: Whether the app-data directory should be created first.
+
+    Returns:
+        Path: Celune's generated API-key file path.
+    """
+    return app_data_dir(create=create_parent) / "api.key"
+
+
 def traceback_path(create_parent: bool = False) -> Path:
     """Return the traceback capture file path.
 
@@ -380,6 +392,11 @@ def traceback_path(create_parent: bool = False) -> Path:
     if create_parent:
         path.parent.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def model_consent_path() -> Path:
+    """Return the app-data path used for model-license acknowledgements."""
+    return app_data_dir() / "model-consents.json"
 
 
 def main_window_log_path(create_parent: bool = False) -> Path:

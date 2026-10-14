@@ -4,7 +4,6 @@
 import signal
 import datetime
 from enum import Enum, IntEnum, auto
-from typing import Literal, Optional, TypedDict
 
 from ._version import VERSION
 
@@ -40,23 +39,6 @@ NVIDIA_DEVICE_KEYWORDS = (
     "maxwell",
 )
 
-# CeluneNorm v2.0 inherits v1.3's feature set but at an extended context length
-# so Celune can process your normalized text more efficiently at either
-# 1024 or 2048 tokens of available max context length
-#
-# uncomment the normalizer you wish to use here
-# NORMALIZER_MODEL_ID = "lunahr/CeluneNorm-0.6B-v2.0-ctx1024"
-NORMALIZER_MODEL_ID = "lunahr/CeluneNorm-0.6B-v2.0-ctx2048"
-
-# this embedding model is used to extract a voice embedding vector out of the target utterance,
-# and analyze the voice automatically based on any given embeddings from your CEVOICE/CECHAR pack
-VOICE_EMBEDDING_MODEL = "marksverdhei/Qwen3-Voice-Embedding-12Hz-1.7B"
-VOICE_EMBEDDING_MODEL_REVISION = "7577f61c42737fc8064bba773e2a18602df92803"
-# this embedding model is used to retrieve long-term Persona memories semantically when available
-PERSONA_MEMORY_EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
-# this model is used to infer conversation emotion and derive Persona's target response mood
-PERSONA_EMOTION_MODEL = "lunahr/emotispace-128"
-
 # agents use more context than plain Persona
 PERSONA_CONTEXT_SPACE = 2048
 PERSONA_COMPACT_AT = 75
@@ -65,154 +47,7 @@ AGENT_ROUTING_CONTEXT_SPACE = 8192
 AGENT_ROUTING_MAX_NEW_TOKENS = 256
 AGENT_COMPACT_AT = 75
 AGENT_MAX_LOOPS = 20
-DEFAULT_PERSONA_SPEECH_MODEL_ID = "openai/whisper-large-v3-turbo"
-DEFAULT_PERSONA_SPEECH_MODEL_REVISION = "41f01f3fe87f28c78e2fbf8b568835947dd65ed9"
-
-
-class PersonaModelRevisions(TypedDict):
-    """Pinned Hugging Face revisions for one Persona model family."""
-
-    official: str
-    abliterated: str
-
-
-class PersonaModelDefinition(TypedDict):
-    """Registry entry for one official and abliterated Persona model family."""
-
-    model: str
-    organization: str
-    tier: Literal["standard", "smart"]
-    revisions: PersonaModelRevisions
-
-
-# known supported Persona and agent models
-PERSONA_DEFAULT_MODEL_ID = "Qwen/Qwen3-VL-4B-Instruct"
-PERSONA_MODELS: tuple[PersonaModelDefinition, ...] = (
-    {
-        "model": "Qwen3-VL-4B-Instruct",
-        "organization": "Qwen",
-        "tier": "standard",
-        "revisions": {
-            "official": "ebb281ec70b05090aa6165b016eac8ec08e71b17",
-            "abliterated": "ce72a7c22aacb493fb94478de3bfbe834c61844a",
-        },
-    },
-    {
-        "model": "Qwen3-VL-8B-Instruct",
-        "organization": "Qwen",
-        "tier": "smart",
-        "revisions": {
-            "official": "0c351dd01ed87e9c1b53cbc748cba10e6187ff3b",
-            "abliterated": "b47a0690b22eaf1d9a63874d967a03781c90f9cf",
-        },
-    },
-    {
-        "model": "Qwen3-VL-8B-Thinking",
-        "organization": "Qwen",
-        "tier": "smart",
-        "revisions": {
-            "official": "92f3c4b4feadd3a016ef468d103bb5f58b2a2c6b",
-            "abliterated": "34bbf0d131d799ef233b2c20b074fbc9a0179ead",
-        },
-    },
-    {
-        "model": "Qwen3.5-4B",
-        "organization": "Qwen",
-        "tier": "standard",
-        "revisions": {
-            "official": "851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a",
-            "abliterated": "5581467dfd52bf338c782006a6cdce05c42594be",
-        },
-    },
-    {
-        "model": "Qwen3.5-9B",
-        "organization": "Qwen",
-        "tier": "smart",
-        "revisions": {
-            "official": "c202236235762e1c871ad0ccb60c8ee5ba337b9a",
-            "abliterated": "05b9e7c9b978ba29bdb8f50a49c30e4b91183339",
-        },
-    },
-    {
-        "model": "gemma-4-E2B-it",
-        "organization": "google",
-        "tier": "standard",
-        "revisions": {
-            "official": "3e22461f65e89153144f8adb70e3b8c2cc9845a7",
-            "abliterated": "3d1e3d50d7a04585ce4ded197b2fd7a90c04647c",
-        },
-    },
-    {
-        "model": "gemma-4-E4B-it",
-        "organization": "google",
-        "tier": "smart",
-        "revisions": {
-            "official": "ee0ef6023621cff504d758262d4e04895a5af4a2",
-            "abliterated": "03ce1f3a982b544afb03878ce80e7f042bcdc172",
-        },
-    },
-)
 PERSONA_HISTORY_MESSAGES = 20
-
-
-def _persona_model_id(
-    definition: PersonaModelDefinition,
-    variant: Literal["official", "abliterated"],
-) -> str:
-    """Build a full Hugging Face repository ID from a registry entry."""
-    if variant == "official":
-        return f"{definition['organization']}/{definition['model']}"
-    return f"huihui-ai/Huihui-{definition['model']}-abliterated"
-
-
-PERSONA_MODEL_REVISIONS = {
-    **{
-        _persona_model_id(definition, "official"): definition["revisions"]["official"]
-        for definition in PERSONA_MODELS
-    },
-    **{
-        _persona_model_id(definition, "abliterated"): definition["revisions"][
-            "abliterated"
-        ]
-        for definition in PERSONA_MODELS
-    },
-}
-
-REMOTE_CODE_MODEL_REVISIONS = {
-    VOICE_EMBEDDING_MODEL: VOICE_EMBEDDING_MODEL_REVISION,
-    **PERSONA_MODEL_REVISIONS,
-}
-
-
-def remote_code_model_revision(model_id: str) -> Optional[str]:
-    """Return the pinned revision for a remote-code model when Celune knows one.
-
-    Args:
-        model_id: Hugging Face model ID to resolve.
-
-    Returns:
-        Optional[str]: The pinned commit revision, or ``None`` when unknown.
-    """
-    return REMOTE_CODE_MODEL_REVISIONS.get(model_id)
-
-
-def persona_model_tier(model_id: str) -> Optional[Literal["standard", "smart"]]:
-    """Return the configured hardware tier for a Persona model ID.
-
-    Args:
-        model_id: Full Hugging Face model repository ID.
-
-    Returns:
-        Optional[Literal["standard", "smart"]]: The model tier, or ``None`` when
-        the model is not in the Persona registry.
-    """
-    for definition in PERSONA_MODELS:
-        if model_id in {
-            _persona_model_id(definition, "official"),
-            _persona_model_id(definition, "abliterated"),
-        }:
-            return definition["tier"]
-    return None
 
 
 # used to pre-calculate the next full moon for the glow boost

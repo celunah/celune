@@ -11,10 +11,10 @@ import select
 import threading
 import subprocess
 from uuid import uuid4
-from typing import IO, Optional, cast
 from contextlib import suppress
-from collections import OrderedDict, deque
 from dataclasses import dataclass
+from typing import IO, Optional, cast
+from collections import OrderedDict, deque
 from collections.abc import Callable, Iterator
 
 from ..paths import (
@@ -23,8 +23,6 @@ from ..paths import (
     configure_numba_cache,
     huggingface_hub_cache_dir,
 )
-from ..utils import format_error_message
-from ..cevoice import active_bundle_path
 from .protocol import (
     CEDTS_VERSION,
     CORE_CAPABILITIES,
@@ -52,27 +50,29 @@ from ..exceptions import (
     CEDTSTimeoutError,
     CEDTSProtocolError,
 )
-from ..typing.common import JSON
 from ..typing.worker import (
     WorkerValue,
     WorkerMessage,
     WorkerResponse,
     WorkerPayloadDescriptor,
 )
-from ..typing.aliases import LogLevel, LogCallback
 from ..typing.backends import (
     BackendArguments,
     BackendGeneration,
     BackendDescription,
     BackendArgumentValue,
 )
-from ..backends.vc.base import CeluneVCBackend
-from ..backends.tts.base import CeluneBackend
+from ..typing.common import JSON
 from ..backends.environment import (
     BackendManifest,
     BackendEnvironment,
     BackendEnvironmentManager,
 )
+from ..utils import format_error_message
+from ..cevoice import active_bundle_path
+from ..backends.tts.base import CeluneBackend
+from ..backends.vc.base import CeluneVCBackend
+from ..typing.aliases import LogLevel, LogCallback
 from ..dataclasses.pipeline import AudioOutput, VoiceConversionRequest
 
 __all__ = ["RemoteBackendProxy", "RemoteModelHandle", "RemoteVCBackendProxy"]
@@ -1743,6 +1743,9 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
         **kwargs: BackendArgumentValue,
     ) -> RemoteModelHandle:
         """Load a model in the worker and return an opaque handle."""
+        from ..registry.consent import require_model_consent
+
+        require_model_consent(model_id)
         self.quantization_attempted = getattr(self, "quantization_requested", False)
         value = self._request(
             "load_model",
@@ -1760,6 +1763,10 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
 
     def preload_models(self) -> None:
         """Ensure backend models are available inside the worker environment."""
+        from ..registry.consent import require_model_consent
+
+        for model_id in self.all_model_ids:
+            require_model_consent(model_id)
         self._request(
             "preload_models",
             response_timeout=_BACKEND_MODEL_OPERATION_TIMEOUT_SECONDS,
@@ -2020,7 +2027,18 @@ class RemoteVCBackendProxy(CeluneVCBackend):
 
     def preload_models(self) -> None:
         """Ensure voice-conversion assets are available in the worker."""
+        self._require_seedvc_model_consents()
         self._worker.preload_models()
+
+    @staticmethod
+    def _require_seedvc_model_consents() -> None:
+        """Check terms for the repositories used by the Seed-VC worker."""
+        from ..registry import OTHER_MODELS
+        from ..registry.consent import require_model_consent
+
+        for metadata in OTHER_MODELS:
+            if "seed_vc" in metadata.roles:
+                require_model_consent(metadata.model_id)
 
     def unload_model(self, release_cuda_cache: bool = True) -> None:
         """Release voice-conversion assets in the worker.
@@ -2032,6 +2050,7 @@ class RemoteVCBackendProxy(CeluneVCBackend):
 
     def convert(self, request: VoiceConversionRequest) -> AudioOutput:
         """Convert audio in the isolated voice-conversion worker."""
+        self._require_seedvc_model_consents()
         return cast(
             AudioOutput,
             self._worker._request("convert", request=request),
@@ -2039,6 +2058,7 @@ class RemoteVCBackendProxy(CeluneVCBackend):
 
     def convert_live(self, request: VoiceConversionRequest) -> AudioOutput:
         """Convert one block through the isolated backend's live session."""
+        self._require_seedvc_model_consents()
         return cast(
             AudioOutput,
             self._worker._request("call", method="convert_live", request=request),

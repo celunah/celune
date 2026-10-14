@@ -8,25 +8,6 @@ import threading
 from pathlib import Path
 from typing import Union, Optional
 
-from . import __version__
-from . import celune as _core
-from .paths import project_root
-from .constants import APP_NAME
-from .config import config_value
-from .pipeline import play_signal
-from .vram import QWEN3_0_6B_MODEL
-from .typing.aliases import LogLevel
-from .i18n import string, tagged_string
-from .utils import format_error_message
-from .threads import run_in_daemon_thread
-from .typing.celune import CoreBackendSpec
-from .extensions.base import CeluneContext
-from .binding import install_class_functions
-from .backends.tts import BACKENDS, CeluneBackend
-from .dataclasses.events import VoiceChangedEvent
-from .backends.vc import VC_BACKENDS, CeluneVCBackend
-from .extensions.manager import CeluneExtensionManager
-from .pipeline import force_stop_speech as force_stop_pipeline
 from .cevoice import (
     default_loader,
     active_bundle_path,
@@ -36,6 +17,25 @@ from .cevoice import (
     persona_metadata_from_manifest,
     bundle_matches_default_pack_checksum,
 )
+from . import __version__
+from . import celune as _core
+from .paths import project_root
+from .constants import APP_NAME
+from .config import config_value
+from .pipeline import play_signal
+from .typing.aliases import LogLevel
+from .i18n import string, tagged_string
+from .utils import format_error_message
+from .threads import run_in_daemon_thread
+from .typing.celune import CoreBackendSpec
+from .extensions.base import CeluneContext
+from .registry.tts import QWEN3_06B_MODEL_ID
+from .binding import install_class_functions
+from .backends.tts import BACKENDS, CeluneBackend
+from .dataclasses.events import VoiceChangedEvent
+from .backends.vc import VC_BACKENDS, CeluneVCBackend
+from .extensions.manager import CeluneExtensionManager
+from .pipeline import force_stop_speech as force_stop_pipeline
 
 __all__ = (
     "_any_playback_active",
@@ -781,7 +781,7 @@ def voice_prompt_supported(self) -> bool:
     backend = self.backend
     return not (
         backend.name == "qwen3"
-        and getattr(backend, "clone_model_id", None) == QWEN3_0_6B_MODEL
+        and getattr(backend, "clone_model_id", None) == QWEN3_06B_MODEL_ID
     )
 
 

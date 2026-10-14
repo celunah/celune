@@ -24,8 +24,10 @@ from transformers import (
 from ..paths import persona_data_dir
 from .paths import persona_character_slug
 from ..typing.common import JSON, JSONSerializable
-from ..constants import PERSONA_MEMORY_EMBEDDING_MODEL
+from ..registry.consent import require_model_consent
+from ..registry.other import PERSONA_MEMORY_EMBEDDING_MODEL
 from ..typing.aliases import EmbeddingVector, EmbeddingBackend
+from ..exceptions import ModelConsentDeclined, ModelConsentRequired
 
 _WORD_RE = re.compile(r"[a-z0-9']+")
 _STOPWORDS = {
@@ -171,18 +173,23 @@ def _load_transformer_text_embedder(model_name: str) -> Optional[EmbeddingBacken
     if model_name in _EMBEDDING_BACKENDS:
         return _EMBEDDING_BACKENDS[model_name]
 
+    metadata = require_model_consent(model_name)
     try:
-        tokenizer = AutoTokenizer.from_pretrained(model_name, local_files_only=True)
+        load_options: dict[str, Union[bool, str]] = {"local_files_only": True}
+        load_options["revision"] = metadata.revision
+        tokenizer = AutoTokenizer.from_pretrained(model_name, **load_options)
 
         if tokenizer is None:
             raise RuntimeError("tokenizer not available")
 
         model = cast(
             PreTrainedModel,
-            AutoModel.from_pretrained(model_name, local_files_only=True),
+            AutoModel.from_pretrained(model_name, **load_options),
         )
         model.eval()
         model.to(torch.device("cpu"))
+    except (ModelConsentDeclined, ModelConsentRequired):
+        raise
     except (RuntimeError, AssertionError, ValueError, OSError):
         _FAILED_EMBEDDING_MODELS.add(model_name)
         return None
@@ -671,6 +678,8 @@ class PersonaMemoryStore:
             embeddings = self._embed_texts(
                 [content, *(record.content for record in candidate_records)]
             )
+        except (ModelConsentDeclined, ModelConsentRequired):
+            raise
         except (KeyError, OSError, RuntimeError, ValueError):
             return []
         if embeddings is None or len(embeddings) != len(candidate_records) + 1:

@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Celune's backend layer."""
 
-# Import groups follow Celune's project-specific Ruff ordering.
+# Import groups follow Celune's project-specific ordering.
 # pylint: disable=ungrouped-imports
 
 import gc
@@ -12,17 +12,16 @@ import shutil
 import asyncio
 import threading
 import contextlib
-from typing import Never, Union, ClassVar, Optional, cast, final
 from pathlib import Path
 from dataclasses import dataclass
 from collections.abc import Mapping, Callable, Generator
+from typing import Never, Union, ClassVar, Optional, cast, final
 
-import numpy as np
 import torch
+import numpy as np
 import numpy.typing as npt
 from transformers.modeling_utils import PreTrainedModel
 
-from .i18n import string, set_locale, tagged_string, get_system_locale
 from .vram import (
     VramPreset,
     backend_allowed,
@@ -31,19 +30,15 @@ from .vram import (
     is_cuda_out_of_memory,
     release_cuda_after_oom,
 )
-from .locks import ComponentLockLease
 from .modes import (
     OperationMode,
     resolve_operation_mode,
 )
-from .paths import temp_data_dir
 from .utils import (
     discard,
     available,
     format_error_message,
 )
-from .chroma import AudioRGBGlow
-from .config import Config, config_bool, config_value, normalize_log_level
 from .cevoice import (
     CEVoicePersona,
     default_loader,
@@ -78,9 +73,6 @@ from .agent.tools import (
     agent_test_tool_schemas,
     production_agent_tool_schemas,
 )
-from .backends.vc import VC_BACKENDS, CeluneVCBackend, resolve_vc_backend
-from .agent.needle import NeedleToolSelector
-from .backends.tts import BACKENDS, CeluneBackend, resolve_backend
 from .persona.impl import (
     PersonaClient,
     persona_enabled,
@@ -99,10 +91,6 @@ from .typing.locks import (
     ComponentLockOwner,
     ComponentLockRequirement,
 )
-from .typing.modes import BackendMode
-from .agent.persona import PersonaAgentBridge
-from .agent.routing import AgentInputRouter
-from .agent.runtime import AgentRuntime
 from .typing.celune import (
     VCBackendSpec,
     TTSBackendSpec,
@@ -118,12 +106,7 @@ from .typing.celune import (
     CaptionProgressCallback,
     _BundleWithPath,
 )
-from .typing.common import JSON, JSONSerializable
-from .typing.events import EventName, EventPayload
-from .typing.aliases import LogLevel
-from .persona.emotion import PersonaEmotionAnalyzer
-from .typing.backends import BackendModel
-from .extensions.events import EventDispatcher
+from .chroma import AudioRGBGlow
 from .dataclasses.celune import (
     CELUNE_CONSTANT_PROPERTIES,
     CELUNE_FORWARDED_PROPERTIES,
@@ -143,10 +126,29 @@ from .dataclasses.events import (
     CharacterChangedEvent,
     CharacterUnloadedEvent,
 )
+from .typing.aliases import LogLevel
+from .locks import ComponentLockLease
+from .typing.modes import BackendMode
 from .dataclasses.properties import (
     bind_constant_properties,
     bind_forwarded_properties,
 )
+from .agent.runtime import AgentRuntime
+from .typing.backends import BackendModel
+from .api_key import get_or_create_api_key
+from .agent.routing import AgentInputRouter
+from .agent.needle import NeedleToolSelector
+from .agent.persona import PersonaAgentBridge
+from .paths import api_key_path, temp_data_dir
+from .extensions.events import EventDispatcher
+from .cloudflared import CloudflaredQuickTunnel
+from .typing.common import JSON, JSONSerializable
+from .typing.events import EventName, EventPayload
+from .persona.emotion import PersonaEmotionAnalyzer
+from .backends.tts import BACKENDS, CeluneBackend, resolve_backend
+from .i18n import string, set_locale, tagged_string, get_system_locale
+from .backends.vc import VC_BACKENDS, CeluneVCBackend, resolve_vc_backend
+from .config import Config, config_bool, config_value, normalize_log_level
 
 
 def _load_speech_module():
@@ -513,6 +515,7 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
         self._pipeline_state.playback_done.set()
 
         self.config = config
+        self._api_tunnel: Optional[CloudflaredQuickTunnel] = None
         self._runtime_state.backend_mode = backend_mode
         set_locale(_configured_locale(config) or get_system_locale())
         self.mode: OperationMode = resolve_operation_mode(config)
@@ -2331,34 +2334,70 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
             if not self._hot_reload_cevoice(restore_bundle, restore_voice):
                 raise BackendError("failed to restore character")
 
-    def _api_settings(self) -> tuple[bool, str, int, Optional[str], int]:
-        """Resolve API settings from Celune's configuration."""
+    def _api_settings(self) -> tuple[bool, str, int, Optional[str], int, str]:
+        """Resolve API access, authentication, port, and rate-limit settings."""
         api_config = config_value(self.config, "api", {})
 
         if isinstance(api_config, bool):
-            return api_config, "0.0.0.0", 2060, None, 60
+            enabled = api_config
+            options: Mapping[str, JSONSerializable] = {}
+        elif api_config is None:
+            enabled = False
+            options = {}
+        elif isinstance(api_config, dict):
+            enabled = bool(api_config.get("enabled", True))
+            options = api_config
+        else:
+            enabled = bool(api_config)
+            options = {}
 
-        if api_config is None:
-            return False, "0.0.0.0", 2060, None, 60
-
-        if not isinstance(api_config, dict):
-            return bool(api_config), "0.0.0.0", 2060, None, 60
-
-        enabled = bool(api_config.get("enabled", True))
-        host = str(api_config.get("host", "0.0.0.0"))
-        token_value = api_config.get("token")
-        token = str(token_value).strip() if token_value is not None else None
-        if not token:
+        configured_access = options.get("access")
+        if configured_access is None:
+            legacy_host = str(options.get("host", "127.0.0.1")).strip().casefold()
+            access_level = (
+                "same_machine"
+                if legacy_host in {"localhost", "127.0.0.1", "::1"}
+                else "same_network"
+            )
+        elif isinstance(configured_access, str) and configured_access in {
+            "same_machine",
+            "same_network",
+            "everyone",
+        }:
+            access_level = str(configured_access)
+        else:
             self.log(
-                string("celune.no_api_token", app_name=APP_NAME),
+                string(
+                    "celune.api_access_invalid",
+                    app_name=APP_NAME,
+                    access=configured_access,
+                ),
                 "warning",
             )
-            token = None
-            host = "127.0.0.1"
+            access_level = "same_machine"
+
+        host = "0.0.0.0" if access_level == "same_network" else "127.0.0.1"
+        token_value = options.get("token")
+        token = str(token_value).strip() if token_value is not None else None
+        if enabled:
+            key_file = api_key_path(create_parent=True)
+            env_token = os.getenv("CELUNE_API_TOKEN", "").strip()
+            uses_generated_key = not token and not env_token
+            token = get_or_create_api_key(token, path=key_file)
+            if uses_generated_key:
+                self.log(
+                    string(
+                        "celune.api_key_file",
+                        app_name=APP_NAME,
+                        path=str(key_file),
+                    ),
+                    "info",
+                )
+
         try:
-            port = _config_int(api_config.get("port", 2060), 2060)
+            port = _config_int(options.get("port", 2060), 2060)
         except (TypeError, ValueError):
-            invalid_port = api_config.get("port", 2060)
+            invalid_port = options.get("port", 2060)
             self.log(
                 string("celune.api_port_invalid", app_name=APP_NAME, port=invalid_port),
                 "warning",
@@ -2374,11 +2413,11 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
 
         try:
             requests_per_minute = _config_int(
-                api_config.get("rate_limit_per_minute", 60),
+                options.get("rate_limit_per_minute", 60),
                 60,
             )
         except (TypeError, ValueError):
-            invalid_ratelimit = api_config.get("rate_limit_per_minute", 60)
+            invalid_ratelimit = options.get("rate_limit_per_minute", 60)
             self.log(
                 string(
                     "celune.api_rate_limit_invalid",
@@ -2389,7 +2428,14 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
             )
             requests_per_minute = 60
 
-        return enabled, host, port, token, max(0, requests_per_minute)
+        return (
+            enabled,
+            host,
+            port,
+            token,
+            max(0, requests_per_minute),
+            access_level,
+        )
 
     api_settings = _api_settings
 
@@ -2456,6 +2502,10 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
             if self._closed:
                 return
             self._closed = True
+
+        if self._api_tunnel is not None:
+            self._api_tunnel.stop()
+            self._api_tunnel = None
 
         # call this or else you get a zombified Celune that can't proceed with her exit procedures
         self._abort_backend_operations()

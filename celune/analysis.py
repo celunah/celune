@@ -19,17 +19,11 @@ from matplotlib import colors as mcolors
 from matplotlib.projections import PolarAxes
 from matplotlib import rcParams, font_manager
 
-from .i18n import string
-from .utils import run_async
-from .typing.aliases import AudioChunk
-from .paths import huggingface_progress
-from .compat import torchao_compatibility
-from .cevoice import ManifestValue, default_loader
 from .constants import (
     N_A_NUMERIC,
-    VOICE_EMBEDDING_MODEL,
-    remote_code_model_revision,
 )
+from .i18n import string
+from .utils import run_async
 from .typing.analysis import (
     TextConfig,
     VoiceMatch,
@@ -38,6 +32,12 @@ from .typing.analysis import (
     EmbeddingPayload,
     EmbeddingProcessor,
 )
+from .typing.aliases import AudioChunk
+from .paths import huggingface_progress
+from .compat import torchao_compatibility
+from .registry.other import VOICE_EMBEDDING_MODEL
+from .cevoice import ManifestValue, default_loader
+from .registry.consent import require_model_consent
 
 matplotlib.use("Agg")
 
@@ -362,7 +362,8 @@ def _load_embedding_model(
     global _EMBEDDING_MODEL, _EMBEDDING_PROCESSOR
 
     if _EMBEDDING_MODEL is None or _EMBEDDING_PROCESSOR is None:
-        revision = remote_code_model_revision(VOICE_EMBEDDING_MODEL)
+        metadata = require_model_consent(VOICE_EMBEDDING_MODEL)
+        revision = metadata.revision
         with torchao_compatibility():
             from transformers import AutoModel, AutoProcessor
 

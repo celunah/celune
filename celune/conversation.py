@@ -10,28 +10,6 @@ from uuid import uuid4
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Optional, cast
 
-from .i18n import string
-from .utils import format_error_message
-from .threads import run_in_daemon_thread
-from .persona.paths import persona_override_files
-from .typing.common import JSON, JSONSerializable
-from .persona.emotion import PersonaEmotionAnalyzer
-from .persona.capabilities import PersonaCapabilities
-from .typing.persona import PersonaModel, PersonaTokenizer
-from .binding import install_class_functions, install_module_functions
-from .persona.memory import PersonaMemoryStore, classifier_memory_candidates
-from .typing.locks import (
-    ComponentLockName,
-    ComponentLockOwner,
-    ComponentLockRequirement,
-)
-from .typing.agent import (
-    ToolCall,
-    AgentRoute,
-    AgentContext,
-    AgentToolSchema,
-    AgentClassificationFailureKind,
-)
 from .cevoice import (
     default_loader,
     bundle_character_name,
@@ -43,16 +21,8 @@ from .constants import (
     AGENT_CONTEXT_SPACE,
     AGENT_ROUTING_CONTEXT_SPACE,
     AGENT_ROUTING_MAX_NEW_TOKENS,
-    PERSONA_MEMORY_EMBEDDING_MODEL,
 )
-from .persona.prompts import (
-    PersonaCard,
-    PersonaContext,
-    CharacterProfile,
-    PersonaPromptBuilder,
-    PersonaSourceMaterial,
-    RetrievedMemoryBundle,
-)
+from .i18n import string
 from .persona.impl import (
     persona_config,
     persona_enabled,
@@ -74,6 +44,36 @@ from .persona.impl import (
     persona_active_character_name,
     persona_debug_overrides_enabled,
 )
+from .typing.agent import (
+    ToolCall,
+    AgentRoute,
+    AgentContext,
+    AgentToolSchema,
+    AgentClassificationFailureKind,
+)
+from .typing.locks import (
+    ComponentLockName,
+    ComponentLockOwner,
+    ComponentLockRequirement,
+)
+from .persona.prompts import (
+    PersonaCard,
+    PersonaContext,
+    CharacterProfile,
+    PersonaPromptBuilder,
+    PersonaSourceMaterial,
+    RetrievedMemoryBundle,
+)
+from .utils import format_error_message
+from .threads import run_in_daemon_thread
+from .persona.paths import persona_override_files
+from .typing.common import JSON, JSONSerializable
+from .persona.emotion import PersonaEmotionAnalyzer
+from .persona.capabilities import PersonaCapabilities
+from .registry.other import PERSONA_MEMORY_EMBEDDING_MODEL
+from .typing.persona import PersonaModel, PersonaTokenizer
+from .binding import install_class_functions, install_module_functions
+from .persona.memory import PersonaMemoryStore, classifier_memory_candidates
 
 if TYPE_CHECKING:
     from .celune import Celune

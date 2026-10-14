@@ -409,6 +409,35 @@ class TestConfig(CeluneTestCase):
         assert not changed
         assert merged == {"api": False}
 
+    def test_merge_missing_defaults_migrates_legacy_api_host(self) -> None:
+        """Verify old listener addresses become the matching access level."""
+        merged, changed = config.merge_missing_defaults(
+            {
+                "api": {
+                    "enabled": True,
+                    "host": "0.0.0.0",
+                    "port": 2060,
+                    "token": None,
+                }
+            },
+            {
+                "api": {
+                    "enabled": True,
+                    "access": "same_machine",
+                    "port": 2060,
+                    "token": None,
+                }
+            },
+        )
+
+        assert changed
+        assert merged["api"] == {
+            "enabled": True,
+            "access": "same_network",
+            "port": 2060,
+            "token": None,
+        }
+
     def test_merge_missing_defaults_removes_unknown_schema_keys(self) -> None:
         """Verify removed configuration options are pruned at the schema boundary."""
         current: Mapping[str, JSONSerializable] = {

@@ -5,41 +5,37 @@ import json
 import queue
 import tempfile
 import threading
-from types import MappingProxyType
-from typing import Optional
 from pathlib import Path
 from unittest import mock
+from typing import Optional, cast
+from types import MappingProxyType
 from collections.abc import Callable
 
-import numpy as np
 import pytest
+import numpy as np
 
-from celune import i18n, cevoice
 from celune.agent import (
     AgentRequest,
     AgentSession,
     AgentTaskState,
     AgentCancellationReason,
 )
-from celune.utils import discard
-from celune.celune import Celune
-from celune.config import Config
-from celune.pipeline import close as close_pipeline
 from celune.pipeline import (
+    close as close_pipeline,
     play_signal,
     release_pipeline,
     handle_audio_input,
     convert_audio_input,
 )
-from celune.exceptions import BackendError, CEDTSTimeoutError
-from celune.persona.impl import persona_quantization
+from celune import i18n, cevoice
+from celune.utils import discard
+from celune.celune import Celune
+from celune.config import Config
 from celune.typing.locks import (
     ComponentLockName,
     ComponentLockOwner,
     ComponentLockRequirement,
 )
-from celune.typing.common import JSONSerializable
-from celune.persona.emotion import PersonaEmotionAnalyzer
 from celune.dataclasses.celune import (
     CeluneAudioState,
     CeluneModelState,
@@ -49,6 +45,11 @@ from celune.dataclasses.celune import (
     CeluneCallbackState,
     CelunePipelineState,
 )
+from celune.typing.common import JSONSerializable
+from celune.persona.impl import persona_quantization
+from celune.cloudflared import CloudflaredQuickTunnel
+from celune.persona.emotion import PersonaEmotionAnalyzer
+from celune.exceptions import BackendError, CEDTSTimeoutError
 
 from .support import (
     FakeGlow,
@@ -1240,6 +1241,8 @@ class TestCeluneCore(CeluneTestCase):
         celune.agent_runtime.classify_task(task.task_id)
         backend_abort = mock.Mock()
         celune._playback_thread = mock.Mock(is_alive=mock.Mock(return_value=True))
+        tunnel = mock.Mock()
+        celune._api_tunnel = cast(CloudflaredQuickTunnel, tunnel)
 
         with (
             mock.patch("celune.celune.close_pipeline"),
@@ -1255,6 +1258,7 @@ class TestCeluneCore(CeluneTestCase):
             AgentCancellationReason.RUNTIME_SHUTDOWN,
         )
         backend_abort.assert_called_once_with()
+        tunnel.stop.assert_called_once_with()
 
     def test_close_aborts_backends_even_when_pipeline_workers_are_cooperative(
         self,
@@ -1430,9 +1434,41 @@ class TestCeluneCore(CeluneTestCase):
         celune.locked = False
         assert celune.wait_until_idle(timeout=0)
 
-        assert celune.api_settings() == (True, "127.0.0.1", 2060, None, 60)
+        with tempfile.TemporaryDirectory() as temp_directory:
+            key_path = Path(temp_directory) / "api.key"
+            with (
+                mock.patch("celune.celune.api_key_path", return_value=key_path),
+                mock.patch.dict("os.environ", {"CELUNE_API_TOKEN": ""}),
+            ):
+                settings = celune.api_settings()
+                assert settings[:3] == (True, "127.0.0.1", 2060)
+                assert settings[4:] == (60, "same_machine")
+                assert settings[3] is not None and settings[3].startswith("C-")
+                assert len(settings[3]) == 27
+                assert key_path.read_text(encoding="utf-8").strip() == settings[3]
+
+        assert logs[-3][1] == "info"
+        assert str(key_path) in logs[-3][0]
         assert logs[-2][1] == "warning"
         assert logs[-1][1] == "warning"
+
+    def test_api_access_modes_map_to_local_and_network_listeners(self) -> None:
+        """Verify each configured access level chooses its intended local bind."""
+        expected_hosts = {
+            "same_machine": "127.0.0.1",
+            "same_network": "0.0.0.0",
+            "everyone": "127.0.0.1",
+        }
+        for access_level, host in expected_hosts.items():
+            celune = self._make_celune(
+                {"api": {"access": access_level, "token": "configured"}}
+            )
+            try:
+                settings = celune.api_settings()
+                assert settings[1] == host
+                assert settings[5] == access_level
+            finally:
+                celune.close()
 
     def test_submit_audio_is_accepted_and_does_not_use_tts(self) -> None:
         """Verify audio input is accepted without disturbing the text/TTS path."""

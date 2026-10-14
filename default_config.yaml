@@ -162,11 +162,13 @@ sleep:
 api:
   # enabled?
   enabled: true
-  # where to bind
-  host: 127.0.0.1
+  # same_machine = localhost, same_network = all local interfaces,
+  # everyone = localhost plus a temporary cloudflared public tunnel
+  access: same_machine
   # what port to bind
   port: 2060
   # what authentication token users must use
+  # leave null to generate and store a key in Celune's app-data directory
   # the token can also be set with CELUNE_API_TOKEN
   token: null
   # how many generations are allowed every minute
