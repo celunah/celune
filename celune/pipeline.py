@@ -15,18 +15,16 @@ import datetime
 import threading
 import contextlib
 import collections.abc
-from typing import TYPE_CHECKING, Optional, cast
 from collections import deque
 from dataclasses import replace, dataclass
+from typing import TYPE_CHECKING, Optional, cast
 
-import numpy as np
 import torch
+import numpy as np
 import soundfile as sf
 import sounddevice as sd
 import pyrubberband as rb
 
-from .i18n import string, tagged_string
-from .vram import is_cuda_out_of_memory, release_cuda_after_oom
 from .paths import (
     outputs_dir,
 )
@@ -35,11 +33,6 @@ from .utils import (
     format_number,
     format_error_message,
 )
-from .config import resolve_audio_device
-from .binding import install_class_functions
-from .threads import run_in_daemon_thread as _run_in_daemon_thread
-from .analysis import _schedule_voice_analysis
-from .captions import _build_caption_alignment_sections
 from .metadata import (
     _write_celune_flac,
     _write_flac_metadata,
@@ -75,7 +68,6 @@ from .playback import (
     _record_caption_playback_segment,
     _should_apply_contention_buffering,
 )
-from .prepared import play_prepared_speech, finish_tutorial_audio_capture
 from .audio.dsp import (
     soften,
     to_48khz,
@@ -90,23 +82,31 @@ from .constants import (
     APP_NAME,
     APP_SLUG,
 )
-from .contention import _PlaybackContentionMonitor
-from .exceptions import BackendError, NotAvailableError
-from .conversation import _think_persona, _effective_voice_prompt
 from .pipelinecore import (
     _PIPELINE_CPU_YIELD_SECONDS,
     _PLAYBACK_BUFFER_STARTUP_GRACE_SECONDS,
     _monotonic_time,
 )
-from .typing.common import JSONSerializable
-from .typing.aliases import AudioChunk, AudioChunks
-from .typing.pipeline import SpeechStreamQueue
 from .dataclasses.pipeline import (
     SpeechTiming,
     PlaybackChunk,
     SpeechRequest,
     PlaybackSourceDone,
 )
+from .i18n import string, tagged_string
+from .config import resolve_audio_device
+from .typing.common import JSONSerializable
+from .binding import install_class_functions
+from .analysis import _schedule_voice_analysis
+from .typing.pipeline import SpeechStreamQueue
+from .contention import _PlaybackContentionMonitor
+from .typing.aliases import AudioChunk, AudioChunks
+from .captions import _build_caption_alignment_sections
+from .exceptions import BackendError, NotAvailableError
+from .vram import is_cuda_out_of_memory, release_cuda_after_oom
+from .conversation import _think_persona, _effective_voice_prompt
+from .threads import run_in_daemon_thread as _run_in_daemon_thread
+from .prepared import play_prepared_speech, finish_tutorial_audio_capture
 
 if TYPE_CHECKING:
     from .celune import Celune
@@ -909,6 +909,9 @@ def play_signal(engine: Celune, signal_type: str) -> bool:
     Raises:
         ValueError: An invalid signal name was requested.
     """
+    if engine.exit_requested:
+        return False
+
     if signal_type == "readiness":
         signal = readiness_signal()
     elif signal_type == "working":
@@ -927,12 +930,14 @@ def play_signal(engine: Celune, signal_type: str) -> bool:
         source_id = _next_playback_source_id(engine)
         state_event = _register_overlay_playback(engine)
         _register_playback_source(engine, source_id, kind="sfx")
-        _queue_playback_chunk(engine, source_id, signal, BASE_SR)
-        _queue_playback_done(
+        if not _queue_playback_chunk(engine, source_id, signal, BASE_SR):
+            return False
+        if not _queue_playback_done(
             engine,
             source_id,
             notify_idle_when_finished=True,
-        )
+        ):
+            return False
         if state_event is not None:
             engine._emit_event("state_changed", state_event)
         return True
@@ -946,13 +951,17 @@ def play_signal(engine: Celune, signal_type: str) -> bool:
                 engine.cur_state = "speaking"
         source_id = _next_playback_source_id(engine)
         _register_playback_source(engine, source_id, kind="sfx")
-        _queue_playback_chunk(engine, source_id, signal, BASE_SR)
-        _queue_playback_done(
+        if not _queue_playback_chunk(engine, source_id, signal, BASE_SR):
+            release_pipeline(engine)
+            return False
+        if not _queue_playback_done(
             engine,
             source_id,
             release_pipeline_when_finished=release_to_idle,
             notify_idle_when_finished=signal_type == "readiness",
-        )
+        ):
+            release_pipeline(engine)
+            return False
         release_pipeline(engine, playback_idle=False)
         return True
     return False

@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import time
 import asyncio
 import threading
 from pathlib import Path
@@ -72,6 +73,8 @@ __all__ = (
     "set_voice_async",
     "set_voices",
     "setup_extensions",
+    "sleep",
+    "status",
     "try_play_signal",
     "voice_prompt_supported",
     "wait_until_idle_async",
@@ -649,13 +652,38 @@ def setup_extensions(self) -> None:
         version=__version__,
         log_level=self.log_level,
     )
-    self.extension_manager = CeluneExtensionManager(ctx, self._event_dispatcher)
+    self.extension_manager = CeluneExtensionManager(
+        ctx,
+        self._event_dispatcher,
+        core=self,
+    )
     self.extension_manager.autoload(str(project_root() / "extensions"))
 
     self.log(
         f"[Core] Loaded extensions: {', '.join(self.extension_manager.list_extensions())}",
         loglevel="verbose",
     )
+
+
+def status(self, msg: str, severity: str = "info") -> None:
+    """Update Celune's status display.
+
+    Args:
+        msg: The status message to show.
+        severity: The status severity level.
+    """
+    self.status_callback(msg, severity)
+
+
+def sleep(self, seconds: float) -> None:
+    """Pause the current extension worker for a number of seconds.
+
+    Args:
+        seconds: Number of seconds to pause the current thread.
+    """
+    if self.exit_requested:
+        return
+    time.sleep(seconds)
 
 
 def log(
@@ -762,6 +790,8 @@ def try_play_signal(self, signal_type: str) -> bool:
 
 def _try_play_signal(self, signal_type: str) -> bool:
     """Play a runtime signal only when the playback pipeline can currently accept it."""
+    if self._closed or self.exit_requested:
+        return False
     playback_thread = self.playback_thread
     if playback_thread is None or not playback_thread.is_alive():
         return False
@@ -805,6 +835,8 @@ def change_voice(self, voice: str) -> None:
     Raises:
         WarmupError: The newly loaded voice fails warmup.
     """
+    if self._closed or self.exit_requested:
+        return
 
     self.log(string("celune.reloading", app_name=APP_NAME))
     self._ready_announced = False
@@ -860,6 +892,11 @@ def change_voice(self, voice: str) -> None:
                 self.current_voice = voice
                 self.loaded = True
 
+        self.log(string("celune.voice_loaded", voice=voice))
+        self.progress_callback(1, 1)
+        self.cur_state = "idle"
+        self.status_callback(string("status.idle"))
+        self._model_ready.set()
         self.voice_changed_callback(voice)
         if active_voice != voice:
             self._emit_event(
@@ -870,10 +907,6 @@ def change_voice(self, voice: str) -> None:
                     new_voice=voice,
                 ),
             )
-        self.log(string("celune.voice_loaded", voice=voice))
-        self.progress_callback(1, 1)
-        self.cur_state = "idle"
-        self.status_callback(string("status.idle"))
     except Exception as error:
         self.fatal()
         self.log(
