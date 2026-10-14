@@ -5,14 +5,12 @@ import json
 import hashlib
 from pathlib import Path
 from typing import Optional
-
 from collections.abc import Mapping
 from tempfile import TemporaryDirectory
 
 import torch
-from safetensors.torch import save_file
-
 import pytest
+from safetensors.torch import save_file
 
 from celune.typing.common import JSONSerializable
 from celune.agent.needle.models import NeedleModel, NeedleConfig

@@ -24,6 +24,17 @@ from textual.app import App
 from textual.containers import Vertical
 from textual.widgets import Label, Static, RichLog, TextArea, ProgressBar
 
+from celune.theme import colors
+from celune.utils import discard
+from celune.celune import Celune
+from celune.ui import app as ui_app
+from celune.ui import compat as ui_compat
+from celune.ui import terminal as ui_terminal
+from celune.i18n import string, tagged_string
+from celune.ui import resources as ui_resources
+from celune.ui.headless import CeluneHeadlessUI
+from tests.support import FakeBackend, CeluneTestCase
+from celune.constants import APP_NAME, COST_EQUIVALENTS, ExitCodes
 from celune.ui.app import (
     Button,
     CeluneUI,
@@ -33,17 +44,6 @@ from celune.ui.app import (
     ProgressLabel,
     CeluneLoadingScreen,
 )
-from celune.theme import colors
-from celune.celune import Celune
-from celune.utils import discard
-from celune.ui import app as ui_app
-from celune.ui import compat as ui_compat
-from celune.i18n import string, tagged_string
-from celune.ui import terminal as ui_terminal
-from celune.ui import resources as ui_resources
-from celune.ui.headless import CeluneHeadlessUI
-from tests.support import FakeBackend, CeluneTestCase
-from celune.constants import APP_NAME, COST_EQUIVALENTS, ExitCodes
 
 
 class TestUIStartup(CeluneTestCase):

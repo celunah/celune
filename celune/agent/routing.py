@@ -8,14 +8,19 @@ from uuid import uuid4
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Optional, cast
 
-from .runtime import AgentRuntime
 from ..i18n import string
+from .runtime import AgentRuntime
 from ..modes import mode_allows_agents
 from ..vram import agent_vram_compatible
 from ..exceptions import _EmptyClassifierOutput
 from ..typing.common import JSON, JSONSerializable
 from ..typing.persona import PersonaClientResponse
 from ..conversation import build_agent_classification_request
+from ..typing.locks import (
+    ComponentLockName,
+    ComponentLockOwner,
+    ComponentLockRequirement,
+)
 from ..typing.agent import (
     AgentTask,
     AgentRoute,
@@ -32,11 +37,6 @@ from ..typing.agent import (
     AgentClassificationResult,
     AgentClassificationFailure,
     AgentClassificationFailureKind,
-)
-from ..typing.locks import (
-    ComponentLockName,
-    ComponentLockOwner,
-    ComponentLockRequirement,
 )
 
 if TYPE_CHECKING:

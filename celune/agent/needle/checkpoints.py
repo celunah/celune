@@ -16,9 +16,9 @@ import torch
 from safetensors import safe_open
 from huggingface_hub import hf_hub_download
 
+from .models import NeedleModel, NeedleConfig
 from ...paths import huggingface_hub_cache_dir
 from ...typing.common import JSON, JSONSerializable
-from .models import NeedleModel, NeedleConfig
 from ...exceptions import (
     NeedleCheckpointError,
     NeedleUnsupportedConverterError,

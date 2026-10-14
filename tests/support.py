@@ -8,21 +8,21 @@ import queue
 import importlib
 import threading
 import contextlib
-from collections.abc import Callable, Container, Iterable, Iterator
-from pathlib import Path
 from re import Pattern
-from types import MappingProxyType, ModuleType, SimpleNamespace, TracebackType
+from pathlib import Path
+from unittest import TestCase, mock
+from collections.abc import Callable, Iterable, Iterator, Container
+from types import ModuleType, TracebackType, SimpleNamespace, MappingProxyType
 from typing import (
     TYPE_CHECKING,
+    Self,
+    Union,
     ClassVar,
     Optional,
     Protocol,
-    Self,
     TypedDict,
-    Union,
     cast,
 )
-from unittest import TestCase, mock
 
 import numpy as np
 import numpy.typing as npt

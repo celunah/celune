@@ -23,8 +23,8 @@ from typing import Final, Union, BinaryIO, Optional, cast
 
 import numpy as np
 
-from .exceptions import CEVoiceError
 from .i18n import string
+from .exceptions import CEVoiceError
 from .paths import project_root, temp_data_dir, voices_data_dir
 from .typing.cevoice import Manifest, ManifestValue, VoiceManifest
 

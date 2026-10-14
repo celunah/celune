@@ -6,8 +6,8 @@ import tempfile
 import textwrap
 from typing import cast
 from pathlib import Path
-from types import SimpleNamespace
 from unittest import mock
+from types import SimpleNamespace
 
 from celune import subscribe
 from celune.celune import Celune
@@ -28,7 +28,7 @@ from celune.dataclasses.events import (
     CharacterUnloadedEvent,
 )
 
-from .support import CeluneTestCase, FakeBackend, FakeGlow
+from .support import FakeGlow, FakeBackend, CeluneTestCase
 
 
 class TestDispatcher(CeluneTestCase):

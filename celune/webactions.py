@@ -7,7 +7,7 @@ import io
 import json
 import textwrap
 from typing import Optional, cast
-from collections.abc import Awaitable, Callable, Iterator
+from collections.abc import Callable, Iterator, Awaitable
 
 import numpy as np
 import gradio as gr
@@ -17,25 +17,25 @@ from fastapi.responses import JSONResponse
 from . import api as _api
 from .ui.app import CeluneUI
 from .i18n import string, tagged_string
-from .constants import APP_NAME, BASE_SR
+from .constants import BASE_SR, APP_NAME
 from .speech import prepare_playback_audio
 from .binding import install_module_functions
 from .persona.impl import persona_talkback_enabled
 from .typing.aliases import AudioChunk, AudioChunks
-from .typing.api import WebUiAudioValue, WebUiInputAudioValue, WebUiUpdate
+from .typing.api import WebUiUpdate, WebUiAudioValue, WebUiInputAudioValue
 from .webui import (
-    _append_webui_error,
+    _webui_snapshot,
+    _webui_logs_html,
     _append_webui_log,
     _normalized_audio,
     _set_webui_status,
-    _webui_audio_waveform_options,
-    _webui_logs_html,
-    _webui_resources_html,
-    _webui_snapshot,
     _webui_status_html,
+    _append_webui_error,
+    _webui_resources_html,
+    _webui_vc_mode_active,
     _webui_submit_snapshot,
     _webui_vc_controls_update,
-    _webui_vc_mode_active,
+    _webui_audio_waveform_options,
 )
 
 __all__ = (
@@ -404,8 +404,8 @@ def _webui_voice_catalog(celune: _api.Celune) -> tuple[tuple[str, str], ...]:
     from .cevoice import (
         CEVoice,
         CEVoiceError,
-        bundle_display_name,
         bundled_voices_dir,
+        bundle_display_name,
     )
 
     try:

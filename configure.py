@@ -5,8 +5,8 @@
 import os
 import sys
 import shutil
-import platform
 import tomllib
+import platform
 import subprocess
 from pathlib import Path
 from typing import Optional

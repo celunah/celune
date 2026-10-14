@@ -6,8 +6,8 @@ import os
 import subprocess
 from typing import IO, Optional
 
-from celune.cedts.protocol import encode_message, send_message
 from celune.typing.worker import WorkerMessage
+from celune.cedts.protocol import send_message, encode_message
 
 
 def send_no_payload_packet(

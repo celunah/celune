@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Literal, Optional, Union, cast
+from typing import TYPE_CHECKING, Union, Literal, Optional, cast
 
 import torch
 from transformers.cache_utils import (
