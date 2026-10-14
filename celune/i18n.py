@@ -7,9 +7,9 @@ import json
 import ctypes
 import contextlib
 from pathlib import Path
-import locale as _locale  # else it gets shadowed
 from typing import Optional
 from types import SimpleNamespace
+import locale as _locale  # else it gets shadowed
 
 DEFAULT_LOCALE = "en"
 _LANG_DIR = Path(__file__).resolve().parent / "lang"

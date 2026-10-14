@@ -3,10 +3,10 @@
 
 from __future__ import annotations
 
-from contextlib import nullcontext
 import threading
-from types import SimpleNamespace
 from unittest import mock
+from types import SimpleNamespace
+from contextlib import nullcontext
 from typing import TYPE_CHECKING, cast
 
 import pytest

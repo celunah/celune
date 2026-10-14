@@ -6,20 +6,20 @@ from types import SimpleNamespace
 from typing import Optional, cast
 from collections.abc import Callable
 
-import numpy as np
 import pytest
+import numpy as np
 from textual import events
 
-from celune.constants import (
-    DEFAULT_PERSONA_SPEECH_MODEL_ID,
-    DEFAULT_PERSONA_SPEECH_MODEL_REVISION,
-)
+from celune.ui.app import CeluneUI, ButtonActions
+from celune.typing.persona import _WhisperProcessor
 from celune.persona.asr import (
     PERSONA_SPEECH_NO_INPUT_TIMEOUT_SECONDS,
     WhisperTranscriber,
 )
-from celune.ui.app import CeluneUI, ButtonActions
-from celune.typing.persona import _WhisperProcessor
+from celune.constants import (
+    DEFAULT_PERSONA_SPEECH_MODEL_ID,
+    DEFAULT_PERSONA_SPEECH_MODEL_REVISION,
+)
 
 from .support import CeluneTestCase
 

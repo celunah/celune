@@ -1,21 +1,18 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for Celune core behavior without real models or GPU work."""
 
-from typing import Optional
 from unittest import mock
+from typing import Optional
 
 import pytest
 
 from celune.celune import Celune
-
+from .core_reload import TestCeluneCore as _TestCeluneCore
 from .support import (
     FakeGlow,
     FakeBackend,
     CeluneAsyncTestCase,
 )
-
-
-from .core_reload import TestCeluneCore as _TestCeluneCore
 
 
 class TestCeluneCore(_TestCeluneCore):

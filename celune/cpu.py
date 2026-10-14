@@ -3,9 +3,9 @@
 
 import ctypes
 import platform
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
+from dataclasses import dataclass
 
 __all__ = ["CpuFeatureCheck", "check_cpu_features", "required_cpu_features"]
 

@@ -3,14 +3,14 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, TypeVar, Union, Optional, Protocol, TypedDict
 from collections.abc import Mapping, Callable, Iterator
+from typing import TYPE_CHECKING, Union, TypeVar, Optional, Protocol, TypedDict
 
-import numpy as np
 import torch
+import numpy as np
 
-from .common import JSON, JSONSerializable
 from .aliases import AudioChunk
+from .common import JSON, JSONSerializable
 
 if TYPE_CHECKING:
     from .aliases import SeedVCArgument, SeedVCGenerator

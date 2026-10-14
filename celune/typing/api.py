@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
 """API-specific type aliases."""
 
-from typing import Union, Literal, Final, Optional
+from typing import Final, Union, Literal, Optional
 
-from .common import JSONSerializable, Sentinel
+from .common import Sentinel, JSONSerializable
 from .aliases import AudioChunk, AudioChunkNonNormalized
 
 

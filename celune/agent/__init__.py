@@ -4,10 +4,9 @@
 from collections.abc import Mapping
 
 from .routing import AgentInputRouter
-from ..typing.common import JSONSerializable
-from .needle import NeedleModel, NeedleConfig
-from ..modes import mode_allows_agents, resolve_operation_mode
 from ..vram import agent_vram_compatible
+from ..typing.common import JSONSerializable
+from ..modes import mode_allows_agents, resolve_operation_mode
 from .runtime import AgentRuntime, DefaultAgentPermissionPolicy
 from ..exceptions import (
     NeedleSelectionError,
@@ -16,19 +15,19 @@ from ..exceptions import (
 )
 from .needle import (
     NEEDLE_MODEL_ID,
+    NEEDLE_PICKLE_FILE,
     NEEDLE_MODEL_REVISION,
+    NeedleModel,
+    NeedleConfig,
     NeedleHandler,
     NeedleTokenizer,
     NeedleToolSelector,
-    convert_needle_safetensors,
-)
-from .needle import (
-    NEEDLE_PICKLE_FILE,
     NeedlePickleConverter,
     NeedleTensorInventory,
     NeedleCheckpointMetadata,
     NeedlePreparedCheckpoint,
     prepare_needle_checkpoint,
+    convert_needle_safetensors,
     validate_needle_safetensors,
 )
 from ..typing.agent import (

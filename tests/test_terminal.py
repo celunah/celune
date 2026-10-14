@@ -3,13 +3,13 @@
 
 import pytest
 from textual.app import App
-from textual.events import Key, MouseMove
 from textual.message import Message
+from textual.events import Key, MouseMove
 from textual.widgets import Button, Static
 
+from celune.ui.theme import CELUNE_CSS
 from celune.ui.app import CeluneUI, SelectMenuOverlay
 from celune.ui.terminal import SelectMenuOption, SelectMenuWidget
-from celune.ui.theme import CELUNE_CSS
 
 
 def test_select_menu_widget_aligns_values_after_longest_label() -> None:

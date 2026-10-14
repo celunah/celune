@@ -6,7 +6,7 @@ import ast
 import sys
 from pathlib import Path
 from collections import defaultdict
-from typing import Optional, Union, TypedDict
+from typing import Union, Optional, TypedDict
 
 
 class FunctionRecord(TypedDict):

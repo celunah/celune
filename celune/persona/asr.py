@@ -5,12 +5,15 @@ from __future__ import annotations
 
 import threading
 from dataclasses import dataclass
-from collections.abc import Mapping, Callable, Sequence
 from typing import TYPE_CHECKING, Union, Optional, cast
+from collections.abc import Mapping, Callable, Sequence
 
 import torch
 import numpy as np
 
+from ..audio.dsp import resample_audio
+from ..typing.aliases import AudioChunk
+from ..paths import huggingface_progress
 from ..constants import (
     DEFAULT_PERSONA_SPEECH_MODEL_ID,
     DEFAULT_PERSONA_SPEECH_MODEL_REVISION,
@@ -22,9 +25,6 @@ from ..typing.persona import (
     _WhisperModel,
     _WhisperProcessor,
 )
-from ..audio.dsp import resample_audio
-from ..paths import huggingface_progress
-from ..typing.aliases import AudioChunk
 
 if TYPE_CHECKING:
     # noinspection PyPep8Naming

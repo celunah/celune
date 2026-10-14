@@ -7,8 +7,8 @@ import ctypes
 import signal
 import warnings
 from types import FrameType
-from typing import Optional, Never, ClassVar, cast, final
 from collections.abc import Callable
+from typing import Never, ClassVar, Optional, cast, final
 
 from ..i18n import string
 from ..utils import discard

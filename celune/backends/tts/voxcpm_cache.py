@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from types import MethodType
 from collections.abc import Callable
-from typing import Optional, Protocol, Union, cast
+from typing import Union, Optional, Protocol, cast
 
 import torch
 

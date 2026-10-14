@@ -5,9 +5,9 @@ import gc
 import os
 import sys
 import tempfile
+import importlib
 import threading
 import contextlib
-import importlib
 import importlib.util
 from pathlib import Path
 import importlib.metadata
@@ -25,15 +25,15 @@ from ...utils import available
 from .base import CeluneVCBackend
 from ...typing.aliases import AudioChunk, SeedVCGenerator
 from ...dataclasses.pipeline import AudioOutput, VoiceConversionRequest
-from ...paths import (
-    configure_numba_cache,
-    huggingface_progress,
-    huggingface_hub_cache_dir,
-)
 from ...typing.backends import (
     SeedVCModelValue,
-    _SeedVCRealtimeModule,
     _SeedVCWrapper,
+    _SeedVCRealtimeModule,
+)
+from ...paths import (
+    huggingface_progress,
+    configure_numba_cache,
+    huggingface_hub_cache_dir,
 )
 
 __all__ = ["CeluneSeedVCBackend"]

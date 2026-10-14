@@ -8,8 +8,8 @@ from types import SimpleNamespace
 from contextlib import nullcontext
 from typing import Union, Optional, cast
 
-import pytest
 import torch
+import pytest
 
 from celune.typing.common import JSONSerializable
 from celune.agent.needle.models import NeedleModel

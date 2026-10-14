@@ -18,12 +18,12 @@ from importlib import util, import_module
 from types import ModuleType, SimpleNamespace
 from typing import TYPE_CHECKING, NoReturn, Optional
 
-from celune.paths import (
-    project_root,
-    running_compiled,
-    migrate_legacy_app_data,
-    configure_huggingface_runtime,
-)
+from celune.i18n import string
+from celune.typing.common import Config
+from celune.terminal import set_terminal_title
+from celune import REVISION, __tagline__, __version__
+from celune.vcs import is_git_checkout, git_checkout_hint
+from celune.config import config_log_level, normalize_log_level
 from celune.constants import (
     APP_NAME,
     APP_SLUG,
@@ -31,12 +31,12 @@ from celune.constants import (
     SUPPORTED_CUDA_VERSIONS,
     ExitCodes,
 )
-from celune.i18n import string
-from celune.typing.common import Config
-from celune.terminal import set_terminal_title
-from celune import REVISION, __tagline__, __version__
-from celune.vcs import is_git_checkout, git_checkout_hint
-from celune.config import config_log_level, normalize_log_level
+from celune.paths import (
+    project_root,
+    running_compiled,
+    migrate_legacy_app_data,
+    configure_huggingface_runtime,
+)
 
 if TYPE_CHECKING:
     from celune.celune import Celune

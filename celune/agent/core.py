@@ -5,30 +5,30 @@ from __future__ import annotations
 
 from typing import Optional, cast
 
-from .needle import NeedleToolSelector
-from ..exceptions import NeedleSelectionError
 from ..i18n import string
+from .needle import NeedleToolSelector
 from ..paths import huggingface_progress
+from ..utils import format_error_message
 from ..speech import deliver_persona_response
+from ..binding import install_class_functions
+from ..exceptions import NeedleSelectionError
 from ..typing.agent import (
-    AgentAbortReason,
-    AgentClassificationFailure,
-    AgentClassificationResult,
-    AgentContext,
-    AgentInputClassification,
-    AgentInterruption,
-    AgentInterruptionKind,
+    ToolCall,
     AgentOutput,
+    AgentContext,
     AgentRequest,
     AgentSession,
     AgentTaskState,
-    AgentToolExecutionStatus,
+    AgentAbortReason,
+    AgentInterruption,
     AgentToolSelector,
-    ToolCall,
     ToolExecutionResult,
+    AgentInterruptionKind,
+    AgentInputClassification,
+    AgentToolExecutionStatus,
+    AgentClassificationResult,
+    AgentClassificationFailure,
 )
-from ..utils import format_error_message
-from ..binding import install_class_functions
 
 __all__ = (
     "_execute_agent_tool",

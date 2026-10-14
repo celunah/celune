@@ -6,10 +6,11 @@ import tempfile
 from pathlib import Path
 from unittest import mock
 from dataclasses import replace
-from typing import Optional, Union
+from typing import Union, Optional
 from collections.abc import Sequence
 
 import numpy as np
+
 from celune.persona.memory import PersonaMemoryStore, classifier_memory_candidates
 
 from .support import CeluneTestCase

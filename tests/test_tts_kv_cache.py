@@ -2,14 +2,14 @@
 """Tests for supported TTS KV-cache quantization adapters."""
 
 from unittest.mock import patch
-from typing import Optional, Union, cast
+from typing import Union, Optional, cast
 
 import torch
 from torch import nn
 
 from celune.backends.tts.voxcpm_cache import (
-    _VoxCPMModel,
     QuantizedStaticKVCache,
+    _VoxCPMModel,
     install_voxcpm_quantized_cache,
 )
 

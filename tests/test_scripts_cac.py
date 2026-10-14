@@ -8,9 +8,9 @@ import sys
 import contextlib
 import importlib.util
 from pathlib import Path
+from unittest import mock
 from types import ModuleType
 from tempfile import TemporaryDirectory
-from unittest import mock
 
 from .support import CeluneTestCase
 

@@ -4,9 +4,9 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 import contextlib
 import contextvars
-import threading
 from collections.abc import Callable
 
 

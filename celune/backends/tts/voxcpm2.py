@@ -14,21 +14,21 @@ from transformers import AutoTokenizer
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 
 from . import get_version
+from ...i18n import string
+from ...constants import BASE_SR
+from ...paths import huggingface_progress
+from ...utils import available, custom_assert
+from ...cevoice import CEVoiceLoader, default_loader
+from ...typing.aliases import AudioChunk, AudioChunks
+from .base import (
+    _to_numpy_audio as normalize_streamed_audio,
+)
+from .voxcpm_cache import _VoxCPMModel, install_voxcpm_quantized_cache
 from .base import (
     CeluneBackend,
     local_hf_offline_mode,
     cached_hf_snapshot_path,
 )
-from .base import (
-    _to_numpy_audio as normalize_streamed_audio,
-)
-from ...i18n import string
-from ...paths import huggingface_progress
-from ...utils import available, custom_assert
-from ...cevoice import CEVoiceLoader, default_loader
-from ...constants import BASE_SR
-from ...typing.aliases import AudioChunk, AudioChunks
-from .voxcpm_cache import _VoxCPMModel, install_voxcpm_quantized_cache
 
 _VOXCPM_RUNTIME_KV_CACHE_LENGTH = 2048
 

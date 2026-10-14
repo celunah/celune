@@ -23,18 +23,18 @@ from pathlib import Path, PurePosixPath, PureWindowsPath
 
 from git.exc import GitError
 
-from .vcs import (
-    UPSTREAM_REPOSITORY_URL,
-    _open_repository,
-    git_checkout_hint,
-    is_git_checkout,
-)
 from .i18n import string
 from . import __version__
 from .constants import CELUNE_UA
 from .exceptions import UpdateError
-from .paths import project_root, running_compiled
 from .typing.common import JSONSerializable
+from .paths import project_root, running_compiled
+from .vcs import (
+    UPSTREAM_REPOSITORY_URL,
+    is_git_checkout,
+    _open_repository,
+    git_checkout_hint,
+)
 
 REMOTE_URL = f"{UPSTREAM_REPOSITORY_URL}.git"
 RELEASES_API_URL = "https://api.github.com/repos/celunah/celune/releases?per_page=100"
