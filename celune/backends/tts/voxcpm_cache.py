@@ -4,12 +4,12 @@
 from __future__ import annotations
 
 from types import MethodType
-from collections.abc import Callable
 from typing import Union, Optional, Protocol, cast
+from collections.abc import Callable
 
 import torch
 
-from ...kv_cache import QuantizedKVCacheMode, quantized_kv_cache_mode
+from ...modeling import QuantizedKVCacheMode, quantized_kv_cache_mode
 
 
 class _VoxCPMCache(Protocol):

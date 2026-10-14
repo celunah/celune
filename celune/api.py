@@ -1,8 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """API layer."""
 
-# pylint: disable=ungrouped-imports
-
 import os
 import html
 import json
@@ -16,48 +14,66 @@ import inspect
 import secrets
 import binascii
 import datetime
+import tempfile
 import threading
 import contextlib
+from hmac import new as hmac_new
+from hmac import compare_digest
 from typing import (
     Union,
     Literal,
     Optional,
 )
 from hashlib import sha256
-from urllib.parse import urlsplit
+from pathlib import Path
+from collections import abc, deque, defaultdict
 from dataclasses import field, dataclass
-from collections import deque, defaultdict
-from hmac import compare_digest, new as hmac_new
-from collections.abc import Callable, Iterator, Awaitable
+from urllib.parse import urlsplit
 
-import uvicorn
 import numpy as np
 import gradio as gr
-from fastapi import (
-    File,
-    Form,
-    FastAPI,
-    Request,
-    WebSocket,
-    UploadFile,
-    HTTPException,
-    WebSocketDisconnect,
-)
-from fastapi.responses import (
-    Response,
-    FileResponse,
-    HTMLResponse,
-    JSONResponse,
-    RedirectResponse,
-    StreamingResponse,
-)
+import fastapi
+import uvicorn
 from pydantic import Field, BaseModel
-from starlette.datastructures import Headers
-from starlette.concurrency import run_in_threadpool
-from starlette.types import Send, Scope, ASGIApp, Receive
-from starlette.middleware.base import RequestResponseEndpoint
+from starlette import types, concurrency, datastructures
+from starlette.middleware import base as middleware_base
 
-from .webui import (
+from . import __version__
+from .ui import resources as ui_resources
+from .i18n import string
+from .paths import api_key_path, project_root
+from .theme import colors
+from .utils import available, format_error_message
+from .webui import actions as webactions
+from .webui import runtime as webui
+from .celune import Celune
+from .speech import (
+    prepare_playback_audio,
+)
+from .cevoice import default_loader
+from .audio.dsp import resample_audio
+from .constants import BASE_SR, APP_NAME
+from .exceptions import (
+    ModelConsentDeclined,
+    ModelConsentRequired,
+    TaskSubscriptionClosed,
+    ModelCommercialUseRestricted,
+)
+from .typing.api import (
+    TaskStatus,
+    TaskEventName,
+    TaskCommandName,
+)
+from .typing.common import JSONSerializable
+from .typing.events import EventName, EventCallback
+from .webui.actions import (
+    _build_webui,
+    _webui_speak,
+    _webui_run_command,
+    _decode_uploaded_audio,
+    _voice_conversion_unavailable_response,
+)
+from .webui.runtime import (
     api_log,
     _flac_bytes,
     audio_bytes,
@@ -85,53 +101,46 @@ from .webui import (
     _unsubscribe_from_speech_job,
     _subscribe_webui_timed_updates,
 )
-from .speech import (
-    prepare_playback_audio,
-)
-from .i18n import string
-from .theme import colors
-from .typing.api import (
-    TaskStatus,
-    TaskEventName,
-    TaskCommandName,
-)
-from .webactions import (
-    _build_webui,
-    _webui_speak,
-    _webui_run_command,
-    _decode_uploaded_audio,
-    _voice_conversion_unavailable_response,
-)
-from .exceptions import (
-    ModelConsentDeclined,
-    ModelConsentRequired,
-    TaskSubscriptionClosed,
-)
-from .celune import Celune
-from .paths import project_root
-from .registry.consent import (
-    consent_details,
-    consent_prompt_text,
-    consent_status,
-    enter_api_model_request,
-    exit_api_model_request,
-    model_metadata_for_revision,
-    pending_model_consents,
-    record_model_consent,
-    registered_models,
-)
-from .cevoice import default_loader
-from .typing.aliases import LogLevel
-from .audio.dsp import resample_audio
-from .constants import BASE_SR, APP_NAME
-from .ui import resources as ui_resources
 from .registry.types import ModelMetadata
-from .typing.common import JSONSerializable
-from . import webui, webactions, __version__
+from .typing.aliases import LogLevel
+from .registry.consent import (
+    consent_status,
+    consent_details,
+    registered_models,
+    consent_prompt_text,
+    record_model_consent,
+    exit_api_model_request,
+    pending_model_consents,
+    commercial_mode_enabled,
+    enter_api_model_request,
+    model_metadata_for_revision,
+)
 from .extensions.events import EventDispatcher
-from .utils import available, format_error_message
-from .typing.events import EventName, EventCallback
-from .webui_assets import read_webui_asset, webui_asset_response_data
+
+Callable = abc.Callable
+Iterator = abc.Iterator
+Awaitable = abc.Awaitable
+File = fastapi.File
+Form = fastapi.Form
+FastAPI = fastapi.FastAPI
+Request = fastapi.Request
+WebSocket = fastapi.WebSocket
+UploadFile = fastapi.UploadFile
+HTTPException = fastapi.HTTPException
+WebSocketDisconnect = fastapi.WebSocketDisconnect
+Response = fastapi.responses.Response
+FileResponse = fastapi.responses.FileResponse
+HTMLResponse = fastapi.responses.HTMLResponse
+JSONResponse = fastapi.responses.JSONResponse
+RedirectResponse = fastapi.responses.RedirectResponse
+StreamingResponse = fastapi.responses.StreamingResponse
+run_in_threadpool = concurrency.run_in_threadpool
+Headers = datastructures.Headers
+RequestResponseEndpoint = middleware_base.RequestResponseEndpoint
+Send = types.Send
+Scope = types.Scope
+ASGIApp = types.ASGIApp
+Receive = types.Receive
 
 _receive_webui_timed_update = webui._receive_webui_timed_update
 _webui_audio_waveform_options = webui._webui_audio_waveform_options
@@ -147,6 +156,93 @@ UiTimedUpdate = webui.UiTimedUpdate
 
 api = FastAPI(title=f"{APP_NAME}API")
 
+API_KEY_PREFIX = "C-"
+API_KEY_ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+API_KEY_LENGTH = 25
+
+
+def generate_api_key() -> str:
+    """Generate a Celune API key with 25 secure base-36 characters.
+
+    Returns:
+        str: A key with the ``C-`` prefix and 25 uppercase base-36 characters.
+    """
+    return API_KEY_PREFIX + "".join(
+        secrets.choice(API_KEY_ALPHABET) for _ in range(API_KEY_LENGTH)
+    )
+
+
+def _valid_generated_key(value: str) -> bool:
+    """Return whether a value matches Celune's generated-key format."""
+    if not value.startswith(API_KEY_PREFIX):
+        return False
+    suffix = value[len(API_KEY_PREFIX) :]
+    return len(suffix) == API_KEY_LENGTH and all(
+        character in API_KEY_ALPHABET for character in suffix
+    )
+
+
+def _replace_key_file(path: Path, key: str) -> None:
+    """Atomically replace a malformed generated-key file."""
+    descriptor, temporary_name = tempfile.mkstemp(
+        dir=path.parent,
+        prefix=f".{path.name}.",
+    )
+    temporary_path = Path(temporary_name)
+    try:
+        if os.name != "nt":
+            os.chmod(temporary_path, 0o600)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as output:
+            output.write(f"{key}\n")
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(temporary_path, path)
+    finally:
+        temporary_path.unlink(missing_ok=True)
+
+
+def get_or_create_api_key(
+    configured_key: Optional[str] = None,
+    path: Optional[Path] = None,
+) -> str:
+    """Return a configured key or load and persist a generated key.
+
+    Args:
+        configured_key: Optional key from Celune's configuration.
+        path: Optional storage path, primarily useful for isolated callers.
+
+    Returns:
+        str: The configured or persisted Celune API key.
+    """
+    for candidate in (configured_key, os.getenv("CELUNE_API_TOKEN")):
+        if candidate is not None and candidate.strip():
+            return candidate.strip()
+
+    key_file = path or api_key_path(create_parent=True)
+    key_file.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        descriptor = os.open(
+            key_file,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+            0o600,
+        )
+    except FileExistsError:
+        for _attempt in range(20):
+            existing = key_file.read_text(encoding="utf-8").strip()
+            if _valid_generated_key(existing):
+                return existing
+            time.sleep(0.01)
+        generated = generate_api_key()
+        _replace_key_file(key_file, generated)
+        return generated
+
+    generated = generate_api_key()
+    with os.fdopen(descriptor, "w", encoding="utf-8") as output:
+        output.write(f"{generated}\n")
+        output.flush()
+        os.fsync(output.fileno())
+    return generated
+
 
 @api.exception_handler(ModelConsentRequired)
 async def model_consent_required_response(
@@ -160,6 +256,24 @@ async def model_consent_required_response(
         status_code=428,
         content={
             "error": "model_consent_required",
+            "model": metadata.to_dict(consented=consent_status(metadata)),
+        },
+    )
+
+
+@api.exception_handler(ModelCommercialUseRestricted)
+async def model_commercial_use_restricted_response(
+    request: Request,
+    error: ModelCommercialUseRestricted,
+) -> JSONResponse:
+    """Reject a model operation that conflicts with commercial-use mode."""
+    del request
+    metadata = error.metadata
+    return JSONResponse(
+        status_code=403,
+        content={
+            "error": "commercial_model_restricted",
+            "message": str(error),
             "model": metadata.to_dict(consented=consent_status(metadata)),
         },
     )
@@ -366,8 +480,8 @@ def _run_async_runtime_call(
     raise RuntimeError("synchronous runtime calls cannot run on an active event loop")
 
 
-WEBUI_HEAD = read_webui_asset("head.html")
-WEBUI_CSS = read_webui_asset("webui.css").replace(
+WEBUI_HEAD = webui.read_webui_asset("head.html")
+WEBUI_CSS = webui.read_webui_asset("webui.css").replace(
     "__CELUNE_CONNECTION_LOST_MESSAGE__",
     json.dumps(string("webui.connection_lost", app_name=APP_NAME), ensure_ascii=False),
 )
@@ -420,7 +534,7 @@ def _configure_webui_theme() -> None:
     button_bg = colors.blend(primary, background, 0.72)
     button_hover = colors.blend(primary, background, 0.6)
     input_bg = colors.blend(primary, background, 0.78)
-    theme_css = read_webui_asset("theme.css")
+    theme_css = webui.read_webui_asset("theme.css")
     theme_values = {
         "BACKGROUND": background,
         "PRIMARY": primary,
@@ -815,7 +929,7 @@ def _webui_auth_page() -> str:
         "invalid": string("api.webui_auth_invalid"),
         "error": string("api.webui_auth_error"),
     }
-    page = read_webui_asset("api_key.html")
+    page = webui.read_webui_asset("api_key.html")
     for key, value in values.items():
         page = page.replace(f"__{key.upper()}__", html.escape(value))
     return page
@@ -1394,13 +1508,14 @@ def models() -> dict[str, object]:
         }
     )
     return {
+        "commercial_mode": commercial_mode_enabled(),
         "models": [
             _model_consent_document(metadata)
             for metadata in sorted(
                 catalog.values(),
                 key=lambda item: (item.category, item.model_id),
             )
-        ]
+        ],
     }
 
 
@@ -1413,7 +1528,7 @@ def webui_asset(asset_name: str) -> Response:
             media_type="text/css",
             headers={"Cache-Control": "no-store"},
         )
-    asset = webui_asset_response_data(asset_name)
+    asset = webui.webui_asset_response_data(asset_name)
     if asset is None:
         return Response(status_code=404)
     content, media_type = asset

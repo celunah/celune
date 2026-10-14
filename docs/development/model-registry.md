@@ -15,6 +15,20 @@ This page is for Celune contributors who add model metadata or change a model lo
 
 Each `ModelMetadata` entry records its model ID, display name, category, immutable Hugging Face commit SHA, repository URL, license identifier and source URL, restriction flags, and any runtime roles. A missing license or restriction value is represented by `None`; Celune treats unknown terms as requiring consent. Set `terms_review_required` when the published terms need human review, even if a license identifier exists.
 
+## Commercial use mode
+
+The top-level `commercial` key in `default_config.yaml` declares the runtime's
+use. Its default is `false`, which retains the normal consent flow. When set to
+`true`, the shared model access gate permits a model only when the registry has
+a license and source URL, both restriction flags are explicitly false, and the
+terms do not need review. Unknown, non-commercial, research-only, and unreviewed
+models are rejected before consent or any download/load path. Custom models
+remain unavailable in this mode until their terms are reviewed and cataloged.
+
+The model listing API reports the active `commercial_mode` and each model's
+`commercial_use_allowed` metadata. A blocked operation returns HTTP `403` with
+the model details and a localized explanation.
+
 Built-in revisions are reviewed pins. Update a pin only after checking the repository revision and its license information. Custom Hugging Face IDs resolve to a full commit SHA before download, and remain unknown-license models until they are added to a catalog.
 
 Keep backend implementation dispatch and dependency environment manifests in their backend modules. Consumers should import model metadata from `celune.registry` modules rather than maintain a second list.

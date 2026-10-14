@@ -14,16 +14,10 @@ import gradio as gr
 import soundfile as sf
 from fastapi.responses import JSONResponse
 
-from . import api as _api
-from .ui.app import CeluneUI
-from .i18n import string, tagged_string
-from .constants import BASE_SR, APP_NAME
-from .speech import prepare_playback_audio
-from .binding import install_module_functions
-from .persona.impl import persona_talkback_enabled
-from .typing.aliases import AudioChunk, AudioChunks
-from .typing.api import WebUiUpdate, WebUiAudioValue, WebUiInputAudioValue
-from .webui import (
+from .. import api as _api
+from ..i18n import string, tagged_string
+from ..ui.app import CeluneUI
+from .runtime import (
     _webui_snapshot,
     _webui_logs_html,
     _append_webui_log,
@@ -37,6 +31,11 @@ from .webui import (
     _webui_vc_controls_update,
     _webui_audio_waveform_options,
 )
+from ..binding import install_module_functions
+from ..constants import BASE_SR, APP_NAME
+from ..typing.api import WebUiUpdate, WebUiAudioValue, WebUiInputAudioValue
+from ..persona.impl import persona_talkback_enabled
+from ..typing.aliases import AudioChunk, AudioChunks
 
 __all__ = (
     "_build_webui",
@@ -72,7 +71,7 @@ def _webui_run_command(text: str) -> bool:
     command_args = parts[1:]
     celune = _api.bound_celune
     if command == "settings" and celune is not None:
-        from .ui.commands import process_command as process_ui_command
+        from ..ui.commands import process_command as process_ui_command
 
         process_ui_command(
             cast(CeluneUI, _api._WebUiCommandHost(celune)), command, command_args
@@ -88,7 +87,7 @@ def _webui_run_command(text: str) -> bool:
     if celune is None:
         _append_webui_log(string("webui.not_available"), "error")
         return False
-    from .ui.commands import process_command as process_ui_command
+    from ..ui.commands import process_command as process_ui_command
 
     process_ui_command(
         cast(CeluneUI, _api._WebUiCommandHost(celune)), command, command_args
@@ -126,6 +125,8 @@ def _webui_playback_audio(
     sample_rate: int,
 ) -> WebUiAudioValue:
     """Encode normalized playback audio as PCM16 for Gradio."""
+    from ..speech import prepare_playback_audio
+
     prepared_audio = prepare_playback_audio(audio, sample_rate)
     peak = float(np.max(np.abs(prepared_audio))) if prepared_audio.size else 0.0
     if peak == 0.0:
@@ -401,7 +402,7 @@ def _webui_cycle_voice() -> tuple[
 
 def _webui_voice_catalog(celune: _api.Celune) -> tuple[tuple[str, str], ...]:
     """Return readable browser choices for every available voice-pack entry."""
-    from .cevoice import (
+    from ..cevoice import (
         CEVoice,
         CEVoiceError,
         bundled_voices_dir,
@@ -461,7 +462,7 @@ def _webui_voice_choices() -> WebUiUpdate:
     celune = _api.bound_celune
     if celune is None:
         return gr.update(choices=[], value=None, interactive=False)
-    from .cevoice import active_bundle_path
+    from ..cevoice import active_bundle_path
 
     choices = _webui_voice_catalog(celune)
     current_voice = getattr(celune, "current_voice", None)

@@ -1,15 +1,16 @@
 # SPDX-License-Identifier: Apache-2.0
 """Frontend layer."""
 
-# pylint: disable=ungrouped-imports
-
 from __future__ import annotations
 
 import sys
+import queue as queue_module
 import asyncio
 import logging
 import itertools
 import threading
+from io import TextIOWrapper
+from types import ModuleType
 from typing import (
     TYPE_CHECKING,
     Never,
@@ -23,63 +24,81 @@ from typing import (
     final,
 )
 from pathlib import Path
-import queue as queue_module
-from io import TextIOWrapper
-from types import ModuleType
 from dataclasses import field, dataclass
 from collections.abc import Callable, Iterator
 
-from textual.app import (
-    App,
-    ReturnType,
-    ComposeResult,
-    RenderableType,
-    ScreenStackError,
-    AutopilotCallbackType,
+from textual import (
+    app,
+    css,
+    work,
+    theme,
+    timer,
+    events,
+    widget,
+    binding,
+    widgets,
+    containers,
+)
+from textual import (
+    color as textual_color,
+)
+from textual import (
+    screen as textual_screen,
+)
+from textual import (
+    message as textual_message,
 )
 from rich.text import Text
-from textual.widgets import (
-    Input,
-    Label,
-    RichLog,
-    Static,
-    TextArea,
-    ProgressBar,
-)
-from textual.widgets import (
-    Button as TextualButton,
-)
-from textual.color import Color
-from textual.theme import Theme
-from textual.timer import Timer
-from textual import work, events
-from textual.widget import Widget
-from textual.message import Message
-from textual.screen import ModalScreen
-from textual.binding import BindingType
-from textual.css.query import NoMatches
-from textual.css.types import EdgeStyle
-from textual.containers import Vertical, Horizontal
 
+from ..i18n import string, tagged_string
+from .theme import CELUNE_CSS, severity_color
+from .compat import install_textual_timer_sleep
+from .loading import CeluneLoadingScreen
+from ..threads import run_in_daemon_thread
+from .terminal import SelectMenuOption, SelectMenuWidget
+from ..watchdog import launcher_loss_requested
+from ..constants import BASE_SR, SIGTSTP, APP_NAME, ExitCodes
+from ..typing.ui import CeluneUIMethodSurface
+from ..typing.agent import AgentTaskState
 from ..typing.locks import (
     ComponentLockName,
     ComponentLockOwner,
     ComponentLockRequirement,
 )
-from ..i18n import string, tagged_string
-from .loading import CeluneLoadingScreen
-from ..typing.agent import AgentTaskState
-from ..registry.types import ModelMetadata
-from ..threads import run_in_daemon_thread
 from ..typing.common import JSONSerializable
-from .theme import CELUNE_CSS, severity_color
-from ..typing.ui import CeluneUIMethodSurface
-from ..watchdog import launcher_loss_requested
-from .compat import install_textual_timer_sleep
 from ..typing.config import AudioDeviceInfoValue
-from .terminal import SelectMenuOption, SelectMenuWidget
-from ..constants import BASE_SR, SIGTSTP, APP_NAME, ExitCodes
+from ..registry.types import ModelMetadata
 from ..theme.defaults import default_theme_family, default_error_theme_family
+
+App = app.App
+ReturnType = app.ReturnType
+ComposeResult = app.ComposeResult
+RenderableType = app.RenderableType
+ScreenStackError = app.ScreenStackError
+AutopilotCallbackType = app.AutopilotCallbackType
+Color = textual_color.Color
+Theme = theme.Theme
+Timer = timer.Timer
+ModalScreen = textual_screen.ModalScreen
+Widget = widget.Widget
+BindingType = binding.BindingType
+Message = textual_message.Message
+Input = widgets.Input
+Label = widgets.Label
+Static = widgets.Static
+RichLog = widgets.RichLog
+TextArea = widgets.TextArea
+ProgressBar = widgets.ProgressBar
+TextualButton = widgets.Button
+Vertical = containers.Vertical
+Horizontal = containers.Horizontal
+
+if TYPE_CHECKING:
+    from textual.css.query import NoMatches
+    from textual.css.types import EdgeStyle
+else:
+    NoMatches = css.query.NoMatches
+    EdgeStyle = css.types.EdgeStyle
 
 install_textual_timer_sleep()
 
@@ -99,6 +118,7 @@ if TYPE_CHECKING:
     from . import resources as ui_resources
     from ..vc import (
         VC_PLAYBACK_GAIN,
+        VCDebugCapture,
         LiveVoiceActivityDetector,
         vc_input_rms,
         vc_input_has_voice,
@@ -118,7 +138,6 @@ if TYPE_CHECKING:
     from .commands import process_command as process_ui_command
     from .terminal import is_celune_log_record
     from ..playback import current_playback_status
-    from ..vc_debug import VCDebugCapture
     from .resources import FOOTER_ROTATE_SECONDS
     from ..exceptions import CEDTSError
     from ..persona.asr import (

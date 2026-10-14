@@ -788,7 +788,7 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
                 ui.safe_log(string("commands.vc_debug_already_enabled"), "warning")
                 return
             try:
-                from ..vc_debug import VCDebugCapture
+                from ..vc import VCDebugCapture
 
                 capture = VCDebugCapture()
             except Exception as exc:

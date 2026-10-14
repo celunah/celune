@@ -1,9 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """Celune's backend layer."""
 
-# Import groups follow Celune's project-specific ordering.
-# pylint: disable=ungrouped-imports
-
 import gc
 import os
 import time
@@ -12,16 +9,16 @@ import shutil
 import asyncio
 import threading
 import contextlib
+from typing import Never, Union, ClassVar, Optional, cast, final
 from pathlib import Path
 from dataclasses import dataclass
 from collections.abc import Mapping, Callable, Generator
-from typing import Never, Union, ClassVar, Optional, cast, final
 
-import torch
 import numpy as np
-import numpy.typing as npt
+import torch
 from transformers.modeling_utils import PreTrainedModel
 
+from .i18n import string, set_locale, tagged_string, get_system_locale
 from .vram import (
     VramPreset,
     backend_allowed,
@@ -30,15 +27,19 @@ from .vram import (
     is_cuda_out_of_memory,
     release_cuda_after_oom,
 )
+from .locks import ComponentLockLease
 from .modes import (
     OperationMode,
     resolve_operation_mode,
 )
+from .paths import api_key_path, temp_data_dir
 from .utils import (
     discard,
     available,
     format_error_message,
 )
+from .chroma import AudioRGBGlow
+from .config import Config, config_bool, config_value, normalize_log_level
 from .cevoice import (
     CEVoicePersona,
     default_loader,
@@ -73,6 +74,10 @@ from .agent.tools import (
     agent_test_tool_schemas,
     production_agent_tool_schemas,
 )
+from .backends.vc import VC_BACKENDS, CeluneVCBackend, resolve_vc_backend
+from .cloudflared import CloudflaredQuickTunnel
+from .agent.needle import NeedleToolSelector
+from .backends.tts import BACKENDS, CeluneBackend, resolve_backend
 from .persona.impl import (
     PersonaClient,
     persona_enabled,
@@ -91,6 +96,10 @@ from .typing.locks import (
     ComponentLockOwner,
     ComponentLockRequirement,
 )
+from .typing.modes import BackendMode
+from .agent.persona import PersonaAgentBridge
+from .agent.routing import AgentInputRouter
+from .agent.runtime import AgentRuntime
 from .typing.celune import (
     VCBackendSpec,
     TTSBackendSpec,
@@ -106,7 +115,12 @@ from .typing.celune import (
     CaptionProgressCallback,
     _BundleWithPath,
 )
-from .chroma import AudioRGBGlow
+from .typing.common import JSON, JSONSerializable
+from .typing.events import EventName, EventPayload
+from .typing.aliases import LogLevel
+from .persona.emotion import PersonaEmotionAnalyzer
+from .typing.backends import BackendModel
+from .extensions.events import EventDispatcher
 from .dataclasses.celune import (
     CELUNE_CONSTANT_PROPERTIES,
     CELUNE_FORWARDED_PROPERTIES,
@@ -126,29 +140,12 @@ from .dataclasses.events import (
     CharacterChangedEvent,
     CharacterUnloadedEvent,
 )
-from .typing.aliases import LogLevel
-from .locks import ComponentLockLease
-from .typing.modes import BackendMode
 from .dataclasses.properties import (
     bind_constant_properties,
     bind_forwarded_properties,
 )
-from .agent.runtime import AgentRuntime
-from .typing.backends import BackendModel
-from .api_key import get_or_create_api_key
-from .agent.routing import AgentInputRouter
-from .agent.needle import NeedleToolSelector
-from .agent.persona import PersonaAgentBridge
-from .paths import api_key_path, temp_data_dir
-from .extensions.events import EventDispatcher
-from .cloudflared import CloudflaredQuickTunnel
-from .typing.common import JSON, JSONSerializable
-from .typing.events import EventName, EventPayload
-from .persona.emotion import PersonaEmotionAnalyzer
-from .backends.tts import BACKENDS, CeluneBackend, resolve_backend
-from .i18n import string, set_locale, tagged_string, get_system_locale
-from .backends.vc import VC_BACKENDS, CeluneVCBackend, resolve_vc_backend
-from .config import Config, config_bool, config_value, normalize_log_level
+
+npt = np.typing
 
 
 def _load_speech_module():
@@ -764,6 +761,10 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
         )
 
         self.vision = self._persona_conn()
+
+        from .registry.consent import set_commercial_mode
+
+        set_commercial_mode(config.get("commercial") is True)
 
         Celune._instance = self
 
@@ -2383,16 +2384,21 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
             key_file = api_key_path(create_parent=True)
             env_token = os.getenv("CELUNE_API_TOKEN", "").strip()
             uses_generated_key = not token and not env_token
-            token = get_or_create_api_key(token, path=key_file)
-            if uses_generated_key:
-                self.log(
-                    string(
-                        "celune.api_key_file",
-                        app_name=APP_NAME,
-                        path=str(key_file),
-                    ),
-                    "info",
-                )
+            try:
+                from .api import get_or_create_api_key
+            except ModuleNotFoundError:
+                token = token or env_token or None
+            else:
+                token = get_or_create_api_key(token, path=key_file)
+                if uses_generated_key:
+                    self.log(
+                        string(
+                            "celune.api_key_file",
+                            app_name=APP_NAME,
+                            path=str(key_file),
+                        ),
+                        "info",
+                    )
 
         try:
             port = _config_int(options.get("port", 2060), 2060)
@@ -2544,6 +2550,9 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
                     close_default_loader()
                 with contextlib.suppress(Exception):
                     self._cleanup_residual_temp_data(temp_data_dir())
+                from .registry.consent import set_commercial_mode
+
+                set_commercial_mode(False)
                 Celune._instance = None
                 self.log("[ENGINE] close complete", loglevel="debug")
 

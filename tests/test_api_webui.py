@@ -2,22 +2,23 @@
 """Tests for Celune's browser-facing API UI."""
 
 import asyncio
+from queue import Queue
+from types import SimpleNamespace
 from typing import (
     Optional,
     cast,
 )
-from queue import Queue
 from unittest import mock
-from types import SimpleNamespace
 from collections import abc, deque
 
 import numpy as np
+from starlette.types import Send, Scope, Message, Receive
 from starlette.requests import Request
 from starlette.responses import Response
-from starlette.types import Send, Scope, Message, Receive
 
 from celune import api
 from celune.i18n import string
+from celune.webui import runtime as webui
 from celune.celune import Celune
 from celune.pipeline import SpeechStreamQueue
 
@@ -233,8 +234,8 @@ class TestApiWebUI(CeluneTestCase):
         assert '<link rel="stylesheet" href="/ui/assets/api_key.css">' in page
         assert '<script src="/ui/assets/api_key.js" defer></script>' in page
         assert "<style>" not in page
-        stylesheet = api.read_webui_asset("api_key.css")
-        script = api.read_webui_asset("api_key.js")
+        stylesheet = webui.read_webui_asset("api_key.css")
+        script = webui.read_webui_asset("api_key.js")
         assert "#error { display: none;" in stylesheet
         assert "#error:not(:empty) { display: block; }" in stylesheet
         assert 'fetch("/ui/key"' in script
@@ -601,7 +602,7 @@ class TestApiWebUI(CeluneTestCase):
             ),
         )
         with mock.patch(
-            "celune.webui.main_window_log_path",
+            "celune.webui.runtime.main_window_log_path",
             return_value=mock.Mock(exists=lambda: False),
         ):
             api.bind_celune(celune)
@@ -651,7 +652,9 @@ class TestApiWebUI(CeluneTestCase):
         )
         api.bound_celune = celune
         with (
-            mock.patch("celune.webactions.persona_talkback_enabled", return_value=True),
+            mock.patch(
+                "celune.webui.actions.persona_talkback_enabled", return_value=True
+            ),
             mock.patch(
                 "celune.api.ui_resources.resource_pages",
                 return_value=("VRAM: first",),
@@ -714,7 +717,9 @@ class TestApiWebUI(CeluneTestCase):
             encoding="utf-8",
         )
         api.webui_logs_seeded = False
-        with mock.patch("celune.webui.main_window_log_path", return_value=log_path):
+        with mock.patch(
+            "celune.webui.runtime.main_window_log_path", return_value=log_path
+        ):
             api._seed_webui_logs()
 
         assert list(api.webui_log_lines) == [
@@ -905,7 +910,7 @@ class TestApiWebUI(CeluneTestCase):
 
     def test_webui_connection_toast_styles_only_gradio_disconnects(self) -> None:
         """Verify only Gradio connection-loss toasts get Celune's unavailable style."""
-        webui_script = api.read_webui_asset("webui.js")
+        webui_script = webui.read_webui_asset("webui.js")
         assert '"Connection Lost"' in webui_script
         assert '"Connection to the server was lost."' in webui_script
         assert ".toast-body.error.celune-gradio-connection-lost" in api.WEBUI_CSS
@@ -919,9 +924,9 @@ class TestApiWebUI(CeluneTestCase):
 
     def test_webui_assets_keep_markup_scripts_and_styles_separate(self) -> None:
         """Verify WebUI behavior is served from standalone packaged assets."""
-        head = api.read_webui_asset("head.html")
-        script = api.read_webui_asset("webui.js")
-        stylesheet = api.read_webui_asset("webui.css")
+        head = webui.read_webui_asset("head.html")
+        script = webui.read_webui_asset("webui.js")
+        stylesheet = webui.read_webui_asset("webui.css")
 
         assert 'href="/ui/assets/theme.css"' in head
         assert 'src="/ui/assets/webui.js"' in head
@@ -942,7 +947,7 @@ class TestApiWebUI(CeluneTestCase):
 
     def test_webui_head_installs_log_autoscroll(self) -> None:
         """Verify the WebUI head installs auto-scroll behavior for the log pane."""
-        script = api.read_webui_asset("webui.js")
+        script = webui.read_webui_asset("webui.js")
         assert "#celune-log-panel pre" in script
         assert "MutationObserver" in script
         assert "isNearLogBottom" in script
@@ -972,8 +977,10 @@ class TestApiWebUI(CeluneTestCase):
         )
 
         with (
-            mock.patch("celune.webui.persona_enabled", return_value=True),
-            mock.patch("celune.webui.persona_talkback_enabled", return_value=True),
+            mock.patch("celune.webui.runtime.persona_enabled", return_value=True),
+            mock.patch(
+                "celune.webui.runtime.persona_talkback_enabled", return_value=True
+            ),
         ):
             placeholder = api._webui_input_placeholder(celune, False, True)
 
@@ -997,8 +1004,10 @@ class TestApiWebUI(CeluneTestCase):
 
         with (
             mock.patch.object(api.CeluneUI, "_instance", object()),
-            mock.patch("celune.webui.persona_enabled", return_value=True),
-            mock.patch("celune.webui.persona_talkback_enabled", return_value=True),
+            mock.patch("celune.webui.runtime.persona_enabled", return_value=True),
+            mock.patch(
+                "celune.webui.runtime.persona_talkback_enabled", return_value=True
+            ),
             mock.patch(
                 "celune.api.ui_resources.resource_pages",
                 return_value=("VRAM: available",),
