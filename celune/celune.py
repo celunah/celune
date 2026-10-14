@@ -1,9 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """Celune's backend layer."""
 
-# Import groups follow Celune's project-specific Ruff ordering.
-# pylint: disable=ungrouped-imports
-
 import gc
 import os
 import time
@@ -12,87 +9,51 @@ import shutil
 import asyncio
 import threading
 import contextlib
-from typing import Never, Union, ClassVar, Optional, cast, final
 from pathlib import Path
 from dataclasses import dataclass
-from collections.abc import Callable, Generator
+from collections.abc import Mapping, Callable, Generator
+from typing import Never, Union, ClassVar, Optional, cast, final
 
-import numpy as np
 import torch
+import numpy as np
 import numpy.typing as npt
 from transformers.modeling_utils import PreTrainedModel
 
+from .paths import temp_data_dir
+from .chroma import AudioRGBGlow
 from .vc import clamp_vc_pitch_shift
-from .i18n import string, set_locale, tagged_string, get_system_locale
-from .vram import (
-    VramPreset,
-    backend_allowed,
-    resolve_vram_preset,
-    resolve_backend_name,
-)
+from .typing.aliases import LogLevel
 from .locks import ComponentLockLease
+from .typing.modes import BackendMode
+from .agent.runtime import AgentRuntime
+from .typing.backends import BackendModel
+from .agent.routing import AgentInputRouter
+from .agent.needle import NeedleToolSelector
+from .agent.persona import PersonaAgentBridge
+from .extensions.events import EventDispatcher
+from .typing.common import JSON, JSONSerializable
+from .typing.events import EventName, EventPayload
+from .persona.emotion import PersonaEmotionAnalyzer
+from .exceptions import (
+    WarmupError,
+    BackendError,
+)
+from .backends.tts import BACKENDS, CeluneBackend, resolve_backend
 from .modes import (
     OperationMode,
     resolve_operation_mode,
 )
-from .paths import temp_data_dir
+from .i18n import string, set_locale, tagged_string, get_system_locale
+from .backends.vc import VC_BACKENDS, CeluneVCBackend, resolve_vc_backend
+from .config import Config, config_bool, config_value, normalize_log_level
 from .utils import (
     available,
     discard,
     format_error_message,
 )
-from .chroma import AudioRGBGlow
-from .config import Config, config_bool, config_value, normalize_log_level
-from .cevoice import (
-    CEVoicePersona,
-    default_loader,
-    active_bundle_path,
-    select_voice_bundle,
-    close_default_loader,
-    bundle_character_name,
-    is_protected_temp_path,
-    persona_metadata_from_manifest,
-    bundle_matches_default_pack_checksum,
-)
-from .pipeline import (
-    clear_queue,
-    close_stream,
-    generation_worker_job,
-    playback_worker_job,
-    split_text,
-)
-from .speech import (
-    play as play_pipeline,
-    close as close_pipeline,
-    queue_sfx_audio,
-    stop_live_audio_input,
-)
-from .constants import (
-    APP_NAME,
-    AGENT_MAX_LOOPS,
-    AGENT_COMPACT_AT,
-    AGENT_CONTEXT_SPACE,
-)
-from .exceptions import (
-    WarmupError,
-    BackendError,
-)
-from .agent.tools import (
-    agent_test_tools,
-    production_agent_tools,
-    agent_test_tool_schemas,
-    production_agent_tool_schemas,
-)
-from .backends.vc import VC_BACKENDS, CeluneVCBackend, resolve_vc_backend
-from .agent.needle import NeedleToolSelector
-from .backends.tts import BACKENDS, CeluneBackend, resolve_backend
-from .persona.impl import (
-    PersonaClient,
-    persona_enabled,
-    persona_model_id,
-    persona_is_available,
-    persona_quantization,
-    create_persona_client,
+from .dataclasses.properties import (
+    bind_constant_properties,
+    bind_forwarded_properties,
 )
 from .typing.agent import (
     AgentTaskConfig,
@@ -104,10 +65,75 @@ from .typing.locks import (
     ComponentLockOwner,
     ComponentLockRequirement,
 )
-from .typing.modes import BackendMode
-from .agent.persona import PersonaAgentBridge
-from .agent.routing import AgentInputRouter
-from .agent.runtime import AgentRuntime
+from .constants import (
+    APP_NAME,
+    AGENT_MAX_LOOPS,
+    AGENT_COMPACT_AT,
+    AGENT_CONTEXT_SPACE,
+)
+from .vram import (
+    VramPreset,
+    backend_allowed,
+    resolve_vram_preset,
+    resolve_backend_name,
+)
+from .speech import (
+    play as play_pipeline,
+    close as close_pipeline,
+    queue_sfx_audio,
+    stop_live_audio_input,
+)
+from .pipeline import (
+    clear_queue,
+    close_stream,
+    generation_worker_job,
+    playback_worker_job,
+    split_text,
+)
+from .agent.tools import (
+    agent_test_tools,
+    production_agent_tools,
+    agent_test_tool_schemas,
+    production_agent_tool_schemas,
+)
+from .persona.impl import (
+    PersonaClient,
+    persona_enabled,
+    persona_model_id,
+    persona_is_available,
+    persona_quantization,
+    create_persona_client,
+)
+from .dataclasses.events import (
+    ShutdownEvent,
+    StateChangedEvent,
+    VoiceChangedEvent,
+    CharacterLoadedEvent,
+    CharacterChangedEvent,
+    CharacterUnloadedEvent,
+)
+from .dataclasses.celune import (
+    CELUNE_CONSTANT_PROPERTIES,
+    CELUNE_FORWARDED_PROPERTIES,
+    CeluneAudioState,
+    CeluneModelState,
+    CeluneVoiceState,
+    CeluneBackendState,
+    CeluneRuntimeState,
+    CeluneCallbackState,
+    CelunePipelineState,
+)
+from .cevoice import (
+    CEVoicePersona,
+    default_loader,
+    active_bundle_path,
+    select_voice_bundle,
+    close_default_loader,
+    bundle_character_name,
+    is_protected_temp_path,
+    persona_metadata_from_manifest,
+    bundle_matches_default_pack_checksum,
+)
 from .typing.celune import (
     VCBackendSpec,
     TTSBackendSpec,
@@ -121,35 +147,6 @@ from .typing.celune import (
     CeluneMethodSurface,
     VoiceLockStateCallback,
     _BundleWithPath,
-)
-from .typing.common import JSON, JSONSerializable
-from .typing.events import EventName, EventPayload
-from .typing.aliases import LogLevel
-from .persona.emotion import PersonaEmotionAnalyzer
-from .typing.backends import BackendModel
-from .extensions.events import EventDispatcher
-from .dataclasses.celune import (
-    CELUNE_CONSTANT_PROPERTIES,
-    CELUNE_FORWARDED_PROPERTIES,
-    CeluneAudioState,
-    CeluneModelState,
-    CeluneVoiceState,
-    CeluneBackendState,
-    CeluneRuntimeState,
-    CeluneCallbackState,
-    CelunePipelineState,
-)
-from .dataclasses.events import (
-    ShutdownEvent,
-    StateChangedEvent,
-    VoiceChangedEvent,
-    CharacterLoadedEvent,
-    CharacterChangedEvent,
-    CharacterUnloadedEvent,
-)
-from .dataclasses.properties import (
-    bind_constant_properties,
-    bind_forwarded_properties,
 )
 
 
@@ -181,6 +178,29 @@ def _config_int(value: JSONSerializable, default: int) -> int:
     if value is None:
         return default
     raise TypeError("config value cannot be converted to int")
+
+
+def _tts_quantization_enabled(
+    config: Optional[Mapping[str, JSONSerializable]],
+    backend_spec: CoreBackendSpec,
+) -> bool:
+    """Resolve the default TTS quantization policy, excluding LuxTTS."""
+    if isinstance(backend_spec, CeluneVCBackend):
+        return False
+    if isinstance(backend_spec, type) and issubclass(backend_spec, CeluneVCBackend):
+        return False
+    raw_name = (
+        backend_spec
+        if isinstance(backend_spec, str)
+        else getattr(backend_spec, "name", "")
+    )
+    backend_name = raw_name.strip().lower() if isinstance(raw_name, str) else ""
+    return backend_name != "luxtts" and config_bool(
+        config,
+        "CELUNE_TTS_QUANTIZE",
+        "quantize",
+        default=True,
+    )
 
 
 def _resolve_input_mode(config: Config, requested_mode: Optional[str] = None) -> str:

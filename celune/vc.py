@@ -3,25 +3,27 @@
 
 from __future__ import annotations
 
-import queue as queue_module
 import importlib
 import threading
 import contextlib
+import queue as queue_module
 from typing import TYPE_CHECKING, Optional, cast
 
-import numpy as np
 import torch
+import numpy as np
 from scipy import signal
 
 from .i18n import string
-from .binding import install_class_functions
 from .typing.aliases import AudioChunk
+from .binding import install_class_functions
 from .typing.backends import _StreamingSpeechModel
 from .dataclasses.pipeline import AudioOutput, AudioInputRequest
 
 if TYPE_CHECKING:
     from .celune import Celune
 
+VC_PITCH_SHIFT_MIN = -3
+VC_PITCH_SHIFT_MAX = 3
 VC_VAD_RMS_THRESHOLD = 0.005
 VC_VAD_HANGOVER_SECONDS = 0.3
 VC_VAD_PREROLL_SECONDS = 0.18
@@ -39,12 +41,15 @@ _LIVE_VAD_NEGATIVE_THRESHOLD = 0.35
 __all__ = [
     "VC_LIVE_CHUNK_OVERLAP_SECONDS",
     "VC_LIVE_CHUNK_SECONDS",
+    "VC_PITCH_SHIFT_MAX",
+    "VC_PITCH_SHIFT_MIN",
     "VC_PLAYBACK_ATTENUATION_DB",
     "VC_PLAYBACK_GAIN",
     "VC_VAD_HANGOVER_SECONDS",
     "VC_VAD_PREROLL_SECONDS",
     "VC_VAD_RMS_THRESHOLD",
     "LiveVoiceActivityDetector",
+    "clamp_vc_pitch_shift",
     "convert_audio",
     "convert_live_audio",
     "create_live_voice_activity_detector",
@@ -56,6 +61,18 @@ __all__ = [
     "vc_vad_hangover_frames",
     "vc_vad_preroll_frames",
 ]
+
+
+def clamp_vc_pitch_shift(value: int) -> int:
+    """Clamp one VC pitch shift to Celune's supported semitone range.
+
+    Args:
+        value: Requested semitone offset for voice conversion.
+
+    Returns:
+        int: The requested offset clamped to Celune's supported VC range.
+    """
+    return max(VC_PITCH_SHIFT_MIN, min(VC_PITCH_SHIFT_MAX, value))
 
 
 def normalize_vc_audio(audio: AudioChunk) -> AudioChunk:

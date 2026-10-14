@@ -1,18 +1,19 @@
 # SPDX-License-Identifier: Apache-2.0
 """Frontend layer."""
 
-# pylint: disable=ungrouped-imports
-
 from __future__ import annotations
 
 import sys
-import queue as queue_module
 import asyncio
 import logging
 import itertools
 import threading
+from pathlib import Path
+import queue as queue_module
 from io import TextIOWrapper
 from types import ModuleType
+from dataclasses import field, dataclass
+from collections.abc import Callable, Iterator
 from typing import (
     TYPE_CHECKING,
     Never,
@@ -25,12 +26,27 @@ from typing import (
     cast,
     final,
 )
-from pathlib import Path
-from dataclasses import field, dataclass
-from collections.abc import Callable, Iterator
 
-from textual import work, events
 from rich.text import Text
+from textual.color import Color
+from textual.theme import Theme
+from textual.timer import Timer
+from textual import work, events
+from textual.widget import Widget
+from textual.message import Message
+from textual.screen import ModalScreen
+from textual.css.query import NoMatches
+from textual.css.types import EdgeStyle
+from textual.containers import Vertical, Horizontal
+from textual.widgets import (
+    Button as TextualButton,
+)
+from textual.widgets import (
+    Label,
+    RichLog,
+    TextArea,
+    ProgressBar,
+)
 from textual.app import (
     App,
     ReturnType,
@@ -39,42 +55,24 @@ from textual.app import (
     ScreenStackError,
     AutopilotCallbackType,
 )
-from textual.color import Color
-from textual.theme import Theme
-from textual.timer import Timer
-from textual.screen import ModalScreen
-from textual.widget import Widget
-from textual.message import Message
-from textual.widgets import (
-    Label,
-    RichLog,
-    TextArea,
-    ProgressBar,
-)
-from textual.widgets import (
-    Button as TextualButton,
-)
-from textual.css.query import NoMatches
-from textual.css.types import EdgeStyle
-from textual.containers import Vertical, Horizontal
 
 from ..i18n import string, tagged_string
-from .theme import CELUNE_CSS, severity_color
 from .loading import CeluneLoadingScreen
-from ..threads import run_in_daemon_thread
-from .terminal import SelectMenuOption, SelectMenuWidget
-from ..watchdog import launcher_loss_requested
-from ..constants import BASE_SR, SIGTSTP, APP_NAME, ExitCodes
-from ..typing.ui import CeluneUIMethodSurface
 from ..typing.agent import AgentTaskState
+from ..threads import run_in_daemon_thread
+from ..typing.common import JSONSerializable
+from .theme import CELUNE_CSS, severity_color
+from ..typing.ui import CeluneUIMethodSurface
+from ..watchdog import launcher_loss_requested
+from ..typing.config import AudioDeviceInfoValue
+from .terminal import SelectMenuOption, SelectMenuWidget
+from ..constants import BASE_SR, SIGTSTP, APP_NAME, ExitCodes
+from ..theme.defaults import default_theme_family, default_error_theme_family
 from ..typing.locks import (
     ComponentLockName,
     ComponentLockOwner,
     ComponentLockRequirement,
 )
-from ..typing.common import JSONSerializable
-from ..typing.config import AudioDeviceInfoValue
-from ..theme.defaults import default_theme_family, default_error_theme_family
 
 if TYPE_CHECKING:
     import sounddevice as sd
@@ -1134,6 +1132,9 @@ class CeluneUI(App, CeluneUIMethodSurface):
         "_interaction_state", "persona_recording_text_prefix"
     )
     _persona_recording_transcriber = _forward_ui_property(
+        "_interaction_state", "persona_recording_transcriber"
+    )
+    _speech_transcriber = _forward_ui_property(
         "_interaction_state", "persona_recording_transcriber"
     )
     _persona_recording_worker = _forward_ui_property(
