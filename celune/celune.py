@@ -9,16 +9,15 @@ import shutil
 import asyncio
 import threading
 import contextlib
-from typing import Never, Union, ClassVar, Optional, cast, final
 from pathlib import Path
 from dataclasses import dataclass
 from collections.abc import Mapping, Callable, Generator
+from typing import Never, Union, ClassVar, Optional, cast, final
 
-import numpy as np
 import torch
+import numpy as np
 from transformers.modeling_utils import PreTrainedModel
 
-from .i18n import string, set_locale, tagged_string, get_system_locale
 from .vram import (
     VramPreset,
     backend_allowed,
@@ -27,19 +26,15 @@ from .vram import (
     is_cuda_out_of_memory,
     release_cuda_after_oom,
 )
-from .locks import ComponentLockLease
 from .modes import (
     OperationMode,
     resolve_operation_mode,
 )
-from .paths import api_key_path, temp_data_dir
 from .utils import (
     discard,
     available,
     format_error_message,
 )
-from .chroma import AudioRGBGlow
-from .config import Config, config_bool, config_value, normalize_log_level
 from .cevoice import (
     CEVoicePersona,
     default_loader,
@@ -74,10 +69,6 @@ from .agent.tools import (
     agent_test_tool_schemas,
     production_agent_tool_schemas,
 )
-from .backends.vc import VC_BACKENDS, CeluneVCBackend, resolve_vc_backend
-from .cloudflared import CloudflaredQuickTunnel
-from .agent.needle import NeedleToolSelector
-from .backends.tts import BACKENDS, CeluneBackend, resolve_backend
 from .persona.impl import (
     PersonaClient,
     persona_enabled,
@@ -96,10 +87,6 @@ from .typing.locks import (
     ComponentLockOwner,
     ComponentLockRequirement,
 )
-from .typing.modes import BackendMode
-from .agent.persona import PersonaAgentBridge
-from .agent.routing import AgentInputRouter
-from .agent.runtime import AgentRuntime
 from .typing.celune import (
     VCBackendSpec,
     TTSBackendSpec,
@@ -115,12 +102,7 @@ from .typing.celune import (
     CaptionProgressCallback,
     _BundleWithPath,
 )
-from .typing.common import JSON, JSONSerializable
-from .typing.events import EventName, EventPayload
-from .typing.aliases import LogLevel
-from .persona.emotion import PersonaEmotionAnalyzer
-from .typing.backends import BackendModel
-from .extensions.events import EventDispatcher
+from .chroma import AudioRGBGlow
 from .dataclasses.celune import (
     CELUNE_CONSTANT_PROPERTIES,
     CELUNE_FORWARDED_PROPERTIES,
@@ -140,10 +122,28 @@ from .dataclasses.events import (
     CharacterChangedEvent,
     CharacterUnloadedEvent,
 )
+from .typing.aliases import LogLevel
+from .locks import ComponentLockLease
+from .typing.modes import BackendMode
 from .dataclasses.properties import (
     bind_constant_properties,
     bind_forwarded_properties,
 )
+from .agent.runtime import AgentRuntime
+from .typing.backends import BackendModel
+from .agent.routing import AgentInputRouter
+from .agent.needle import NeedleToolSelector
+from .agent.persona import PersonaAgentBridge
+from .paths import api_key_path, temp_data_dir
+from .extensions.events import EventDispatcher
+from .cloudflared import CloudflaredQuickTunnel
+from .typing.common import JSON, JSONSerializable
+from .typing.events import EventName, EventPayload
+from .persona.emotion import PersonaEmotionAnalyzer
+from .backends.tts import BACKENDS, CeluneBackend, resolve_backend
+from .i18n import string, set_locale, tagged_string, get_system_locale
+from .backends.vc import VC_BACKENDS, CeluneVCBackend, resolve_vc_backend
+from .config import Config, config_bool, config_value, normalize_log_level
 
 npt = np.typing
 
@@ -1950,6 +1950,11 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
             elif backend_target == "vc":
                 self._unload_normalizer_components()
             self.loaded = True
+            self.log(string("celune.switched_backend", backend=requested_name))
+            self.progress_callback(1, 1)
+            self.cur_state = "idle"
+            self.status_callback(string("status.idle"))
+            self._model_ready.set()
             if candidate_backend is not None:
                 if candidate_voice is None:
                     raise BackendError("no voices found")
@@ -1963,10 +1968,6 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
                             new_voice=candidate_voice,
                         ),
                     )
-            self.log(string("celune.switched_backend", backend=requested_name))
-            self.progress_callback(1, 1)
-            self.cur_state = "idle"
-            self.status_callback(string("status.idle"))
             return True
         except Exception as error:
             self.log(
@@ -2164,6 +2165,16 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
                     _release_loaded_object(cast(ReleasableObject, previous_model))
 
             self.loaded = True
+            self.log(
+                string(
+                    "celune.switched_character",
+                    character=(bundle if bundle is not None else previous_bundle.name),
+                )
+            )
+            self.progress_callback(1, 1)
+            self.cur_state = "idle"
+            self.status_callback(string("status.idle"))
+            self._model_ready.set()
             self.voice_changed_callback(candidate_voice)
             self._emit_character_event_transition(
                 snapshot.current_character,
@@ -2181,15 +2192,6 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
                         new_voice=candidate_voice,
                     ),
                 )
-            self.log(
-                string(
-                    "celune.switched_character",
-                    character=(bundle if bundle is not None else previous_bundle.name),
-                )
-            )
-            self.progress_callback(1, 1)
-            self.cur_state = "idle"
-            self.status_callback(string("status.idle"))
             return True
         except Exception as error:
             self.log(
@@ -2544,6 +2546,8 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
                     vision.interrupt()
             self._emit_event("shutdown", ShutdownEvent(celune=self))
             try:
+                if self.extension_manager is not None:
+                    self.extension_manager.unregister_all()
                 close_pipeline(self)
                 wake_background_thread = self._wake_background_thread
                 if (

@@ -7,16 +7,14 @@ import os
 import time
 import queue
 import pathlib
-from typing import TYPE_CHECKING, Union, Optional, cast
 from collections.abc import Callable
+from typing import TYPE_CHECKING, Union, Optional, cast
 
 import numpy as np
 import soundfile as sf
 from iso639 import Lang
 from iso639.exceptions import InvalidLanguageValue, DeprecatedLanguageValue
 
-from .vc import VC_PLAYBACK_GAIN, normalize_vc_audio
-from .i18n import string
 from .utils import (
     rng_replace,
     is_april_fools,
@@ -24,8 +22,6 @@ from .utils import (
     format_error_message,
     normalize_special_characters,
 )
-from .binding import install_class_functions, install_module_functions
-from .cevoice import default_loader
 from .pipeline import (
     close_stream,
     _format_stat_duration,
@@ -47,16 +43,12 @@ from .playback import (
     _clear_playback_source_status,
     _register_overlay_playback_state,
 )
-from .audio.dsp import split, resample_audio
-from .constants import BASE_SR, APP_NAME
-from .exceptions import NotAvailableError
+from .i18n import string
 from .conversation import (
     _store_persona_memories,
     _classify_persona_memories,
 )
-from .persona.impl import compact_persona_history
-from .typing.aliases import AudioChunk
-from .typing.pipeline import SpeechStreamQueue
+from .cevoice import default_loader
 from .dataclasses.pipeline import (
     AudioOutput,
     SpeechRequest,
@@ -65,6 +57,14 @@ from .dataclasses.pipeline import (
     VoiceConversionRequest,
     CaptionAlignmentSection,
 )
+from .typing.aliases import AudioChunk
+from .constants import BASE_SR, APP_NAME
+from .exceptions import NotAvailableError
+from .audio.dsp import split, resample_audio
+from .typing.pipeline import SpeechStreamQueue
+from .persona.impl import compact_persona_history
+from .vc import VC_PLAYBACK_GAIN, normalize_vc_audio
+from .binding import install_class_functions, install_module_functions
 
 if TYPE_CHECKING:
     from .celune import Celune
@@ -141,7 +141,7 @@ def say(
     Raises:
         Exception: Re-raised after releasing the pipeline if queueing fails.
     """
-    if getattr(engine, "test_finished", False):
+    if engine.exit_requested or getattr(engine, "test_finished", False):
         return False
     engine.log(
         f"[ENGINE] say requested text_chars={len(text)} save={save} "
@@ -380,7 +380,7 @@ async def say_async(
     Returns:
         bool: ``True`` when the request was queued successfully, otherwise ``False``.
     """
-    if getattr(engine, "test_finished", False):
+    if engine.exit_requested or getattr(engine, "test_finished", False):
         return False
     if engine.input_mode != "text_to_speech":
         engine.log(string("celune.text_input_unavailable_vc"), "warning")
@@ -403,6 +403,8 @@ def say_stream(
     save: bool = True,
 ) -> Optional[SpeechStreamQueue]:
     """Queue text for playback and mirror generated chunks to a queue."""
+    if engine.exit_requested:
+        return None
     stream_queue: SpeechStreamQueue = queue.Queue(maxsize=2)
     if not queue_speech(engine, text, save=save, stream_queue=stream_queue):
         return None
@@ -415,6 +417,8 @@ async def say_stream_async(
     save: bool = True,
 ) -> Optional[SpeechStreamQueue]:
     """Queue text for playback and mirror chunks without blocking an async caller."""
+    if engine.exit_requested:
+        return None
     stream_queue: SpeechStreamQueue = queue.Queue(maxsize=2)
     if not await queue_speech_async(
         engine,
@@ -622,10 +626,13 @@ def _queue_speech_request(
     Returns:
         bool: ``True`` when the request was queued successfully.
     """
-    if not _prepare_speech_readiness(engine, allow_tutorial=allow_tutorial):
+    if engine.exit_requested or not _prepare_speech_readiness(
+        engine,
+        allow_tutorial=allow_tutorial,
+    ):
         return False
 
-    if not _wait_for_model_ready(engine):
+    if not _wait_for_model_ready(engine) or engine.exit_requested:
         return False
     if not _finish_speech_readiness(engine):
         return False
@@ -742,6 +749,9 @@ def _queue_speech_after_ready(
 ) -> bool:
     """Queue one speech request after reload readiness is satisfied."""
 
+    if engine.exit_requested:
+        return False
+
     speech_text = normalize_special_characters(text, for_tts=True)
     preserved_display_text = display_text if display_text is not None else text
     language_meta = detect_language(
@@ -802,37 +812,44 @@ def _queue_speech_after_ready(
             return False
 
         engine.cur_state = "generating"
+        request_rejected = False
         with engine.queue_lock:
-            engine._speech_generation = getattr(engine, "_speech_generation", 0) + 1
-            engine.utterance_force_stop.clear()
-            engine.text_queue.put(
-                SpeechRequest(
-                    speech_text,
-                    display_text=preserved_display_text,
-                    language=requested_language,
-                    save=save,
-                    stream_queue=stream_queue,
-                    normalize=(
-                        engine.use_normalization if normalize is None else normalize
-                    ),
-                    generation=engine.speech_generation,
-                    synthesis_sections=tuple(
-                        normalize_special_characters(section, for_tts=True)
-                        for section in synthesis_sections
-                    ),
-                    audio_capture_queue=audio_capture_queue,
-                    prepared_audio=prepared_audio,
-                    playback_source_queue=playback_source_queue,
-                    caption_alignment_sections=caption_alignment_sections,
+            if engine.exit_requested:
+                request_rejected = True
+            else:
+                engine._speech_generation = getattr(engine, "_speech_generation", 0) + 1
+                engine.utterance_force_stop.clear()
+                engine.text_queue.put(
+                    SpeechRequest(
+                        speech_text,
+                        display_text=preserved_display_text,
+                        language=requested_language,
+                        save=save,
+                        stream_queue=stream_queue,
+                        normalize=(
+                            engine.use_normalization if normalize is None else normalize
+                        ),
+                        generation=engine.speech_generation,
+                        synthesis_sections=tuple(
+                            normalize_special_characters(section, for_tts=True)
+                            for section in synthesis_sections
+                        ),
+                        audio_capture_queue=audio_capture_queue,
+                        prepared_audio=prepared_audio,
+                        playback_source_queue=playback_source_queue,
+                        caption_alignment_sections=caption_alignment_sections,
+                    )
                 )
-            )
-            engine.log(
-                "[QUEUE] speech "
-                f"generation={engine.speech_generation} text_chars={len(speech_text)} "
-                f"language={requested_language} stream_queue={stream_queue is not None} "
-                f"text_queue={engine.text_queue.qsize()}",
-                loglevel="debug",
-            )
+                engine.log(
+                    "[QUEUE] speech "
+                    f"generation={engine.speech_generation} text_chars={len(speech_text)} "
+                    f"language={requested_language} stream_queue={stream_queue is not None} "
+                    f"text_queue={engine.text_queue.qsize()}",
+                    loglevel="debug",
+                )
+        if request_rejected:
+            release_pipeline(engine)
+            return False
         engine.status_callback(string("status.generating"))
         engine.progress_callback(None, None)
         return True
@@ -860,10 +877,13 @@ async def queue_speech_async(
     Returns:
         bool: ``True`` when the request was queued successfully, otherwise ``False``.
     """
-    if not _prepare_speech_readiness(engine):
+    if engine.exit_requested or not _prepare_speech_readiness(engine):
         return False
 
-    if not await _run_in_daemon_thread(lambda: _wait_for_model_ready(engine)):
+    if (
+        not await _run_in_daemon_thread(lambda: _wait_for_model_ready(engine))
+        or engine.exit_requested
+    ):
         return False
 
     if not _finish_speech_readiness(engine):
@@ -908,8 +928,13 @@ def queue_sfx_audio(
     Raises:
         Exception: Re-raised after releasing the pipeline if SFX playback setup fails.
     """
+    if engine.exit_requested:
+        return False
+
     try:
         audio = prepare_playback_audio(audio, sample_rate)
+        if engine.exit_requested:
+            return False
         playback_sample_rate = BASE_SR
         audio_len = len(audio) / playback_sample_rate
         if log_length:
@@ -942,6 +967,9 @@ def queue_sfx_audio(
             ):
                 _clear_playback_source_status(engine, source_id)
                 return False
+        if engine.exit_requested:
+            _clear_playback_source_status(engine, source_id)
+            return False
         if not _queue_playback_done(
             engine,
             source_id,
@@ -1092,6 +1120,9 @@ def play(
     Raises:
         Exception: Re-raised after releasing the pipeline if SFX playback setup fails.
     """
+    if engine.exit_requested:
+        return False
+
     downloaded_from_url = _is_youtube_sfx_url(sound_path)
     if downloaded_from_url:
         downloaded_info = _download_youtube_sfx(engine, sound_path)

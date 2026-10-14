@@ -5,17 +5,17 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Union, Optional, Protocol
 from pathlib import Path
 from collections.abc import Callable, Iterator, Awaitable
+from typing import TYPE_CHECKING, Union, Optional, Protocol
 
 import torch
 from transformers.modeling_utils import PreTrainedModel
 from transformers.tokenization_utils_base import BatchEncoding, PreTrainedTokenizerBase
 
+from .aliases import LogLevel
 from .modes import BackendMode, OperationMode
 from .common import JSON, Config, JSONSerializable
-from .aliases import LogLevel
 
 if TYPE_CHECKING:
     import queue
@@ -326,6 +326,8 @@ class CeluneMethodSurface(
     _any_playback_active: Callable[..., bool]
     wait_until_idle_async: Callable[..., Awaitable[bool]]
     setup_extensions: Callable[..., None]
+    sleep: Callable[[float], None]
+    status: Callable[[str, str], None]
     log: Callable[..., None]
     _buffer_startup_log: Callable[..., None]
     _emit_runtime_banner_line: Callable[..., None]

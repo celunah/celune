@@ -1,9 +1,9 @@
 # Extensions
 
-Extensions are small Python modules loaded from the repository's `extensions/`
-directory. They run inside the Celune process and use the same core engine;
-they are not isolated backend workers. Treat third-party extensions as trusted
-code.
+Extensions are Python modules or Lua scripts loaded from the repository's
+`extensions/` directory. They run inside the Celune process and use the same
+core engine; they are not isolated backend workers. Treat third-party
+extensions as trusted code.
 
 ## Minimal extension
 
@@ -52,8 +52,44 @@ def after_generation(event) -> None:
 ```
 
 The manager supports `register`, `unregister`, `invoke`, `list_extensions`,
-and automatic loading from `extensions`. `/invoke NAME [ARGS...]` calls an
-extension by name and `/extensions` lists what loaded successfully.
+and automatic loading of `.py` and `.lua` files from `extensions`. Python and
+Lua examples can live in the directory together. `/invoke NAME [ARGS...]`
+calls an extension by name and `/extensions` lists what loaded successfully.
+
+## Lua extensions
+
+Each `.lua` file receives its own Lupa runtime. The script can use the `celune`
+object for runtime methods, `CELUNE_VERSION` for the current version, and
+`subscribe` to register event handlers. `celune.sleep(seconds)` blocks the
+extension's worker thread. `EXTENSION_NAME` is optional; without it, Celune uses
+the file name. Define `invoke(...)` to make the extension callable through
+`/invoke`.
+
+```lua
+EXTENSION_NAME = "greeting"
+
+function invoke()
+    celune.say("Hello from a Lua extension.")
+end
+
+subscribe("ready", function(event)
+    celune.log("Celune is ready.")
+end)
+```
+
+Lua event handlers receive a table of event fields without the live Celune
+object. They run on daemon workers so a callback that waits or speaks does not
+block Celune's state transitions. Unregistering an extension removes its event
+handlers and closes its Lua runtime. Lua extensions use the core `lupa`
+dependency. Python evaluation and built-ins are disabled in Lua, but the
+`celune` object exposes the live engine; this is not a security sandbox. Only
+load Lua scripts you trust.
+
+Lua scripts can subscribe to `ready`, `shutdown`, `fatal`, `error`,
+`voice_changed`, `state_changed`, `generation_start`, `generation_end`,
+`generation_error`, `audio_start`, `audio_end`, `character_changed`,
+`character_loaded`, and `character_unloaded`. Python extensions can also use
+the agent events documented below.
 
 ## Events
 
