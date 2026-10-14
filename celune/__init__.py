@@ -18,12 +18,17 @@ import sys as _sys
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Union
 
+from .i18n import string
 from .constants import APP_NAME
 from ._version import REVISION, __version__
-from .i18n import string
-from .paths import configure_huggingface_cache_environment
 
-configure_huggingface_cache_environment()
+try:
+    from .paths import configure_huggingface_cache_environment
+
+    configure_huggingface_cache_environment()
+except ModuleNotFoundError as package:
+    if package.name != "platformdirs":
+        raise
 
 if TYPE_CHECKING:
     from .celune import Celune

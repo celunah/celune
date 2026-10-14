@@ -2,10 +2,10 @@
 """Tests for Celune's browser-facing API UI."""
 
 import asyncio
-from queue import Queue
-from types import SimpleNamespace
 from typing import cast
+from queue import Queue
 from unittest import mock
+from types import SimpleNamespace
 
 import numpy as np
 from starlette.requests import Request
@@ -496,12 +496,9 @@ class TestApiWebUI(CeluneTestCase):
             ),
         )
 
-        source_update, pitch_update, mode_update, button_update = (
-            api._webui_vc_controls_update()
-        )
+        source_update, mode_update, button_update = api._webui_vc_controls_update()
 
         assert not source_update["interactive"]
-        assert not pitch_update["interactive"]
         assert not mode_update["interactive"]
         assert not button_update["interactive"]
 
@@ -514,12 +511,9 @@ class TestApiWebUI(CeluneTestCase):
             ),
         )
 
-        source_update, pitch_update, mode_update, button_update = (
-            api._webui_vc_controls_update()
-        )
+        source_update, mode_update, button_update = api._webui_vc_controls_update()
 
         assert source_update["interactive"]
-        assert pitch_update["interactive"]
         assert mode_update["interactive"]
         assert button_update["interactive"]
 
@@ -872,6 +866,8 @@ class TestApiWebUI(CeluneTestCase):
         sample_rate, array = cast(tuple[int, np.ndarray], second_audio)
         assert sample_rate == 48000
         assert array.shape == (8, 2)
+        assert array.dtype == np.int16
+        assert not np.any(array)
 
     def test_webui_speak_wakes_sleeping_celune_before_speaking(self) -> None:
         """Verify browser submit wakes Celune first, then continues into speech."""
@@ -976,7 +972,6 @@ class TestApiWebUI(CeluneTestCase):
         ):
             source_value, browser_audio, *_rest = api._webui_convert_audio(
                 (44100, np.zeros((16, 2), dtype=np.float32)),
-                6.0,
                 "sing",
             )
 
@@ -985,13 +980,14 @@ class TestApiWebUI(CeluneTestCase):
         sample_rate, array = cast(tuple[int, np.ndarray], browser_audio)
         assert sample_rate == 48000
         assert array.shape == (20, 2)
+        assert array.dtype == np.int16
+        assert np.max(np.abs(array)) == 32767
         assert browser_audio[0] == 48000
         celune_convert_audio = cast(mock.Mock, api.bound_celune.convert_audio)
         celune_convert_audio.assert_called_once_with(
             mock.ANY,
             44100,
             label="browser audio input",
-            pitch_shift=6,
             f0_condition=True,
         )
 

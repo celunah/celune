@@ -60,6 +60,7 @@ from textual.containers import Vertical, Horizontal
 
 from ..i18n import string, tagged_string
 from .theme import CELUNE_CSS, severity_color
+from .compat import install_textual_timer_sleep
 from .loading import CeluneLoadingScreen
 from ..threads import run_in_daemon_thread
 from .terminal import SelectMenuOption, SelectMenuWidget
@@ -76,6 +77,8 @@ from ..typing.common import JSONSerializable
 from ..typing.config import AudioDeviceInfoValue
 from ..theme.defaults import default_theme_family, default_error_theme_family
 
+install_textual_timer_sleep()
+
 if TYPE_CHECKING:
     import sounddevice as sd
 
@@ -91,12 +94,10 @@ if TYPE_CHECKING:
 
     from . import resources as ui_resources
     from ..vc import (
-        VC_PITCH_SHIFT_MAX,
-        VC_PITCH_SHIFT_MIN,
+        VC_PLAYBACK_GAIN,
         LiveVoiceActivityDetector,
         vc_input_rms,
         vc_input_has_voice,
-        clamp_vc_pitch_shift,
         vc_live_chunk_frames,
         vc_vad_preroll_frames,
         vc_vad_hangover_frames,
@@ -113,6 +114,7 @@ if TYPE_CHECKING:
     from .commands import process_command as process_ui_command
     from .terminal import is_celune_log_record
     from ..playback import current_playback_status
+    from ..vc_debug import VCDebugCapture
     from .resources import FOOTER_ROTATE_SECONDS
     from ..exceptions import CEDTSError
     from ..persona.asr import (
@@ -210,12 +212,10 @@ if TYPE_CHECKING:
         current_playback_status,
         finish_streaming_sfx_audio,
         queue_streaming_sfx_audio,
+        VC_PLAYBACK_GAIN,
         discard,
         is_april_fools,
         replace_ipa,
-        VC_PITCH_SHIFT_MAX,
-        VC_PITCH_SHIFT_MIN,
-        clamp_vc_pitch_shift,
         create_live_voice_activity_detector,
         vc_input_has_voice,
         vc_input_rms,
@@ -503,11 +503,8 @@ def _load_ui_runtime_dependencies() -> None:
     global LiveVoiceActivityDetector
     global PERSONA_SPEECH_END_DELAY_SECONDS
     global PERSONA_SPEECH_NO_INPUT_TIMEOUT_SECONDS
-    global VC_PITCH_SHIFT_MAX
-    global VC_PITCH_SHIFT_MIN
     global WhisperSegment
     global WhisperTranscriber
-    global clamp_vc_pitch_shift
     global config_path
     global discard
     global format_audio_device_name
@@ -536,6 +533,7 @@ def _load_ui_runtime_dependencies() -> None:
     global vc_live_chunk_overlap_frames
     global vc_vad_hangover_frames
     global vc_vad_preroll_frames
+    global VC_PLAYBACK_GAIN
     global yaml
     global is_celune_log_record
     global _RUNTIME_LOG_REDIRECT_FILTER_MESSAGES
@@ -547,12 +545,10 @@ def _load_ui_runtime_dependencies() -> None:
 
     from . import resources as ui_resources
     from ..vc import (
-        VC_PITCH_SHIFT_MAX,
-        VC_PITCH_SHIFT_MIN,
+        VC_PLAYBACK_GAIN,
         LiveVoiceActivityDetector,
         vc_input_rms,
         vc_input_has_voice,
-        clamp_vc_pitch_shift,
         vc_live_chunk_frames,
         vc_vad_preroll_frames,
         vc_vad_hangover_frames,
@@ -727,7 +723,6 @@ class CeluneUIWidgetState:
     input_box: Optional[TextArea] = None
     style_button: Optional[VoiceButton] = None
     vc_mode_button: Optional[Button] = None
-    vc_pitch_button: Optional[Button] = None
     status: Optional[Label] = None
     resources: Optional[Label] = None
     caption: Optional[Label] = None
@@ -834,6 +829,7 @@ class CeluneUIInteractionState:
     vc_recording_worker: Optional[threading.Thread] = None
     vc_recording_vad: Optional[LiveVoiceActivityDetector] = None
     vc_recording_component_lease: Optional[ComponentLockLease] = None
+    vc_debug_capture: Optional[VCDebugCapture] = None
     persona_recording_chunks: AudioChunks = field(default_factory=list)
     persona_recording_lock: threading.Lock = field(default_factory=threading.Lock)
     persona_recording_queue: Optional[queue_module.Queue[tuple[AudioChunk, bool]]] = (
@@ -845,7 +841,7 @@ class CeluneUIInteractionState:
     persona_recording_stop_requested: bool = False
     persona_recording_stream: Optional[sd.InputStream] = None
     persona_recording_text_prefix: str = ""
-    persona_recording_transcriber: Optional[WhisperTranscriber] = None
+    speech_transcriber: Optional[WhisperTranscriber] = None
     persona_recording_worker: Optional[threading.Thread] = None
     persona_recording_vad: Optional[LiveVoiceActivityDetector] = None
     persona_recording_last_partial_at: float = 0.0
@@ -925,6 +921,9 @@ class CeluneUI(App, CeluneUIMethodSurface):
             log_file_path=Path(),
         )
         self._interaction_state = CeluneUIInteractionState()
+        self._agent_test_response_queue: Optional[queue_module.Queue[Optional[str]]] = (
+            None
+        )
         self._terminal_status: Optional[tuple[str, str, str]] = None
         self._loading_screen: Optional[CeluneLoadingScreen] = None
         self._startup_loader = startup_loader
@@ -945,7 +944,6 @@ class CeluneUI(App, CeluneUIMethodSurface):
     input_box = _forward_ui_property("_widgets", "input_box")
     style_button = _forward_ui_property("_widgets", "style_button")
     vc_mode_button = _forward_ui_property("_widgets", "vc_mode_button")
-    vc_pitch_button = _forward_ui_property("_widgets", "vc_pitch_button")
     status = _forward_ui_property("_widgets", "status")
     resources = _forward_ui_property("_widgets", "resources")
     caption = _forward_ui_property("_widgets", "caption")
@@ -1106,6 +1104,7 @@ class CeluneUI(App, CeluneUIMethodSurface):
     _vc_recording_component_lease = _forward_ui_property(
         "_interaction_state", "vc_recording_component_lease"
     )
+    _vc_debug_capture = _forward_ui_property("_interaction_state", "vc_debug_capture")
     _persona_recording_chunks = _forward_ui_property(
         "_interaction_state", "persona_recording_chunks"
     )
@@ -1133,8 +1132,8 @@ class CeluneUI(App, CeluneUIMethodSurface):
     _persona_recording_text_prefix = _forward_ui_property(
         "_interaction_state", "persona_recording_text_prefix"
     )
-    _persona_recording_transcriber = _forward_ui_property(
-        "_interaction_state", "persona_recording_transcriber"
+    _speech_transcriber = _forward_ui_property(
+        "_interaction_state", "speech_transcriber"
     )
     _persona_recording_worker = _forward_ui_property(
         "_interaction_state", "persona_recording_worker"
@@ -1389,12 +1388,24 @@ class CeluneUI(App, CeluneUIMethodSurface):
             if self.cur_state != "exiting" and self.celune.sleeping:
                 self.safe_status(string("ui.sleeping_status"), "sleeping")
 
-    @work(thread=True, exclusive=True)
     def load_tts(self) -> None:
+        """Start runtime loading in a daemon thread."""
+        threading.Thread(
+            target=self._load_tts,
+            name="celune-ui-runtime-load",
+            daemon=True,
+        ).start()
+
+    def _load_tts(self) -> None:
         """Load the app runtime."""
+        if self.cur_state == "exiting":
+            return
         self._latest_startup_error = None
         try:
-            if self.celune.load():
+            loaded = self.celune.load()
+            if self.cur_state == "exiting":
+                return
+            if loaded:
                 self.celune_styles = self.celune.voices
                 if not self.celune_styles:
                     if self._is_ui_test_mode():
@@ -1454,6 +1465,8 @@ class CeluneUI(App, CeluneUIMethodSurface):
                 self._show_loading_error(failure_message)
                 self._finish_test_startup(False, failure_message)
         except Exception as e:
+            if self.cur_state == "exiting":
+                return
             self.cur_state = "error"
             error_message = format_error_message(
                 tagged_string("ui.init_error", "INIT ERROR"),

@@ -50,3 +50,5 @@ class GenerateResponse:
     response: str
     model: str
     quantization: str
+    prompt_tokens: int = 0
+    completion_tokens: int = 0

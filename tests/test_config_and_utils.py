@@ -3,10 +3,10 @@
 
 import math
 import datetime
-from types import SimpleNamespace
-from typing import Literal, Optional, cast
 from unittest import mock
+from types import SimpleNamespace
 from collections.abc import Mapping
+from typing import Literal, Optional, cast
 
 import pytest
 
@@ -119,8 +119,8 @@ class TestConfig(CeluneTestCase):
         hostapis = [{"name": "MME"}, {"name": "Windows WASAPI"}]
 
         with (
-            mock.patch("celune.config.sd.query_devices", return_value=devices),
-            mock.patch("celune.config.sd.query_hostapis", return_value=hostapis),
+            mock.patch("sounddevice.query_devices", return_value=devices),
+            mock.patch("sounddevice.query_hostapis", return_value=hostapis),
             pytest.raises(
                 ValueError, match="the specified input device name has multiple matches"
             ) as caught,
@@ -155,8 +155,8 @@ class TestConfig(CeluneTestCase):
         hostapis = [{"name": "MME"}, {"name": "Windows WASAPI"}]
 
         with (
-            mock.patch("celune.config.sd.query_devices", return_value=devices),
-            mock.patch("celune.config.sd.query_hostapis", return_value=hostapis),
+            mock.patch("sounddevice.query_devices", return_value=devices),
+            mock.patch("sounddevice.query_hostapis", return_value=hostapis),
         ):
             resolved = config.resolve_audio_device(
                 {"output_device": "CABLE-B Input"},
@@ -177,8 +177,8 @@ class TestConfig(CeluneTestCase):
         hostapis = [{"name": "Windows WASAPI"}]
 
         with (
-            mock.patch("celune.config.sd.query_devices", return_value=device_info),
-            mock.patch("celune.config.sd.query_hostapis", return_value=hostapis),
+            mock.patch("sounddevice.query_devices", return_value=device_info),
+            mock.patch("sounddevice.query_hostapis", return_value=hostapis),
         ):
             resolved = config.resolve_audio_device(
                 {"input_device": "Stereo Mix (Realtek)"},
@@ -208,8 +208,8 @@ class TestConfig(CeluneTestCase):
         hostapis = [{"name": "Windows DirectSound"}, {"name": "Windows WASAPI"}]
 
         with (
-            mock.patch("celune.config.sd.query_devices", return_value=devices),
-            mock.patch("celune.config.sd.query_hostapis", return_value=hostapis),
+            mock.patch("sounddevice.query_devices", return_value=devices),
+            mock.patch("sounddevice.query_hostapis", return_value=hostapis),
         ):
             resolved = config.resolve_audio_device(
                 {
@@ -246,10 +246,10 @@ class TestConfig(CeluneTestCase):
 
         with (
             mock.patch(
-                "celune.config.sd.query_devices",
+                "sounddevice.query_devices",
                 side_effect=[direct_info, devices],
             ),
-            mock.patch("celune.config.sd.query_hostapis", return_value=hostapis),
+            mock.patch("sounddevice.query_hostapis", return_value=hostapis),
         ):
             resolved = config.resolve_audio_device(
                 {
@@ -289,10 +289,10 @@ class TestConfig(CeluneTestCase):
 
         with (
             mock.patch(
-                "celune.config.sd.query_devices",
+                "sounddevice.query_devices",
                 side_effect=[direct_info, devices],
             ),
-            mock.patch("celune.config.sd.query_hostapis", return_value=hostapis),
+            mock.patch("sounddevice.query_hostapis", return_value=hostapis),
         ):
             resolved = config.resolve_audio_device(
                 {
@@ -327,8 +327,8 @@ class TestConfig(CeluneTestCase):
         hostapis = [{"name": "Windows DirectSound"}, {"name": "Windows WASAPI"}]
 
         with (
-            mock.patch("celune.config.sd.query_devices", return_value=devices),
-            mock.patch("celune.config.sd.query_hostapis", return_value=hostapis),
+            mock.patch("sounddevice.query_devices", return_value=devices),
+            mock.patch("sounddevice.query_hostapis", return_value=hostapis),
         ):
             resolved = config.resolve_audio_device(
                 {

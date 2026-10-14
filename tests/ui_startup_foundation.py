@@ -37,6 +37,7 @@ from celune.theme import colors
 from celune.celune import Celune
 from celune.utils import discard
 from celune.ui import app as ui_app
+from celune.ui import compat as ui_compat
 from celune.i18n import string, tagged_string
 from celune.ui import terminal as ui_terminal
 from celune.ui import resources as ui_resources
@@ -72,6 +73,54 @@ class TestUIStartup(CeluneTestCase):
         )
         assert isinstance(error, SystemExit)
         assert error.code == 4
+
+    def test_deferred_startup_uses_a_daemon_thread(self) -> None:
+        """Verify deferred runtime loading cannot hold up executor shutdown."""
+        ui = CeluneUI(startup_loader=mock.Mock())
+
+        with mock.patch("celune.ui.runtime.threading.Thread") as thread_type:
+            ui._start_deferred_runtime()
+
+        thread_type.assert_called_once_with(
+            target=ui._load_deferred_runtime,
+            name="celune-ui-runtime-startup",
+            daemon=True,
+        )
+        thread_type.return_value.start.assert_called_once_with()
+
+    def test_model_loading_uses_a_daemon_thread(self) -> None:
+        """Verify model loading cannot hold up executor shutdown."""
+        ui = CeluneUI()
+
+        with mock.patch("celune.ui.app.threading.Thread") as thread_type:
+            ui.load_tts()
+
+        thread_type.assert_called_once_with(
+            target=ui._load_tts,
+            name="celune-ui-runtime-load",
+            daemon=True,
+        )
+        thread_type.return_value.start.assert_called_once_with()
+
+    def test_windows_textual_timers_do_not_use_the_default_executor(self) -> None:
+        """Verify Windows Textual timer sleeps use cancellable asyncio waits."""
+        textual_timer = ui_compat.textual_timer
+        original_sleep = textual_timer.sleep
+        try:
+            textual_timer.sleep = mock.Mock()
+            with mock.patch.object(ui_compat.sys, "platform", "win32"):
+                ui_compat.install_textual_timer_sleep()
+
+            self.assertIs(textual_timer.sleep, ui_compat._asyncio_timer_sleep)
+
+            with mock.patch.object(
+                asyncio.BaseEventLoop,
+                "run_in_executor",
+                side_effect=AssertionError("timer sleep used the default executor"),
+            ):
+                asyncio.run(textual_timer.sleep(0.001))
+        finally:
+            textual_timer.sleep = original_sleep
 
     def test_linux_terminal_stream_does_not_need_lazy_discard_export(self) -> None:
         """Verify Linux terminal setup works before deferred UI imports complete."""
@@ -336,8 +385,8 @@ class TestUIStartup(CeluneTestCase):
             app = Harness()
             async with app.run_test(size=(80, 24)) as pilot:
                 await pilot.pause()
-                assert str(screen.query_one("#loading-brand", Static).render()) == (
-                    APP_NAME
+                assert str(screen.query_one("#header", Static).render()) == (
+                    "  ".join(APP_NAME.upper())
                 )
                 screen.set_latest_log_message("Backend initialized")
                 self.assertEqual(
@@ -731,7 +780,6 @@ class TestUIStartup(CeluneTestCase):
             "#caption": Label(),
             "#style": Button(),
             "#vc-mode": Button(),
-            "#vc-pitch": Button(),
             "#progress": SimpleNamespace(update=lambda **_: None),
             "#progress-label": Label(),
             "#header": Label(),
@@ -875,6 +923,32 @@ class TestUIStartup(CeluneTestCase):
         assert calls == ["message"]
         assert fake_celune.log_callback is callback
 
+    def test_caption_callback_chaining_preserves_legacy_callbacks(self) -> None:
+        """Verify three-argument caption updates tolerate legacy two-argument callbacks."""
+        ui = CeluneUI()
+        received: list[tuple[Optional[float], Optional[float], Optional[int]]] = []
+
+        def caption_progress(
+            progress: Optional[float],
+            total: Optional[float],
+            visible_words: Optional[int] = None,
+        ) -> None:
+            received.append((progress, total, visible_words))
+
+        fake_celune = cast(
+            Celune,
+            SimpleNamespace(caption_progress_callback=Celune._noop_progress),
+        )
+        ui.celune = fake_celune
+        ui._chain_runtime_callback("caption_progress_callback", caption_progress)
+
+        caption_callback = cast(
+            Callable[..., None], fake_celune.caption_progress_callback
+        )
+        caption_callback(5.0, 10.0, 2)
+
+        assert received == [(5.0, 10.0, 2)]
+
     def test_log_binding_does_not_chain_startup_sink_again(self) -> None:
         """Verify startup log delivery does not duplicate the UI log callback."""
         calls: list[str] = []
@@ -913,7 +987,6 @@ class TestUIStartup(CeluneTestCase):
             "#caption": Label(),
             "#style": Button(),
             "#vc-mode": Button(),
-            "#vc-pitch": Button(),
             "#progress": SimpleNamespace(update=lambda **_: None),
             "#progress-label": Label(),
             "#header": Label(),
@@ -974,7 +1047,6 @@ class TestUIStartup(CeluneTestCase):
             "#caption": Label(),
             "#style": Button(),
             "#vc-mode": Button(),
-            "#vc-pitch": Button(),
             "#progress": SimpleNamespace(update=lambda **_: None),
             "#progress-label": Label(),
             "#header": Label(),
@@ -1303,8 +1375,7 @@ class TestUIStartup(CeluneTestCase):
                     side_effect=lambda callback, *args: callback(*args),
                 ),
             ):
-                load_tts = getattr(CeluneUI.load_tts, "__wrapped__", CeluneUI.load_tts)
-                load_tts(ui)
+                ui._load_tts()
 
             terminal.write.assert_called_with(f"\x1b]0;{APP_NAME} ・ Ready ・ Idle\x07")
             terminal.flush.assert_called()
@@ -1366,8 +1437,7 @@ class TestUIStartup(CeluneTestCase):
         )
         ui.error = mock.Mock()
 
-        load_tts = getattr(CeluneUI.load_tts, "__wrapped__", CeluneUI.load_tts)
-        load_tts(ui)
+        ui._load_tts()
 
         ui.error.assert_called_once_with(f"{APP_NAME} could not start")
         assert ui.cur_state == "error"
@@ -1397,11 +1467,10 @@ class TestUIStartup(CeluneTestCase):
             ),
         )
 
-        load_tts = getattr(CeluneUI.load_tts, "__wrapped__", CeluneUI.load_tts)
         patched_modules = dict(sys.modules)
         patched_modules.pop("pytest", None)
         with mock.patch("celune.ui.app.sys.modules", patched_modules):
-            load_tts(ui)
+            ui._load_tts()
 
         ui.safe_status.assert_called_once_with(string("ui.test_mode_active"))
         ui.safe_progress.assert_called_once_with(1, 1)
@@ -1430,8 +1499,7 @@ class TestUIStartup(CeluneTestCase):
             ),
         )
 
-        load_tts = getattr(CeluneUI.load_tts, "__wrapped__", CeluneUI.load_tts)
-        load_tts(ui)
+        ui._load_tts()
 
         ui.tts_voice_changed.assert_called_once_with("balanced")
 
@@ -1708,10 +1776,10 @@ class TestUIStartup(CeluneTestCase):
         ]
 
         assert len(cost_pages) == len(COST_EQUIVALENTS) * 2
-        assert "gemini-flash-tts (this session): $0.03" in cost_pages
-        assert "openai-realtime (this session): $0.19" in cost_pages
-        assert "gemini-flash-tts (overall): $0.08" in cost_pages
-        assert "openai-realtime (overall): $0.48" in cost_pages
+        assert "gemini-3.8-flash-tts (this session): $0.05" in cost_pages
+        assert "gpt-realtime-2.1 (this session): $0.15" in cost_pages
+        assert "gemini-3.8-flash-tts (overall): $0.14" in cost_pages
+        assert "gpt-realtime-2.1 (overall): $0.38" in cost_pages
 
     def test_ctrl_r_toggles_tui_vc_recording(self) -> None:
         """Verify CTRL+R streams VC audio live and flushes the final tail on stop."""

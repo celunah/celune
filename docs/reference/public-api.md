@@ -123,9 +123,9 @@ call a backend's generator directly from application code.
 
 | Call | Contract |
 | --- | --- |
-| `submit_audio(audio, sample_rate, label="audio input", pitch_shift=None, f0_condition=None, ...) -> bool` | Submit audio to the active non-TTS mode for playback/conversion. |
-| `convert_audio(audio, sample_rate, label="audio input", pitch_shift=None, f0_condition=None) -> Optional[AudioOutput]` | Convert one block and return the output metadata/audio. |
-| `convert_live_audio(audio, sample_rate, label="audio input", pitch_shift=None, f0_condition=None) -> Optional[AudioOutput]` | Convert one low-latency live block while preserving VC overlap state. |
+| `submit_audio(audio, sample_rate, label="audio input", f0_condition=None, ...) -> bool` | Submit audio to the active non-TTS mode for playback/conversion. |
+| `convert_audio(audio, sample_rate, label="audio input", f0_condition=None) -> Optional[AudioOutput]` | Convert one block and return the output metadata/audio. |
+| `convert_live_audio(audio, sample_rate, label="audio input", f0_condition=None) -> Optional[AudioOutput]` | Convert one low-latency live block while preserving VC overlap state. |
 | `stop_live_audio() -> None` | Reset live VC backend state. |
 | `play(sound_path, keep=False, volume=1.0) -> bool` | Queue an SFX file, optionally prepending it to the next saved utterance. |
 | `play_audio(audio, sample_rate, label="uploaded SFX", keep=False) -> bool` | Queue decoded SFX data. |
@@ -140,7 +140,7 @@ call a backend's generator directly from application code.
 | `playback_writer_gap_seconds` | Read the latest gap between the previous write finishing and this write starting. |
 | `playback_writer_write_seconds` | Read the latest time spent inside the output stream write. |
 | `playback_rebuffer_wait_seconds` | Read cumulative time spent waiting for the adaptive reserve target. |
-| `vc_pitch_shift`, `vc_f0_condition` | Read/write VC controls. |
+| `vc_f0_condition` | Read/write VC F0 conditioning state. |
 
 Arrays passed to audio calls should be numeric mono/stereo data; Celune converts
 them to normalized float32. The returned `AudioOutput` includes the actual
@@ -174,7 +174,7 @@ replace lifecycle flags or required facade assembly checks.
 from celune.utils import available
 
 available("config")
-available("pitch_shift", obj=backend)
+available("f0_condition", obj=backend)
 available("silero_vad")
 ```
 
@@ -221,6 +221,7 @@ bytes. `write_cevoice()` writes the legacy-compatible layout;
 | `celune.analysis` | Audio metrics, reference similarity, trait computation, radar plots, reports, and `analyze_voice_audio()`. |
 | `celune.paths` | App-data, runtime, Hugging Face cache, voice, backend-environment, config, output, and migration paths. |
 | `celune.extensions` | Extension base, context, manager, event dispatcher, and event decorator. |
+| `celune.exceptions` | Canonical Celune-owned exception hierarchy, including backend, agent, environment, and checkpoint failures. |
 | `celune.api` | `configure_api_security()`, `resolve_api_host()`, `bind_celune()`, `run_api()`, `start_api()`, `audio_bytes()`, and `stream_headers()`. |
 | `celune.backends.environment` | `BackendManifest`, `BackendEnvironment`, and `BackendEnvironmentManager`. |
 | `celune.cedts.protocol` | CEDTS framing, typed values, handshake, and stream exceptions. |

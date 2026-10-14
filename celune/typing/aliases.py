@@ -8,13 +8,12 @@ from enum import Enum
 from collections.abc import Callable, Hashable, Generator
 from typing import TYPE_CHECKING, Union, Literal, Optional, Protocol
 
-import numpy as np
-import numpy.typing as npt
-import sounddevice as sd
-
 from .common import JSONSerializable
 
 if TYPE_CHECKING:
+    import numpy as np
+    import numpy.typing as npt
+    import sounddevice as sd
     from torch import Tensor
 
     # noinspection PyPep8Naming

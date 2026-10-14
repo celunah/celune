@@ -1212,14 +1212,12 @@ def _webui_vc_controls_update() -> tuple[
     WebUiUpdate,
     WebUiUpdate,
     WebUiUpdate,
-    WebUiUpdate,
 ]:
     """Return the current browser VC control state."""
     celune = _api.bound_celune
     vc_enabled = _webui_vc_mode_active(celune)
     control_interactive = celune is not None and vc_enabled
     return (
-        gr.update(interactive=control_interactive),
         gr.update(interactive=control_interactive),
         gr.update(interactive=control_interactive),
         gr.update(interactive=control_interactive),

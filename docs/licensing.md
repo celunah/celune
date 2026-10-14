@@ -2,7 +2,7 @@
 
 Celune source code is licensed under the Apache 2.0 License. The repository also
 contains third-party dependencies, downloaded model checkpoints, reference
-recordings, tutorial audio, icons, and other assets. Those materials are not
+recordings, icons, and other assets. Those materials are not
 automatically covered by Celune's Apache 2.0 license.
 
 Before redistributing a build, voice pack, model cache, or generated bundle:

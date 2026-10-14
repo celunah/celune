@@ -364,7 +364,41 @@ def _chain_runtime_callback(
         try:
             signature.bind(*args, **kwargs)
         except TypeError:
-            target(*args)
+            positional_parameters = tuple(
+                parameter
+                for parameter in signature.parameters.values()
+                if parameter.kind
+                in {
+                    inspect.Parameter.POSITIONAL_ONLY,
+                    inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                }
+            )
+            accepts_extra_arguments = any(
+                parameter.kind == inspect.Parameter.VAR_POSITIONAL
+                for parameter in signature.parameters.values()
+            )
+            if (
+                attribute == "caption_progress_callback"
+                and not accepts_extra_arguments
+                and len(args) > len(positional_parameters)
+            ):
+                compatible_args = args[: len(positional_parameters)]
+                compatible_kwargs = dict(kwargs)
+                visible_words = signature.parameters.get("visible_words")
+                if (
+                    visible_words is not None
+                    and visible_words.kind == inspect.Parameter.KEYWORD_ONLY
+                    and len(args) == len(positional_parameters) + 1
+                ):
+                    compatible_kwargs["visible_words"] = args[-1]
+                try:
+                    signature.bind(*compatible_args, **compatible_kwargs)
+                except TypeError:
+                    target(*args)
+                else:
+                    target(*compatible_args, **compatible_kwargs)
+            else:
+                target(*args)
         else:
             target(*args, **kwargs)
 
@@ -875,7 +909,7 @@ def compose() -> _app.ComposeResult:
     with _app.Vertical(id="container"):
         with _app.Horizontal(id="header-container"):
             yield _app.Label("", classes="line")
-            yield _app.Label(_app.APP_NAME, id="header")
+            yield _app.Label("  ".join(_app.APP_NAME.upper()), id="header")
             yield _app.Label("", classes="line")
         yield _app.RichLog(id="logs", wrap=True, markup=False)
         yield _app.Label("", id="caption", markup=False)
@@ -896,11 +930,6 @@ def compose() -> _app.ComposeResult:
             yield _app.Button(
                 _app.string("ui.vc_mode_talk"),
                 id="vc-mode",
-                actions=_app.ButtonActions(press=False),
-            )
-            yield _app.Button(
-                _app.string("ui.vc_pitch_button", value="+0"),
-                id="vc-pitch",
                 actions=_app.ButtonActions(press=False),
             )
         with _app.Horizontal(id="bottom"):
@@ -929,7 +958,6 @@ def on_mount(self) -> None:
     self.caption = self.query_one("#caption", _app.Label)
     self.style_button = self.query_one("#style", _app.VoiceButton)
     self.vc_mode_button = self.query_one("#vc-mode", _app.Button)
-    self.vc_pitch_button = self.query_one("#vc-pitch", _app.Button)
     self.progress_bar = self.query_one("#progress", _app.ProgressBar)
     self.progress_label = self.query_one("#progress-label", _app.ProgressLabel)
     self.header = self.query_one("#header", _app.Label)
@@ -963,7 +991,11 @@ def on_mount(self) -> None:
 
 def _start_deferred_runtime(self) -> None:
     """Start constructing Celune after the initial loading frame renders."""
-    self.run_worker(self._load_deferred_runtime, thread=True, exclusive=True)
+    threading.Thread(
+        target=self._load_deferred_runtime,
+        name="celune-ui-runtime-startup",
+        daemon=True,
+    ).start()
 
 
 def _startup_terminal_status_for(
@@ -1028,10 +1060,17 @@ def _load_deferred_runtime(self) -> None:
             celune = self._startup_loader()
         _app._load_ui_runtime_dependencies()
     except BaseException as exc:
-        self.call_from_thread(self._handle_deferred_runtime_error, exc)
+        try:
+            self.call_from_thread(self._handle_deferred_runtime_error, exc)
+        except RuntimeError:
+            pass
         return
     if celune is not None:
-        self.call_from_thread(self.attach_celune, celune)
+        try:
+            self.call_from_thread(self.attach_celune, celune)
+        except RuntimeError:
+            with contextlib.suppress(Exception):
+                celune.close()
 
 
 def _handle_deferred_runtime_error(self, error: BaseException) -> None:
