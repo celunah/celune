@@ -682,6 +682,7 @@
     "registry.consent_phrase": "I consent",
     "registry.consent_prompt": "Please read the license terms for {model_name}: {license_url}",
     "registry.consent_submit_failed": "Could not submit your decision. Try again.",
+    "registry.commercial_use_blocked": "Commercial mode blocks {model_name} because its terms do not confirm commercial use.",
     "registry.flag_no": "No",
     "registry.flag_unknown": "Unknown",
     "registry.flag_yes": "Yes",

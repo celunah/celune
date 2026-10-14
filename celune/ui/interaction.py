@@ -6,24 +6,24 @@ from __future__ import annotations
 import os
 import re
 import sys
+import queue as queue_module
 import shlex
 import types
 import ctypes
 import asyncio
 import threading
 import contextlib
-from uuid import uuid4
 from copy import deepcopy
-import queue as queue_module
-from collections.abc import Callable, Iterator
+from uuid import uuid4
 from typing import TYPE_CHECKING, Optional, cast
+from collections.abc import Callable, Iterator
 
 from . import app as _app
-from ..constants import SIGTSTP, APP_NAME
 from ..binding import install_class_functions
+from ..constants import SIGTSTP, APP_NAME
 
 if TYPE_CHECKING:
-    from ..vc_debug import VCDebugSaveResult
+    from ..vc import VCDebugSaveResult
 
 __all__ = (
     "_close_menu",

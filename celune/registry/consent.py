@@ -8,21 +8,27 @@ import re
 import json
 import tempfile
 import threading
-from pathlib import Path
 from typing import Optional
+from pathlib import Path
+from contextvars import Token, ContextVar
 from collections.abc import Callable
-from contextvars import ContextVar, Token
 
 from .types import ModelMetadata
 from ..paths import model_consent_path
-from ..exceptions import ModelConsentDeclined, ModelConsentRequired
+from ..exceptions import (
+    ModelConsentDeclined,
+    ModelConsentRequired,
+    ModelCommercialUseRestricted,
+)
 
 _COMMIT_SHA_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 _STORE_LOCK = threading.RLock()
 _PENDING_LOCK = threading.RLock()
+_POLICY_LOCK = threading.Lock()
 _PENDING_CONSENTS: dict[tuple[str, str], ModelMetadata] = {}
 _CONSENT_HANDLER: Optional[Callable[[ModelMetadata], bool]] = None
 _API_MODEL_REQUEST = ContextVar("celune_api_model_request", default=False)
+_COMMERCIAL_MODE = False
 
 
 class ModelConsentStore:
@@ -129,6 +135,25 @@ def _catalog_model(model_id: str) -> Optional[ModelMetadata]:
     return get_model_metadata(model_id)
 
 
+def set_commercial_mode(enabled: bool) -> None:
+    """Set whether runtime model access must be cleared for commercial use."""
+    global _COMMERCIAL_MODE
+    with _POLICY_LOCK:
+        _COMMERCIAL_MODE = enabled
+
+
+def commercial_mode_enabled() -> bool:
+    """Return whether the active runtime declares commercial use."""
+    with _POLICY_LOCK:
+        return _COMMERCIAL_MODE
+
+
+def _require_commercial_compatibility(metadata: ModelMetadata) -> None:
+    """Reject models whose catalog terms do not confirm commercial use."""
+    if commercial_mode_enabled() and not metadata.commercial_use_allowed:
+        raise ModelCommercialUseRestricted(metadata)
+
+
 def resolve_model_metadata(
     model_id: str,
     revision: Optional[str] = None,
@@ -177,6 +202,7 @@ def require_model_consent(
 ) -> ModelMetadata:
     """Return verified metadata or raise until required consent is recorded."""
     metadata = resolve_model_metadata(model_id, revision)
+    _require_commercial_compatibility(metadata)
     if not metadata.requires_consent:
         return metadata
     if _STORE.has_acknowledged(metadata.model_id, metadata.revision):
@@ -244,6 +270,7 @@ def record_model_consent(
         )
     elif metadata.revision != revision:
         raise ValueError("consent revision does not match the registry pin")
+    _require_commercial_compatibility(metadata)
     with _PENDING_LOCK:
         _PENDING_CONSENTS.pop((model_id, revision), None)
     _STORE.set_acknowledged(model_id, revision, accepted)
@@ -287,8 +314,8 @@ def consent_prompt_text(metadata: ModelMetadata) -> tuple[str, str]:
 
 def consent_details(metadata: ModelMetadata) -> tuple[str, ...]:
     """Return localized license and restriction details for confirmations."""
-    from ..constants import APP_NAME
     from ..i18n import string
+    from ..constants import APP_NAME
 
     license_text = metadata.license_id or string("registry.license_unknown")
     return (

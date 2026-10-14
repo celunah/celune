@@ -10,6 +10,12 @@
 # seed-vc = VC backend, converts speech rather than generating it
 backend: null
 
+# Model license-use policy
+#
+# false = allow models after their normal license consent prompt
+# true = allow only models whose reviewed terms confirm commercial use
+commercial: false
+
 # Runtime TTS weight quantization
 #
 # false = keep loading TTS weights in BF16

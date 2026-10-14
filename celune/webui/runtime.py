@@ -11,39 +11,42 @@ import datetime
 import contextlib
 from html import escape
 from typing import Union, Optional, cast
+from pathlib import Path
 from collections.abc import Callable, Iterator
+from importlib.resources import files
 
+import numpy as np
 import gradio as gr
 import soundfile as sf
-import numpy.typing as npt
 from fastapi import HTTPException
-import numpy as np  # pylint: disable=ungrouped-imports
 
-from .i18n import string
-from . import api as _api
-from .theme import colors
-from .ui.app import CeluneUI
-from .dataclasses.events import (
+from .. import api as _api
+from ..ui import resources as ui_resources
+from ..i18n import string
+from ..paths import project_root, main_window_log_path
+from ..theme import colors
+from ..utils import available, format_error_message
+from ..ui.app import CeluneUI
+from ..binding import install_module_functions
+from ..cedts.ui import UiTimedUpdate, ui_timed_update_channel
+from ..playback import current_playback_status
+from ..constants import BASE_SR, APP_NAME
+from ..typing.api import WEBUI_UNSET as _WEBUI_UNSET
+from ..typing.api import TaskStatus, WebUiUpdate
+from ..typing.api import WebUiUnset as _WebUiUnset
+from ..persona.impl import persona_enabled, persona_talkback_enabled
+from ..typing.events import EventName, EventCallback
+from ..typing.aliases import LogLevel, AudioChunks
+from ..typing.pipeline import SpeechStreamQueue
+from ..extensions.events import EventDispatcher
+from ..dataclasses.events import (
     AgentTaskFinishedEvent,
     AgentChoiceRequestedEvent,
     AgentTaskStateChangedEvent,
     AgentApprovalRequestedEvent,
 )
-from .paths import main_window_log_path
-from .constants import BASE_SR, APP_NAME
-from .ui import resources as ui_resources
-from .binding import install_module_functions
-from .playback import current_playback_status
-from .typing.pipeline import SpeechStreamQueue
-from .extensions.events import EventDispatcher
-from .typing.api import TaskStatus, WebUiUpdate
-from .typing.api import WebUiUnset as _WebUiUnset
-from .typing.aliases import LogLevel, AudioChunks
-from .utils import available, format_error_message
-from .typing.api import WEBUI_UNSET as _WEBUI_UNSET
-from .typing.events import EventName, EventCallback
-from .cedts.ui import UiTimedUpdate, ui_timed_update_channel
-from .persona.impl import persona_enabled, persona_talkback_enabled
+
+npt = np.typing
 
 __all__ = (
     "_append_webui_error",
@@ -1250,6 +1253,46 @@ def _webui_submit_snapshot(
         voice_update,
         send_update,
     )
+
+
+_ASSET_MEDIA_TYPES = {
+    "api_key.html": "text/html; charset=utf-8",
+    "api_key.css": "text/css; charset=utf-8",
+    "api_key.js": "text/javascript; charset=utf-8",
+    "head.html": "text/html; charset=utf-8",
+    "theme.css": "text/css; charset=utf-8",
+    "webui.css": "text/css; charset=utf-8",
+    "webui.js": "text/javascript; charset=utf-8",
+}
+_FONT_ASSET_NAMES = {
+    "fonts/michroma-400.ttf": "michroma-400.ttf",
+    "fonts/outfit-400.ttf": "outfit-400.ttf",
+    "fonts/outfit-700.ttf": "outfit-700.ttf",
+}
+
+
+def read_webui_asset(name: str) -> str:
+    """Read a packaged WebUI text asset by its fixed name."""
+    if name not in _ASSET_MEDIA_TYPES:
+        raise FileNotFoundError(name)
+    return files("celune").joinpath("assets", name).read_text(encoding="utf-8")
+
+
+def webui_asset_response_data(name: str) -> Optional[tuple[bytes, str]]:
+    """Return safe packaged WebUI or bundled font data for an asset route."""
+    media_type = _ASSET_MEDIA_TYPES.get(name)
+    if media_type is not None:
+        data = files("celune").joinpath("assets", name).read_bytes()
+        return data, media_type
+
+    font_name = _FONT_ASSET_NAMES.get(name)
+    if font_name is None:
+        return None
+    font_path: Path = project_root() / "resources" / "fonts" / font_name
+    try:
+        return font_path.read_bytes(), "font/ttf"
+    except OSError:
+        return None
 
 
 def install(target):
