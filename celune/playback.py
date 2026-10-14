@@ -17,18 +17,13 @@ import subprocess
 import urllib.parse
 import urllib.request
 import collections.abc
-from typing import TYPE_CHECKING, Union, Optional, cast
-from difflib import SequenceMatcher
 from collections import deque
+from difflib import SequenceMatcher
+from typing import TYPE_CHECKING, Union, Optional, cast
 
 import numpy as np
 
 from .i18n import string
-from .locks import ComponentLockManager
-from .paths import project_root, temp_data_dir, running_compiled
-from .utils import available
-from .binding import install_class_functions, install_module_functions
-from .constants import BASE_SR, APP_NAME, PipelineStates
 from .pipelinecore import (
     _SFX_DUCK_GAIN,
     _LEGACY_BUFFER_SECONDS,
@@ -54,10 +49,7 @@ from .typing.locks import (
     ComponentLockAcquisition,
     ComponentLockRequirement,
 )
-from .typing.common import JSONSerializable
-from .typing.aliases import AudioChunk, AudioChunks
-from .typing.pipeline import SpeechStreamQueue
-from .dataclasses.events import StateChangedEvent
+from .utils import available
 from .dataclasses.pipeline import (
     SpeechTiming,
     PlaybackChunk,
@@ -65,6 +57,14 @@ from .dataclasses.pipeline import (
     CaptionPlaybackState,
     CaptionPlaybackSegment,
 )
+from .locks import ComponentLockManager
+from .typing.common import JSONSerializable
+from .typing.pipeline import SpeechStreamQueue
+from .dataclasses.events import StateChangedEvent
+from .typing.aliases import AudioChunk, AudioChunks
+from .constants import BASE_SR, APP_NAME, PipelineStates
+from .paths import project_root, temp_data_dir, running_compiled
+from .binding import install_class_functions, install_module_functions
 
 if TYPE_CHECKING:
     from .celune import Celune
@@ -189,6 +189,18 @@ def acquire_pipeline_result(
     )
     requirements = _pipeline_requirements(action)
     with engine.say_lock:
+        if engine.exit_requested:
+            busy = ComponentBusyResult(
+                components=tuple(requirement.component for requirement in requirements),
+                owners=tuple(
+                    (requirement.component, None) for requirement in requirements
+                ),
+            )
+            return ComponentLockAcquisition(
+                resolved_owner,
+                tuple(requirement.component for requirement in requirements),
+                busy,
+            )
         engine.log(
             f"[LOCK] acquire requested by {action}, locked={engine.locked}",
             loglevel="verbose",
@@ -633,6 +645,8 @@ def _queue_playback_chunk(
 ) -> bool:
     """Queue one chunk for the shared DSP playback mixer."""
     with engine.queue_lock:
+        if engine.exit_requested:
+            return False
         active_playback_generation = getattr(engine, "_playback_generation", 0)
         expected_generation = (
             active_playback_generation if generation is None else generation
@@ -913,6 +927,8 @@ def _queue_playback_done(
 ) -> bool:
     """Queue a completion marker for one playback source."""
     with engine.queue_lock:
+        if engine.exit_requested:
+            return False
         active_playback_generation = getattr(engine, "_playback_generation", 0)
         expected_generation = (
             active_playback_generation if generation is None else generation

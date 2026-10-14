@@ -5,22 +5,25 @@ import sys
 import inspect
 import threading
 import importlib.util
-from types import ModuleType
-from typing import Optional, cast
 from pathlib import Path
+from types import ModuleType
 from dataclasses import dataclass
 from collections.abc import Callable
+from typing import TYPE_CHECKING, Optional, cast
 
-from .base import CeluneContext, CeluneExtension
-from ..i18n import string
-from ..utils import format_error_message
 from .events import (
     EventDispatcher,
     RegisteredEventHandler,
     iter_subscriptions,
 )
-from ..exceptions import InvalidExtensionError, ExtensionAlreadyRegisteredError
+from ..i18n import string
+from ..utils import format_error_message
+from .base import CeluneContext, CeluneExtension
 from ..typing.events import EventName, EventPayload
+from ..exceptions import InvalidExtensionError, ExtensionAlreadyRegisteredError
+
+if TYPE_CHECKING:
+    from ..celune import Celune
 
 
 @dataclass(frozen=True)
@@ -38,6 +41,7 @@ class CeluneExtensionManager:
         self,
         context: CeluneContext,
         dispatcher: Optional[EventDispatcher] = None,
+        core: Optional["Celune"] = None,
     ) -> None:
         self.context = context
         self.dispatcher = dispatcher or EventDispatcher(
@@ -49,6 +53,7 @@ class CeluneExtensionManager:
         self._event_registrations: dict[str, list[RegisteredEventHandler]] = {}
         self._module_registrations: dict[str, _ModuleRegistration] = {}
         self._extension_modules: dict[str, str] = {}
+        self._core = core
 
     def register(self, extension_cls: type[CeluneExtension]) -> CeluneExtension:
         """Register a Celune extension class.
@@ -71,6 +76,15 @@ class CeluneExtensionManager:
             )
 
         instance = extension_cls(self.context)
+        return self._register_instance(instance, module_name=extension_cls.__module__)
+
+    def _register_instance(
+        self,
+        instance: CeluneExtension,
+        *,
+        module_name: str = "",
+    ) -> CeluneExtension:
+        """Register one initialized extension object."""
         name = instance.name
 
         if name in self.extensions:
@@ -83,10 +97,42 @@ class CeluneExtensionManager:
             )
 
         self.extensions[name] = instance
-        self._extension_modules[name] = extension_cls.__module__
+        self._extension_modules[name] = module_name
         self._register_extension_handlers(instance)
         self.context.log(f"[Core] Registered extension: {name}", loglevel="verbose")
         return instance
+
+    def register_lua(self, path: Path) -> CeluneExtension:
+        """Load and register one Lua extension file.
+
+        Args:
+            path: Lua source file to load.
+
+        Returns:
+            CeluneExtension: The registered Lua extension adapter.
+
+        Raises:
+            RuntimeError: Lua extensions require the Celune core and Lupa.
+            OSError: The Lua source file could not be read.
+        """
+        if self._core is None:
+            raise RuntimeError("Lua extensions require an attached Celune core")
+
+        from ..lua import LuaExtension, LuaRuntimeManager
+
+        runtime = LuaRuntimeManager(
+            self._core,
+            self.dispatcher,
+            version=self.context.version,
+        )
+        try:
+            name = runtime.load(path)
+            extension = LuaExtension(self.context, name, runtime)
+            self._register_instance(extension)
+            return extension
+        except Exception:
+            runtime.close()
+            raise
 
     def unregister(self, name: str) -> None:
         """Unregister one extension and any event handlers it owns.
@@ -102,6 +148,10 @@ class CeluneExtensionManager:
             raise InvalidExtensionError(f"extension '{name}' is not registered")
 
         self._unregister_owner(name)
+        from ..lua import LuaExtension
+
+        if isinstance(extension, LuaExtension):
+            extension.close()
         module_name = self._extension_modules.pop(name, "")
         if module_name and module_name not in self._extension_modules.values():
             module_registration = self._module_registrations.pop(module_name, None)
@@ -257,6 +307,22 @@ class CeluneExtensionManager:
             if not found_any:
                 self.context.log(
                     f"[Core] {file_path.name} is not a Celune extension, skipping",
+                    "warning",
+                )
+
+        for file_path in sorted(extensions_dir.glob("*.lua")):
+            if file_path.name.startswith("_"):
+                continue
+
+            try:
+                self.register_lua(file_path)
+            except Exception as error:
+                self.context.log(
+                    format_error_message(
+                        f"[Core] Failed to import '{file_path.name}'",
+                        error,
+                        self.context.log_level,
+                    ),
                     "warning",
                 )
 

@@ -5,25 +5,21 @@ import json
 import queue
 import tempfile
 import threading
-from types import MappingProxyType
-from typing import Optional, cast
 from pathlib import Path
 from unittest import mock
+from typing import Optional, cast
+from types import MappingProxyType
 from collections.abc import Callable
 
-import numpy as np
 import pytest
+import numpy as np
 
-from celune import i18n, cevoice
 from celune.agent import (
     AgentRequest,
     AgentSession,
     AgentTaskState,
     AgentCancellationReason,
 )
-from celune.utils import discard
-from celune.celune import Celune
-from celune.config import Config
 from celune.pipeline import (
     close as close_pipeline,
     play_signal,
@@ -31,16 +27,15 @@ from celune.pipeline import (
     handle_audio_input,
     convert_audio_input,
 )
-from celune.exceptions import BackendError, CEDTSTimeoutError
-from celune.cloudflared import CloudflaredQuickTunnel
-from celune.persona.impl import persona_quantization
+from celune import i18n, cevoice
+from celune.utils import discard
+from celune.celune import Celune
+from celune.config import Config
 from celune.typing.locks import (
     ComponentLockName,
     ComponentLockOwner,
     ComponentLockRequirement,
 )
-from celune.typing.common import JSONSerializable
-from celune.persona.emotion import PersonaEmotionAnalyzer
 from celune.dataclasses.celune import (
     CeluneAudioState,
     CeluneModelState,
@@ -50,7 +45,12 @@ from celune.dataclasses.celune import (
     CeluneCallbackState,
     CelunePipelineState,
 )
+from celune.typing.common import JSONSerializable
+from celune.persona.impl import persona_quantization
+from celune.cloudflared import CloudflaredQuickTunnel
 from celune.dataclasses.events import StateChangedEvent
+from celune.persona.emotion import PersonaEmotionAnalyzer
+from celune.exceptions import BackendError, CEDTSTimeoutError
 
 from .support import (
     FakeGlow,
@@ -813,7 +813,10 @@ class TestCeluneCore(CeluneTestCase):
         celune.status_callback = lambda msg, severity="info", *, loglevel="info": (
             statuses.append((msg, severity))
         )
-        celune.voice_changed_callback = mock.Mock()
+        readiness_states: list[tuple[bool, str]] = []
+        celune.voice_changed_callback = lambda _name: readiness_states.append(
+            (celune.model_ready.is_set(), celune.cur_state)
+        )
 
         with mock.patch("celune.voice.play_signal", return_value=False):
             celune.change_voice("bold")
@@ -822,7 +825,39 @@ class TestCeluneCore(CeluneTestCase):
         assert celune.loaded
         assert celune.cur_state == "idle"
         assert statuses[-1] == ("Idle", "info")
-        celune.voice_changed_callback.assert_called_once_with("bold")
+        assert readiness_states == [(True, "idle")]
+
+    def test_status_and_sleep_delegate_to_runtime_callbacks(self) -> None:
+        """Verify extension helpers forward status and sleep to Celune's runtime."""
+        celune = self._make_celune({})
+
+        with (
+            mock.patch.object(celune._callbacks, "status_callback") as status,
+            mock.patch("celune.voice.time.sleep") as sleep,
+        ):
+            celune.status("Status test", "warning")
+            celune.sleep(1.25)
+
+        status.assert_called_once_with("Status test", "warning")
+        sleep.assert_called_once_with(1.25)
+
+    def test_closing_core_rejects_late_extension_requests(self) -> None:
+        """Verify extension calls cannot enqueue new work after shutdown starts."""
+        celune = self._make_celune({})
+        celune._exit_requested = True
+
+        with (
+            mock.patch("celune.speech.queue_speech") as say,
+            mock.patch("celune.speech.play") as play,
+            mock.patch("celune.voice.play_signal") as signal,
+        ):
+            assert not celune.say("late speech")
+            assert not celune.play("late.wav")
+            assert not celune.try_play_signal("readiness")
+
+        say.assert_not_called()
+        play.assert_not_called()
+        signal.assert_not_called()
 
     def test_change_voice_in_voice_conversion_mode_skips_tts_reload(self) -> None:
         """Verify VC mode updates the target voice without loading TTS models."""
@@ -968,6 +1003,11 @@ class TestCeluneCore(CeluneTestCase):
         release_pipeline(celune)
 
         celune.locked = False
+
+        def queue_completion(*_args, **_kwargs) -> bool:
+            queued_markers.append(True)
+            return True
+
         with (
             mock.patch(
                 "celune.pipeline.readiness_signal",
@@ -977,7 +1017,7 @@ class TestCeluneCore(CeluneTestCase):
             mock.patch("celune.pipeline._queue_playback_chunk"),
             mock.patch(
                 "celune.pipeline._queue_playback_done",
-                side_effect=lambda *_args, **_kwargs: queued_markers.append(True),
+                side_effect=queue_completion,
             ),
         ):
             assert play_signal(celune, "readiness")

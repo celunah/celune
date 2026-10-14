@@ -386,9 +386,12 @@ Celune exposes the following core events to extensions:
 - `character_loaded`
 - `character_unloaded`
 
-For example extension usage, check the [example extension](./extensions/test.py).
+For an example, see the [Lua extension](./extensions/test.lua) or the
+[Python extension](./extensions/test.py).
 
 The aforementioned extension defines a basic usage case for Celune extensions.
+
+Celune extensions can be made in either Python or Lua. Lua extensions use Celune's singleton objects and do not require additional imports to run. They inherit the same feature set from Python extensions.
 
 ## Web UI
 

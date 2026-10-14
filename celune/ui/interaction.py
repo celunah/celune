@@ -6,21 +6,21 @@ from __future__ import annotations
 import os
 import re
 import sys
-import queue as queue_module
 import shlex
 import types
 import ctypes
 import asyncio
 import threading
 import contextlib
-from copy import deepcopy
 from uuid import uuid4
-from typing import TYPE_CHECKING, Optional, cast
+from copy import deepcopy
+import queue as queue_module
 from collections.abc import Callable, Iterator
+from typing import TYPE_CHECKING, Optional, cast
 
 from . import app as _app
-from ..binding import install_class_functions
 from ..constants import SIGTSTP, APP_NAME
+from ..binding import install_class_functions
 
 if TYPE_CHECKING:
     from ..vc import VCDebugSaveResult
@@ -40,6 +40,7 @@ __all__ = (
     "_save_settings",
     "_set_config_value",
     "_show_menu",
+    "_shutdown_from_windows_signal",
     "_shutdown_live_vc_recording",
     "_shutdown_runtime",
     "_signal_handler",
@@ -1613,9 +1614,17 @@ def _install_windows_signal_handler(self) -> None:
 def _signal_handler_windows(self, sig: int) -> bool:
     """Handle incoming Windows signals."""
     if sig in (2, 5, 6):
-        self._graceful_exit()
+        self._shutdown_from_windows_signal()
         return True
     return False
+
+
+def _shutdown_from_windows_signal(self) -> None:
+    """Schedule graceful shutdown from a Windows console callback thread."""
+    try:
+        self.call_from_thread(self._graceful_exit)
+    except RuntimeError:
+        self._run_shutdown_step(self._shutdown_runtime)
 
 
 def _hide_scrollbars_for_exit(self) -> None:
