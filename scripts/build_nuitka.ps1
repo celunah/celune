@@ -24,6 +24,14 @@ $processTerminationTimeoutSeconds = 30
 $artifactRemovalAttempts = 20
 $artifactRemovalDelayMilliseconds = 250
 
+$env:UV_CACHE_DIR = Join-Path $repoRoot ".uv-cache"
+$revisionOutput = & python (Join-Path $repoRoot "scripts\root.py") --revision
+$revisionExitCode = $LASTEXITCODE
+if ($revisionExitCode -ne 0) {
+    exit $revisionExitCode
+}
+$revision = ($revisionOutput -join [Environment]::NewLine).Trim()
+
 $env:CL = "/O2 /GL /GS /guard:cf /DNDEBUG"
 $env:_CL_ = "/link /LTCG /OPT:REF /OPT:ICF /DYNAMICBASE /NXCOMPAT"
 
@@ -124,9 +132,7 @@ if (-not (Test-Path $manifestScript)) {
     throw "The update manifest script was not found."
 }
 
-$env:UV_CACHE_DIR = Join-Path $repoRoot ".uv-cache"
-
-& uv run python (Join-Path $repoRoot "scripts\root.py")
+& python (Join-Path $repoRoot "scripts\root.py")
 if ($LASTEXITCODE -ne 0) {
     throw "Failed to update .celune-root."
 }
@@ -224,11 +230,6 @@ $compileCmd = "call `"$vsDevCmd`" -arch=amd64 -host_arch=amd64 >nul && " + ($com
 & cmd /c $compileCmd
 if ($LASTEXITCODE -ne 0) {
     throw "Failed to compile the Windows launcher."
-}
-
-$revision = (& git -C $repoRoot rev-parse HEAD).Trim()
-if (-not $revision) {
-    throw "Could not determine the Git revision for update metadata."
 }
 
 $manifestArguments = @(

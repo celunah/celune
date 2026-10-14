@@ -1,8 +1,14 @@
 #include "launcher_platform.h"
+#include "launcher_id.h"
 
 #include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
+
+const volatile char launcher_id[] =
+    CELUNE_LAUNCHER_ID CELUNE_LAUNCHER_VERSION;
+
+void retain_launcher_id(void) { (void)launcher_id[0]; }
 
 static int launcher_cpu_check_is_bypassed(int argc, char **argv) {
     for (int index = 1; index < argc; index++) {
@@ -103,6 +109,7 @@ const char *launcher_exit_reason(int return_code) {
 }
 
 int main(int argc, char **argv) {
+    retain_launcher_id();
     launcher_setup_terminal();
 
     if (!launcher_cpu_check_is_bypassed(argc, argv) &&

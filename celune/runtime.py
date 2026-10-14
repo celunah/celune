@@ -8,19 +8,22 @@ from collections.abc import Callable
 
 import torch
 
-from . import __comment__, __version__, __codename__
-from .i18n import string
 from .utils import (
     available,
     format_number,
     cuda_architecture,
+    current_platform,
 )
+from .i18n import string
 from ._version import DEVELOPMENT
-from .constants import APP_NAME, NVIDIA_DEVICE_KEYWORDS
-from .backends.vc import CeluneVCBackend
-from .backends.tts import CeluneBackend
 from .typing.modes import BackendMode
+from .backends.tts import CeluneBackend
+from .backends.vc import CeluneVCBackend
+from .paths import project_root, running_compiled
 from .typing.aliases import LogLevel, LogCallback
+from . import __comment__, __version__, __codename__
+from .constants import APP_NAME, NVIDIA_DEVICE_KEYWORDS, SUPPORTED_CUDA_VERSIONS
+from .vcs import get_branch, git_checkout_hint, is_git_checkout
 
 
 def log_runtime_banner(
@@ -46,7 +49,7 @@ def log_runtime_banner(
         backend_line = f"on backend {backend.name}, "
 
     log(
-        f"{APP_NAME} {__version__} "
+        f"{APP_NAME} {__version__} ({get_branch(project_root())}, {current_platform()}) "
         f"{backend_line}"
         f"Python {platform.python_version()}, "
         f"PyTorch {torch.__version__}"
@@ -57,6 +60,10 @@ def log_runtime_banner(
         f'{__codename__} - "{__comment__}"',
         "info",
     )
+
+    if not running_compiled() and not is_git_checkout(project_root()):
+        log(string("git.checkout_missing"), "warning")
+        log(git_checkout_hint(), "warning")
 
     if DEVELOPMENT:
         log(string("celune.development_version"), "warning")
@@ -209,11 +216,14 @@ def validate_runtime(
         )
         log(string("runtime.zluda_performance", app_name=APP_NAME), "warning")
 
-    cuda_version_tuple = tuple(map(int, cuda_version.split(".")))
-    if cuda_version_tuple not in {(12, 8), (13, 0)}:
+    if cuda_version not in SUPPORTED_CUDA_VERSIONS:
         log(
-            f"{APP_NAME} only supports CUDA 12.8 or 13.0, "
-            f"found version {torch.version.cuda}.",
+            string(
+                "runtime.incompatible_cuda_detail",
+                app_name=APP_NAME,
+                versions=" or ".join(SUPPORTED_CUDA_VERSIONS),
+                version=cuda_version,
+            ),
             "error",
         )
         set_state("error")

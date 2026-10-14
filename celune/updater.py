@@ -10,6 +10,7 @@ import json
 import stat
 import time
 import ctypes
+import locale
 import shutil
 import hashlib
 import zipfile
@@ -20,14 +21,22 @@ from dataclasses import dataclass
 from typing import Union, Optional
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
+from git.exc import GitError
+
+from .vcs import (
+    UPSTREAM_REPOSITORY_URL,
+    _open_repository,
+    git_checkout_hint,
+    is_git_checkout,
+)
 from .i18n import string
 from . import __version__
 from .constants import CELUNE_UA
 from .exceptions import UpdateError
-from .typing.common import JSONSerializable
 from .paths import project_root, running_compiled
+from .typing.common import JSONSerializable
 
-REMOTE_URL = "https://github.com/celunah/celune.git"
+REMOTE_URL = f"{UPSTREAM_REPOSITORY_URL}.git"
 RELEASES_API_URL = "https://api.github.com/repos/celunah/celune/releases?per_page=100"
 UPDATE_MANIFEST_NAME = "celune-update.json"
 SHORT_HASH_LENGTH = 7
@@ -173,16 +182,38 @@ def _latest_release() -> Optional[ReleaseInfo]:
 
 
 def _run_git(args: list[str], timeout: int = 15) -> str:
-    """Run a Git command on the repository."""
-    result = subprocess.run(
-        ["git", *args],
-        cwd=_repo_root(),
-        check=True,
-        text=True,
-        timeout=timeout,
-        capture_output=True,
-    )
-    return result.stdout.strip()
+    """Run a timeout-bounded GitPython command, including on Windows."""
+    from git import Git
+    from git.exc import GitCommandNotFound
+
+    git = Git(working_dir=str(_repo_root()))
+    try:
+        process = git.execute(
+            ["git", *args],
+            as_process=True,
+        )
+    except GitCommandNotFound as error:
+        raise FileNotFoundError("git") from error
+
+    try:
+        stdout_bytes, stderr_bytes = process.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.communicate()
+        raise
+
+    encoding = locale.getpreferredencoding(False)
+    stdout = stdout_bytes.decode(encoding) if stdout_bytes else ""
+    stderr = stderr_bytes.decode(encoding) if stderr_bytes else ""
+    return_code = process.returncode
+    if return_code:
+        raise subprocess.CalledProcessError(
+            return_code,
+            ["git", *args],
+            output=stdout,
+            stderr=stderr,
+        )
+    return (stdout or "").strip()
 
 
 def _format_git_error(exc: subprocess.CalledProcessError) -> str:
@@ -197,15 +228,6 @@ def _format_git_error(exc: subprocess.CalledProcessError) -> str:
         return f"{command} failed:\n{details}"
 
     return f"{command} failed with exit code {exc.returncode}."
-
-
-def _git_succeeds(args: list[str], timeout: int = 15) -> bool:
-    """Check if Git succeeded this command."""
-    try:
-        _run_git(args, timeout=timeout)
-        return True
-    except subprocess.CalledProcessError:
-        return False
 
 
 def _short_revision(revision: str) -> str:
@@ -284,37 +306,50 @@ def _is_newer_version_tag(candidate: str, current: str) -> bool:
 
 def _current_branch() -> str:
     """Get current branch."""
-    return _run_git(["branch", "--show-current"])
+    with _open_repository(_repo_root()) as repository:
+        if repository.head.is_detached:
+            return ""
+        return repository.active_branch.name
 
 
 def _local_tag() -> str:
     """Get current local tag."""
     try:
-        return _normalize_tag(_run_git(["describe", "--tags", "--exact-match", "HEAD"]))
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        with _open_repository(_repo_root()) as repository:
+            tag = repository.git.describe(
+                "HEAD",
+                tags=True,
+                exact_match=True,
+            )
+        return _normalize_tag(tag)
+    except GitError:
         return ""
 
 
 def _local_revision() -> str:
     """Get current local revision."""
-    return _run_git(["rev-parse", "HEAD"])
+    with _open_repository(_repo_root()) as repository:
+        return repository.head.commit.hexsha
 
 
 def _has_local_changes() -> bool:
     """Does the local repository have any changes pending for commit?"""
-    return bool(_run_git(["status", "--porcelain"]))
+    with _open_repository(_repo_root()) as repository:
+        return repository.is_dirty(untracked_files=True)
 
 
 def _is_git_checkout() -> bool:
-    """Can the repository be checked out?"""
-    try:
-        return _run_git(["rev-parse", "--is-inside-work-tree"]) == "true"
-    except (
-        subprocess.CalledProcessError,
-        FileNotFoundError,
-        subprocess.TimeoutExpired,
-    ):
-        return False
+    """Return whether the active source root is a committed Git checkout."""
+    return is_git_checkout(_repo_root())
+
+
+def _update_is_fast_forward() -> bool:
+    """Return whether FETCH_HEAD descends from the current local commit."""
+    with _open_repository(_repo_root()) as repository:
+        return repository.is_ancestor(
+            repository.head.commit,
+            repository.commit("FETCH_HEAD"),
+        )
 
 
 def _sha256_file(path: Path) -> str:
@@ -534,9 +569,7 @@ def check_for_update() -> Optional[UpdateInfo]:
         local_revision = _local_revision()
         local_tag = _local_tag()
     except (
-        subprocess.CalledProcessError,
-        subprocess.TimeoutExpired,
-        FileNotFoundError,
+        GitError,
         ValueError,
     ):
         return None
@@ -666,21 +699,15 @@ def update_to_latest(install_dir: Optional[Path] = None) -> None:
         return
 
     if not _is_git_checkout():
-        raise UpdateError("did not find a repository")
+        raise UpdateError(f"{string('git.checkout_required')}\n{git_checkout_hint()}")
 
     if _has_local_changes():
         raise UpdateError("repository not committed")
 
     try:
         branch = _current_branch()
-    except subprocess.CalledProcessError as exc:
-        raise UpdateError(_format_git_error(exc)) from exc
-    except subprocess.TimeoutExpired as exc:
-        raise UpdateError(
-            f"timed out checking the current branch after {exc.timeout} seconds"
-        ) from exc
-    except FileNotFoundError as exc:
-        raise UpdateError("git is not available") from exc
+    except GitError as exc:
+        raise UpdateError(str(exc)) from exc
 
     if branch and branch not in UPDATE_BRANCHES:
         raise UpdateError(f"automatic updates are disabled on branch '{branch}'")
@@ -704,18 +731,14 @@ def update_to_latest(install_dir: Optional[Path] = None) -> None:
             f"timed out fetching the repository after {exc.timeout} seconds"
         ) from exc
     except FileNotFoundError as exc:
-        raise UpdateError("git is not available") from exc
+        raise UpdateError(
+            f"{string('git.checkout_required')}\n{git_checkout_hint()}"
+        ) from exc
 
     try:
-        can_fast_forward = _git_succeeds(
-            ["merge-base", "--is-ancestor", "HEAD", "FETCH_HEAD"]
-        )
-    except subprocess.TimeoutExpired as exc:
-        raise UpdateError(
-            f"timed out validating the update after {exc.timeout} seconds"
-        ) from exc
-    except FileNotFoundError as exc:
-        raise UpdateError("git is not available") from exc
+        can_fast_forward = _update_is_fast_forward()
+    except GitError as exc:
+        raise UpdateError(str(exc)) from exc
 
     if not can_fast_forward:
         raise UpdateError("repository is not able to be fast-forwarded")
@@ -727,7 +750,9 @@ def update_to_latest(install_dir: Optional[Path] = None) -> None:
     except subprocess.TimeoutExpired as exc:
         raise UpdateError(f"timed out merging after {exc.timeout} seconds") from exc
     except FileNotFoundError as exc:
-        raise UpdateError("git is not available") from exc
+        raise UpdateError(
+            f"{string('git.checkout_required')}\n{git_checkout_hint()}"
+        ) from exc
 
 
 def _wait_for_pid_exit(pid: int, timeout: float = 120.0) -> None:

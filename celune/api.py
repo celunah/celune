@@ -500,14 +500,52 @@ WEBUI_CSS = textwrap.dedent(
         color: var(--celune-ui-accent, var(--celune-primary, #cebaff));
     }
 
-    button#celune-send, button#celune-convert {
-        background: var(--celune-button-bg, #3a304c);
-        color: var(--celune-ui-accent, var(--celune-primary, #cebaff));
+    #celune-style button,
+    #celune-send button,
+    #celune-convert button,
+    button#celune-style,
+    button#celune-send,
+    button#celune-convert {
+        background: var(--celune-button-bg, #3a304c) !important;
+        border: 1px solid var(--celune-ui-accent, var(--celune-primary, #cebaff)) !important;
         border-radius: 4px;
+        color: var(--celune-ui-accent, var(--celune-primary, #cebaff)) !important;
+        opacity: 1 !important;
     }
 
-    button#celune-send:hover, button#celune-convert:hover {
-        background: var(--celune-button-hover, #443a56);
+    #celune-style button:hover:not(:disabled),
+    #celune-send button:hover:not(:disabled),
+    #celune-convert button:hover:not(:disabled),
+    button#celune-style:hover:not(:disabled),
+    button#celune-send:hover:not(:disabled),
+    button#celune-convert:hover:not(:disabled) {
+        background: var(--celune-button-hover, #443a56) !important;
+    }
+
+    #celune-style button:disabled,
+    #celune-send button:disabled,
+    #celune-convert button:disabled,
+    button#celune-style:disabled,
+    button#celune-send:disabled,
+    button#celune-convert:disabled {
+        background: color-mix(
+            in srgb,
+            var(--celune-button-bg, #3a304c) 72%,
+            var(--celune-ui-bg, var(--celune-background, #1d1826))
+        ) !important;
+        border-color: var(--celune-accent, #7c7099) !important;
+        color: var(--celune-secondary, #a595cc) !important;
+        cursor: not-allowed;
+    }
+
+    #celune-style button:focus-visible,
+    #celune-send button:focus-visible,
+    #celune-convert button:focus-visible,
+    button#celune-style:focus-visible,
+    button#celune-send:focus-visible,
+    button#celune-convert:focus-visible {
+        outline: 2px solid var(--celune-ui-accent, var(--celune-primary, #cebaff));
+        outline-offset: 2px;
     }
 
     #celune-log-panel {
@@ -575,6 +613,7 @@ WEBUI_CSS = textwrap.dedent(
         gap: 0.75rem;
     }
 
+    #celune-send button,
     button#celune-send {
         min-height: 2.75rem;
     }
@@ -583,6 +622,7 @@ WEBUI_CSS = textwrap.dedent(
         padding: 0 1em;
     }
 
+    #celune-send,
     button#celune-send {
         display: none;
     }
@@ -774,7 +814,7 @@ WEBUI_CSS = textwrap.dedent(
     """
 ).replace(
     "__CELUNE_CONNECTION_LOST_MESSAGE__",
-    json.dumps(string("webui.connection_lost"), ensure_ascii=False),
+    json.dumps(string("webui.connection_lost", app_name=APP_NAME), ensure_ascii=False),
 )
 
 
@@ -1197,16 +1237,6 @@ class _WebUiCommandHost:
         backend = getattr(self.celune, "vc_backend", None)
         if backend is not None and available("f0_condition", obj=backend):
             backend.f0_condition = enabled
-
-    def set_vc_pitch_shift(self, value: int) -> None:
-        """Set the active VC pitch shift through the core state."""
-        from .vc import clamp_vc_pitch_shift
-
-        clamped = clamp_vc_pitch_shift(value)
-        self.celune.vc_pitch_shift = clamped
-        backend = getattr(self.celune, "vc_backend", None)
-        if backend is not None and available("pitch_shift", obj=backend):
-            backend.pitch_shift = clamped
 
     def open_settings_menu(self) -> None:
         """Report that configuration editing belongs to the Textual UI."""
@@ -1772,14 +1802,12 @@ async def sfx(
 @api.post("/v1/convert", response_model=None)
 async def convert_audio(
     file: UploadFile = File(...),  # noqa: B008
-    pitch_shift: Optional[int] = Form(None),
     f0_condition: Optional[bool] = Form(None),
 ) -> Union[StreamingResponse, JSONResponse]:
     """Convert an uploaded source audio file through the active VC backend.
 
     Args:
         file: The uploaded source audio file to convert.
-        pitch_shift: Optional semitone adjustment applied for this conversion only.
         f0_condition: Optional override enabling singing mode pitch conditioning.
 
     Returns:
@@ -1830,7 +1858,6 @@ async def convert_audio(
             audio,
             sample_rate,
             label=filename,
-            pitch_shift=pitch_shift,
             f0_condition=f0_condition,
         )
     except Exception as error:
@@ -1878,7 +1905,6 @@ api = gr.mount_gradio_app(
     _build_webui(),
     path="/ui",
     footer_links=[],
-    favicon_path=str(project_root() / "resources" / "celune.ico"),
     show_error=True,
     css=WEBUI_CSS,
     head=WEBUI_HEAD,

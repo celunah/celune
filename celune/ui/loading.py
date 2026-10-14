@@ -60,7 +60,10 @@ class CeluneLoadingScreen(Widget):
             ComposeResult: The loading overlay widget tree.
         """
         with Center(id="loading-center"), Vertical(id="loading-content"):
-            yield Static(APP_NAME, id="loading-brand", markup=False)
+            with Horizontal(id="header-container"):
+                yield Static("", classes="line", markup=False)
+                yield Static("  ".join(APP_NAME.upper()), id="header", markup=False)
+                yield Static("", classes="line", markup=False)
             yield Static(
                 self._status_message,
                 id="loading-state-label",

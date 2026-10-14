@@ -13,6 +13,7 @@ from ._version import VERSION
 # don't blame her when you fork Celune and rename her to something else
 APP_NAME = "Celune"
 APP_SLUG = "".join(char if char.isalnum() else "_" for char in APP_NAME.lower())
+SUPPORTED_CUDA_VERSIONS = ("12.8", "13.0")
 NVIDIA_DEVICE_KEYWORDS = (
     "nvidia",
     "geforce",
@@ -57,13 +58,15 @@ PERSONA_MEMORY_EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 PERSONA_EMOTION_MODEL = "lunahr/emotispace-128"
 
 # agents use more context than plain Persona
-PERSONA_CONTEXT_SPACE = 8192
+PERSONA_CONTEXT_SPACE = 2048
 PERSONA_COMPACT_AT = 75
-AGENT_CONTEXT_SPACE = 32768
+AGENT_CONTEXT_SPACE = 8192
 AGENT_ROUTING_CONTEXT_SPACE = 8192
-AGENT_ROUTING_MAX_NEW_TOKENS = 96
+AGENT_ROUTING_MAX_NEW_TOKENS = 256
 AGENT_COMPACT_AT = 75
 AGENT_MAX_LOOPS = 20
+DEFAULT_PERSONA_SPEECH_MODEL_ID = "openai/whisper-large-v3-turbo"
+DEFAULT_PERSONA_SPEECH_MODEL_REVISION = "41f01f3fe87f28c78e2fbf8b568835947dd65ed9"
 
 
 class PersonaModelRevisions(TypedDict):
@@ -288,22 +291,37 @@ VRAM_REQUIREMENTS = {
     "xhigh": 16,
 }
 
+# reserve 2 GB of VRAM for safety margins
+# otherwise she could make your system lag and cause OOM errors
+VRAM_SYSTEM_RESERVE_GIB = 2
+VRAM_BUDGETS = {
+    tier: requirement - VRAM_SYSTEM_RESERVE_GIB
+    for tier, requirement in VRAM_REQUIREMENTS.items()
+}
+
 # equivalent service costs per minute grouped by popular TTS providers
 #
-# please note Celune does not use any of these providers, so this is only for
-# calculating equivalent API cost had you not been using Celune
+# NOTE: Celune does not use any of these providers, so this is only for
+# calculating equivalent API cost if you were not using Celune
 COST_EQUIVALENTS = {
-    "gemini-flash-tts": 0.015,
-    "gemini-pro-tts": 0.03,
-    "openai-realtime": 0.096,
-    "openai-realtime-mini": 0.03,
-    "elevenlabs-flash": 0.05,
-    "elevenlabs-turbo": 0.05,
-    "elevenlabs-multilingual-v2": 0.1,
-    "elevenlabs-multilingual-v3": 0.1,
+    # NOTE: Celune's voice samples were designed with this TTS (as of Sep 30, 2026)
+    # she does not require it to speak, the app remains local only
+    "gemini-3.8-flash-tts": 0.027,
+    "gemini-3.8-flash-lite-tts": 0.018,
+    "gpt-realtime-2.1": 0.076,
+    "gpt-realtime-2.1-mini": 0.024,
+    "gpt-live-1": 0.05,
+    "elevenlabs-flash": 0.04,
+    "elevenlabs-turbo": 0.04,
+    "elevenlabs-multilingual-v2": 0.08,
+    "elevenlabs-conversational-v3": 0.04,
+    "elevenlabs-v3": 0.08,
+    "elevenlabs-v4-turbo": 0.04,
+    "elevenlabs-v4": 0.08,
     "fishaudio-s2-pro": 0.021,
     "fishaudio-s2.1-pro": 0.021,
 }
 
-# temporary Celune user agent, will be used properly in v5
+# Celune user agent
+# TODO: use in the agent web crawler (v5.1.0)
 CELUNE_UA = f"Celune/{VERSION}"

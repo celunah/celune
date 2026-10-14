@@ -4,18 +4,17 @@
 import re
 import sys
 import logging
-
 from typing import Literal, Optional
-from dataclasses import dataclass, replace
-from collections.abc import Callable, Collection, Mapping
+from dataclasses import replace, dataclass
+from collections.abc import Mapping, Callable, Collection
 
 import readchar
 from rich.text import Text
 from rich.cells import cell_len
 from textual.dom import NoScreen
+from textual.events import Key, Click, Leave, MouseMove
 from textual.widget import Widget
 from textual.message import Message
-from textual.events import Click, Key, Leave, MouseMove
 
 from ..terminal import _infer_log_severity
 from ..typing.common import JSONSerializable

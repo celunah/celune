@@ -6,16 +6,17 @@ import stat
 import zipfile
 import datetime
 import tempfile
-import subprocess
 from pathlib import Path
 from unittest import mock
 
 import pytest
+from git import Repo
+from git.exc import GitError
 
 from celune import i18n, updater, namedays
-
-from .support import CeluneTestCase
+from celune.vcs import get_revision, is_git_checkout
 from .platform import LINUX_ONLY
+from .support import CeluneTestCase
 
 
 class TestNameDay(CeluneTestCase):
@@ -122,6 +123,73 @@ class TestI18n(CeluneTestCase):
 
 class TestUpdater(CeluneTestCase):
     """Tests for pure updater decision logic."""
+
+    def test_gitpython_helpers_read_repository_metadata(self) -> None:
+        """Verify repository state is read through GitPython's Repo API."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            repository = Repo.init(root)
+            try:
+                with repository.config_writer() as config:
+                    config.set_value("user", "name", "Celune Tests")
+                    config.set_value("user", "email", "celune@example.invalid")
+                (root / "note.txt").write_text("tracked", encoding="utf-8")
+                repository.index.add(["note.txt"])
+                commit = repository.index.commit("initial commit")
+                repository.create_tag("v5.0.4")
+
+                with mock.patch("celune.updater._repo_root", return_value=root):
+                    assert updater._is_git_checkout()
+                    assert is_git_checkout(root)
+                    assert updater._current_branch() == repository.active_branch.name
+                    assert updater._local_revision() == commit.hexsha
+                    assert updater._local_tag() == "5.0.4"
+                    assert not updater._has_local_changes()
+                    assert updater._run_git(["status", "--porcelain"]) == ""
+
+                assert get_revision(root) == commit.hexsha[:7]
+                (root / "untracked.txt").write_text("untracked", encoding="utf-8")
+                assert get_revision(root) == f"{commit.hexsha[:7]}*"
+                with mock.patch("celune.updater._repo_root", return_value=root):
+                    assert updater._has_local_changes()
+                    assert updater._run_git(["status", "--porcelain"]) == (
+                        "?? untracked.txt"
+                    )
+            finally:
+                repository.close()
+
+    def test_git_checkout_detection_rejects_uninitialized_source_archive(self) -> None:
+        """Verify a source directory without Git metadata is not a checkout."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            assert not is_git_checkout(Path(temp_dir))
+
+    def test_git_checkout_detection_handles_a_missing_git_executable(self) -> None:
+        """Verify missing Git is treated as unavailable repository metadata."""
+        with mock.patch(
+            "celune.vcs._open_repository",
+            side_effect=FileNotFoundError("git"),
+        ):
+            assert not is_git_checkout(Path.cwd())
+
+    def test_git_checkout_detection_rejects_a_parent_repository(self) -> None:
+        """Verify a Git parent does not make an extracted ZIP a checkout."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            repository = Repo.init(root)
+            try:
+                with repository.config_writer() as config:
+                    config.set_value("user", "name", "Celune Tests")
+                    config.set_value("user", "email", "celune@example.invalid")
+                (root / "tracked.txt").write_text("tracked", encoding="utf-8")
+                repository.index.add(["tracked.txt"])
+                repository.index.commit("initial commit")
+                source_archive = root / "source-archive"
+                source_archive.mkdir()
+
+                assert not is_git_checkout(source_archive)
+                assert get_revision(source_archive) == ""
+            finally:
+                repository.close()
 
     def test_missing_update_metadata_uses_active_locale(self) -> None:
         """Verify missing update metadata is reported through the locale table."""
@@ -541,9 +609,11 @@ class TestUpdater(CeluneTestCase):
         """
         with (
             mock.patch("celune.updater._is_git_checkout", return_value=False),
-            pytest.raises(updater.UpdateError, match="did not find"),
+            pytest.raises(updater.UpdateError) as error,
         ):
             updater.update_to_latest()
+        assert i18n.string("git.checkout_required") in str(error.value)
+        assert updater.git_checkout_hint() in str(error.value)
 
         with (
             mock.patch("celune.updater._is_git_checkout", return_value=True),
@@ -557,8 +627,8 @@ class TestUpdater(CeluneTestCase):
             mock.patch("celune.updater._has_local_changes", return_value=False),
             mock.patch(
                 "celune.updater._current_branch",
-                side_effect=subprocess.TimeoutExpired("git", 5),
+                side_effect=GitError("branch inspection failed"),
             ),
-            pytest.raises(updater.UpdateError, match="timed out"),
+            pytest.raises(updater.UpdateError, match="branch inspection failed"),
         ):
             updater.update_to_latest()

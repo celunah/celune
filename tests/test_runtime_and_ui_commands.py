@@ -26,9 +26,9 @@ from celune.i18n import string
 from celune.agent import AgentTaskState
 from celune.celune import Celune
 from celune.ui.app import (
-    ButtonActions,
     CeluneUI,
     VoiceButton,
+    ButtonActions,
 )
 from tests.support import FakeBackend, FakeVCBackend, CeluneTestCase
 from tests.platform import WINDOWS_ONLY
@@ -43,6 +43,7 @@ from celune.typing.locks import (
 )
 from celune.typing.common import JSONSerializable
 from celune.typing.aliases import LogLevel
+
 from .ui_startup_interactions import TestUIStartup as _TestUIStartup
 
 
@@ -574,7 +575,6 @@ class TestUICommand(CeluneTestCase):
             dev=False,
             input_mode="text_to_speech",
             vc_f0_condition=False,
-            vc_pitch_shift=0,
             vc_backend=SimpleNamespace(),
         )
 
@@ -601,6 +601,68 @@ class TestUICommand(CeluneTestCase):
             "Host audio server restarted.",
             "info",
         )
+
+    def test_vram_command_reports_process_and_component_usage(self) -> None:
+        """Verify /vram renders aggregate and per-component CUDA diagnostics."""
+        report = {
+            "available": True,
+            "allocated_bytes": 2 * 1024**3,
+            "reserved_bytes": 3 * 1024**3,
+            "peak_allocated_bytes": 4 * 1024**3,
+            "components": [
+                {
+                    "name": "tts/qwen3",
+                    "loaded": True,
+                    "available": True,
+                    "device": "cuda:0",
+                    "allocated_bytes": 1024**3,
+                    "reserved_bytes": 3 * 1024**3,
+                    "peak_allocated_bytes": 4 * 1024**3,
+                }
+            ],
+        }
+        with mock.patch("celune.ui.commands.runtime_vram_report", return_value=report):
+            self._process_command("vram", [])
+
+        assert self.logs == [
+            ("--- Memory usage statistics ---", "info"),
+            (
+                "Text to speech (qwen3): 1.00 GiB/3.00 GiB/4.00 GiB (cuda:0)",
+                "info",
+            ),
+            ("Legend: allocated memory, reserved memory, peak memory", "info"),
+        ]
+
+    def test_vram_command_reports_cpu_only_components(self) -> None:
+        """Verify /vram reports loaded components on the CPU."""
+        report = {
+            "available": True,
+            "allocated_bytes": 2 * 1024**3,
+            "reserved_bytes": 3 * 1024**3,
+            "peak_allocated_bytes": 4 * 1024**3,
+            "components": [
+                {
+                    "name": "normalizer",
+                    "loaded": True,
+                    "available": True,
+                    "device": "cpu",
+                    "allocated_bytes": 32 * 1024**2,
+                    "reserved_bytes": 32 * 1024**2,
+                    "peak_allocated_bytes": 32 * 1024**2,
+                }
+            ],
+        }
+        with mock.patch("celune.ui.commands.runtime_vram_report", return_value=report):
+            self._process_command("vram", [])
+
+        assert self.logs == [
+            ("--- Memory usage statistics ---", "info"),
+            (
+                "Normalizer: 32.00 MiB/-/- (cpu)",
+                "info",
+            ),
+            ("Legend: allocated memory, reserved memory, peak memory", "info"),
+        ]
 
     def test_common_commands_update_state_and_validate_inputs(self) -> None:
         """Verify prompt, speed, and reverb command paths.
@@ -657,29 +719,41 @@ class TestUICommand(CeluneTestCase):
         self.ui.celune.set_backend_async.assert_not_called()
         assert self.logs[-1][1] == "warning"
 
-    def test_voice_conversion_commands_update_seedvc_state(self) -> None:
-        """Verify VC slash commands update engine and backend state."""
+    def test_voice_conversion_mode_command_updates_f0_conditioning(self) -> None:
+        """Verify the VC mode command updates engine and backend state."""
         self.ui.celune.input_mode = "voice_conversion"
-        self.ui.celune.vc_backend = SimpleNamespace(f0_condition=False, pitch_shift=0)
+        self.ui.celune.vc_backend = SimpleNamespace(f0_condition=False)
 
         self._process_command("vcmode", ["sing"])
-        self._process_command("vcpitch", ["-2"])
-        self._process_command("vcpitch", ["clear"])
 
         assert self.ui.celune.vc_f0_condition
         assert self.ui.celune.vc_backend.f0_condition
-        assert self.ui.celune.vc_pitch_shift == 0
-        assert self.ui.celune.vc_backend.pitch_shift == 0
-        assert self.logs[-3] == ("Voice conversion mode set to Sing.", "info")
-        assert self.logs[-2] == (
-            "Voice conversion pitch shift set to -2 semitones.",
-            "info",
-        )
+        assert self.logs[-1] == ("Voice conversion mode set to Sing.", "info")
+        assert self.ui.refresh_vc_controls.call_count == 1
+
+    def test_vcdebug_command_starts_and_stops_capture(self) -> None:
+        """Verify /vcdebug is available only as an explicit VC capture toggle."""
+        self.ui.celune.input_mode = "voice_conversion"
+        capture = SimpleNamespace(directory=Path("temporary"))
+        self.ui._vc_debug_capture = None
+        self.ui._stop_vc_debug_capture = mock.Mock(return_value=True)
+
+        with mock.patch("celune.vc_debug.VCDebugCapture", return_value=capture):
+            self._process_command("vcdebug", ["on"])
+
+        assert self.ui._vc_debug_capture is capture
         assert self.logs[-1] == (
-            "Voice conversion pitch shift set to 0 semitones.",
+            "VC debug capture started. Run /vcdebug off to save it.",
             "info",
         )
-        assert self.ui.refresh_vc_controls.call_count == 3
+
+        self._process_command("vcdebug", ["off"])
+
+        self.ui._stop_vc_debug_capture.assert_called_once_with(announce=True)
+        assert self.logs[-1] == (
+            "Stopping VC debug capture and saving audio.",
+            "info",
+        )
 
     def test_vc_command_submits_audio_file_through_engine_pipeline(self) -> None:
         """Verify /vc decodes a file and submits it through Celune's VC pipeline."""
@@ -737,14 +811,11 @@ class TestUICommand(CeluneTestCase):
         self._process_command("vcmode", ["maybe"])
         assert self.logs[-1] == ("Usage: /vcmode <talk|sing>", "warning")
 
-        self._process_command("vcpitch", ["13"])
+        self._process_command("vcpitch", ["-2"])
         assert self.logs[-1] == (
-            "Pitch shift must be between -3 and 3 semitones.",
+            string("commands.unknown_command", command="vcpitch"),
             "warning",
         )
-
-        self._process_command("vcpitch", ["high"])
-        assert self.logs[-1] == ("Usage: /vcpitch <semitones|clear>", "warning")
 
     def test_vc_command_reports_decode_failure(self) -> None:
         """Verify /vc surfaces decode errors cleanly."""

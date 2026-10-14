@@ -3,6 +3,12 @@
 `main.py` is the lightweight launcher. It rejects unsupported Python versions
 before importing the heavy runtime, then dispatches to `celune.entrypoint`.
 
+Commands that do not start the core keep that boundary: help, version, the
+doctor report, and the test-mode listing use lightweight command dependencies.
+Configuration commands load only the configuration-path and system-browser
+helpers. The full Celune dependency contract is loaded by the default start,
+explicit start/run commands, and the UI or agent test modes.
+
 ## Commands
 
 | Command | Behavior |
@@ -24,6 +30,28 @@ before importing the heavy runtime, then dispatches to `celune.entrypoint`.
 | `celune help` / `--help` / `-h` | Print command help. |
 | `celune version` / `--version` | Print version, revision, and tagline. |
 
+The agent test runs the configured Persona, Needle, and TTS path through one
+read-only task. It then runs every active production tool handler with isolated
+test state and speaks a short worked/didn't work status for each tool; detailed
+results are recorded in the test log. Celune speaks a multiple-choice question
+and an approval request before displaying them and accepting typed answers. The
+answers are applied directly to the paused diagnostic runtime, without another
+Persona response. Either listed choice passes. Approving or declining the
+simulated mutation passes when the response is processed. The test also checks task
+lifecycle, schema validation, permissions, context limits, and terminal
+outcomes. Each typed response prompt waits up to two minutes; a missing answer
+fails that check. When local-management tools are enabled, filesystem operations stay
+inside a temporary directory; process and application mutations use test
+doubles and never launch or close real resources. Independent checks continue
+after a failure.
+
+The stopped test UI log shows one `PASS`, `FAIL`, or `SKIP` entry per check and
+a total for each status. Local-management tools are skipped when
+`agent.fs_tools` is disabled. When enabled, filesystem mutations stay inside a
+temporary directory; process and application launch or termination use test
+doubles and do not affect running programs. A failed active check makes
+`celune test agent` return the standard failure exit code after the UI closes.
+
 The command help aligns descriptions with spaces, so terminal tab-stop settings
 do not shift the text.
 
@@ -44,9 +72,16 @@ overrides are useful for one process, a service wrapper, or a packaged launcher.
 Doctor checks Python version, repository/default-config paths, version metadata,
 the active interpreter/venv, core Python imports, system binaries, runtime
 configuration, PyTorch build and CUDA backend, GPU architecture, and a compute
-smoke test where possible. It distinguishes a missing prerequisite from an
-accelerator that is present but unusable. `--fix` does not promise to repair
-third-party GPU drivers or arbitrary backend environments.
+smoke test where possible. TTS backend dependencies belong to isolated CEDTS
+worker environments, so doctor does not look for them in Celune's core Python
+environment. Source-tree runs also check for a committed Git
+checkout with a commit and show the upstream clone command when Git metadata is missing.
+Compiled releases use their bundled update manifest and do not need a local Git
+checkout. The report distinguishes a missing prerequisite from an accelerator
+that is present but unusable. `--fix` does not promise to repair third-party
+GPU drivers or arbitrary backend environments. The optional eSpeak NG check is
+a warning: without eSpeak NG, Celune still runs, but word-timed captions are
+unavailable.
 
 ## CPU compatibility
 
@@ -68,3 +103,7 @@ arguments, already-running instances, no ANSI-capable terminal, launcher loss,
 pending updates, and an unsupported CPU. A normal interactive start should use
 the launcher so process-loss, CPU compatibility, and update handoff behavior
 are preserved.
+
+## See also
+
+- [Agent mode](../user-guide/agent.md)

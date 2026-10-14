@@ -11,12 +11,12 @@ import platform
 import warnings
 import contextlib
 import subprocess
-import importlib.util
 from pathlib import Path
 from dataclasses import dataclass
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Optional
+from importlib import util, import_module
 from types import ModuleType, SimpleNamespace
+from typing import TYPE_CHECKING, NoReturn, Optional
 
 from celune.paths import (
     project_root,
@@ -24,14 +24,19 @@ from celune.paths import (
     migrate_legacy_app_data,
     configure_huggingface_runtime,
 )
+from celune.constants import (
+    APP_NAME,
+    APP_SLUG,
+    NVIDIA_DEVICE_KEYWORDS,
+    SUPPORTED_CUDA_VERSIONS,
+    ExitCodes,
+)
 from celune.i18n import string
 from celune.typing.common import Config
 from celune.terminal import set_terminal_title
-from celune.updater import apply_update_and_restart
 from celune import REVISION, __tagline__, __version__
+from celune.vcs import is_git_checkout, git_checkout_hint
 from celune.config import config_log_level, normalize_log_level
-from celune.watchdog import start_watchdog, launcher_loss_requested
-from celune.constants import APP_NAME, APP_SLUG, NVIDIA_DEVICE_KEYWORDS, ExitCodes
 
 if TYPE_CHECKING:
     from celune.celune import Celune
@@ -110,12 +115,10 @@ _CELUNE_PROCESS_NAMES = frozenset(
     {"celune", "celune-bin", "celune-bin.exe", "celune.appimage", "celune.exe"}
 )
 
-start_watchdog()
-
 
 def _load_ui_test_backend() -> type:
     """Load the lightweight fake backend used by the explicit UI test mode."""
-    support = importlib.import_module("tests.support")
+    support = import_module("tests.support")
     return support.FakeBackend
 
 
@@ -267,19 +270,10 @@ def _load_runtime() -> SimpleNamespace:
         from celune.updater import check_for_update, update_to_latest
         from celune.namedays import has_name_day
         from celune.exceptions import No, UpdateError
+
+        config_path()
     except ModuleNotFoundError as package:
-        if package.name is not None:
-            _print_dependency_setup_help(package.name)
-
-        if INITIAL_LOG_LEVEL != "info":
-            with contextlib.suppress(ModuleNotFoundError):
-                from rich.traceback import install
-
-                install()
-
-            raise
-
-        sys.exit(EXIT_CODES.EXIT_MISSING_DEPENDENCIES.value)
+        _handle_missing_dependency(package)
 
     _RUNTIME = SimpleNamespace(
         yaml=yaml,
@@ -310,8 +304,41 @@ def _load_runtime() -> SimpleNamespace:
     return _RUNTIME
 
 
+def _handle_missing_dependency(package: ModuleNotFoundError) -> NoReturn:
+    """Report one unavailable CLI dependency and terminate the command."""
+    if package.name is not None:
+        _print_dependency_setup_help(package.name)
+
+    if INITIAL_LOG_LEVEL != "info":
+        with contextlib.suppress(ModuleNotFoundError):
+            from rich.traceback import install
+
+            install()
+
+        raise package
+
+    sys.exit(EXIT_CODES.EXIT_MISSING_DEPENDENCIES.value)
+
+
+def _load_config_runtime() -> SimpleNamespace:
+    """Import only the services needed by configuration commands."""
+    try:
+        import webbrowser
+
+        from celune.paths import config_path
+
+        config_path()
+    except ModuleNotFoundError as package:
+        _handle_missing_dependency(package)
+
+    return SimpleNamespace(
+        config_path=config_path,
+        webbrowser=webbrowser,
+    )
+
+
 def _load_core_runtime(*, defer_missing_dependency: bool = False) -> SimpleNamespace:
-    """Import the engine and full UI runtime when it is needed.
+    """Import Celune's engine core after lightweight startup completes.
 
     Args:
         defer_missing_dependency: Leave a missing dependency for the mounted UI
@@ -329,14 +356,14 @@ def _load_core_runtime(*, defer_missing_dependency: bool = False) -> SimpleNames
         return runtime
 
     try:
+        from celune.paths import configure_huggingface_cache_environment
+
+        configure_huggingface_cache_environment()
         configure_huggingface_runtime()
-        from celune.ui import (
-            CeluneUI,
-            CeluneTextualUI,
-            CeluneHeadlessUI,
-            CeluneHeadlessBaseUI,
-        )
-        from celune.celune import Celune
+        from celune.compat import torchao_compatibility
+
+        with torchao_compatibility():
+            from celune.celune import Celune
     except ModuleNotFoundError as package:
         if defer_missing_dependency:
             raise
@@ -355,10 +382,6 @@ def _load_core_runtime(*, defer_missing_dependency: bool = False) -> SimpleNames
         sys.exit(EXIT_CODES.EXIT_MISSING_DEPENDENCIES.value)
 
     runtime.Celune = Celune
-    runtime.CeluneUI = CeluneUI
-    runtime.CeluneHeadlessUI = CeluneHeadlessUI
-    runtime.CeluneHeadlessBaseUI = CeluneHeadlessBaseUI
-    runtime.CeluneTextualUI = CeluneTextualUI
     return runtime
 
 
@@ -398,7 +421,7 @@ def _doctor_add(
 
 def _doctor_import(module_name: str) -> bool:
     """Return whether a module can be resolved without importing the full app."""
-    return importlib.util.find_spec(module_name) is not None
+    return util.find_spec(module_name) is not None
 
 
 def _doctor_distro_name(system_name: str) -> str:
@@ -579,7 +602,7 @@ def _doctor_torch_details() -> list[DoctorCheck]:
         return checks
 
     try:
-        torch = importlib.import_module("torch")
+        torch = import_module("torch")
     except Exception as exc:
         _doctor_add(
             checks,
@@ -664,13 +687,17 @@ def _doctor_torch_details() -> list[DoctorCheck]:
         return checks
 
     if cuda_available:
-        expected = "12.8"
+        supported_versions = cuda_version in SUPPORTED_CUDA_VERSIONS
         _doctor_add(
             checks,
             "CUDA runtime",
-            cuda_version == expected,
+            supported_versions,
             f"Detected CUDA {cuda_version or 'unknown'}",
-            hint=f"{APP_NAME} expects a CUDA 12.8-compatible runtime for the main GPU backends.",
+            hint=string(
+                "cli.doctor_cuda_runtime_hint",
+                app_name=APP_NAME,
+                versions=" or ".join(SUPPORTED_CUDA_VERSIONS),
+            ),
         )
 
         try:
@@ -830,6 +857,19 @@ def _doctor_checks() -> list[DoctorCheck]:
     ):
         _doctor_add(checks, label, path.exists(), str(path), hint=hint)
 
+    if not running_compiled():
+        git_checkout_present = is_git_checkout(PROJECT_ROOT)
+        _doctor_add(
+            checks,
+            string("cli.doctor_git_checkout"),
+            git_checkout_present,
+            string("cli.doctor_git_checkout_present")
+            if git_checkout_present
+            else string("git.checkout_missing"),
+            severity="warning",
+            hint=None if git_checkout_present else git_checkout_hint(),
+        )
+
     version, revision = _display_version()
     version_detail = version if not revision else f"{version} ({revision})"
     _doctor_add(checks, "Version metadata", True, version_detail)
@@ -878,6 +918,7 @@ def _doctor_checks() -> list[DoctorCheck]:
         hint=f"{APP_NAME} setup uses uv to sync Python dependencies.",
     )
 
+    # CEDTS worker manifests own backend-specific packages; probe core imports here only.
     required_imports = [
         ("yaml", "PyYAML", f"{APP_NAME} needs YAML support for config loading."),
         ("psutil", "psutil", f"{APP_NAME} uses psutil for process checks."),
@@ -910,17 +951,9 @@ def _doctor_checks() -> list[DoctorCheck]:
             f"{APP_NAME} DSP playback requires sounddevice.",
         ),
         ("soundfile", "soundfile", f"{APP_NAME}'s audio writer requires soundfile."),
-        (
-            "faster_qwen3_tts",
-            "faster-qwen3-tts",
-            f"{APP_NAME}'s default backend requires faster-qwen3-tts.",
-        ),
     ]
     optional_imports = [
         ("torchvision", "torchvision", "Persona vision support uses torchvision."),
-        ("pocket_tts", "pocket-tts", f"{APP_NAME} Mini needs pocket-tts."),
-        ("dots_tts", "dots.tts", "The dots.tts MeanFlow backend needs dots.tts."),
-        ("voxcpm", "voxcpm", "The VoxCPM2 backend needs voxcpm."),
         ("openrgb", "openrgb-python", "Presence lighting needs openrgb-python."),
         ("matplotlib", "matplotlib", "Developer visualizations use matplotlib."),
         ("pedalboard", "pedalboard", "Reverb effects require pedalboard."),
@@ -977,6 +1010,20 @@ def _doctor_checks() -> list[DoctorCheck]:
             str(binary_path) if binary_path else "not found",
             hint=hint,
         )
+
+    espeak_path = _doctor_binary_path("espeak-ng")
+    _doctor_add(
+        checks,
+        string("cli.doctor_espeak_label"),
+        espeak_path is not None,
+        (
+            str(espeak_path)
+            if espeak_path is not None
+            else string("cli.doctor_espeak_missing")
+        ),
+        severity="warning",
+        hint=string("cli.doctor_espeak_hint"),
+    )
 
     config_path = _doctor_config_path()
     if config_path is None:
@@ -1105,7 +1152,7 @@ def handle_config(command_args: list[str], prog_name: str) -> None:
         command_args: Current command's arguments.
         prog_name: The name of the program.
     """
-    runtime = _load_runtime()
+    runtime = _load_config_runtime()
 
     if len(command_args) == 1:
         if command_args[0] == "view":
@@ -1290,6 +1337,9 @@ def start(
     global _FORCE_STARTUP_DIAGNOSTICS
     global _STARTUP_DIAGNOSTIC_SINK
 
+    from celune.watchdog import start_watchdog, launcher_loss_requested
+
+    start_watchdog()
     _FORCE_STARTUP_DIAGNOSTICS = log_level not in {None, "info"}
     _STARTUP_DIAGNOSTICS.clear()
     _print_startup_diagnostic(string("ui.startup_checking_dependencies"))
@@ -1301,6 +1351,8 @@ def start(
         if testing:
             if test_mode not in {None, "ui", "agent"}:
                 raise ValueError(f"unknown test mode: {test_mode}")
+            from celune.ui import CeluneUI
+
             runtime = _load_core_runtime()
             active_test_mode = test_mode or "ui"
             backend_mode = "ui_test" if active_test_mode == "ui" else "agent_test"
@@ -1317,6 +1369,13 @@ def start(
             if active_test_mode == "agent":
                 test_config = configured_test_config
                 test_backend = configured_test_backend
+                from celune.compat import _suppress_torchao_quantization_syntax_warning
+
+                runtime_startup_context = (
+                    _suppress_torchao_quantization_syntax_warning()
+                )
+            else:
+                runtime_startup_context = contextlib.nullcontext()
 
             def finish_test(
                 core: "Celune",
@@ -1324,10 +1383,19 @@ def start(
                 detail: Optional[str],
             ) -> None:
                 """Finish the selected explicit test through the core boundary."""
-                if active_test_mode == "agent" and success:
+                if active_test_mode == "agent":
                     from celune.test import run_agent_test
 
-                    run_agent_test(core)
+                    run_agent_test(
+                        core,
+                        startup_success=success,
+                        startup_detail=detail,
+                        request_user=getattr(
+                            ui,
+                            "request_agent_test_response",
+                            None,
+                        ),
+                    )
                     return
                 core.finish_test_mode(
                     active_test_mode,
@@ -1335,7 +1403,7 @@ def start(
                     detail=detail,
                 )
 
-            ui = runtime.CeluneUI(
+            ui = CeluneUI(
                 startup_messages=_STARTUP_DIAGNOSTICS,
                 test_completion_callback=finish_test,
             )
@@ -1351,13 +1419,14 @@ def start(
                 )
             else:
                 _print_startup_diagnostic(string("ui.startup_loading_core"))
-                celune = runtime.Celune(
-                    config=test_config,
-                    tts_backend=test_backend,
-                    backend_mode=backend_mode,
-                    log_level=active_log_level,
-                    startup_callback=_print_startup_diagnostic,
-                )
+                with runtime_startup_context:
+                    celune = runtime.Celune(
+                        config=test_config,
+                        tts_backend=test_backend,
+                        backend_mode=backend_mode,
+                        log_level=active_log_level,
+                        startup_callback=_print_startup_diagnostic,
+                    )
             ui.celune = celune
             ui.prepare_theme()
             try:
@@ -1369,6 +1438,11 @@ def start(
                     sys.exit(ui.return_code)
                 if ui.return_code not in (None, 0):
                     sys.exit(runtime.ExitCodes.EXIT_FAILURE.value)
+                if active_test_mode == "agent":
+                    from celune.test import _agent_test_succeeded
+
+                    if not _agent_test_succeeded(celune.test_result):
+                        sys.exit(runtime.ExitCodes.EXIT_FAILURE.value)
             finally:
                 _STARTUP_DIAGNOSTIC_SINK = None
             if test_mode is None:
@@ -1563,7 +1637,9 @@ def start(
                 _STARTUP_DIAGNOSTIC_SINK = None
         elif headless:
             runtime = _load_core_runtime()
-            ui_headless = runtime.CeluneHeadlessUI(config)
+            from celune.ui import CeluneHeadlessUI
+
+            ui_headless = CeluneHeadlessUI(config)
             _print_startup_diagnostic(string("ui.startup_loading_core"))
             celune = runtime.Celune(
                 tts_backend=backend,
@@ -1690,6 +1766,8 @@ def main(argv: Optional[list[str]] = None) -> None:
 
         launcher_path = Path(args[2]).resolve()
         try:
+            from celune.updater import apply_update_and_restart
+
             sys.exit(apply_update_and_restart(parent_pid, launcher_path, args[3:]))
         except Exception as exc:
             from celune.utils import format_error_message
@@ -1810,6 +1888,11 @@ def main(argv: Optional[list[str]] = None) -> None:
         else:
             print(f"{APP_NAME} {version}")
         print(__tagline__)
+
+        if not running_compiled() and not is_git_checkout(PROJECT_ROOT):
+            print()
+            print(string("git.checkout_missing"))
+            print(git_checkout_hint())
 
         if "dirty" in revision:
             print()

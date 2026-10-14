@@ -15,12 +15,15 @@ import threading
 import contextlib
 from copy import deepcopy
 from uuid import uuid4
-from typing import Optional, cast
+from typing import TYPE_CHECKING, Optional, cast
 from collections.abc import Callable, Iterator
 
 from . import app as _app
 from ..binding import install_class_functions
-from ..constants import SIGTSTP
+from ..constants import SIGTSTP, APP_NAME
+
+if TYPE_CHECKING:
+    from ..vc_debug import VCDebugSaveResult
 
 __all__ = (
     "_close_menu",
@@ -43,6 +46,7 @@ __all__ = (
     "_signal_handler_windows",
     "_split_command_input",
     "_start_vc_recording",
+    "_stop_vc_debug_capture",
     "_submit_text",
     "action_quit",
     "begin_tutorial",
@@ -61,6 +65,7 @@ __all__ = (
     "open_settings_menu",
     "open_voice_menu",
     "process_command",
+    "request_agent_test_response",
     "split_command_input",
     "toggle_vc_recording",
     "tts_idle",
@@ -177,7 +182,9 @@ def _start_vc_recording(self) -> bool:
                     audio_label,
                     source_id=live_source_id,
                     generation=live_playback_generation,
+                    volume=_app.VC_PLAYBACK_GAIN,
                     status_label_key="pipeline.revoicing_label",
+                    low_latency=True,
                     reset_ready_announcement=live_source_id is None,
                 )
                 if live_source_id is None:
@@ -213,6 +220,10 @@ def _start_vc_recording(self) -> bool:
                 return
 
             audio, queued_sample_rate, queued_label, is_final_chunk = item
+            debug_capture = getattr(self, "_vc_debug_capture", None)
+            debug_token = (
+                debug_capture.begin_conversion() if debug_capture is not None else None
+            )
             try:
                 if self.celune is None:
                     continue
@@ -228,6 +239,8 @@ def _start_vc_recording(self) -> bool:
                     label=queued_label,
                 )
                 if converted is None:
+                    if debug_capture is not None:
+                        debug_capture.record_conversion(debug_token)
                     self.safe_log(
                         _app.string("ui.recording_stream_submit_failed"),
                         "warning",
@@ -239,6 +252,12 @@ def _start_vc_recording(self) -> bool:
                 )
                 playback_sample_rate = converted.sample_rate
                 playback_label = converted.label
+                if debug_capture is not None:
+                    debug_capture.record_conversion(
+                        debug_token,
+                        converted_audio,
+                        playback_sample_rate,
+                    )
                 if len(converted_audio) > 0:
                     queue_playback_segment(
                         converted_audio,
@@ -249,6 +268,8 @@ def _start_vc_recording(self) -> bool:
                 if is_final_chunk:
                     finish_playback_segment()
             except Exception as exc:
+                if debug_capture is not None:
+                    debug_capture.record_conversion(debug_token)
                 if self.celune is None:
                     continue
                 self.safe_log(
@@ -280,12 +301,18 @@ def _start_vc_recording(self) -> bool:
         discard(status)
 
         callback_audio = _app.np.asarray(indata, dtype=_app.np.float32).copy()
+        debug_capture = getattr(self, "_vc_debug_capture", None)
+        if debug_capture is not None:
+            debug_capture.record_microphone(callback_audio, sample_rate)
         current_rms = self._vc_input_rms(callback_audio)
         should_stop_for_feedback = False
         feedback_min_capture_frames = self._vc_feedback_min_capture_frames(sample_rate)
         if ai_vad is not None:
             try:
-                voice_detected = ai_vad.has_voice(callback_audio, sample_rate)
+                voice_detected = ai_vad.has_voice(
+                    callback_audio,
+                    sample_rate,
+                ) or self._vc_input_has_voice(callback_audio)
             except (RuntimeError, AssertionError, ValueError):
                 ai_vad.reset()
                 voice_detected = self._vc_input_has_voice(callback_audio)
@@ -335,7 +362,7 @@ def _start_vc_recording(self) -> bool:
                 self._vc_recording_silence_frames = 0
             elif self._vc_recording_speech_started:
                 self._vc_recording_silence_frames += len(callback_audio)
-                live_audio = _app.np.zeros_like(callback_audio)
+                live_audio = callback_audio
                 if self._vc_recording_silence_frames > vad_hangover_frames:
                     self._vc_recording_speech_started = False
                     self._vc_recording_silence_frames = 0
@@ -477,6 +504,7 @@ def _shutdown_live_vc_recording(self) -> None:
         self.celune._exit_requested = True
 
     if not self._vc_recording_active():
+        self._stop_vc_debug_capture(announce=False, discard_pending=True)
         return
 
     with self._vc_recording_lock:
@@ -494,6 +522,54 @@ def _shutdown_live_vc_recording(self) -> None:
     self._shutdown_vc_stream(stream)
     self._stop_live_vc_backend()
     self._join_vc_recording_threads(stop_thread, worker)
+    self._stop_vc_debug_capture(announce=False, discard_pending=True)
+
+
+def _stop_vc_debug_capture(
+    self,
+    announce: bool = True,
+    discard_pending: bool = False,
+) -> bool:
+    """Stop and export the active diagnostic capture asynchronously."""
+    capture = getattr(self, "_vc_debug_capture", None)
+    if capture is None:
+        return False
+
+    def report(result: VCDebugSaveResult) -> None:
+        def clear_capture() -> None:
+            if getattr(self, "_vc_debug_capture", None) is capture:
+                self._vc_debug_capture = None
+
+        self._run_on_ui_thread(clear_capture)
+        files = tuple(
+            path.name
+            for path in (result.microphone_path, result.converted_path)
+            if path is not None
+        )
+        if files and announce:
+            self.safe_log(
+                _app.string(
+                    "ui.vc_debug_saved",
+                    files=", ".join(files),
+                    path=str(result.directory),
+                )
+            )
+        elif not files and not result.errors and announce:
+            self.safe_log(_app.string("ui.vc_debug_empty"), "warning")
+
+        if result.errors and announce:
+            message = "; ".join(result.errors)
+            self.safe_log(
+                _app.format_error_message(
+                    _app.string("ui.vc_debug_save_failed"),
+                    RuntimeError(message),
+                    getattr(self.celune, "log_level", "info"),
+                ),
+                "warning",
+            )
+
+    capture.stop(report, discard_pending=discard_pending)
+    return True
 
 
 def tts_voice_changed(self, name: str) -> None:
@@ -682,6 +758,11 @@ def _config_explanation(path: tuple[str, ...]) -> str:
             "max_short_term_messages",
         ): "persona.memory.short_term",
         ("persona", "memory", "auto_classifier"): "persona.memory.auto",
+        (
+            "persona",
+            "memory",
+            "automatic_max_age_days",
+        ): "mem.automatic_age",
         ("persona", "memory", "auto_classifier_min_confidence"): "mem.auto_conf",
         (
             "persona",
@@ -709,12 +790,13 @@ def _config_explanation(path: tuple[str, ...]) -> str:
     }
     explanation_path = aliases.get(path, ".".join(path))
     explanation_key = "ui.settings_explanation." + explanation_path
-    explanation = _app.string(explanation_key)
+    explanation = _app.string(explanation_key, app_name=APP_NAME)
     if explanation != explanation_key:
         return explanation
     return _app.string(
         "ui.settings_explanation_generic",
         setting=_app.CeluneUI._config_label(path),
+        app_name=APP_NAME,
     )
 
 
@@ -999,11 +1081,21 @@ def _submit_text(self, text: str, process_commands: bool = True) -> bool:
         return True
 
     if self._is_agent_test_mode():
+        response_queue = self._agent_test_response_queue
         self._suppress_input_change = True
         try:
             self.input_box.load_text("")
         finally:
             self._suppress_input_change = False
+        if response_queue is not None:
+            try:
+                response_queue.put_nowait(text)
+            except queue_module.Full:
+                return True
+            self._agent_test_response_queue = None
+            self.change_input_state(locked=True)
+            self.safe_status(_app.string("ui.agent_test_answer_received"))
+            return True
         self.safe_status(_app.string("ui.agent_test_mode_active"))
         return True
 
@@ -1069,6 +1161,45 @@ def _submit_text(self, text: str, process_commands: bool = True) -> bool:
     self.input_box.load_text("")
     self.update_resources()
     return True
+
+
+def request_agent_test_response(
+    self,
+    prompt: str,
+    timeout_seconds: float = 120.0,
+) -> Optional[str]:
+    """Display an agent diagnostic prompt and wait for one typed answer.
+
+    Args:
+        prompt: The spoken question or approval request to display.
+        timeout_seconds: Maximum time to wait for the user's response.
+
+    Returns:
+        Optional[str]: The submitted answer, or ``None`` after timeout or exit.
+
+    Raises:
+        RuntimeError: If the UI is not running the agent test mode.
+        ValueError: If the response timeout is not positive.
+    """
+    if not self._is_agent_test_mode():
+        raise RuntimeError("agent test prompts require agent test mode")
+    if timeout_seconds <= 0:
+        raise ValueError("agent test prompt timeout must be positive")
+    response_queue: queue_module.Queue[Optional[str]] = queue_module.Queue(maxsize=1)
+    self._agent_test_response_queue = response_queue
+    self.safe_log(prompt)
+    self.safe_status(_app.string("ui.agent_test_prompt_ready"))
+    self.input_box.placeholder = _app.string("ui.agent_test_answer_placeholder")
+    self.change_input_state(locked=False)
+    try:
+        try:
+            return response_queue.get(timeout=timeout_seconds)
+        except queue_module.Empty:
+            return None
+    finally:
+        if self._agent_test_response_queue is response_queue:
+            self._agent_test_response_queue = None
+        self.change_input_state(locked=True)
 
 
 def tutorial_after(self, delay: float, callback: Callable[[], None]) -> None:
@@ -1253,6 +1384,7 @@ def on_key(self, event: _app.events.Key) -> None:
 
         if event.key == "ctrl+j" and self._submit_text(self.input_box.text):
             event.prevent_default()
+            event.stop()
 
 
 def on_button_pressed(self, event: _app.Button.Pressed) -> None:
@@ -1281,15 +1413,6 @@ def on_button_pressed(self, event: _app.Button.Pressed) -> None:
             )
         return
 
-    if event.button == self.vc_pitch_button:
-        if self._is_voice_conversion_mode():
-            current_value = int(getattr(celune, "vc_pitch_shift", 0))
-            next_value = current_value + 1
-            if next_value > _app.VC_PITCH_SHIFT_MAX:
-                next_value = _app.VC_PITCH_SHIFT_MIN
-            self.set_vc_pitch_shift(next_value)
-        return
-
     if event.button != self.style_button:
         return
 
@@ -1314,6 +1437,11 @@ def on_button_pressed(self, event: _app.Button.Pressed) -> None:
 
 def on_unmount(self) -> None:
     """Unload Celune."""
+    response_queue = self._agent_test_response_queue
+    if response_queue is not None:
+        self._agent_test_response_queue = None
+        with contextlib.suppress(queue_module.Full):
+            response_queue.put_nowait(None)
     restarting = self.cur_state == "restarting"
     if not restarting:
         self.cur_state = "exiting"
@@ -1343,13 +1471,16 @@ def tts_idle(self) -> None:
     celune = self.celune
     if celune is None:
         return
-    if getattr(celune, "test_finished", False) or self._is_agent_test_mode():
+    if getattr(celune, "test_finished", False):
         self.change_input_state(locked=True)
         self.change_voice_lock_state(locked=True)
-        if getattr(celune, "test_finished", False):
-            if self.input_box is not None:
-                self.input_box.placeholder = _app.string("ui.stopped_placeholder")
-            self.safe_status(_app.string("status.stopped"), "sleeping")
+        if self.input_box is not None:
+            self.input_box.placeholder = _app.string("ui.stopped_placeholder")
+        self.safe_status(_app.string("status.stopped"), "sleeping")
+        return
+    if self._is_agent_test_mode():
+        self.change_input_state(locked=self._agent_test_response_queue is None)
+        self.change_voice_lock_state(locked=True)
         return
     if self.cur_state in {"exiting", "error"} or not self.celune_ready:
         if self.input_box is not None:
