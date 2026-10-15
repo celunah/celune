@@ -893,9 +893,14 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
                 )
 
         if checks is not None:
-            success = success and not any(
-                check.get("status") == "failed" for check in checks
+            failed_check = next(
+                (check for check in checks if check.get("status") == "failed"),
+                None,
             )
+            success = success and failed_check is None
+            if detail is None and failed_check is not None:
+                failed_detail = failed_check.get("detail")
+                detail = failed_detail if isinstance(failed_detail, str) else None
 
         result: JSON = {
             "mode": mode,
