@@ -57,8 +57,9 @@ The wizard collects a pack/character name, number of voices, each voice name,
 reference WAV, transcript, optional CFG scale, optional per-voice Persona style,
 theme, shared Persona metadata, default voice, and voice order. It rejects
 duplicate/unknown names and writes a validated bundle. It is intentionally
-interactive; automation should call `write_cevoice()` or `write_cechar_v4()`
-directly.
+interactive; automation should call `write_cevoice()` for legacy-compatible
+packs or `write_cechar_v5()` for new indexed character packs. Use
+`write_cechar_v4()` only when v4 compatibility is required.
 
 ## Reference design
 

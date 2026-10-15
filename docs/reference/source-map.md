@@ -28,7 +28,8 @@ own. It is the index to use when a feature needs a precise code entrypoint.
 | `celune/audio/server.py` | Host audio-server recovery. |
 | `celune/audio/resampling.py` | Sample-rate conversion at boundaries. |
 | `celune/audio/dsp.py` | Pitch/speed support, readiness signals, silence detection, and streaming reverb. |
-| `celune/vc.py` | VC normalization, RMS/VAD, preroll/hangover, and live-capture helpers. |
+| `celune/vc.py` | VC normalization, RMS/VAD, live conversion, and diagnostic capture. |
+| `celune/modeling.py` | CeluneNorm loading and quantized autoregressive cache helpers. |
 | `celune/chroma.py` | OpenRGB connection, audio reactivity, sleep/wake, and fatal glow state. |
 | `celune/theme/colors.py` | Built-in themes and pack color integration. |
 | `celune/analysis.py` | Voice metrics, embedding similarity, traits, assessments, plots, and reports. |

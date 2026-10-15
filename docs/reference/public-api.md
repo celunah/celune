@@ -196,18 +196,22 @@ available. `obj` and `scope` are mutually exclusive.
 The stable pack API is:
 
 ```python
-from celune.cevoice import CEVoice, write_cevoice, write_cechar_v4
+from celune.cevoice import CEVoice, write_cevoice, write_cechar_v4, write_cechar_v5
 
 bundle = CEVoice.open("voices/default.cevoice")
 wav_bytes = bundle.read_asset("balanced", "wav")
 write_cevoice("legacy-compatible.cevoice", voices, metadata, voice_metadata)
 write_cechar_v4("character.cechar", files, metadata, compression=0)
+write_cechar_v5("character-with-singing.cechar", files, metadata, voice_metadata)
 ```
 
 `CEVoice.open()` validates the header, metadata, safe names, ranges, and
 checksums. `read_asset()` validates the selected asset digest before returning
 bytes. `write_cevoice()` writes the legacy-compatible layout;
-`write_cechar_v4()` is the preferred writer for new packs. See
+`write_cechar_v4()` writes indexed v4 archives, and `write_cechar_v5()` writes
+the current schema with an optional hidden `sing` voice. `CEVoice.singing_voice`
+returns `"sing"` when a v5 pack defines it, otherwise `None`. TTS voice lists
+exclude that reserved singing entry. See
 [CEVOICE and CECHAR](../CEVOICE.md) for the binary schemas and constraints.
 
 ## Supporting module calls

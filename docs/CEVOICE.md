@@ -2,9 +2,11 @@
 
 `CEVOICE` is Celune's voice-pack container format. The bundled `default.cevoice`
 and `classic.cevoice` packs are the two official Celune variants and use the
-`CECHAR` v4 schema. Older `CECHAR` v2/v3 and legacy `CEVOICE` v1 bundles remain
-readable, and `write_cevoice()` remains available for producing those
-legacy-compatible bundles. Use `write_cechar_v4()` for new v4 archives. A
+`CECHAR` v4 schema. CECHAR v5 keeps the indexed archive layout and reserves an
+optional hidden `sing` voice for singing backends. Older `CECHAR` v2/v3 and
+legacy `CEVOICE` v1 bundles remain readable. `write_cevoice()` writes the
+legacy-compatible layout, `write_cechar_v4()` writes v4, and
+`write_cechar_v5()` writes the current format for new character packs. A
 `.cevoice` file stores:
 
 - a small fixed-size binary header
@@ -20,14 +22,14 @@ The canonical implementation lives in `celune/cevoice.py`.
 
 ## File layout
 
-CECHAR v4 bundles are written as:
+CECHAR v4 and v5 bundles are written as:
 
 | Region | Size | Description |
 | --- | ---: | --- |
 | Header | 9 bytes | `struct.Struct("<7sBB")` |
 | Stored payload | variable | uncompressed or one complete compressed stream |
 
-The decompressed v4 payload is:
+The decompressed indexed payload for v4 and v5 is:
 
 | Region | Size | Description |
 | --- | ---: | --- |
@@ -45,14 +47,14 @@ Legacy CECHAR v2/v3 bundles use the older layout:
 | Metadata | variable | UTF-8 JSON |
 | Payload | variable | concatenated asset bytes |
 
-### CECHAR v4 header
+### CECHAR v4 and v5 header
 
-The v4 header fields are:
+The indexed header fields are:
 
 | Field | Type | Value |
 | --- | --- | --- |
 | `magic` | `7s` | `b"CECHAR\0"` |
-| `version` | `B` | `4` |
+| `version` | `B` | `4` for v4, `5` for v5 |
 | `compression` | `B` | `0` none, `1` gzip, `2` Zstandard, `3` XZ, `4` OpenZL |
 
 Celune also accepts legacy bundles with:
@@ -62,9 +64,9 @@ Celune also accepts legacy bundles with:
 | `magic` | `8s` | `b"CEVOICE\0"` |
 | `version` | `H` | `1` |
 
-V4 asset offsets are relative to the start of the decompressed logical payload,
-not the start of the file. Physical offsets and lengths are never stored in v4
-JSON metadata.
+Asset offsets are relative to the start of the decompressed logical payload,
+not the start of the file. Physical offsets and lengths are never stored in
+v4/v5 JSON metadata.
 
 ## Metadata schema
 
@@ -167,6 +169,50 @@ identity remains active, text rules and examples are combined, and voice style
 values refine the shared trait values. Voices without this block use the base
 Persona unchanged.
 
+### CECHAR v5 singing voice
+
+CECHAR v5 reserves the exact voice name `sing` for the character's singing
+reference. The entry is optional. Its assets remain under `voices`, but Celune
+keeps it out of `voice_order` and never offers it to TTS backends. A v5 manifest
+may omit `voice_order`; Celune then lists every voice except `sing`. If an
+explicit `voice_order` or `default_voice` selects `sing`, the pack is invalid.
+
+The singing entry requires a WAV asset, a non-empty `reference_text`, and
+explicit `null` values for `cfg_scale` and `persona`. Celune does not apply
+speaking Persona or VoxCPM2 guidance settings to it. Future singing backends
+must select only `sing`; they must report that singing is unavailable when the
+pack has no `sing` entry and must not fall back to a speaking voice.
+
+V5 retains v4's name-only file list and binary jump table. For example:
+
+```json
+{
+  "format": "CECHAR",
+  "version": 5,
+  "default_voice": "balanced",
+  "voice_order": ["balanced"],
+  "files": [
+    {"name": "balanced.wav", "sha256": "..."},
+    {"name": "sing.wav", "sha256": "..."}
+  ],
+  "voices": {
+    "balanced": {
+      "reference_text": "My name is Celune...",
+      "assets": {"wav": "balanced.wav"}
+    },
+    "sing": {
+      "cfg_scale": null,
+      "reference_text": "Singing reference transcript...",
+      "persona": null,
+      "assets": {"wav": "sing.wav"}
+    }
+  }
+}
+```
+
+Only v5 reserves this role. CECHAR v2 through v4 continue to treat `sing` as
+an ordinary voice name for backward compatibility.
+
 Supported top-level bundle Markdown assets are:
 
 - `identity.md`
@@ -185,7 +231,8 @@ Validation rules enforced by Celune:
 
 - legacy `format`/`version` must be either `"CECHAR"` / `2` or `3`, or `"CEVOICE"` / `1`
 - v4 `format`/`version` must be `"CECHAR"` / `4`
-- v4 compression must be one of `0`, `1`, `2`, `3`, or `4`
+- v5 `format`/`version` must be `"CECHAR"` / `5`
+- v4/v5 compression must be one of `0`, `1`, `2`, `3`, or `4`
 - v4 metadata must contain a `files` list whose length equals the binary file count
 - v4 metadata JSON must not begin with a UTF-8 byte-order mark
 - v4 `files` entries must not contain `offset` or `length` fields
@@ -208,6 +255,9 @@ Validation rules enforced by Celune:
 - Persona text fields must be strings, and list-capable Persona fields must be either a string or a list of strings
 - `voices.<name>.cfg_scale`, when present, must be a positive number
 - `voices.<name>.reference_text`, when present, must be a non-empty string
+- in v5, `voices.sing` must include a WAV and non-empty `reference_text`
+- in v5, `voices.sing.cfg_scale` and `voices.sing.persona` must both be `null`
+- in v5, `default_voice` and `voice_order` must not select `sing`
 - voice names and asset kinds may not contain path separators and may not be `""`, `"."`, or `".."`
 - only `wav` and `pt` asset kinds are supported
 - only supported persona `.md` filenames may appear in top-level `assets`
@@ -238,6 +288,7 @@ The loader parses and validates the bundle, then lazily materializes assets into
 - Analysis helpers read optional `pt` assets directly from the bundle.
 - `default_voice` controls the initial selected voice.
 - `voice_order` controls the user-facing order.
+- In v5, `sing` is reserved for a singing backend and is hidden from TTS voice selection.
 - `theme.accent` or `theme.glow_color` can affect Celune's UI glow color.
 - `persona.identity.name`, when present, becomes the bundle's character name ahead of top-level `name`.
 
@@ -360,6 +411,33 @@ The values in the `voices` mapping can be:
 - a `Path`
 
 `wav` is the important runtime asset. Include `pt` only if you also want Celune's analysis features to have embeddings for that voice.
+
+To add an optional singing reference, write CECHAR v5. Provide its WAV and
+transcript under the reserved `sing` key; the writer stores null speaking-only
+metadata for it. Keep `sing` out of `voice_order`:
+
+```python
+from pathlib import Path
+
+from celune.cevoice import write_cechar_v5
+
+write_cechar_v5(
+    "character.cechar",
+    {
+        "balanced": {"wav": Path("source-assets/balanced.wav")},
+        "sing": {"wav": Path("source-assets/singing.wav")},
+    },
+    {"name": "My Character", "default_voice": "balanced"},
+    {
+        "balanced": {"reference_text": "Speaking transcript."},
+        "sing": {"reference_text": "Singing transcript."},
+    },
+)
+```
+
+The v5 writer adds `cfg_scale: null` and `persona: null` to `voices.sing` and
+rejects attempts to assign either speaking-only value. Ordinary TTS continues
+to use the speaking voices listed in `voice_order`.
 
 ## Minimal bundle recipe
 

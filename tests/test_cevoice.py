@@ -1,9 +1,11 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for CEVOICE parsing, writing, loading, and fallback behavior."""
 
+import io
 import copy
 import gzip
 import json
+import wave
 import shutil
 import tempfile
 from typing import cast
@@ -14,7 +16,6 @@ import pytest
 
 from celune import cevoice
 from celune.exceptions import CEVoiceError
-
 from .support import CeluneTestCase
 
 
@@ -30,6 +31,18 @@ class TestCEVoice(CeluneTestCase):
     def _cleanup_temp_dir(self) -> None:
         """Remove the temporary fixture directory."""
         shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+    @staticmethod
+    def _minimal_wav() -> bytes:
+        """Return a small canonical CECHAR reference WAV."""
+        buffer = io.BytesIO()
+        output = wave.Wave_write(buffer)
+        output.setnchannels(1)
+        output.setsampwidth(2)
+        output.setframerate(24000)
+        output.writeframes(b"\0\0" * 240)
+        output.close()
+        return buffer.getvalue()
 
     def tearDown(self) -> None:
         """Reset shared CEVOICE loader globals after one test."""
@@ -207,6 +220,59 @@ class TestCEVoice(CeluneTestCase):
                 gzip.compress(b"four"),
                 cevoice.V4_COMPRESSION_GZIP,
             )
+
+    def test_cechar_v5_reserves_singing_voice_outside_tts_voice_order(self) -> None:
+        """Verify CECHAR v5 keeps its singing voice separate from TTS voices."""
+        sample = self._minimal_wav()
+        cevoice.write_cechar_v5(
+            self.path,
+            {"balanced": {"wav": sample}, "sing": {"wav": sample}},
+            {"name": "Fixture", "default_voice": "balanced"},
+            {
+                "balanced": {"reference_text": "Balanced reference."},
+                "sing": {"reference_text": "Singing reference."},
+            },
+        )
+
+        bundle = cevoice.CEVoice.open(self.path)
+
+        assert bundle.metadata["version"] == cevoice.V5_VERSION
+        assert bundle.voice_order == ("balanced",)
+        assert bundle.singing_voice == cevoice.SINGING_VOICE_NAME
+        assert bundle.voices["sing"]["cfg_scale"] is None
+        assert bundle.voices["sing"]["persona"] is None
+
+    def test_cechar_v5_rejects_singing_voice_in_public_voice_order(self) -> None:
+        """Verify CECHAR v5 does not let TTS select the singing voice."""
+        sample = self._minimal_wav()
+        with pytest.raises(CEVoiceError, match="must not include the singing voice"):
+            cevoice.write_cechar_v5(
+                self.path,
+                {"balanced": {"wav": sample}, "sing": {"wav": sample}},
+                {"voice_order": ["balanced", "sing"]},
+                {
+                    "balanced": {"reference_text": "Balanced reference."},
+                    "sing": {"reference_text": "Singing reference."},
+                },
+            )
+
+    def test_cechar_v4_treats_sing_as_an_ordinary_voice(self) -> None:
+        """Keep the reserved singing role scoped to CECHAR v5 and newer."""
+        sample = self._minimal_wav()
+        cevoice.write_cechar_v4(
+            self.path,
+            {"balanced": {"wav": sample}, "sing": {"wav": sample}},
+            {"voice_order": ["balanced", "sing"]},
+            {
+                "balanced": {"reference_text": "Balanced reference."},
+                "sing": {"reference_text": "Legacy speaking reference."},
+            },
+        )
+
+        bundle = cevoice.CEVoice.open(self.path)
+
+        assert bundle.voice_order == ("balanced", "sing")
+        assert bundle.singing_voice is None
 
     # any types here are resolved dynamically
     def test_asset_checksums_are_case_insensitive(self) -> None:
