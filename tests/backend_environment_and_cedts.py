@@ -7,17 +7,15 @@ import json
 import tempfile
 import threading
 import subprocess
-from types import SimpleNamespace
-from typing import IO, Optional, cast
 from pathlib import Path
 from unittest import mock
-from collections import OrderedDict, deque
+from types import SimpleNamespace
 from collections.abc import Iterator
+from collections import OrderedDict, deque
+from typing import IO, Optional, cast
 
 import numpy as np
 
-from celune.cedts import remote, worker
-from celune.backends import environment
 from celune.exceptions import (
     CEDTSError,
     CEDTSEOFError,
@@ -51,6 +49,8 @@ from celune.typing.backends import (
     BackendArgumentValue,
     _BackendRuntime,
 )
+from celune.backends import environment
+from celune.cedts import remote, worker
 from celune.backends.environment import (
     BACKEND_MANIFESTS,
     BackendManifest,
@@ -68,6 +68,53 @@ _ShutdownProcess = ShutdownProcess
 
 class TestBackendEnvironment(CeluneTestCase):
     """Verify backend environment paths and installation transactions."""
+
+    def test_worker_description_and_proxy_preserve_singing_capability(self) -> None:
+        """Expose the worker's singing capability to the core proxy."""
+        backend = SimpleNamespace(name="singing-test", singing=True)
+        description = worker._describe(cast(_BackendRuntime, backend))
+        self.assertTrue(description["singing"])
+
+        proxy = object.__new__(remote.RemoteBackendProxy)
+        proxy._request = mock.Mock(return_value=description)
+        proxy._load_description()
+        self.assertTrue(proxy.singing)
+
+        notation = "[c3:4] hello"
+        proxy._request.return_value = "backend-format"
+        self.assertEqual(proxy.cesn_to_model(notation), "backend-format")
+        proxy._request.assert_called_with(
+            "call",
+            method="cesn_to_model",
+            text=notation,
+        )
+
+    def test_worker_dispatches_cesn_conversion_hook(self) -> None:
+        """Allow the worker to invoke a backend's CESN conversion override."""
+
+        class SingingBackend:
+            """Backend stand-in with an observable CESN conversion hook."""
+
+            def cesn_to_model(self, text: str) -> str:
+                """Return a backend-specific marker for the test notation."""
+                return f"converted:{text}"
+
+        notation = "[c3:4] hello"
+        response, _ = worker._run_request(
+            cast(_BackendRuntime, SingingBackend()),
+            cast(
+                WorkerRequest,
+                {
+                    "operation": "call",
+                    "arguments": {"method": "cesn_to_model", "text": notation},
+                },
+            ),
+            {},
+            1,
+            io.BytesIO(),
+        )
+
+        self.assertEqual(response["value"], f"converted:{notation}")
 
     def test_remote_bundle_voice_uses_worker_model_for_custom_name(self) -> None:
         """Verify pack-local voice names do not use the static model map."""

@@ -8,8 +8,6 @@ import queue
 import importlib
 import threading
 import contextlib
-from re import Pattern
-from types import ModuleType, TracebackType, SimpleNamespace, MappingProxyType
 from typing import (
     TYPE_CHECKING,
     Self,
@@ -20,20 +18,22 @@ from typing import (
     TypedDict,
     cast,
 )
+from re import Pattern
 from pathlib import Path
 from unittest import TestCase, mock
 from collections.abc import Callable, Iterable, Iterator, Container
+from types import ModuleType, TracebackType, SimpleNamespace, MappingProxyType
 
 import numpy as np
 import numpy.typing as npt
 
-from celune.locks import ComponentLockManager
 from celune.utils import discard
 from celune.constants import PipelineStates
-from celune.typing.common import JSONSerializable
 from celune.typing.aliases import AudioChunk
-from celune.backends.vc.base import CeluneVCBackend
+from celune.locks import ComponentLockManager
+from celune.typing.common import JSONSerializable
 from celune.backends.tts.base import CeluneBackend
+from celune.backends.vc.base import CeluneVCBackend
 from celune.dataclasses.pipeline import AudioOutput, VoiceConversionRequest
 
 if TYPE_CHECKING:
@@ -273,11 +273,13 @@ class FakeBackend(CeluneBackend):
         log: Optional[Callable[[str, str], None]] = None,
         fatal: Optional[Callable[[], None]] = None,
         quantize: bool = False,
+        singing: bool = False,
     ) -> None:
         super().__init__(
             log=log or (lambda _msg, _severity="info": None),
             fatal=fatal,
             quantize=quantize,
+            singing=singing,
         )
 
     def model_is_available_locally(

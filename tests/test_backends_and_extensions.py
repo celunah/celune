@@ -26,14 +26,14 @@ from celune.exceptions import (
     InvalidExtensionError,
     ExtensionAlreadyRegisteredError,
 )
-from celune.celune import Celune
-from celune.utils import discard
 from celune.backends.vc import (
     resolve_vc_backend,
 )
 from celune.backends.vc import (
     BACKEND_MANIFESTS as VC_BACKEND_MANIFESTS,
 )
+from celune.celune import Celune
+from celune.utils import discard
 from celune.typing.backends import (
     BackendModel,
     SeedVCModelValue,
@@ -85,6 +85,16 @@ class TestBackend(CeluneTestCase):
         )
         consent_patch.start()
         self.addCleanup(consent_patch.stop)
+
+    def test_singing_capability_defaults_off_and_base_cesn_is_noop(self) -> None:
+        """Keep ordinary TTS unchanged until a singing backend opts in."""
+        notation = "[c3:4d,d3:8,e3:16] Text to sing."
+        backend = FakeBackend()
+        self.assertFalse(backend.singing)
+        self.assertEqual(backend.cesn_to_model(notation), notation)
+
+        singing_backend = FakeBackend(singing=True)
+        self.assertTrue(singing_backend.singing)
 
     def test_tts_load_oom_does_not_retry_unquantized_model(self) -> None:
         """Verify CUDA OOM releases a partial load without retrying BF16."""

@@ -57,6 +57,7 @@ class BackendDescription(TypedDict):
     uses_voice_bundles: bool
     max_new_tokens: int
     is_fake: bool
+    singing: bool
 
 
 class MiniModel(Protocol):
@@ -120,6 +121,10 @@ class _BackendRuntime(Protocol):  # noqa: PYI046
     """Runtime method surface used by the generic worker loop."""
 
     model: Optional[BackendModel]
+    singing: bool
+
+    def cesn_to_model(self, text: str) -> str:
+        """Convert complete CESN text to this backend's input format."""
 
     def bind_progress(
         self,

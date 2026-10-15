@@ -1,24 +1,21 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for pipeline helpers that do not perform real synthesis."""
 
-# Import groups follow Celune's project-specific Ruff ordering.
-# pylint: disable=ungrouped-imports
-
-import json as _json
 import tempfile
 import threading
-from types import SimpleNamespace
+import json as _json
 from typing import cast
 from pathlib import Path
 from unittest import mock
+from types import SimpleNamespace
 
-import numpy as np
 import pytest
+import numpy as np
 import soundfile as sf
 
-from celune import metadata as celune_metadata
 from celune import pipeline
 from celune.celune import Celune
+from celune import metadata as celune_metadata
 
 from .support import (
     FakeStream,
@@ -73,6 +70,32 @@ class TestPipelineAsync(_TestPipelineAsync):
         assert len(chunks) > 1
         assert all(len(chunk) <= 400 for chunk in chunks)
         assert " ".join(chunks) == " ".join(text.split())
+
+    def test_singing_backend_converts_complete_text_before_splitting(self) -> None:
+        """Convert CESN once before buffering splits a long request."""
+        engine = make_pipeline_engine()
+        notation = "[c3:4d,d3:8,e3:16] Text to sing."
+        converted = "backend-format text"
+        engine.backend.cesn_to_model = mock.Mock(return_value=converted)
+
+        with mock.patch.object(
+            engine.backend,
+            "cesn_to_model",
+            return_value=converted,
+        ) as convert:
+            assert (
+                pipeline._prepare_synthesis_text(cast(Celune, engine), notation)
+                == notation
+            )
+            convert.assert_not_called()
+
+            engine.backend.singing = True
+            assert (
+                pipeline._prepare_synthesis_text(cast(Celune, engine), notation)
+                == converted
+            )
+
+        convert.assert_called_once_with(notation)
 
     def test_flac_metadata_helpers_round_trip_tags(self) -> None:
         """Verify FLAC tag writing and parsing without real speech.

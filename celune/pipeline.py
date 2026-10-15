@@ -896,6 +896,13 @@ def split_text(engine: Celune, text: str) -> list[str]:
     return chunks
 
 
+def _prepare_synthesis_text(engine: Celune, text: str) -> str:
+    """Convert CESN for singing backends before Celune splits long requests."""
+    if not getattr(engine.backend, "singing", False):
+        return text
+    return engine.backend.cesn_to_model(text)
+
+
 def play_signal(engine: Celune, signal_type: str) -> bool:
     """Queue a readiness signal to be played.
 
@@ -1088,9 +1095,13 @@ def _process_generation_request(
                 "repetition_penalty": 1.1,
             }
 
-            chunks = split_text(engine, text)
             if capture_tutorial_audio:
                 chunks = list(item.synthesis_sections)
+            else:
+                chunks = split_text(
+                    engine,
+                    _prepare_synthesis_text(engine, text),
+                )
             if not chunks:
                 engine.progress_callback(0, 1)
                 engine.error_callback(string("pipeline.nothing_to_say"))

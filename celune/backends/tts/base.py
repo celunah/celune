@@ -9,12 +9,12 @@ import hashlib
 import secrets
 import threading
 import contextlib
-import unittest.mock
 from typing import (
     Union,
     Optional,
     cast,
 )
+import unittest.mock
 from pathlib import Path
 from abc import ABC, abstractmethod
 from collections.abc import Mapping, Callable, Iterator, Generator
@@ -30,10 +30,10 @@ from ...typing.common import JSON
 from ...constants import N_A_NUMERIC
 from ...exceptions import BackendError
 from ...registry.tts import ModelContract
+from ...registry.tts import model_contract as resolve_model_contract
 from ...typing.backends import BackendModel
 from ...cevoice import CEVoiceLoader, default_loader
 from ...typing.aliases import LogLevel, AudioChunk, RuntimeValue
-from ...registry.tts import model_contract as resolve_model_contract
 from .quantization import QuantizationMode, quantization_mode, quantize_component
 from ...paths import temp_data_dir, huggingface_progress, huggingface_hub_cache_dir
 from ...vram import backend_vram_report, is_cuda_out_of_memory, release_cuda_after_oom
@@ -254,6 +254,7 @@ class CeluneBackend[ModelT](ABC):
         fatal: Optional[Callable[[], None]] = None,
         quantize: bool = True,
         quantize_kv_cache: bool = True,
+        singing: bool = False,
     ) -> None:
         self.model_name: Optional[str]
         if model_name is not None:
@@ -268,6 +269,7 @@ class CeluneBackend[ModelT](ABC):
         self._fatal_callback = fatal
         self.quantization_requested = quantize
         self.quantize_kv_cache = quantize_kv_cache
+        self.singing = singing
         self.quantization_mode: Optional[QuantizationMode] = quantization_mode(quantize)
         self.quantization_active = False
         self.quantization_attempted = False
@@ -281,6 +283,20 @@ class CeluneBackend[ModelT](ABC):
     def __str__(self) -> str:
         """Return the backend name for callers using str(CeluneBackend(...))."""
         return self.name
+
+    def cesn_to_model(self, text: str) -> str:
+        """Convert Celune Singing Notation to this backend's input format.
+
+        The base implementation preserves the input until CESN parsing is
+        implemented or a singing backend overrides this method.
+
+        Args:
+            text: Complete speech request containing CESN notation, if any.
+
+        Returns:
+            str: Backend-ready text. The base implementation returns ``text`` unchanged.
+        """
+        return text
 
     def bind_fatal(self, fatal: Optional[Callable[[], None]]) -> None:
         """Bind the active Celune fatal callback to this backend instance.

@@ -246,6 +246,30 @@ fails, the backend disables quantization, unloads the model, and reloads the
 same model in BF16. A failed BF16 recovery invokes the fatal engine transition
 immediately.
 
+## CESN singing hook
+
+`CeluneBackend` accepts `singing: bool = False`. A singing-capable TTS backend
+opts in by passing `singing=True` to the base initializer. Celune then calls
+`cesn_to_model(text)` once with the complete request before splitting it into
+generation chunks. Override the method to translate CESN into the selected
+model's notation. The base implementation returns the input unchanged, and no
+CESN parser is implemented yet.
+
+CESN writes notes in a bracketed, comma-separated list before the lyrics:
+
+```text
+[c3:4d,d3:8,e3:16] Text to sing.
+```
+
+Each note has a pitch such as `c3`, a colon, and a note type of `1`, `2`, `4`,
+`8`, `16`, or `32`. An optional trailing `d` marks a dotted note. CESN assigns
+one note to each syllable; the singing backend translates those notes to the
+format its model expects.
+
+The hook signature is `cesn_to_model(self, text: str) -> str`. Its argument is
+the complete request text, and it returns the backend-ready string. Ordinary
+TTS backends leave `singing` false and pass text through unchanged.
+
 ## Adding a backend
 
 1. Implement the existing TTS or VC base contract.
@@ -267,3 +291,8 @@ as UTF-8 with replacement for malformed bytes, preserving Unicode resolver
 symbols on Windows instead of displaying code-page mojibake.
 
 The core must remain importable without the backend package installed.
+
+## See also
+
+- [CEVOICE and CECHAR formats](../CEVOICE.md)
+- [Speech guide](../user-guide/speech.md)

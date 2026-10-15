@@ -9,14 +9,11 @@ import time
 import argparse
 import threading
 import traceback
-from typing import IO, Optional, cast
 from contextlib import suppress
 from collections import OrderedDict
 from collections.abc import Mapping, Callable
+from typing import IO, Optional, cast
 
-from ..vram import is_cuda_out_of_memory, release_cuda_after_oom
-from ..paths import configure_numba_cache
-from ..cevoice import select_voice_bundle
 from .protocol import (
     CEDTS_VERSION,
     WORKER_CAPABILITIES,
@@ -39,7 +36,6 @@ from ..exceptions import (
     CEDTSPayloadError,
     CEDTSProtocolError,
 )
-from ..typing.common import JSONSerializable
 from ..typing.worker import (
     WorkerValue,
     WorkerMessage,
@@ -47,15 +43,19 @@ from ..typing.worker import (
     WorkerResponse,
     WorkerPayloadDescriptor,
 )
-from ..typing.aliases import LogLevel
 from ..typing.backends import (
     BackendModel,
     BackendArguments,
     BackendDescription,
     _BackendRuntime,
 )
-from ..backends.environment import BackendManifest, backend_manifest
+from ..typing.aliases import LogLevel
+from ..cevoice import select_voice_bundle
+from ..paths import configure_numba_cache
+from ..typing.common import JSONSerializable
 from ..dataclasses.pipeline import VoiceConversionRequest
+from ..vram import is_cuda_out_of_memory, release_cuda_after_oom
+from ..backends.environment import BackendManifest, backend_manifest
 
 _WORKER_STDERR = sys.stderr
 _MESSAGE_ID_REPLAY_WINDOW = 4096
@@ -65,6 +65,7 @@ _CALL_ARGUMENT_FIELDS = {
     "vram_report": frozenset({"method"}),
     "resolve_generation_language": frozenset({"method", "lang"}),
     "should_reload_for_language": frozenset({"method", "lang"}),
+    "cesn_to_model": frozenset({"method", "text"}),
     "convert_live": frozenset({"method", "request"}),
     "stop_live": frozenset({"method"}),
 }
@@ -282,6 +283,7 @@ def _describe(backend: _BackendRuntime) -> BackendDescription:
             "uses_voice_bundles": getattr(backend, "uses_voice_bundles", False),
             "max_new_tokens": getattr(backend, "max_new_tokens", 512),
             "is_fake": getattr(backend, "is_fake", False),
+            "singing": getattr(backend, "singing", False),
         },
     )
 
@@ -438,6 +440,7 @@ def _validate_request_arguments(
             "vram_report": {"method"},
             "resolve_generation_language": {"method", "lang"},
             "should_reload_for_language": {"method", "lang"},
+            "cesn_to_model": {"method", "text"},
             "convert_live": {"method", "request"},
             "stop_live": {"method"},
         }[method_name]
@@ -450,6 +453,8 @@ def _validate_request_arguments(
             and not isinstance(checked["lang"], str)
         ):
             raise _worker_protocol_error("backend_worker_language_argument_is_invalid")
+        if method_name == "cesn_to_model" and not isinstance(checked.get("text"), str):
+            raise _worker_protocol_error("backend_worker_cesn_text_is_invalid")
         if method_name == "convert_live" and not isinstance(
             checked.get("request"), VoiceConversionRequest
         ):

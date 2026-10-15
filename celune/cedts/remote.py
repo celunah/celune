@@ -1,8 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """Proxy objects for backends running in isolated Python processes."""
 
-# pylint: disable=ungrouped-imports
-
 import os
 import re
 import json
@@ -68,8 +66,8 @@ from ..backends.environment import (
     BackendEnvironment,
     BackendEnvironmentManager,
 )
-from ..utils import format_error_message
 from ..cevoice import active_bundle_path
+from ..utils import format_error_message
 from ..backends.tts.base import CeluneBackend
 from ..backends.vc.base import CeluneVCBackend
 from ..typing.aliases import LogLevel, LogCallback
@@ -1351,6 +1349,7 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
         self.uses_voice_bundles = description["uses_voice_bundles"]
         self.max_new_tokens = description["max_new_tokens"]
         self.is_fake = description["is_fake"]
+        self.singing = description.get("singing", False)
 
     def _request(
         self,
@@ -1813,6 +1812,13 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
         arguments["model_id"] = model.identifier
         for value in self._stream_request("generate_stream", **arguments):
             yield cast(BackendGeneration, value)
+
+    def cesn_to_model(self, text: str) -> str:
+        """Convert complete CESN text in the selected worker backend."""
+        return cast(
+            str,
+            self._request("call", method="cesn_to_model", text=text),
+        )
 
     def resolve_generation_language(self, lang: Optional[str]) -> Optional[str]:
         """Resolve a language using the worker backend implementation."""
