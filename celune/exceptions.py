@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Celune exception classes."""
 
-from typing import TYPE_CHECKING, Union, Optional, Protocol
 from pathlib import Path
+from typing import TYPE_CHECKING, Optional, Protocol, Union
 
 from .typing.common import JSON
 
@@ -175,6 +175,41 @@ class No(Exception):
 
 class CEVoiceError(RuntimeError, CeluneError):
     """CEVOICE data is malformed or unsupported."""
+
+
+class CESNError(ValueError, CeluneError):
+    """Base class for Celune Singing Notation parsing failures."""
+
+
+class CESNSyntaxError(CESNError):
+    """CESN notation is malformed."""
+
+
+class CESNAlignmentError(CESNError):
+    """The note-event count does not match the lyric syllable count."""
+
+    def __init__(self, note_count: int, syllable_count: int) -> None:
+        """Initialize an alignment error with both sequence lengths."""
+        self.note_count = note_count
+        self.syllable_count = syllable_count
+        super().__init__(
+            "note and syllable counts do not align: "
+            f"{note_count} notes for {syllable_count} syllables"
+        )
+
+
+class CESNMatchError(CESNError):
+    """A note event has no corresponding lyric syllable."""
+
+    def __init__(self, note_index: int, note_event: str, syllable_count: int) -> None:
+        """Initialize an error for the first unmatched note event."""
+        self.note_index = note_index
+        self.note_event = note_event
+        self.syllable_count = syllable_count
+        super().__init__(
+            f"note event {note_index} ({note_event!r}) did not match any "
+            f"of {syllable_count} syllables"
+        )
 
 
 class NeedleCheckpointError(RuntimeError, CeluneError):

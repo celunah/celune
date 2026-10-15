@@ -4,22 +4,19 @@
 # Import groups follow Celune's project-specific Ruff ordering.
 # pylint: disable=ungrouped-imports
 
-import json as _json
 import tempfile
 import threading
-from types import SimpleNamespace
-from typing import Optional, cast
+import json as _json
 from pathlib import Path
 from unittest import mock
+from types import SimpleNamespace
+from typing import Optional, cast
 from collections.abc import Iterator
 
-import numpy as np
 import pytest
+import numpy as np
 
 from celune import pipeline
-from celune.i18n import string
-from celune.utils import discard
-from celune.celune import Celune
 from celune.cevoice import (
     CEVoice,
     CEVoiceLoader,
@@ -28,8 +25,9 @@ from celune.cevoice import (
     PersonaStyleValues,
     persona_files_from_bundle,
 )
-from celune.constants import PipelineStates
-from celune.persona.impl import compact_persona_history
+from celune.i18n import string
+from celune.utils import discard
+from celune.celune import Celune
 from celune.typing.agent import (
     ToolCall,
     AgentTask,
@@ -41,16 +39,18 @@ from celune.typing.agent import (
     AgentToolDangerLevel,
     AgentToolArgumentSchema,
 )
-from celune.typing.common import JSON, JSONSerializable
+from celune.constants import PipelineStates
 from celune.typing.aliases import AudioChunk
-from celune.persona.prompts import PersonaPromptBuilder, render_markdown_subsection
-from celune.dataclasses.pipeline import CaptionAlignmentSection
+from celune.persona.impl import compact_persona_history
 from celune.persona.capabilities import PersonaCapabilities
+from celune.typing.common import JSON, JSONSerializable
+from celune.dataclasses.pipeline import CaptionAlignmentSection
+from celune.persona.prompts import PersonaPromptBuilder, render_markdown_subsection
 
 from .support import make_pipeline_engine
 from .platform import LINUX_ONLY, WINDOWS_ONLY
-from .pipeline_basics import TestPipelineAsync as _TestPipelineAsync
 from .test_persona_memory import StubEmbeddingMemoryStore
+from .pipeline_basics import TestPipelineAsync as _TestPipelineAsync
 
 
 @pytest.mark.anyio
@@ -484,8 +484,12 @@ class TestPipelineAsync(_TestPipelineAsync):
 
         voice_manifest = bundle.metadata["voices"]
         self.assertIsInstance(voice_manifest, dict)
-        for voice_metadata in voice_manifest.values():
+        for voice_name, voice_metadata in voice_manifest.items():
             self.assertIsInstance(voice_metadata, dict)
+            if voice_name == "sing":
+                self.assertIsNone(voice_metadata.get("persona"))
+                self.assertIsNone(voice_metadata.get("cfg_scale"))
+                continue
             self.assertNotIn("persona", voice_metadata)
 
     def test_non_default_character_pack_does_not_inherit_celune_foundation(

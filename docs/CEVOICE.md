@@ -1,13 +1,13 @@
 # CEVOICE
 
 `CEVOICE` is Celune's voice-pack container format. The bundled `default.cevoice`
-and `classic.cevoice` packs are the two official Celune variants and use the
-`CECHAR` v4 schema. CECHAR v5 keeps the indexed archive layout and reserves an
-optional hidden `sing` voice for singing backends. Older `CECHAR` v2/v3 and
+and `classic.cevoice` packs are the two official Celune variants. The default
+pack uses `CECHAR` v5 and includes the hidden `sing` reference; the classic pack
+remains on CECHAR v4. CECHAR v5 keeps the indexed archive layout and reserves
+an optional hidden `sing` voice for singing backends. Older `CECHAR` v2/v3 and
 legacy `CEVOICE` v1 bundles remain readable. `write_cevoice()` writes the
 legacy-compatible layout, `write_cechar_v4()` writes v4, and
-`write_cechar_v5()` writes the current format for new character packs. A
-`.cevoice` file stores:
+`write_cechar_v5()` writes v5. A `.cevoice` file stores:
 
 - a small fixed-size binary header
 - UTF-8 JSON metadata
@@ -522,11 +522,12 @@ Celune's bundled `default.cevoice` uses:
 - `default_voice`: `balanced`
 - `voice_order`: `balanced`, `calm`, `bold`, `upbeat`
 - `theme`: `background`, `accent`, `glow_color`, and `faded_accent`
-- top-level `assets`: CECHAR v4-style prompt source material for the bundled character
+- top-level `assets`: prompt source material for the bundled character
 - `soul.md`: shared character continuity and relationship guidance
 - per-voice `persona`: response-style refinements layered onto the shared character
 - `cfg_scale`: `2.4` for `balanced`, `bold`, and `upbeat`; `3.0` for `calm`
 - `reference_text`: the transcript matching each bundled reference `wav`
 - both `wav` and `pt` assets for each voice
+- a `sing` WAV reference with transcript `Moonlight resting, silver-blue, I'll keep one quiet light for you.`; Celune keeps this voice out of `voice_order` and TTS selection
 
 That pack is a good real-world model if you want your own bundle to behave like the stock one.

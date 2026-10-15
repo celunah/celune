@@ -62,6 +62,7 @@ nav:
       - Extensions: interfaces/extensions.md
   - Formats:
       - CEVOICE/CECHAR: CEVOICE.md
+      - CESN: formats/cesn.md
       - CEDTS transport: formats/cedts.md
       - Persona Markdown: formats/persona-markdown.md
   - Reference:

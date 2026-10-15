@@ -214,6 +214,26 @@ returns `"sing"` when a v5 pack defines it, otherwise `None`. TTS voice lists
 exclude that reserved singing entry. See
 [CEVOICE and CECHAR](../CEVOICE.md) for the binary schemas and constraints.
 
+## CESN parsing
+
+`parse_cesn(text: str) -> tuple[tuple[CESNNoteEvent, str], ...]` parses one
+bracketed CESN note list, aligns its notes with lyric syllables, and returns
+immutable `(note_event, syllable)` pairs. `CESNNoteEvent` exposes `pitch` as a
+normalized string, `note_type` as one of `1`, `2`, `4`, `8`, `16`, or `32`, and
+`dotted` as a boolean. Parsing has no runtime side effects.
+
+```python
+from celune.cesn import parse_cesn
+
+notes = parse_cesn("[c3:4d,d3:8,e3:16] Text to sing.")
+```
+
+The function accepts the complete notation string as `text`. It raises
+`CESNSyntaxError` for malformed notation, `CESNAlignmentError` when syllables
+outnumber notes, and `CESNMatchError` when a note event has no syllable. See
+[CESN format and parsing](../formats/cesn.md) for the pitch grammar and
+syllabification behavior.
+
 ## Supporting module calls
 
 | Module | Public call families |
@@ -225,7 +245,7 @@ exclude that reserved singing entry. See
 | `celune.analysis` | Audio metrics, reference similarity, trait computation, radar plots, reports, and `analyze_voice_audio()`. |
 | `celune.paths` | App-data, runtime, Hugging Face cache, voice, backend-environment, config, output, and migration paths. |
 | `celune.extensions` | Extension base, context, manager, event dispatcher, and event decorator. |
-| `celune.exceptions` | Canonical Celune-owned exception hierarchy, including backend, agent, environment, and checkpoint failures. |
+| `celune.exceptions` | Canonical Celune-owned exception hierarchy, including CESN, backend, agent, environment, and checkpoint failures. |
 | `celune.api` | `configure_api_security()`, `resolve_api_host()`, `bind_celune()`, `run_api()`, `start_api()`, `audio_bytes()`, and `stream_headers()`. |
 | `celune.backends.environment` | `BackendManifest`, `BackendEnvironment`, and `BackendEnvironmentManager`. |
 | `celune.cedts.protocol` | CEDTS framing, typed values, handshake, and stream exceptions. |

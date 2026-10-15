@@ -253,7 +253,7 @@ opts in by passing `singing=True` to the base initializer. Celune then calls
 `cesn_to_model(text)` once with the complete request before splitting it into
 generation chunks. Override the method to translate CESN into the selected
 model's notation. The base implementation returns the input unchanged, and no
-CESN parser is implemented yet.
+backend-specific singing converter is implemented yet.
 
 CESN writes notes in a bracketed, comma-separated list before the lyrics:
 
@@ -264,7 +264,11 @@ CESN writes notes in a bracketed, comma-separated list before the lyrics:
 Each note has a pitch such as `c3`, a colon, and a note type of `1`, `2`, `4`,
 `8`, `16`, or `32`. An optional trailing `d` marks a dotted note. CESN assigns
 one note to each syllable; the singing backend translates those notes to the
-format its model expects.
+format its model expects. Core parsing is available through
+[`parse_cesn()`](../formats/cesn.md). It uses the multilingual Syllabreak
+library, retaining punctuation and word separators with syllables. Its
+orthographic rules may differ from spoken syllables; consult the CESN format
+page for language coverage and limitations.
 
 The hook signature is `cesn_to_model(self, text: str) -> str`. Its argument is
 the complete request text, and it returns the backend-ready string. Ordinary

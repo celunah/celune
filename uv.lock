@@ -274,6 +274,7 @@ dependencies = [
     { name = "sentencepiece" },
     { name = "sounddevice" },
     { name = "soundfile" },
+    { name = "syllabreak" },
     { name = "textual" },
     { name = "torch" },
     { name = "torchao" },
@@ -357,6 +358,7 @@ requires-dist = [
     { name = "silero-vad", marker = "extra == 'live-vc-ai'" },
     { name = "sounddevice" },
     { name = "soundfile" },
+    { name = "syllabreak", specifier = ">=0.20.1,<0.21.0" },
     { name = "textual" },
     { name = "torch", specifier = "==2.13.0+cu130", index = "https://download.pytorch.org/whl/cu130" },
     { name = "torchao", specifier = "==0.17.0" },
@@ -3123,6 +3125,19 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/0f/3c/76d2fd1f1357ed0f0108d8a5aa233dcf16e2946a8559c84912fe08e01ac7/starlette-1.4.1.tar.gz", hash = "sha256:b7332de6e9375593a29ba9eee1e6ecfeb3eb2043e2e19a13b4b71da73ff35540", size = 2709041, upload-time = "2026-08-05T15:17:26.23Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/75/0a/67e95f21498de41433babf7b1db0eeab449eb58872dfb831b27747a70fd0/starlette-1.4.1-py3-none-any.whl", hash = "sha256:7d078e0fbefae0d2cecfb80a799d6fb84b1c0c6acd4f14ac79d17d0e7ec27f19", size = 74019, upload-time = "2026-08-05T15:17:24.357Z" },
+]
+
+[[package]]
+name = "syllabreak"
+version = "0.20.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pyyaml" },
+    { name = "regex" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/04/83/c5d777f7ffe88bd264c16bbed7afa0d34dd5982899fa376e20c8f1aee163/syllabreak-0.20.1.tar.gz", hash = "sha256:3feaba06db0b52a3e9b1ea75a8cfa0f97c58b464a3acc485862aa74e9bd899f8", size = 59795, upload-time = "2026-09-29T12:09:11.632Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/4e/7d/0c9fa101e4264aef56e63aae3485a54db17cd5d7657e3f2ddd9085f0cf47/syllabreak-0.20.1-py3-none-any.whl", hash = "sha256:e8fc09050e25fc02014aafeb88c4da8b7557420ebf63f9b0062e2828067d2408", size = 57771, upload-time = "2026-09-29T12:09:10.373Z" },
 ]
 
 [[package]]

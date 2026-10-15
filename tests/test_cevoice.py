@@ -2,12 +2,13 @@
 """Tests for CEVOICE parsing, writing, loading, and fallback behavior."""
 
 import io
+import json
 import copy
 import gzip
-import json
 import wave
 import shutil
 import tempfile
+
 from typing import cast
 from pathlib import Path
 from unittest import mock
@@ -241,6 +242,20 @@ class TestCEVoice(CeluneTestCase):
         assert bundle.singing_voice == cevoice.SINGING_VOICE_NAME
         assert bundle.voices["sing"]["cfg_scale"] is None
         assert bundle.voices["sing"]["persona"] is None
+
+    def test_default_pack_uses_v5_and_keeps_classic_on_v4(self) -> None:
+        """Keep the default pack's singing reference scoped to CECHAR v5."""
+        default = cevoice.CEVoice.open(Path("voices/default.cevoice"))
+        classic = cevoice.CEVoice.open(Path("voices/classic.cevoice"))
+
+        assert default.metadata["version"] == cevoice.V5_VERSION
+        assert default.voice_order == ("balanced", "calm", "bold", "upbeat")
+        assert default.singing_voice == cevoice.SINGING_VOICE_NAME
+        assert (
+            default.voices["sing"]["reference_text"]
+            == "Moonlight resting, silver-blue, I'll keep one quiet light for you."
+        )
+        assert classic.metadata["version"] == cevoice.V4_VERSION
 
     def test_cechar_v5_rejects_singing_voice_in_public_voice_order(self) -> None:
         """Verify CECHAR v5 does not let TTS select the singing voice."""
