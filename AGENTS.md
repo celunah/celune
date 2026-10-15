@@ -67,6 +67,12 @@ exposes effort controls under different names, choose the closest supported sett
 preserving the lower-worker and upper-lead tiers. Effort labels across providers are configuration
 counterparts, not guarantees of equal capability.
 
+### Branch workflow
+
+Push the complete merged work to `dev`. Split new changes into `<version>/<feature>` branches only
+when the user explicitly asks. Treat `dev` as the integrated working branch; review requested
+feature branches and merge them directly into `main`.
+
 ## Typing Style
 
 Prefer classic unions like `Union[str, int]` or `Optional[str]`, rather than using PEP 604 unions like
