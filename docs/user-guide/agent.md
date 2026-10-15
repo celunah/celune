@@ -5,10 +5,9 @@ arbitrary shell or computer-control agent. The runtime exposes typed,
 allowlisted operations, validates every call against its schema, and routes
 mutating work through approval policy.
 
-Agent mode requires the `xhigh` VRAM preset while its memory usage is being
-optimized. If a lower preset is selected, agent routing is disabled rather than
-raising the configured preset automatically. Persona-only conversation requires
-at least the `high` preset.
+Agent mode requires the `xhigh` VRAM preset. Its context is capped at 8,192
+tokens. If a lower preset is selected, agent routing is disabled rather than
+raising the configured preset automatically.
 
 ## Task lifecycle
 
@@ -21,13 +20,19 @@ not consume an iteration. Cancellation clears pending approval/choice state.
 The production limits are:
 
 - 20 tool/planning iterations per task.
-- 32,768 tokens of agent context space.
-- Compaction pressure around 24,576 tokens.
+- Up to 8,192 tokens of agent context space.
+- Up to 256 output tokens for input classification, with one repair attempt for
+  rejected output.
+- Compaction pressure around 6,144 tokens by default.
 - A stuck-task threshold of three repeated non-progress outcomes.
 
 The agent can speak its final result through the standard `say()` path. It can
 also be paused, resumed, cancelled, or queried by the runtime and extension
 events.
+
+Agent prompts do not include Persona's automatically retrieved long-term
+memories, conversation summary, or ordinary chat history. Memory tools remain
+available when a task explicitly needs a memory operation.
 
 ## Built-in engine tools
 
@@ -82,6 +87,19 @@ available. The checkpoint is validated and prepared in an isolated cache; a
 legacy JAX/Flax `needle.pkl` is not accepted as a normal production artifact.
 Needle may select only registered schemas, and the runtime validates names,
 argument types, approval state, and availability before execution.
+If Needle returns multiple valid calls, Celune pauses and asks which one to run.
+The numbered options show each tool and its arguments in speakable form: empty
+objects are described as having no arguments, and populated JSON is rendered
+as named values instead of reading braces and quotes aloud. The user can
+identify an option in their response. Celune executes only the selected call,
+then applies the normal availability and approval checks. The choice pause does
+not consume an iteration or trigger another planning step.
+The loader instantiates the model in the dtype declared by its validated
+checkpoint before placing it on the selected device, avoiding an intermediate
+FP32 copy for BF16 checkpoints.
+Needle's KV cache grows with generated tokens and lasts only for that selection
+request. Rotary values are computed for the prompt or decode step in use;
+`max_seq_len` is a hard limit and does not reserve a full positional table.
 
 ## User steering and approvals
 
@@ -91,3 +109,30 @@ Extensions can subscribe to `agent_approval_requested`,
 `agent_choice_requested`, `agent_task_state_changed`, and
 `agent_task_finished`. See [Extensions](../interfaces/extensions.md) for the
 event payloads.
+
+## Verify agent availability
+
+Run `celune test agent` to check the configured live agent path, every active
+tool handler, schema validation, permissions and approvals, task lifecycle,
+choices, context limits, and terminal outcomes. Its report records each check
+as passed, failed, or skipped. Optional local-management checks run only when
+`agent.fs_tools` is enabled. The [CLI guide](../interfaces/cli.md#commands)
+describes the report and exit status.
+
+After the live task, the test invokes every active tool with isolated test
+adapters and speaks a short status for each tool; the detailed result is
+recorded in the test log. Celune then speaks a multiple-choice request and an
+approval request before displaying each request and accepting a typed answer.
+The answer is applied directly to the paused diagnostic runtime, so the check
+verifies that the response was received and processed without requiring another
+Persona response. Either listed choice is accepted, and approving or declining
+the simulated mutation passes when processed. The answer field says “Enter your
+answer here,” with “Waiting for answer” and “Processing answer” status messages.
+These spoken tool results and interactive prompts apply only to
+`celune test agent`. Each typed response has a two-minute timeout; no response
+fails that check.
+
+## See also
+
+- [CLI](../interfaces/cli.md)
+- [Extensions](../interfaces/extensions.md)

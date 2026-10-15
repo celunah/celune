@@ -10,27 +10,26 @@ import hashlib
 import platform
 import importlib
 import subprocess
-
-from pathlib import Path
 from typing import Optional
-from collections.abc import Generator
-
-from dataclasses import asdict, dataclass
+from pathlib import Path
 from contextlib import suppress, contextmanager
+from dataclasses import asdict, dataclass
+from collections.abc import Generator
 
 from ..i18n import string
 from ..paths import backend_environments_dir
+from ..exceptions import BackendEnvironmentError as _BackendEnvironmentError
 
 __all__ = [
     "BACKEND_MANIFESTS",
     "BackendEnvironment",
-    "BackendEnvironmentError",
     "BackendEnvironmentManager",
     "BackendManifest",
     "backend_manifest",
 ]
 
 _WORKER_SHARED_REQUIREMENTS = (
+    "GitPython>=3.1.59,<4.0",
     "lingua-language-detector>=2.2.0,<3.0.0",
     "librosa==0.11.0",
     "llvmlite==0.47.0",
@@ -59,6 +58,10 @@ _MAIN_BRANCH_PYTORCH_REQUIREMENTS = (
     "torch==2.11.0+cu128",
     "torchaudio==2.11.0+cu128",
     "torchvision==0.26.0+cu128",
+)
+_TTS_PYTORCH_REQUIREMENTS = (
+    *_MAIN_BRANCH_PYTORCH_REQUIREMENTS,
+    "torchao==0.17.0",
 )
 _PYTORCH_INDEX_URLS = (
     "https://pypi.org/simple",
@@ -99,10 +102,6 @@ class BackendManifest:
         return hashlib.sha256(encoded).hexdigest()[:16]
 
 
-class BackendEnvironmentError(RuntimeError):
-    """Raised when a backend environment cannot be created or used."""
-
-
 @dataclass(frozen=True)
 class BackendEnvironment:
     """Describe an installed backend environment."""
@@ -138,7 +137,7 @@ BACKEND_MANIFESTS = {
         backend_id="mini",
         kind="tts",
         requirements=(
-            *_MAIN_BRANCH_PYTORCH_REQUIREMENTS,
+            *_TTS_PYTORCH_REQUIREMENTS,
             *_WORKER_HUGGINGFACE_REQUIREMENTS,
             "pocket-tts>=2.1.0,!=3.0.0",
         ),
@@ -150,7 +149,7 @@ BACKEND_MANIFESTS = {
         backend_id="qwen3",
         kind="tts",
         requirements=(
-            *_MAIN_BRANCH_PYTORCH_REQUIREMENTS,
+            *_TTS_PYTORCH_REQUIREMENTS,
             *_WORKER_HUGGINGFACE_REQUIREMENTS,
             "faster-qwen3-tts>=0.2.4",
         ),
@@ -162,7 +161,7 @@ BACKEND_MANIFESTS = {
         backend_id="fireredtts3",
         kind="tts",
         requirements=(
-            *_MAIN_BRANCH_PYTORCH_REQUIREMENTS,
+            *_TTS_PYTORCH_REQUIREMENTS,
             *_FIRERED_WORKER_HUGGINGFACE_REQUIREMENTS,
             "einops==0.8.2",
             "regex",
@@ -176,7 +175,7 @@ BACKEND_MANIFESTS = {
         backend_id="dotstts",
         kind="tts",
         requirements=(
-            *_MAIN_BRANCH_PYTORCH_REQUIREMENTS,
+            *_TTS_PYTORCH_REQUIREMENTS,
             *_WORKER_HUGGINGFACE_REQUIREMENTS,
             "dots.tts @ git+https://github.com/celunah/dots.tts",
         ),
@@ -189,7 +188,7 @@ BACKEND_MANIFESTS = {
         backend_id="voxcpm2",
         kind="tts",
         requirements=(
-            *_MAIN_BRANCH_PYTORCH_REQUIREMENTS,
+            *_TTS_PYTORCH_REQUIREMENTS,
             *_WORKER_HUGGINGFACE_REQUIREMENTS,
             "voxcpm>=2.0.0",
         ),
@@ -278,7 +277,7 @@ def _exclusive_lock(path: Path, timeout: float) -> Generator[None, None, None]:
         except (BlockingIOError, OSError):
             handle.close()
             if time.monotonic() - started >= timeout:
-                raise BackendEnvironmentError(
+                raise _BackendEnvironmentError(
                     f"Timed out waiting for backend environment lock: {path}"
                 ) from None
             time.sleep(0.1)
@@ -344,7 +343,7 @@ class BackendEnvironmentManager:
             return environment
 
         if self.uv_executable is None:
-            raise BackendEnvironmentError(string("backends.uv_required"))
+            raise _BackendEnvironmentError(string("backends.uv_required"))
 
         lock_path = self.root / manifest.backend_id / ".install.lock"
         with _exclusive_lock(lock_path, self.lock_timeout):
@@ -409,7 +408,7 @@ class BackendEnvironmentManager:
                 shutil.rmtree(temporary_root, ignore_errors=True)
 
         if not environment.is_ready:
-            raise BackendEnvironmentError(
+            raise _BackendEnvironmentError(
                 f"Backend environment was not created: {environment.root}"
             )
         return environment
@@ -461,4 +460,4 @@ class BackendEnvironmentManager:
             message = string("backends.dependencies_install_failed")
             if output:
                 message = f"{message}: {output}"
-            raise BackendEnvironmentError(message) from error
+            raise _BackendEnvironmentError(message) from error

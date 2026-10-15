@@ -24,6 +24,14 @@ from typing import TYPE_CHECKING, Union, Optional, cast
 import numpy as np
 
 from .i18n import string
+from .utils import available
+from .locks import ComponentLockManager
+from .typing.common import JSONSerializable
+from .typing.pipeline import SpeechStreamQueue
+from .typing.aliases import AudioChunk, AudioChunks
+from .constants import BASE_SR, APP_NAME, PipelineStates
+from .paths import project_root, temp_data_dir, running_compiled
+from .binding import install_class_functions, install_module_functions
 from .pipelinecore import (
     _SFX_DUCK_GAIN,
     _LEGACY_BUFFER_SECONDS,
@@ -49,7 +57,6 @@ from .typing.locks import (
     ComponentLockAcquisition,
     ComponentLockRequirement,
 )
-from .utils import available
 from .dataclasses.pipeline import (
     SpeechTiming,
     PlaybackChunk,
@@ -57,14 +64,6 @@ from .dataclasses.pipeline import (
     CaptionPlaybackState,
     CaptionPlaybackSegment,
 )
-from .locks import ComponentLockManager
-from .typing.common import JSONSerializable
-from .typing.pipeline import SpeechStreamQueue
-from .typing.aliases import AudioChunk, AudioChunks
-from .constants import BASE_SR, APP_NAME, PipelineStates
-from .paths import project_root, temp_data_dir, running_compiled
-from .binding import install_class_functions, install_module_functions
-
 
 if TYPE_CHECKING:
     from .celune import Celune
@@ -439,6 +438,7 @@ def _register_playback_source(
     *,
     kind: str,
     base_gain: float = 1.0,
+    low_latency: bool = False,
     caption_word_total: int = 0,
     async_caption_audio: bool = False,
 ) -> None:
@@ -452,12 +452,30 @@ def _register_playback_source(
         "played_frames": 0.0,
         "total_frames_final": 0.0,
         "generation": float(getattr(engine, "_playback_generation", 0)),
+        "low_latency": low_latency,
         "async_caption_audio": "true" if async_caption_audio else "",
     }
     if kind == "speech" and caption_word_total > 0:
         _playback_caption_states(engine)[source_id] = CaptionPlaybackState(
             total_words=caption_word_total
         )
+
+
+def _should_apply_contention_buffering(
+    engine: Celune,
+    source_ids: collections.abc.Iterable[int],
+    has_completed_source: bool,
+) -> bool:
+    """Return whether active sources should wait for contention reserve."""
+    if has_completed_source:
+        return False
+
+    source_meta = _playback_source_meta(engine)
+    for source_id in source_ids:
+        metadata = source_meta.get(source_id)
+        if isinstance(metadata, dict) and metadata.get("low_latency") is True:
+            return False
+    return True
 
 
 def _record_caption_playback_segment(

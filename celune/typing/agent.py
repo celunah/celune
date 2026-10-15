@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from enum import Enum
+from collections.abc import Sequence
 from dataclasses import field, dataclass
 from typing import (
     TYPE_CHECKING,
@@ -18,7 +19,7 @@ from typing import (
 from .modes import OperationMode
 from .locks import ComponentBusyResult
 from .common import JSON, JSONSerializable
-from ..constants import AGENT_COMPACT_AT, AGENT_CONTEXT_SPACE, AGENT_MAX_LOOPS
+from ..constants import AGENT_MAX_LOOPS, AGENT_COMPACT_AT, AGENT_CONTEXT_SPACE
 
 if TYPE_CHECKING:
     from ..persona.capabilities import PersonaCapabilities
@@ -1245,15 +1246,15 @@ class AgentPlanner(Protocol):
 
 
 class AgentToolSelector(Protocol):
-    """Dependency boundary for selecting at most one tool call."""
+    """Dependency boundary for returning a call or candidate calls."""
 
     def __call__(
         self,
         context: AgentContext,
         output: AgentOutput,
         /,
-    ) -> Optional[ToolCall]:
-        """Select one typed tool call or no tool call."""
+    ) -> Optional[Union[ToolCall, Sequence[ToolCall]]]:
+        """Select one call or return candidates for the user to choose from."""
         raise NotImplementedError("protocol not defined")
 
 

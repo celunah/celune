@@ -43,7 +43,7 @@ type WorkerControlMessage = dict[str, JSONSerializable]
 class WorkerPacket(TypedDict, total=False):
     """Common CEDTS packet envelope shared by core and worker."""
 
-    cedts_version: int
+    cedts_version: list[int]
     kind: str
     message_id: str
     reply_to: Optional[str]

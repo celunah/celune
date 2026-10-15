@@ -1,9 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """Celune's backend layer."""
 
-# Import groups follow Celune's project-specific Ruff ordering.
-# pylint: disable=ungrouped-imports
-
 import gc
 import os
 import time
@@ -15,20 +12,21 @@ import contextlib
 from typing import Never, Union, ClassVar, Optional, cast, final
 from pathlib import Path
 from dataclasses import dataclass
-from collections.abc import Callable, Generator
+from collections.abc import Mapping, Callable, Generator
 
 import numpy as np
-import torch
 import numpy.typing as npt
+import torch
 from transformers.modeling_utils import PreTrainedModel
 
-from .vc import clamp_vc_pitch_shift
 from .i18n import string, set_locale, tagged_string, get_system_locale
 from .vram import (
     VramPreset,
     backend_allowed,
     resolve_vram_preset,
     resolve_backend_name,
+    is_cuda_out_of_memory,
+    release_cuda_after_oom,
 )
 from .locks import ComponentLockLease
 from .modes import (
@@ -37,8 +35,8 @@ from .modes import (
 )
 from .paths import temp_data_dir
 from .utils import (
-    available,
     discard,
+    available,
     format_error_message,
 )
 from .chroma import AudioRGBGlow
@@ -55,17 +53,11 @@ from .cevoice import (
     bundle_matches_default_pack_checksum,
 )
 from .pipeline import (
+    split_text,
     clear_queue,
     close_stream,
-    generation_worker_job,
     playback_worker_job,
-    split_text,
-)
-from .speech import (
-    play as play_pipeline,
-    close as close_pipeline,
-    queue_sfx_audio,
-    stop_live_audio_input,
+    generation_worker_job,
 )
 from .constants import (
     APP_NAME,
@@ -117,9 +109,10 @@ from .typing.celune import (
     ProgressCallback,
     ReleasableObject,
     InputStateCallback,
-    CeluneStateAccessors,
     CeluneMethodSurface,
+    CeluneStateAccessors,
     VoiceLockStateCallback,
+    CaptionProgressCallback,
     _BundleWithPath,
 )
 from .typing.common import JSON, JSONSerializable
@@ -153,6 +146,24 @@ from .dataclasses.properties import (
 )
 
 
+def _load_speech_module():
+    """Import speech helpers after the pipeline facade has been initialized."""
+    from . import speech
+
+    return speech
+
+
+speech_module = _load_speech_module()
+
+
+play_pipeline = speech_module.play
+close_pipeline = speech_module.close
+queue_sfx_audio = speech_module.queue_sfx_audio
+stop_live_audio_input = speech_module.stop_live_audio_input
+
+_TTS_KV_CACHE_BACKENDS = frozenset({"qwen3", "fireredtts3", "voxcpm2"})
+
+
 def _config_str(value: JSONSerializable) -> Optional[str]:
     """Return a config value only when it is a string."""
     return value if isinstance(value, str) else None
@@ -181,6 +192,29 @@ def _config_int(value: JSONSerializable, default: int) -> int:
     if value is None:
         return default
     raise TypeError("config value cannot be converted to int")
+
+
+def _tts_quantization_enabled(
+    config: Optional[Mapping[str, JSONSerializable]],
+    backend_spec: CoreBackendSpec,
+) -> bool:
+    """Resolve the default TTS quantization policy, excluding LuxTTS."""
+    if isinstance(backend_spec, CeluneVCBackend):
+        return False
+    if isinstance(backend_spec, type) and issubclass(backend_spec, CeluneVCBackend):
+        return False
+    raw_name = (
+        backend_spec
+        if isinstance(backend_spec, str)
+        else getattr(backend_spec, "name", "")
+    )
+    backend_name = raw_name.strip().lower() if isinstance(raw_name, str) else ""
+    return backend_name != "luxtts" and config_bool(
+        config,
+        "CELUNE_TTS_QUANTIZE",
+        "quantize",
+        default=True,
+    )
 
 
 def _resolve_input_mode(config: Config, requested_mode: Optional[str] = None) -> str:
@@ -261,7 +295,9 @@ def _agent_task_config(config: Config) -> AgentTaskConfig:
             )
             else None
         ),
-        context_size=positive("context_size", AGENT_CONTEXT_SPACE),
+        context_size=min(
+            positive("context_size", AGENT_CONTEXT_SPACE), AGENT_CONTEXT_SPACE
+        ),
         compact_at=(
             values["compact_at"]
             if isinstance(values.get("compact_at"), int)
@@ -396,7 +432,6 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
         backend: Optional[CoreBackendSpec] = None,
         tts_backend: Optional[CoreBackendSpec] = None,
         vc_backend: Optional[CoreBackendSpec] = None,
-        vc_pitch_shift: Optional[int] = None,
         vc_f0_condition: Optional[bool] = None,
         input_mode: Optional[str] = None,
         chunk_size: int = 0,  # defaulted to 0 because not all backends use this
@@ -411,7 +446,7 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
         change_input_state_callback: Optional[InputStateCallback] = None,
         change_voice_lock_state_callback: Optional[VoiceLockStateCallback] = None,
         progress_callback: Optional[ProgressCallback] = None,
-        caption_progress_callback: Optional[ProgressCallback] = None,
+        caption_progress_callback: Optional[CaptionProgressCallback] = None,
         caption_callback: Optional[CaptionCallback] = None,
         log_level: LogLevel = "info",
         agent_tool_selector: Optional[AgentToolSelector] = None,
@@ -504,8 +539,8 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
                     "\n".join(
                         (
                             string("agent.unsandboxed_title"),
-                            string("agent.unsandboxed_body"),
-                            string("agent.unsandboxed_rollback"),
+                            string("agent.unsandboxed_body", app_name=APP_NAME),
+                            string("agent.unsandboxed_rollback", app_name=APP_NAME),
                         )
                     ),
                     "warning",
@@ -526,6 +561,7 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
             tool_executor=self._execute_agent_tool,
             tool_result_handler=self._agent_persona_bridge.handle_tool_result,
             responder=self._agent_persona_bridge.respond,
+            compactor=self._agent_persona_bridge.compact,
             tool_schemas=self._agent_tool_schemas,
             task_config=_agent_task_config(config),
         )
@@ -554,11 +590,6 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
             tts_backend,
             vc_backend,
         )
-        self.vc_pitch_shift = (
-            0
-            if vc_pitch_shift is None
-            else clamp_vc_pitch_shift(_config_int(vc_pitch_shift, 0))
-        )
         self.vc_f0_condition = False if vc_f0_condition is None else vc_f0_condition
         select_voice_bundle(_config_str(config_value(config, "voice_bundle")))
         preset = resolve_vram_preset(config)
@@ -566,7 +597,11 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
         if tts_backend is None:
             tts_backend = preset.default_backend
 
-        backend_kwargs: dict[str, Optional[Union[bool, str]]] = {}
+        backend_kwargs: dict[str, Optional[Union[bool, str]]] = {
+            "quantize": _tts_quantization_enabled(config, tts_backend),
+        }
+        if isinstance(tts_backend, CeluneBackend):
+            tts_backend.quantization_requested = bool(backend_kwargs["quantize"])
         if isinstance(tts_backend, CeluneBackend):
             if not backend_allowed(config, tts_backend.name):
                 raise BackendError(
@@ -600,6 +635,11 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
             if isinstance(raw_name, str)
             else None
         )
+        quantize_kv_cache = config_value(config, "quantize_kv_cache", True) is not False
+        if isinstance(tts_backend, CeluneBackend):
+            tts_backend.quantize_kv_cache = quantize_kv_cache
+        if backend_name in _TTS_KV_CACHE_BACKENDS:
+            backend_kwargs["quantize_kv_cache"] = quantize_kv_cache
         if backend_name == "qwen3":
             backend_kwargs["x_vector_only"] = config_bool(
                 config,
@@ -665,8 +705,6 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
                     resolved_vc_backend,
                     log=self.log_callback,
                 )
-                if available("pitch_shift", obj=self.vc_backend):
-                    self.vc_backend.pitch_shift = self.vc_pitch_shift
                 if available("f0_condition", obj=self.vc_backend):
                     self.vc_backend.f0_condition = self.vc_f0_condition
                 self.voice_conversion_backend = self.vc_backend.name
@@ -781,6 +819,7 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
         *,
         task_state: Optional[str] = None,
         detail: Optional[str] = None,
+        checks: Optional[list[JSON]] = None,
     ) -> JSON:
         """Finish an explicit test mode and leave the engine stopped but alive.
 
@@ -789,6 +828,7 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
             success: Whether the controlled test completed successfully.
             task_state: Final agent task state, when the mode created a task.
             detail: Optional diagnostic detail retained with the final result.
+            checks: Optional per-feature agent diagnostic results.
 
         Returns:
             JSON: The synchronously recorded final test result.
@@ -826,6 +866,19 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
         if cleanup_errors:
             success = False
             detail = detail or "; ".join(cleanup_errors)
+            if checks is not None:
+                checks.append(
+                    {
+                        "name": "cleanup",
+                        "status": "failed",
+                        "detail": "; ".join(cleanup_errors),
+                    }
+                )
+
+        if checks is not None:
+            success = success and not any(
+                check.get("status") == "failed" for check in checks
+            )
 
         result: JSON = {
             "mode": mode,
@@ -834,12 +887,48 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
             "task_state": task_state,
             "detail": detail,
         }
+        summary = {"passed": 0, "failed": 0, "skipped": 0}
+        if checks is not None:
+            result["checks"] = cast(JSONSerializable, checks)
+            summary = {
+                "passed": sum(check.get("status") == "passed" for check in checks),
+                "failed": sum(check.get("status") == "failed" for check in checks),
+                "skipped": sum(check.get("status") == "skipped" for check in checks),
+            }
+            result["summary"] = cast(JSONSerializable, summary)
         self._runtime_state.test_result = result
         try:
             self.cur_state = "stopped"
         except Exception:
             self._runtime_state.cur_state = "stopped"
-        if mode == "agent":
+        if mode == "agent" and checks is not None:
+            self.log(
+                string(
+                    "test.agent_report_summary",
+                    passed=summary["passed"],
+                    failed=summary["failed"],
+                    skipped=summary["skipped"],
+                ),
+                "error" if not success else "info",
+            )
+            for check in checks:
+                status = check.get("status")
+                message_key = "test.agent_check_failed"
+                if isinstance(status, str):
+                    message_key = {
+                        "passed": "test.agent_check_passed",
+                        "failed": "test.agent_check_failed",
+                        "skipped": "test.agent_check_skipped",
+                    }.get(status, message_key)
+                self.log(
+                    string(
+                        message_key,
+                        check=check.get("name", "unknown"),
+                        message=check.get("detail", ""),
+                    ),
+                    "error" if status == "failed" else "info",
+                )
+        elif mode == "agent":
             message_key = (
                 "test.finished_success" if success else "test.finished_failure"
             )
@@ -850,6 +939,7 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
                         mode=mode,
                         task_state=task_state or "none",
                         detail=detail or "none",
+                        app_name=APP_NAME,
                     ),
                     "info" if success else "error",
                 )
@@ -1412,8 +1502,6 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
             self._vc_backend_spec,
             log=self.log_callback,
         )
-        if available("pitch_shift", obj=candidate_backend):
-            candidate_backend.pitch_shift = self.vc_pitch_shift
         if available("f0_condition", obj=candidate_backend):
             candidate_backend.f0_condition = self.vc_f0_condition
         previous_backend = self.vc_backend
@@ -1459,7 +1547,9 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
         backend_spec: Union[str, CeluneBackend, type[CeluneBackend]],
     ) -> dict[str, JSONSerializable]:
         """Return constructor kwargs needed to instantiate one backend specification."""
-        backend_kwargs: dict[str, JSONSerializable] = {}
+        backend_kwargs: dict[str, JSONSerializable] = {
+            "quantize": _tts_quantization_enabled(self.config, backend_spec),
+        }
         raw_name = getattr(backend_spec, "name", None)
         backend_name = (
             backend_spec.strip().lower()
@@ -1468,9 +1558,16 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
             if isinstance(raw_name, str)
             else None
         )
+        quantize_kv_cache = (
+            config_value(self.config, "quantize_kv_cache", True) is not False
+        )
         if isinstance(backend_spec, CeluneBackend):
-            return backend_kwargs
+            backend_spec.quantization_requested = bool(backend_kwargs["quantize"])
+            backend_spec.quantize_kv_cache = quantize_kv_cache
+            return {}
 
+        if backend_name in _TTS_KV_CACHE_BACKENDS:
+            backend_kwargs["quantize_kv_cache"] = quantize_kv_cache
         if backend_name == "qwen3":
             preset = resolve_vram_preset(self.config)
             backend_kwargs["x_vector_only"] = config_bool(
@@ -1575,8 +1672,6 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
             snapshot.restorable_vc_backend_spec,
             log=self.log_callback,
         )
-        if available("pitch_shift", obj=restored_vc_backend):
-            restored_vc_backend.pitch_shift = self.vc_pitch_shift
         if available("f0_condition", obj=restored_vc_backend):
             restored_vc_backend.f0_condition = self.vc_f0_condition
         if snapshot.loaded:
@@ -1641,7 +1736,29 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
     ) -> tuple[Optional[PreTrainedModel], str]:
         """Load the TTS runtime for one backend and voice without disturbing the previous runtime."""
         model_name = backend.model_id_for_voice(voice)
-        model = cast(PreTrainedModel, backend.load_model(model_name))
+        try:
+            model = cast(PreTrainedModel, backend.load_model(model_name))
+        except Exception as error:
+            if is_cuda_out_of_memory(error):
+                with contextlib.suppress(Exception):
+                    backend.unload_model()
+                release_cuda_after_oom()
+                raise
+            if not backend.quantization_requested:
+                raise
+            backend.disable_runtime_quantization()
+            backend.unload_model()
+            try:
+                model = cast(PreTrainedModel, backend.load_model(model_name))
+            except Exception as recovery_error:
+                if is_cuda_out_of_memory(recovery_error):
+                    with contextlib.suppress(Exception):
+                        backend.unload_model()
+                    release_cuda_after_oom()
+                fatal = getattr(backend, "_fatal_callback", None)
+                if callable(fatal):
+                    fatal()
+                raise
         backend.model = model
         return model, model_name
 
@@ -1753,6 +1870,9 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
                     voice=candidate_voice,
                 ):
                     self._raise_warmup_error("warmup failed after backend reload")
+                candidate_model = cast(
+                    Optional[PreTrainedModel], candidate_backend.model
+                )
 
                 self.backend = candidate_backend
                 self.vc_backend = None
@@ -1781,8 +1901,6 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
                 if not self._track_reload_backend(candidate_vc_backend):
                     _close_backend(candidate_vc_backend)
                     return False
-                if available("pitch_shift", obj=candidate_vc_backend):
-                    candidate_vc_backend.pitch_shift = self.vc_pitch_shift
                 if available("f0_condition", obj=candidate_vc_backend):
                     candidate_vc_backend.f0_condition = self.vc_f0_condition
                 if previous_backend is not None:
@@ -2440,14 +2558,24 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
 def _install_celune_methods() -> None:
     """Install split engine methods after the concrete class exists."""
     from . import (
-        conversation,
-        loader as loader_methods,
-        pipeline as pipeline_methods,
-        playback as playback_methods,
+        vc as vc_methods,
+    )
+    from . import (
         sleep,
         speech,
-        vc as vc_methods,
+        conversation,
+    )
+    from . import (
         voice as voice_methods,
+    )
+    from . import (
+        loader as loader_methods,
+    )
+    from . import (
+        pipeline as pipeline_methods,
+    )
+    from . import (
+        playback as playback_methods,
     )
     from .agent import core as agent_methods
 

@@ -17,6 +17,25 @@ from ..typing.aliases import AudioChunk
 
 
 @dataclass(frozen=True)
+class PreparedSpeechAudio:
+    """Generated section audio kept in order for deferred playback."""
+
+    sections: tuple[AudioChunk, ...]
+
+
+@dataclass(frozen=True)
+class CaptionAlignmentSection:
+    """Known audio and transcript ranges for one prepared speech passage."""
+
+    audio_start_frame: int
+    audio_end_frame: int
+    transcript_word_start: int
+    transcript_word_end: int
+    display_word_start: int
+    display_word_end: int
+
+
+@dataclass(frozen=True)
 class SpeechRequest:
     """Queued speech input and output persistence preference."""
 
@@ -28,6 +47,13 @@ class SpeechRequest:
     normalize: bool = False
     silent_retry_count: int = 0
     generation: int = 0
+    synthesis_sections: tuple[str, ...] = ()
+    audio_capture_queue: Optional[
+        queue.Queue[Union[PreparedSpeechAudio, Exception]]
+    ] = None
+    prepared_audio: Optional[AudioChunk] = None
+    playback_source_queue: Optional[queue.Queue[Union[int, Exception]]] = None
+    caption_alignment_sections: tuple[CaptionAlignmentSection, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -37,7 +63,6 @@ class AudioInputRequest:
     audio: npt.NDArray[np.float32]
     sample_rate: int
     label: str = "audio input"
-    pitch_shift: Optional[int] = None
     f0_condition: Optional[bool] = None
     log_playback: bool = True
     reset_ready_announcement: bool = True
@@ -53,7 +78,6 @@ class VoiceConversionRequest:
     target_character: Optional[str] = None
     target_references: tuple[Path, ...] = ()
     label: str = "audio input"
-    pitch_shift: Optional[int] = None
     f0_condition: Optional[bool] = None
 
 

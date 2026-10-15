@@ -284,13 +284,11 @@ The conversion endpoint accepts multipart form data:
 ```bash
 curl -X POST http://127.0.0.1:2060/v1/convert \
   -F "file=@input.wav" \
-  -F "pitch_shift=-2" \
   -F "f0_condition=false" \
   --output converted.flac
 ```
 
-`file` is required. `pitch_shift` is an optional integer override and
-`f0_condition` is an optional boolean override. The endpoint returns `audio/flac`
+`file` is required. `f0_condition` is an optional boolean override. The endpoint returns `audio/flac`
 when conversion succeeds, `409` when VC mode is not active or the engine is
 busy, `400` for malformed audio/fields, `413` when the upload limit is
 exceeded, and `500` when the conversion backend raises an internal request
@@ -323,13 +321,16 @@ Persona/agent submission path, slash-command handler, voice state, VC state,
 speech lifecycle callbacks, and one-shot upload/microphone VC conversion. TUI
 timed state updates are delivered through the CEDTS frontend update channel;
 the browser keeps a polling fallback for reconnects and standalone API hosts.
+Browser playback is returned as 16-bit PCM; Celune's engine continues to use
+normalized float32 audio internally.
 The WebUI exposes the active voice as a compact button beside the text input;
 clicking it cycles through the available voices using the same Core switching
-path as the TUI. It does not expose the TUI's settings editor. When live
-Persona or VC capture is available, press `ALT+R` to toggle recording; the same
-shortcut is shown in the bottom-right resource area. If the API extra is absent,
-the REST/WebUI surface cannot be started, but the core Python/TUI runtime
-remains separate.
+path as the TUI. The voice and VC conversion buttons follow the active Celune
+palette, including their disabled, hover, and keyboard-focus states. The WebUI
+does not expose the TUI's settings editor. When live Persona or VC capture is
+available, press `ALT+R` to toggle recording; the same shortcut is shown in the
+bottom-right resource area. If the API extra is absent, the REST/WebUI surface
+cannot be started, but the core Python/TUI runtime remains separate.
 
 ## Embedding the server
 

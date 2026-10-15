@@ -20,6 +20,10 @@ capabilities = celune.vision.capabilities() if celune.vision is not None else No
 probes. A speech-only model has no attachment path, even if the UI command is
 present.
 
+The `high` preset supports registered standard models, including the 4B tier.
+Registered smart 8B-tier models require `xhigh`. Persona context is capped at
+2,048 tokens outside agent mode; agent requests use a separate 8,192-token cap.
+
 ## Character context
 
 The active CEVOICE/CECHAR pack supplies the character identity, speaking style,
@@ -41,9 +45,10 @@ speech model, automatic language detection by default, a five-second no-input
 timeout, and a 1.5-second speech-end delay.
 
 The transcriber exposes segment and word timestamps for the voice-input
-workflow. Input is resampled to the runtime's audio invariants before
-transcription. Speech captions use the separate IPA aligner documented in
-[speech](speech.md).
+workflow. Whisper loads when a recording is transcribed and unloads after its
+final queued snapshot or cancellation. Input is resampled to the runtime's
+audio invariants before transcription. Speech captions use the separate IPA
+aligner documented in [speech](speech.md).
 
 ## Attachments
 
@@ -81,10 +86,16 @@ this”, “on record”, or “going forward” when a detail should be persist
 
 The classifier may suggest additional memories when its confidence is above
 the configured threshold and the candidate count is within the configured
-limit. Sensitive-looking secrets, passwords, API keys, payment numbers, and
+limit. It uses user-authored messages, not Celune's generated replies, as
+evidence. Sensitive-looking secrets, passwords, API keys, payment numbers, and
 similar credentials are rejected rather than stored. Retrieval uses a local
 sentence-transformer embedding when available and falls back to token overlap;
-the configured thresholds control both paths.
+the configured thresholds control both paths. Inferred memories stop being
+retrieved 60 days after their last update by default; explicit memories remain
+available until forgotten. Set `persona.memory.automatic_max_age_days` to
+`null` to disable inferred-memory expiry. Exact duplicates are merged, and
+high-confidence semantic duplicates are merged when local embeddings are
+available.
 
 Agent tools expose `remember`, `recall`, `forget`, `clear_recent_context`, and
 `summarize_context`. The same memory store is used by ordinary Persona turns.

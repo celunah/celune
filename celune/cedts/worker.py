@@ -14,6 +14,7 @@ from contextlib import suppress
 from collections import OrderedDict
 from collections.abc import Mapping, Callable
 
+from ..vram import is_cuda_out_of_memory, release_cuda_after_oom
 from ..paths import configure_numba_cache
 from ..cevoice import select_voice_bundle
 from .protocol import (
@@ -59,6 +60,9 @@ from ..dataclasses.pipeline import VoiceConversionRequest
 _WORKER_STDERR = sys.stderr
 _MESSAGE_ID_REPLAY_WINDOW = 4096
 _CALL_ARGUMENT_FIELDS = {
+    "disable_runtime_quantization": frozenset({"method"}),
+    "runtime_quantization_active": frozenset({"method"}),
+    "vram_report": frozenset({"method"}),
     "resolve_generation_language": frozenset({"method", "lang"}),
     "should_reload_for_language": frozenset({"method", "lang"}),
     "convert_live": frozenset({"method", "request"}),
@@ -429,6 +433,9 @@ def _validate_request_arguments(
         if not set(checked).issubset(allowed):
             raise _worker_protocol_error("backend_worker_method_arguments_are_invalid")
         required = {
+            "disable_runtime_quantization": {"method"},
+            "runtime_quantization_active": {"method"},
+            "vram_report": {"method"},
             "resolve_generation_language": {"method", "lang"},
             "should_reload_for_language": {"method", "lang"},
             "convert_live": {"method", "request"},
@@ -535,7 +542,25 @@ def _run_request(
         backend.preload_models()
         return {"ok": True, "value": None}, next_model_id
     if operation == "load_model":
-        model = backend.load_model(**cast(BackendArguments, arguments))
+        try:
+            model = backend.load_model(**cast(BackendArguments, arguments))
+        except Exception as error:
+            if is_cuda_out_of_memory(error):
+                with suppress(Exception):
+                    backend.unload_model()
+                _release_worker_models(models)
+                release_cuda_after_oom()
+                raise
+            if not bool(getattr(backend, "quantization_requested", False)):
+                raise
+            disable_quantization = getattr(
+                backend, "disable_runtime_quantization", None
+            )
+            if not callable(disable_quantization):
+                raise
+            disable_quantization()
+            backend.unload_model()
+            model = backend.load_model(**cast(BackendArguments, arguments))
         backend.model = model
         model_id = next_model_id
         models[model_id] = model
@@ -677,7 +702,7 @@ def _send_error(
 
 def _negotiate_hello(control: Mapping[str, object]) -> dict[str, JSONSerializable]:
     """Validate a core hello and return the worker's negotiated capabilities."""
-    if control.get("cedts_version") != CEDTS_VERSION:
+    if control.get("cedts_version") != list(CEDTS_VERSION):
         raise _worker_protocol_error("unsupported_cedts_packet_version")
     if control.get("kind") != "hello" or control.get("operation") != "handshake":
         raise _worker_protocol_error("worker_expected_a_cedts_hello_packet")
@@ -685,7 +710,7 @@ def _negotiate_hello(control: Mapping[str, object]) -> dict[str, JSONSerializabl
     if not isinstance(data, dict):
         raise _worker_protocol_error("cedts_hello_data_is_invalid")
     versions = data.get("versions")
-    if not isinstance(versions, list) or CEDTS_VERSION not in versions:
+    if not isinstance(versions, list) or list(CEDTS_VERSION) not in versions:
         raise _worker_protocol_error("no_compatible_cedts_version_was_offered")
     offered = data.get("capabilities")
     if not isinstance(offered, dict):
@@ -800,7 +825,7 @@ def main() -> int:
             "hello_ack",
             "handshake",
             {
-                "cedts_version": CEDTS_VERSION,
+                "cedts_version": cast(WorkerValue, list(CEDTS_VERSION)),
                 "capabilities": negotiated_capabilities,
             },
             reply_to=hello_id,
@@ -943,6 +968,8 @@ def main() -> int:
             )
             next_model_id = updated_model_id
         except Exception as error:
+            if is_cuda_out_of_memory(error):
+                release_cuda_after_oom()
             response = _error_response(error)
             response_kind = "error"
             _worker_log(
@@ -1012,7 +1039,7 @@ def main() -> int:
         packet_kind = control.get("kind")
         packet_operation = control.get("operation")
         packet_id = control.get("message_id")
-        if control.get("cedts_version") != CEDTS_VERSION:
+        if control.get("cedts_version") != list(CEDTS_VERSION):
             _send_error(
                 protocol_stream,
                 binary_output,

@@ -13,11 +13,11 @@ import torch
 import numpy as np
 from scipy import signal
 
-from .binding import install_class_functions
-from .dataclasses.pipeline import AudioInputRequest, AudioOutput
 from .i18n import string
 from .typing.aliases import AudioChunk
+from .binding import install_class_functions
 from .typing.backends import _StreamingSpeechModel
+from .dataclasses.pipeline import AudioOutput, AudioInputRequest
 
 if TYPE_CHECKING:
     from .celune import Celune
@@ -29,6 +29,8 @@ VC_VAD_HANGOVER_SECONDS = 0.3
 VC_VAD_PREROLL_SECONDS = 0.18
 VC_LIVE_CHUNK_SECONDS = 0.18
 VC_LIVE_CHUNK_OVERLAP_SECONDS = 0.0
+VC_PLAYBACK_ATTENUATION_DB = 2.0
+VC_PLAYBACK_GAIN = 10.0 ** (-VC_PLAYBACK_ATTENUATION_DB / 20.0)
 _VC_AUDIO_PEAK = 0.95
 
 _LIVE_VAD_TARGET_SAMPLE_RATE = 16000
@@ -41,6 +43,8 @@ __all__ = [
     "VC_LIVE_CHUNK_SECONDS",
     "VC_PITCH_SHIFT_MAX",
     "VC_PITCH_SHIFT_MIN",
+    "VC_PLAYBACK_ATTENUATION_DB",
+    "VC_PLAYBACK_GAIN",
     "VC_VAD_HANGOVER_SECONDS",
     "VC_VAD_PREROLL_SECONDS",
     "VC_VAD_RMS_THRESHOLD",
@@ -100,7 +104,6 @@ def convert_audio(
     audio: np.ndarray,
     sample_rate: int,
     label: str = "audio input",
-    pitch_shift: Optional[int] = None,
     f0_condition: Optional[bool] = None,
 ) -> Optional[AudioOutput]:
     """Convert submitted audio and return the generated VC output."""
@@ -118,7 +121,6 @@ def convert_audio(
             audio=np.asarray(audio, dtype=np.float32),
             sample_rate=sample_rate,
             label=label,
-            pitch_shift=pitch_shift,
             f0_condition=f0_condition,
         ),
     )
@@ -129,7 +131,6 @@ def convert_live_audio(
     audio: np.ndarray,
     sample_rate: int,
     label: str = "audio input",
-    pitch_shift: Optional[int] = None,
     f0_condition: Optional[bool] = None,
 ) -> Optional[AudioOutput]:
     """Convert one low-latency live block through the active VC backend."""
@@ -138,7 +139,6 @@ def convert_live_audio(
             audio,
             sample_rate,
             label=label,
-            pitch_shift=pitch_shift,
             f0_condition=f0_condition,
         )
 
@@ -150,7 +150,6 @@ def convert_live_audio(
             audio=np.asarray(audio, dtype=np.float32),
             sample_rate=sample_rate,
             label=label,
-            pitch_shift=pitch_shift,
             f0_condition=f0_condition,
         ),
         live=True,

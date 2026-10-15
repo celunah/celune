@@ -13,7 +13,6 @@ from typing import Union, Optional, cast
 from dataclasses import asdict, dataclass
 
 import torch
-import torch.nn.functional as f
 import numpy as np
 from transformers import (
     AutoModel,
@@ -93,6 +92,24 @@ _SENSITIVE_MEMORY_PATTERN = re.compile(
     r"credit card|bank account|social security|\bssn\b)\b",
     flags=re.IGNORECASE,
 )
+_MEMORY_DUPLICATE_SIMILARITY_THRESHOLD = 0.9
+_MEMORY_DUPLICATE_TOKEN_COVERAGE_THRESHOLD = 0.75
+_MEMORY_NEGATION_TOKENS = {
+    "can't",
+    "cannot",
+    "couldn't",
+    "didn't",
+    "doesn't",
+    "don't",
+    "isn't",
+    "never",
+    "no",
+    "not",
+    "shouldn't",
+    "wasn't",
+    "won't",
+    "wouldn't",
+}
 
 _EMBEDDING_BACKENDS: dict[str, EmbeddingBackend] = {}
 _FAILED_EMBEDDING_MODELS: set[str] = set()
@@ -200,7 +217,7 @@ def _compute_text_embeddings(
         attention_mask = cast(torch.Tensor, encoded["attention_mask"])
         attention = attention_mask.unsqueeze(-1).to(hidden.dtype)
         pooled = (hidden * attention).sum(dim=1) / attention.sum(dim=1).clamp(min=1)
-        normalized = f.normalize(pooled, p=2, dim=1)
+        normalized = torch.nn.functional.normalize(pooled, p=2, dim=1)
         array = normalized.cpu().numpy().astype(np.float32)
         return [cast(EmbeddingVector, row) for row in array]
     except (RuntimeError, AssertionError, ValueError, OSError):
@@ -284,8 +301,18 @@ class PersonaMemoryStore:
         *,
         semantic_similarity_threshold: float = 0.62,
         fallback_token_overlap_threshold: int = 1,
+        automatic_max_age_days: Optional[int] = 60,
         embedding_model: str = PERSONA_MEMORY_EMBEDDING_MODEL,
     ) -> None:
+        """Initialize one character-scoped memory store.
+
+        Args:
+            storage_dir: Optional root directory for persisted character records.
+            semantic_similarity_threshold: Minimum cosine score for retrieval.
+            fallback_token_overlap_threshold: Minimum shared tokens for fallback retrieval.
+            automatic_max_age_days: Maximum age of inferred memories, or ``None`` to disable expiry.
+            embedding_model: Local transformer model used for retrieval and duplicate checks.
+        """
         self.storage_dir = (
             Path(storage_dir) if storage_dir is not None else default_memory_dir()
         )
@@ -294,6 +321,16 @@ class PersonaMemoryStore:
         )
         self.fallback_token_overlap_threshold = _clamp_overlap_threshold(
             fallback_token_overlap_threshold
+        )
+        self.automatic_max_age_days = (
+            automatic_max_age_days
+            if automatic_max_age_days is None
+            or (
+                isinstance(automatic_max_age_days, int)
+                and not isinstance(automatic_max_age_days, bool)
+                and automatic_max_age_days > 0
+            )
+            else 60
         )
         self.embedding_model = embedding_model.strip() or PERSONA_MEMORY_EMBEDDING_MODEL
         self._embedding_cache: dict[str, EmbeddingVector] = {}
@@ -389,7 +426,7 @@ class PersonaMemoryStore:
         importance: int = 1,
         explicit: bool = False,
     ) -> Optional[MemoryRecord]:
-        """Store or update one memory for a character.
+        """Store or merge one memory for a character.
 
         Args:
             character_name: The character name to save or update a memory record for.
@@ -398,7 +435,7 @@ class PersonaMemoryStore:
             explicit: Whether the memory is explicit or not.
 
         Returns:
-            Optional[MemoryRecord]: A stored or updated memory record, or ``None`` if memory normalization failed.
+            Optional[MemoryRecord]: The stored or merged record, or ``None`` if memory normalization failed.
         """
         normalized = _normalize_text(content)
         if not normalized:
@@ -406,19 +443,38 @@ class PersonaMemoryStore:
 
         records = self.load_records(character_name)
         now = _utc_now()
-        for index, record in enumerate(records):
-            if record.content.casefold() != normalized.casefold():
-                continue
-            updated = MemoryRecord(
-                id=record.id,
-                content=record.content,
-                importance=max(record.importance, 1, min(3, importance)),
-                explicit=record.explicit or explicit,
-                created_at=record.created_at,
-                updated_at=now,
-                last_used_at=record.last_used_at,
+        duplicate_indices = self._duplicate_record_indices(normalized, records)
+        if duplicate_indices:
+            keeper_index = max(
+                duplicate_indices,
+                key=lambda index: (records[index].explicit, records[index].importance),
             )
-            records[index] = updated
+            keeper = records[keeper_index]
+            kept_content = keeper.content
+            keeper_tokens = _tokenize(keeper.content)
+            candidate_tokens = _tokenize(normalized)
+            if keeper_tokens < candidate_tokens:
+                kept_content = normalized
+            updated = MemoryRecord(
+                id=keeper.id,
+                content=kept_content,
+                importance=max(
+                    max(records[index].importance for index in duplicate_indices),
+                    1,
+                    min(3, importance),
+                ),
+                explicit=explicit
+                or any(records[index].explicit for index in duplicate_indices),
+                created_at=keeper.created_at,
+                updated_at=now,
+                last_used_at=keeper.last_used_at,
+            )
+            duplicates = set(duplicate_indices)
+            records = [
+                updated if index == keeper_index else record
+                for index, record in enumerate(records)
+                if index == keeper_index or index not in duplicates
+            ]
             self.save_records(character_name, records)
             return updated
 
@@ -486,7 +542,7 @@ class PersonaMemoryStore:
     def retrieve(
         self, character_name: str, request: str, limit: int = 5
     ) -> list[MemoryRecord]:
-        """Return the most relevant memories for the current request.
+        """Return relevant, non-expired memories for the current request.
 
         Args:
             character_name: The character name to retrieve memory records for.
@@ -494,10 +550,14 @@ class PersonaMemoryStore:
             limit: How many memory records should be retrieved at a time.
 
         Returns:
-            list[MemoryRecord]: Up to ``limit`` most recent memories stored for the current character.
+            list[MemoryRecord]: Up to ``limit`` matching recent inferred and explicit memories.
         """
-        records = self.load_records(character_name)
-        if not records or limit <= 0:
+        all_records = self.load_records(character_name)
+        if not all_records or limit <= 0:
+            return []
+
+        records = self._recent_records(all_records)
+        if not records:
             return []
 
         request_text = _normalize_text(request)
@@ -525,8 +585,10 @@ class PersonaMemoryStore:
 
         now = _utc_now()
         selected_ids = {record.id for record in selected}
-        updated_records = [
-            MemoryRecord(
+        updated_records: list[MemoryRecord] = []
+        updated_by_id: dict[str, MemoryRecord] = {}
+        for record in all_records:
+            updated = MemoryRecord(
                 id=record.id,
                 content=record.content,
                 importance=record.importance,
@@ -535,15 +597,95 @@ class PersonaMemoryStore:
                 updated_at=record.updated_at,
                 last_used_at=now if record.id in selected_ids else record.last_used_at,
             )
-            for record in records
-        ]
+            updated_records.append(updated)
+            updated_by_id[updated.id] = updated
         self.save_records(character_name, updated_records)
-        return [
-            record
-            if record.id not in selected_ids
-            else next(updated for updated in updated_records if updated.id == record.id)
-            for record in selected
+        return [updated_by_id[record.id] for record in selected]
+
+    def _recent_records(self, records: Sequence[MemoryRecord]) -> list[MemoryRecord]:
+        """Exclude expired inferred memories while retaining explicit records."""
+        if self.automatic_max_age_days is None:
+            return list(records)
+
+        now = datetime.datetime.fromisoformat(_utc_now())
+        cutoff = now - datetime.timedelta(days=self.automatic_max_age_days)
+        recent: list[MemoryRecord] = []
+        for record in records:
+            if record.explicit:
+                recent.append(record)
+                continue
+            try:
+                updated_at = datetime.datetime.fromisoformat(record.updated_at)
+            except ValueError:
+                continue
+            if updated_at.tzinfo is None:
+                updated_at = updated_at.replace(tzinfo=datetime.UTC)
+            if updated_at >= cutoff:
+                recent.append(record)
+        return recent
+
+    def _duplicate_record_indices(
+        self,
+        content: str,
+        records: Sequence[MemoryRecord],
+    ) -> list[int]:
+        """Find exact or high-confidence semantic duplicates in the record set."""
+        exact_matches = [
+            index
+            for index, record in enumerate(records)
+            if record.content.casefold() == content.casefold()
         ]
+        if exact_matches:
+            return exact_matches
+
+        content_tokens = _tokenize(content)
+        if len(content_tokens) < 3:
+            return []
+        content_negations = content_tokens & _MEMORY_NEGATION_TOKENS
+        content_numbers = {
+            token for token in _WORD_RE.findall(content.casefold()) if token.isdigit()
+        }
+        possible_duplicates: list[int] = []
+        for index, record in enumerate(records):
+            record_tokens = _tokenize(record.content)
+            if len(record_tokens) < 3:
+                continue
+            shared_tokens = content_tokens & record_tokens
+            overlap = len(shared_tokens) / min(len(content_tokens), len(record_tokens))
+            if (
+                overlap >= _MEMORY_DUPLICATE_TOKEN_COVERAGE_THRESHOLD
+                and content_negations == record_tokens & _MEMORY_NEGATION_TOKENS
+                and content_numbers
+                == {
+                    token
+                    for token in _WORD_RE.findall(record.content.casefold())
+                    if token.isdigit()
+                }
+            ):
+                possible_duplicates.append(index)
+        if not possible_duplicates:
+            return []
+
+        candidate_records = [records[index] for index in possible_duplicates]
+        try:
+            embeddings = self._embed_texts(
+                [content, *(record.content for record in candidate_records)]
+            )
+        except (KeyError, OSError, RuntimeError, ValueError):
+            return []
+        if embeddings is None or len(embeddings) != len(candidate_records) + 1:
+            return []
+
+        candidate_embedding = embeddings[0]
+        duplicates: list[int] = []
+        for index, embedding in zip(possible_duplicates, embeddings[1:]):
+            try:
+                similarity = _cosine_similarity(candidate_embedding, embedding)
+            except ValueError:
+                continue
+            if similarity >= _MEMORY_DUPLICATE_SIMILARITY_THRESHOLD:
+                duplicates.append(index)
+        return duplicates
 
     def forget(self, character_name: str, record_id: str) -> bool:
         """Remove one character-scoped memory by its stable record identifier.

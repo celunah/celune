@@ -5,18 +5,18 @@ from __future__ import annotations
 
 import re
 import time
+import queue as queue_module
 import threading
 import contextlib
 from uuid import uuid4
-import queue as queue_module
-from collections.abc import Callable
 from typing import Union, Optional, cast
+from collections.abc import Callable
 
 from textual.color import Color
 
 from . import app as _app
-from .constants import _CAPTION_FADE_SECONDS
 from ..binding import install_class_functions
+from .constants import _CAPTION_FADE_SECONDS
 
 __all__ = (
     "_acquire_recording_component_lease",
@@ -34,7 +34,7 @@ __all__ = (
     "_finish_vc_submission_queue",
     "_flush_vc_recording_buffer_locked",
     "_flush_vc_recording_chunk_locked",
-    "_format_vc_pitch_shift",
+    "_get_persona_speech_transcriber",
     "_hide_caption_widgets",
     "_is_voice_conversion_mode",
     "_join_vc_recording_threads",
@@ -80,7 +80,6 @@ __all__ = (
     "safe_log_dev",
     "safe_status",
     "set_vc_f0_condition",
-    "set_vc_pitch_shift",
     "toggle_persona_recording",
     "tts_caption",
 )
@@ -494,7 +493,11 @@ def _refresh_persona_availability(self) -> None:
             changed = self._persona_available != available
             self._persona_available = available
             if changed and not self._input_locked:
-                self.input_box.placeholder = self._normal_input_placeholder()
+                self.input_box.placeholder = (
+                    _app.string("ui.agent_test_answer_placeholder")
+                    if self._agent_test_response_queue is not None
+                    else self._normal_input_placeholder()
+                )
 
         self._run_on_ui_thread(apply_result)
 
@@ -508,7 +511,7 @@ def change_input_state(self, locked: bool) -> None:
         locked: Whether user input should be disabled.
     """
 
-    if not locked:
+    if not locked and not self._is_agent_test_mode():
         self._schedule_sleep_timer()
 
     def update() -> None:
@@ -525,6 +528,8 @@ def change_input_state(self, locked: bool) -> None:
             if stopped
             else _app.string("ui.wait_placeholder")
             if locked
+            else _app.string("ui.agent_test_answer_placeholder")
+            if self._agent_test_response_queue is not None
             else self._normal_input_placeholder()
         )
         self.style_button.actions = _app.ButtonActions(
@@ -663,26 +668,15 @@ def _is_voice_conversion_mode(self) -> bool:
     )
 
 
-def _format_vc_pitch_shift(value: int) -> str:
-    """Return one signed semitone label for the VC pitch control."""
-    return f"{value:+d}"
-
-
 def _set_vc_controls_visibility(self, visible: bool) -> None:
     """Show or hide the VC-only controls in the bottom input row."""
     if self.vc_mode_button is not None:
         self.vc_mode_button.display = visible
-    if self.vc_pitch_button is not None:
-        self.vc_pitch_button.display = visible
 
 
 def refresh_vc_controls(self) -> None:
     """Refresh VC control labels and enabled state from the current engine state."""
-    if (
-        self.vc_mode_button is None
-        or self.vc_pitch_button is None
-        or self.celune is None
-    ):
+    if self.vc_mode_button is None or self.celune is None:
         return
 
     is_vc_mode = self._is_voice_conversion_mode()
@@ -690,17 +684,11 @@ def refresh_vc_controls(self) -> None:
     if not is_vc_mode:
         self._cancel_vc_recording(announce=False)
     f0_condition = bool(getattr(self.celune, "vc_f0_condition", False))
-    pitch_shift = int(getattr(self.celune, "vc_pitch_shift", 0))
     self.vc_mode_button.label = _app.string(
         "ui.vc_mode_sing" if f0_condition else "ui.vc_mode_talk"
     )
-    self.vc_pitch_button.label = _app.string(
-        "ui.vc_pitch_button",
-        value=self._format_vc_pitch_shift(pitch_shift),
-    )
     controls_available = is_vc_mode and not self._input_locked
     self.vc_mode_button.actions = _app.ButtonActions(press=controls_available)
-    self.vc_pitch_button.actions = _app.ButtonActions(press=controls_available)
 
 
 def set_vc_f0_condition(self, enabled: bool, announce: bool = True) -> None:
@@ -727,35 +715,6 @@ def set_vc_f0_condition(self, enabled: bool, announce: bool = True) -> None:
             _app.string(
                 "ui.vc_mode_changed",
                 mode=_app.string("ui.vc_mode_sing" if enabled else "ui.vc_mode_talk"),
-            )
-        )
-
-
-def set_vc_pitch_shift(self, value: int, announce: bool = True) -> None:
-    """Update the active VC pitch-shift value in the UI and backend state.
-
-    Args:
-        value: The requested pitch shift in semitones before clamping.
-        announce: Whether to log the new pitch shift to the user.
-    """
-    if self.celune is None:
-        return
-
-    clamped = _app.clamp_vc_pitch_shift(value)
-    self.celune.vc_pitch_shift = clamped
-    backend = getattr(self.celune, "vc_backend", None)
-    if backend is not None:
-        from ..utils import available
-
-        if available("pitch_shift", obj=backend):
-            backend.pitch_shift = clamped
-    self.refresh_vc_controls()
-
-    if announce:
-        self.safe_log(
-            _app.string(
-                "ui.vc_pitch_changed",
-                value=self._format_vc_pitch_shift(clamped),
             )
         )
 
@@ -813,6 +772,18 @@ def _persona_speech_language(self) -> Optional[str]:
     }:
         return None
     return configured.strip()
+
+
+def _get_persona_speech_transcriber(self) -> _app.WhisperTranscriber:
+    """Return the Whisper transcriber shared by recording and captions."""
+    transcriber = self._speech_transcriber
+    if transcriber is None:
+        transcriber = _app.WhisperTranscriber(
+            self._persona_speech_model_id(),
+            language=self._persona_speech_language(),
+        )
+        self._speech_transcriber = transcriber
+    return transcriber
 
 
 def _persona_speech_end_delay_seconds(self) -> float:
@@ -969,7 +940,6 @@ def _persona_transcription_worker(
             self._persona_recording_queue = None
             self._persona_recording_worker = None
             self._persona_recording_vad = None
-            self._persona_recording_transcriber = None
             self._persona_recording_chunks = []
             self._persona_recording_stop_requested = False
             self._persona_recording_speech_started = False
@@ -978,6 +948,8 @@ def _persona_transcription_worker(
 
         self._shutdown_vc_stream(stream)
         self._close_live_vad(vad)
+        with contextlib.suppress(Exception):
+            transcriber.unload()
         if component_lease is not None:
             component_lease.release()
 
@@ -1074,10 +1046,7 @@ def _start_persona_recording(self) -> bool:
     recording_queue: queue_module.Queue[tuple[_app.AudioChunk, bool]] = (
         queue_module.Queue(maxsize=1)
     )
-    transcriber = _app.WhisperTranscriber(
-        self._persona_speech_model_id(),
-        language=self._persona_speech_language(),
-    )
+    transcriber = self._get_persona_speech_transcriber()
     prefix = self.input_box.text.strip() if self.input_box is not None else ""
     recording_started_at = time.monotonic()
     should_stop = False
@@ -1165,7 +1134,6 @@ def _start_persona_recording(self) -> bool:
             self._persona_recording_queue = recording_queue
             self._persona_recording_worker = worker
             self._persona_recording_vad = ai_vad
-            self._persona_recording_transcriber = transcriber
             self._persona_recording_sample_rate = sample_rate
             self._persona_recording_chunks = []
             self._persona_recording_silence_frames = 0
@@ -1184,7 +1152,6 @@ def _start_persona_recording(self) -> bool:
             self._persona_recording_queue = None
             self._persona_recording_worker = None
             self._persona_recording_vad = None
-            self._persona_recording_transcriber = None
             self._persona_recording_chunks = []
             self._persona_recording_stop_requested = True
             self._persona_recording_component_lease = None
@@ -1236,7 +1203,6 @@ def _shutdown_persona_recording(self) -> None:
         self._persona_recording_queue = None
         self._persona_recording_worker = None
         self._persona_recording_vad = None
-        self._persona_recording_transcriber = None
         self._persona_recording_chunks = []
         self._persona_recording_stop_requested = True
         self._persona_recording_component_lease = None

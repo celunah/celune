@@ -19,40 +19,65 @@ import pytest
 import numpy as np
 import numpy.typing as npt
 
-from celune import pipeline
-from celune.cevoice import (
-    CEVoicePersona,
-    PersonaIdentity,
-    PersonaStyleValues,
-)
 from celune.celune import Celune
 from celune.utils import discard
-from celune.typing.agent import (
-    AgentTask,
-    AgentContext,
-    AgentRequest,
-)
+from celune import pipeline, speech
 from celune.constants import PipelineStates
 from celune.typing.aliases import AudioChunk
 from celune.typing.locks import ComponentLockName
 from celune import conversation as conversation_module
 from celune.typing.common import JSON, JSONSerializable
-from celune.dataclasses.pipeline import AudioInputRequest
 from celune.persona.capabilities import PersonaCapabilities
+from celune.cevoice import (
+    CEVoicePersona,
+    PersonaIdentity,
+    PersonaStyleValues,
+)
+from celune.typing.agent import (
+    AgentTask,
+    AgentContext,
+    AgentRequest,
+)
+from celune.dataclasses.pipeline import (
+    SpeechRequest,
+    AudioInputRequest,
+)
 
+from .platform import LINUX_ONLY, WINDOWS_ONLY
 from .support import (
     FakeStream,
     FakeVCBackend,
     CeluneTestCase,
-    CeluneAsyncTestCase,
     make_voice_loader,
+    CeluneAsyncTestCase,
     make_pipeline_engine,
 )
-from .platform import LINUX_ONLY, WINDOWS_ONLY
 
 
 class TestPipeline(CeluneTestCase):
     """Tests for lightweight pipeline behavior."""
+
+    def test_cuda_oom_during_generation_returns_engine_to_idle(self) -> None:
+        """Verify a synthesis OOM is reported recoverably without a BF16 retry."""
+        engine = make_pipeline_engine()
+        engine.backend.quantization_active = True
+        error = RuntimeError("CUDA error: out of memory")
+        with (
+            mock.patch.object(engine.model_ready, "wait", side_effect=error),
+            mock.patch("celune.pipeline.release_cuda_after_oom") as release_memory,
+            mock.patch("celune.pipeline._recover_quantized_tts") as recover,
+        ):
+            pipeline._process_generation_request(
+                cast(Celune, engine),
+                SpeechRequest(text="hello", display_text="hello", save=False),
+                None,
+            )
+
+        assert engine.cur_state == "idle"
+        assert release_memory.call_count == 1
+        recover.assert_not_called()
+        assert engine.statuses[-1][1] == "warning"
+        assert "CUDA" not in engine.errors[-1]
 
     def test_pipeline_cpu_config_has_conservative_defaults(self) -> None:
         """Verify playback pressure protection defaults to a small bounded window."""
@@ -88,6 +113,41 @@ class TestPipeline(CeluneTestCase):
         assert monitor.target_seconds() == 30.0
         assert monitor.capacity_seconds() == 30.0
         assert monitor.requires_rebuffer()
+
+    def test_live_vc_source_bypasses_contention_buffering(self) -> None:
+        """Verify live VC avoids adaptive buffering that adds audible delay."""
+        engine = make_pipeline_engine()
+        with (
+            mock.patch(
+                "celune.speech.prepare_playback_audio",
+                side_effect=lambda audio, sample_rate: audio,
+            ),
+            mock.patch("celune.speech._queue_playback_chunk", return_value=True),
+        ):
+            source_id = speech.queue_streaming_sfx_audio(
+                cast(Celune, engine),
+                np.zeros(48, dtype=np.float32),
+                pipeline.BASE_SR,
+                "Live VC",
+                low_latency=True,
+            )
+
+        assert source_id is not None
+        assert not pipeline._should_apply_contention_buffering(
+            cast(Celune, engine),
+            (source_id,),
+            False,
+        )
+        assert pipeline._should_apply_contention_buffering(
+            cast(Celune, engine),
+            (),
+            False,
+        )
+        assert not pipeline._should_apply_contention_buffering(
+            cast(Celune, engine),
+            (),
+            True,
+        )
 
     def test_pipeline_cpu_config_ignores_removed_user_configuration(self) -> None:
         """Verify playback protection remains bounded regardless of engine config."""
@@ -799,7 +859,6 @@ class TestPipelineAsync(CeluneAsyncTestCase):
         convert_mock.assert_called_once()
         vc_request = convert_mock.call_args.args[0]
         assert vc_request.target_references == (Path("balanced.wav"),)
-        assert vc_request.pitch_shift == 0
         assert not vc_request.f0_condition
         q.assert_called_once()
         queued_audio = q.call_args.args[1]
@@ -865,24 +924,24 @@ class TestPipelineAsync(CeluneAsyncTestCase):
         assert np.all(np.isfinite(request.source_audio))
         assert float(np.max(np.abs(request.source_audio))) <= 0.95
 
-    def test_handle_audio_input_applies_engine_vc_pitch_shift_to_output(
+    def test_handle_audio_input_queues_vc_output_without_pitch_processing(
         self,
     ) -> None:
-        """Verify VC routing applies the configured pitch shift to converted output."""
+        """Verify Celune queues the converted waveform without pitch processing."""
         engine = make_pipeline_engine()
         engine.input_mode = "voice_conversion"
         engine.vc_backend = FakeVCBackend(log=lambda _msg, _severity="info": None)
         engine.current_voice = "balanced"
         engine.current_character = "Celune"
-        engine.vc_pitch_shift = -5
         request = AudioInputRequest(
             audio=np.ones((12, 2), dtype=np.float32),
             sample_rate=48000,
             label="mic test",
         )
+        expected_audio = np.full((12, 2), 0.4, dtype=np.float32)
         convert_mock = mock.Mock(
             return_value=SimpleNamespace(
-                audio=np.ones((12, 2), dtype=np.float32),
+                audio=expected_audio,
                 sample_rate=48000,
                 label="mic test",
             )
@@ -892,17 +951,15 @@ class TestPipelineAsync(CeluneAsyncTestCase):
 
         with (
             mock.patch("celune.speech.default_loader", return_value=loader),
-            mock.patch("celune.speech.queue_sfx_audio", return_value=True),
             mock.patch(
-                "celune.speech.pitch_shift_audio",
-                return_value=np.ones((12, 2), dtype=np.float32) * 0.25,
-            ) as shift_audio,
+                "celune.speech.queue_sfx_audio",
+                return_value=True,
+            ) as queue_mock,
         ):
             result = pipeline.handle_audio_input(cast(Celune, engine), request)
 
         assert result
-        assert convert_mock.call_args.args[0].pitch_shift == 0
-        shift_audio.assert_called_once_with(mock.ANY, 48000, -5)
+        assert np.array_equal(queue_mock.call_args.args[1], expected_audio)
 
     def test_handle_audio_input_passes_engine_vc_f0_condition_to_vc_backend(
         self,
@@ -2196,6 +2253,22 @@ class TestPipelineAsync(CeluneAsyncTestCase):
         assert not getattr(engine, "_ready_announced", False)
         assert engine.cur_state == "reloading"
 
+    def test_finalize_playback_idle_does_not_announce_readiness_in_agent_test(
+        self,
+    ) -> None:
+        """Keep the normal speech readiness message out of the agent test log."""
+        engine = make_pipeline_engine()
+        engine.backend_mode = "agent_test"
+        engine.locked = False
+        engine.loaded = True
+        engine.cur_state = "speaking"
+
+        with mock.patch("celune.pipeline.random.random", return_value=0.5):
+            pipeline.finalize_playback_idle(cast(Celune, engine))
+
+        assert ("Ready to speak.", "info") not in engine.messages
+        assert engine._ready_announced
+
     def test_finalize_playback_idle_does_not_emit_idle_callback_while_locked(
         self,
     ) -> None:
@@ -2362,6 +2435,8 @@ class TestPipelineAsync(CeluneAsyncTestCase):
             "persona": {"model_id": "fixture/persona-test"},
         }
         engine.persona_history = [{"role": "assistant", "content": "Earlier."}]
+        engine.persona_session_summary = "Stale conversation summary."
+        engine.retrieved_long_term_memory = ["Stale long-term memory."]
 
         payload = pipeline.build_agent_classification_request(
             cast(Celune, engine),
@@ -2371,10 +2446,14 @@ class TestPipelineAsync(CeluneAsyncTestCase):
         self.assertEqual(payload["format"], "celune_agent_classification")
         self.assertEqual(payload["request"], "Please handle this.")
         self.assertEqual(payload["context_space"], 8192)
-        self.assertEqual(payload["max_new_tokens"], 96)
+        self.assertEqual(payload["max_new_tokens"], 256)
         system_prompt = payload["system"]
         self.assertIsInstance(system_prompt, str)
         assert isinstance(system_prompt, str)
+        self.assertNotIn("\n\n<memory>\n", system_prompt)
+        self.assertNotIn("<conversation_summary>", system_prompt)
+        self.assertNotIn("Stale long-term memory", system_prompt)
+        self.assertNotIn("Stale conversation summary", system_prompt)
         self.assertIn("Classify the latest user input", system_prompt)
         self.assertIn(
             "internal routing request, not a character response", system_prompt
@@ -2453,7 +2532,7 @@ class TestPipelineAsync(CeluneAsyncTestCase):
         engine.config = {"vram": "high"}
 
         conversation = pipeline.build_persona_request(cast(Celune, engine), "Hello")
-        self.assertEqual(conversation["context_space"], 8192)
+        self.assertEqual(conversation["context_space"], 2048)
 
         task = AgentTask(
             task_id="task-context",
@@ -2471,4 +2550,4 @@ class TestPipelineAsync(CeluneAsyncTestCase):
             task.request.request,
             agent_context=agent_context,
         )
-        self.assertEqual(agent["context_space"], 32768)
+        self.assertEqual(agent["context_space"], 8192)
