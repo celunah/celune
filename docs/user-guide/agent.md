@@ -5,10 +5,9 @@ arbitrary shell or computer-control agent. The runtime exposes typed,
 allowlisted operations, validates every call against its schema, and routes
 mutating work through approval policy.
 
-Agent mode requires at least the `high` VRAM preset with a standard Persona
-model. Registered smart 8B-tier Persona models require `xhigh`. At `high`, the
-agent context is capped at 8,192 tokens. If a lower preset is selected, agent
-routing is disabled rather than raising the configured preset automatically.
+Agent mode requires the `xhigh` VRAM preset. Its context is capped at 8,192
+tokens. If a lower preset is selected, agent routing is disabled rather than
+raising the configured preset automatically.
 
 ## Task lifecycle
 

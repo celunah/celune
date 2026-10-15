@@ -77,6 +77,14 @@ from ..dataclasses.pipeline import AudioOutput, VoiceConversionRequest
 
 __all__ = ["RemoteBackendProxy", "RemoteModelHandle", "RemoteVCBackendProxy"]
 
+_REMOTE_RUNTIME_LOG_FILTER_MESSAGES = RUNTIME_LOG_FILTER_MESSAGES | frozenset(
+    {
+        "SyntaxWarning: invalid escape sequence",
+        "regex for parameter names, must start with `re:`",
+        "NOTE: Redirects are currently not supported in Windows or MacOs.",
+    }
+)
+
 
 def _worker_protocol_error(key: str, **kwargs: str) -> CEDTSError:
     """Create a typed worker proxy CEDTS error with internal diagnostics."""
@@ -512,7 +520,7 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
                 filtered_continuation = False
             if any(
                 filtered_message in text
-                for filtered_message in RUNTIME_LOG_FILTER_MESSAGES
+                for filtered_message in _REMOTE_RUNTIME_LOG_FILTER_MESSAGES
             ):
                 filtered_continuation = text.endswith(":")
                 continue

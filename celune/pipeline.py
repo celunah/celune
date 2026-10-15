@@ -1855,11 +1855,10 @@ async def generation_worker_job(engine: Celune) -> None:
         engine._active_speech_generation = request.generation
         try:
             await _run_in_daemon_thread(
-                lambda request=request: _process_generation_request(
-                    engine,
-                    request,
-                    caption_worker,
-                )
+                _process_generation_request,
+                engine,
+                request,
+                caption_worker,
             )
         finally:
             engine._active_speech_generation = None

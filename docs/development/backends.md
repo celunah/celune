@@ -17,6 +17,10 @@ exception, the early-startup error also includes its final exception line;
 traceback frames remain in the worker diagnostics rather than the error
 screen.
 
+Source-tree startup banners include the current Git branch and platform. When
+the source directory has no committed Git metadata, Celune shows the upstream
+clone command. Compiled releases skip the Git checkout check.
+
 ## Registered manifests
 
 | ID | Kind | Worker | Extra requirements |

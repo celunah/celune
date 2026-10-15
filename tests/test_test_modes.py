@@ -72,15 +72,15 @@ class _TestNeedleHandler:
             available_only=available_only,
         )
 
-    def select_one_tool(
+    def select_tools(
         self,
         query: str,
         tools: NeedleToolCatalog,
         max_new_tokens: int = 96,
-    ) -> NeedleToolCall:
-        """Return the one safe tool selected by this controlled adapter."""
+    ) -> list[NeedleToolCall]:
+        """Return the safe tool selected by this controlled adapter."""
         del query, tools, max_new_tokens
-        return {"name": "local_current_working_directory", "arguments": {}}
+        return [{"name": "local_current_working_directory", "arguments": {}}]
 
     def close(self) -> None:
         """Release the controlled adapter without external model resources."""
@@ -262,10 +262,14 @@ class TestFinishedLifecycleTests(CeluneTestCase):
             persona.requests[0]["user"]
             == "Check the current working directory and report the result."
         )
-        detail = payload["detail"]
-        assert isinstance(detail, str)
-        assert "tool=local_current_working_directory" in detail
-        assert "status=succeeded" in detail
+        checks = cast(list[JSON], payload["checks"])
+        task_check = next(check for check in checks if check["name"] == "live.task")
+        task_detail = task_check.get("detail")
+        assert isinstance(task_detail, str)
+        assert "tool=local_current_working_directory" in task_detail
+        assert "status=succeeded" in task_detail
+        summary = cast(dict[str, int], payload["summary"])
+        assert summary["failed"] == 0
         assert core.cur_state == "stopped"
         assert not core.say("queued after test")
 

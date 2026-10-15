@@ -9,116 +9,38 @@ import shutil
 import asyncio
 import threading
 import contextlib
+from typing import Never, Union, ClassVar, Optional, cast, final
 from pathlib import Path
 from dataclasses import dataclass
 from collections.abc import Mapping, Callable, Generator
-from typing import Never, Union, ClassVar, Optional, cast, final
 
-import torch
 import numpy as np
 import numpy.typing as npt
+import torch
 from transformers.modeling_utils import PreTrainedModel
 
-from .paths import temp_data_dir
-from .chroma import AudioRGBGlow
-from . import pipeline as _pipeline
-from .vc import clamp_vc_pitch_shift
-from .typing.aliases import LogLevel
-from .locks import ComponentLockLease
-from .typing.modes import BackendMode
-from .agent.runtime import AgentRuntime
-from .typing.backends import BackendModel
-from .agent.routing import AgentInputRouter
-from .agent.needle import NeedleToolSelector
-from .agent.persona import PersonaAgentBridge
-from .extensions.events import EventDispatcher
-from .typing.common import JSON, JSONSerializable
-from .typing.events import EventName, EventPayload
-from .persona.emotion import PersonaEmotionAnalyzer
-from .exceptions import (
-    WarmupError,
-    BackendError,
-)
-from .backends.tts import BACKENDS, CeluneBackend, resolve_backend
-from .modes import (
-    OperationMode,
-    resolve_operation_mode,
-)
 from .i18n import string, set_locale, tagged_string, get_system_locale
-from .backends.vc import VC_BACKENDS, CeluneVCBackend, resolve_vc_backend
-from .config import Config, config_bool, config_value, normalize_log_level
-from .utils import (
-    available,
-    discard,
-    format_error_message,
-)
-from .dataclasses.properties import (
-    bind_constant_properties,
-    bind_forwarded_properties,
-)
-from .typing.agent import (
-    AgentTaskConfig,
-    AgentToolSelector,
-    AgentCancellationReason,
-)
-from .typing.locks import (
-    ComponentLockName,
-    ComponentLockOwner,
-    ComponentLockRequirement,
-)
-from .constants import (
-    APP_NAME,
-    AGENT_MAX_LOOPS,
-    AGENT_COMPACT_AT,
-    AGENT_CONTEXT_SPACE,
-)
 from .vram import (
     VramPreset,
     backend_allowed,
     resolve_vram_preset,
     resolve_backend_name,
+    is_cuda_out_of_memory,
+    release_cuda_after_oom,
 )
-
-# Import pipeline before speech because its initialization installs speech functions.
-from .speech import (
-    play as play_pipeline,
-    close as close_pipeline,
-    queue_sfx_audio,
-    stop_live_audio_input,
+from .locks import ComponentLockLease
+from .modes import (
+    OperationMode,
+    resolve_operation_mode,
 )
-from .agent.tools import (
-    agent_test_tools,
-    production_agent_tools,
-    agent_test_tool_schemas,
-    production_agent_tool_schemas,
+from .paths import temp_data_dir
+from .utils import (
+    discard,
+    available,
+    format_error_message,
 )
-from .persona.impl import (
-    PersonaClient,
-    persona_enabled,
-    persona_model_id,
-    persona_is_available,
-    persona_quantization,
-    create_persona_client,
-)
-from .dataclasses.events import (
-    ShutdownEvent,
-    StateChangedEvent,
-    VoiceChangedEvent,
-    CharacterLoadedEvent,
-    CharacterChangedEvent,
-    CharacterUnloadedEvent,
-)
-from .dataclasses.celune import (
-    CELUNE_CONSTANT_PROPERTIES,
-    CELUNE_FORWARDED_PROPERTIES,
-    CeluneAudioState,
-    CeluneModelState,
-    CeluneVoiceState,
-    CeluneBackendState,
-    CeluneRuntimeState,
-    CeluneCallbackState,
-    CelunePipelineState,
-)
+from .chroma import AudioRGBGlow
+from .config import Config, config_bool, config_value, normalize_log_level
 from .cevoice import (
     CEVoicePersona,
     default_loader,
@@ -130,6 +52,54 @@ from .cevoice import (
     persona_metadata_from_manifest,
     bundle_matches_default_pack_checksum,
 )
+from .pipeline import (
+    split_text,
+    clear_queue,
+    close_stream,
+    playback_worker_job,
+    generation_worker_job,
+)
+from .constants import (
+    APP_NAME,
+    AGENT_MAX_LOOPS,
+    AGENT_COMPACT_AT,
+    AGENT_CONTEXT_SPACE,
+)
+from .exceptions import (
+    WarmupError,
+    BackendError,
+)
+from .agent.tools import (
+    agent_test_tools,
+    production_agent_tools,
+    agent_test_tool_schemas,
+    production_agent_tool_schemas,
+)
+from .backends.vc import VC_BACKENDS, CeluneVCBackend, resolve_vc_backend
+from .agent.needle import NeedleToolSelector
+from .backends.tts import BACKENDS, CeluneBackend, resolve_backend
+from .persona.impl import (
+    PersonaClient,
+    persona_enabled,
+    persona_model_id,
+    persona_is_available,
+    persona_quantization,
+    create_persona_client,
+)
+from .typing.agent import (
+    AgentTaskConfig,
+    AgentToolSelector,
+    AgentCancellationReason,
+)
+from .typing.locks import (
+    ComponentLockName,
+    ComponentLockOwner,
+    ComponentLockRequirement,
+)
+from .typing.modes import BackendMode
+from .agent.persona import PersonaAgentBridge
+from .agent.routing import AgentInputRouter
+from .agent.runtime import AgentRuntime
 from .typing.celune import (
     VCBackendSpec,
     TTSBackendSpec,
@@ -139,11 +109,59 @@ from .typing.celune import (
     ProgressCallback,
     ReleasableObject,
     InputStateCallback,
-    CeluneStateAccessors,
     CeluneMethodSurface,
+    CeluneStateAccessors,
     VoiceLockStateCallback,
+    CaptionProgressCallback,
     _BundleWithPath,
 )
+from .typing.common import JSON, JSONSerializable
+from .typing.events import EventName, EventPayload
+from .typing.aliases import LogLevel
+from .persona.emotion import PersonaEmotionAnalyzer
+from .typing.backends import BackendModel
+from .extensions.events import EventDispatcher
+from .dataclasses.celune import (
+    CELUNE_CONSTANT_PROPERTIES,
+    CELUNE_FORWARDED_PROPERTIES,
+    CeluneAudioState,
+    CeluneModelState,
+    CeluneVoiceState,
+    CeluneBackendState,
+    CeluneRuntimeState,
+    CeluneCallbackState,
+    CelunePipelineState,
+)
+from .dataclasses.events import (
+    ShutdownEvent,
+    StateChangedEvent,
+    VoiceChangedEvent,
+    CharacterLoadedEvent,
+    CharacterChangedEvent,
+    CharacterUnloadedEvent,
+)
+from .dataclasses.properties import (
+    bind_constant_properties,
+    bind_forwarded_properties,
+)
+
+
+def _load_speech_module():
+    """Import speech helpers after the pipeline facade has been initialized."""
+    from . import speech
+
+    return speech
+
+
+speech_module = _load_speech_module()
+
+
+play_pipeline = speech_module.play
+close_pipeline = speech_module.close
+queue_sfx_audio = speech_module.queue_sfx_audio
+stop_live_audio_input = speech_module.stop_live_audio_input
+
+_TTS_KV_CACHE_BACKENDS = frozenset({"qwen3", "fireredtts3", "voxcpm2"})
 
 
 def _config_str(value: JSONSerializable) -> Optional[str]:
@@ -277,7 +295,9 @@ def _agent_task_config(config: Config) -> AgentTaskConfig:
             )
             else None
         ),
-        context_size=positive("context_size", AGENT_CONTEXT_SPACE),
+        context_size=min(
+            positive("context_size", AGENT_CONTEXT_SPACE), AGENT_CONTEXT_SPACE
+        ),
         compact_at=(
             values["compact_at"]
             if isinstance(values.get("compact_at"), int)
@@ -412,7 +432,6 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
         backend: Optional[CoreBackendSpec] = None,
         tts_backend: Optional[CoreBackendSpec] = None,
         vc_backend: Optional[CoreBackendSpec] = None,
-        vc_pitch_shift: Optional[int] = None,
         vc_f0_condition: Optional[bool] = None,
         input_mode: Optional[str] = None,
         chunk_size: int = 0,  # defaulted to 0 because not all backends use this
@@ -427,7 +446,7 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
         change_input_state_callback: Optional[InputStateCallback] = None,
         change_voice_lock_state_callback: Optional[VoiceLockStateCallback] = None,
         progress_callback: Optional[ProgressCallback] = None,
-        caption_progress_callback: Optional[ProgressCallback] = None,
+        caption_progress_callback: Optional[CaptionProgressCallback] = None,
         caption_callback: Optional[CaptionCallback] = None,
         log_level: LogLevel = "info",
         agent_tool_selector: Optional[AgentToolSelector] = None,
@@ -520,8 +539,8 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
                     "\n".join(
                         (
                             string("agent.unsandboxed_title"),
-                            string("agent.unsandboxed_body"),
-                            string("agent.unsandboxed_rollback"),
+                            string("agent.unsandboxed_body", app_name=APP_NAME),
+                            string("agent.unsandboxed_rollback", app_name=APP_NAME),
                         )
                     ),
                     "warning",
@@ -542,6 +561,7 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
             tool_executor=self._execute_agent_tool,
             tool_result_handler=self._agent_persona_bridge.handle_tool_result,
             responder=self._agent_persona_bridge.respond,
+            compactor=self._agent_persona_bridge.compact,
             tool_schemas=self._agent_tool_schemas,
             task_config=_agent_task_config(config),
         )
@@ -570,11 +590,6 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
             tts_backend,
             vc_backend,
         )
-        self.vc_pitch_shift = (
-            0
-            if vc_pitch_shift is None
-            else clamp_vc_pitch_shift(_config_int(vc_pitch_shift, 0))
-        )
         self.vc_f0_condition = False if vc_f0_condition is None else vc_f0_condition
         select_voice_bundle(_config_str(config_value(config, "voice_bundle")))
         preset = resolve_vram_preset(config)
@@ -582,7 +597,11 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
         if tts_backend is None:
             tts_backend = preset.default_backend
 
-        backend_kwargs: dict[str, Optional[Union[bool, str]]] = {}
+        backend_kwargs: dict[str, Optional[Union[bool, str]]] = {
+            "quantize": _tts_quantization_enabled(config, tts_backend),
+        }
+        if isinstance(tts_backend, CeluneBackend):
+            tts_backend.quantization_requested = bool(backend_kwargs["quantize"])
         if isinstance(tts_backend, CeluneBackend):
             if not backend_allowed(config, tts_backend.name):
                 raise BackendError(
@@ -616,6 +635,11 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
             if isinstance(raw_name, str)
             else None
         )
+        quantize_kv_cache = config_value(config, "quantize_kv_cache", True) is not False
+        if isinstance(tts_backend, CeluneBackend):
+            tts_backend.quantize_kv_cache = quantize_kv_cache
+        if backend_name in _TTS_KV_CACHE_BACKENDS:
+            backend_kwargs["quantize_kv_cache"] = quantize_kv_cache
         if backend_name == "qwen3":
             backend_kwargs["x_vector_only"] = config_bool(
                 config,
@@ -681,8 +705,6 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
                     resolved_vc_backend,
                     log=self.log_callback,
                 )
-                if available("pitch_shift", obj=self.vc_backend):
-                    self.vc_backend.pitch_shift = self.vc_pitch_shift
                 if available("f0_condition", obj=self.vc_backend):
                     self.vc_backend.f0_condition = self.vc_f0_condition
                 self.voice_conversion_backend = self.vc_backend.name
@@ -797,6 +819,7 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
         *,
         task_state: Optional[str] = None,
         detail: Optional[str] = None,
+        checks: Optional[list[JSON]] = None,
     ) -> JSON:
         """Finish an explicit test mode and leave the engine stopped but alive.
 
@@ -805,6 +828,7 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
             success: Whether the controlled test completed successfully.
             task_state: Final agent task state, when the mode created a task.
             detail: Optional diagnostic detail retained with the final result.
+            checks: Optional per-feature agent diagnostic results.
 
         Returns:
             JSON: The synchronously recorded final test result.
@@ -830,7 +854,7 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
                         self.log_level,
                     )
                 )
-        _pipeline.clear_queue(self.persona_queue)
+        clear_queue(self.persona_queue)
 
         active_task = self.agent_runtime.get_active_task("default")
         if active_task is not None:
@@ -842,6 +866,19 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
         if cleanup_errors:
             success = False
             detail = detail or "; ".join(cleanup_errors)
+            if checks is not None:
+                checks.append(
+                    {
+                        "name": "cleanup",
+                        "status": "failed",
+                        "detail": "; ".join(cleanup_errors),
+                    }
+                )
+
+        if checks is not None:
+            success = success and not any(
+                check.get("status") == "failed" for check in checks
+            )
 
         result: JSON = {
             "mode": mode,
@@ -850,12 +887,48 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
             "task_state": task_state,
             "detail": detail,
         }
+        summary = {"passed": 0, "failed": 0, "skipped": 0}
+        if checks is not None:
+            result["checks"] = cast(JSONSerializable, checks)
+            summary = {
+                "passed": sum(check.get("status") == "passed" for check in checks),
+                "failed": sum(check.get("status") == "failed" for check in checks),
+                "skipped": sum(check.get("status") == "skipped" for check in checks),
+            }
+            result["summary"] = cast(JSONSerializable, summary)
         self._runtime_state.test_result = result
         try:
             self.cur_state = "stopped"
         except Exception:
             self._runtime_state.cur_state = "stopped"
-        if mode == "agent":
+        if mode == "agent" and checks is not None:
+            self.log(
+                string(
+                    "test.agent_report_summary",
+                    passed=summary["passed"],
+                    failed=summary["failed"],
+                    skipped=summary["skipped"],
+                ),
+                "error" if not success else "info",
+            )
+            for check in checks:
+                status = check.get("status")
+                message_key = "test.agent_check_failed"
+                if isinstance(status, str):
+                    message_key = {
+                        "passed": "test.agent_check_passed",
+                        "failed": "test.agent_check_failed",
+                        "skipped": "test.agent_check_skipped",
+                    }.get(status, message_key)
+                self.log(
+                    string(
+                        message_key,
+                        check=check.get("name", "unknown"),
+                        message=check.get("detail", ""),
+                    ),
+                    "error" if status == "failed" else "info",
+                )
+        elif mode == "agent":
             message_key = (
                 "test.finished_success" if success else "test.finished_failure"
             )
@@ -866,6 +939,7 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
                         mode=mode,
                         task_state=task_state or "none",
                         detail=detail or "none",
+                        app_name=APP_NAME,
                     ),
                     "info" if success else "error",
                 )
@@ -879,8 +953,8 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
                 self._speech_generation = getattr(self, "_speech_generation", 0) + 1
                 self._playback_generation = getattr(self, "_playback_generation", 0) + 1
                 self.utterance_force_stop.set()
-                _pipeline.clear_queue(self.text_queue)
-                _pipeline.clear_queue(self.audio_queue)
+                clear_queue(self.text_queue)
+                clear_queue(self.audio_queue)
                 self.text_queue.put(self.sentinel)
                 self.audio_queue.put(self.sentinel)
         except Exception as exc:
@@ -893,7 +967,7 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
             )
 
         try:
-            _pipeline.close_stream(self, abort=True)
+            close_stream(self, abort=True)
         except Exception as exc:
             errors.append(
                 format_error_message(
@@ -1154,7 +1228,7 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
     @staticmethod
     def _clear_queue(q: queue.Queue) -> None:
         """Drain all pending items from a queue."""
-        _pipeline.clear_queue(q)
+        clear_queue(q)
 
     def _acquire_component_lease(
         self,
@@ -1273,7 +1347,7 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
 
     def _close_stream(self, abort: bool = False) -> None:
         """Close the current audio stream if one exists."""
-        _pipeline.close_stream(self, abort=abort)
+        close_stream(self, abort=abort)
 
     def _unload_persona_state(self) -> None:
         """Release Persona state while reserving the model lifecycle resource."""
@@ -1428,8 +1502,6 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
             self._vc_backend_spec,
             log=self.log_callback,
         )
-        if available("pitch_shift", obj=candidate_backend):
-            candidate_backend.pitch_shift = self.vc_pitch_shift
         if available("f0_condition", obj=candidate_backend):
             candidate_backend.f0_condition = self.vc_f0_condition
         previous_backend = self.vc_backend
@@ -1475,7 +1547,9 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
         backend_spec: Union[str, CeluneBackend, type[CeluneBackend]],
     ) -> dict[str, JSONSerializable]:
         """Return constructor kwargs needed to instantiate one backend specification."""
-        backend_kwargs: dict[str, JSONSerializable] = {}
+        backend_kwargs: dict[str, JSONSerializable] = {
+            "quantize": _tts_quantization_enabled(self.config, backend_spec),
+        }
         raw_name = getattr(backend_spec, "name", None)
         backend_name = (
             backend_spec.strip().lower()
@@ -1484,9 +1558,16 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
             if isinstance(raw_name, str)
             else None
         )
+        quantize_kv_cache = (
+            config_value(self.config, "quantize_kv_cache", True) is not False
+        )
         if isinstance(backend_spec, CeluneBackend):
-            return backend_kwargs
+            backend_spec.quantization_requested = bool(backend_kwargs["quantize"])
+            backend_spec.quantize_kv_cache = quantize_kv_cache
+            return {}
 
+        if backend_name in _TTS_KV_CACHE_BACKENDS:
+            backend_kwargs["quantize_kv_cache"] = quantize_kv_cache
         if backend_name == "qwen3":
             preset = resolve_vram_preset(self.config)
             backend_kwargs["x_vector_only"] = config_bool(
@@ -1591,8 +1672,6 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
             snapshot.restorable_vc_backend_spec,
             log=self.log_callback,
         )
-        if available("pitch_shift", obj=restored_vc_backend):
-            restored_vc_backend.pitch_shift = self.vc_pitch_shift
         if available("f0_condition", obj=restored_vc_backend):
             restored_vc_backend.f0_condition = self.vc_f0_condition
         if snapshot.loaded:
@@ -1657,7 +1736,29 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
     ) -> tuple[Optional[PreTrainedModel], str]:
         """Load the TTS runtime for one backend and voice without disturbing the previous runtime."""
         model_name = backend.model_id_for_voice(voice)
-        model = cast(PreTrainedModel, backend.load_model(model_name))
+        try:
+            model = cast(PreTrainedModel, backend.load_model(model_name))
+        except Exception as error:
+            if is_cuda_out_of_memory(error):
+                with contextlib.suppress(Exception):
+                    backend.unload_model()
+                release_cuda_after_oom()
+                raise
+            if not backend.quantization_requested:
+                raise
+            backend.disable_runtime_quantization()
+            backend.unload_model()
+            try:
+                model = cast(PreTrainedModel, backend.load_model(model_name))
+            except Exception as recovery_error:
+                if is_cuda_out_of_memory(recovery_error):
+                    with contextlib.suppress(Exception):
+                        backend.unload_model()
+                    release_cuda_after_oom()
+                fatal = getattr(backend, "_fatal_callback", None)
+                if callable(fatal):
+                    fatal()
+                raise
         backend.model = model
         return model, model_name
 
@@ -1769,6 +1870,9 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
                     voice=candidate_voice,
                 ):
                     self._raise_warmup_error("warmup failed after backend reload")
+                candidate_model = cast(
+                    Optional[PreTrainedModel], candidate_backend.model
+                )
 
                 self.backend = candidate_backend
                 self.vc_backend = None
@@ -1797,8 +1901,6 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
                 if not self._track_reload_backend(candidate_vc_backend):
                     _close_backend(candidate_vc_backend)
                     return False
-                if available("pitch_shift", obj=candidate_vc_backend):
-                    candidate_vc_backend.pitch_shift = self.vc_pitch_shift
                 if available("f0_condition", obj=candidate_vc_backend):
                     candidate_vc_backend.f0_condition = self.vc_f0_condition
                 if previous_backend is not None:
@@ -2436,16 +2538,16 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
 
     def _split_text(self, text: str) -> list[str]:
         """Split text into chunks."""
-        return _pipeline.split_text(self, text)
+        return split_text(self, text)
 
     async def _pipeline_jobs(self) -> None:
         """Run Celune's speech pipeline workers as async jobs."""
-        playback_task = asyncio.create_task(_pipeline.playback_worker_job(self))
+        playback_task = asyncio.create_task(playback_worker_job(self))
         if self._is_voice_conversion_mode():
             await playback_task
             return
 
-        generation_task = asyncio.create_task(_pipeline.generation_worker_job(self))
+        generation_task = asyncio.create_task(generation_worker_job(self))
         await asyncio.gather(generation_task, playback_task)
 
     def _run_pipeline_jobs(self) -> None:
@@ -2456,14 +2558,24 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
 def _install_celune_methods() -> None:
     """Install split engine methods after the concrete class exists."""
     from . import (
-        conversation,
-        loader as loader_methods,
-        pipeline as pipeline_methods,
-        playback as playback_methods,
+        vc as vc_methods,
+    )
+    from . import (
         sleep,
         speech,
-        vc as vc_methods,
+        conversation,
+    )
+    from . import (
         voice as voice_methods,
+    )
+    from . import (
+        loader as loader_methods,
+    )
+    from . import (
+        pipeline as pipeline_methods,
+    )
+    from . import (
+        playback as playback_methods,
     )
     from .agent import core as agent_methods
 

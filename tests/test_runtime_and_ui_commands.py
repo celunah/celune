@@ -250,12 +250,14 @@ class TestRuntime(CeluneTestCase):
         )
 
         with mock.patch("celune.cevoice.active_bundle_path", return_value=bundle_path):
-            asyncio.run(
-                apply_voice_selection(
+
+            async def apply_selection() -> None:
+                await apply_voice_selection(
                     cast(CeluneUI, ui),
                     {"pack": "Celune", "entry": "bold"},
                 )
-            )
+
+            asyncio.run(apply_selection())
 
         assert call_order == ["wake", "voice"]
         assert ui.celune_styles == ("balanced", "bold")

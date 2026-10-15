@@ -13,6 +13,7 @@ from ._version import VERSION
 # don't blame her when you fork Celune and rename her to something else
 APP_NAME = "Celune"
 APP_SLUG = "".join(char if char.isalnum() else "_" for char in APP_NAME.lower())
+SUPPORTED_CUDA_VERSIONS = ("12.8", "13.0")
 NVIDIA_DEVICE_KEYWORDS = (
     "nvidia",
     "geforce",
@@ -57,11 +58,11 @@ PERSONA_MEMORY_EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 PERSONA_EMOTION_MODEL = "lunahr/emotispace-128"
 
 # agents use more context than plain Persona
-PERSONA_CONTEXT_SPACE = 8192
+PERSONA_CONTEXT_SPACE = 2048
 PERSONA_COMPACT_AT = 75
-AGENT_CONTEXT_SPACE = 32768
+AGENT_CONTEXT_SPACE = 8192
 AGENT_ROUTING_CONTEXT_SPACE = 8192
-AGENT_ROUTING_MAX_NEW_TOKENS = 96
+AGENT_ROUTING_MAX_NEW_TOKENS = 256
 AGENT_COMPACT_AT = 75
 AGENT_MAX_LOOPS = 20
 DEFAULT_PERSONA_SPEECH_MODEL_ID = "openai/whisper-large-v3-turbo"

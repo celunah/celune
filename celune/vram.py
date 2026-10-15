@@ -795,16 +795,7 @@ def agent_vram_compatible(
     config: Optional[Mapping[str, JSONSerializable]],
 ) -> bool:
     """Return whether the resolved VRAM preset supports agent mode."""
-    tier = resolve_vram_preset(config).tier
-    if tier not in {"high", "xhigh"}:
-        return False
-    if tier == "high" and config is not None:
-        raw_persona = config.get("persona")
-        persona = raw_persona if isinstance(raw_persona, dict) else {}
-        model_id = persona.get("model_id")
-        if isinstance(model_id, str) and persona_model_tier(model_id) == "smart":
-            return False
-    return True
+    return resolve_vram_preset(config).tier == "xhigh"
 
 
 def _iter_component_tensors(
