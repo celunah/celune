@@ -5,13 +5,13 @@ import re
 import warnings
 import unicodedata
 from pathlib import Path
+from fractions import Fraction
 from functools import lru_cache
 from dataclasses import dataclass
 from typing import NamedTuple, Optional, Union
 
-from iso639 import Lang
-from iso639.exceptions import DeprecatedLanguageValue, InvalidLanguageValue
 from syllabreak import Syllabreak
+from iso639 import Lang, exceptions
 
 from .exceptions import (
     CESNAlignmentError,
@@ -23,12 +23,26 @@ from .exceptions import (
 )
 
 
+class CESNTuplet(NamedTuple):
+    """A tuplet grouping actual events into a number of normal durations."""
+
+    actual_count: int
+    normal_count: int
+
+
 class CESNNoteEvent(NamedTuple):
     """A pitched note and duration assigned to one lyric syllable."""
 
     pitch: str
     note_type: int
     dotted: bool
+    tuplet: Optional[CESNTuplet] = None
+    tuplet_start: bool = False
+
+    @property
+    def duration_beats(self) -> Fraction:
+        """Return this note's exact duration in quarter-note beats."""
+        return _event_duration_beats(self.note_type, self.dotted, self.tuplet)
 
 
 class CESNRestEvent(NamedTuple):
@@ -36,6 +50,13 @@ class CESNRestEvent(NamedTuple):
 
     note_type: int
     dotted: bool
+    tuplet: Optional[CESNTuplet] = None
+    tuplet_start: bool = False
+
+    @property
+    def duration_beats(self) -> Fraction:
+        """Return this rest's exact duration in quarter-note beats."""
+        return _event_duration_beats(self.note_type, self.dotted, self.tuplet)
 
 
 class CESNNotePair(NamedTuple):
@@ -86,9 +107,11 @@ _NOTE_EVENT_PATTERN = re.compile(
 )
 _LANGUAGE_PATTERN = re.compile(r"[a-z]{2,3}(?:-[a-z0-9]{2,8})*\Z")
 _KEY_PATTERN = re.compile(r"[a-g](?:[#b])?\Z", re.IGNORECASE)
+_TUPLET_PATTERN = re.compile(r"(?P<actual>\d+)\s*,\s*(?P<normal>\d+)\Z")
 _SCALE_INTERVALS = {
     "major": (0, 2, 4, 5, 7, 9, 11),
     "minor": (0, 2, 3, 5, 7, 8, 10),
+    "natural-minor": (0, 2, 3, 5, 7, 8, 10),
     "dorian": (0, 2, 3, 5, 7, 9, 10),
     "phrygian": (0, 1, 3, 5, 7, 8, 10),
     "lydian": (0, 2, 4, 6, 7, 9, 11),
@@ -149,9 +172,13 @@ def parse_cesn(
     section_blocks: list[CESNBlock] = []
     sections: list[CESNSection] = []
     resolved_singers: dict[str, CESNSinger] = {}
+    active_tuplet: Optional[CESNTuplet] = None
+    tuplet_remaining = 0
 
     def close_section() -> None:
         nonlocal section_state, section_blocks
+        if active_tuplet is not None:
+            raise CESNSyntaxError("cesn tuplet group cannot cross a section boundary")
         if section_state is None or not section_blocks:
             section_state = None
             section_blocks = []
@@ -171,6 +198,24 @@ def parse_cesn(
         )
         section_state = None
         section_blocks = []
+
+    def apply_tuplet(events: tuple[_CESNEvent, ...]) -> tuple[_CESNEvent, ...]:
+        nonlocal active_tuplet, tuplet_remaining
+        annotated: list[_CESNEvent] = []
+        for event in events:
+            if active_tuplet is None:
+                annotated.append(event)
+                continue
+            annotated.append(
+                event._replace(
+                    tuplet=active_tuplet,
+                    tuplet_start=tuplet_remaining == active_tuplet.actual_count,
+                )
+            )
+            tuplet_remaining -= 1
+            if tuplet_remaining == 0:
+                active_tuplet = None
+        return tuple(annotated)
 
     def append_block(block: CESNBlock, block_state: _CESNState) -> None:
         nonlocal section_state, section_blocks
@@ -277,6 +322,8 @@ def parse_cesn(
         pending_has_no_lyrics = (
             pending_events is not None and not "".join(pending_lyrics).strip()
         )
+        if pending_has_no_lyrics and directive == "tuplet":
+            raise CESNSyntaxError("cesn tuplet must precede the events it affects")
         if not (
             pending_has_no_lyrics and directive in {"bpm", "lang", "singer", "pattern"}
         ):
@@ -342,7 +389,16 @@ def parse_cesn(
             pending_pattern = _parse_pattern(argument)
             continue
 
-        events = _parse_note_events(tag)
+        if directive == "tuplet":
+            if not separator:
+                raise CESNSyntaxError("cesn tuplet requires an actual,normal ratio")
+            if active_tuplet is not None:
+                raise CESNSyntaxError("cesn tuplets cannot overlap")
+            active_tuplet = _parse_tuplet(argument)
+            tuplet_remaining = active_tuplet.actual_count
+            continue
+
+        events = apply_tuplet(_parse_note_events(tag))
         if not events:
             raise CESNSyntaxError("cesn note list cannot be empty")
         pending_events = events
@@ -352,6 +408,8 @@ def parse_cesn(
     finish_pending()
     if pending_pattern is not None:
         raise CESNSyntaxError("cesn pattern must be followed by a lyric word")
+    if active_tuplet is not None:
+        raise CESNSyntaxError(f"cesn tuplet is missing {tuplet_remaining} event(s)")
     close_section()
     if not sections:
         raise CESNSyntaxError("cesn notation must contain at least one note list")
@@ -381,8 +439,10 @@ def render_cesn(sections: tuple[CESNSection, ...]) -> str:
         for block in section.blocks:
             for item in block.events:
                 if isinstance(item, CESNRestEvent):
+                    rendered.append(_format_tuplet_start(item))
                     rendered.append(_format_rest_event(item))
                 else:
+                    rendered.append(_format_tuplet_start(item.event))
                     rendered.append(
                         f"[{_format_note_event(item.event)}]{item.syllable}"
                     )
@@ -453,6 +513,33 @@ def _parse_language(value: str) -> str:
     return language
 
 
+def _parse_tuplet(value: str) -> CESNTuplet:
+    """Validate an actual-event count and normal-duration count."""
+    match = _TUPLET_PATTERN.fullmatch(value)
+    if match is None:
+        raise CESNSyntaxError("cesn tuplet must contain two positive integers")
+    actual_count, normal_count = (int(count) for count in match.groups())
+    if actual_count < 2 or normal_count < 1:
+        raise CESNSyntaxError(
+            "cesn tuplet counts must be positive and actual must exceed one"
+        )
+    return CESNTuplet(actual_count, normal_count)
+
+
+def _event_duration_beats(
+    note_type: int,
+    dotted: bool,
+    tuplet: Optional[CESNTuplet],
+) -> Fraction:
+    """Calculate an exact event duration using quarter-note beats."""
+    duration = Fraction(4, note_type)
+    if dotted:
+        duration *= Fraction(3, 2)
+    if tuplet is not None:
+        duration *= Fraction(tuplet.normal_count, tuplet.actual_count)
+    return duration
+
+
 def _syllabreak_language(language: str) -> str:
     """Map an explicit language tag to a supported Syllabreak language."""
     supported = _supported_syllabreak_languages()
@@ -463,7 +550,10 @@ def _syllabreak_language(language: str) -> str:
     primary = pieces[0]
     try:
         language_info = Lang(primary)
-    except (DeprecatedLanguageValue, InvalidLanguageValue) as error:
+    except (
+        exceptions.DeprecatedLanguageValue,
+        exceptions.InvalidLanguageValue,
+    ) as error:
         raise CESNSyntaxError(
             f"language {language!r} is not supported by syllabreak"
         ) from error
@@ -503,7 +593,7 @@ def _language_equivalents(language: str) -> set[str]:
     equivalents = {normalized, primary}
     try:
         language_info = Lang(primary)
-    except (DeprecatedLanguageValue, InvalidLanguageValue):
+    except (exceptions.DeprecatedLanguageValue, exceptions.InvalidLanguageValue):
         return equivalents
     if language_info.pt1:
         equivalents.add(language_info.pt1.casefold())
@@ -632,6 +722,15 @@ def _format_rest_event(event: CESNRestEvent) -> str:
     """Return the canonical textual representation of one rest."""
     dotted = "d" if event.dotted else ""
     return f"[r:{event.note_type}{dotted}]"
+
+
+def _format_tuplet_start(event: Union[CESNNoteEvent, CESNRestEvent]) -> str:
+    """Render a tuplet directive immediately before its first event."""
+    if not event.tuplet_start:
+        return ""
+    if event.tuplet is None:
+        raise CESNSyntaxError("cesn tuplet start has no ratio")
+    return f"[tuplet:{event.tuplet.actual_count},{event.tuplet.normal_count}]"
 
 
 def _syllabify(

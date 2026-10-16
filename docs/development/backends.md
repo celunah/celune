@@ -267,6 +267,12 @@ combine the sections into the final model notation or rendered output. Parsed
 blocks retain note/syllable pairs and positioned rests; out-of-scale notes
 remain available after a `CESNNotationWarning` is displayed.
 
+`[tuplet:a,b]` scales the next `a` pitched-note or rest events by `b/a` and
+expires automatically. The parser preserves this ratio on each event and
+exposes its effective duration in quarter-note beats so a backend can convert
+it to the model's timing units. Tuplets may span adjacent blocks but cannot
+overlap or cross a section boundary.
+
 The core parser requires an explicit `[lang:...]` tag and uses Syllabreak with
 that language. It rejects languages unsupported by either Syllabreak or the
 selected model. `[singer:...]` resolves a character name to a CECHAR v5 pack

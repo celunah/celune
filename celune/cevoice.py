@@ -71,7 +71,7 @@ SUPPORTED_PERSONA_FILENAMES: Final[tuple[str, ...]] = (
 
 # Celune now provides two unique identities as of her 6-month anniversary
 DEFAULT_CEVOICE_PACK_SHA256: Final[str] = (
-    "248cdf3d86a6f814dee1486408d70eef134688f0bc5cd30fe96df977b291b81b"
+    "35db55adca450062806e20d6c8ae1fc0c0ad5de569cb422321981de80e567851"
 )
 CLASSIC_CEVOICE_PACK_SHA256: Final[str] = (
     "646d68a70d4402cc5a9f8fdc96c171607d896dfe5424b27748193e3504530023"
@@ -659,13 +659,21 @@ def _write_indexed_cechar(
             manifest_assets[kind] = name
 
         voice_entry = dict((voice_metadata or {}).get(voice, {}))
-        if version == V5_VERSION and voice == SINGING_VOICE_NAME:
-            for field_name in ("cfg_scale", "persona"):
-                if voice_entry.get(field_name) is not None:
-                    raise CEVoiceError(
-                        f"singing voice '{SINGING_VOICE_NAME}' {field_name} must be null"
-                    )
-                voice_entry[field_name] = None
+        if version == V5_VERSION:
+            if voice == SINGING_VOICE_NAME:
+                for field_name in ("cfg_scale", "persona"):
+                    if voice_entry.get(field_name) is not None:
+                        raise CEVoiceError(
+                            f"singing voice '{SINGING_VOICE_NAME}' {field_name} must be null"
+                        )
+                    voice_entry[field_name] = None
+                cesn = voice_entry.get("cesn")
+                if not isinstance(cesn, str) or not cesn.strip():
+                    raise CEVoiceError("singing voice cesn is required")
+            else:
+                if voice_entry.get("cesn") is not None:
+                    raise CEVoiceError(f"voice '{voice}' cesn must be null")
+                voice_entry["cesn"] = None
         voice_entry["assets"] = cast(ManifestValue, manifest_assets)
         manifest_voices[voice] = voice_entry
 
@@ -1084,12 +1092,19 @@ def _validate_v4_semantic_metadata(
                 raise CEVoiceError("singing voice cfg_scale must be null")
             if "persona" not in voice_data or voice_data["persona"] is not None:
                 raise CEVoiceError("singing voice persona must be null")
+            cesn = voice_data.get("cesn")
+            if not isinstance(cesn, str) or not cesn.strip():
+                raise CEVoiceError("singing voice cesn is required")
             assets = voice_data.get("assets")
             if not isinstance(assets, dict) or "wav" not in assets:
                 raise CEVoiceError("singing voice must provide a wav asset")
             reference_text = voice_data.get("reference_text")
             if not isinstance(reference_text, str) or not reference_text.strip():
                 raise CEVoiceError("singing voice reference_text is required")
+        elif version == V5_VERSION and (
+            "cesn" not in voice_data or voice_data["cesn"] is not None
+        ):
+            raise CEVoiceError(f"voice '{voice}' cesn must be null")
         cfg_scale = voice_data.get("cfg_scale")
         if cfg_scale is not None and (
             not isinstance(cfg_scale, (int, float))

@@ -223,15 +223,19 @@ explicit language, singer identity, and ordered note blocks. A block keeps
 `CESNNotePair` entries and `CESNRestEvent` values in event order; rests do not
 consume syllables. `render_cesn(sections: tuple[CESNSection, ...]) -> str`
 serializes all sections into one canonical notation string with settings
-repeated at each section boundary. Language tags are required and are checked
-against Syllabreak; providing `supported_languages` also checks the selected
-model.
+repeated at each section boundary. `CESNTuplet(actual_count, normal_count)`
+scales the next `actual_count` note/rest events by `normal_count / actual_count`
+and then expires. Each parsed note/rest exposes its exact `duration_beats` as a
+`fractions.Fraction`; `tuplet_start` identifies where the directive belongs in
+canonical rendering. Language tags are required and are checked against
+Syllabreak; providing `supported_languages` also checks the selected model.
 
 ```python
 from celune.cesn import parse_cesn, render_cesn
 
 sections = parse_cesn(
-    "[lang:en][bpm:120,key:c,scale:major][pattern:qui,et][c3:4,r:1,d3:4]Quiet."
+    "[lang:en][bpm:120,key:c,scale:major][pattern:qui,et]"
+    "[tuplet:3,2][c3:4,r:4,d3:4]Quiet."
 )
 notation = render_cesn(sections)
 ```

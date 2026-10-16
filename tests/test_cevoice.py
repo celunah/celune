@@ -2,13 +2,12 @@
 """Tests for CEVOICE parsing, writing, loading, and fallback behavior."""
 
 import io
-import json
 import copy
 import gzip
+import json
 import wave
 import shutil
 import tempfile
-
 from typing import cast
 from pathlib import Path
 from unittest import mock
@@ -231,7 +230,10 @@ class TestCEVoice(CeluneTestCase):
             {"name": "Fixture", "default_voice": "balanced"},
             {
                 "balanced": {"reference_text": "Balanced reference."},
-                "sing": {"reference_text": "Singing reference."},
+                "sing": {
+                    "reference_text": "Singing reference.",
+                    "cesn": "[lang:en][c3:4,d3:4]Singing.",
+                },
             },
         )
 
@@ -240,8 +242,10 @@ class TestCEVoice(CeluneTestCase):
         assert bundle.metadata["version"] == cevoice.V5_VERSION
         assert bundle.voice_order == ("balanced",)
         assert bundle.singing_voice == cevoice.SINGING_VOICE_NAME
+        assert bundle.voices["balanced"]["cesn"] is None
         assert bundle.voices["sing"]["cfg_scale"] is None
         assert bundle.voices["sing"]["persona"] is None
+        assert bundle.voices["sing"]["cesn"] == "[lang:en][c3:4,d3:4]Singing."
 
     def test_default_pack_uses_v5_and_keeps_classic_on_v4(self) -> None:
         """Keep the default pack's singing reference scoped to CECHAR v5."""
@@ -255,7 +259,41 @@ class TestCEVoice(CeluneTestCase):
             default.voices["sing"]["reference_text"]
             == "Moonlight resting, silver-blue, I'll keep one quiet light for you."
         )
+        assert default.voices["sing"]["cesn"] == (
+            "[bpm:108,key:g#,scale:natural_minor][lang:en]"
+            "[a3:4,b3:4d] Moonlight [c#4:4,b3:4d] resting "
+            "[g#3:4,a#3:8,a#3:4] silver-blue. [tuplet:3,2][r:1,g#3:4] I'll "
+            "[a#3:4] keep [b3:4] one [pattern:qui,et][tuplet:3,2]"
+            "[c#4:4,c4:4] quiet [g#3:4] light [r:2,g#3:4] for [f#3:4] you."
+        )
+        assert all(
+            default.voices[voice]["cesn"] is None for voice in default.voice_order
+        )
+        assert cevoice.bundle_matches_default_pack_checksum(default.path)
         assert classic.metadata["version"] == cevoice.V4_VERSION
+
+    def test_cechar_v5_requires_singing_cesn_and_null_tts_cesn(self) -> None:
+        """Require a score for the singing role and null for speaking roles."""
+        sample = self._minimal_wav()
+        with pytest.raises(CEVoiceError, match="singing voice cesn is required"):
+            cevoice.write_cechar_v5(
+                self.path,
+                {"balanced": {"wav": sample}, "sing": {"wav": sample}},
+                voice_metadata={"sing": {"reference_text": "Singing reference."}},
+            )
+
+        with pytest.raises(CEVoiceError, match="voice 'balanced' cesn must be null"):
+            cevoice.write_cechar_v5(
+                self.path,
+                {"balanced": {"wav": sample}, "sing": {"wav": sample}},
+                voice_metadata={
+                    "balanced": {"cesn": "[lang:en][c3:4]Speaking."},
+                    "sing": {
+                        "reference_text": "Singing reference.",
+                        "cesn": "[lang:en][c3:4,d3:4]Singing.",
+                    },
+                },
+            )
 
     def test_cechar_v5_rejects_singing_voice_in_public_voice_order(self) -> None:
         """Verify CECHAR v5 does not let TTS select the singing voice."""
@@ -267,7 +305,10 @@ class TestCEVoice(CeluneTestCase):
                 {"voice_order": ["balanced", "sing"]},
                 {
                     "balanced": {"reference_text": "Balanced reference."},
-                    "sing": {"reference_text": "Singing reference."},
+                    "sing": {
+                        "reference_text": "Singing reference.",
+                        "cesn": "[lang:en][c3:4,d3:4]Singing.",
+                    },
                 },
             )
 

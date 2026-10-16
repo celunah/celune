@@ -15,6 +15,7 @@ notation may contain many pairs and many sections:
 [#Opening phrase]
 [c3:4,r:1,d3:4] Moonlight.
 [pattern:qui,et][c3:4,d3:4] Quiet.
+[tuplet:3,2][c3:4,d3:4,e3:4] Trip-let.
 [singer:Celune]
 [bpm:160,key:e,scale:minor]
 [e3:4] Word.
@@ -39,14 +40,23 @@ Syllabreak. The tag accepts an ISO language identifier such as `en`, `eng`, or
 
 `[bpm:120,key:c,scale:major]` sets all three musical settings. A later settings
 tag updates them from that point forward. Supported scales are `major`,
-`minor`, `dorian`, `phrygian`, `lydian`, `mixolydian`, `locrian`,
-`harmonic-minor`, and `melodic-minor`. Keys use a note name with an optional
-sharp or flat.
+`minor` (also named `natural-minor` or `natural_minor`), `dorian`, `phrygian`,
+`lydian`, `mixolydian`, `locrian`, `harmonic-minor`, and `melodic-minor`. Keys
+use a note name with an optional sharp or flat.
 
 `[#Comment]` is ignored. `[pattern:qui,et]` replaces Syllabreak's automatic
 syllable mapping for the next lyric word; its fragments must join to that word.
 `[singer:Celune]` selects a matching character pack, which must be a CECHAR v5
 pack containing the reserved `sing` voice.
+
+`[tuplet:a,b]` scales the next `a` note or rest events by `b/a`, then expires.
+For example, `[tuplet:3,2]` makes three following quarter notes fit into the
+time of two quarter notes. Rests count toward the `a` events. A tuplet can span
+successive note/lyric blocks, but it must finish before another tuplet, a
+musical section change, or the end of the notation. Tuplets cannot overlap.
+The parsed event retains its tuplet ratio and exposes its exact effective
+duration as `duration_beats`, a `fractions.Fraction` measured in quarter-note
+beats. Dotted notes apply their 3/2 multiplier before the tuplet ratio.
 
 ## Parse and render
 
@@ -60,13 +70,16 @@ Each `CESNBlock` contains the original lyric text and an ordered `events`
 sequence. Pitched entries are `CESNNotePair(event, syllable)` values; rests are
 `CESNRestEvent` values. A rest keeps its timing and position but does not
 consume a lyric syllable. `block.pairs` returns only the pitched note/syllable
-pairs.
+pairs. Note and rest events expose an exact `duration_beats` value and their
+optional `CESNTuplet`; `tuplet_start` marks the event where rendering re-emits
+the tuplet directive.
 
 ```python
 from celune.cesn import parse_cesn, render_cesn
 
 sections = parse_cesn(
-    "[lang:en][bpm:120,key:c,scale:major][pattern:qui,et][c3:4,r:1,d3:4]Quiet."
+    "[lang:en][bpm:120,key:c,scale:major][pattern:qui,et]"
+    "[tuplet:3,2][c3:4,r:4,d3:4]Quiet."
 )
 rendered = render_cesn(sections)
 ```

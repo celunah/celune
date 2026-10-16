@@ -146,6 +146,7 @@ Each voice entry may also include:
 | `cfg_scale` | Optional positive VoxCPM2 classifier-free guidance scale for that voice |
 | `reference_text` | Optional non-empty transcript for the voice's reference audio |
 | `persona` | Optional style/rule additions layered on the shared Persona metadata |
+| `cesn` | In CECHAR v5, required for `sing` and `null` for speaking voices |
 
 Supported `persona` fields are:
 
@@ -177,11 +178,13 @@ keeps it out of `voice_order` and never offers it to TTS backends. A v5 manifest
 may omit `voice_order`; Celune then lists every voice except `sing`. If an
 explicit `voice_order` or `default_voice` selects `sing`, the pack is invalid.
 
-The singing entry requires a WAV asset, a non-empty `reference_text`, and
-explicit `null` values for `cfg_scale` and `persona`. Celune does not apply
-speaking Persona or VoxCPM2 guidance settings to it. Future singing backends
-must select only `sing`; they must report that singing is unavailable when the
-pack has no `sing` entry and must not fall back to a speaking voice.
+The singing entry requires a WAV asset, a non-empty `reference_text`, a
+non-empty `cesn` score, and explicit `null` values for `cfg_scale` and
+`persona`. Every ordinary TTS voice must include `cesn: null`. Celune does not
+apply speaking Persona or VoxCPM2 guidance settings to the singing entry.
+Future singing backends must select only `sing`; they must report that singing
+is unavailable when the pack has no `sing` entry and must not fall back to a
+speaking voice.
 
 V5 retains v4's name-only file list and binary jump table. For example:
 
@@ -197,11 +200,13 @@ V5 retains v4's name-only file list and binary jump table. For example:
   ],
   "voices": {
     "balanced": {
+      "cesn": null,
       "reference_text": "My name is Celune...",
       "assets": {"wav": "balanced.wav"}
     },
     "sing": {
       "cfg_scale": null,
+      "cesn": "[lang:en][c3:4,d3:4]Singing.",
       "reference_text": "Singing reference transcript...",
       "persona": null,
       "assets": {"wav": "sing.wav"}
@@ -257,6 +262,8 @@ Validation rules enforced by Celune:
 - `voices.<name>.reference_text`, when present, must be a non-empty string
 - in v5, `voices.sing` must include a WAV and non-empty `reference_text`
 - in v5, `voices.sing.cfg_scale` and `voices.sing.persona` must both be `null`
+- in v5, `voices.sing.cesn` must be a non-empty CESN string
+- in v5, every other voice must include `cesn: null`
 - in v5, `default_voice` and `voice_order` must not select `sing`
 - voice names and asset kinds may not contain path separators and may not be `""`, `"."`, or `".."`
 - only `wav` and `pt` asset kinds are supported
@@ -412,9 +419,9 @@ The values in the `voices` mapping can be:
 
 `wav` is the important runtime asset. Include `pt` only if you also want Celune's analysis features to have embeddings for that voice.
 
-To add an optional singing reference, write CECHAR v5. Provide its WAV and
-transcript under the reserved `sing` key; the writer stores null speaking-only
-metadata for it. Keep `sing` out of `voice_order`:
+To add an optional singing reference, write CECHAR v5. Provide its WAV,
+transcript, and CESN score under the reserved `sing` key; the writer stores
+null speaking-only metadata for it. Keep `sing` out of `voice_order`:
 
 ```python
 from pathlib import Path
@@ -430,14 +437,18 @@ write_cechar_v5(
     {"name": "My Character", "default_voice": "balanced"},
     {
         "balanced": {"reference_text": "Speaking transcript."},
-        "sing": {"reference_text": "Singing transcript."},
+        "sing": {
+            "reference_text": "Singing transcript.",
+            "cesn": "[lang:en][c3:4,d3:4]Singing.",
+        },
     },
 )
 ```
 
-The v5 writer adds `cfg_scale: null` and `persona: null` to `voices.sing` and
-rejects attempts to assign either speaking-only value. Ordinary TTS continues
-to use the speaking voices listed in `voice_order`.
+The v5 writer adds `cfg_scale: null` and `persona: null` to `voices.sing`, and
+adds `cesn: null` to every speaking voice. It rejects a missing singing score
+or non-null CESN metadata on a speaking voice. Ordinary TTS continues to use
+the speaking voices listed in `voice_order`.
 
 ## Minimal bundle recipe
 

@@ -2,20 +2,22 @@
 """Tests for CESN directives, sections, syllables, and notation rendering."""
 
 from pathlib import Path
+from fractions import Fraction
 from types import SimpleNamespace
 
 import pytest
 
-from celune import cevoice
 from celune.cesn import (
     CESNNoteEvent,
     CESNNotePair,
     CESNRestEvent,
     CESNSinger,
+    CESNTuplet,
     _resolve_singer,
     parse_cesn,
     render_cesn,
 )
+from celune import cevoice
 from celune.exceptions import (
     CESNAlignmentError,
     CESNMatchError,
@@ -90,6 +92,40 @@ def test_parse_cesn_aligns_default_singing_reference() -> None:
     )
 
 
+def test_parse_default_cechar_singing_notation() -> None:
+    """Parse the default pack's CESN score and retain its tuplet durations."""
+    bundle = cevoice.CEVoice.open(Path("voices/default.cevoice"))
+    notation = bundle.voices["sing"]["cesn"]
+    assert isinstance(notation, str)
+
+    with pytest.warns(CESNNotationWarning) as captured_warnings:
+        sections = parse_cesn(notation)
+    warning_messages = tuple(str(item.message) for item in captured_warnings)
+
+    events = tuple(
+        event
+        for section in sections
+        for block in section.blocks
+        for event in block.events
+    )
+    duration = sum(
+        (
+            event.duration_beats
+            if isinstance(event, CESNRestEvent)
+            else event.event.duration_beats
+            for event in events
+        ),
+        Fraction(0),
+    )
+
+    assert duration == Fraction(37, 2)
+    assert sections[0].bpm == 108
+    assert duration * 60 / sections[0].bpm == Fraction(185, 18)
+    assert len(warning_messages) == 2
+    assert "note a3:4" in warning_messages[0]
+    assert "note c4:4" in warning_messages[1]
+
+
 def test_parse_cesn_respects_per_word_pattern_override() -> None:
     """Use an explicit pattern for the next word without a fixed dictionary."""
     result = parse_cesn("[lang:en][pattern:qui,et][c3:4,d3:4] Quiet.")
@@ -110,6 +146,64 @@ def test_parse_cesn_keeps_rests_out_of_note_syllable_pairs() -> None:
         CESNRestEvent(1, True),
     )
     assert len(block.pairs) == 1
+
+
+def test_parse_cesn_scales_next_tuplet_events_then_expires() -> None:
+    """Scale the next actual note events by the tuplet's exact duration ratio."""
+    result = parse_cesn("[lang:en][tuplet:3,2][c3:4]One[d3:4]two[e3:4]three[f3:4]four.")
+    pairs = result[0].blocks
+    events = tuple(block.pairs[0].event for block in pairs)
+
+    assert tuple(event.tuplet for event in events) == (
+        CESNTuplet(3, 2),
+        CESNTuplet(3, 2),
+        CESNTuplet(3, 2),
+        None,
+    )
+    assert tuple(event.tuplet_start for event in events) == (True, False, False, False)
+    assert tuple(event.duration_beats for event in events) == (
+        Fraction(2, 3),
+        Fraction(2, 3),
+        Fraction(2, 3),
+        Fraction(1, 1),
+    )
+
+
+def test_parse_cesn_counts_rests_in_tuplets_and_renders_groups() -> None:
+    """Count rests as tuplet events and preserve repeated groups when rendered."""
+    notation = (
+        "[lang:en][tuplet:3,2][c3:4,r:4,d3:4]One two."
+        "[tuplet:3,2][f3:4,g3:4,a3:4]three four five."
+    )
+    sections = parse_cesn(notation)
+    rendered = render_cesn(sections)
+    reparsed = parse_cesn(rendered)
+    events = tuple(
+        item.event if isinstance(item, CESNNotePair) else item
+        for block in reparsed[0].blocks
+        for item in block.events
+    )
+
+    assert sum(event.tuplet_start for event in events) == 2
+    assert tuple(event.duration_beats for event in events) == (
+        Fraction(2, 3),
+        Fraction(2, 3),
+        Fraction(2, 3),
+        Fraction(2, 3),
+        Fraction(2, 3),
+        Fraction(2, 3),
+    )
+
+
+def test_parse_cesn_rejects_incomplete_tuplets_and_section_changes() -> None:
+    """Require every tuplet to finish before the notation or section ends."""
+    with pytest.raises(CESNSyntaxError, match="missing 2 event"):
+        parse_cesn("[lang:en][tuplet:3,2][c3:4]One.")
+
+    with pytest.raises(CESNSyntaxError, match="section boundary"):
+        parse_cesn(
+            "[lang:en][tuplet:3,2][c3:4]One[bpm:140,key:c,scale:major][d3:4]Two."
+        )
 
 
 def test_parse_cesn_ignores_comments_and_accepts_multiple_note_blocks() -> None:
@@ -249,6 +343,9 @@ def test_render_cesn_preserves_sections_patterns_and_rests() -> None:
         "[lang:en][pattern:qui,far][c3:4,d3:4] Quiet.",
         "[lang:en][bpm:0,key:c,scale:major][c3:4] Word.",
         "[lang:en][bpm:120,key:c,scale:unknown][c3:4] Word.",
+        "[lang:en][tuplet:1,1][c3:4] Word.",
+        "[lang:en][tuplet:3,0][c3:4] Word.",
+        "[lang:en][tuplet:3,x][c3:4] Word.",
     ),
 )
 def test_parse_cesn_rejects_malformed_notation(text: str) -> None:
