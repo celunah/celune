@@ -236,6 +236,7 @@ BACKEND_MANIFESTS = {
             "omegaconf==2.3.0",
             "scipy",
             "syllabreak>=0.20.1,<0.21.0",
+            "iso639-lang>=2.0.0,<3.0.0",
             "tqdm",
         ),
         backend_module="celune.backends.tts.soulxsinger",

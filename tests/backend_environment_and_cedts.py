@@ -381,6 +381,7 @@ class TestBackendEnvironment(CeluneTestCase):
         """Install CESN and English G2P dependencies in the SoulX worker."""
         requirements = BACKEND_MANIFESTS["soulxsinger"].requirements
         assert "syllabreak>=0.20.1,<0.21.0" in requirements
+        assert "iso639-lang>=2.0.0,<3.0.0" in requirements
         assert "g2p_en==2.1.0" in requirements
         assert "nltk==3.9.2" in requirements
         assert "omegaconf==2.3.0" in requirements
