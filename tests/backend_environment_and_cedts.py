@@ -377,9 +377,10 @@ class TestBackendEnvironment(CeluneTestCase):
             for manifest in BACKEND_MANIFESTS.values()
         )
 
-    def test_soulxsinger_manifest_has_english_phonemizer_dependencies(self) -> None:
-        """Install the pinned English G2P stack in SoulX-Singer's worker."""
+    def test_soulxsinger_manifest_has_cesn_and_phonemizer_dependencies(self) -> None:
+        """Install CESN and English G2P dependencies in the SoulX worker."""
         requirements = BACKEND_MANIFESTS["soulxsinger"].requirements
+        assert "syllabreak>=0.20.1,<0.21.0" in requirements
         assert "g2p_en==2.1.0" in requirements
         assert "nltk==3.9.2" in requirements
         assert "omegaconf==2.3.0" in requirements
