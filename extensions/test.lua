@@ -1,7 +1,7 @@
--- SPDX-License-Identifier: MIT
+-- SPDX-License-Identifier: Apache-2.0
 
 -- What should this extension be called?
-EXTENSION_NAME = "Lua Test"
+EXTENSION_NAME = "Test (Lua)"
 
 subscribe("ready", function(event)
 	-- What Lua version is Celune using?
@@ -43,7 +43,9 @@ subscribe("ready", function(event)
 
     -- Say something and don't save the output.
     celune.say("You will only hear this once.", false)
-end)
+
+-- Change to 'true' to enable this extension.
+end, false)
 
 -- Run actions on event dispatch.
 subscribe("voice_changed", function(event)

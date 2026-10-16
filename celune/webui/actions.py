@@ -656,7 +656,7 @@ def _build_webui() -> gr.Blocks:
                             f"""
                             <div id="celune-header">
                                 <div class="line"></div>
-                                <div class="title">{APP_NAME}</div>
+                                <div class="title">{"&nbsp;&nbsp;".join(APP_NAME.upper())}</div>
                                 <div class="line"></div>
                             </div>
                             """
