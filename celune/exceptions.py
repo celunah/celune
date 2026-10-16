@@ -177,6 +177,17 @@ class CEVoiceError(RuntimeError, CeluneError):
     """CEVOICE data is malformed or unsupported."""
 
 
+class InvalidCharacterError(CEVoiceError):
+    """A requested character pack is missing or cannot provide a singing voice."""
+
+    def __init__(self, character_name: str) -> None:
+        """Initialize a failed character selection with its requested name."""
+        from .i18n import string
+
+        self.character_name = character_name
+        super().__init__(string("cesn.invalid_singer", character=character_name))
+
+
 class CESNError(ValueError, CeluneError):
     """Base class for Celune Singing Notation parsing failures."""
 
@@ -209,6 +220,26 @@ class CESNMatchError(CESNError):
         super().__init__(
             f"note event {note_index} ({note_event!r}) did not match any "
             f"of {syllable_count} syllables"
+        )
+
+
+class CESNNotationWarning(UserWarning):
+    """A CESN pitch falls outside its section's selected scale."""
+
+    def __init__(self, note_event: str, key: str, scale: str) -> None:
+        """Initialize an out-of-scale warning with its notation context."""
+        from .i18n import string
+
+        self.note_event = note_event
+        self.key = key
+        self.scale = scale
+        super().__init__(
+            string(
+                "cesn.out_of_scale_note",
+                note=note_event,
+                tonic=key,
+                scale=scale,
+            )
         )
 
 

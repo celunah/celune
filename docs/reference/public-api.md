@@ -216,23 +216,33 @@ exclude that reserved singing entry. See
 
 ## CESN parsing
 
-`parse_cesn(text: str) -> tuple[tuple[CESNNoteEvent, str], ...]` parses one
-bracketed CESN note list, aligns its notes with lyric syllables, and returns
-immutable `(note_event, syllable)` pairs. `CESNNoteEvent` exposes `pitch` as a
-normalized string, `note_type` as one of `1`, `2`, `4`, `8`, `16`, or `32`, and
-`dotted` as a boolean. Parsing has no runtime side effects.
+`parse_cesn(text: str, *, supported_languages: Optional[tuple[str, ...]] =
+None) -> tuple[CESNSection, ...]` parses the section-based notation and aligns
+pitched notes with syllables. A `CESNSection` carries BPM, key, scale,
+explicit language, singer identity, and ordered note blocks. A block keeps
+`CESNNotePair` entries and `CESNRestEvent` values in event order; rests do not
+consume syllables. `render_cesn(sections: tuple[CESNSection, ...]) -> str`
+serializes all sections into one canonical notation string with settings
+repeated at each section boundary. Language tags are required and are checked
+against Syllabreak; providing `supported_languages` also checks the selected
+model.
 
 ```python
-from celune.cesn import parse_cesn
+from celune.cesn import parse_cesn, render_cesn
 
-notes = parse_cesn("[c3:4d,d3:8,e3:16] Text to sing.")
+sections = parse_cesn(
+    "[lang:en][bpm:120,key:c,scale:major][pattern:qui,et][c3:4,r:1,d3:4]Quiet."
+)
+notation = render_cesn(sections)
 ```
 
-The function accepts the complete notation string as `text`. It raises
-`CESNSyntaxError` for malformed notation, `CESNAlignmentError` when syllables
-outnumber notes, and `CESNMatchError` when a note event has no syllable. See
-[CESN format and parsing](../formats/cesn.md) for the pitch grammar and
-syllabification behavior.
+The parser raises `CESNSyntaxError` for malformed notation or unsupported
+languages, `CESNAlignmentError` when syllables outnumber pitched notes,
+`CESNMatchError` when a pitched event has no syllable, and
+`InvalidCharacterError` when a selected singer lacks a CECHAR v5 `sing` voice.
+Out-of-scale pitches emit `CESNNotationWarning`. See
+[CESN format and parsing](../formats/cesn.md) for the grammar, supported
+scales, section boundaries, and recovery behavior.
 
 ## Supporting module calls
 

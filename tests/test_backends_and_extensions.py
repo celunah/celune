@@ -22,39 +22,10 @@ import numpy as np
 import soundfile as sf
 
 from celune.i18n import string
-from celune.exceptions import (
-    InvalidExtensionError,
-    ExtensionAlreadyRegisteredError,
-)
-from celune.backends.vc import (
-    resolve_vc_backend,
-)
-from celune.backends.vc import (
-    BACKEND_MANIFESTS as VC_BACKEND_MANIFESTS,
-)
 from celune.celune import Celune
 from celune.utils import discard
-from celune.typing.backends import (
-    BackendModel,
-    SeedVCModelValue,
-    _SeedVCRealtimeModule,
-)
 from celune.registry import MODEL_BY_ID
-from celune.backends.tts.luxtts import (
-    LuxTTS,
-    _LuxTTSModel,
-    _set_vocoder_silence_feature,
-    _install_vocoder_decode_guard,
-    _install_cpu_duration_correction,
-)
 from celune.typing.aliases import AudioChunk
-from celune.backends.tts.fireredtts3 import (
-    FireRedTTS3,
-    _FireRedModel,
-    _FireRedRedAE,
-    _create_firered_model,
-    _FireRedIncrementalDecoder,
-)
 from celune.backends.tts.base import CeluneBackend
 from celune.registry.tts import QWEN3_DEFAULT_MODEL_ID
 from celune.backends.vc.seedvc import CeluneSeedVCBackend
@@ -62,7 +33,33 @@ from celune.extensions.manager import CeluneExtensionManager
 from celune.dataclasses.pipeline import VoiceConversionRequest
 from celune.extensions.base import CeluneContext, CeluneExtension
 from celune.backends.tts import BACKEND_MANIFESTS, resolve_backend
-
+from celune.exceptions import (
+    InvalidExtensionError,
+    ExtensionAlreadyRegisteredError,
+)
+from celune.typing.backends import (
+    BackendModel,
+    SeedVCModelValue,
+    _SeedVCRealtimeModule,
+)
+from celune.backends.vc import (
+    resolve_vc_backend,
+    BACKEND_MANIFESTS as VC_BACKEND_MANIFESTS,
+)
+from celune.backends.tts.fireredtts3 import (
+    FireRedTTS3,
+    _FireRedModel,
+    _FireRedRedAE,
+    _create_firered_model,
+    _FireRedIncrementalDecoder,
+)
+from celune.backends.tts.luxtts import (
+    LuxTTS,
+    _LuxTTSModel,
+    _set_vocoder_silence_feature,
+    _install_vocoder_decode_guard,
+    _install_cpu_duration_correction,
+)
 from .support import (
     FakeBackend,
     FakeVCBackend,
@@ -88,7 +85,9 @@ class TestBackend(CeluneTestCase):
 
     def test_singing_capability_defaults_off_and_base_cesn_is_noop(self) -> None:
         """Keep ordinary TTS unchanged until a singing backend opts in."""
-        notation = "[c3:4d,d3:8,e3:16] Text to sing."
+        notation = (
+            "[lang:en][bpm:120,key:c,scale:major][c3:4d,d3:8,e3:16] Text to sing."
+        )
         backend = FakeBackend()
         self.assertFalse(backend.singing)
         self.assertEqual(backend.cesn_to_model(notation), notation)

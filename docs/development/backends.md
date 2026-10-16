@@ -249,30 +249,37 @@ immediately.
 ## CESN singing hook
 
 `CeluneBackend` accepts `singing: bool = False`. A singing-capable TTS backend
-opts in by passing `singing=True` to the base initializer. Celune then calls
-`cesn_to_model(text)` once with the complete request before splitting it into
-generation chunks. Override the method to translate CESN into the selected
-model's notation. The base implementation returns the input unchanged, and no
-backend-specific singing converter is implemented yet.
+opts in by passing `singing=True` to the base initializer. For a request with
+CESN tags, Celune parses the complete notation, validates the explicit
+language against the backend's `supported_languages`, records warnings in the
+runtime log, and serializes all sections before calling
+`cesn_to_model(text)`. The hook is called once before generation chunking.
 
-CESN writes notes in a bracketed, comma-separated list before the lyrics:
+`celune/cesn.py` owns parsing, syllabification, and canonical rendering.
+`celune/singing.py` validates backend language support, assigns the active
+singing voice when no singer tag is present, and calls the backend hook before
+the pipeline chunks the request.
 
-```text
-[c3:4d,d3:8,e3:16] Text to sing.
-```
+Each `CESNSection` has one singer, language, BPM, key, and scale. A change to
+any of those values begins a new section. A singing backend must reset its
+inference state at each section boundary, process the section metadata, and
+combine the sections into the final model notation or rendered output. Parsed
+blocks retain note/syllable pairs and positioned rests; out-of-scale notes
+remain available after a `CESNNotationWarning` is displayed.
 
-Each note has a pitch such as `c3`, a colon, and a note type of `1`, `2`, `4`,
-`8`, `16`, or `32`. An optional trailing `d` marks a dotted note. CESN assigns
-one note to each syllable; the singing backend translates those notes to the
-format its model expects. Core parsing is available through
-[`parse_cesn()`](../formats/cesn.md). It uses the multilingual Syllabreak
-library, retaining punctuation and word separators with syllables. Its
-orthographic rules may differ from spoken syllables; consult the CESN format
-page for language coverage and limitations.
+The core parser requires an explicit `[lang:...]` tag and uses Syllabreak with
+that language. It rejects languages unsupported by either Syllabreak or the
+selected model. `[singer:...]` resolves a character name to a CECHAR v5 pack
+with a hidden `sing` voice, and `[pattern:...]` can replace automatic
+syllabification for the next word. See
+[`parse_cesn()` and the CESN format](../formats/cesn.md) for tag syntax, data
+types, and errors.
 
-The hook signature is `cesn_to_model(self, text: str) -> str`. Its argument is
-the complete request text, and it returns the backend-ready string. Ordinary
-TTS backends leave `singing` false and pass text through unchanged.
+The hook signature remains `cesn_to_model(self, text: str) -> str`. Its input
+contains the canonical, complete notation with settings repeated at section
+boundaries. Override it to translate those sections into the selected model's
+notation. The base implementation returns the input unchanged. Ordinary TTS
+backends leave `singing` false and do not invoke CESN parsing.
 
 ## Adding a backend
 

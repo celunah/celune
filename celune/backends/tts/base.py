@@ -9,14 +9,14 @@ import hashlib
 import secrets
 import threading
 import contextlib
+import unittest.mock
+from pathlib import Path
+from abc import ABC, abstractmethod
 from typing import (
     Union,
     Optional,
     cast,
 )
-import unittest.mock
-from pathlib import Path
-from abc import ABC, abstractmethod
 from collections.abc import Mapping, Callable, Iterator, Generator
 
 import torch
@@ -29,13 +29,12 @@ from ...utils import discard
 from ...typing.common import JSON
 from ...constants import N_A_NUMERIC
 from ...exceptions import BackendError
-from ...registry.tts import ModelContract
-from ...registry.tts import model_contract as resolve_model_contract
 from ...typing.backends import BackendModel
 from ...cevoice import CEVoiceLoader, default_loader
 from ...typing.aliases import LogLevel, AudioChunk, RuntimeValue
 from .quantization import QuantizationMode, quantization_mode, quantize_component
 from ...paths import temp_data_dir, huggingface_progress, huggingface_hub_cache_dir
+from ...registry.tts import ModelContract, model_contract as resolve_model_contract
 from ...vram import backend_vram_report, is_cuda_out_of_memory, release_cuda_after_oom
 
 __all__ = [
@@ -287,11 +286,12 @@ class CeluneBackend[ModelT](ABC):
     def cesn_to_model(self, text: str) -> str:
         """Convert Celune Singing Notation to this backend's input format.
 
-        The base implementation preserves the input until CESN parsing is
-        implemented or a singing backend overrides this method.
+        Celune parses and canonicalizes CESN before invoking this hook. The base
+        implementation preserves the complete notation for backends without a
+        custom singing representation.
 
         Args:
-            text: Complete speech request containing CESN notation, if any.
+            text: Complete, section-marked CESN notation, if any.
 
         Returns:
             str: Backend-ready text. The base implementation returns ``text`` unchanged.

@@ -28,10 +28,50 @@ import pyrubberband as rb
 from .paths import (
     outputs_dir,
 )
+from .i18n import string, tagged_string
+from .config import resolve_audio_device
+from .typing.common import JSONSerializable
+from .binding import install_class_functions
+from .singing import _prepare_synthesis_text
+from .analysis import _schedule_voice_analysis
+from .typing.pipeline import SpeechStreamQueue
+from .constants import (
+    BASE_SR,
+    APP_NAME,
+    APP_SLUG,
+)
+from .contention import _PlaybackContentionMonitor
+from .typing.aliases import AudioChunk, AudioChunks
+from .captions import _build_caption_alignment_sections
+from .exceptions import BackendError, NotAvailableError
 from .utils import (
     discard,
     format_number,
     format_error_message,
+)
+from .vram import is_cuda_out_of_memory, release_cuda_after_oom
+from .conversation import _think_persona, _effective_voice_prompt
+from .threads import run_in_daemon_thread as _run_in_daemon_thread
+from .prepared import play_prepared_speech, finish_tutorial_audio_capture
+from .dataclasses.pipeline import (
+    SpeechTiming,
+    PlaybackChunk,
+    SpeechRequest,
+    PlaybackSourceDone,
+)
+from .pipelinecore import (
+    _PIPELINE_CPU_YIELD_SECONDS,
+    _PLAYBACK_BUFFER_STARTUP_GRACE_SECONDS,
+    _monotonic_time,
+)
+from .audio.dsp import (
+    soften,
+    to_48khz,
+    error_signal,
+    working_signal,
+    sleeping_signal,
+    readiness_signal,
+    is_silent_utterance,
 )
 from .metadata import (
     _write_celune_flac,
@@ -68,45 +108,6 @@ from .playback import (
     _record_caption_playback_segment,
     _should_apply_contention_buffering,
 )
-from .audio.dsp import (
-    soften,
-    to_48khz,
-    error_signal,
-    working_signal,
-    sleeping_signal,
-    readiness_signal,
-    is_silent_utterance,
-)
-from .constants import (
-    BASE_SR,
-    APP_NAME,
-    APP_SLUG,
-)
-from .pipelinecore import (
-    _PIPELINE_CPU_YIELD_SECONDS,
-    _PLAYBACK_BUFFER_STARTUP_GRACE_SECONDS,
-    _monotonic_time,
-)
-from .dataclasses.pipeline import (
-    SpeechTiming,
-    PlaybackChunk,
-    SpeechRequest,
-    PlaybackSourceDone,
-)
-from .i18n import string, tagged_string
-from .config import resolve_audio_device
-from .typing.common import JSONSerializable
-from .binding import install_class_functions
-from .analysis import _schedule_voice_analysis
-from .typing.pipeline import SpeechStreamQueue
-from .contention import _PlaybackContentionMonitor
-from .typing.aliases import AudioChunk, AudioChunks
-from .captions import _build_caption_alignment_sections
-from .exceptions import BackendError, NotAvailableError
-from .vram import is_cuda_out_of_memory, release_cuda_after_oom
-from .conversation import _think_persona, _effective_voice_prompt
-from .threads import run_in_daemon_thread as _run_in_daemon_thread
-from .prepared import play_prepared_speech, finish_tutorial_audio_capture
 
 if TYPE_CHECKING:
     from .celune import Celune
@@ -894,13 +895,6 @@ def split_text(engine: Celune, text: str) -> list[str]:
 
     engine.log(f"Chunks: {len(chunks)}")
     return chunks
-
-
-def _prepare_synthesis_text(engine: Celune, text: str) -> str:
-    """Convert CESN for singing backends before Celune splits long requests."""
-    if not getattr(engine.backend, "singing", False):
-        return text
-    return engine.backend.cesn_to_model(text)
 
 
 def play_signal(engine: Celune, signal_type: str) -> bool:

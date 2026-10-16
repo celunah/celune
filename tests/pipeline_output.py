@@ -13,9 +13,9 @@ import pytest
 import numpy as np
 import soundfile as sf
 
-from celune import pipeline
 from celune.celune import Celune
-from celune import metadata as celune_metadata
+from celune.cesn import CESNSinger, parse_cesn, render_cesn
+from celune import pipeline, metadata as celune_metadata, singing
 
 from .support import (
     FakeStream,
@@ -71,10 +71,28 @@ class TestPipelineAsync(_TestPipelineAsync):
         assert all(len(chunk) <= 400 for chunk in chunks)
         assert " ".join(chunks) == " ".join(text.split())
 
-    def test_singing_backend_converts_complete_text_before_splitting(self) -> None:
+    def test_singing_backend_converts_complete_text_before_splitting(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
         """Convert CESN once before buffering splits a long request."""
         engine = make_pipeline_engine()
-        notation = "[c3:4d,d3:8,e3:16] Text to sing."
+        notation = (
+            "[lang:en][bpm:120,key:c,scale:major][c3:4d,d3:8,e3:16] Text to sing."
+        )
+        canonical_notation = render_cesn(
+            parse_cesn(notation, supported_languages=("en",))
+        )
+        active_singer = CESNSinger("Test Singer", Path("singer.cevoice"))
+        monkeypatch.setattr(
+            singing,
+            "_resolve_active_singer",
+            lambda: active_singer,
+        )
+        canonical_notation = canonical_notation.replace(
+            "[lang:en]",
+            f"[lang:en][singer:{active_singer.name}]",
+        )
         converted = "backend-format text"
         engine.backend.cesn_to_model = mock.Mock(return_value=converted)
 
@@ -95,7 +113,31 @@ class TestPipelineAsync(_TestPipelineAsync):
                 == converted
             )
 
-        convert.assert_called_once_with(notation)
+        convert.assert_called_once_with(canonical_notation)
+
+    def test_singing_backend_logs_out_of_scale_cesn_warning(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Show parser warnings through the active runtime log."""
+        engine = make_pipeline_engine()
+        engine.backend.singing = True
+        engine.backend.cesn_to_model = mock.Mock(side_effect=lambda text: text)
+        monkeypatch.setattr(
+            singing,
+            "_resolve_active_singer",
+            lambda: CESNSinger("Test Singer", Path("singer.cevoice")),
+        )
+
+        pipeline._prepare_synthesis_text(
+            cast(
+                Celune,
+                engine,
+            ),
+            "[lang:en][bpm:120,key:c,scale:major][c#3:4]Word.",
+        )
+
+        assert any("outside c major" in message for message, _ in engine.messages)
 
     def test_flac_metadata_helpers_round_trip_tags(self) -> None:
         """Verify FLAC tag writing and parsing without real speech.
