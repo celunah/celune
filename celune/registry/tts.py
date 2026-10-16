@@ -33,6 +33,10 @@ __all__ = [
     "QWEN3_TTS_0_6B_REVISION",
     "QWEN3_TTS_1_7B_MODEL_ID",
     "QWEN3_TTS_1_7B_REVISION",
+    "SOULX_SINGER_CODE_REPOSITORY",
+    "SOULX_SINGER_CODE_REVISION",
+    "SOULX_SINGER_MODEL_ID",
+    "SOULX_SINGER_REVISION",
     "TTS_DEFAULT_VOICE",
     "TTS_MODELS",
     "TTS_VOICE_NAMES",
@@ -285,6 +289,10 @@ _DOTS_REVISION = "c28105adc8228143392b4e346994ff613ee48a06"
 _VOX_REVISION = "32279effe8c19989596f05d353d1447f51d9e915"
 _FIRERED_REVISION = "dcf1bdcd1b8b25b382fa84c3e34eb82e3054a610"
 _LUXTTS_REVISION = "527f245a276a0eb42ea103a7a512bcfd771eb9b6"
+SOULX_SINGER_MODEL_ID = "Soul-AILab/SoulX-Singer"
+SOULX_SINGER_REVISION = "40493ad90286056c7a9095035164434a79daa8c9"
+SOULX_SINGER_CODE_REPOSITORY = "https://github.com/Soul-AILab/SoulX-Singer.git"
+SOULX_SINGER_CODE_REVISION = "81aeb3ae772c70093c3de74dc23c92d983801ae4"
 
 POCKET_TTS_MODEL_ID = "lunahr/pocket-tts-ungated"
 QWEN3_TTS_0_6B_MODEL_ID = "Qwen/Qwen3-TTS-12Hz-0.6B-Base"
@@ -418,6 +426,18 @@ TTS_MODELS: tuple[ModelMetadata, ...] = (
         research_only=False,
         repository_url="https://huggingface.co/YatharthS/LuxTTS",
         roles=("voice-cloning",),
+    ),
+    ModelMetadata(
+        model_id=SOULX_SINGER_MODEL_ID,
+        display_name="SoulX-Singer",
+        category="tts",
+        revision=SOULX_SINGER_REVISION,
+        license_id="apache-2.0",
+        license_url="https://www.apache.org/licenses/LICENSE-2.0",
+        non_commercial=False,
+        research_only=False,
+        repository_url="https://huggingface.co/Soul-AILab/SoulX-Singer",
+        roles=("singing-synthesis",),
     ),
 )
 

@@ -10,9 +10,8 @@ import subprocess
 from pathlib import Path
 from unittest import mock
 from types import SimpleNamespace
-from collections.abc import Iterator
-from collections import OrderedDict, deque
 from typing import IO, Optional, cast
+from collections import OrderedDict, abc, deque
 
 import numpy as np
 
@@ -71,7 +70,11 @@ class TestBackendEnvironment(CeluneTestCase):
 
     def test_worker_description_and_proxy_preserve_singing_capability(self) -> None:
         """Expose the worker's singing capability to the core proxy."""
-        backend = SimpleNamespace(name="singing-test", singing=True)
+        backend = SimpleNamespace(
+            name="singing-test",
+            singing=True,
+            uses_voice_bundles=True,
+        )
         description = worker._describe(cast(_BackendRuntime, backend))
         self.assertTrue(description["singing"])
 
@@ -82,11 +85,14 @@ class TestBackendEnvironment(CeluneTestCase):
 
         notation = "[c3:4] hello"
         proxy._request.return_value = "backend-format"
-        self.assertEqual(proxy.cesn_to_model(notation), "backend-format")
+        bundle_path = Path("custom.cevoice")
+        with mock.patch.object(remote, "active_bundle_path", return_value=bundle_path):
+            self.assertEqual(proxy.cesn_to_model(notation), "backend-format")
         proxy._request.assert_called_with(
             "call",
             method="cesn_to_model",
             text=notation,
+            voice_bundle=str(bundle_path),
         )
 
     def test_worker_dispatches_cesn_conversion_hook(self) -> None:
@@ -100,21 +106,27 @@ class TestBackendEnvironment(CeluneTestCase):
                 return f"converted:{text}"
 
         notation = "[c3:4] hello"
-        response, _ = worker._run_request(
-            cast(_BackendRuntime, SingingBackend()),
-            cast(
-                WorkerRequest,
-                {
-                    "operation": "call",
-                    "arguments": {"method": "cesn_to_model", "text": notation},
-                },
-            ),
-            {},
-            1,
-            io.BytesIO(),
-        )
+        with mock.patch.object(worker, "select_voice_bundle") as select_bundle:
+            response, _ = worker._run_request(
+                cast(_BackendRuntime, SingingBackend()),
+                cast(
+                    WorkerRequest,
+                    {
+                        "operation": "call",
+                        "arguments": {
+                            "method": "cesn_to_model",
+                            "text": notation,
+                            "voice_bundle": "custom.cevoice",
+                        },
+                    },
+                ),
+                {},
+                1,
+                io.BytesIO(),
+            )
 
         self.assertEqual(response["value"], f"converted:{notation}")
+        select_bundle.assert_called_once_with("custom.cevoice")
 
     def test_remote_bundle_voice_uses_worker_model_for_custom_name(self) -> None:
         """Verify pack-local voice names do not use the static model map."""
@@ -163,7 +175,7 @@ class TestBackendEnvironment(CeluneTestCase):
                 self,
                 model: BackendModel,
                 **kwargs: BackendArgumentValue,
-            ) -> Iterator[BackendGeneration]:
+            ) -> abc.Iterator[BackendGeneration]:
                 """Record one voice request without generating audio."""
                 del model
                 self.generated_voices.append(cast(str, kwargs["voice"]))
@@ -273,6 +285,7 @@ class TestBackendEnvironment(CeluneTestCase):
             "dotstts",
             "voxcpm2",
             "luxtts",
+            "soulxsinger",
             "seed-vc",
         }
 
@@ -281,7 +294,7 @@ class TestBackendEnvironment(CeluneTestCase):
         assert backend_manifest(" QWEN3 ") is BACKEND_MANIFESTS["qwen3"]
 
     def test_worker_registry_contains_only_approved_backends(self) -> None:
-        """Verify worker construction is limited to the seven CEDTS backends."""
+        """Verify worker construction is limited to the registered CEDTS backends."""
         self.assertEqual(
             set(worker._BACKEND_REGISTRY),
             {
@@ -291,6 +304,7 @@ class TestBackendEnvironment(CeluneTestCase):
                 "dotstts",
                 "voxcpm2",
                 "luxtts",
+                "soulxsinger",
                 "seed-vc",
             },
         )
@@ -306,6 +320,7 @@ class TestBackendEnvironment(CeluneTestCase):
                 "dotstts": "tts",
                 "voxcpm2": "tts",
                 "luxtts": "tts",
+                "soulxsinger": "tts",
                 "seed-vc": "vc",
             },
         )
@@ -361,6 +376,13 @@ class TestBackendEnvironment(CeluneTestCase):
             requirement in manifest.requirements
             for manifest in BACKEND_MANIFESTS.values()
         )
+
+    def test_soulxsinger_manifest_has_english_phonemizer_dependencies(self) -> None:
+        """Install the pinned English G2P stack in SoulX-Singer's worker."""
+        requirements = BACKEND_MANIFESTS["soulxsinger"].requirements
+        assert "g2p_en==2.1.0" in requirements
+        assert "nltk==3.9.2" in requirements
+        assert "omegaconf==2.3.0" in requirements
 
     def test_manifests_use_the_main_branch_huggingface_versions(self) -> None:
         """Verify standard isolated backends use the main Hugging Face ranges."""

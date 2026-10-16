@@ -102,18 +102,48 @@ class TestPipelineAsync(_TestPipelineAsync):
             return_value=converted,
         ) as convert:
             assert (
-                pipeline._prepare_synthesis_text(cast(Celune, engine), notation)
+                singing._prepare_synthesis_text(cast(Celune, engine), notation)
                 == notation
             )
             convert.assert_not_called()
 
             engine.backend.singing = True
             assert (
-                pipeline._prepare_synthesis_text(cast(Celune, engine), notation)
+                singing._prepare_synthesis_text(cast(Celune, engine), notation)
                 == converted
             )
 
         convert.assert_called_once_with(canonical_notation)
+
+    def test_singing_backend_keeps_converted_score_in_one_chunk(self) -> None:
+        """Preserve the full backend score payload as one generation request."""
+        engine = make_pipeline_engine()
+        engine.backend.singing = True
+        payload = '{"sections":[{"text":"moon light"}]}'
+
+        with (
+            mock.patch.object(
+                singing,
+                "_prepare_synthesis_text",
+                return_value=payload,
+            ),
+            mock.patch.object(pipeline, "split_text") as split,
+        ):
+            assert singing._prepare_synthesis_chunks(
+                cast(Celune, engine), "score", pipeline.split_text
+            ) == [payload]
+
+        split.assert_not_called()
+
+    def test_singing_input_detection_requires_a_note_event(self) -> None:
+        """Recognize CESN events while ignoring prose and comment-only input."""
+        assert not singing._contains_cesn_note_event("plain lyrics")
+        assert not singing._contains_cesn_note_event("[#only a comment]")
+        assert not singing._contains_cesn_note_event(
+            "[lang:en][bpm:120,key:c,scale:major]"
+        )
+        assert singing._contains_cesn_note_event("[a4:4] Ah")
+        assert singing._contains_cesn_note_event("[r:1]")
 
     def test_singing_backend_logs_out_of_scale_cesn_warning(
         self,
@@ -129,7 +159,7 @@ class TestPipelineAsync(_TestPipelineAsync):
             lambda: CESNSinger("Test Singer", Path("singer.cevoice")),
         )
 
-        pipeline._prepare_synthesis_text(
+        singing._prepare_synthesis_text(
             cast(
                 Celune,
                 engine,

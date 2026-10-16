@@ -28,50 +28,14 @@ import pyrubberband as rb
 from .paths import (
     outputs_dir,
 )
-from .i18n import string, tagged_string
-from .config import resolve_audio_device
-from .typing.common import JSONSerializable
-from .binding import install_class_functions
-from .singing import _prepare_synthesis_text
-from .analysis import _schedule_voice_analysis
-from .typing.pipeline import SpeechStreamQueue
-from .constants import (
-    BASE_SR,
-    APP_NAME,
-    APP_SLUG,
-)
-from .contention import _PlaybackContentionMonitor
-from .typing.aliases import AudioChunk, AudioChunks
-from .captions import _build_caption_alignment_sections
-from .exceptions import BackendError, NotAvailableError
 from .utils import (
     discard,
     format_number,
     format_error_message,
 )
-from .vram import is_cuda_out_of_memory, release_cuda_after_oom
-from .conversation import _think_persona, _effective_voice_prompt
-from .threads import run_in_daemon_thread as _run_in_daemon_thread
-from .prepared import play_prepared_speech, finish_tutorial_audio_capture
-from .dataclasses.pipeline import (
-    SpeechTiming,
-    PlaybackChunk,
-    SpeechRequest,
-    PlaybackSourceDone,
-)
-from .pipelinecore import (
-    _PIPELINE_CPU_YIELD_SECONDS,
-    _PLAYBACK_BUFFER_STARTUP_GRACE_SECONDS,
-    _monotonic_time,
-)
-from .audio.dsp import (
-    soften,
-    to_48khz,
-    error_signal,
-    working_signal,
-    sleeping_signal,
-    readiness_signal,
-    is_silent_utterance,
+from .singing import (
+    _contains_cesn_note_event,
+    _prepare_synthesis_chunks,
 )
 from .metadata import (
     _write_celune_flac,
@@ -108,6 +72,45 @@ from .playback import (
     _record_caption_playback_segment,
     _should_apply_contention_buffering,
 )
+from .audio.dsp import (
+    soften,
+    to_48khz,
+    error_signal,
+    working_signal,
+    sleeping_signal,
+    readiness_signal,
+    is_silent_utterance,
+)
+from .constants import (
+    BASE_SR,
+    APP_NAME,
+    APP_SLUG,
+)
+from .pipelinecore import (
+    _PIPELINE_CPU_YIELD_SECONDS,
+    _PLAYBACK_BUFFER_STARTUP_GRACE_SECONDS,
+    _monotonic_time,
+)
+from .dataclasses.pipeline import (
+    SpeechTiming,
+    PlaybackChunk,
+    SpeechRequest,
+    PlaybackSourceDone,
+)
+from .i18n import string, tagged_string
+from .config import resolve_audio_device
+from .typing.common import JSONSerializable
+from .binding import install_class_functions
+from .analysis import _schedule_voice_analysis
+from .typing.pipeline import SpeechStreamQueue
+from .contention import _PlaybackContentionMonitor
+from .typing.aliases import AudioChunk, AudioChunks
+from .captions import _build_caption_alignment_sections
+from .exceptions import BackendError, NotAvailableError
+from .vram import is_cuda_out_of_memory, release_cuda_after_oom
+from .conversation import _think_persona, _effective_voice_prompt
+from .threads import run_in_daemon_thread as _run_in_daemon_thread
+from .prepared import play_prepared_speech, finish_tutorial_audio_capture
 
 if TYPE_CHECKING:
     from .celune import Celune
@@ -1091,11 +1094,21 @@ def _process_generation_request(
 
             if capture_tutorial_audio:
                 chunks = list(item.synthesis_sections)
+            elif getattr(
+                engine.backend, "singing", False
+            ) and not _contains_cesn_note_event(text):
+                message = string("cesn.no_notation_found")
+                engine.progress_callback(0, 1)
+                engine.error_callback(message)
+                if item.audio_capture_queue is not None:
+                    item.audio_capture_queue.put(NotAvailableError(message))
+                if stream_queue is not None:
+                    stream_queue.put(NotAvailableError(message))
+                    stream_queue.put(None)
+                release_pipeline(engine)
+                break
             else:
-                chunks = split_text(
-                    engine,
-                    _prepare_synthesis_text(engine, text),
-                )
+                chunks = _prepare_synthesis_chunks(engine, text, split_text)
             if not chunks:
                 engine.progress_callback(0, 1)
                 engine.error_callback(string("pipeline.nothing_to_say"))
@@ -1118,6 +1131,7 @@ def _process_generation_request(
             caption_word_total = len(display_text.split())
             caption_alignment_enabled = (
                 not capture_tutorial_audio
+                and not getattr(engine.backend, "singing", False)
                 and engine.config.get("captions") is True
                 and caption_worker is not None
             )
@@ -1156,7 +1170,7 @@ def _process_generation_request(
                                 float(source_meta.get("total_frames", 0.0))
                             )
 
-                if item.normalize:
+                if item.normalize and not getattr(engine.backend, "singing", False):
                     engine.status_callback(string("status.normalizing"))
                     engine.progress_callback(None, None)
                     normalized = engine.normalize(chunk_text)
@@ -1175,7 +1189,8 @@ def _process_generation_request(
                             if differences > max(5, int(len(chunk_text) * 0.05)):
                                 chunk_text = normalized
 
-                generated_text_parts.append(chunk_text)
+                if not getattr(engine.backend, "singing", False):
+                    generated_text_parts.append(chunk_text)
                 is_first_chunk = chunk_index == 0
                 last_timing: Optional[dict] = None
 

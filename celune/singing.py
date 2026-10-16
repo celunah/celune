@@ -6,12 +6,31 @@ from __future__ import annotations
 import warnings
 from dataclasses import replace
 from typing import TYPE_CHECKING
+from collections.abc import Callable
 
+from .cesn import (
+    _NOTE_EVENT_PATTERN,
+    _resolve_active_singer,
+    _tokens,
+    parse_cesn,
+    render_cesn,
+)
 from .exceptions import CESNNotationWarning
-from .cesn import _resolve_active_singer, parse_cesn, render_cesn
 
 if TYPE_CHECKING:
     from .celune import Celune
+
+
+def _contains_cesn_note_event(text: str) -> bool:
+    """Return whether CESN tags contain at least one valid note or rest event."""
+    for is_tag, value in _tokens(text):
+        if not is_tag or value.strip().startswith("#"):
+            continue
+        if any(
+            _NOTE_EVENT_PATTERN.fullmatch(event.strip()) for event in value.split(",")
+        ):
+            return True
+    return False
 
 
 def _prepare_synthesis_text(engine: Celune, text: str) -> str:
@@ -37,3 +56,15 @@ def _prepare_synthesis_text(engine: Celune, text: str) -> str:
             engine.log(str(notation_warning.message), "warning")
         text = render_cesn(sections)
     return engine.backend.cesn_to_model(text)
+
+
+def _prepare_synthesis_chunks(
+    engine: Celune,
+    text: str,
+    splitter: Callable[[Celune, str], list[str]],
+) -> list[str]:
+    """Convert CESN once and preserve complete scores as a single request."""
+    prepared_text = _prepare_synthesis_text(engine, text)
+    if getattr(engine.backend, "singing", False):
+        return [prepared_text]
+    return splitter(engine, prepared_text)

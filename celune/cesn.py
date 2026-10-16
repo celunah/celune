@@ -623,12 +623,20 @@ def _resolve_singer(name: str) -> CESNSinger:
         SINGING_VOICE_NAME,
         V5_VERSION,
         CEVoice,
+        active_bundle_path,
         bundle_character_name,
         bundled_voices_dir,
     )
 
     normalized_name = unicodedata.normalize("NFC", name).casefold()
-    for path in sorted(bundled_voices_dir().glob("*.cevoice")):
+    active_path = active_bundle_path().resolve()
+    candidate_paths = (active_path, *sorted(bundled_voices_dir().glob("*.cevoice")))
+    seen_paths: set[Path] = set()
+    for path in candidate_paths:
+        path = path.resolve()
+        if path in seen_paths:
+            continue
+        seen_paths.add(path)
         try:
             bundle = CEVoice.open(path)
         except (OSError, CEVoiceError):

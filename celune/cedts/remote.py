@@ -1815,10 +1815,16 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
 
     def cesn_to_model(self, text: str) -> str:
         """Convert complete CESN text in the selected worker backend."""
-        return cast(
-            str,
-            self._request("call", method="cesn_to_model", text=text),
-        )
+        if self.uses_voice_bundles:
+            result = self._request(
+                "call",
+                method="cesn_to_model",
+                text=text,
+                voice_bundle=str(active_bundle_path()),
+            )
+        else:
+            result = self._request("call", method="cesn_to_model", text=text)
+        return cast(str, result)
 
     def resolve_generation_language(self, lang: Optional[str]) -> Optional[str]:
         """Resolve a language using the worker backend implementation."""

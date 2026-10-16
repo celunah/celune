@@ -10,9 +10,8 @@ import argparse
 import threading
 import traceback
 from contextlib import suppress
-from collections import OrderedDict
-from collections.abc import Mapping, Callable
 from typing import IO, Optional, cast
+from collections import OrderedDict, abc
 
 from .protocol import (
     CEDTS_VERSION,
@@ -65,7 +64,7 @@ _CALL_ARGUMENT_FIELDS = {
     "vram_report": frozenset({"method"}),
     "resolve_generation_language": frozenset({"method", "lang"}),
     "should_reload_for_language": frozenset({"method", "lang"}),
-    "cesn_to_model": frozenset({"method", "text"}),
+    "cesn_to_model": frozenset({"method", "text", "voice_bundle"}),
     "convert_live": frozenset({"method", "request"}),
     "stop_live": frozenset({"method"}),
 }
@@ -101,57 +100,64 @@ def _remember_message_id(
     return True
 
 
-def _mini_constructor() -> Callable[..., _BackendRuntime]:
+def _mini_constructor() -> abc.Callable[..., _BackendRuntime]:
     """Load the approved Mini backend constructor on demand."""
     from ..backends.tts.mini import Mini
 
-    return cast(Callable[..., _BackendRuntime], Mini)
+    return cast(abc.Callable[..., _BackendRuntime], Mini)
 
 
-def _qwen3_constructor() -> Callable[..., _BackendRuntime]:
+def _qwen3_constructor() -> abc.Callable[..., _BackendRuntime]:
     """Load the approved Qwen3 backend constructor on demand."""
     from ..backends.tts.qwen3 import Qwen3
 
-    return cast(Callable[..., _BackendRuntime], Qwen3)
+    return cast(abc.Callable[..., _BackendRuntime], Qwen3)
 
 
-def _fireredtts3_constructor() -> Callable[..., _BackendRuntime]:
+def _fireredtts3_constructor() -> abc.Callable[..., _BackendRuntime]:
     """Load the approved FireRedTTS3 backend constructor on demand."""
     from ..backends.tts.fireredtts3 import FireRedTTS3
 
-    return cast(Callable[..., _BackendRuntime], FireRedTTS3)
+    return cast(abc.Callable[..., _BackendRuntime], FireRedTTS3)
 
 
-def _dotstts_constructor() -> Callable[..., _BackendRuntime]:
+def _dotstts_constructor() -> abc.Callable[..., _BackendRuntime]:
     """Load the approved DotsTTS backend constructor on demand."""
     from ..backends.tts.dotstts import DotsTtsMF
 
-    return cast(Callable[..., _BackendRuntime], DotsTtsMF)
+    return cast(abc.Callable[..., _BackendRuntime], DotsTtsMF)
 
 
-def _voxcpm2_constructor() -> Callable[..., _BackendRuntime]:
+def _voxcpm2_constructor() -> abc.Callable[..., _BackendRuntime]:
     """Load the approved VoxCPM2 backend constructor on demand."""
     from ..backends.tts.voxcpm2 import VoxCPM2
 
-    return cast(Callable[..., _BackendRuntime], VoxCPM2)
+    return cast(abc.Callable[..., _BackendRuntime], VoxCPM2)
 
 
-def _luxtts_constructor() -> Callable[..., _BackendRuntime]:
+def _luxtts_constructor() -> abc.Callable[..., _BackendRuntime]:
     """Load the approved LuxTTS backend constructor on demand."""
     from ..backends.tts.luxtts import LuxTTS
 
-    return cast(Callable[..., _BackendRuntime], LuxTTS)
+    return cast(abc.Callable[..., _BackendRuntime], LuxTTS)
 
 
-def _seed_vc_constructor() -> Callable[..., _BackendRuntime]:
+def _soulxsinger_constructor() -> abc.Callable[..., _BackendRuntime]:
+    """Load the approved SoulX-Singer backend constructor on demand."""
+    from ..backends.tts.soulxsinger import SoulXSinger
+
+    return cast(abc.Callable[..., _BackendRuntime], SoulXSinger)
+
+
+def _seed_vc_constructor() -> abc.Callable[..., _BackendRuntime]:
     """Load the approved Seed-VC backend constructor on demand."""
     from ..backends.vc.seedvc import CeluneSeedVCBackend
 
-    return cast(Callable[..., _BackendRuntime], CeluneSeedVCBackend)
+    return cast(abc.Callable[..., _BackendRuntime], CeluneSeedVCBackend)
 
 
-_BACKEND_REGISTRY: Mapping[
-    str, tuple[str, Callable[[], Callable[..., _BackendRuntime]]]
+_BACKEND_REGISTRY: abc.Mapping[
+    str, tuple[str, abc.Callable[[], abc.Callable[..., _BackendRuntime]]]
 ] = {
     "mini": ("tts", _mini_constructor),
     "qwen3": ("tts", _qwen3_constructor),
@@ -159,6 +165,7 @@ _BACKEND_REGISTRY: Mapping[
     "dotstts": ("tts", _dotstts_constructor),
     "voxcpm2": ("tts", _voxcpm2_constructor),
     "luxtts": ("tts", _luxtts_constructor),
+    "soulxsinger": ("tts", _soulxsinger_constructor),
     "seed-vc": ("vc", _seed_vc_constructor),
 }
 
@@ -194,7 +201,7 @@ def _open_binary_streams(args: argparse.Namespace) -> tuple[IO[bytes], IO[bytes]
 
             binary_flags = getattr(os, "O_BINARY", 0)
             open_osfhandle = cast(
-                Callable[[int, int], int],
+                abc.Callable[[int, int], int],
                 msvcrt.open_osfhandle,  # type: ignore[missing-attribute]
             )
             binary_input_fd = open_osfhandle(
@@ -246,8 +253,8 @@ def _detach_protocol_stream() -> IO[bytes]:
 
 def _load_backend(
     manifest: BackendManifest,
-    log: Callable[[str, str], None],
-    fatal: Callable[[], None],
+    log: abc.Callable[[str, str], None],
+    fatal: abc.Callable[[], None],
     kwargs: BackendArguments,
 ) -> _BackendRuntime:
     """Construct one backend from the worker's approved static registry."""
@@ -363,13 +370,13 @@ def _stream_value_summary(value: WorkerValue) -> str:
 
 def _backend_method_map(
     backend: _BackendRuntime,
-) -> dict[str, Callable[..., WorkerValue]]:
+) -> dict[str, abc.Callable[..., WorkerValue]]:
     """Return only the explicitly supported backend callback methods."""
-    method_map: dict[str, Callable[..., WorkerValue]] = {}
+    method_map: dict[str, abc.Callable[..., WorkerValue]] = {}
     for method_name in _CALL_ARGUMENT_FIELDS:
         method = getattr(backend, method_name, None)
         if callable(method):
-            method_map[method_name] = cast(Callable[..., WorkerValue], method)
+            method_map[method_name] = cast(abc.Callable[..., WorkerValue], method)
     return method_map
 
 
@@ -455,6 +462,14 @@ def _validate_request_arguments(
             raise _worker_protocol_error("backend_worker_language_argument_is_invalid")
         if method_name == "cesn_to_model" and not isinstance(checked.get("text"), str):
             raise _worker_protocol_error("backend_worker_cesn_text_is_invalid")
+        if (
+            method_name == "cesn_to_model"
+            and "voice_bundle" in checked
+            and not isinstance(checked["voice_bundle"], str)
+        ):
+            raise _worker_protocol_error(
+                "backend_worker_voice_bundle_argument_is_invalid"
+            )
         if method_name == "convert_live" and not isinstance(
             checked.get("request"), VoiceConversionRequest
         ):
@@ -592,6 +607,9 @@ def _run_request(
             raise _worker_protocol_error("backend_worker_method_is_unavailable")
         call_arguments = dict(arguments)
         del call_arguments["method"]
+        voice_bundle = call_arguments.pop("voice_bundle", None)
+        if voice_bundle is not None:
+            select_voice_bundle(cast(str, voice_bundle))
         return {
             "ok": True,
             "value": method(**call_arguments),
@@ -705,7 +723,7 @@ def _send_error(
     )
 
 
-def _negotiate_hello(control: Mapping[str, object]) -> dict[str, JSONSerializable]:
+def _negotiate_hello(control: abc.Mapping[str, object]) -> dict[str, JSONSerializable]:
     """Validate a core hello and return the worker's negotiated capabilities."""
     if control.get("cedts_version") != list(CEDTS_VERSION):
         raise _worker_protocol_error("unsupported_cedts_packet_version")

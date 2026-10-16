@@ -4,19 +4,19 @@
 import weakref
 import threading
 import contextlib
-from types import SimpleNamespace, MappingProxyType
-from typing import Optional, cast
 from pathlib import Path
 from unittest import mock
+from typing import Optional, cast
+from types import SimpleNamespace, MappingProxyType
 
 import pytest
 from transformers.modeling_utils import PreTrainedModel
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 
-from celune.utils import discard
 from celune.celune import Celune
-from celune.exceptions import WarmupError, BackendError
+from celune.utils import discard
 from celune.typing.common import JSONSerializable
+from celune.exceptions import WarmupError, BackendError
 
 from .support import (
     FakeGlow,
@@ -343,7 +343,8 @@ class TestCeluneCore(_TestCeluneCore):
         celune.change_voice_lock_state_callback.assert_not_called()
         celune._try_play_signal.assert_not_called()
         celune.log_callback.assert_called_once_with(
-            "unknown backend: qwen (available: mini, qwen3, fireredtts3, dotstts, voxcpm2, luxtts, seed-vc)",
+            "unknown backend: qwen (available: mini, qwen3, fireredtts3, dotstts, voxcpm2, luxtts, "
+            "soulxsinger, seed-vc)",
             "warning",
         )
         assert celune.cur_state == "idle"

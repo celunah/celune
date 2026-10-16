@@ -1502,6 +1502,49 @@ class TestPipelineAsync(_TestPipelineAsync):
         assert pipeline.acquire_pipeline(cast(Celune, engine), "speak")
         pipeline.release_pipeline(cast(Celune, engine))
 
+    async def test_missing_singing_notation_reports_error_and_releases_pipeline(
+        self,
+    ) -> None:
+        """Consume lyric-only singing input and show the localized CESN message."""
+        engine = make_pipeline_engine()
+        generate_stream = mock.Mock()
+        engine.backend = SimpleNamespace(
+            singing=True,
+            generate_stream=generate_stream,
+            supported_languages=("en",),
+        )
+        engine.model_lock = threading.Lock()
+        engine.model = mock.Mock()
+        engine.language = "en"
+        engine.chunk_size = 8
+        engine.voice_prompt = None
+        engine.current_voice = "balanced"
+        engine.speed = 1.0
+        engine.can_use_rubberband = False
+        engine.reverb = SimpleNamespace(
+            strength=0.0,
+            reset=mock.Mock(),
+            flush=mock.Mock(return_value=np.zeros((0, 2), dtype=np.float32)),
+        )
+        engine.queue_avail_callback = mock.Mock()
+        engine.sentinel = PipelineStates.TERMINATE
+        engine.dev = False
+        engine.recently_saved = None
+
+        assert pipeline.acquire_pipeline(cast(Celune, engine), "speak")
+        engine.text_queue.put(
+            pipeline.SpeechRequest("plain lyrics", "plain lyrics", save=False)
+        )
+        engine.text_queue.put(engine.sentinel)
+
+        await self._run_generation_worker(cast(Celune, engine))
+
+        assert engine.errors == [string("cesn.no_notation_found")]
+        assert engine.cur_state == "idle"
+        assert not engine.locked
+        assert engine.text_queue.empty()
+        generate_stream.assert_not_called()
+
     async def test_generation_worker_reloads_language_specific_model_when_needed(
         self,
     ) -> None:

@@ -302,10 +302,19 @@ def test_resolve_singer_requires_a_v5_pack_with_singing_voice(
         singing_voice="sing",
     )
     monkeypatch.setattr(cevoice, "bundled_voices_dir", lambda: tmp_path)
+
+    active_pack = tmp_path / "active.cevoice"
+    monkeypatch.setattr(cevoice, "active_bundle_path", lambda: active_pack)
+
+    def open_bundle(_cls: type[cevoice.CEVoice], path: Path) -> object:
+        if path == active_pack:
+            raise OSError("active bundle is not part of this test")
+        return bundle
+
     monkeypatch.setattr(
         cevoice.CEVoice,
         "open",
-        classmethod(lambda _cls, _path: bundle),
+        classmethod(open_bundle),
     )
     monkeypatch.setattr(cevoice, "bundle_character_name", lambda _bundle: "Celune")
 

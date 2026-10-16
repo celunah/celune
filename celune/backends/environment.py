@@ -10,11 +10,11 @@ import hashlib
 import platform
 import importlib
 import subprocess
-from typing import Optional
 from pathlib import Path
-from contextlib import suppress, contextmanager
-from dataclasses import asdict, dataclass
+from typing import Optional
 from collections.abc import Generator
+from dataclasses import asdict, dataclass
+from contextlib import suppress, contextmanager
 
 from ..i18n import string
 from ..paths import backend_environments_dir
@@ -223,6 +223,23 @@ BACKEND_MANIFESTS = {
         index_urls=_PYTORCH_INDEX_URLS,
         find_links=("https://k2-fsa.github.io/icefall/piper_phonemize.html",),
         ignore_uv_sources=True,
+    ),
+    "soulxsinger": BackendManifest(
+        backend_id="soulxsinger",
+        kind="tts",
+        requirements=(
+            *_TTS_PYTORCH_REQUIREMENTS,
+            *_WORKER_HUGGINGFACE_REQUIREMENTS,
+            "accelerate",
+            "g2p_en==2.1.0",
+            "nltk==3.9.2",
+            "omegaconf==2.3.0",
+            "scipy",
+            "tqdm",
+        ),
+        backend_module="celune.backends.tts.soulxsinger",
+        backend_class="SoulXSinger",
+        index_urls=_PYTORCH_INDEX_URLS,
     ),
     "seed-vc": BackendManifest(
         backend_id="seed-vc",

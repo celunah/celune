@@ -22,37 +22,24 @@ import numpy as np
 import soundfile as sf
 
 from celune.i18n import string
-from celune.celune import Celune
-from celune.utils import discard
-from celune.registry import MODEL_BY_ID
-from celune.typing.aliases import AudioChunk
-from celune.backends.tts.base import CeluneBackend
-from celune.registry.tts import QWEN3_DEFAULT_MODEL_ID
-from celune.backends.vc.seedvc import CeluneSeedVCBackend
-from celune.extensions.manager import CeluneExtensionManager
-from celune.dataclasses.pipeline import VoiceConversionRequest
-from celune.extensions.base import CeluneContext, CeluneExtension
-from celune.backends.tts import BACKEND_MANIFESTS, resolve_backend
 from celune.exceptions import (
     InvalidExtensionError,
     ExtensionAlreadyRegisteredError,
-)
-from celune.typing.backends import (
-    BackendModel,
-    SeedVCModelValue,
-    _SeedVCRealtimeModule,
+    CESNSyntaxError,
 )
 from celune.backends.vc import (
     resolve_vc_backend,
     BACKEND_MANIFESTS as VC_BACKEND_MANIFESTS,
 )
-from celune.backends.tts.fireredtts3 import (
-    FireRedTTS3,
-    _FireRedModel,
-    _FireRedRedAE,
-    _create_firered_model,
-    _FireRedIncrementalDecoder,
+from celune.celune import Celune
+from celune.utils import discard
+from celune.cesn import CESNSinger
+from celune.typing.backends import (
+    BackendModel,
+    SeedVCModelValue,
+    _SeedVCRealtimeModule,
 )
+from celune.registry import MODEL_BY_ID
 from celune.backends.tts.luxtts import (
     LuxTTS,
     _LuxTTSModel,
@@ -60,6 +47,27 @@ from celune.backends.tts.luxtts import (
     _install_vocoder_decode_guard,
     _install_cpu_duration_correction,
 )
+from celune.typing.aliases import AudioChunk
+from celune.backends.tts.fireredtts3 import (
+    FireRedTTS3,
+    _FireRedModel,
+    _FireRedRedAE,
+    _create_firered_model,
+    _FireRedIncrementalDecoder,
+)
+from celune.backends.tts.soulxsinger import (
+    SoulXSinger,
+    _decode_score,
+    _pitch_to_midi,
+)
+from celune.backends.tts.base import CeluneBackend
+from celune.registry.tts import QWEN3_DEFAULT_MODEL_ID
+from celune.backends.vc.seedvc import CeluneSeedVCBackend
+from celune.extensions.manager import CeluneExtensionManager
+from celune.dataclasses.pipeline import VoiceConversionRequest
+from celune.extensions.base import CeluneContext, CeluneExtension
+from celune.backends.tts import BACKEND_MANIFESTS, resolve_backend
+
 from .support import (
     FakeBackend,
     FakeVCBackend,
@@ -94,6 +102,45 @@ class TestBackend(CeluneTestCase):
 
         singing_backend = FakeBackend(singing=True)
         self.assertTrue(singing_backend.singing)
+
+    def test_soulxsinger_encodes_cesn_defaults_and_reports_missing_notation(
+        self,
+    ) -> None:
+        """Keep musical defaults in the score payload and reject lyric-only input."""
+        backend = object.__new__(SoulXSinger)
+        singer = CESNSinger("Test Singer", Path("singer.cevoice"))
+        notation = "[bpm:120,key:c,scale:major][lang:en][a4:4] Ah"
+
+        with mock.patch(
+            "celune.backends.tts.soulxsinger._resolve_active_singer",
+            return_value=singer,
+        ):
+            section = _decode_score(backend.cesn_to_model(notation))[0]
+
+        self.assertEqual((section.bpm, section.key, section.scale), (120, "c", "major"))
+        self.assertEqual(section.singer_path, str(singer.bundle_path))
+        self.assertEqual(_pitch_to_midi("a4"), 69)
+        with self.assertRaises(CESNSyntaxError) as error:
+            backend.cesn_to_model("[#comment only]")
+        self.assertEqual(str(error.exception), string("cesn.no_notation_found"))
+
+    def test_soulxsinger_keeps_section_metadata_in_its_score_payload(self) -> None:
+        """Preserve default tempo, key, and scale through the backend conversion."""
+        backend = object.__new__(SoulXSinger)
+        backend.name = "soulxsinger"
+        singer = CESNSinger("Test Singer", Path("singer.cevoice"))
+        notation = "[bpm:120,key:c,scale:major][lang:en][a4:4] Ah"
+
+        with mock.patch(
+            "celune.backends.tts.soulxsinger._resolve_active_singer",
+            return_value=singer,
+        ):
+            converted = backend.cesn_to_model(notation)
+
+        section = _decode_score(converted)[0]
+        self.assertEqual((section.bpm, section.key, section.scale), (120, "c", "major"))
+        self.assertEqual(section.singer_path, str(singer.bundle_path))
+        self.assertEqual(_pitch_to_midi("a4"), 69)
 
     def test_tts_load_oom_does_not_retry_unquantized_model(self) -> None:
         """Verify CUDA OOM releases a partial load without retrying BF16."""
@@ -657,7 +704,7 @@ class TestBackend(CeluneTestCase):
                 string(
                     "celune.unknown_backend",
                     backend="missing",
-                    available="mini, qwen3, fireredtts3, dotstts, voxcpm2, luxtts",
+                    available="mini, qwen3, fireredtts3, dotstts, voxcpm2, luxtts, soulxsinger",
                 )
             ),
         ):

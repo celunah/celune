@@ -27,6 +27,7 @@ screen.
 | `dotstts` | TTS | `celune.backends.tts.dotstts:DotsTtsMF` | Celune's `dots.tts` fork; Python 3.12. |
 | `voxcpm2` | TTS | `celune.backends.tts.voxcpm2:VoxCPM2` | `voxcpm>=2.0.0`; Python 3.12. |
 | `luxtts` | TTS | `celune.backends.tts.luxtts:LuxTTS` | CUDA-first LuxTTS worker with CPU ONNX fallback, its ZipVoice/LinaCodec VCS dependencies, and English prompt transcription. |
+| `soulxsinger` | TTS | `celune.backends.tts.soulxsinger:SoulXSinger` | Score-conditioned singing; pinned SoulX-Singer source and Hugging Face model, English G2P, CUDA. |
 | `seed-vc` | VC | `celune.backends.vc.seedvc:CeluneSeedVCBackend` | Celune's Seed-VC fork. |
 
 Most workers share a compatibility baseline that includes GitPython for
@@ -149,6 +150,32 @@ utterance can still be admitted. The known LuxTTS short-input vocoder shape and
 empty-reduction failures return Celune to idle and are presented as a warning
 asking the user to enter a longer utterance; other generation failures retain
 the normal error treatment.
+
+### SoulX-Singer
+
+`soulxsinger` implements the score-controlled path from the
+[SoulX-Singer model](https://huggingface.co/Soul-AILab/SoulX-Singer) and its
+[pinned upstream source](https://github.com/Soul-AILab/SoulX-Singer/tree/81aeb3ae772c70093c3de74dc23c92d983801ae4).
+The model repository is licensed under Apache-2.0; its terms are separate from
+Celune's source license. The registry pins both model weights and source code.
+The worker downloads only `config.yaml` and `model.pt` from the reviewed model
+revision, then strictly loads the checkpoint state dictionary.
+
+The backend accepts English CESN and requires an active CECHAR v5 pack with a
+hidden `sing` WAV and `cesn` reference. It uses that reference as the prompt,
+converts note-event syllables through English G2P, maps pitches to MIDI note
+numbers, and converts CESN beat lengths to seconds using each section's BPM.
+Changes in singer, tempo, key, or scale remain section boundaries; the model
+synthesizes each section and Celune concatenates the resulting audio. SoulX
+returns one complete 24 kHz waveform, so it does not stream partial score audio.
+
+The startup probe is CESN notation with explicit `[bpm:120,key:c,scale:major]`
+metadata and the synthetic note `[a4:4] Ah`. A singing backend rejects input
+without any note or rest event with `No CESN notation found.` It requires a CUDA
+GPU. The first use also downloads the small English NLTK resources used by
+`g2p_en` into Celune's app data. If the source checkout, phonemizer resources,
+model weights, or singing reference cannot be prepared, the backend reports a
+localized error and does not synthesize the request.
 
 ## Model weight contracts
 

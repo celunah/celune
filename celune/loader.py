@@ -34,10 +34,10 @@ from .exceptions import (
     WarmupError,
 )
 from .constants import APP_NAME
-from .i18n import string, tagged_string
 from .backends.tts import CeluneBackend
-from .threads import run_in_daemon_thread
+from .i18n import string, tagged_string
 from .persona.impl import persona_enabled
+from .threads import run_in_daemon_thread
 from .dataclasses.events import ReadyEvent
 from .binding import install_class_functions
 from .registry.other import NORMALIZER_MODEL_ID
@@ -433,11 +433,13 @@ def _warmup(
     self.log(tagged_string("celune.warmup_start", "WARMUP"))
     self.status_callback(string("status.warming_up"))
     self.progress_callback(None, None)
-    warmup_text = "Hello. I am here, and I am listening carefully."
     self._last_warmup_error = None
     active_backend = backend if backend is not None else self.backend
     active_model = model if model is not None else self.model
     active_voice = voice if voice is not None else self.current_voice
+    warmup_text = "Hello. I am here, and I am listening carefully."
+    if active_backend.singing:
+        warmup_text = "[bpm:120,key:c,scale:major][lang:en][a4:4] Ah"
 
     forced_error = os.getenv("CELUNE_FORCE_ERROR") in {
         "1",
@@ -456,9 +458,14 @@ def _warmup(
             if candidate_model is None:
                 raise WarmupError("cannot warm up a null model")
 
+            backend_text = (
+                active_backend.cesn_to_model(warmup_text)
+                if active_backend.singing
+                else warmup_text
+            )
             for _, _, _ in active_backend.generate_stream(
                 candidate_model,
-                text=warmup_text,
+                text=backend_text,
                 language=self.language,
                 chunk_size=self.chunk_size,
                 instruct=self.effective_voice_prompt(),
