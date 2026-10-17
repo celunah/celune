@@ -8,32 +8,38 @@ from tempfile import TemporaryDirectory
 from celune.backends.tts import soulxsinger
 
 
-def test_soulxsinger_source_publication_retries_windows_sharing_violation() -> None:
-    """Retry a transient Windows lock while publishing the source checkout."""
+def test_soulxsinger_source_clones_into_revision_directory() -> None:
+    """Clone directly into the locked revision directory without renaming it."""
     with TemporaryDirectory() as directory:
-        root = Path(directory)
-        staging_root = root / "staging"
-        source_root = root / "source"
-        staging_root.mkdir()
-        (staging_root / "checkout.py").touch()
-        attempts = 0
-        replace = Path.replace
+        source_parent = Path(directory) / "soulxsinger-source"
+        source_root = source_parent / soulxsinger.SOULX_SINGER_CODE_REVISION
+        package_path = source_root / "soulxsinger" / "models" / "soulxsinger.py"
+        repository = mock.Mock()
+        repository.head.commit.hexsha = soulxsinger.SOULX_SINGER_CODE_REVISION
 
-        def replace_after_transient_lock(source: Path, destination: Path) -> Path:
-            nonlocal attempts
-            attempts += 1
-            if attempts == 1:
-                error = PermissionError("sharing violation")
-                error.winerror = 32
-                raise error
-            return replace(source, destination)
+        def clone_source(_url: str, destination: Path, **_kwargs: object) -> mock.Mock:
+            cloned_package = destination / "soulxsinger" / "models" / "soulxsinger.py"
+            cloned_package.parent.mkdir(parents=True)
+            cloned_package.touch()
+            return repository
 
         with (
-            mock.patch.object(Path, "replace", replace_after_transient_lock),
-            mock.patch.object(soulxsinger.time, "sleep") as sleep,
+            mock.patch(
+                "celune.backends.tts.soulxsinger.backend_environments_dir",
+                return_value=source_parent.parent,
+            ),
+            mock.patch("git.Repo") as repository_type,
         ):
-            soulxsinger._publish_upstream_source(staging_root, source_root)
+            repository_type.clone_from.side_effect = clone_source
+            assert soulxsinger._load_upstream_source() == source_root
 
-        assert attempts == 2
-        sleep.assert_called_once_with(soulxsinger._SOURCE_PUBLICATION_RETRY_DELAY)
-        assert (source_root / "checkout.py").is_file()
+        repository_type.clone_from.assert_called_once_with(
+            soulxsinger.SOULX_SINGER_CODE_REPOSITORY,
+            source_root,
+            no_checkout=True,
+            multi_options=["--filter=blob:none"],
+        )
+        repository.git.checkout.assert_called_once_with(
+            soulxsinger.SOULX_SINGER_CODE_REVISION
+        )
+        assert package_path.is_file()

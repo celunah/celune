@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import os
 import re
 import sys
 import json
@@ -64,8 +63,6 @@ from .base import CeluneBackend, _to_numpy_audio, cached_hf_snapshot_path
 __all__ = ["SoulXSinger"]
 
 _MODEL_FILES = ["config.yaml", "model.pt"]
-_SOURCE_PUBLICATION_RETRIES = 5
-_SOURCE_PUBLICATION_RETRY_DELAY = 0.1
 _ARPABET_PATTERN = re.compile(r"[A-Z]+[0-2]?")
 _PITCH_PATTERN = re.compile(r"(?P<step>[a-g])(?P<accidental>[#b]?)(?P<octave>-?\d+)")
 _PITCH_CLASSES = {"c": 0, "d": 2, "e": 4, "f": 5, "g": 7, "a": 9, "b": 11}
@@ -344,22 +341,6 @@ def _ensure_nltk_data() -> None:
             )
 
 
-def _publish_upstream_source(staging_root: Path, source_root: Path) -> None:
-    """Publish a staged checkout, retrying transient Windows sharing violations."""
-    for attempt in range(_SOURCE_PUBLICATION_RETRIES + 1):
-        try:
-            staging_root.replace(source_root)
-        except PermissionError as error:
-            if (
-                getattr(error, "winerror", None) != 32
-                or attempt == _SOURCE_PUBLICATION_RETRIES
-            ):
-                raise
-            time.sleep(_SOURCE_PUBLICATION_RETRY_DELAY * (attempt + 1))
-        else:
-            return
-
-
 def _load_upstream_source() -> Path:
     """Return the exact pinned SoulX source checkout, downloading it once if needed."""
     from git import Repo
@@ -368,7 +349,6 @@ def _load_upstream_source() -> Path:
     source_parent.mkdir(parents=True, exist_ok=True)
     source_root = source_parent / SOULX_SINGER_CODE_REVISION
     package_path = source_root / "soulxsinger" / "models" / "soulxsinger.py"
-    staging_root = source_parent / f"{SOULX_SINGER_CODE_REVISION}.install-{os.getpid()}"
     try:
         with _exclusive_lock(source_parent / ".install.lock", timeout=300.0):
             if package_path.is_file():
@@ -389,12 +369,12 @@ def _load_upstream_source() -> Path:
                     )
                 return source_root
 
-            if staging_root.exists():
-                shutil.rmtree(staging_root)
+            if source_root.exists():
+                shutil.rmtree(source_root)
             try:
                 repository = Repo.clone_from(
                     SOULX_SINGER_CODE_REPOSITORY,
-                    staging_root,
+                    source_root,
                     no_checkout=True,
                     multi_options=["--filter=blob:none"],
                 )
@@ -404,10 +384,9 @@ def _load_upstream_source() -> Path:
                         string("soulx.source_unavailable"),
                         error_code="soulx_source_revision_mismatch",
                     )
-                _publish_upstream_source(staging_root, source_root)
             except Exception as error:
-                if staging_root.exists():
-                    shutil.rmtree(staging_root, ignore_errors=True)
+                if source_root.exists():
+                    shutil.rmtree(source_root, ignore_errors=True)
                 if isinstance(error, BackendError):
                     raise
                 raise BackendError(
