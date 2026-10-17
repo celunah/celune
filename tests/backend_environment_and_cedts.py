@@ -387,8 +387,10 @@ class TestBackendEnvironment(CeluneTestCase):
         assert "omegaconf==2.3.0" in requirements
 
     def test_soulxsinger_pins_its_upstream_transformers_compatibility(self) -> None:
-        """Keep SoulX's custom Llama decoder on its supported attention API."""
-        requirements = BACKEND_MANIFESTS["soulxsinger"].requirements
+        """Keep SoulX on its supported Transformers and Python versions."""
+        manifest = BACKEND_MANIFESTS["soulxsinger"]
+        requirements = manifest.requirements
+        assert manifest.python == "3.12"
         assert "transformers==4.41.2" in requirements
         assert "transformers>=4.56,<5.0.0" not in requirements
 

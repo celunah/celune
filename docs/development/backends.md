@@ -27,7 +27,7 @@ screen.
 | `dotstts` | TTS | `celune.backends.tts.dotstts:DotsTtsMF` | Celune's `dots.tts` fork; Python 3.12. |
 | `voxcpm2` | TTS | `celune.backends.tts.voxcpm2:VoxCPM2` | `voxcpm>=2.0.0`; Python 3.12. |
 | `luxtts` | TTS | `celune.backends.tts.luxtts:LuxTTS` | CUDA-first LuxTTS worker with CPU ONNX fallback, its ZipVoice/LinaCodec VCS dependencies, and English prompt transcription. |
-| `soulxsinger` | TTS | `celune.backends.tts.soulxsinger:SoulXSinger` | Score-conditioned singing; pinned upstream source and Transformers 4.41.2, Syllabreak and `iso639-lang` for CESN, English G2P, CUDA. |
+| `soulxsinger` | TTS | `celune.backends.tts.soulxsinger:SoulXSinger` | Score-conditioned singing; Python 3.12, pinned upstream source and Transformers 4.41.2, Syllabreak and `iso639-lang` for CESN, English G2P, CUDA. |
 | `seed-vc` | VC | `celune.backends.vc.seedvc:CeluneSeedVCBackend` | Celune's Seed-VC fork. |
 
 Most workers share a compatibility baseline that includes GitPython for
@@ -49,7 +49,10 @@ constraints. The core project itself currently resolves its own CUDA 13.0
 stack; the core and backend environments are intentionally not the same
 lockfile. SoulX-Singer pins Transformers 4.41.2 to match its upstream
 requirements; its custom Llama decoder omits the `position_embeddings`
-argument required by newer `LlamaAttention` implementations.
+argument required by newer `LlamaAttention` implementations. Its worker uses
+Python 3.12 because Transformers 4.41.2 selects `tokenizers==0.19.1`, whose
+Windows wheel is available for Python 3.12; Python 3.13 falls back to a source
+distribution that fails to parse its incomplete project metadata.
 
 ## Backend behavior
 

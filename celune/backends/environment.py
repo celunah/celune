@@ -247,6 +247,7 @@ BACKEND_MANIFESTS = {
         ),
         backend_module="celune.backends.tts.soulxsinger",
         backend_class="SoulXSinger",
+        python="3.12",
         index_urls=_PYTORCH_INDEX_URLS,
     ),
     "seed-vc": BackendManifest(
