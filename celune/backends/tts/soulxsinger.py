@@ -63,6 +63,7 @@ from .base import CeluneBackend, _to_numpy_audio, cached_hf_snapshot_path
 __all__ = ["SoulXSinger"]
 
 _MODEL_FILES = ["config.yaml", "model.pt"]
+_MODEL_LOAD_STEPS = 8
 _ARPABET_PATTERN = re.compile(r"[A-Z]+[0-2]?")
 _PITCH_PATTERN = re.compile(r"(?P<step>[a-g])(?P<accidental>[#b]?)(?P<octave>-?\d+)")
 _PITCH_CLASSES = {"c": 0, "d": 2, "e": 4, "f": 5, "g": 7, "a": 9, "b": 11}
@@ -315,8 +316,18 @@ def _pitch_to_midi(pitch: str) -> int:
     return midi_note
 
 
-def _ensure_nltk_data() -> None:
-    """Install the small NLTK resources used by the pinned English G2P package."""
+def _ensure_nltk_data(
+    report_progress: Optional[
+        Callable[[Optional[float], Optional[float]], None]
+    ] = None,
+    log: Optional[Callable[[str, str], None]] = None,
+) -> None:
+    """Install pinned English G2P data and report progress for each resource.
+
+    Args:
+        report_progress: Optional callback receiving completed resource count and total.
+        log: Optional callback for localized preparation status messages.
+    """
     import nltk
 
     nltk_root = app_data_dir(create=True) / "nltk_data"
@@ -329,16 +340,33 @@ def _ensure_nltk_data() -> None:
         "cmudict": "corpora/cmudict",
         "punkt_tab": "tokenizers/punkt_tab/english",
     }
-    for resource, resource_path in resources.items():
+    total = len(resources)
+    if log is not None:
+        log(string("soulx.phonemizer_data_preparing"), "info")
+    if report_progress is not None:
+        report_progress(0, total)
+    for step, (resource, resource_path) in enumerate(resources.items(), start=1):
+        if log is not None:
+            log(
+                string(
+                    "soulx.phonemizer_data_progress",
+                    step=step,
+                    total=total,
+                ),
+                "info",
+            )
         try:
             nltk.data.find(resource_path)
         except LookupError:
-            if nltk.download(resource, download_dir=nltk_root_text, quiet=True):
-                continue
-            raise BackendError(
-                string("soulx.phonemizer_data_failed"),
-                error_code="soulx_phonemizer_data_failed",
-            )
+            if not nltk.download(resource, download_dir=nltk_root_text, quiet=True):
+                raise BackendError(
+                    string("soulx.phonemizer_data_failed"),
+                    error_code="soulx_phonemizer_data_failed",
+                )
+        if report_progress is not None:
+            report_progress(step, total)
+    if log is not None:
+        log(string("soulx.phonemizer_data_ready"), "info")
 
 
 def _load_upstream_source() -> Path:
@@ -487,7 +515,7 @@ class SoulXSinger(CeluneBackend[_SoulXRuntime]):
         return cached_hf_snapshot_path(model, _MODEL_FILES, SOULX_SINGER_REVISION)
 
     def preload_models(self) -> None:
-        """Download the reviewed inference weights and pinned upstream source."""
+        """Prepare reviewed weights, pinned source, and English phonemizer data."""
         metadata = require_model_consent(SOULX_SINGER_MODEL_ID)
         available, _ = self.model_is_available_locally(SOULX_SINGER_MODEL_ID)
         if not available:
@@ -499,10 +527,13 @@ class SoulXSinger(CeluneBackend[_SoulXRuntime]):
                     allow_patterns=_MODEL_FILES,
                     cache_dir=str(huggingface_hub_cache_dir(create=True)),
                 )
+        self.log(string("soulx.source_preparing"), "info")
         _load_upstream_source()
+        self.log(string("soulx.source_ready"), "info")
+        _ensure_nltk_data(self.report_progress, self.log)
 
     def load_model(self, model_id: str, **kwargs: object) -> _SoulXRuntime:
-        """Load the pinned SoulX-Singer checkpoint and its score processor."""
+        """Load the pinned checkpoint and report each model-loading stage."""
         del kwargs
         if model_id != SOULX_SINGER_MODEL_ID:
             raise BackendError(
@@ -516,6 +547,12 @@ class SoulXSinger(CeluneBackend[_SoulXRuntime]):
                 error_code="soulx_cuda_required",
             )
 
+        def report_stage(message_key: str, step: int) -> None:
+            """Report one visible model-loading stage to the worker and Celune."""
+            self.log(string(message_key), "info")
+            self.report_progress(step, _MODEL_LOAD_STEPS)
+
+        report_stage("soulx.model_loading", 0)
         source_root = _load_upstream_source()
         if str(source_root) not in sys.path:
             sys.path.insert(0, str(source_root))
@@ -541,13 +578,16 @@ class SoulXSinger(CeluneBackend[_SoulXRuntime]):
                 )
 
         snapshot = Path(snapshot_path)
+        report_stage("soulx.config_loading", 1)
         config = OmegaConf.load(str(snapshot / "config.yaml"))
         config_values = cast(Mapping[str, object], config)
         audio_config = cast(Mapping[str, object], config_values["audio"])
         inference_config = cast(Mapping[str, object], config_values["infer"])
         device = torch.device("cuda")
         model_type = cast(Callable[..., torch.nn.Module], module.SoulXSinger)
+        report_stage("soulx.model_constructing", 2)
         model = model_type(config)
+        report_stage("soulx.checkpoint_loading", 3)
         checkpoint = cast(
             Mapping[str, object],
             torch.load(
@@ -557,7 +597,9 @@ class SoulXSinger(CeluneBackend[_SoulXRuntime]):
             ),
         )
         state_dict = cast(Mapping[str, torch.Tensor], checkpoint["state_dict"])
+        report_stage("soulx.weights_loading", 4)
         model.load_state_dict(state_dict, strict=True)
+        report_stage("soulx.cuda_transfer", 5)
         model.half()
         mel = getattr(model, "mel", None)
         if isinstance(mel, torch.nn.Module):
@@ -568,6 +610,7 @@ class SoulXSinger(CeluneBackend[_SoulXRuntime]):
         processor_type = cast(
             Callable[..., _SoulXDataProcessor], processor_module.DataProcessor
         )
+        report_stage("soulx.processor_loading", 6)
         processor = processor_type(
             hop_size=int(audio_config["hop_size"]),
             sample_rate=int(audio_config["sample_rate"]),
@@ -576,6 +619,7 @@ class SoulXSinger(CeluneBackend[_SoulXRuntime]):
             ),
             device=str(device),
         )
+        report_stage("soulx.phonemizer_loading", 7)
         runtime = _SoulXRuntime(
             model=cast(_SoulXInferenceModel, model),
             processor=processor,
@@ -585,6 +629,8 @@ class SoulXSinger(CeluneBackend[_SoulXRuntime]):
             cfg=float(inference_config["cfg"]),
         )
         self.model = runtime
+        self.log(string("soulx.model_ready"), "info")
+        self.report_progress(_MODEL_LOAD_STEPS, _MODEL_LOAD_STEPS)
         return runtime
 
     def cesn_to_model(self, text: str) -> str:
