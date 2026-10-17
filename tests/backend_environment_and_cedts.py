@@ -964,15 +964,25 @@ class TestBackendEnvironment(CeluneTestCase):
         self.assertEqual(response["value"], {"process_scope": "worker"})
         self.assertEqual(next_model_id, 1)
 
-    def test_protocol_accepts_runtime_quantization_callbacks(self) -> None:
-        """Verify quantization control callbacks pass the parent packet validator."""
-        for method in (
-            "runtime_quantization_active",
-            "disable_runtime_quantization",
-            "vram_report",
-        ):
-            with self.subTest(method=method):
-                arguments = cast(dict[str, WorkerValue], {"method": method})
+    def test_protocol_accepts_registered_backend_callbacks(self) -> None:
+        """Verify registered callbacks pass the parent packet validator."""
+        calls: tuple[dict[str, WorkerValue], ...] = (
+            {"method": "runtime_quantization_active"},
+            {"method": "disable_runtime_quantization"},
+            {"method": "vram_report"},
+            {
+                "method": "cesn_to_model",
+                "text": "[c3:4] hello",
+                "voice_bundle": "custom.cevoice",
+            },
+            {
+                "method": "cesn_to_model",
+                "text": "[c3:4] hello",
+                "voice_bundle": None,
+            },
+        )
+        for arguments in calls:
+            with self.subTest(arguments=arguments):
                 packet = build_packet(
                     "request",
                     "call",

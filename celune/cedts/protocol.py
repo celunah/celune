@@ -3,11 +3,11 @@
 
 import json
 import struct
-from math import isfinite
 from uuid import uuid4
-from typing import IO, Optional, cast
 from pathlib import Path
+from math import isfinite
 from dataclasses import dataclass
+from typing import IO, Optional, cast
 from collections.abc import Mapping, Sequence
 
 import numpy as np
@@ -20,13 +20,13 @@ from ..exceptions import (
     CEDTSPayloadError,
     CEDTSProtocolError,
 )
-from ..typing.common import JSONSerializable
 from ..typing.worker import (
     WorkerValue,
     WorkerMessage,
     WorkerControlMessage,
     WorkerPayloadDescriptor,
 )
+from ..typing.common import JSONSerializable
 from ..dataclasses.pipeline import AudioOutput, VoiceConversionRequest
 
 __all__ = [
@@ -136,6 +136,16 @@ _PROTOCOL_OPERATIONS = frozenset(
 )
 _UI_OPERATIONS = frozenset({"ui_timed_update"})
 _VALID_OPERATIONS = SUPPORTED_OPERATIONS | _PROTOCOL_OPERATIONS | _UI_OPERATIONS
+_CALL_ARGUMENT_SCHEMAS: dict[str, tuple[frozenset[str], frozenset[str]]] = {
+    "disable_runtime_quantization": (frozenset({"method"}), frozenset()),
+    "runtime_quantization_active": (frozenset({"method"}), frozenset()),
+    "vram_report": (frozenset({"method"}), frozenset()),
+    "resolve_generation_language": (frozenset({"method", "lang"}), frozenset()),
+    "should_reload_for_language": (frozenset({"method", "lang"}), frozenset()),
+    "cesn_to_model": (frozenset({"method", "text"}), frozenset({"voice_bundle"})),
+    "convert_live": (frozenset({"method", "request"}), frozenset()),
+    "stop_live": (frozenset({"method"}), frozenset()),
+}
 _EVENT_OPERATIONS = frozenset(
     {
         "fatal",
@@ -1493,20 +1503,25 @@ def _validate_call_arguments(value: dict[str, object]) -> None:
     method = value.get("method")
     if not isinstance(method, str):
         raise _worker_protocol_error("backend_worker_callback_method_is_invalid")
-    fields = {
-        "disable_runtime_quantization": {"method"},
-        "runtime_quantization_active": {"method"},
-        "vram_report": {"method"},
-        "resolve_generation_language": {"method", "lang"},
-        "should_reload_for_language": {"method", "lang"},
-        "convert_live": {"method", "request"},
-        "stop_live": {"method"},
-    }.get(method)
-    if fields is None or set(value) != fields:
+    schema = _CALL_ARGUMENT_SCHEMAS.get(method)
+    if schema is None:
+        raise _worker_protocol_error("backend_worker_callback_arguments_are_invalid")
+    required_fields, optional_fields = schema
+    allowed_fields = required_fields | optional_fields
+    if not required_fields.issubset(value) or not set(value).issubset(allowed_fields):
         raise _worker_protocol_error("backend_worker_callback_arguments_are_invalid")
     if method in {"resolve_generation_language", "should_reload_for_language"}:
         if value["lang"] is not None and not isinstance(value["lang"], str):
             raise _worker_protocol_error("backend_worker_language_argument_is_invalid")
+    elif method == "cesn_to_model":
+        if not isinstance(value["text"], str):
+            raise _worker_protocol_error("backend_worker_cesn_text_is_invalid")
+        if value.get("voice_bundle") is not None and not isinstance(
+            value["voice_bundle"], str
+        ):
+            raise _worker_protocol_error(
+                "backend_worker_voice_bundle_argument_is_invalid"
+            )
     elif method == "convert_live" and not isinstance(value["request"], dict):
         raise _worker_protocol_error(
             "backend_worker_live_conversion_request_is_invalid"

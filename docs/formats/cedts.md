@@ -152,6 +152,16 @@ supports it. Progress packets are throttled to approximately 100 ms. Streaming
 outputs carry typed audio or backend-generation values and finish with a
 terminal response/event.
 
+`call` accepts only the methods registered by the worker. The
+`cesn_to_model` call requires a string `text` and accepts an optional
+`voice_bundle` string. Omitting `voice_bundle` or sending JSON `null` keeps the
+worker's currently selected bundle; a string selects that bundle before the
+backend converts the notation. CEDTS transports the bundle path; the CECHAR
+manifest remains in the file and is validated by the backend's CECHAR loader.
+
+Progress packets require a non-negative integer `step`. Their optional `total`
+is a non-negative integer when known; omission means the total is unknown.
+
 Worker stderr is retained for failure diagnostics, but CEDTS applies the same
 known-benign runtime-message suppression list used by Celune's local runtime
 log redirect. This keeps isolated workers from reintroducing filtered model,

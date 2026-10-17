@@ -14,18 +14,19 @@ from typing import IO, Optional, cast
 from collections import OrderedDict, abc
 
 from .protocol import (
-    CEDTS_VERSION,
-    WORKER_CAPABILITIES,
-    DEFAULT_CEDTS_LIMITS,
-    SUPPORTED_OPERATIONS,
     CEDTSLimits,
     build_packet,
     send_message,
     send_payloads,
-    decode_message,
     encode_message,
+    decode_message,
     receive_message,
     receive_payloads,
+    SUPPORTED_OPERATIONS,
+    WORKER_CAPABILITIES,
+    CEDTS_VERSION,
+    DEFAULT_CEDTS_LIMITS,
+    _CALL_ARGUMENT_SCHEMAS,
     limits_from_capabilities,
 )
 from ..exceptions import (
@@ -58,16 +59,6 @@ from ..backends.environment import BackendManifest, backend_manifest
 
 _WORKER_STDERR = sys.stderr
 _MESSAGE_ID_REPLAY_WINDOW = 4096
-_CALL_ARGUMENT_FIELDS = {
-    "disable_runtime_quantization": frozenset({"method"}),
-    "runtime_quantization_active": frozenset({"method"}),
-    "vram_report": frozenset({"method"}),
-    "resolve_generation_language": frozenset({"method", "lang"}),
-    "should_reload_for_language": frozenset({"method", "lang"}),
-    "cesn_to_model": frozenset({"method", "text", "voice_bundle"}),
-    "convert_live": frozenset({"method", "request"}),
-    "stop_live": frozenset({"method"}),
-}
 _CANCELLABLE_OPERATIONS = frozenset({"generate_stream"})
 _REQUEST_FIELDS = frozenset({"operation", "arguments"})
 _MAX_BACKEND_ARGUMENT_FIELDS = 128
@@ -373,7 +364,7 @@ def _backend_method_map(
 ) -> dict[str, abc.Callable[..., WorkerValue]]:
     """Return only the explicitly supported backend callback methods."""
     method_map: dict[str, abc.Callable[..., WorkerValue]] = {}
-    for method_name in _CALL_ARGUMENT_FIELDS:
+    for method_name in _CALL_ARGUMENT_SCHEMAS:
         method = getattr(backend, method_name, None)
         if callable(method):
             method_map[method_name] = cast(abc.Callable[..., WorkerValue], method)
@@ -436,21 +427,15 @@ def _validate_request_arguments(
         _validate_backend_arguments(checked, {"model_id"})
     elif operation == "call":
         method_name = checked.get("method")
-        if not isinstance(method_name, str) or method_name not in _CALL_ARGUMENT_FIELDS:
+        if (
+            not isinstance(method_name, str)
+            or method_name not in _CALL_ARGUMENT_SCHEMAS
+        ):
             raise _worker_protocol_error("backend_worker_method_is_not_allowed")
-        allowed = _CALL_ARGUMENT_FIELDS[method_name]
+        required, optional = _CALL_ARGUMENT_SCHEMAS[method_name]
+        allowed = required | optional
         if not set(checked).issubset(allowed):
             raise _worker_protocol_error("backend_worker_method_arguments_are_invalid")
-        required = {
-            "disable_runtime_quantization": {"method"},
-            "runtime_quantization_active": {"method"},
-            "vram_report": {"method"},
-            "resolve_generation_language": {"method", "lang"},
-            "should_reload_for_language": {"method", "lang"},
-            "cesn_to_model": {"method", "text"},
-            "convert_live": {"method", "request"},
-            "stop_live": {"method"},
-        }[method_name]
         if not required.issubset(checked):
             raise _worker_protocol_error("backend_worker_method_arguments_are_invalid")
         if (
@@ -465,6 +450,7 @@ def _validate_request_arguments(
         if (
             method_name == "cesn_to_model"
             and "voice_bundle" in checked
+            and checked["voice_bundle"] is not None
             and not isinstance(checked["voice_bundle"], str)
         ):
             raise _worker_protocol_error(
