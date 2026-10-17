@@ -161,10 +161,12 @@ Celune's source license. The registry pins both model weights and source code.
 The worker downloads only `config.yaml` and `model.pt` from the reviewed model
 revision, then strictly loads the checkpoint state dictionary. Preloading also
 prepares the pinned source checkout and the three English NLTK resources used by
-`g2p_en`; CEDTS reports progress for each resource. During `load_model`, the
-worker reports progress and logs as it imports the model, reads its config and
-checkpoint, applies weights, transfers the model to CUDA, and prepares the
-score processor and phonemizer.
+`g2p_en`; CEDTS starts reporting progress before importing NLTK, then reports
+progress for each resource. It reuses data found on NLTK's search path and
+downloads only missing resources into Celune's app-data `nltk_data` directory.
+During model loading, the worker reports progress and logs as it imports the
+model, reads its config and checkpoint, applies weights, transfers the model to
+CUDA, and prepares the score processor and phonemizer.
 Concurrent worker startups serialize checkout preparation with a cross-process
 lock. Each worker rechecks the pinned checkout after acquiring the lock, so a
 worker can reuse a checkout another process just installed. The checkout is
@@ -183,8 +185,8 @@ returns one complete 24 kHz waveform, so it does not stream partial score audio.
 The startup probe is CESN notation with explicit `[bpm:120,key:c,scale:major]`
 metadata and the synthetic note `[a4:4] Ah`. A singing backend rejects input
 without any note or rest event with `No CESN notation found.` It requires a CUDA
-GPU. The first use also downloads the small English NLTK resources used by
-`g2p_en` into Celune's app data during preloading. If the source checkout,
+GPU. The first use also prepares the small English NLTK resources used by
+`g2p_en` during preloading. If the source checkout,
 phonemizer resources, model weights, or singing reference cannot be prepared,
 the backend reports a localized error and does not synthesize the request.
 

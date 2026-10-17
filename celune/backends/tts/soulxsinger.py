@@ -328,13 +328,6 @@ def _ensure_nltk_data(
         report_progress: Optional callback receiving completed resource count and total.
         log: Optional callback for localized preparation status messages.
     """
-    import nltk
-
-    nltk_root = app_data_dir(create=True) / "nltk_data"
-    nltk_root.mkdir(parents=True, exist_ok=True)
-    nltk_root_text = str(nltk_root)
-    if nltk_root_text not in nltk.data.path:
-        nltk.data.path.insert(0, nltk_root_text)
     resources = {
         "averaged_perceptron_tagger_eng": "taggers/averaged_perceptron_tagger_eng",
         "cmudict": "corpora/cmudict",
@@ -345,6 +338,14 @@ def _ensure_nltk_data(
         log(string("soulx.phonemizer_data_preparing"), "info")
     if report_progress is not None:
         report_progress(0, total)
+
+    import nltk
+
+    nltk_root = app_data_dir(create=True) / "nltk_data"
+    nltk_root.mkdir(parents=True, exist_ok=True)
+    nltk_root_text = str(nltk_root)
+    if nltk_root_text not in nltk.data.path:
+        nltk.data.path.insert(0, nltk_root_text)
     for step, (resource, resource_path) in enumerate(resources.items(), start=1):
         if log is not None:
             log(

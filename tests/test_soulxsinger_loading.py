@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for SoulX-Singer model loading progress and preparation."""
 
+import builtins
+from typing import Any
 from pathlib import Path
 from unittest import mock
 from types import SimpleNamespace
@@ -19,10 +21,20 @@ def test_soulxsinger_nltk_preparation_reports_resource_progress(
     nltk.download.return_value = True
     report_progress = mock.Mock()
     log = mock.Mock()
+    import_nltk = builtins.__import__
+
+    def check_import_order(name: str, *args: Any, **kwargs: Any) -> Any:
+        if name == "nltk":
+            assert log.call_args_list == [
+                mock.call(string("soulx.phonemizer_data_preparing"), "info")
+            ]
+            assert report_progress.call_args_list == [mock.call(0, 3)]
+        return import_nltk(name, *args, **kwargs)
 
     with (
         mock.patch.dict(soulxsinger.sys.modules, {"nltk": nltk}),
         mock.patch.object(soulxsinger, "app_data_dir", return_value=tmp_path),
+        mock.patch("builtins.__import__", side_effect=check_import_order),
     ):
         soulxsinger._ensure_nltk_data(report_progress, log)
 
@@ -37,6 +49,9 @@ def test_soulxsinger_nltk_preparation_reports_resource_progress(
         mock.call(2, 3),
         mock.call(3, 3),
     ]
+    assert log.call_args_list[0] == mock.call(
+        string("soulx.phonemizer_data_preparing"), "info"
+    )
 
 
 def test_soulxsinger_preload_prepares_nltk_data() -> None:
