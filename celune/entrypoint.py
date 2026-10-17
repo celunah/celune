@@ -24,18 +24,18 @@ from celune.terminal import set_terminal_title
 from celune import REVISION, __tagline__, __version__
 from celune.vcs import is_git_checkout, git_checkout_hint
 from celune.config import config_log_level, normalize_log_level
+from celune.paths import (
+    project_root,
+    running_compiled,
+    migrate_legacy_app_data,
+    configure_huggingface_runtime,
+)
 from celune.constants import (
     APP_NAME,
     APP_SLUG,
     NVIDIA_DEVICE_KEYWORDS,
     SUPPORTED_CUDA_VERSIONS,
     ExitCodes,
-)
-from celune.paths import (
-    project_root,
-    running_compiled,
-    migrate_legacy_app_data,
-    configure_huggingface_runtime,
 )
 
 if TYPE_CHECKING:
@@ -1819,6 +1819,14 @@ def main(argv: Optional[list[str]] = None) -> None:
         handle_config(args[1:], resolved_argv[0])
     elif args[0] == "test":
         handle_test(args[1:], resolved_argv[0])
+    elif args[0] == "ls":
+        from celune.pack import handle_ls_command
+
+        sys.exit(handle_ls_command(args[1:], resolved_argv[0]))
+    elif args[0] == "pack":
+        from celune.pack import handle_pack_command
+
+        sys.exit(handle_pack_command(args[1:], resolved_argv[0]))
     elif args[0] == "doctor":
         if len(args) > 1 and args[1] != "--fix":
             print(string("cli.invalid_argument"))
@@ -1850,6 +1858,14 @@ def main(argv: Optional[list[str]] = None) -> None:
             (
                 string("cli.help_config_command"),
                 string("cli.config_description", app_name=APP_NAME),
+            ),
+            (
+                string("cli.help_ls_command"),
+                string("cli.help_ls_description"),
+            ),
+            (
+                string("cli.help_pack_command"),
+                string("cli.help_pack_description"),
             ),
             (
                 string("cli.help_doctor_command"),

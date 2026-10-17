@@ -6,7 +6,8 @@ before importing the heavy runtime, then dispatches to `celune.entrypoint`.
 Commands that do not start the core keep that boundary: help, version, the
 doctor report, and the test-mode listing use lightweight command dependencies.
 Configuration commands load only the configuration-path and system-browser
-helpers. The full Celune dependency contract is loaded by the default start,
+helpers. Voice-pack commands use the CEVOICE reader and writer without starting
+the runtime. The full Celune dependency contract is loaded by the default start,
 explicit start/run commands, and the UI or agent test modes.
 
 ## Commands
@@ -25,6 +26,8 @@ explicit start/run commands, and the UI or agent test modes.
 | `celune test agent` | Run the agent test mode. |
 | `celune config view` | Print the active YAML configuration. |
 | `celune config edit` | Open the active configuration in the system editor. |
+| `celune ls <pack.cevoice>` | List a pack's ordered entries and byte sizes. |
+| `celune pack --help` | Show CEVOICE listing, extraction, and edit operations. |
 | `celune doctor` | Run environment checks without starting the app. |
 | `celune doctor --fix` | Run checks and ask the setup helper to repair supported issues. |
 | `celune help` / `--help` / `-h` | Print command help. |
@@ -54,6 +57,54 @@ doubles and do not affect running programs. A failed active check makes
 
 The command help aligns descriptions with spaces, so terminal tab-stop settings
 do not shift the text.
+
+## Voice pack operations
+
+`celune ls <pack.cevoice>` and `celune pack -tf <pack.cevoice>` validate the
+pack and list its filename, optional character name, and entries in stored
+order. Each entry has a 1-based number and size in bytes.
+
+`celune pack` accepts one operation per invocation:
+
+| Syntax | Behavior |
+| --- | --- |
+| `celune pack -tf <pack.cevoice>` | List entries. |
+| `celune pack -xf <pack.cevoice> [destination]` | Extract to the current directory or the optional destination. |
+| `celune pack -rf <pack.cevoice> <file...>` | Remove entries by exact filename. |
+| `celune pack -df <pack.cevoice> <entry...>` | Remove entries by exact filename or 1-based index. |
+| `celune pack -af<N> <pack.cevoice> <file...>` | Insert files before entry N; use entry count + 1 to append. |
+
+Extraction creates the optional destination and any subdirectories used by
+entry names. It checks every output path before writing and fails if an output
+already exists. Files are never overwritten.
+
+Add only `.wav`, `.pt`, and the supported Persona Markdown filenames described
+in [CEVOICE and CECHAR](../CEVOICE.md). A WAV entry needs matching voice
+metadata with a non-empty `reference_text`. New names must be unique without
+regard to letter case. `-af<N>` accepts a positive decimal position from 1
+through the current entry count plus one.
+
+For `-df`, Celune first looks for an exact case-sensitive filename. If there is
+no exact match and the selector is decimal, it is treated as a 1-based index.
+Repeated selectors, missing entries, and out-of-range indexes are argument
+errors. `-rf` accepts filenames only. Removing a voice's final asset also
+removes its voice metadata references; an edit that would leave an invalid
+pack fails without replacing the original.
+
+Successful edits preserve the pack generation, metadata, compression, and
+unaffected entry order. The new pack is written to a temporary sibling,
+validated, and then moved over the original.
+
+```bash
+celune ls voices/default.cevoice
+celune pack -xf voices/default.cevoice ./unpacked
+celune pack -af4 voices/custom.cevoice ./assets/identity.md
+celune pack -df voices/custom.cevoice identity.md 2
+```
+
+Syntax errors and invalid selectors return exit code `5`. Invalid packs,
+unsupported files, metadata violations, duplicate additions, existing
+extraction targets, and filesystem failures return exit code `1`.
 
 The `-v` spelling is accepted both as the verbose start flag and as the version
 alias by the dispatcher; use `--verbose` and `--version` in scripts to avoid

@@ -542,3 +542,8 @@ Celune's bundled `default.cevoice` uses:
 - a `sing` WAV reference with transcript `Moonlight resting, silver-blue, I'll keep one quiet light for you.`; Celune keeps this voice out of `voice_order` and TTS selection
 
 That pack is a good real-world model if you want your own bundle to behave like the stock one.
+
+## See also
+
+- [CLI voice-pack operations](interfaces/cli.md#voice-pack-operations)
+- [CEVOICE Python API](reference/public-api.md#cevoice-calls)

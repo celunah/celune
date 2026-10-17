@@ -196,10 +196,21 @@ available. `obj` and `scope` are mutually exclusive.
 The stable pack API is:
 
 ```python
-from celune.cevoice import CEVoice, write_cevoice, write_cechar_v4, write_cechar_v5
+from celune.cevoice import (
+    CEVoice,
+    add_cevoice_entries,
+    remove_cevoice_entries,
+    write_cevoice,
+    write_cechar_v4,
+    write_cechar_v5,
+)
 
 bundle = CEVoice.open("voices/default.cevoice")
 wav_bytes = bundle.read_asset("balanced", "wav")
+entries = bundle.entries
+identity = bundle.read_entry("identity.md")
+add_cevoice_entries("my_pack.cevoice", ["speech_style.md"], position=1)
+remove_cevoice_entries("my_pack.cevoice", ["speech_style.md"])
 write_cevoice("legacy-compatible.cevoice", voices, metadata, voice_metadata)
 write_cechar_v4("character.cechar", files, metadata, compression=0)
 write_cechar_v5("character-with-singing.cechar", files, metadata, voice_metadata)
@@ -213,6 +224,29 @@ the current schema with an optional hidden `sing` voice. `CEVoice.singing_voice`
 returns `"sing"` when a v5 pack defines it, otherwise `None`. TTS voice lists
 exclude that reserved singing entry. See
 [CEVOICE and CECHAR](../CEVOICE.md) for the binary schemas and constraints.
+
+`CEVoice.entries` returns a tuple of `CEVoiceEntry` values (`name` and byte
+`size`) in stored order. Legacy packs use payload offsets for this order;
+indexed packs use their `files` list. `read_entry(name)` returns the named
+entry's bytes after checksum validation and raises `KeyError` when the name is
+absent or `CEVoiceError` when the bytes fail validation.
+
+`add_cevoice_entries(path, sources, position=None)` appends files when
+`position` is omitted or inserts them at a 1-based position. It accepts
+`Path` or string inputs and returns the reopened pack. It raises `CEVoiceError`
+when an asset is unsupported or the edit would leave invalid metadata,
+`FileNotFoundError` for missing input files, and `OSError` for filesystem
+failures. `remove_cevoice_entries(path, names)` removes exact entry names and
+returns the reopened pack; it raises `CEVoiceError` for missing names or an
+invalid resulting pack. Both calls validate a temporary sibling pack before
+atomically replacing `path`, preserving its generation and indexed compression.
+
+```python
+bundle = CEVoice.open("my_pack.cevoice")
+print([(entry.name, entry.size) for entry in bundle.entries])
+add_cevoice_entries("my_pack.cevoice", ["identity.md"], position=1)
+remove_cevoice_entries("my_pack.cevoice", ["identity.md"])
+```
 
 ## CESN parsing
 

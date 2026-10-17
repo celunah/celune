@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 import io
+import os
 import re
+import copy
 import gzip
 import json
 import lzma
@@ -18,7 +20,7 @@ import threading
 import contextlib
 from pathlib import Path
 from dataclasses import field, dataclass
-from collections.abc import Mapping, Callable
+from collections.abc import Mapping, Callable, Sequence
 from typing import Final, Union, BinaryIO, Optional, cast
 
 import numpy as np
@@ -96,6 +98,14 @@ class CEVoiceAsset:
 
 
 @dataclass(frozen=True)
+class CEVoiceEntry:
+    """One named file stored in a CEVOICE/CECHAR package."""
+
+    name: str
+    size: int
+
+
+@dataclass(frozen=True)
 class CEVoice:
     """Parsed CEVOICE/CECHAR package metadata and payload access."""
 
@@ -113,6 +123,12 @@ class CEVoice:
         repr=False,
         compare=False,
     )
+    _file_entries: Mapping[str, CEVoiceAsset] = field(
+        default_factory=dict,
+        repr=False,
+        compare=False,
+    )
+    _compression: Optional[int] = field(default=None, repr=False, compare=False)
 
     @classmethod
     def open(cls, path: Union[str, Path]) -> CEVoice:
@@ -156,6 +172,8 @@ class CEVoice:
             except (UnicodeDecodeError, json.JSONDecodeError) as error:
                 raise CEVoiceError("invalid CEVOICE metadata") from error
 
+            if not isinstance(metadata, dict):
+                raise CEVoiceError("metadata root must be an object")
             if metadata.get("version") != version:
                 raise CEVoiceError("metadata format/version mismatch")
 
@@ -181,10 +199,12 @@ class CEVoice:
             raise CEVoiceError(f"unsupported CECHAR compression mode {compression}")
 
         payload = _decompress_v4_payload(stored_payload, compression)
-        metadata, asset_entries, bundle_asset_entries = _parse_v4_payload(
-            payload,
-            version,
-        )
+        (
+            metadata,
+            asset_entries,
+            bundle_asset_entries,
+            file_entries,
+        ) = _parse_v4_payload(payload, version)
         return cls(
             path,
             metadata,
@@ -192,6 +212,8 @@ class CEVoice:
             payload,
             asset_entries,
             bundle_asset_entries,
+            file_entries,
+            V4_HEADER.unpack(header)[2],
         )
 
     @property
@@ -359,6 +381,68 @@ class CEVoice:
             raise CEVoiceError(f"checksum mismatch for bundle asset '{name}'")
         return data
 
+    @property
+    def entries(self) -> tuple[CEVoiceEntry, ...]:
+        """Return named entries in the order stored by the container.
+
+        Returns:
+            tuple[CEVoiceEntry, ...]: The ordered file names and byte sizes.
+        """
+        asset_entries = self._entry_asset_map()
+        if self._file_entries:
+            names = list(self._file_entries)
+        else:
+            names = sorted(
+                asset_entries,
+                key=lambda name: asset_entries[name].offset,
+            )
+        folded_names: set[str] = set()
+        result: list[CEVoiceEntry] = []
+        for name in names:
+            folded = name.casefold()
+            if folded in folded_names:
+                raise CEVoiceError(f"duplicate CEVOICE entry name '{name}'")
+            folded_names.add(folded)
+            result.append(CEVoiceEntry(name, asset_entries[name].length))
+        return tuple(result)
+
+    def read_entry(self, name: str) -> bytes:
+        """Read and checksum one named container entry.
+
+        Args:
+            name: The exact name of the entry to read.
+
+        Returns:
+            bytes: The validated entry contents.
+
+        Raises:
+            KeyError: The container has no entry with this name.
+            CEVoiceError: The entry payload is truncated or has an invalid checksum.
+        """
+        try:
+            asset = self._entry_asset_map()[name]
+        except KeyError as error:
+            raise KeyError(f"bundle entry '{name}' not found") from error
+        data = self._read_asset_bytes(asset)
+        if len(data) != asset.length:
+            raise CEVoiceError(f"truncated bundle entry '{name}'")
+        if hashlib.sha256(data).hexdigest().casefold() != asset.sha256.casefold():
+            raise CEVoiceError(f"checksum mismatch for bundle entry '{name}'")
+        return data
+
+    def _entry_asset_map(self) -> dict[str, CEVoiceAsset]:
+        """Return file names mapped to validated payload locations."""
+        if self._file_entries:
+            return dict(self._file_entries)
+        result: dict[str, CEVoiceAsset] = {}
+        for voice, voice_data in self.voices.items():
+            assets = cast(dict[str, Manifest], voice_data["assets"])
+            for kind in assets:
+                result[f"{voice}.{kind}"] = self.asset(voice, kind)
+        for name in self.assets:
+            result[name] = self.bundle_asset(name)
+        return result
+
     def _read_asset_bytes(self, asset: CEVoiceAsset) -> bytes:
         """Read an asset from either a legacy payload or an indexed buffer."""
         if self._payload is not None:
@@ -475,8 +559,40 @@ def write_cevoice(
     Raises:
         CEVoiceError: The CEVOICE/CECHAR package contains path delimiters.
     """
-    payload = bytearray()
+    return _write_legacy_cevoice(
+        path,
+        voices,
+        metadata,
+        voice_metadata,
+        bundle_assets,
+        MAGIC,
+        VERSION,
+        None,
+    )
+
+
+def _write_legacy_cevoice(
+    path: Union[str, Path],
+    voices: Mapping[str, Mapping[str, Union[bytes, str, Path]]],
+    metadata: Optional[Mapping[str, ManifestValue]],
+    voice_metadata: Optional[Mapping[str, Mapping[str, ManifestValue]]],
+    bundle_assets: Optional[Mapping[str, Union[bytes, str, Path]]],
+    magic: bytes,
+    version: int,
+    entry_order: Optional[Sequence[str]],
+) -> Path:
+    """Write one legacy CEVOICE layout while retaining its original generation."""
+    format_name = LEGACY_FORMAT_NAME if magic == LEGACY_MAGIC else FORMAT_NAME
+    if not (
+        (magic == LEGACY_MAGIC and version == LEGACY_VERSION)
+        or (magic == MAGIC and version in COMPATIBLE_CECHAR_VERSIONS)
+    ):
+        raise CEVoiceError("unsupported legacy CEVOICE generation")
+
     manifest_voices: VoiceManifest = {}
+    asset_names: dict[tuple[str, str], str] = {}
+    source_data: dict[str, bytes] = {}
+    natural_order: list[str] = []
     unknown_voice_metadata = set(voice_metadata or {}) - set(voices)
     if unknown_voice_metadata:
         unknown = min(unknown_voice_metadata)
@@ -485,7 +601,7 @@ def write_cevoice(
     for voice, assets in voices.items():
         if "/" in voice or "\\" in voice or voice in {"", ".", ".."}:
             raise CEVoiceError(f"invalid voice name '{voice}'")
-        manifest_assets: dict[str, Manifest] = {}
+        manifest_assets: dict[str, ManifestValue] = {}
         for kind, source in assets.items():
             if "/" in kind or "\\" in kind or kind in {"", ".", ".."}:
                 raise CEVoiceError(f"invalid asset kind for voice '{voice}'")
@@ -493,13 +609,12 @@ def write_cevoice(
                 raise CEVoiceError(
                     f"unsupported asset kind '{kind}' for voice '{voice}'"
                 )
+            name = f"{voice}.{kind}"
             data = _read_source(source)
-            manifest_assets[kind] = {
-                "offset": len(payload),
-                "length": len(data),
-                "sha256": hashlib.sha256(data).hexdigest(),
-            }
-            payload.extend(data)
+            source_data[name] = data
+            natural_order.append(name)
+            asset_names[(voice, kind)] = name
+            manifest_assets[kind] = {}
         voice_entry = dict((voice_metadata or {}).get(voice, {}))
         voice_entry["assets"] = cast(ManifestValue, manifest_assets)
         manifest_voices[voice] = voice_entry
@@ -512,20 +627,41 @@ def write_cevoice(
             raise CEVoiceError(f"unsupported bundle asset '{name}'")
         if Path(name).name not in SUPPORTED_PERSONA_FILENAMES:
             raise CEVoiceError(f"unsupported bundle asset '{name}'")
-        data = _read_source(source)
-        manifest_bundle_assets[name] = {
+        source_data[name] = _read_source(source)
+        natural_order.append(name)
+        manifest_bundle_assets[name] = {}
+
+    names = natural_order if entry_order is None else list(entry_order)
+    if len(names) != len(set(names)) or set(names) != set(source_data):
+        raise CEVoiceError("CEVOICE entry order does not match its files")
+
+    payload = bytearray()
+    entry_metadata: dict[str, Manifest] = {}
+    for name in names:
+        data = source_data[name]
+        entry_metadata[name] = {
             "offset": len(payload),
             "length": len(data),
             "sha256": hashlib.sha256(data).hexdigest(),
         }
         payload.extend(data)
+    for (voice, kind), name in asset_names.items():
+        manifest_assets = cast(
+            dict[str, ManifestValue],
+            manifest_voices[voice]["assets"],
+        )
+        manifest_assets[kind] = cast(ManifestValue, entry_metadata[name])
+    for name in manifest_bundle_assets:
+        manifest_bundle_assets[name] = entry_metadata[name]
 
     manifest = dict(metadata or {})
-    manifest["format"] = FORMAT_NAME
-    manifest["version"] = VERSION
+    manifest["format"] = format_name
+    manifest["version"] = version
     manifest["voices"] = cast(ManifestValue, manifest_voices)
     if manifest_bundle_assets:
         manifest["assets"] = cast(ManifestValue, manifest_bundle_assets)
+    else:
+        manifest.pop("assets", None)
     metadata_bytes = json.dumps(
         manifest,
         ensure_ascii=True,
@@ -535,7 +671,7 @@ def write_cevoice(
 
     output_path = Path(path)
     with output_path.open("wb") as stream:
-        stream.write(HEADER.pack(MAGIC, VERSION, len(metadata_bytes)))
+        stream.write(HEADER.pack(magic, version, len(metadata_bytes)))
         stream.write(metadata_bytes)
         stream.write(payload)
     return output_path
@@ -573,6 +709,9 @@ def write_cechar_v4(
         bundle_assets,
         V4_VERSION,
         compression,
+        None,
+        None,
+        None,
     )
 
 
@@ -608,6 +747,9 @@ def write_cechar_v5(
         bundle_assets,
         V5_VERSION,
         compression,
+        None,
+        None,
+        None,
     )
 
 
@@ -619,6 +761,9 @@ def _write_indexed_cechar(
     bundle_assets: Optional[Mapping[str, Union[bytes, str, Path]]],
     version: int,
     compression: int,
+    entry_order: Optional[Sequence[str]],
+    extra_assets: Optional[Mapping[str, bytes]],
+    voice_asset_names: Optional[Mapping[tuple[str, str], str]],
 ) -> Path:
     """Write one version of the indexed CECHAR binary layout."""
     if compression not in V4_COMPRESSION_MODES:
@@ -629,33 +774,28 @@ def _write_indexed_cechar(
         unknown = min(unknown_voice_metadata)
         raise CEVoiceError(f"voice metadata provided for unknown voice '{unknown}'")
 
-    payload = bytearray()
-    file_entries: list[dict[str, str]] = []
-    file_lengths: list[int] = []
+    file_sources: dict[str, bytes] = {}
+    natural_order: list[str] = []
+    seen_names: set[str] = set()
     manifest_voices: VoiceManifest = {}
     for voice, assets in voices.items():
         _validate_v4_name(voice, "voice")
         manifest_assets: dict[str, ManifestValue] = {}
-        seen_names: set[str] = set()
         for kind, source in assets.items():
             if kind not in ALLOWED_ASSET_KINDS:
                 raise CEVoiceError(
                     f"unsupported asset kind '{kind}' for voice '{voice}'"
                 )
-            name = f"{voice}.{kind}"
+            name = (voice_asset_names or {}).get((voice, kind), f"{voice}.{kind}")
             data = _read_source(source)
             _validate_v4_file_data(name, data)
-            payload.extend(data)
 
             folded = name.casefold()
             if folded in seen_names:
                 raise CEVoiceError(f"{name} already exists")
             seen_names.add(folded)
-
-            file_entries.append(
-                {"name": name, "sha256": hashlib.sha256(data).hexdigest()}
-            )
-            file_lengths.append(len(data))
+            file_sources[name] = data
+            natural_order.append(name)
             manifest_assets[kind] = name
 
         voice_entry = dict((voice_metadata or {}).get(voice, {}))
@@ -686,10 +826,42 @@ def _write_indexed_cechar(
             raise CEVoiceError(f"unsupported bundle asset '{name}'")
         data = _read_source(source)
         _validate_v4_file_data(name, data)
+        folded = name.casefold()
+        if folded in seen_names:
+            raise CEVoiceError(f"{name} already exists")
+        seen_names.add(folded)
+        file_sources[name] = data
+        natural_order.append(name)
+        manifest_bundle_assets[name] = name
+
+    for name, data in (extra_assets or {}).items():
+        _validate_v4_name(name, "file")
+        _validate_v4_file_data(name, data)
+        if Path(name).suffix.lower() not in V4_ALLOWED_ASSET_SUFFIXES:
+            raise CEVoiceError(f"unsupported indexed CECHAR asset extension '{name}'")
+        if (
+            Path(name).suffix.lower() == ".md"
+            and Path(name).name not in SUPPORTED_PERSONA_FILENAMES
+        ):
+            raise CEVoiceError(f"unsupported indexed CECHAR persona asset '{name}'")
+        folded = name.casefold()
+        if folded in seen_names:
+            raise CEVoiceError(f"{name} already exists")
+        seen_names.add(folded)
+        file_sources[name] = data
+        natural_order.append(name)
+
+    names = natural_order if entry_order is None else list(entry_order)
+    if len(names) != len(set(names)) or set(names) != set(file_sources):
+        raise CEVoiceError("indexed CECHAR entry order does not match its files")
+    payload = bytearray()
+    file_entries: list[dict[str, str]] = []
+    file_lengths: list[int] = []
+    for name in names:
+        data = file_sources[name]
         payload.extend(data)
         file_entries.append({"name": name, "sha256": hashlib.sha256(data).hexdigest()})
         file_lengths.append(len(data))
-        manifest_bundle_assets[name] = name
 
     manifest = dict(metadata or {})
     manifest["format"] = FORMAT_NAME
@@ -755,6 +927,297 @@ def _validate_v4_file_data(name: str, data: bytes) -> None:
         _validate_v4_embedding(name, data)
     else:
         _validate_v4_persona_markdown(name, data)
+
+
+def add_cevoice_entries(
+    path: Union[str, Path],
+    sources: Sequence[Union[str, Path]],
+    position: Optional[int] = None,
+) -> CEVoice:
+    """Append or insert supported files into a validated CEVOICE pack.
+
+    Args:
+        path: The pack to update in place.
+        sources: Files to add in their requested order.
+        position: Optional 1-based insertion position; omit it to append.
+
+    Returns:
+        CEVoice: The reopened and validated updated pack.
+
+    Raises:
+        CEVoiceError: An input cannot be represented while keeping the pack valid.
+        FileNotFoundError: The pack or one of the input files does not exist.
+        OSError: A pack or input file cannot be read or written.
+    """
+    if not sources:
+        raise CEVoiceError("at least one input file is required")
+    bundle = CEVoice.open(path)
+    entries = list(bundle.entries)
+    insert_at = len(entries) if position is None else position - 1
+    if position is not None and not 1 <= position <= len(entries) + 1:
+        raise CEVoiceError("entry insertion position is out of range")
+
+    metadata, voices, voice_metadata, bundle_assets, extra_assets = (
+        _bundle_mutation_data(bundle)
+    )
+    voice_asset_names = _voice_entry_names(bundle)
+    existing_names = {entry.name.casefold() for entry in entries}
+    additions: list[tuple[str, str, str, str, bytes]] = []
+    for source in sources:
+        source_path = Path(source)
+        if not source_path.is_file():
+            raise FileNotFoundError(source_path)
+        suffix = source_path.suffix.lower()
+        if suffix not in V4_ALLOWED_ASSET_SUFFIXES:
+            raise CEVoiceError(f"unsupported CEVOICE file '{source_path.name}'")
+        if suffix == ".md":
+            name = source_path.name
+            if name not in SUPPORTED_PERSONA_FILENAMES:
+                raise CEVoiceError(f"unsupported CEVOICE Persona file '{name}'")
+            category, voice, kind = "persona", "", ""
+        else:
+            voice = source_path.stem
+            kind = suffix[1:]
+            name = f"{voice}.{kind}"
+            category = "voice"
+        folded_name = name.casefold()
+        if folded_name in existing_names:
+            raise CEVoiceError(f"CEVOICE entry '{name}' already exists")
+        existing_names.add(folded_name)
+        additions.append((name, category, voice, kind, source_path.read_bytes()))
+
+    for name, category, voice, kind, data in additions:
+        if category == "persona":
+            bundle_assets[name] = data
+        else:
+            voice_assets = voices.setdefault(voice, {})
+            if kind in voice_assets:
+                raise CEVoiceError(
+                    f"voice '{voice}' already contains an asset of kind '{kind}'"
+                )
+            if kind == "wav":
+                details = voice_metadata.get(voice)
+                reference_text = details.get("reference_text") if details else None
+                if not isinstance(reference_text, str) or not reference_text.strip():
+                    raise CEVoiceError(
+                        f"voice '{voice}' needs valid reference_text metadata for a WAV file"
+                    )
+            voice_assets[kind] = data
+            voice_asset_names[(voice, kind)] = name
+
+    names = [entry.name for entry in entries]
+    names[insert_at:insert_at] = [addition[0] for addition in additions]
+    _atomic_rewrite_cevoice(
+        path,
+        bundle,
+        metadata,
+        voices,
+        voice_metadata,
+        bundle_assets,
+        extra_assets,
+        names,
+        voice_asset_names,
+    )
+    return CEVoice.open(path)
+
+
+def remove_cevoice_entries(
+    path: Union[str, Path],
+    names: Sequence[str],
+) -> CEVoice:
+    """Remove named files from a validated CEVOICE pack.
+
+    Args:
+        path: The pack to update in place.
+        names: Exact entry names to remove.
+
+    Returns:
+        CEVoice: The reopened and validated updated pack.
+
+    Raises:
+        CEVoiceError: A name is missing or removal would make the pack invalid.
+        FileNotFoundError: The pack does not exist.
+        OSError: The pack cannot be read or written.
+    """
+    if not names or len(names) != len(set(names)):
+        raise CEVoiceError("entry names must be present and unique")
+    bundle = CEVoice.open(path)
+    entry_names = [entry.name for entry in bundle.entries]
+    if any(name not in entry_names for name in names):
+        missing = next(name for name in names if name not in entry_names)
+        raise CEVoiceError(f"CEVOICE entry '{missing}' was not found")
+
+    metadata, voices, voice_metadata, bundle_assets, extra_assets = (
+        _bundle_mutation_data(bundle)
+    )
+    removed = set(names)
+    voice_entry_names = _voice_entry_names(bundle)
+    removed_voices: set[str] = set()
+    for (voice, kind), name in voice_entry_names.items():
+        if name not in removed:
+            continue
+        voices[voice].pop(kind, None)
+        if not voices[voice]:
+            removed_voices.add(voice)
+    for voice in removed_voices:
+        voices.pop(voice, None)
+        voice_metadata.pop(voice, None)
+    for name in removed:
+        bundle_assets.pop(name, None)
+        extra_assets.pop(name, None)
+
+    if metadata.get("default_voice") in removed_voices:
+        metadata.pop("default_voice", None)
+    voice_order = metadata.get("voice_order")
+    if isinstance(voice_order, list):
+        metadata["voice_order"] = [
+            voice for voice in voice_order if voice not in removed_voices
+        ]
+
+    retained_order = [name for name in entry_names if name not in removed]
+    voice_asset_names = {
+        key: name for key, name in voice_entry_names.items() if name not in removed
+    }
+    _atomic_rewrite_cevoice(
+        path,
+        bundle,
+        metadata,
+        voices,
+        voice_metadata,
+        bundle_assets,
+        extra_assets,
+        retained_order,
+        voice_asset_names,
+    )
+    return CEVoice.open(path)
+
+
+def _bundle_mutation_data(
+    bundle: CEVoice,
+) -> tuple[
+    Manifest,
+    dict[str, dict[str, bytes]],
+    dict[str, Manifest],
+    dict[str, bytes],
+    dict[str, bytes],
+]:
+    """Build writer inputs while retaining semantic metadata and all entries."""
+    data = {entry.name: bundle.read_entry(entry.name) for entry in bundle.entries}
+    metadata = copy.deepcopy(bundle.metadata)
+    raw_voices = cast(dict[str, Manifest], metadata.pop("voices", {}))
+    metadata.pop("assets", None)
+    metadata.pop("files", None)
+    metadata.pop("format", None)
+    metadata.pop("version", None)
+
+    voices: dict[str, dict[str, bytes]] = {}
+    voice_metadata: dict[str, Manifest] = {}
+    referenced: set[str] = set()
+    for voice, voice_data in raw_voices.items():
+        raw_assets = cast(dict[str, ManifestValue], voice_data.get("assets", {}))
+        voices[voice] = {}
+        for kind, reference in raw_assets.items():
+            name = (
+                _v4_reference_name(reference, f"voice '{voice}' asset '{kind}'")
+                if bundle._payload is not None
+                else f"{voice}.{kind}"
+            )
+            voices[voice][kind] = data[name]
+            referenced.add(name)
+        voice_metadata[voice] = {
+            key: value for key, value in voice_data.items() if key != "assets"
+        }
+
+    bundle_assets: dict[str, bytes] = {}
+    raw_bundle_assets = cast(
+        dict[str, ManifestValue], bundle.metadata.get("assets", {})
+    )
+    for name, reference in raw_bundle_assets.items():
+        entry_name = (
+            _v4_reference_name(reference, f"bundle asset '{name}'")
+            if bundle._payload is not None
+            else name
+        )
+        bundle_assets[name] = data[entry_name]
+        referenced.add(entry_name)
+
+    extra_assets = (
+        {name: content for name, content in data.items() if name not in referenced}
+        if bundle._payload is not None
+        else {}
+    )
+    return metadata, voices, voice_metadata, bundle_assets, extra_assets
+
+
+def _voice_entry_names(bundle: CEVoice) -> dict[tuple[str, str], str]:
+    """Map voice asset references to their stored filenames."""
+    result: dict[tuple[str, str], str] = {}
+    for voice, voice_data in bundle.voices.items():
+        assets = cast(dict[str, ManifestValue], voice_data["assets"])
+        for kind, reference in assets.items():
+            name = (
+                _v4_reference_name(reference, f"voice '{voice}' asset '{kind}'")
+                if bundle._payload is not None
+                else f"{voice}.{kind}"
+            )
+            result[(voice, kind)] = name
+    return result
+
+
+def _atomic_rewrite_cevoice(
+    path: Union[str, Path],
+    original: CEVoice,
+    metadata: Manifest,
+    voices: Mapping[str, Mapping[str, bytes]],
+    voice_metadata: Mapping[str, Mapping[str, ManifestValue]],
+    bundle_assets: Mapping[str, bytes],
+    extra_assets: Mapping[str, bytes],
+    entry_order: Sequence[str],
+    voice_asset_names: Mapping[tuple[str, str], str],
+) -> None:
+    """Write, validate, and atomically replace a CEVOICE file."""
+    pack_path = Path(path).resolve()
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{pack_path.name}.",
+        suffix=".tmp",
+        dir=pack_path.parent,
+    )
+    os.close(descriptor)
+    temporary_path = Path(temporary_name)
+    try:
+        if original._payload is not None:
+            _write_indexed_cechar(
+                temporary_path,
+                voices,
+                metadata,
+                voice_metadata,
+                bundle_assets,
+                cast(int, original.metadata["version"]),
+                cast(int, original._compression),
+                entry_order,
+                extra_assets,
+                voice_asset_names,
+            )
+        else:
+            format_name = original.metadata["format"]
+            magic = LEGACY_MAGIC if format_name == LEGACY_FORMAT_NAME else MAGIC
+            _write_legacy_cevoice(
+                temporary_path,
+                voices,
+                metadata,
+                voice_metadata,
+                bundle_assets,
+                magic,
+                cast(int, original.metadata["version"]),
+                entry_order,
+            )
+        rewritten = CEVoice.open(temporary_path)
+        for entry in rewritten.entries:
+            rewritten.read_entry(entry.name)
+        os.chmod(temporary_path, pack_path.stat().st_mode & 0o777)
+        os.replace(temporary_path, pack_path)
+    finally:
+        temporary_path.unlink(missing_ok=True)
 
 
 def _compress_v4_payload(payload: bytes, compression: int) -> bytes:
@@ -847,6 +1310,7 @@ def _parse_v4_payload(
 ) -> tuple[
     Manifest,
     dict[tuple[str, str], CEVoiceAsset],
+    dict[str, CEVoiceAsset],
     dict[str, CEVoiceAsset],
 ]:
     """Parse, validate, and index one decompressed indexed CECHAR payload."""
@@ -950,7 +1414,7 @@ def _parse_v4_payload(
         entries,
         expected_version,
     )
-    return normalized_metadata, asset_entries, bundle_asset_entries
+    return normalized_metadata, asset_entries, bundle_asset_entries, entries
 
 
 def _normalize_v4_metadata(
@@ -1036,7 +1500,9 @@ def _validate_v4_semantic_metadata(
 ) -> None:
     """Validate indexed metadata fields that describe runtime voice selection."""
     default_voice = metadata.get("default_voice")
-    if default_voice is not None and default_voice not in voices:
+    if default_voice is not None and (
+        not isinstance(default_voice, str) or default_voice not in voices
+    ):
         raise CEVoiceError("metadata default_voice must name a defined voice")
     if version == V5_VERSION and default_voice == SINGING_VOICE_NAME:
         raise CEVoiceError("metadata default_voice must not name the singing voice")
@@ -1315,7 +1781,9 @@ def _validate_metadata(
         raise CEVoiceError("metadata voices must be an object")
 
     default_voice = metadata.get("default_voice")
-    if default_voice is not None and default_voice not in voices:
+    if default_voice is not None and (
+        not isinstance(default_voice, str) or default_voice not in voices
+    ):
         raise CEVoiceError("metadata default_voice must name a defined voice")
 
     voice_order = metadata.get("voice_order")
