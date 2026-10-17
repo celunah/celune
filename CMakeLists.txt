@@ -315,6 +315,10 @@ if(CELUNE_REQUIRE_RELEASE_SIGNATURE)
 else()
     set(_require_signature_arg "-DREQUIRE_RELEASE_SIGNATURE=OFF")
 endif()
+set(_release_arguments)
+if(NOT WIN32)
+    list(APPEND _release_arguments "-DAPPIMAGETOOL_EXECUTABLE=${APPIMAGETOOL_EXECUTABLE}")
+endif()
 
 add_custom_target(celune_release
     COMMAND "${CMAKE_COMMAND}"
@@ -329,7 +333,7 @@ add_custom_target(celune_release
         "-DRELEASE_ROOT_KEY_FILE=${CELUNE_RELEASE_ROOT_KEY_FILE}"
         "${_signing_key_args}"
         "${_require_signature_arg}"
-        $<$<NOT:$<BOOL:${WIN32}>>:-DAPPIMAGETOOL_EXECUTABLE=${APPIMAGETOOL_EXECUTABLE}>
+        ${_release_arguments}
         "-P" "${CMAKE_CURRENT_SOURCE_DIR}/cmake/PackageRelease.cmake"
     DEPENDS celune_python_core
     COMMENT "Packaging the Celune release artifacts"
