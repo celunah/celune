@@ -886,8 +886,22 @@ def current_platform() -> str:
     Returns:
         str: The platform name and architecture.
     """
-
     operating_system = platform.system()
     architecture = platform.machine()
 
     return f"{operating_system} {architecture}"
+
+
+def cesn_to_text(cesn: str) -> str:
+    """Extract plain text from CESN notation.
+
+    Args:
+        cesn: The CESN notation to extract plain text from.
+
+    Returns:
+        str: The extracted text.
+    """
+    cesn = re.sub(r"\[(.*?)\]", "", cesn)
+    cesn = re.sub(r"\s+", " ", cesn)
+
+    return cesn.strip()

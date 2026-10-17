@@ -35,9 +35,11 @@ The language must be supported by both Syllabreak and the singing model that wil
 
 3. Use Syllabreak with the explicit language rather than a hand-written syllable dictionary. Add `[pattern:frag,ments]` immediately before a word only when automatic syllabification needs correction or the user requests a particular split. Pattern fragments must concatenate to the unchanged lyric word. Preserve all supplied text in verbatim mode.
 
-4. Use `[tuplet:a,b]` only when the rhythm needs it. It scales the next `a` note or rest events by `b/a`, then expires. Rests count toward those events. Do not overlap tuplets or let one cross a section boundary.
+4. Correct syllable mappings with [pattern:...] tags whenever they would be incorrect in a singing voice and context, e.g. quiet (qui-et), singing (sing-ing), etc.
 
-5. Keep one singer and one set of musical settings per section where practical. A change to singer, language, BPM, key, or scale begins a new inference section. Use `[singer:name]` only when the user asks to switch to a specific character; that character needs a CECHAR v5 pack with a `sing` voice.
+5. Use `[tuplet:a,b]` only when the rhythm needs it. It scales the next `a` note or rest events by `b/a`, then expires. Rests count toward those events. Do not overlap tuplets or let one cross a section boundary.
+
+6. Keep one singer and one set of musical settings per section where practical. A change to singer, language, BPM, key, or scale begins a new inference section. Use `[singer:name]` only when the user asks to switch to a specific character; that character needs a CECHAR v5 pack with a `sing` voice.
 
 Example shape:
 
@@ -45,6 +47,7 @@ Example shape:
 [bpm:120,key:c,scale:major]
 [lang:en]
 [c3:4] Ah.
+[pattern:sing,ing][c3:4,d3:4] Singing.
 ```
 
 ## Check and return the score
