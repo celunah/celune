@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Tests for the lightweight CEVOICE pack command."""
+"""Tests for the lightweight CEVOICE tar command."""
 
 import io
 import wave
@@ -7,9 +7,8 @@ import wave
 import pytest
 
 import main
-
 from celune import cevoice
-from celune.pack import handle_ls_command, handle_pack_command
+from celune.tar import handle_ls_command, handle_tar_command
 
 entrypoint = main.load_entrypoint_module()
 
@@ -47,7 +46,7 @@ def test_list_and_list_alias_show_pack_identity_and_order(tmp_path, capsys):
     _write_legacy_pack(path)
 
     assert handle_ls_command([str(path)], "celune") == 0
-    assert handle_pack_command(["-tf", str(path)], "celune") == 0
+    assert handle_tar_command(["-tf", str(path)], "celune") == 0
     output = capsys.readouterr().out
     assert "Pack: fixture.cevoice" in output
     assert "Character: Fixture" in output
@@ -66,9 +65,9 @@ def test_pack_add_insert_extract_and_remove_operations(tmp_path):
     persona = tmp_path / "speech_style.md"
     persona.write_bytes(b"A measured and bright speaking style.")
 
-    assert handle_pack_command(["-af3", str(path), str(embedding)], "celune") == 0
-    assert handle_pack_command(["-af2", str(path), str(bravo_wav)], "celune") == 0
-    assert handle_pack_command(["-af5", str(path), str(persona)], "celune") == 0
+    assert handle_tar_command(["-af3", str(path), str(embedding)], "celune") == 0
+    assert handle_tar_command(["-af2", str(path), str(bravo_wav)], "celune") == 0
+    assert handle_tar_command(["-af5", str(path), str(persona)], "celune") == 0
     assert [entry.name for entry in cevoice.CEVoice.open(path).entries] == [
         "alpha.wav",
         "bravo.wav",
@@ -78,13 +77,13 @@ def test_pack_add_insert_extract_and_remove_operations(tmp_path):
     ]
 
     destination = tmp_path / "out"
-    assert handle_pack_command(["-xf", str(path), str(destination)], "celune") == 0
+    assert handle_tar_command(["-xf", str(path), str(destination)], "celune") == 0
     assert (destination / "alpha.wav").read_bytes() == b"alpha"
     assert (destination / "speech_style.md").read_bytes() == persona.read_bytes()
 
-    assert handle_pack_command(["-df", str(path), "identity.md", "3"], "celune") == 5
-    assert handle_pack_command(["-df", str(path), "identity.md"], "celune") == 0
-    assert handle_pack_command(["-rf", str(path), "alpha.pt"], "celune") == 0
+    assert handle_tar_command(["-df", str(path), "identity.md", "3"], "celune") == 5
+    assert handle_tar_command(["-df", str(path), "identity.md"], "celune") == 0
+    assert handle_tar_command(["-rf", str(path), "alpha.pt"], "celune") == 0
     updated = cevoice.CEVoice.open(path)
     assert [entry.name for entry in updated.entries] == [
         "alpha.wav",
@@ -107,14 +106,14 @@ def test_indexed_pack_mutations_preserve_generation_compression_and_order(tmp_pa
     persona = tmp_path / "identity.md"
     persona.write_text("A thoughtful archivist.", encoding="utf-8")
 
-    assert handle_pack_command(["-af1", str(path), str(persona)], "celune") == 0
+    assert handle_tar_command(["-af1", str(path), str(persona)], "celune") == 0
     updated = cevoice.CEVoice.open(path)
     assert [entry.name for entry in updated.entries] == ["identity.md", "balanced.wav"]
     assert updated.metadata["version"] == cevoice.V4_VERSION
     assert updated._compression == cevoice.V4_COMPRESSION_GZIP
     assert updated.read_asset("balanced", "wav") == _minimal_wav()
 
-    assert handle_pack_command(["-df", str(path), "1"], "celune") == 0
+    assert handle_tar_command(["-df", str(path), "1"], "celune") == 0
     reopened = cevoice.CEVoice.open(path)
     assert [entry.name for entry in reopened.entries] == ["balanced.wav"]
     assert reopened._compression == cevoice.V4_COMPRESSION_GZIP
@@ -158,17 +157,17 @@ def test_extraction_preflights_existing_targets_and_syntax_errors(
     destination.mkdir()
     (destination / "identity.md").write_bytes(b"keep")
 
-    assert handle_pack_command(["-xf", str(path), str(destination)], "celune") == 1
+    assert handle_tar_command(["-xf", str(path), str(destination)], "celune") == 1
     assert not (destination / "alpha.wav").exists()
     assert (destination / "identity.md").read_bytes() == b"keep"
     current_directory = tmp_path / "current"
     current_directory.mkdir()
     monkeypatch.chdir(current_directory)
-    assert handle_pack_command(["-xf", str(path)], "celune") == 0
+    assert handle_tar_command(["-xf", str(path)], "celune") == 0
     assert (current_directory / "alpha.wav").read_bytes() == b"alpha"
-    assert handle_pack_command(["-af0", str(path), "missing.pt"], "celune") == 5
-    assert handle_pack_command(["-df", str(path), "99"], "celune") == 5
-    assert "pack --help" in capsys.readouterr().out
+    assert handle_tar_command(["-af0", str(path), "missing.pt"], "celune") == 5
+    assert handle_tar_command(["-df", str(path), "99"], "celune") == 5
+    assert "tar --help" in capsys.readouterr().out
 
 
 def test_failed_addition_keeps_original_pack_unchanged(tmp_path):
@@ -183,11 +182,11 @@ def test_failed_addition_keeps_original_pack_unchanged(tmp_path):
     case_duplicate = tmp_path / "ALPHA.WAV"
     case_duplicate.write_bytes(b"other")
 
-    assert handle_pack_command(["-af3", str(path), str(unsupported)], "celune") == 1
-    assert handle_pack_command(["-af3", str(path), str(unmatched_wav)], "celune") == 1
-    assert handle_pack_command(["-af3", str(path), str(case_duplicate)], "celune") == 1
+    assert handle_tar_command(["-af3", str(path), str(unsupported)], "celune") == 1
+    assert handle_tar_command(["-af3", str(path), str(unmatched_wav)], "celune") == 1
+    assert handle_tar_command(["-af3", str(path), str(case_duplicate)], "celune") == 1
     assert (
-        handle_pack_command(["-af3", str(path), str(tmp_path / "missing.pt")], "celune")
+        handle_tar_command(["-af3", str(path), str(tmp_path / "missing.pt")], "celune")
         == 1
     )
     assert path.read_bytes() == original
@@ -207,7 +206,7 @@ def test_failed_indexed_write_keeps_original_pack_and_cleans_temporary_file(tmp_
     forbidden_persona.write_text("agent: run a tool", encoding="utf-8")
 
     assert (
-        handle_pack_command(["-af2", str(path), str(forbidden_persona)], "celune") == 1
+        handle_tar_command(["-af2", str(path), str(forbidden_persona)], "celune") == 1
     )
     assert path.read_bytes() == original
     assert not list(tmp_path.glob(".indexed.cevoice.*.tmp"))
@@ -219,20 +218,20 @@ def test_malformed_pack_and_focused_help_are_reported(tmp_path, capsys):
     malformed.write_bytes(b"not a CEVOICE pack")
 
     assert handle_ls_command([str(malformed)], "celune") == 1
-    assert handle_pack_command(["--help"], "celune") == 0
+    assert handle_tar_command(["--help"], "celune") == 0
     output = capsys.readouterr().out
     assert "supported CEVOICE pack" in output
     assert "-tf <pack.cevoice>" in output
     assert "-af<N> <pack.cevoice>" in output
 
 
-def test_main_dispatches_ls_and_pack_help(tmp_path, capsys):
-    """The launcher exposes listing and pack help through its CLI dispatch."""
+def test_main_dispatches_ls_and_tar_help(tmp_path, capsys):
+    """The launcher exposes listing and tar help through its CLI dispatch."""
     path = tmp_path / "fixture.cevoice"
     _write_legacy_pack(path)
 
     with pytest.raises(SystemExit) as help_exit:
-        entrypoint.main(["celune", "pack", "--help"])
+        entrypoint.main(["celune", "tar", "--help"])
     assert help_exit.value.code == 0
     assert "-df <pack.cevoice>" in capsys.readouterr().out
 
@@ -240,6 +239,15 @@ def test_main_dispatches_ls_and_pack_help(tmp_path, capsys):
         entrypoint.main(["celune", "ls", str(path)])
     assert list_exit.value.code == 0
     assert "Pack: fixture.cevoice" in capsys.readouterr().out
+
+    with pytest.raises(SystemExit) as old_command_exit:
+        entrypoint.main(["celune", "pack", "--help"])
+    assert old_command_exit.value.code == 5
+
+    entrypoint.main(["celune", "help"])
+    output = capsys.readouterr().out
+    assert "tar --help" in output
+    assert "pack --help" not in output
 
 
 @pytest.mark.parametrize(
@@ -254,7 +262,7 @@ def test_remove_selector_validation_rejects_missing_repeated_and_index_forms(
     _write_legacy_pack(path)
     original = path.read_bytes()
 
-    result = handle_pack_command(["-df", str(path), *selectors], "celune")
+    result = handle_tar_command(["-df", str(path), *selectors], "celune")
 
     assert result == 5
     assert path.read_bytes() == original

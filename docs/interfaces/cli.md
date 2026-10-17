@@ -27,7 +27,7 @@ explicit start/run commands, and the UI or agent test modes.
 | `celune config view` | Print the active YAML configuration. |
 | `celune config edit` | Open the active configuration in the system editor. |
 | `celune ls <pack.cevoice>` | List a pack's ordered entries and byte sizes. |
-| `celune pack --help` | Show CEVOICE listing, extraction, and edit operations. |
+| `celune tar --help` | Show CEVOICE listing, extraction, and edit operations. |
 | `celune doctor` | Run environment checks without starting the app. |
 | `celune doctor --fix` | Run checks and ask the setup helper to repair supported issues. |
 | `celune help` / `--help` / `-h` | Print command help. |
@@ -60,19 +60,19 @@ do not shift the text.
 
 ## Voice pack operations
 
-`celune ls <pack.cevoice>` and `celune pack -tf <pack.cevoice>` validate the
+`celune ls <pack.cevoice>` and `celune tar -tf <pack.cevoice>` validate the
 pack and list its filename, optional character name, and entries in stored
 order. Each entry has a 1-based number and size in bytes.
 
-`celune pack` accepts one operation per invocation:
+`celune tar` accepts one operation per invocation:
 
 | Syntax | Behavior |
 | --- | --- |
-| `celune pack -tf <pack.cevoice>` | List entries. |
-| `celune pack -xf <pack.cevoice> [destination]` | Extract to the current directory or the optional destination. |
-| `celune pack -rf <pack.cevoice> <file...>` | Remove entries by exact filename. |
-| `celune pack -df <pack.cevoice> <entry...>` | Remove entries by exact filename or 1-based index. |
-| `celune pack -af<N> <pack.cevoice> <file...>` | Insert files before entry N; use entry count + 1 to append. |
+| `celune tar -tf <pack.cevoice>` | List entries. |
+| `celune tar -xf <pack.cevoice> [destination]` | Extract to the current directory or the optional destination. |
+| `celune tar -rf <pack.cevoice> <file...>` | Remove entries by exact filename. |
+| `celune tar -df <pack.cevoice> <entry...>` | Remove entries by exact filename or 1-based index. |
+| `celune tar -af<N> <pack.cevoice> <file...>` | Insert files before entry N; use entry count + 1 to append. |
 
 Extraction creates the optional destination and any subdirectories used by
 entry names. It checks every output path before writing and fails if an output
@@ -97,9 +97,9 @@ validated, and then moved over the original.
 
 ```bash
 celune ls voices/default.cevoice
-celune pack -xf voices/default.cevoice ./unpacked
-celune pack -af4 voices/custom.cevoice ./assets/identity.md
-celune pack -df voices/custom.cevoice identity.md 2
+celune tar -xf voices/default.cevoice ./unpacked
+celune tar -af4 voices/custom.cevoice ./assets/identity.md
+celune tar -df voices/custom.cevoice identity.md 2
 ```
 
 Syntax errors and invalid selectors return exit code `5`. Invalid packs,

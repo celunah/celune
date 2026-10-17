@@ -6,16 +6,16 @@ import re
 from typing import Optional
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
-from .i18n import string
-from .constants import ExitCodes
 from .cevoice import (
+    SUPPORTED_PERSONA_FILENAMES,
     CEVoice,
     CEVoiceError,
-    SUPPORTED_PERSONA_FILENAMES,
     add_cevoice_entries,
     bundle_character_name,
     remove_cevoice_entries,
 )
+from .i18n import string
+from .constants import ExitCodes
 
 
 def handle_ls_command(arguments: list[str], program: str) -> int:
@@ -25,13 +25,13 @@ def handle_ls_command(arguments: list[str], program: str) -> int:
     return _list_pack(Path(arguments[0]))
 
 
-def handle_pack_command(arguments: list[str], program: str) -> int:
+def handle_tar_command(arguments: list[str], program: str) -> int:
     """Run one pack inspection, extraction, or mutation operation."""
     if arguments == ["--help"]:
         _print_help(program)
         return 0
     if not arguments:
-        return _syntax_error(program, "pack")
+        return _syntax_error(program, "tar")
 
     operation = arguments[0]
     insertion_position: Optional[int] = None
@@ -41,42 +41,42 @@ def handle_pack_command(arguments: list[str], program: str) -> int:
         try:
             insertion_position = int(operation[3:])
         except ValueError:
-            return _syntax_error(program, "pack")
+            return _syntax_error(program, "tar")
         if insertion_position < 1:
-            return _syntax_error(program, "pack")
+            return _syntax_error(program, "tar")
         operation = "-af"
     else:
-        return _syntax_error(program, "pack")
+        return _syntax_error(program, "tar")
 
     values = arguments[1:]
     if operation == "-tf":
         if len(values) != 1:
-            return _syntax_error(program, "pack")
+            return _syntax_error(program, "tar")
         return _list_pack(Path(values[0]))
     if operation == "-xf":
         if not 1 <= len(values) <= 2:
-            return _syntax_error(program, "pack")
+            return _syntax_error(program, "tar")
         return _extract_pack(
             Path(values[0]), Path(values[1]) if len(values) == 2 else None
         )
     if operation == "-rf":
         if len(values) < 2:
-            return _syntax_error(program, "pack")
+            return _syntax_error(program, "tar")
         return _remove_pack_entries(Path(values[0]), values[1:], program, indexed=False)
     if operation == "-df":
         if len(values) < 2:
-            return _syntax_error(program, "pack")
+            return _syntax_error(program, "tar")
         return _remove_pack_entries(Path(values[0]), values[1:], program, indexed=True)
     if operation == "-af":
         if len(values) < 2:
-            return _syntax_error(program, "pack")
+            return _syntax_error(program, "tar")
         return _add_pack_entries(
             Path(values[0]),
             values[1:],
             program,
             insertion_position,
         )
-    return _syntax_error(program, "pack")
+    return _syntax_error(program, "tar")
 
 
 def _list_pack(path: Path) -> int:
@@ -193,7 +193,7 @@ def _add_pack_entries(
         return 1
 
     if insertion_position is not None and insertion_position > len(bundle.entries) + 1:
-        return _syntax_error(program, "pack")
+        return _syntax_error(program, "tar")
     new_names: list[str] = []
     for source_name in source_names:
         source = Path(source_name)
@@ -300,7 +300,7 @@ def _selector_error(program: str, selector: str) -> int:
     """Report a missing, repeated, or out-of-range removal selector."""
     print(string("cli.invalid_argument"))
     print(string("cli.pack_selector_missing", selector=selector))
-    print(string("cli.pack_usage", program=program))
+    print(string("cli.tar_usage", program=program))
     return ExitCodes.EXIT_UNKNOWN_ARGS.value
 
 
@@ -309,7 +309,7 @@ def _syntax_error(program: str, command: str) -> int:
     print(string("cli.invalid_argument"))
     print(
         string(
-            "cli.ls_usage" if command == "ls" else "cli.pack_usage",
+            "cli.ls_usage" if command == "ls" else "cli.tar_usage",
             program=program,
         )
     )
@@ -317,14 +317,14 @@ def _syntax_error(program: str, command: str) -> int:
 
 
 def _print_help(program: str) -> None:
-    """Print the focused `celune pack` operation reference."""
-    print(string("cli.pack_help_title", program=program))
+    """Print the focused `celune tar` operation reference."""
+    print(string("cli.tar_help_title", program=program))
     for key in (
-        "cli.pack_help_list",
-        "cli.pack_help_extract",
-        "cli.pack_help_remove",
-        "cli.pack_help_delete",
-        "cli.pack_help_append",
-        "cli.pack_help_help",
+        "cli.tar_help_list",
+        "cli.tar_help_extract",
+        "cli.tar_help_remove",
+        "cli.tar_help_delete",
+        "cli.tar_help_append",
+        "cli.tar_help_help",
     ):
         print(string(key, program=program))

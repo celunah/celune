@@ -18,12 +18,6 @@ from importlib import util, import_module
 from types import ModuleType, SimpleNamespace
 from typing import TYPE_CHECKING, NoReturn, Optional
 
-from celune.i18n import string
-from celune.typing.common import Config
-from celune.terminal import set_terminal_title
-from celune import REVISION, __tagline__, __version__
-from celune.vcs import is_git_checkout, git_checkout_hint
-from celune.config import config_log_level, normalize_log_level
 from celune.paths import (
     project_root,
     running_compiled,
@@ -37,6 +31,12 @@ from celune.constants import (
     SUPPORTED_CUDA_VERSIONS,
     ExitCodes,
 )
+from celune.i18n import string
+from celune.typing.common import Config
+from celune.terminal import set_terminal_title
+from celune import REVISION, __tagline__, __version__
+from celune.vcs import is_git_checkout, git_checkout_hint
+from celune.config import config_log_level, normalize_log_level
 
 if TYPE_CHECKING:
     from celune.celune import Celune
@@ -1820,13 +1820,13 @@ def main(argv: Optional[list[str]] = None) -> None:
     elif args[0] == "test":
         handle_test(args[1:], resolved_argv[0])
     elif args[0] == "ls":
-        from celune.pack import handle_ls_command
+        from celune.tar import handle_ls_command
 
         sys.exit(handle_ls_command(args[1:], resolved_argv[0]))
-    elif args[0] == "pack":
-        from celune.pack import handle_pack_command
+    elif args[0] == "tar":
+        from celune.tar import handle_tar_command
 
-        sys.exit(handle_pack_command(args[1:], resolved_argv[0]))
+        sys.exit(handle_tar_command(args[1:], resolved_argv[0]))
     elif args[0] == "doctor":
         if len(args) > 1 and args[1] != "--fix":
             print(string("cli.invalid_argument"))
@@ -1864,8 +1864,8 @@ def main(argv: Optional[list[str]] = None) -> None:
                 string("cli.help_ls_description"),
             ),
             (
-                string("cli.help_pack_command"),
-                string("cli.help_pack_description"),
+                string("cli.help_tar_command"),
+                string("cli.help_tar_description"),
             ),
             (
                 string("cli.help_doctor_command"),
