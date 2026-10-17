@@ -3,70 +3,74 @@
 This page describes how contributors build, package, update, and deploy
 Celune's compiled artifacts and documentation.
 
-## Nuitka builds
+## CMake release builds
 
-The build scripts produce a compiled core executable plus a small launcher:
+CMake builds a pinned static libsodium, compiles the C launcher and runs its
+signature verification, compiles the Python core with Nuitka, then packages the
+release. Use the `unsigned` preset for a validation archive or the `signed`
+preset for a release archive:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts\build_nuitka.ps1
+cmake --preset unsigned
+cmake --build --preset unsigned
 ```
 
 ```bash
-bash scripts/build_nuitka.sh
+cmake --preset unsigned
+cmake --build --preset unsigned
 ```
 
-Pass `signed` to either build script to require a signed update manifest and
-write a signed ZIP with a `-signed` suffix:
+The signed preset keeps the same two-step workflow:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts\build_nuitka.ps1 signed
+cmake --preset signed
+cmake --build --preset signed
 ```
 
 ```bash
-bash scripts/build_nuitka.sh signed
+cmake --preset signed
+cmake --build --preset signed
 ```
+
+Both presets build the `celune_release` target with at most two build jobs;
+Nuitka's C compiler is also capped at two jobs.
+The dependency chain enforces libsodium → C launcher and native signature
+verification → Python core (Nuitka) → release packaging. `uv run poe build`
+builds the unsigned preset; `uv run poe build_signed` builds the signed preset.
 
 ## Python build target
 
 Celune source installations support Python 3.12 through 3.14. Compiled
 artifacts use Python 3.13 deliberately so v4 and v5 releases share one
-CPython ABI. Both build scripts pin the Nuitka invocation to Python 3.13.
+CPython ABI. The CMake build pins the Nuitka invocation to Python 3.13.
 
-Build from a Git checkout with at least one commit. Each script checks for a valid `HEAD`
-before stopping a running Celune process or changing build artifacts. A GitHub
+Build from a Git checkout with at least one commit. CMake checks for a valid
+`HEAD` before stopping a running Celune process or changing build artifacts. A GitHub
 **Download ZIP** has no commit history and cannot supply the revision recorded
-in `.celune-root` and the update manifest; the script exits with the clone
-command when Git metadata is missing.
+in `.celune-root` and the update manifest; use a Git clone to build release
+artifacts.
 
 The compiled build remains a deployment build rather than a fully standalone
 bundle, so its `.venv` must use the matching Python 3.13 runtime. Python 3.14
 remains available for source development and source-based launches; a Python
 3.14 `.venv` cannot run the compiled 3.13 executable.
 
-Windows builds use Nuitka, Visual Studio C++ tools, the launcher C sources,
-static libsodium from the `x64-windows-static-md` vcpkg triplet, the project
-icon/resource, and `scripts/write_update_manifest.py`. Linux builds use GCC,
-`libsodium-dev`, `pkg-config`, `appimagetool`, and `zip`. Both release launchers
-link libsodium statically. Install the native crypto dependency before building:
+Windows builds use CMake, Visual Studio C++ tools, the launcher C sources, the
+project icon/resource, and `scripts/write_update_manifest.py`. Linux builds
+use CMake, GCC, Make, and `appimagetool`. CMake downloads the pinned libsodium
+1.0.22 source archive, verifies its SHA-256 digest, and builds a static library
+as part of the release target. Linux compiles libsodium without LTO so the
+launcher does not depend on a host archive or its LTO plugin configuration.
+The Windows build uses libsodium's `StaticRelease` MSVC project, whose static
+CRT matches the launcher's `/MT` runtime. Install CMake 3.25 or newer, `uv`, and
+the platform C compiler and build tools before configuring. Windows requires
+the Visual Studio 2022 C++ tools. Linux also needs `appimagetool`.
 
-```powershell
-vcpkg install libsodium:x64-windows-static-md
-```
-
-```bash
-sudo apt-get install -y libsodium-dev pkg-config
-```
-
-The Windows script refreshes `resources/vcruntime140.dll` from the configured
-Visual Studio 14.44.35112 CRT installation, includes Windows runtime DLLs during
-Nuitka compilation, places that exact DLL beside both release executables, and
-adds it to the update manifest and archive. Linux builds produce the executable,
-AppImage, and archive. Before replacing
-Windows build artifacts, the script force-stops existing Celune processes,
-waits up to thirty seconds for their process handles to exit, and retries
-transient locked-file cleanup for up to five seconds. A persistent lock still
-fails the build with the original cleanup error instead of producing a partial
-package.
+On Windows, Nuitka includes Windows runtime DLLs, and the tracked
+`resources/vcruntime140.dll` is placed beside the release executables and added
+to the update manifest and archive. Linux builds produce the launcher,
+Nuitka executable, AppImage, and archive. CMake stops running Celune processes
+before preparing output artifacts.
 
 Typical output files are:
 
@@ -186,24 +190,28 @@ signed package. The root private key signs the catalog trailer, so a launcher
 can authenticate newly catalogued release keys without embedding each key in
 its source.
 
-The build scripts use their platform's default private-key path when called
-with `signed`. On Windows, that is the `%LOCALAPPDATA%` path above. For another
-key location, pass it to `--output` and set
-`CELUNE_RELEASE_SIGNING_KEY_FILE` to the same path before building. The existing
-`CELUNE_REQUIRE_RELEASE_SIGNATURE=1` setting also continues to require signing.
+The signed preset uses the platform's default private-key path. On Windows,
+that is the `%LOCALAPPDATA%` path above. For another key location, pass it to
+`--output` and set `CELUNE_RELEASE_SIGNING_KEY_FILE` to the same path before
+configuring. `CELUNE_REQUIRE_RELEASE_SIGNATURE=1` also requires signing when
+using the unsigned preset. CMake cache variables
+`CELUNE_RELEASE_SIGNING_KEY_FILE`, `CELUNE_RELEASE_ROOT_KEY_FILE`, and
+`CELUNE_REQUIRE_RELEASE_SIGNATURE` provide equivalent configuration options.
 `CELUNE_RELEASE_ROOT_KEY_FILE` can select a separately stored root key; by
 default it uses the platform's standard key path above:
 
 ```powershell
 uv run python scripts\make_signing_key.py --output "C:\path\to\release-ed25519-private.pem"
 $env:CELUNE_RELEASE_SIGNING_KEY_FILE = "C:\path\to\release-ed25519-private.pem"
-powershell -ExecutionPolicy Bypass -File scripts\build_nuitka.ps1 signed
+cmake --preset signed
+cmake --build --preset signed
 ```
 
 ```bash
 uv run python scripts/make_signing_key.py --output "$HOME/keys/release-ed25519-private.pem"
 export CELUNE_RELEASE_SIGNING_KEY_FILE="$HOME/keys/release-ed25519-private.pem"
-bash scripts/build_nuitka.sh signed
+cmake --preset signed
+cmake --build --preset signed
 ```
 
 The native C signature tests run as part of both platform launcher builds. The

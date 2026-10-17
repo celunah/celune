@@ -196,7 +196,7 @@ cloned copy of Celune.
 
 Copies obtained via `Download ZIP` will not work.
 
-To manually compile Celune, run `scripts/build_nuitka.ps1` or `scripts/build_nuitka.sh` instead, depending on your platform.
+To manually compile Celune, configure and build the CMake `unsigned` or `signed` preset. The release target builds static libsodium, verifies the native launcher, compiles the Python core with Nuitka, then packages the artifacts.
 
 Don't have a copy yet? Run the following commands:
 

@@ -301,13 +301,20 @@ ignore_fail = "return_non_zero"
 sequence = ["ruff", "format", "lint_basic", "types", "test_basic"]
 ignore_fail = "return_non_zero"
 
+[tool.poe.tasks.build_configure]
+cmd = "cmake --preset unsigned"
+
+[tool.poe.tasks.build_compile]
+cmd = "cmake --build --preset unsigned"
+
 [tool.poe.tasks.build]
-control.expr = "sys.platform"
+sequence = ["build_configure", "build_compile"]
 
-[[tool.poe.tasks.build.switch]]
-case = "win32"
-cmd = "pwsh -NoProfile -File scripts/build_nuitka.ps1"
+[tool.poe.tasks.build_signed_configure]
+cmd = "cmake --preset signed"
 
-[[tool.poe.tasks.build.switch]]
-case = ["linux", "darwin"]
-cmd = "bash scripts/build_nuitka.sh"
+[tool.poe.tasks.build_signed_compile]
+cmd = "cmake --build --preset signed"
+
+[tool.poe.tasks.build_signed]
+sequence = ["build_signed_configure", "build_signed_compile"]

@@ -70,7 +70,7 @@ jobs:
       - name: Install build tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc wget zip desktop-file-utils libfuse2 libsodium-dev pkg-config
+          sudo apt-get install -y cmake gcc make wget desktop-file-utils libfuse2
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7
@@ -84,7 +84,8 @@ jobs:
 
       - name: Build Linux launcher artifacts
         run: |
-          python3 ./scripts/ci_warnings.py -- bash ./scripts/build_nuitka.sh
+          python3 ./scripts/ci_warnings.py -- cmake --preset unsigned
+          python3 ./scripts/ci_warnings.py -- cmake --build --preset unsigned
           test -x bin/celune
           test -x bin/celune-bin
           test -f bin/celune.AppImage
@@ -111,14 +112,11 @@ jobs:
         shell: powershell
         run: python .\scripts\ci_warnings.py -- uv sync --dev --extra api
 
-      - name: Install static libsodium
-        shell: powershell
-        run: vcpkg install libsodium:x64-windows-static-md
-
       - name: Build Windows launcher artifacts
         shell: powershell
         run: |
-          python .\scripts\ci_warnings.py -- powershell -ExecutionPolicy Bypass -File .\scripts\build_nuitka.ps1
+          python .\scripts\ci_warnings.py -- cmake --preset unsigned
+          python .\scripts\ci_warnings.py -- cmake --build --preset unsigned
           if (!(Test-Path .\bin\celune.exe)) { throw "bin/celune.exe not found" }
           if (!(Test-Path .\bin\celune-bin.exe)) { throw "bin/celune-bin.exe not found" }
           if (!(Test-Path .\bin\Celune-win-x64.zip)) { throw "bin/Celune-win-x64.zip not found" }

@@ -1,0 +1,39 @@
+{
+  "version": 6,
+  "configurePresets": [
+    {
+      "name": "unsigned",
+      "displayName": "Unsigned release",
+      "binaryDir": "${sourceDir}/build/cmake-unsigned",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CELUNE_BUILD_MODE": "unsigned"
+      }
+    },
+    {
+      "name": "signed",
+      "displayName": "Signed release",
+      "binaryDir": "${sourceDir}/build/cmake-signed",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CELUNE_BUILD_MODE": "signed"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "unsigned",
+      "configurePreset": "unsigned",
+      "configuration": "Release",
+      "jobs": 2,
+      "targets": ["celune_release"]
+    },
+    {
+      "name": "signed",
+      "configurePreset": "signed",
+      "configuration": "Release",
+      "jobs": 2,
+      "targets": ["celune_release"]
+    }
+  ]
+}
