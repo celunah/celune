@@ -211,6 +211,9 @@ def _worker_environment(environment: BackendEnvironment) -> dict[str, str]:
         if value is not None:
             worker_environment[variable] = value
 
+    if os.name == "nt" and environment.manifest.backend_id == "soulxsinger":
+        worker_environment.setdefault("OPENBLAS_NUM_THREADS", "1")
+
     worker_environment.setdefault("HF_HOME", str(huggingface_home_dir()))
     worker_environment.setdefault(
         "HF_HUB_CACHE",

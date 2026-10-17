@@ -641,6 +641,52 @@ class TestBackendEnvironment(CeluneTestCase):
 
             assert run.call_args_list[0].args[0][3] == "3.13"
 
+    def test_soulx_worker_defaults_openblas_to_one_thread_on_windows(self) -> None:
+        """Keep SoulX's Windows phonemizer import from creating a BLAS thread pool."""
+        if os.name != "nt":
+            self.skipTest("SoulX OpenBLAS worker default is Windows-specific")
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            backend_environment = environment.BackendEnvironment(
+                manifest=BackendManifest("soulxsinger", "tts", (), "module", "Backend"),
+                root=root,
+            )
+            with (
+                mock.patch.object(remote, "huggingface_home_dir", return_value=root),
+                mock.patch.object(
+                    remote,
+                    "huggingface_hub_cache_dir",
+                    return_value=root,
+                ),
+                mock.patch.object(remote, "configure_numba_cache", return_value=root),
+                mock.patch.object(remote, "project_root", return_value=root),
+                mock.patch.dict(os.environ, {}, clear=True),
+            ):
+                worker_environment = remote._worker_environment(backend_environment)
+                self.assertEqual(worker_environment["OPENBLAS_NUM_THREADS"], "1")
+
+                mini_environment = environment.BackendEnvironment(
+                    manifest=BackendManifest("mini", "tts", (), "module", "Backend"),
+                    root=root,
+                )
+                self.assertNotIn(
+                    "OPENBLAS_NUM_THREADS",
+                    remote._worker_environment(mini_environment),
+                )
+
+                with mock.patch.dict(
+                    os.environ,
+                    {"OPENBLAS_NUM_THREADS": "4"},
+                    clear=True,
+                ):
+                    self.assertEqual(
+                        remote._worker_environment(backend_environment)[
+                            "OPENBLAS_NUM_THREADS"
+                        ],
+                        "4",
+                    )
+
     def test_exclusive_lock_times_out_while_another_handle_owns_it(self) -> None:
         """Verify the operating-system lock blocks a second installer."""
         with tempfile.TemporaryDirectory() as temporary_directory:

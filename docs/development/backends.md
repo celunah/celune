@@ -164,6 +164,10 @@ prepares the pinned source checkout and the three English NLTK resources used by
 `g2p_en`; CEDTS starts reporting progress before importing NLTK, then reports
 progress for each resource. It reuses data found on NLTK's search path and
 downloads only missing resources into Celune's app-data `nltk_data` directory.
+On Windows, the isolated SoulX worker defaults `OPENBLAS_NUM_THREADS` to `1`
+before backend initialization unless the host already sets it. This keeps the
+SciPy import triggered by NLTK from starting a second multithreaded BLAS pool
+inside a CEDTS request thread.
 During model loading, the worker reports progress and logs as it imports the
 model, reads its config and checkpoint, applies weights, transfers the model to
 CUDA, and prepares the score processor and phonemizer.
