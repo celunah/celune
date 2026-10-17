@@ -11,6 +11,16 @@ from celune.i18n import string
 from celune.backends.tts import soulxsinger
 
 
+def test_soulxsinger_prepares_nltk_before_worker_requests() -> None:
+    """Load NLTK in the worker startup thread before CEDTS starts requests."""
+    backend = object.__new__(soulxsinger.SoulXSinger)
+
+    with mock.patch.object(soulxsinger.importlib, "import_module") as import_module:
+        backend.prepare_model_loading()
+
+    import_module.assert_called_once_with("nltk")
+
+
 def test_soulxsinger_nltk_preparation_reports_resource_progress(
     tmp_path: Path,
 ) -> None:

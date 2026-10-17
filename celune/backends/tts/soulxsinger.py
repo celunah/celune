@@ -469,6 +469,10 @@ class SoulXSinger(CeluneBackend[_SoulXRuntime]):
         )
         self._validate_refs()
 
+    def prepare_model_loading(self) -> None:
+        """Import NLTK before CEDTS runs backend work in request threads."""
+        importlib.import_module("nltk")
+
     @staticmethod
     def _get_default_loader() -> Optional[CEVoiceLoader]:
         """Return the active CEVOICE loader for SoulX-Singer."""
