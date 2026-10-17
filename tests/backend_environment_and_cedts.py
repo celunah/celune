@@ -386,6 +386,12 @@ class TestBackendEnvironment(CeluneTestCase):
         assert "nltk==3.9.2" in requirements
         assert "omegaconf==2.3.0" in requirements
 
+    def test_soulxsinger_pins_its_upstream_transformers_compatibility(self) -> None:
+        """Keep SoulX's custom Llama decoder on its supported attention API."""
+        requirements = BACKEND_MANIFESTS["soulxsinger"].requirements
+        assert "transformers==4.41.2" in requirements
+        assert "transformers>=4.56,<5.0.0" not in requirements
+
     def test_manifests_use_the_main_branch_huggingface_versions(self) -> None:
         """Verify standard isolated backends use the main Hugging Face ranges."""
         expected_requirements = {
@@ -396,7 +402,7 @@ class TestBackendEnvironment(CeluneTestCase):
         standard_manifests = (
             manifest
             for backend_id, manifest in BACKEND_MANIFESTS.items()
-            if backend_id != "fireredtts3"
+            if backend_id not in {"fireredtts3", "soulxsinger"}
         )
         for manifest in standard_manifests:
             assert expected_requirements.issubset(manifest.requirements)

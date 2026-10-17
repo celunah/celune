@@ -48,6 +48,12 @@ _WORKER_HUGGINGFACE_REQUIREMENTS = (
     "transformers>=4.56,<5.0.0",
     *_WORKER_SHARED_REQUIREMENTS,
 )
+_SOULX_WORKER_HUGGINGFACE_REQUIREMENTS = (
+    "huggingface-hub>=0.36,<1.0.0",
+    "hf-xet",
+    "transformers==4.41.2",
+    *_WORKER_SHARED_REQUIREMENTS,
+)
 _FIRERED_WORKER_HUGGINGFACE_REQUIREMENTS = (
     "huggingface-hub>=1.5.0,<2.0.0",
     "hf-xet",
@@ -229,7 +235,7 @@ BACKEND_MANIFESTS = {
         kind="tts",
         requirements=(
             *_TTS_PYTORCH_REQUIREMENTS,
-            *_WORKER_HUGGINGFACE_REQUIREMENTS,
+            *_SOULX_WORKER_HUGGINGFACE_REQUIREMENTS,
             "accelerate",
             "g2p_en==2.1.0",
             "nltk==3.9.2",
