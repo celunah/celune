@@ -49,6 +49,7 @@ from ...exceptions import (
     CESNSyntaxError,
     InvalidCharacterError,
 )
+from ..environment import _exclusive_lock
 from ...registry.tts import (
     TTS_DEFAULT_VOICE,
     SOULX_SINGER_MODEL_ID,
@@ -349,44 +350,53 @@ def _load_upstream_source() -> Path:
     source_parent.mkdir(parents=True, exist_ok=True)
     source_root = source_parent / SOULX_SINGER_CODE_REVISION
     package_path = source_root / "soulxsinger" / "models" / "soulxsinger.py"
-    if package_path.is_file():
-        try:
-            repository = Repo(source_root)
-        except Exception as error:
-            raise BackendError(
-                string("soulx.source_unavailable"),
-                error_code="soulx_source_revision_mismatch",
-            ) from error
-        if (
-            repository.head.commit.hexsha != SOULX_SINGER_CODE_REVISION
-            or repository.is_dirty()
-        ):
-            raise BackendError(
-                string("soulx.source_unavailable"),
-                error_code="soulx_source_revision_mismatch",
-            )
-        return source_root
-
     staging_root = source_parent / f"{SOULX_SINGER_CODE_REVISION}.install-{os.getpid()}"
-    if staging_root.exists():
-        shutil.rmtree(staging_root)
     try:
-        repository = Repo.clone_from(
-            SOULX_SINGER_CODE_REPOSITORY,
-            staging_root,
-            no_checkout=True,
-            multi_options=["--filter=blob:none"],
-        )
-        repository.git.checkout(SOULX_SINGER_CODE_REVISION)
-        if repository.head.commit.hexsha != SOULX_SINGER_CODE_REVISION:
-            raise BackendError(
-                string("soulx.source_unavailable"),
-                error_code="soulx_source_revision_mismatch",
-            )
-        staging_root.replace(source_root)
+        with _exclusive_lock(source_parent / ".install.lock", timeout=300.0):
+            if package_path.is_file():
+                try:
+                    repository = Repo(source_root)
+                except Exception as error:
+                    raise BackendError(
+                        string("soulx.source_unavailable"),
+                        error_code="soulx_source_revision_mismatch",
+                    ) from error
+                if (
+                    repository.head.commit.hexsha != SOULX_SINGER_CODE_REVISION
+                    or repository.is_dirty()
+                ):
+                    raise BackendError(
+                        string("soulx.source_unavailable"),
+                        error_code="soulx_source_revision_mismatch",
+                    )
+                return source_root
+
+            if staging_root.exists():
+                shutil.rmtree(staging_root)
+            try:
+                repository = Repo.clone_from(
+                    SOULX_SINGER_CODE_REPOSITORY,
+                    staging_root,
+                    no_checkout=True,
+                    multi_options=["--filter=blob:none"],
+                )
+                repository.git.checkout(SOULX_SINGER_CODE_REVISION)
+                if repository.head.commit.hexsha != SOULX_SINGER_CODE_REVISION:
+                    raise BackendError(
+                        string("soulx.source_unavailable"),
+                        error_code="soulx_source_revision_mismatch",
+                    )
+                staging_root.replace(source_root)
+            except Exception as error:
+                if staging_root.exists():
+                    shutil.rmtree(staging_root, ignore_errors=True)
+                if isinstance(error, BackendError):
+                    raise
+                raise BackendError(
+                    string("soulx.source_unavailable"),
+                    error_code="soulx_source_unavailable",
+                ) from error
     except Exception as error:
-        if staging_root.exists():
-            shutil.rmtree(staging_root, ignore_errors=True)
         if isinstance(error, BackendError):
             raise
         raise BackendError(

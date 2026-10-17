@@ -38,7 +38,7 @@ from celune.backends.vc import (
     resolve_vc_backend,
 )
 from celune.backends.tts import BACKEND_MANIFESTS, resolve_backend
-from celune.registry.tts import QWEN3_DEFAULT_MODEL_ID
+from celune.registry.tts import QWEN3_DEFAULT_MODEL_ID, SOULX_SINGER_CODE_REVISION
 from celune.typing.aliases import AudioChunk
 from celune.extensions.base import CeluneContext, CeluneExtension
 from celune.typing.backends import (
@@ -68,6 +68,7 @@ from celune.backends.tts.soulxsinger import (
     SoulXSinger,
     _decode_score,
     _pitch_to_midi,
+    _load_upstream_source,
 )
 
 from .support import (
@@ -129,6 +130,46 @@ class TestBackend(CeluneTestCase):
     def test_soulxsinger_description_uses_a_finite_chunk_rate(self) -> None:
         """Give CEDTS a finite rate for SoulX's complete-score audio chunk."""
         self.assertEqual(SoulXSinger.chunk_rate, 1.0)
+
+    def test_soulxsinger_source_install_rechecks_after_lock(self) -> None:
+        """Reuse the pinned checkout another backend worker just installed."""
+        with tempfile.TemporaryDirectory() as directory:
+            environment_root = Path(directory)
+            source_root = (
+                environment_root / "soulxsinger-source" / SOULX_SINGER_CODE_REVISION
+            )
+            package_path = source_root / "soulxsinger" / "models" / "soulxsinger.py"
+
+            @contextlib.contextmanager
+            def other_worker_installs_source() -> Generator[None, None, None]:
+                package_path.parent.mkdir(parents=True)
+                package_path.touch()
+                yield
+
+            with (
+                mock.patch(
+                    "celune.backends.tts.soulxsinger.backend_environments_dir",
+                    return_value=environment_root,
+                ),
+                mock.patch(
+                    "celune.backends.tts.soulxsinger._exclusive_lock",
+                    side_effect=lambda *_args, **_kwargs: (
+                        other_worker_installs_source()
+                    ),
+                ) as acquire_lock,
+                mock.patch("git.Repo") as repository_type,
+            ):
+                repository_type.return_value.head.commit.hexsha = source_root.name
+                repository_type.return_value.is_dirty.return_value = False
+
+                self.assertEqual(_load_upstream_source(), source_root)
+
+            acquire_lock.assert_called_once_with(
+                source_root.parent / ".install.lock",
+                timeout=300.0,
+            )
+            repository_type.assert_called_once_with(source_root)
+            repository_type.clone_from.assert_not_called()
 
     def test_soulxsinger_keeps_section_metadata_in_its_score_payload(self) -> None:
         """Preserve default tempo, key, and scale through the backend conversion."""

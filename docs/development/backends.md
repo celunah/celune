@@ -160,6 +160,9 @@ The model repository is licensed under Apache-2.0; its terms are separate from
 Celune's source license. The registry pins both model weights and source code.
 The worker downloads only `config.yaml` and `model.pt` from the reviewed model
 revision, then strictly loads the checkpoint state dictionary.
+Concurrent worker startups serialize checkout preparation with a cross-process
+lock. Each worker rechecks the pinned checkout after acquiring the lock, so a
+worker can reuse a checkout another process just installed.
 
 The backend accepts English CESN and requires an active CECHAR v5 pack with a
 hidden `sing` WAV and `cesn` reference. It uses that reference as the prompt,
