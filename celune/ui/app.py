@@ -4,13 +4,10 @@
 from __future__ import annotations
 
 import sys
-import queue as queue_module
 import asyncio
 import logging
 import itertools
 import threading
-from io import TextIOWrapper
-from types import ModuleType
 from typing import (
     TYPE_CHECKING,
     Never,
@@ -24,6 +21,9 @@ from typing import (
     final,
 )
 from pathlib import Path
+from io import TextIOWrapper
+from types import ModuleType
+import queue as queue_module
 from dataclasses import field, dataclass
 from collections.abc import Callable, Iterator
 
@@ -43,31 +43,31 @@ from textual import (
     color as textual_color,
 )
 from textual import (
-    screen as textual_screen,
+    message as textual_message,
 )
 from textual import (
-    message as textual_message,
+    screen as textual_screen,
 )
 from rich.text import Text
 
-from ..i18n import string, tagged_string
-from .theme import CELUNE_CSS, severity_color
-from .compat import install_textual_timer_sleep
-from .loading import CeluneLoadingScreen
-from ..threads import run_in_daemon_thread
-from .terminal import SelectMenuOption, SelectMenuWidget
-from ..watchdog import launcher_loss_requested
-from ..constants import BASE_SR, SIGTSTP, APP_NAME, ExitCodes
-from ..typing.ui import CeluneUIMethodSurface
-from ..typing.agent import AgentTaskState
 from ..typing.locks import (
     ComponentLockName,
     ComponentLockOwner,
     ComponentLockRequirement,
 )
-from ..typing.common import JSONSerializable
-from ..typing.config import AudioDeviceInfoValue
+from ..i18n import string, tagged_string
+from .loading import CeluneLoadingScreen
+from ..typing.agent import AgentTaskState
 from ..registry.types import ModelMetadata
+from ..threads import run_in_daemon_thread
+from ..typing.common import JSONSerializable
+from ..typing.ui import CeluneUIMethodSurface
+from .theme import CELUNE_CSS, severity_color
+from ..watchdog import launcher_loss_requested
+from .compat import install_textual_timer_sleep
+from ..typing.config import AudioDeviceInfoValue
+from .terminal import SelectMenuOption, SelectMenuWidget
+from ..constants import BASE_SR, SIGTSTP, APP_NAME, ExitCodes
 from ..theme.defaults import default_theme_family, default_error_theme_family
 
 App = app.App
@@ -1698,6 +1698,9 @@ class CeluneUI(App, CeluneUIMethodSurface):
         if self._is_voice_conversion_mode():
             return string("ui.voice_changer_placeholder")
 
+        if getattr(getattr(self.celune, "backend", None), "singing", False):
+            return string("ui.cesn_input_placeholder")
+
         if (
             self._persona_loaded()
             and self._persona_available
@@ -1719,6 +1722,9 @@ class CeluneUI(App, CeluneUIMethodSurface):
     async def _apply_voice_selection(self, value: dict[str, JSONSerializable]) -> None:
         """Load the selected pack and voice without blocking the Textual loop."""
         if self.celune is None:
+            return
+        if getattr(getattr(self.celune, "backend", None), "singing", False):
+            self.safe_log(string("celune.singing_voice_change_unavailable"), "warning")
             return
         from ..cevoice import active_bundle_path
 

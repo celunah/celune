@@ -8,41 +8,41 @@ import sys
 import asyncio
 import tempfile
 import subprocess
-from types import SimpleNamespace
-from typing import Optional, cast
 from pathlib import Path
 from unittest import mock
+from types import SimpleNamespace
+from typing import Optional, cast
 from collections.abc import Callable, Awaitable, Coroutine
 
-import numpy as np
 import pytest
+import numpy as np
 from textual import events
 from textual.widget import Widget
 from textual.widgets import TextArea
 
 from celune import runtime
-from celune.ui import app as ui_app
-from celune.i18n import string
-from celune.agent import AgentTaskState
-from celune.celune import Celune
 from celune.ui.app import (
     CeluneUI,
     VoiceButton,
     ButtonActions,
 )
-from tests.support import FakeBackend, FakeVCBackend, CeluneTestCase
-from tests.platform import WINDOWS_ONLY
-from celune.terminal import set_terminal_title
-from celune.constants import APP_NAME
-from celune.ui.commands import process_command, attachment_source
-from celune.ui.headless import CeluneHeadlessUI
+from celune.i18n import string
+from celune.celune import Celune
 from celune.typing.locks import (
     ComponentLockName,
     ComponentLockOwner,
     ComponentBusyResult,
 )
-from celune.typing.common import JSONSerializable
+from celune.ui import app as ui_app
+from celune.constants import APP_NAME
+from celune.agent import AgentTaskState
+from tests.platform import WINDOWS_ONLY
 from celune.typing.aliases import LogLevel
+from celune.terminal import set_terminal_title
+from celune.ui.headless import CeluneHeadlessUI
+from celune.typing.common import JSONSerializable
+from celune.ui.commands import process_command, attachment_source
+from tests.support import FakeBackend, FakeVCBackend, CeluneTestCase
 
 from .ui_startup_interactions import TestUIStartup as _TestUIStartup
 
@@ -107,6 +107,30 @@ class TestRuntime(CeluneTestCase):
 
         assert button.actions == ButtonActions(press=True, hold=False)
         assert not button.has_class("-actions-disabled")
+
+    def test_singing_backend_disables_voice_cycle_and_menu(self) -> None:
+        """Disable both ordinary voice controls while a singing backend is active."""
+        button = VoiceButton(
+            "Voice",
+            actions=ButtonActions(press=True, hold=True),
+        )
+        ui = cast(
+            CeluneUI,
+            SimpleNamespace(
+                celune=SimpleNamespace(backend=SimpleNamespace(singing=True)),
+                style_button=button,
+                update_resources=mock.Mock(),
+                _run_on_ui_thread=lambda callback: callback(),
+            ),
+        )
+
+        CeluneUI.change_voice_lock_state(
+            ui,
+            locked=False,
+            can_open_menu=True,
+        )
+
+        assert button.actions == ButtonActions(press=False, hold=False)
 
     def test_voice_button_long_press_message_waits_for_release(self) -> None:
         """Verify a held voice button posts its modal message after release."""
@@ -577,6 +601,18 @@ class TestUICommand(CeluneTestCase):
             vc_f0_condition=False,
             vc_backend=SimpleNamespace(),
         )
+
+    def test_help_includes_cesn_glossary_for_singing_backend(self) -> None:
+        """Show CESN syntax help only when the active TTS backend sings."""
+        self.ui.celune.backend = SimpleNamespace(name="soulxsinger", singing=True)
+        self.ui.celune.vision = None
+
+        self._process_command("help", [])
+
+        messages = [message for message, _severity in self.logs]
+        assert string("commands.help_cesn_header") in messages
+        assert string("commands.help_cesn_notes") in messages
+        assert string("commands.help_cesn_singer") in messages
 
     def _process_command(self, command: str, args: list[str]) -> None:
         """Process one command against the typed UI test double."""

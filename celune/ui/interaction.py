@@ -829,6 +829,9 @@ def open_voice_menu(self) -> None:
     """Open a voice menu containing every available CEVOICE/CECHAR entry."""
     if self.celune is None or self._active_menu is not None:
         return
+    if getattr(getattr(self.celune, "backend", None), "singing", False):
+        self.safe_log(_app.string("celune.singing_voice_change_unavailable"), "warning")
+        return
 
     from ..cevoice import (
         CEVoice,

@@ -20,18 +20,18 @@ from .cevoice import (
 )
 from . import __version__
 from . import celune as _core
-from .paths import project_root
 from .constants import APP_NAME
+from .paths import project_root
 from .config import config_value
 from .pipeline import play_signal
 from .typing.aliases import LogLevel
 from .i18n import string, tagged_string
 from .utils import format_error_message
 from .threads import run_in_daemon_thread
-from .typing.celune import CoreBackendSpec
 from .extensions.base import CeluneContext
-from .registry.tts import QWEN3_06B_MODEL_ID
+from .typing.celune import CoreBackendSpec
 from .binding import install_class_functions
+from .registry.tts import QWEN3_06B_MODEL_ID
 from .backends.tts import BACKENDS, CeluneBackend
 from .dataclasses.events import VoiceChangedEvent
 from .backends.vc import VC_BACKENDS, CeluneVCBackend
@@ -218,6 +218,10 @@ def set_voice(self, name: str) -> bool:
 
 def _prepare_voice_change(self, name: str) -> bool:
     """Wait for speech to drain before preparing one voice switch."""
+    if getattr(self.backend, "singing", False):
+        self.log(string("celune.singing_voice_change_unavailable"), "warning")
+        return False
+
     if name not in self.voices:
         # this voice was not found in the current CEVOICE/CECHAR pack
         self.log(string("celune.unknown_voice", voice=name), "warning")

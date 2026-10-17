@@ -5,18 +5,18 @@ from __future__ import annotations
 
 import re
 import time
-import queue as queue_module
 import threading
 import contextlib
 from uuid import uuid4
-from typing import Union, Optional, cast
+import queue as queue_module
 from collections.abc import Callable
+from typing import Union, Optional, cast
 
 from textual.color import Color
 
 from . import app as _app
-from ..binding import install_class_functions
 from .constants import _CAPTION_FADE_SECONDS
+from ..binding import install_class_functions
 
 __all__ = (
     "_acquire_recording_component_lease",
@@ -464,6 +464,11 @@ def change_voice_lock_state(
     """
     if can_open_menu is None:
         can_open_menu = not locked
+    if getattr(
+        getattr(getattr(self, "celune", None), "backend", None), "singing", False
+    ):
+        locked = True
+        can_open_menu = False
 
     def update() -> None:
         self.style_button.actions = _app.ButtonActions(

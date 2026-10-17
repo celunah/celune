@@ -26,6 +26,8 @@ from celune.i18n import string
 from celune.celune import Celune
 from celune.webui import runtime as webui
 from celune.pipeline import SpeechStreamQueue
+from celune.webui import actions as webui_actions
+
 from .support import CeluneTestCase
 
 
@@ -1294,6 +1296,63 @@ class TestApiWebUI(CeluneTestCase):
             placeholder = api._webui_input_placeholder(celune, False, True)
 
         assert placeholder == string("ui.say_placeholder")
+
+    def test_webui_singing_placeholder_requests_cesn(self) -> None:
+        """Use the CESN prompt in the browser when its backend supports singing."""
+        celune = cast(
+            Celune,
+            SimpleNamespace(
+                current_voice="balanced",
+                voices=("balanced",),
+                is_in_tutorial=False,
+                locked=False,
+                cur_state="idle",
+                persona_ready=True,
+                config={},
+                backend=SimpleNamespace(singing=True),
+            ),
+        )
+
+        with (
+            mock.patch("celune.webui.runtime.persona_enabled", return_value=True),
+            mock.patch(
+                "celune.webui.runtime.persona_talkback_enabled", return_value=True
+            ),
+        ):
+            placeholder = api._webui_input_placeholder(celune, False, True)
+
+        assert placeholder == string("ui.cesn_input_placeholder")
+
+    def test_webui_hides_voice_choices_for_singing_backend(self) -> None:
+        """Do not offer speaking-only pack voices to a singing backend."""
+        celune = cast(
+            Celune,
+            SimpleNamespace(backend=SimpleNamespace(singing=True)),
+        )
+
+        assert not webui_actions._webui_voice_catalog(celune)
+
+    def test_voice_api_rejects_voice_selection_for_singing_backend(self) -> None:
+        """Return a conflict when an API client requests a speaking voice."""
+        set_voice_async = mock.AsyncMock(return_value=True)
+        api.bound_celune = cast(
+            Celune,
+            SimpleNamespace(
+                backend=SimpleNamespace(singing=True),
+                voices=("balanced",),
+                set_voice_async=set_voice_async,
+            ),
+        )
+
+        response = asyncio.run(api.voice(api.VoiceRequest(voice_name="balanced")))
+
+        assert isinstance(response, Response)
+        assert response.status_code == 409
+        assert (
+            string("celune.singing_voice_change_unavailable")
+            in bytes(response.body).decode()
+        )
+        set_voice_async.assert_not_awaited()
 
     def test_webui_recording_hint_uses_the_existing_resource_snapshot(self) -> None:
         """Verify the ALT+R hint is rendered with the timed footer update."""

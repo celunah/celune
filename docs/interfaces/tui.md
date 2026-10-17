@@ -36,10 +36,18 @@ value. Confirming a row hot-loads that pack and voice. In VC mode
 the mode button toggles talk/sing F0 conditioning. Touch users can use this
 visible button rather than keyboard shortcuts.
 
+When the active TTS backend supports singing, the input placeholder asks for
+CESN notation and the ordinary voice button is disabled because the backend
+uses a dedicated singing voice role. `/help` adds a short CESN syntax glossary
+for language, tempo and scale, notes, rests, syllable patterns, tuplets, singer
+selection, and comments. See [CESN format and parsing](../formats/cesn.md) for
+the complete notation reference.
+
 The mounted WebUI delegates its `ALT+R` recording shortcut to these same
 runtime capture paths and exposes a compact voice button beside its text input;
-clicking it cycles the active voice through the shared Core switching path. It
-does not expose the TUI's settings, Record, or Stop controls. The TUI publishes
+clicking it cycles the active voice through the shared Core switching path. That
+button is disabled for singing backends, which accept CESN input instead. The
+WebUI does not expose the TUI's settings, Record, or Stop controls. The TUI publishes
 timed status, theme, marquee, and resource-page updates through the CEDTS
 frontend channel so the browser does not maintain an independent timer state;
 browser polling is only a reconnect fallback.

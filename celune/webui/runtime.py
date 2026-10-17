@@ -10,41 +10,41 @@ import asyncio
 import datetime
 import contextlib
 from html import escape
-from typing import Union, Optional, cast
 from pathlib import Path
-from collections.abc import Callable, Iterator
 from importlib.resources import files
+from typing import Union, Optional, cast
+from collections.abc import Callable, Iterator
 
 import numpy as np
 import gradio as gr
 import soundfile as sf
 from fastapi import HTTPException
 
-from .. import api as _api
-from ..ui import resources as ui_resources
 from ..i18n import string
-from ..paths import project_root, main_window_log_path
+from .. import api as _api
 from ..theme import colors
-from ..utils import available, format_error_message
 from ..ui.app import CeluneUI
-from ..binding import install_module_functions
-from ..cedts.ui import UiTimedUpdate, ui_timed_update_channel
-from ..playback import current_playback_status
-from ..constants import BASE_SR, APP_NAME
-from ..typing.api import WEBUI_UNSET as _WEBUI_UNSET
-from ..typing.api import TaskStatus, WebUiUpdate
-from ..typing.api import WebUiUnset as _WebUiUnset
-from ..persona.impl import persona_enabled, persona_talkback_enabled
-from ..typing.events import EventName, EventCallback
-from ..typing.aliases import LogLevel, AudioChunks
-from ..typing.pipeline import SpeechStreamQueue
-from ..extensions.events import EventDispatcher
 from ..dataclasses.events import (
     AgentTaskFinishedEvent,
     AgentChoiceRequestedEvent,
     AgentTaskStateChangedEvent,
     AgentApprovalRequestedEvent,
 )
+from ..constants import BASE_SR, APP_NAME
+from ..ui import resources as ui_resources
+from ..binding import install_module_functions
+from ..playback import current_playback_status
+from ..extensions.events import EventDispatcher
+from ..typing.pipeline import SpeechStreamQueue
+from ..typing.api import TaskStatus, WebUiUpdate
+from ..typing.aliases import LogLevel, AudioChunks
+from ..typing.api import WebUiUnset as _WebUiUnset
+from ..utils import available, format_error_message
+from ..typing.api import WEBUI_UNSET as _WEBUI_UNSET
+from ..typing.events import EventName, EventCallback
+from ..paths import project_root, main_window_log_path
+from ..cedts.ui import UiTimedUpdate, ui_timed_update_channel
+from ..persona.impl import persona_enabled, persona_talkback_enabled
 
 npt = np.typing
 
@@ -589,6 +589,7 @@ def _wrap_celune_callbacks(celune: _api.Celune) -> None:
             locked
             or len(celune.voices) < 2
             or not bool(celune.current_voice or celune.voices)
+            or getattr(getattr(celune, "backend", None), "singing", False)
         )
         original_voice_lock_state(locked)
 
@@ -626,7 +627,11 @@ def _sync_webui_runtime_locks(celune: _api.Celune, *, locked: bool) -> None:
         has_voice,
     )
     _api.webui_voice_locked = (
-        locked or len(celune.voices) < 2 or celune.is_in_tutorial or not has_voice
+        locked
+        or len(celune.voices) < 2
+        or celune.is_in_tutorial
+        or not has_voice
+        or getattr(getattr(celune, "backend", None), "singing", False)
     )
 
 
@@ -1036,9 +1041,14 @@ def _voice_button_update() -> WebUiUpdate:
         celune.voices[0] if celune.voices else "No Voice Set"
     )
     interactive = (
-        not _api.webui_voice_locked and len(celune.voices) >= 2 and has_voice
+        not _api.webui_voice_locked
+        and len(celune.voices) >= 2
+        and has_voice
+        and not getattr(getattr(celune, "backend", None), "singing", False)
         if getattr(celune, "_webui_callbacks_wrapped", False)
-        else len(celune.voices) >= 2 and not celune.is_in_tutorial
+        else len(celune.voices) >= 2
+        and not celune.is_in_tutorial
+        and not getattr(getattr(celune, "backend", None), "singing", False)
     )
     return gr.update(
         value=voice_name.capitalize(),
@@ -1106,6 +1116,8 @@ def _webui_input_placeholder(
         return string("ui.wait_placeholder")
     if _webui_vc_mode_active(celune):
         return string("ui.voice_changer_placeholder")
+    if getattr(getattr(celune, "backend", None), "singing", False):
+        return string("ui.cesn_input_placeholder")
     if _webui_persona_input_available(celune):
         return string("ui.say_placeholder")
     return string("ui.input_placeholder")

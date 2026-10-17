@@ -9,8 +9,8 @@ import textwrap
 from typing import Optional, cast
 from collections.abc import Callable, Iterator, Awaitable
 
-import gradio as gr
 import numpy as np
+import gradio as gr
 import soundfile as sf
 from fastapi.responses import JSONResponse
 
@@ -375,6 +375,8 @@ def _webui_cycle_voice() -> tuple[
 ]:
     """Cycle to the next available Celune voice from the browser UI."""
     celune = _api.require_celune()
+    if getattr(getattr(celune, "backend", None), "singing", False):
+        return _webui_snapshot()
     if len(celune.voices) < 2 or not bool(celune.current_voice or celune.voices):
         return _webui_snapshot()
 
@@ -402,6 +404,9 @@ def _webui_cycle_voice() -> tuple[
 
 def _webui_voice_catalog(celune: _api.Celune) -> tuple[tuple[str, str], ...]:
     """Return readable browser choices for every available voice-pack entry."""
+    if getattr(getattr(celune, "backend", None), "singing", False):
+        return ()
+
     from ..cevoice import (
         CEVoice,
         CEVoiceError,
@@ -500,6 +505,9 @@ def _webui_select_voice(
     """Select one voice through the same asynchronous core switch as the TUI."""
     celune = _api.bound_celune
     if celune is None or not name:
+        return _webui_snapshot()
+    if getattr(getattr(celune, "backend", None), "singing", False):
+        _append_webui_log(string("celune.singing_voice_change_unavailable"), "warning")
         return _webui_snapshot()
     try:
         selection = json.loads(name)

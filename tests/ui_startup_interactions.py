@@ -21,16 +21,6 @@ from textual import events
 from textual.widget import Widget
 from textual.widgets import Label, RichLog, TextArea, ProgressBar
 
-from celune.i18n import string
-from celune.theme import colors
-from celune.utils import discard
-from celune.celune import Celune
-from celune.config import Config
-from celune.ui import app as ui_app
-from tests.support import FakeBackend
-from celune.ui.theme import severity_color
-from celune.ui import resources as ui_resources
-from celune.typing.common import JSONSerializable
 from celune.ui.app import (
     Button,
     CeluneUI,
@@ -38,6 +28,16 @@ from celune.ui.app import (
     ButtonActions,
     ProgressLabel,
 )
+from celune.i18n import string
+from celune.theme import colors
+from celune.celune import Celune
+from celune.config import Config
+from celune.utils import discard
+from celune.ui import app as ui_app
+from tests.support import FakeBackend
+from celune.ui.theme import severity_color
+from celune.ui import resources as ui_resources
+from celune.typing.common import JSONSerializable
 
 from .ui_startup_foundation import TestUIStartup as _TestUIStartup
 
@@ -1139,6 +1139,26 @@ class TestUIStartup(_TestUIStartup):
         )
 
         assert ui.normal_input_placeholder() == string("ui.voice_changer_placeholder")
+
+    def test_placeholder_requests_cesn_for_singing_backend(self) -> None:
+        """Use a CESN-specific prompt when the active backend sings."""
+        ui = CeluneUI()
+        ui.input_box = TextArea()
+        ui.style_button = VoiceButton(
+            "Voice",
+            actions=ButtonActions(press=False, hold=False),
+        )
+        ui.resources = cast(Label, None)
+        ui.celune = cast(
+            Celune,
+            SimpleNamespace(
+                config={},
+                backend=SimpleNamespace(singing=True),
+                vision=SimpleNamespace(),
+            ),
+        )
+
+        assert ui.normal_input_placeholder() == string("ui.cesn_input_placeholder")
 
     def test_refresh_vc_controls_hides_mode_button_outside_voice_conversion_mode(
         self,

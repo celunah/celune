@@ -28,9 +28,9 @@ from celune.pipeline import (
     convert_audio_input,
 )
 from celune import i18n, cevoice
-from celune.utils import discard
 from celune.celune import Celune
 from celune.config import Config
+from celune.utils import discard
 from celune.typing.locks import (
     ComponentLockName,
     ComponentLockOwner,
@@ -945,6 +945,19 @@ class TestCeluneCore(CeluneTestCase):
         assert celune._prepare_voice_change("bold")
         assert not celune.loaded
         assert not celune.model_ready.is_set()
+
+    def test_singing_backend_rejects_speaking_voice_changes(self) -> None:
+        """Keep ordinary voice changes away from singing backends."""
+        celune = self._make_celune({})
+        celune.backend.singing = True
+        celune.loaded = True
+        celune.model_ready.set()
+        celune.change_input_state_callback = mock.Mock()
+
+        assert not celune._prepare_voice_change("bold")
+        assert celune.loaded
+        assert celune.model_ready.is_set()
+        celune.change_input_state_callback.assert_not_called()
 
     def test_fatal_glow_marks_runtime_error_state(self) -> None:
         """Verify fatal glow always stamps Celune into the error state."""

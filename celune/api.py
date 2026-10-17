@@ -18,7 +18,6 @@ import tempfile
 import ipaddress
 import threading
 import contextlib
-
 from typing import (
     Union,
     Literal,
@@ -109,8 +108,8 @@ from .cevoice import default_loader
 from .webui import runtime as webui
 from .typing.aliases import LogLevel
 from .audio.dsp import resample_audio
-from .webui import actions as webactions
 from .constants import BASE_SR, APP_NAME
+from .webui import actions as webactions
 from .registry.types import ModelMetadata
 from .ui import resources as ui_resources
 from .typing.common import JSONSerializable
@@ -1341,7 +1340,10 @@ def bind_celune(celune: Celune) -> None:
         has_voice,
     )
     webui_voice_locked = (
-        len(celune.voices) < 2 or celune.is_in_tutorial or not has_voice
+        len(celune.voices) < 2
+        or celune.is_in_tutorial
+        or not has_voice
+        or getattr(getattr(celune, "backend", None), "singing", False)
     )
     _seed_webui_logs()
     _wrap_celune_callbacks(celune)
@@ -2027,6 +2029,15 @@ async def voice(body: VoiceRequest) -> Union[ActionResponse, JSONResponse]:
     """
     celune = require_celune()
     api_log("VOICE", body.voice_name)
+
+    if getattr(getattr(celune, "backend", None), "singing", False):
+        return JSONResponse(
+            status_code=409,
+            content={
+                "error": "unsupported_operation",
+                "message": string("celune.singing_voice_change_unavailable"),
+            },
+        )
 
     if body.voice_name not in celune.voices:
         return JSONResponse(
