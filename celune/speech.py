@@ -7,14 +7,16 @@ import os
 import time
 import queue
 import pathlib
-from collections.abc import Callable
 from typing import TYPE_CHECKING, Union, Optional, cast
+from collections.abc import Callable
 
 import numpy as np
 import soundfile as sf
 from iso639 import Lang
 from iso639.exceptions import InvalidLanguageValue, DeprecatedLanguageValue
 
+from .vc import VC_PLAYBACK_GAIN, normalize_vc_audio
+from .i18n import string
 from .utils import (
     rng_replace,
     is_april_fools,
@@ -22,6 +24,8 @@ from .utils import (
     format_error_message,
     normalize_special_characters,
 )
+from .binding import install_class_functions, install_module_functions
+from .cevoice import default_loader
 from .pipeline import (
     close_stream,
     _format_stat_duration,
@@ -43,12 +47,16 @@ from .playback import (
     _clear_playback_source_status,
     _register_overlay_playback_state,
 )
-from .i18n import string
+from .audio.dsp import split, resample_audio
+from .constants import BASE_SR, APP_NAME
+from .exceptions import NotAvailableError
 from .conversation import (
     _store_persona_memories,
     _classify_persona_memories,
 )
-from .cevoice import default_loader
+from .persona.impl import compact_persona_history
+from .typing.aliases import AudioChunk
+from .typing.pipeline import SpeechStreamQueue
 from .dataclasses.pipeline import (
     AudioOutput,
     SpeechRequest,
@@ -57,14 +65,6 @@ from .dataclasses.pipeline import (
     VoiceConversionRequest,
     CaptionAlignmentSection,
 )
-from .typing.aliases import AudioChunk
-from .constants import BASE_SR, APP_NAME
-from .exceptions import NotAvailableError
-from .audio.dsp import split, resample_audio
-from .typing.pipeline import SpeechStreamQueue
-from .persona.impl import compact_persona_history
-from .vc import VC_PLAYBACK_GAIN, normalize_vc_audio
-from .binding import install_class_functions, install_module_functions
 
 if TYPE_CHECKING:
     from .celune import Celune
@@ -752,11 +752,14 @@ def _queue_speech_after_ready(
     if engine.exit_requested:
         return False
 
-    speech_text = normalize_special_characters(text, for_tts=True)
+    singing_backend = bool(getattr(engine.backend, "singing", False))
+    speech_text = (
+        text if singing_backend else normalize_special_characters(text, for_tts=True)
+    )
     preserved_display_text = display_text if display_text is not None else text
-    language_meta = detect_language(
-        speech_text,
-        list(engine.backend.supported_languages),
+    supported_languages = list(engine.backend.supported_languages)
+    language_meta = (
+        None if singing_backend else detect_language(speech_text, supported_languages)
     )
     requested_language = engine.language
     backend_name = str(getattr(engine.backend, "name", "")).strip().lower()
@@ -766,11 +769,16 @@ def _queue_speech_after_ready(
         or requested_language.strip().lower() == "auto"
     ):
         # Celune usually handles language detection, but Qwen has its own handler
-        requested_language = (
-            "Auto" if backend_name == "qwen3" else language_meta["language"]
-        )
+        if backend_name == "qwen3":
+            requested_language = "Auto"
+        elif language_meta is not None:
+            requested_language = language_meta["language"]
+        elif supported_languages:
+            requested_language = supported_languages[0]
+        else:
+            requested_language = "en"
 
-    if not language_meta["supported"]:
+    if language_meta is not None and not language_meta["supported"]:
         # "zh-cn" has to be clipped to just "zh" to be a valid language code
         try:
             language = Lang(language_meta["language"][:2]).name
@@ -785,13 +793,18 @@ def _queue_speech_after_ready(
             string("pipeline.may_not_say_properly", app_name=APP_NAME), "warning"
         )
 
-    if is_april_fools() and os.getenv("CELUNE_DISABLE_APRIL_FOOLS") not in {
-        "1",
-        "true",
-        "on",
-        "yes",
-        "enabled",
-    }:
+    if (
+        not singing_backend
+        and is_april_fools()
+        and os.getenv("CELUNE_DISABLE_APRIL_FOOLS")
+        not in {
+            "1",
+            "true",
+            "on",
+            "yes",
+            "enabled",
+        }
+    ):
         engine.log(string("pipeline.april_fools"))
         speech_text = rng_replace(
             speech_text,
@@ -831,7 +844,9 @@ def _queue_speech_after_ready(
                         ),
                         generation=engine.speech_generation,
                         synthesis_sections=tuple(
-                            normalize_special_characters(section, for_tts=True)
+                            section
+                            if singing_backend
+                            else normalize_special_characters(section, for_tts=True)
                             for section in synthesis_sections
                         ),
                         audio_capture_queue=audio_capture_queue,

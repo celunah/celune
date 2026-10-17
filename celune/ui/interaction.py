@@ -6,21 +6,21 @@ from __future__ import annotations
 import os
 import re
 import sys
+import queue as queue_module
 import shlex
 import types
 import ctypes
 import asyncio
 import threading
 import contextlib
-from uuid import uuid4
 from copy import deepcopy
-import queue as queue_module
-from collections.abc import Callable, Iterator
+from uuid import uuid4
 from typing import TYPE_CHECKING, Optional, cast
+from collections.abc import Callable, Iterator
 
 from . import app as _app
-from ..constants import SIGTSTP, APP_NAME
 from ..binding import install_class_functions
+from ..constants import SIGTSTP, APP_NAME
 
 if TYPE_CHECKING:
     from ..vc import VCDebugSaveResult
@@ -1550,6 +1550,9 @@ def error(self, message: str) -> None:
         return
     self._hide_caption_widgets()
     self.safe_status(message, "error")
+    celune = self.celune
+    if celune is not None and celune.cur_state == "idle" and not celune.locked:
+        self.change_input_state(locked=False)
 
 
 def on_text_area_changed(self, event: _app.TextArea.Changed) -> None:

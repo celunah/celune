@@ -9,41 +9,40 @@ import queue
 import asyncio
 import tempfile
 import threading
+from types import TracebackType, SimpleNamespace
+from typing import Self, Optional, cast
 from pathlib import Path
 from unittest import mock
 from collections.abc import Iterator
-from typing import Self, Optional, cast
-from types import TracebackType, SimpleNamespace
 
-import pytest
 import numpy as np
+import pytest
 import numpy.typing as npt
 
+from celune import speech, pipeline
+from celune import conversation as conversation_module
 from celune.utils import discard
 from celune.celune import Celune
-from celune import speech, pipeline
-from celune.constants import PipelineStates
-from celune.typing.aliases import AudioChunk
-from celune.typing.locks import ComponentLockName
-from celune import conversation as conversation_module
-from celune.typing.common import JSON, JSONSerializable
-from celune.persona.capabilities import PersonaCapabilities
-from celune.typing.agent import (
-    AgentTask,
-    AgentContext,
-    AgentRequest,
-)
-from celune.dataclasses.pipeline import (
-    SpeechRequest,
-    AudioInputRequest,
-)
 from celune.cevoice import (
     CEVoicePersona,
     PersonaIdentity,
     PersonaStyleValues,
 )
+from celune.constants import PipelineStates
+from celune.typing.agent import (
+    AgentTask,
+    AgentContext,
+    AgentRequest,
+)
+from celune.typing.locks import ComponentLockName
+from celune.typing.common import JSON, JSONSerializable
+from celune.typing.aliases import AudioChunk
+from celune.dataclasses.pipeline import (
+    SpeechRequest,
+    AudioInputRequest,
+)
+from celune.persona.capabilities import PersonaCapabilities
 
-from .platform import LINUX_ONLY, WINDOWS_ONLY
 from .support import (
     FakeStream,
     FakeVCBackend,
@@ -52,6 +51,7 @@ from .support import (
     make_voice_loader,
     make_pipeline_engine,
 )
+from .platform import LINUX_ONLY, WINDOWS_ONLY
 
 
 class TestPipeline(CeluneTestCase):
@@ -807,6 +807,32 @@ class TestPipelineAsync(CeluneAsyncTestCase):
             "status, ok C drive, Users, user foo underscore bar dot py",
         )
         self.assertEqual(request.display_text, raw_text)
+
+    def test_queue_speech_preserves_cesn_for_singing_backend(self) -> None:
+        """Preserve CESN tags and lyrics through speech request admission."""
+        engine = make_pipeline_engine()
+        engine.backend.singing = True
+        notation = (
+            "[lang:en]\n[bpm:120,key:c,scale:major]\n[c4:4,d4:4,e4:2] I love you."
+        )
+
+        with mock.patch("celune.speech.detect_language") as detect_language:
+            self.assertTrue(
+                speech._queue_speech_request(
+                    cast(Celune, engine),
+                    notation,
+                    display_text=notation,
+                    allow_tutorial=False,
+                    synthesis_sections=(notation,),
+                )
+            )
+
+        request = engine.text_queue.get_nowait()
+        self.assertEqual(request.text, notation)
+        self.assertEqual(request.display_text, notation)
+        self.assertEqual(request.synthesis_sections, (notation,))
+        self.assertEqual(request.language, "en")
+        detect_language.assert_not_called()
 
     def test_handle_audio_input_accepts_and_ignores_audio_by_default(self) -> None:
         """Verify engine-level audio input is a safe explicit no-op in TTS mode."""

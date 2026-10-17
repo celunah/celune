@@ -9,18 +9,25 @@ import asyncio
 import logging
 import tempfile
 import threading
-from pathlib import Path
-from unittest import mock
 from types import SimpleNamespace
 from typing import Optional, cast
+from pathlib import Path
+from unittest import mock
 from collections.abc import Callable
 
-import pytest
 import numpy as np
+import pytest
 from textual import events
 from textual.widget import Widget
 from textual.widgets import Label, RichLog, TextArea, ProgressBar
 
+from celune.ui import app as ui_app
+from celune.ui import resources as ui_resources
+from celune.i18n import string
+from celune.theme import colors
+from celune.utils import discard
+from celune.celune import Celune
+from celune.config import Config
 from celune.ui.app import (
     Button,
     CeluneUI,
@@ -28,15 +35,8 @@ from celune.ui.app import (
     ButtonActions,
     ProgressLabel,
 )
-from celune.i18n import string
-from celune.theme import colors
-from celune.celune import Celune
-from celune.config import Config
-from celune.utils import discard
-from celune.ui import app as ui_app
 from tests.support import FakeBackend
 from celune.ui.theme import severity_color
-from celune.ui import resources as ui_resources
 from celune.typing.common import JSONSerializable
 
 from .ui_startup_foundation import TestUIStartup as _TestUIStartup
@@ -1052,6 +1052,40 @@ class TestUIStartup(_TestUIStartup):
         assert not ui.style_button.has_class("-actions-disabled")
         available.assert_called_once_with()
         thread_cls.return_value.start.assert_called_once()
+
+    def test_idle_error_restores_singing_input_placeholder(self) -> None:
+        """Restore the active CESN prompt after a rejected singing request."""
+        ui = CeluneUI()
+        ui.cur_state = "idle"
+        ui.input_box = TextArea(placeholder=string("ui.wait_placeholder"))
+        ui.style_button = VoiceButton(
+            "Voice",
+            actions=ButtonActions(press=False, hold=False),
+        )
+        ui.resources = cast(Label, None)
+        ui.safe_status = mock.Mock()
+        ui.update_resources = mock.Mock()
+        ui.refresh_vc_controls = mock.Mock()
+        ui._schedule_sleep_timer = mock.Mock()
+        ui._refresh_persona_availability = mock.Mock()
+        ui._hide_caption_widgets = mock.Mock()
+        ui.celune = cast(
+            Celune,
+            SimpleNamespace(
+                backend=SimpleNamespace(singing=True),
+                config={},
+                cur_state="idle",
+                locked=False,
+            ),
+        )
+
+        ui.error(string("cesn.no_notation_found"))
+
+        assert ui.input_box.placeholder == string("ui.cesn_input_placeholder")
+        assert ui.style_button.actions == ButtonActions(press=True, hold=True)
+        ui.safe_status.assert_called_once_with(
+            string("cesn.no_notation_found"), "error"
+        )
 
     def test_change_input_state_reveals_vc_mode_after_backend_switch(self) -> None:
         """Verify the VC mode control appears after switching to voice conversion."""

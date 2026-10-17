@@ -40,8 +40,11 @@ When the active TTS backend supports singing, the input placeholder asks for
 CESN notation and the ordinary voice button is disabled because the backend
 uses a dedicated singing voice role. `/help` adds a short CESN syntax glossary
 for language, tempo and scale, notes, rests, syllable patterns, tuplets, singer
-selection, and comments. See [CESN format and parsing](../formats/cesn.md) for
-the complete notation reference.
+selection, and comments. CESN input is preserved as written through request
+submission so its directives and note tags reach the parser intact. If a request
+is rejected before generation while the engine is idle, the error remains visible
+and the input prompt returns to the active mode. See
+[CESN format and parsing](../formats/cesn.md) for the complete notation reference.
 
 The mounted WebUI delegates its `ALT+R` recording shortcut to these same
 runtime capture paths and exposes a compact voice button beside its text input;
