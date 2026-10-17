@@ -10,37 +10,39 @@ import json
 import time
 import shutil
 import importlib
+from typing import Union, Optional, Protocol, cast
 from pathlib import Path
-from dataclasses import dataclass, field
-from typing import Optional, Protocol, Union, cast
-from collections.abc import Callable, Iterator, Mapping
+from dataclasses import field, dataclass
+from collections.abc import Mapping, Callable, Iterator
 
-import torch
 import numpy as np
+import torch
 from huggingface_hub import snapshot_download
 
+from .base import CeluneBackend, _to_numpy_audio, cached_hf_snapshot_path
 from ...cesn import (
+    CESNSection,
     CESNNotePair,
     CESNRestEvent,
-    CESNSection,
-    _resolve_active_singer,
     parse_cesn,
-)
-from ...paths import (
-    app_data_dir,
-    backend_environments_dir,
-    huggingface_hub_cache_dir,
-    huggingface_progress,
-)
-from ...cevoice import (
-    SINGING_VOICE_NAME,
-    V5_VERSION,
-    CEVoice,
-    CEVoiceLoader,
-    bundle_character_name,
-    default_loader,
+    _resolve_active_singer,
 )
 from ...i18n import string
+from ...paths import (
+    app_data_dir,
+    huggingface_progress,
+    backend_environments_dir,
+    huggingface_hub_cache_dir,
+)
+from ...cevoice import (
+    V5_VERSION,
+    SINGING_VOICE_NAME,
+    CEVoice,
+    CEVoiceLoader,
+    default_loader,
+    bundle_character_name,
+)
+from ...singing import _contains_cesn_note_event
 from ...exceptions import (
     BackendError,
     CEVoiceError,
@@ -48,17 +50,15 @@ from ...exceptions import (
     InvalidCharacterError,
 )
 from ...registry.tts import (
-    SOULX_SINGER_CODE_REPOSITORY,
-    SOULX_SINGER_CODE_REVISION,
+    TTS_DEFAULT_VOICE,
     SOULX_SINGER_MODEL_ID,
     SOULX_SINGER_REVISION,
-    TTS_DEFAULT_VOICE,
+    SOULX_SINGER_CODE_REVISION,
+    SOULX_SINGER_CODE_REPOSITORY,
 )
 from ...typing.common import JSON
 from ...typing.aliases import AudioChunk
-from ...singing import _contains_cesn_note_event
 from ...registry.consent import require_model_consent
-from .base import CeluneBackend, cached_hf_snapshot_path, _to_numpy_audio
 
 __all__ = ["SoulXSinger"]
 
@@ -408,6 +408,7 @@ class SoulXSinger(CeluneBackend[_SoulXRuntime]):
     """Score-controlled singing backend driven by a CECHAR v5 ``sing`` voice."""
 
     name = "soulxsinger"
+    chunk_rate = 1.0
     singing = True
     uses_voice_bundles = True
     supported_languages = ("en",)

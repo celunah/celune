@@ -3,11 +3,11 @@
 
 import json
 import struct
-from uuid import uuid4
-from pathlib import Path
 from math import isfinite
-from dataclasses import dataclass
+from uuid import uuid4
 from typing import IO, Optional, cast
+from pathlib import Path
+from dataclasses import dataclass
 from collections.abc import Mapping, Sequence
 
 import numpy as np
@@ -20,13 +20,13 @@ from ..exceptions import (
     CEDTSPayloadError,
     CEDTSProtocolError,
 )
+from ..typing.common import JSONSerializable
 from ..typing.worker import (
     WorkerValue,
     WorkerMessage,
     WorkerControlMessage,
     WorkerPayloadDescriptor,
 )
-from ..typing.common import JSONSerializable
 from ..dataclasses.pipeline import AudioOutput, VoiceConversionRequest
 
 __all__ = [
@@ -94,6 +94,7 @@ _CEDTS_AUDIO_PEAK = np.float32(0.95)
 _TENSOR_MEDIA_TYPES = frozenset({"application/x-tensor"})
 _VALID_DTYPES = frozenset({"bool", "float32", "float64", "int8", "int16", "uint8"})
 CEDTS_VERSION = (1, 1)
+_WORKER_TRACEBACK_MARKER = "\n\n--- CEDTS worker traceback ---\n"
 CONTROL_PACKET_KINDS = frozenset(
     {
         "hello",

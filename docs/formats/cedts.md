@@ -188,6 +188,13 @@ waiter, and emits the failure through Celune's log callback immediately. The
 worker is then torn down; the caller does not wait for the operation's normal
 timeout boundary.
 
+Worker exceptions and JSON response-encoding failures are returned to the
+requesting core as correlated `error` packets when the control stream remains
+writable. The proxy raises the worker error in the requesting operation and
+preserves the worker traceback as an exception note. At debug log level,
+Celune writes both the core traceback and that worker traceback to
+`celune_traceback.txt`.
+
 ## Errors and implementation API
 
 The transport defines these exception categories:

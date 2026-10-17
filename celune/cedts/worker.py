@@ -9,24 +9,28 @@ import time
 import argparse
 import threading
 import traceback
-from contextlib import suppress
 from typing import IO, Optional, cast
+from contextlib import suppress
 from collections import OrderedDict, abc
 
+from ..vram import is_cuda_out_of_memory, release_cuda_after_oom
+from ..paths import configure_numba_cache
+from ..cevoice import select_voice_bundle
 from .protocol import (
+    CEDTS_VERSION,
+    WORKER_CAPABILITIES,
+    DEFAULT_CEDTS_LIMITS,
+    SUPPORTED_OPERATIONS,
+    _CALL_ARGUMENT_SCHEMAS,
+    _WORKER_TRACEBACK_MARKER,
     CEDTSLimits,
     build_packet,
     send_message,
     send_payloads,
-    encode_message,
     decode_message,
+    encode_message,
     receive_message,
     receive_payloads,
-    SUPPORTED_OPERATIONS,
-    WORKER_CAPABILITIES,
-    CEDTS_VERSION,
-    DEFAULT_CEDTS_LIMITS,
-    _CALL_ARGUMENT_SCHEMAS,
     limits_from_capabilities,
 )
 from ..exceptions import (
@@ -36,6 +40,7 @@ from ..exceptions import (
     CEDTSPayloadError,
     CEDTSProtocolError,
 )
+from ..typing.common import JSONSerializable
 from ..typing.worker import (
     WorkerValue,
     WorkerMessage,
@@ -43,19 +48,15 @@ from ..typing.worker import (
     WorkerResponse,
     WorkerPayloadDescriptor,
 )
+from ..typing.aliases import LogLevel
 from ..typing.backends import (
     BackendModel,
     BackendArguments,
     BackendDescription,
     _BackendRuntime,
 )
-from ..typing.aliases import LogLevel
-from ..cevoice import select_voice_bundle
-from ..paths import configure_numba_cache
-from ..typing.common import JSONSerializable
-from ..dataclasses.pipeline import VoiceConversionRequest
-from ..vram import is_cuda_out_of_memory, release_cuda_after_oom
 from ..backends.environment import BackendManifest, backend_manifest
+from ..dataclasses.pipeline import VoiceConversionRequest
 
 _WORKER_STDERR = sys.stderr
 _MESSAGE_ID_REPLAY_WINDOW = 4096
@@ -297,13 +298,32 @@ def _worker_log(
     print(f"{prefix} {message}", file=_WORKER_STDERR, flush=True)
 
 
-def _error_response(error: Exception) -> WorkerResponse:
-    """Build a response with the worker type name as inert diagnostic data."""
+def _error_response(
+    error: Exception,
+    *,
+    limits: CEDTSLimits = DEFAULT_CEDTS_LIMITS,
+) -> WorkerResponse:
+    """Build a worker error response with bounded traceback details when available."""
     traceback.print_exc(file=_WORKER_STDERR)
     error_type = type(error)
+    message = str(error)
+    if error.__traceback__ is not None:
+        worker_traceback = "".join(
+            traceback.format_exception(type(error), error, error.__traceback__)
+        )
+        available_length = max(
+            0,
+            limits.max_string_length - len(message) - len(_WORKER_TRACEBACK_MARKER),
+        )
+        if available_length:
+            message = (
+                f"{message}{_WORKER_TRACEBACK_MARKER}"
+                f"{worker_traceback[:available_length]}"
+            )
+    message = message[: limits.max_string_length]
     return {
         "ok": False,
-        "error": str(error),
+        "error": message,
         "error_type": f"{error_type.__module__}.{error_type.__qualname__}",
     }
 
@@ -684,6 +704,52 @@ def _send_message(
             send()
 
 
+def _send_request_response(
+    protocol_stream: IO[bytes],
+    binary_stream: Optional[IO[bytes]],
+    kind: str,
+    operation: str,
+    response: WorkerResponse,
+    reply_to: str,
+    send_lock: threading.Lock,
+    limits: CEDTSLimits,
+) -> None:
+    """Send a request result, converting invalid JSON responses into errors."""
+    packet = build_packet(
+        kind,
+        operation,
+        cast(dict[str, WorkerValue], response),
+        reply_to=reply_to,
+    )
+    try:
+        _send_message(
+            protocol_stream,
+            binary_stream,
+            packet,
+            send_lock,
+            limits=limits,
+        )
+    except CEDTSProtocolError as error:
+        if kind != "response":
+            raise
+        error_packet = build_packet(
+            "error",
+            operation,
+            cast(
+                dict[str, WorkerValue],
+                _error_response(error, limits=limits),
+            ),
+            reply_to=reply_to,
+        )
+        _send_message(
+            protocol_stream,
+            binary_stream,
+            error_packet,
+            send_lock,
+            limits=limits,
+        )
+
+
 def _send_error(
     protocol_stream: IO[bytes],
     binary_stream: IO[bytes],
@@ -701,7 +767,7 @@ def _send_error(
         build_packet(
             "error",
             operation,
-            cast(dict[str, WorkerValue], _error_response(error)),
+            cast(dict[str, WorkerValue], _error_response(error, limits=limits)),
             reply_to=reply_to,
         ),
         send_lock,
@@ -979,7 +1045,7 @@ def main() -> int:
         except Exception as error:
             if is_cuda_out_of_memory(error):
                 release_cuda_after_oom()
-            response = _error_response(error)
+            response = _error_response(error, limits=effective_limits)
             response_kind = "error"
             _worker_log(
                 "[IPC] response operation="
@@ -1016,17 +1082,15 @@ def main() -> int:
                 active_request_terminal = False
                 active_thread = None
         try:
-            _send_message(
+            _send_request_response(
                 protocol_stream,
                 binary_output,
-                build_packet(
-                    response_kind,
-                    cast(str, request.get("operation")),
-                    cast(dict[str, WorkerValue], response),
-                    reply_to=request_id,
-                ),
+                response_kind,
+                cast(str, request.get("operation")),
+                cast(WorkerResponse, response),
+                request_id,
                 send_lock,
-                limits=effective_limits,
+                effective_limits,
             )
         finally:
             with active_request_lock:

@@ -9,11 +9,10 @@ import select
 import threading
 import subprocess
 from uuid import uuid4
-from contextlib import suppress
-from dataclasses import dataclass
 from typing import IO, Optional, cast
-from collections import OrderedDict, deque
-from collections.abc import Callable, Iterator
+from contextlib import suppress
+from collections import OrderedDict, abc, deque
+from dataclasses import dataclass
 
 from ..paths import (
     project_root,
@@ -21,10 +20,13 @@ from ..paths import (
     configure_numba_cache,
     huggingface_hub_cache_dir,
 )
+from ..utils import format_error_message
+from ..cevoice import active_bundle_path
 from .protocol import (
     CEDTS_VERSION,
     CORE_CAPABILITIES,
     DEFAULT_CEDTS_LIMITS,
+    _WORKER_TRACEBACK_MARKER,
     CEDTSLimits,
     build_packet,
     send_message,
@@ -48,29 +50,27 @@ from ..exceptions import (
     CEDTSTimeoutError,
     CEDTSProtocolError,
 )
+from ..typing.common import JSON
 from ..typing.worker import (
     WorkerValue,
     WorkerMessage,
     WorkerResponse,
     WorkerPayloadDescriptor,
 )
+from ..typing.aliases import LogLevel, LogCallback
 from ..typing.backends import (
     BackendArguments,
     BackendGeneration,
     BackendDescription,
     BackendArgumentValue,
 )
-from ..typing.common import JSON
+from ..backends.vc.base import CeluneVCBackend
+from ..backends.tts.base import CeluneBackend
 from ..backends.environment import (
     BackendManifest,
     BackendEnvironment,
     BackendEnvironmentManager,
 )
-from ..cevoice import active_bundle_path
-from ..utils import format_error_message
-from ..backends.tts.base import CeluneBackend
-from ..backends.vc.base import CeluneVCBackend
-from ..typing.aliases import LogLevel, LogCallback
 from ..dataclasses.pipeline import AudioOutput, VoiceConversionRequest
 
 __all__ = ["RemoteBackendProxy", "RemoteModelHandle", "RemoteVCBackendProxy"]
@@ -237,7 +237,7 @@ def _set_windows_handle_inheritable(handle: int, inheritable: bool) -> None:
 
 
 def _emit_log(
-    callback: Callable[..., None],
+    callback: abc.Callable[..., None],
     message: str,
     severity: str = "info",
     loglevel: LogLevel = "info",
@@ -255,7 +255,10 @@ _WORKER_ERROR_CODE = "backend_worker_error"
 
 
 def _worker_exception(error_type: Optional[str], message: str) -> Exception:
-    """Convert worker error data into a typed CEDTS or backend error."""
+    """Rebuild a typed worker error and attach its transported traceback as a note."""
+    worker_traceback = ""
+    if _WORKER_TRACEBACK_MARKER in message:
+        message, _, worker_traceback = message.rpartition(_WORKER_TRACEBACK_MARKER)
     cedts_error_types: dict[str, type[CEDTSError]] = {
         f"{error_class.__module__}.{error_class.__qualname__}": error_class
         for error_class in (
@@ -270,14 +273,19 @@ def _worker_exception(error_type: Optional[str], message: str) -> Exception:
     cedts_error_type = cedts_error_types.get(error_type or "")
     if cedts_error_type is not None:
         if cedts_error_type is CEDTSTimeoutError:
-            return CEDTSTimeoutError("worker response", 0.0, message=message)
-        return cedts_error_type(message)
-    safe_error_type = error_type or "unknown worker error type"
-    return BackendError(
-        f"{_WORKER_ERROR_CODE} ({safe_error_type}): {message}",
-        error_code=_WORKER_ERROR_CODE,
-        error_type=error_type,
-    )
+            error = CEDTSTimeoutError("worker response", 0.0, message=message)
+        else:
+            error = cedts_error_type(message)
+    else:
+        safe_error_type = error_type or "unknown worker error type"
+        error = BackendError(
+            f"{_WORKER_ERROR_CODE} ({safe_error_type}): {message}",
+            error_code=_WORKER_ERROR_CODE,
+            error_type=error_type,
+        )
+    if worker_traceback:
+        error.add_note(f"Worker traceback:\n{worker_traceback}")
+    return error
 
 
 @dataclass(frozen=True)
@@ -294,9 +302,9 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
         self,
         manifest: BackendManifest,
         log: LogCallback,
-        fatal: Optional[Callable[[], None]] = None,
+        fatal: Optional[abc.Callable[[], None]] = None,
         environment_manager: Optional[BackendEnvironmentManager] = None,
-        event_callback: Optional[Callable[[WorkerMessage], None]] = None,
+        event_callback: Optional[abc.Callable[[WorkerMessage], None]] = None,
         **backend_kwargs: BackendArgumentValue,
     ) -> None:
         self._manifest = manifest
@@ -619,7 +627,7 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
         if callable(log_callback):
             with suppress(Exception):
                 _emit_log(
-                    cast(Callable[..., None], log_callback),
+                    cast(abc.Callable[..., None], log_callback),
                     f"[IPC] CEDTS transport error operation={operation}: {error}",
                     "error",
                 )
@@ -825,7 +833,7 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
                             if callable(log_callback):
                                 with suppress(Exception):
                                     _emit_log(
-                                        cast(Callable[..., None], log_callback),
+                                        cast(abc.Callable[..., None], log_callback),
                                         format_error_message(
                                             "[IPC] worker packet reader failed",
                                             error,
@@ -1522,7 +1530,7 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
         self,
         operation: str,
         **arguments: WorkerValue,
-    ) -> Iterator[WorkerValue]:
+    ) -> abc.Iterator[WorkerValue]:
         """Send one streaming request and yield worker values."""
         self._ensure_response_state()
         process = self._process
@@ -1804,7 +1812,7 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
         self,
         model: RemoteModelHandle,
         **kwargs: BackendArgumentValue,
-    ) -> Iterator[BackendGeneration]:
+    ) -> abc.Iterator[BackendGeneration]:
         """Generate audio by streaming worker results through the proxy."""
         arguments = dict(kwargs)
         if self.uses_voice_bundles:

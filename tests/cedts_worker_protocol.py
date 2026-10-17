@@ -9,30 +9,22 @@ import select
 import argparse
 import threading
 import subprocess
+from types import SimpleNamespace
+from typing import Optional, cast
 from pathlib import Path
 from unittest import mock
 from contextlib import suppress
-from types import SimpleNamespace
-from typing import Optional, cast
 from collections import OrderedDict, deque
 
 import numpy as np
 
 from celune.cedts import remote, worker
-from celune.backends.tts import resolve_backend
-from celune.typing.backends import (
-    _BackendRuntime,
-)
-from celune.dataclasses.pipeline import VoiceConversionRequest
+from celune.utils import format_error
 from celune.exceptions import (
     CEDTSError,
     BackendError,
 )
-from celune.backends.environment import (
-    BACKEND_MANIFESTS,
-    BackendManifest,
-    BackendEnvironment,
-)
+from celune.backends.tts import resolve_backend
 from celune.typing.worker import (
     WorkerValue,
     WorkerMessage,
@@ -48,6 +40,15 @@ from celune.cedts.protocol import (
     receive_message,
     receive_payloads,
 )
+from celune.typing.backends import (
+    _BackendRuntime,
+)
+from celune.backends.environment import (
+    BACKEND_MANIFESTS,
+    BackendManifest,
+    BackendEnvironment,
+)
+from celune.dataclasses.pipeline import VoiceConversionRequest
 
 from .platform import LINUX_ONLY, WINDOWS_ONLY
 from .backend_processes import send_no_payload_packet
@@ -56,6 +57,82 @@ from .backend_proxy_lifecycle import TestBackendEnvironment as _TestBackendEnvir
 
 class TestBackendEnvironment(_TestBackendEnvironment):
     """Exercise the CEDTS worker wire protocol in subprocesses."""
+
+    def test_worker_response_serialization_error_reaches_traceback_file(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Propagate an invalid worker response with its traceback to Celune."""
+        stream = io.BytesIO()
+        response: WorkerResponse = {
+            "ok": True,
+            "value": cast(WorkerValue, {"chunk_rate": float("nan")}),
+        }
+        with mock.patch.object(worker, "_WORKER_STDERR", io.StringIO()):
+            worker._send_request_response(
+                stream,
+                None,
+                "response",
+                "describe",
+                response,
+                "describe-request",
+                threading.Lock(),
+                worker.DEFAULT_CEDTS_LIMITS,
+            )
+
+        stream_bytes = stream.getvalue()
+        packet = receive_message(io.BytesIO(stream_bytes))
+        self.assertEqual(packet["kind"], "error")
+        self.assertEqual(packet["reply_to"], "describe-request")
+        data = cast(dict[str, WorkerValue], packet["data"])
+        proxy = object.__new__(remote.RemoteBackendProxy)
+        proxy._received_message_ids = OrderedDict()
+        proxy._worker_stderr = deque()
+        proxy._worker_stderr_lock = threading.Lock()
+        core_response = proxy._read_response(
+            cast(
+                subprocess.Popen[bytes],
+                SimpleNamespace(stdout=io.BytesIO(stream_bytes)),
+            ),
+            "describe-request",
+        )
+        error = remote._worker_exception(
+            core_response.get("error_type"),
+            cast(str, core_response.get("error")),
+        )
+        traceback_file = tmp_path / "celune_traceback.txt"
+        with mock.patch("celune.utils.traceback_path", return_value=traceback_file):
+            format_error(error, "debug")
+
+        traceback_text = traceback_file.read_text(encoding="utf-8")
+        self.assertIn("Worker traceback:", traceback_text)
+        self.assertIn("ValueError: JSON number is not finite", traceback_text)
+        self.assertIn("_send_message", traceback_text)
+        self.assertFalse(cast(bool, data["ok"]))
+
+    def test_cedts_accepts_null_cechar_singing_metadata(self) -> None:
+        """Keep CECHAR v5 null singing fields valid CEDTS JSON values."""
+        stream = io.BytesIO()
+        message = build_packet(
+            "response",
+            "describe",
+            {
+                "ok": True,
+                "value": cast(
+                    WorkerValue,
+                    {"sing": {"cfg_scale": None, "persona": None}},
+                ),
+            },
+        )
+        send_message(stream, message)
+        stream.seek(0)
+
+        decoded = receive_message(stream)
+        fields = cast(dict[str, WorkerValue], decoded["data"])
+        description = cast(dict[str, WorkerValue], fields["value"])
+        singing_voice = cast(dict[str, WorkerValue], description["sing"])
+        self.assertIsNone(singing_voice["cfg_scale"])
+        self.assertIsNone(singing_voice["persona"])
 
     @LINUX_ONLY
     def test_worker_subprocess_completes_cedts_lifecycle_without_backend_dependencies(

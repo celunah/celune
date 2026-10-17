@@ -10,36 +10,45 @@ import textwrap
 import importlib
 import threading
 import contextlib
+from types import ModuleType, SimpleNamespace
+from typing import Union, Optional, cast
 from pathlib import Path
 from unittest import mock
-from typing import Union, Optional, cast
-from types import ModuleType, SimpleNamespace
 from collections.abc import Iterator, Generator
 
+import numpy as np
 import torch
 import pytest
-import numpy as np
 import soundfile as sf
 
+from celune.cesn import CESNSinger
 from celune.i18n import string
+from celune.utils import discard
+from celune.celune import Celune
+from celune.registry import MODEL_BY_ID
 from celune.exceptions import (
+    CESNSyntaxError,
     InvalidExtensionError,
     ExtensionAlreadyRegisteredError,
-    CESNSyntaxError,
+)
+from celune.backends.vc import (
+    BACKEND_MANIFESTS as VC_BACKEND_MANIFESTS,
 )
 from celune.backends.vc import (
     resolve_vc_backend,
-    BACKEND_MANIFESTS as VC_BACKEND_MANIFESTS,
 )
-from celune.celune import Celune
-from celune.utils import discard
-from celune.cesn import CESNSinger
+from celune.backends.tts import BACKEND_MANIFESTS, resolve_backend
+from celune.registry.tts import QWEN3_DEFAULT_MODEL_ID
+from celune.typing.aliases import AudioChunk
+from celune.extensions.base import CeluneContext, CeluneExtension
 from celune.typing.backends import (
     BackendModel,
     SeedVCModelValue,
     _SeedVCRealtimeModule,
 )
-from celune.registry import MODEL_BY_ID
+from celune.backends.tts.base import CeluneBackend
+from celune.backends.vc.seedvc import CeluneSeedVCBackend
+from celune.extensions.manager import CeluneExtensionManager
 from celune.backends.tts.luxtts import (
     LuxTTS,
     _LuxTTSModel,
@@ -47,7 +56,7 @@ from celune.backends.tts.luxtts import (
     _install_vocoder_decode_guard,
     _install_cpu_duration_correction,
 )
-from celune.typing.aliases import AudioChunk
+from celune.dataclasses.pipeline import VoiceConversionRequest
 from celune.backends.tts.fireredtts3 import (
     FireRedTTS3,
     _FireRedModel,
@@ -60,13 +69,6 @@ from celune.backends.tts.soulxsinger import (
     _decode_score,
     _pitch_to_midi,
 )
-from celune.backends.tts.base import CeluneBackend
-from celune.registry.tts import QWEN3_DEFAULT_MODEL_ID
-from celune.backends.vc.seedvc import CeluneSeedVCBackend
-from celune.extensions.manager import CeluneExtensionManager
-from celune.dataclasses.pipeline import VoiceConversionRequest
-from celune.extensions.base import CeluneContext, CeluneExtension
-from celune.backends.tts import BACKEND_MANIFESTS, resolve_backend
 
 from .support import (
     FakeBackend,
@@ -123,6 +125,10 @@ class TestBackend(CeluneTestCase):
         with self.assertRaises(CESNSyntaxError) as error:
             backend.cesn_to_model("[#comment only]")
         self.assertEqual(str(error.exception), string("cesn.no_notation_found"))
+
+    def test_soulxsinger_description_uses_a_finite_chunk_rate(self) -> None:
+        """Give CEDTS a finite rate for SoulX's complete-score audio chunk."""
+        self.assertEqual(SoulXSinger.chunk_rate, 1.0)
 
     def test_soulxsinger_keeps_section_metadata_in_its_score_payload(self) -> None:
         """Preserve default tempo, key, and scale through the backend conversion."""
