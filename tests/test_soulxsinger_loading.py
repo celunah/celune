@@ -85,6 +85,40 @@ def test_soulxsinger_preload_prepares_nltk_data() -> None:
     ensure_nltk_data.assert_called_once_with(backend.report_progress, backend.log)
 
 
+def test_soulxsinger_reference_wav_loader_uses_soundfile_and_resamples() -> None:
+    """Decode WAV prompts with soundfile and preserve upstream audio shape."""
+    audio = soulxsinger.np.array(
+        [[0.25, 0.75], [-0.25, -0.75]],
+        dtype=soulxsinger.np.float32,
+    )
+    soundfile = SimpleNamespace(read=mock.Mock(return_value=(audio, 16000)))
+    resample = mock.Mock(side_effect=lambda waveform, *_rates: waveform)
+    torchaudio = SimpleNamespace(functional=SimpleNamespace(resample=resample))
+
+    with mock.patch.dict(
+        soulxsinger.sys.modules,
+        {"soundfile": soundfile, "torchaudio": torchaudio},
+    ):
+        waveform = soulxsinger._load_soulx_reference_wav("reference.wav", 24000)
+
+    soundfile.read.assert_called_once_with(
+        "reference.wav",
+        dtype="float32",
+        always_2d=True,
+    )
+    resample.assert_called_once()
+    resampled_waveform, source_rate, target_rate = resample.call_args.args
+    assert soulxsinger.torch.equal(
+        resampled_waveform,
+        soulxsinger.torch.tensor([[0.25, -0.25], [0.75, -0.75]]),
+    )
+    assert (source_rate, target_rate) == (16000, 24000)
+    assert soulxsinger.torch.equal(
+        waveform,
+        soulxsinger.torch.tensor([[0.5, -0.5]]),
+    )
+
+
 def test_soulxsinger_load_model_reports_each_loading_stage(tmp_path: Path) -> None:
     """Forward model construction, checkpoint, CUDA, and processor stages."""
     backend = object.__new__(soulxsinger.SoulXSinger)
@@ -93,7 +127,10 @@ def test_soulxsinger_load_model_reports_each_loading_stage(tmp_path: Path) -> No
     model = mock.Mock()
     processor = mock.Mock()
     model_module = SimpleNamespace(SoulXSinger=mock.Mock(return_value=model))
-    processor_module = SimpleNamespace(DataProcessor=mock.Mock(return_value=processor))
+    processor_module = SimpleNamespace(
+        DataProcessor=mock.Mock(return_value=processor),
+        load_wav=mock.Mock(),
+    )
     modules = {
         "soulxsinger.models.soulxsinger": model_module,
         "soulxsinger.utils.data_processor": processor_module,
@@ -140,6 +177,7 @@ def test_soulxsinger_load_model_reports_each_loading_stage(tmp_path: Path) -> No
     assert backend._progress_callback.call_args_list == [
         mock.call(step, 8) for step in range(9)
     ]
+    assert processor_module.load_wav is soulxsinger._load_soulx_reference_wav
     logged_messages = [call.args[0] for call in backend.log.call_args_list]
     assert string("soulx.checkpoint_loading") in logged_messages
     assert string("soulx.cuda_transfer") in logged_messages

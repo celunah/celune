@@ -440,6 +440,31 @@ def _load_nltk_phonemizer() -> _Phonemizer:
     return cast(_Phonemizer, G2p())
 
 
+def _load_soulx_reference_wav(
+    wav_path: str,
+    sample_rate: int,
+) -> torch.Tensor:
+    """Decode a prompt WAV without requiring TorchCodec or FFmpeg."""
+    import soundfile as sf
+    import torchaudio
+
+    audio, source_sample_rate = sf.read(
+        wav_path,
+        dtype="float32",
+        always_2d=True,
+    )
+    waveform = torch.from_numpy(np.ascontiguousarray(audio.T))
+    if source_sample_rate != sample_rate:
+        waveform = torchaudio.functional.resample(
+            waveform,
+            source_sample_rate,
+            sample_rate,
+        )
+    if waveform.shape[0] > 1:
+        waveform = waveform.mean(dim=0, keepdim=True)
+    return waveform
+
+
 class SoulXSinger(CeluneBackend[_SoulXRuntime]):
     """Score-controlled singing backend driven by a CECHAR v5 ``sing`` voice."""
 
@@ -563,6 +588,7 @@ class SoulXSinger(CeluneBackend[_SoulXRuntime]):
             sys.path.insert(0, str(source_root))
         module = importlib.import_module("soulxsinger.models.soulxsinger")
         processor_module = importlib.import_module("soulxsinger.utils.data_processor")
+        processor_module.load_wav = _load_soulx_reference_wav
         try:
             from omegaconf import OmegaConf
         except ImportError as error:

@@ -172,6 +172,9 @@ loading in a CEDTS request thread and limit BLAS thread oversubscription.
 During model loading, the worker reports progress and logs as it imports the
 model, reads its config and checkpoint, applies weights, transfers the model to
 CUDA, and prepares the score processor and phonemizer.
+The score processor decodes its reference WAV through `soundfile` and calls
+`torchaudio.functional.resample` only when resampling is needed, so this path
+does not require TorchCodec or FFmpeg.
 Concurrent worker startups serialize checkout preparation with a cross-process
 lock. Each worker rechecks the pinned checkout after acquiring the lock, so a
 worker can reuse a checkout another process just installed. The checkout is
