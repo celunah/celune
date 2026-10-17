@@ -114,7 +114,7 @@ file(MAKE_DIRECTORY "${_libsodium_include_dir}" "${_libsodium_lib_dir}")
 if(WIN32)
     set(_libsodium_library "${_libsodium_lib_dir}/libsodium.lib")
     find_program(_vswhere NAMES vswhere.exe
-        HINTS "$ENV{ProgramFiles(x86)}/Microsoft Visual Studio/Installer"
+        HINTS "$ENV{ProgramFiles\(x86\)}/Microsoft Visual Studio/Installer"
         NO_DEFAULT_PATH
     )
     if(_vswhere)
