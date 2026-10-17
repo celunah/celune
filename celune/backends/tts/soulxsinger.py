@@ -10,16 +10,15 @@ import json
 import time
 import shutil
 import importlib
-from typing import Union, Optional, Protocol, cast
 from pathlib import Path
 from dataclasses import field, dataclass
+from typing import Union, Optional, Protocol, cast
 from collections.abc import Mapping, Callable, Iterator
 
-import numpy as np
 import torch
+import numpy as np
 from huggingface_hub import snapshot_download
 
-from .base import CeluneBackend, _to_numpy_audio, cached_hf_snapshot_path
 from ...cesn import (
     CESNSection,
     CESNNotePair,
@@ -27,7 +26,6 @@ from ...cesn import (
     parse_cesn,
     _resolve_active_singer,
 )
-from ...i18n import string
 from ...paths import (
     app_data_dir,
     huggingface_progress,
@@ -42,14 +40,13 @@ from ...cevoice import (
     default_loader,
     bundle_character_name,
 )
-from ...singing import _contains_cesn_note_event
+from ...i18n import string
 from ...exceptions import (
     BackendError,
     CEVoiceError,
     CESNSyntaxError,
     InvalidCharacterError,
 )
-from ..environment import _exclusive_lock
 from ...registry.tts import (
     TTS_DEFAULT_VOICE,
     SOULX_SINGER_MODEL_ID,
@@ -59,11 +56,16 @@ from ...registry.tts import (
 )
 from ...typing.common import JSON
 from ...typing.aliases import AudioChunk
+from ..environment import _exclusive_lock
+from ...singing import _contains_cesn_note_event
 from ...registry.consent import require_model_consent
+from .base import CeluneBackend, _to_numpy_audio, cached_hf_snapshot_path
 
 __all__ = ["SoulXSinger"]
 
 _MODEL_FILES = ["config.yaml", "model.pt"]
+_SOURCE_PUBLICATION_RETRIES = 5
+_SOURCE_PUBLICATION_RETRY_DELAY = 0.1
 _ARPABET_PATTERN = re.compile(r"[A-Z]+[0-2]?")
 _PITCH_PATTERN = re.compile(r"(?P<step>[a-g])(?P<accidental>[#b]?)(?P<octave>-?\d+)")
 _PITCH_CLASSES = {"c": 0, "d": 2, "e": 4, "f": 5, "g": 7, "a": 9, "b": 11}
@@ -342,6 +344,22 @@ def _ensure_nltk_data() -> None:
             )
 
 
+def _publish_upstream_source(staging_root: Path, source_root: Path) -> None:
+    """Publish a staged checkout, retrying transient Windows sharing violations."""
+    for attempt in range(_SOURCE_PUBLICATION_RETRIES + 1):
+        try:
+            staging_root.replace(source_root)
+        except PermissionError as error:
+            if (
+                getattr(error, "winerror", None) != 32
+                or attempt == _SOURCE_PUBLICATION_RETRIES
+            ):
+                raise
+            time.sleep(_SOURCE_PUBLICATION_RETRY_DELAY * (attempt + 1))
+        else:
+            return
+
+
 def _load_upstream_source() -> Path:
     """Return the exact pinned SoulX source checkout, downloading it once if needed."""
     from git import Repo
@@ -386,7 +404,7 @@ def _load_upstream_source() -> Path:
                         string("soulx.source_unavailable"),
                         error_code="soulx_source_revision_mismatch",
                     )
-                staging_root.replace(source_root)
+                _publish_upstream_source(staging_root, source_root)
             except Exception as error:
                 if staging_root.exists():
                     shutil.rmtree(staging_root, ignore_errors=True)

@@ -162,7 +162,9 @@ The worker downloads only `config.yaml` and `model.pt` from the reviewed model
 revision, then strictly loads the checkpoint state dictionary.
 Concurrent worker startups serialize checkout preparation with a cross-process
 lock. Each worker rechecks the pinned checkout after acquiring the lock, so a
-worker can reuse a checkout another process just installed.
+worker can reuse a checkout another process just installed. On Windows,
+publishing the staged checkout retries brief sharing violations from concurrent
+file scanning before reporting a source preparation error.
 
 The backend accepts English CESN and requires an active CECHAR v5 pack with a
 hidden `sing` WAV and `cesn` reference. It uses that reference as the prompt,
