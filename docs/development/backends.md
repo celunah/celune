@@ -21,7 +21,7 @@ screen.
 
 | ID | Kind | Worker | Extra requirements |
 | --- | --- | --- | --- |
-| `mini` | TTS | `celune.backends.tts.mini:Mini` | `pocket-tts>=2.1.0,!=3.0.0` |
+| `mini` | TTS | `celune.backends.tts.mini:Mini` | `pocket-tts>=3.2.0` |
 | `qwen3` | TTS | `celune.backends.tts.qwen3:Qwen3` | `faster-qwen3-tts>=0.2.4` |
 | `fireredtts3` | TTS | `celune.backends.tts.fireredtts3:FireRedTTS3` | FireRedTTS3 source, Transformers 5.6.2, and TorchCodec 0.16.0; BF16 transformer path with PyTorch SDPA and latent streaming. |
 | `dotstts` | TTS | `celune.backends.tts.dotstts:DotsTtsMF` | Celune's `dots.tts` fork; Python 3.12. |
@@ -66,14 +66,19 @@ stability over full reference expressiveness.
 
 ### Mini
 
-`mini` adapts Pocket TTS 2.1.0 or newer, streams at 12.5 chunks per second, and
-supports English, French, German, Italian, Portuguese, and Spanish. Celune uses
-`lsd_decode_steps=8` with the pre-3.0.0 API and `sampler_decode_steps=8` with the
-3.0.0-or-newer API. Version 3.0.0 is excluded because its wheel is broken, as
-noted in the [upstream release](https://github.com/kyutai-labs/pocket-tts/releases/tag/v3.0.0).
-Generated model configs select the matching tokenizer loader for either the
-JSON tokenizer or SentencePiece model stored in the snapshot. Mini remains the
-supported CPU-friendly path and uses pack reference data for cloning.
+`mini` adapts Pocket TTS 3.2.0 or newer, streams at 12.5 chunks per second, and
+supports English, French, German, Italian, Portuguese, and Spanish. Version
+3.2.0 adds the 24-layer French model used by Celune's pinned snapshot
+([upstream release](https://github.com/kyutai-labs/pocket-tts/releases/tag/v3.2.0)).
+Celune matches each snapshot language variant to its corresponding package
+config, which keeps the model architecture aligned with its weights. It uses
+`lsd_decode_steps=2` with the pre-3.0.0 API and `sampler_decode_steps=2` with the
+3.0.0-or-newer API. Generated model configs select the matching tokenizer
+loader for either the JSON tokenizer or SentencePiece model stored in the
+snapshot. Mini remains the supported CPU-friendly path and uses pack reference
+data for cloning. If a language-specific reload fails during generation,
+Celune clears the model reference and enters its fatal state instead of
+continuing with a stale model.
 
 ### FireRedTTS3
 
@@ -191,6 +196,11 @@ The backend accepts English CESN and requires an active CECHAR v5 pack with a
 hidden `sing` WAV and `cesn` reference. It uses that reference as the prompt,
 converts note-event syllables through English G2P, maps pitches to MIDI note
 numbers, and converts CESN beat lengths to seconds using each section's BPM.
+For a word with an explicit `[pattern:...]` and `[ipa:...]`, it converts each
+IPA syllable into the model's English ARPAbet inventory instead of running G2P
+on that syllable. Unsupported IPA sounds raise a backend error before model
+inference. See the [CESN format](../formats/cesn.md) for the supported notation
+and conversion behavior.
 Changes in singer, tempo, key, or scale remain section boundaries; the model
 synthesizes each section and Celune concatenates the resulting audio. SoulX
 returns one complete 24 kHz waveform, so it does not stream partial score audio.

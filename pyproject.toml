@@ -168,7 +168,7 @@ cechar4-openzl = [
 # A cheap on compute Celune backend providing an exceptional sound quality. Fastest, with an exceptional sound quality
 # to size ratio.
 # mini = [
-#     "pocket-tts>=2.1.0,!=3.0.0",
+#     "pocket-tts>=3.2.0",
 # ]
 
 # LuxTTS is isolated in its CUDA-capable CEDTS environment and falls back to

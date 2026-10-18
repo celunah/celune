@@ -5,8 +5,8 @@ import time
 import inspect
 import tempfile
 import contextlib
-from pathlib import Path
 from typing import Optional, cast
+from pathlib import Path
 from collections.abc import Mapping, Callable, Iterator
 
 import yaml
@@ -14,7 +14,11 @@ import numpy as np
 from pocket_tts import TTSModel
 from huggingface_hub import snapshot_download
 
+from .base import CeluneBackend, cached_hf_snapshot_path
 from ...i18n import string
+from ...paths import temp_data_dir, huggingface_progress, huggingface_hub_cache_dir
+from ...utils import custom_assert
+from ...cevoice import CEVoiceLoader, default_loader
 from ...registry.tts import (
     MINI_VOICE_MODELS,
     TTS_DEFAULT_VOICE,
@@ -24,14 +28,12 @@ from ...registry.tts import (
     MINI_LANGUAGE_MODEL_VARIANTS,
     ModelContract,
 )
-from ...utils import custom_assert
-from ...cevoice import CEVoiceLoader, default_loader
-from ...registry.consent import require_model_consent
+from ...registry.tts import (
+    model_contract as resolve_model_contract,
+)
 from ...typing.aliases import AudioChunk, AudioChunks
-from .base import CeluneBackend, cached_hf_snapshot_path
 from ...typing.backends import MiniModel, MiniPromptState
-from ...registry.tts import model_contract as resolve_model_contract
-from ...paths import temp_data_dir, huggingface_progress, huggingface_hub_cache_dir
+from ...registry.consent import require_model_consent
 
 
 class Mini(CeluneBackend[TTSModel]):
@@ -55,7 +57,7 @@ class Mini(CeluneBackend[TTSModel]):
         self._validate_refs()
         self._voice_states: dict[str, MiniPromptState] = {}
         self._generated_config_path: Optional[Path] = None
-        self._loaded_language = "en"
+        self._loaded_language: Optional[str] = None
 
     @staticmethod
     def _get_default_loader() -> Optional[CEVoiceLoader]:
@@ -171,12 +173,23 @@ class Mini(CeluneBackend[TTSModel]):
             + (f" (available: {available})" if available else "")
         )
 
-    def _resolve_template_config_path(self, lang: str = "en") -> Path:
+    def _resolve_template_config_path(
+        self, lang: str = "en", language_variant: Optional[str] = None
+    ) -> Path:
         """Return the best matching Pocket TTS template config for one language."""
         from pocket_tts.utils.config import CONFIGS_DIR
 
         language_code = self.resolve_generation_language(lang)
         language_name = self._resolve_language_name(lang)
+        if language_variant is not None and language_variant != language_name:
+            variant_path = CONFIGS_DIR / f"{language_variant}.yaml"
+            if variant_path.is_file():
+                return variant_path
+            if language_variant.endswith("_24l"):
+                raise FileNotFoundError(
+                    f"invalid Pocket TTS snapshot: template config for {language_variant} not found"
+                )
+
         candidates = (
             CONFIGS_DIR / f"{language_name}.yaml",
             CONFIGS_DIR / f"{language_code}.yaml",
@@ -206,8 +219,8 @@ class Mini(CeluneBackend[TTSModel]):
     ) -> Path:
         """Create a temporary Pocket TTS YAML config targeting the snapshot files."""
         language_name = self._resolve_language_name(lang)
-        template_path = self._resolve_template_config_path(lang)
         language_dir = self._resolve_snapshot_language_dir(snapshot_path, lang)
+        template_path = self._resolve_template_config_path(lang, language_dir.name)
         model_path = language_dir / "model.safetensors"
         tokenizer_json_path = language_dir / "tokenizer.json"
         tokenizer_model_path = language_dir / "tokenizer.model"
@@ -309,7 +322,9 @@ class Mini(CeluneBackend[TTSModel]):
         Returns:
             bool: Whether Celune should reload a new Pocket TTS language model.
         """
-        return self.resolve_generation_language(lang) != self._loaded_language
+        return self.model is None or (
+            self.resolve_generation_language(lang) != self._loaded_language
+        )
 
     def load_model(self, model_id: str, **kwargs) -> TTSModel:
         """Load the configured Pocket TTS model snapshot.
@@ -341,20 +356,24 @@ class Mini(CeluneBackend[TTSModel]):
             snapshot_path, requested_language
         )
         self._generated_config_path = generated_config_path
-        load_model_parameters = inspect.signature(TTSModel.load_model).parameters
-        if "sampler_decode_steps" in load_model_parameters:
-            self.model = TTSModel.load_model(
-                config=generated_config_path, temp=0.15, sampler_decode_steps=2
+        try:
+            load_model_parameters = inspect.signature(TTSModel.load_model).parameters
+            if "sampler_decode_steps" in load_model_parameters:
+                self.model = TTSModel.load_model(
+                    config=generated_config_path, temp=0.15, sampler_decode_steps=2
+                )
+            else:
+                self.model = TTSModel.load_model(
+                    config=generated_config_path, temp=0.15, lsd_decode_steps=2
+                )
+            self.model = self.apply_runtime_quantization(
+                self.model,
+                model_id,
+                lang=requested_language,
             )
-        else:
-            self.model = TTSModel.load_model(
-                config=generated_config_path, temp=0.15, lsd_decode_steps=2
-            )
-        self.model = self.apply_runtime_quantization(
-            self.model,
-            model_id,
-            lang=requested_language,
-        )
+        except Exception:
+            self.unload_model(release_cuda_cache=False)
+            raise
         self._loaded_language = requested_language
         self._voice_states.clear()
         return self.model
@@ -368,6 +387,7 @@ class Mini(CeluneBackend[TTSModel]):
         generated_config_path = self._generated_config_path
         self._voice_states.clear()
         self._generated_config_path = None
+        self._loaded_language = None
         if generated_config_path is not None:
             with contextlib.suppress(OSError):
                 generated_config_path.unlink(missing_ok=True)
