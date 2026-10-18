@@ -934,7 +934,7 @@ class TestCeluneCore(CeluneTestCase):
         celune.cur_state = "speaking"
         celune.model_ready.set()
         celune.playback_done.clear()
-        celune._playback_source_meta[1] = {
+        celune.playback_source_meta[1] = {
             "kind": "sfx",
             "base_gain": 1.0,
             "current_gain": 1.0,
@@ -1026,10 +1026,10 @@ class TestCeluneCore(CeluneTestCase):
                 "celune.pipeline.readiness_signal",
                 return_value=np.zeros((8, 2), dtype=np.float32),
             ),
-            mock.patch("celune.pipeline._register_playback_source"),
-            mock.patch("celune.pipeline._queue_playback_chunk"),
+            mock.patch("celune.pipeline.register_playback_source"),
+            mock.patch("celune.pipeline.queue_playback_chunk"),
             mock.patch(
-                "celune.pipeline._queue_playback_done",
+                "celune.pipeline.queue_playback_done",
                 side_effect=queue_completion,
             ),
         ):
@@ -1133,7 +1133,7 @@ class TestCeluneCore(CeluneTestCase):
             call_order.append("start_load")
 
         with (
-            mock.patch("celune.conversation._think_persona") as think,
+            mock.patch("celune.conversation.think_persona") as think,
             mock.patch.object(celune, "say", side_effect=record_say) as say,
             mock.patch.object(
                 celune,
@@ -1172,7 +1172,7 @@ class TestCeluneCore(CeluneTestCase):
             return True
 
         with mock.patch(
-            "celune.conversation._think_persona", side_effect=process_request
+            "celune.conversation.think_persona", side_effect=process_request
         ):
             assert celune.think("first queued")
             assert celune.think("second queued")
@@ -1206,7 +1206,7 @@ class TestCeluneCore(CeluneTestCase):
         with (
             mock.patch.object(celune, "_wait_for_persona_playback", return_value=True),
             mock.patch(
-                "celune.conversation._think_persona", return_value=True
+                "celune.conversation.think_persona", return_value=True
             ) as think_pipeline,
             mock.patch(
                 "celune.agent.routing.build_agent_classification_request",
@@ -1257,7 +1257,7 @@ class TestCeluneCore(CeluneTestCase):
         celune.vision.post.side_effect = RuntimeError("classifier transport failed")
         with (
             mock.patch("celune.vram.torch.cuda.is_available", return_value=False),
-            mock.patch("celune.conversation._think_persona") as think_pipeline,
+            mock.patch("celune.conversation.think_persona") as think_pipeline,
             mock.patch.object(celune, "say", return_value=False) as say,
         ):
             self.assertTrue(celune.think("Delete the fixture."))
@@ -1461,7 +1461,7 @@ class TestCeluneCore(CeluneTestCase):
         celune._unload_persona_state()
 
         clear_vlm_mock.assert_called_once_with()
-        self.assertIsNone(getattr(celune, "persona_emotion_analyzer"))  # noqa: B009
+        self.assertIsNone(celune.persona_emotion_analyzer)
 
     def test_reset_persona_conversation_clears_history_summary_and_attachments(
         self,
@@ -1472,7 +1472,7 @@ class TestCeluneCore(CeluneTestCase):
         celune.persona_session_summary = "old summary"
         celune.persona_attachments = [{"path": "old.png", "kind": "image"}]
 
-        celune._reset_persona_conversation()
+        celune.reset_persona_conversation()
 
         assert celune.persona_history == []
         assert celune.persona_session_summary == ""

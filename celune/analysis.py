@@ -6,6 +6,8 @@ import warnings
 import threading
 import contextlib
 from pathlib import Path
+
+# noinspection PyProtectedMember
 from typing import Optional, cast
 from collections.abc import Callable
 
@@ -1096,7 +1098,7 @@ def analyze_voice_audio(
     )
 
 
-def _schedule_voice_analysis(
+def schedule_voice_analysis(
     audio: npt.NDArray[np.float32],
     sr: int,
     display_name: str,

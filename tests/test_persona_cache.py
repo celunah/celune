@@ -9,7 +9,7 @@ from transformers.configuration_utils import PreTrainedConfig
 
 from celune.modeling import (
     QuantizedKVCache,
-    _QuantizedKVCacheLayer,
+    QuantizedKVCacheLayer,
     quantized_kv_cache_mode,
 )
 
@@ -46,7 +46,7 @@ def test_int8_cache_keeps_recent_tail_in_compute_dtype() -> None:
     assert second_keys.shape == keys.shape
     assert second_values.shape == values.shape
     assert cache.get_seq_length() == 4
-    layer = cast(_QuantizedKVCacheLayer, cache.layers[0])
+    layer = cast(QuantizedKVCacheLayer, cache.layers[0])
     assert layer._quantized_keys is not None
     assert layer.keys is not None
     assert layer._quantized_keys.dtype == torch.int8
@@ -76,9 +76,9 @@ def test_quantized_cache_crop_and_reset_release_logical_tokens() -> None:
 
     cache.crop(3)
     assert cache.get_seq_length() == 3
-    layer = cast(_QuantizedKVCacheLayer, cache.layers[0])
+    layer = cast(QuantizedKVCacheLayer, cache.layers[0])
     assert layer.keys is not None
-    cropped_keys, cropped_values = layer._dequantized_cache()
+    cropped_keys, cropped_values = layer.dequantized_cache()
     assert cropped_keys.shape[-2] == 3
     assert cropped_values.shape[-2] == 3
 

@@ -27,7 +27,7 @@ from .registry.other import CAPTION_ALIGNMENT_MODEL_ID
 from .typing.aliases import LogLevel, AudioChunks
 from .typing.pipeline import SpeechStreamQueue
 from .dataclasses.pipeline import SpeechTiming, CaptionAlignmentSection
-from .exceptions import _EspeakExecutableNotFound, _OnnxRuntimeNotFound
+from .exceptions import EspeakExecutableNotFound, OnnxRuntimeNotFound
 
 if TYPE_CHECKING:
     from .celune import Celune
@@ -100,7 +100,7 @@ class CaptionAligner:
         def _worker() -> None:
             try:
                 self._load_model()
-            except _OnnxRuntimeNotFound:
+            except OnnxRuntimeNotFound:
                 with self._preload_lock:
                     self._preload_started = False
                 logger(string("ui.caption_onnxruntime_not_found"), "warning")
@@ -225,7 +225,7 @@ class CaptionAligner:
                 except ModuleNotFoundError as error:
                     if error.name != "onnxruntime":
                         raise
-                    raise _OnnxRuntimeNotFound("onnxruntime") from error
+                    raise OnnxRuntimeNotFound("onnxruntime") from error
                 metadata = require_model_consent(CAPTION_ALIGNMENT_MODEL_ID)
                 revision = metadata.revision
                 download = cast(_HubDownload, hub.hf_hub_download)
@@ -334,10 +334,10 @@ def align_chunk_word_start_frames(
             max(0, min(len(chunk_audio), round(start * sample_rate)))
             for start, _end in aligned_timings
         )
-    except _EspeakExecutableNotFound:
+    except EspeakExecutableNotFound:
         logger(string("ui.caption_espeak_not_found"), "warning")
         return None
-    except _OnnxRuntimeNotFound:
+    except OnnxRuntimeNotFound:
         logger(string("ui.caption_onnxruntime_not_found"), "warning")
         return None
     except Exception as error:
@@ -352,12 +352,12 @@ def align_chunk_word_start_frames(
         return None
 
 
-def _build_caption_alignment_sections(
+def build_caption_alignment_sections(
     display_text: str,
     audio_sections: Sequence[tuple[int, int, str]],
 ) -> tuple[str, tuple[CaptionAlignmentSection, ...]]:
     """Build combined-transcript alignment ranges from generated text chunks."""
-    from .playback import _caption_chunk_word_ranges
+    from .playback import caption_chunk_word_ranges
 
     spoken_sections = tuple(
         (audio_start, audio_end, text)
@@ -368,7 +368,7 @@ def _build_caption_alignment_sections(
         return "", ()
 
     transcript_chunks = tuple(section[2] for section in spoken_sections)
-    display_ranges = _caption_chunk_word_ranges(display_text, list(transcript_chunks))
+    display_ranges = caption_chunk_word_ranges(display_text, list(transcript_chunks))
     sections: list[CaptionAlignmentSection] = []
     transcript_word_start = 0
     for (audio_start, audio_end, text), (display_start, display_end) in zip(
@@ -711,7 +711,7 @@ def _phonemize(transcript: str, voice: str) -> tuple[tuple[str, ...], ...]:
                 encoding="utf-8",
             )
         except FileNotFoundError as error:
-            raise _EspeakExecutableNotFound("espeak-ng") from error
+            raise EspeakExecutableNotFound("espeak-ng") from error
         ipa = result.stdout.replace("\n", " ").translate(
             {ord(mark): None for mark in _STRESS_MARKS}
         )
@@ -897,9 +897,9 @@ class CaptionAlignmentWorker:
         """Queue a source completion marker after its pending audio chunks."""
 
         def finish() -> None:
-            from .playback import _queue_playback_done
+            from .playback import queue_playback_done
 
-            _queue_playback_done(
+            queue_playback_done(
                 engine,
                 source_id,
                 release_pipeline_when_finished=release_pipeline_when_finished,
@@ -970,9 +970,9 @@ class CaptionAlignmentWorker:
         alignment_sections: tuple[CaptionAlignmentSection, ...],
     ) -> None:
         from .playback import (
-            _playback_source_meta,
-            _flush_buffered_speech_chunks,
-            _record_caption_playback_segment,
+            playback_source_meta,
+            flush_buffered_speech_chunks,
+            record_caption_playback_segment,
         )
 
         with self._state_lock:
@@ -980,7 +980,7 @@ class CaptionAlignmentWorker:
                 audio_chunks.clear()
                 return
         with engine.queue_lock:
-            source_meta = _playback_source_meta(engine).get(source_id)
+            source_meta = playback_source_meta(engine).get(source_id)
             if not isinstance(source_meta, dict):
                 audio_chunks.clear()
                 return
@@ -1012,7 +1012,7 @@ class CaptionAlignmentWorker:
             if source_id in self._cancelled_sources:
                 audio_chunks.clear()
                 return
-            pushed_audio[0] = _flush_buffered_speech_chunks(
+            pushed_audio[0] = flush_buffered_speech_chunks(
                 engine,
                 source_id,
                 audio_chunks,
@@ -1022,14 +1022,14 @@ class CaptionAlignmentWorker:
                 caption_text=None if alignment_failed[0] else caption_text,
             )
             with engine.queue_lock:
-                source_meta = _playback_source_meta(engine).get(source_id)
+                source_meta = playback_source_meta(engine).get(source_id)
                 chunk_end = (
                     int(float(source_meta.get("total_frames", 0.0)))
                     if isinstance(source_meta, dict)
                     else chunk_start
                 )
             if not alignment_failed[0]:
-                _record_caption_playback_segment(
+                record_caption_playback_segment(
                     engine,
                     source_id,
                     chunk_start,
@@ -1050,13 +1050,13 @@ class CaptionAlignmentWorker:
         pushed_audio: list[bool],
         caption_text: Optional[str],
     ) -> None:
-        from .playback import _flush_buffered_speech_chunks
+        from .playback import flush_buffered_speech_chunks
 
         with self._state_lock:
             if source_id in self._cancelled_sources:
                 audio_chunks.clear()
                 return
-            pushed_audio[0] = _flush_buffered_speech_chunks(
+            pushed_audio[0] = flush_buffered_speech_chunks(
                 engine,
                 source_id,
                 audio_chunks,

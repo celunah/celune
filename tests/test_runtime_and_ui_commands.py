@@ -612,6 +612,7 @@ class TestUICommand(CeluneTestCase):
         messages = [message for message, _severity in self.logs]
         assert string("commands.help_cesn_header") in messages
         assert string("commands.help_cesn_notes") in messages
+        assert string("commands.help_cesn_ipa") in messages
         assert string("commands.help_cesn_singer") in messages
 
     def _process_command(self, command: str, args: list[str]) -> None:
@@ -772,7 +773,7 @@ class TestUICommand(CeluneTestCase):
         self.ui.celune.input_mode = "voice_conversion"
         capture = SimpleNamespace(directory=Path("temporary"))
         self.ui._vc_debug_capture = None
-        self.ui._stop_vc_debug_capture = mock.Mock(return_value=True)
+        self.ui.stop_vc_debug_capture = mock.Mock(return_value=True)
 
         with mock.patch("celune.vc.VCDebugCapture", return_value=capture):
             self._process_command("vcdebug", ["on"])
@@ -785,7 +786,7 @@ class TestUICommand(CeluneTestCase):
 
         self._process_command("vcdebug", ["off"])
 
-        self.ui._stop_vc_debug_capture.assert_called_once_with(announce=True)
+        self.ui.stop_vc_debug_capture.assert_called_once_with(announce=True)
         assert self.logs[-1] == (
             "Stopping VC debug capture and saving audio.",
             "info",

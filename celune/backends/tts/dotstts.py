@@ -19,10 +19,10 @@ from .base import (
     cached_hf_snapshot_path,
 )
 from .base import (
-    _to_numpy_audio as normalize_streamed_audio,
+    to_numpy_audio as normalize_streamed_audio,
 )
 from ...i18n import string
-from ...typing.backends import _LoguruLogger
+from ...typing.backends import LoguruLogger
 from ...cevoice import CEVoiceLoader, default_loader
 from ...registry.consent import require_model_consent
 from ...typing.aliases import AudioChunk, AudioChunks
@@ -156,7 +156,7 @@ class DotsTtsMF(CeluneBackend[DotsTtsRuntime]):
         with open(os.devnull, "w", encoding="utf-8") as devnull:
             disabled_loguru = False
             bound_logger = cast(
-                Optional[_LoguruLogger],
+                Optional[LoguruLogger],
                 getattr(loguru, "logger", None),
             )
             with contextlib.suppress(Exception):
@@ -277,6 +277,7 @@ class DotsTtsMF(CeluneBackend[DotsTtsRuntime]):
         import torch
         from dots_tts.models.dots_tts.model import DotsTtsModel
 
+        # noinspection PyProtectedMember
         pretrained_path = DotsTtsRuntime._resolve_pretrained_path(target)
         loaded_model = DotsTtsModel.from_pretrained(pretrained_path)
         loaded_model.core.to(dtype=torch.bfloat16)
@@ -289,7 +290,7 @@ class DotsTtsMF(CeluneBackend[DotsTtsRuntime]):
             max_generate_length=max_generate_length,
         )
 
-    _to_numpy_audio = staticmethod(normalize_streamed_audio)
+    to_numpy_audio = staticmethod(normalize_streamed_audio)
 
     def generate_stream(
         self, model: DotsTtsRuntime, **kwargs
@@ -366,7 +367,7 @@ class DotsTtsMF(CeluneBackend[DotsTtsRuntime]):
                 first_chunk_time: Optional[float] = None
 
                 for chunk in stream:
-                    audio = self._to_numpy_audio(chunk)
+                    audio = self.to_numpy_audio(chunk)
                     if audio.size == 0:
                         continue
                     if first_chunk_time is None:

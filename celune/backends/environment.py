@@ -10,11 +10,11 @@ import hashlib
 import platform
 import importlib
 import subprocess
-from pathlib import Path
 from typing import Optional
-from collections.abc import Generator
-from dataclasses import asdict, dataclass
+from pathlib import Path
 from contextlib import suppress, contextmanager
+from dataclasses import asdict, dataclass
+from collections.abc import Generator
 
 from ..i18n import string
 from ..paths import backend_environments_dir
@@ -26,6 +26,7 @@ __all__ = [
     "BackendEnvironmentManager",
     "BackendManifest",
     "backend_manifest",
+    "exclusive_lock",
 ]
 
 _WORKER_SHARED_REQUIREMENTS = (
@@ -145,7 +146,7 @@ BACKEND_MANIFESTS = {
         requirements=(
             *_TTS_PYTORCH_REQUIREMENTS,
             *_WORKER_HUGGINGFACE_REQUIREMENTS,
-            "pocket-tts>=2.1.0,!=3.0.0",
+            "pocket-tts>=3.2.0",
         ),
         backend_module="celune.backends.tts.mini",
         backend_class="Mini",
@@ -281,7 +282,7 @@ def backend_manifest(backend_id: str) -> BackendManifest:
 
 
 @contextmanager
-def _exclusive_lock(path: Path, timeout: float) -> Generator[None, None, None]:
+def exclusive_lock(path: Path, timeout: float) -> Generator[None, None, None]:
     """Acquire a process-released cross-process lock backed by one file."""
     started = time.monotonic()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -372,7 +373,7 @@ class BackendEnvironmentManager:
             raise _BackendEnvironmentError(string("backends.uv_required"))
 
         lock_path = self.root / manifest.backend_id / ".install.lock"
-        with _exclusive_lock(lock_path, self.lock_timeout):
+        with exclusive_lock(lock_path, self.lock_timeout):
             if environment.is_ready:
                 return environment
 

@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Name day list derived from Polish name days, translated to English, and with Polish-only names removed."""
 
+# noinspection PyProtectedMember
 from typing import Union
 from datetime import date, datetime
 

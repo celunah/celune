@@ -50,7 +50,6 @@ __all__ = (
     "_prepare_backend_reload",
     "_prepare_cevoice_reload",
     "_prepare_voice_change",
-    "_reset_persona_conversation",
     "_run_voice_reload",
     "_speech_playback_active",
     "_try_play_signal",
@@ -62,6 +61,7 @@ __all__ = (
     "load_voice_bundle",
     "log",
     "log_dev",
+    "reset_persona_conversation",
     "set_backend",
     "set_backend_and_wait",
     "set_backend_async",
@@ -90,7 +90,7 @@ def set_voices(self, voices: tuple[str, ...]) -> None:
     self.voices = voices
 
 
-def _reset_persona_conversation(self) -> None:
+def reset_persona_conversation(self) -> None:
     """Clear Persona conversation context when its character changes."""
     self.persona_history.clear()
     self.persona_session_summary = ""
@@ -117,7 +117,7 @@ def load_voice_bundle(self, bundle: Optional[Union[str, Path]] = None) -> bool:
     loader = default_loader()
     if loader is None:
         if previous_bundle_path is not None or previous_character is not None:
-            self._reset_persona_conversation()
+            self.reset_persona_conversation()
         self.current_character_persona = None
         self.current_character = None
         self.voice_bundle_is_default = True
@@ -162,7 +162,7 @@ def load_voice_bundle(self, bundle: Optional[Union[str, Path]] = None) -> bool:
         previous_bundle_path != new_bundle_path
         or previous_character != self.current_character
     ):
-        self._reset_persona_conversation()
+        self.reset_persona_conversation()
     self._emit_character_event_transition(
         previous_character,
         previous_bundle_path,
@@ -181,7 +181,7 @@ def load_available_voices(self) -> bool:
     """
     if self.backend.uses_voice_bundles:
         return self.load_voice_bundle(
-            _core._config_str(config_value(self.config, "voice_bundle"))
+            _core.config_str(config_value(self.config, "voice_bundle"))
         )
 
     voices = tuple(self.backend.voices)
@@ -591,13 +591,13 @@ def _speech_playback_active(self) -> bool:
 
     return any(
         isinstance(metadata, dict) and metadata.get("kind") == "speech"
-        for metadata in self._playback_source_meta.values()
+        for metadata in self.playback_source_meta.values()
     )
 
 
 def _any_playback_active(self) -> bool:
     """Return whether any registered audio source is still draining."""
-    return bool(getattr(self, "_playback_source_meta", {}))
+    return bool(getattr(self, "playback_source_meta", {}))
 
 
 async def wait_until_idle_async(
@@ -801,7 +801,7 @@ def _try_play_signal(self, signal_type: str) -> bool:
         return False
 
     if self.locked and self._playback_done.is_set():
-        self._release_pipeline()
+        self.release_pipeline()
 
     return play_signal(self, signal_type)
 
@@ -851,7 +851,7 @@ def change_voice(self, voice: str) -> None:
 
     try:
         with self._model_lock:
-            if self._is_voice_conversion_mode():
+            if self.is_voice_conversion_mode():
                 self.current_voice = voice
                 self.loaded = True
             else:
@@ -903,7 +903,7 @@ def change_voice(self, voice: str) -> None:
         self._model_ready.set()
         self.voice_changed_callback(voice)
         if active_voice != voice:
-            self._emit_event(
+            self.emit_event(
                 "voice_changed",
                 VoiceChangedEvent(
                     celune=self,

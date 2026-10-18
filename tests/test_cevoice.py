@@ -16,6 +16,7 @@ import pytest
 
 from celune import cevoice
 from celune.exceptions import CEVoiceError
+
 from .support import CeluneTestCase
 
 
@@ -232,7 +233,8 @@ class TestCEVoice(CeluneTestCase):
                 "balanced": {"reference_text": "Balanced reference."},
                 "sing": {
                     "reference_text": "Singing reference.",
-                    "cesn": "[lang:en][c3:4,d3:4]Singing.",
+                    "cesn": "[lang:en][f#3:4,g3:4]Singing.",
+                    "range": {"min": 54, "max": 72},
                 },
             },
         )
@@ -245,7 +247,8 @@ class TestCEVoice(CeluneTestCase):
         assert bundle.voices["balanced"]["cesn"] is None
         assert bundle.voices["sing"]["cfg_scale"] is None
         assert bundle.voices["sing"]["persona"] is None
-        assert bundle.voices["sing"]["cesn"] == "[lang:en][c3:4,d3:4]Singing."
+        assert bundle.voices["sing"]["cesn"] == "[lang:en][f#3:4,g3:4]Singing."
+        assert bundle.singing_pitch_range == (54, 72)
 
     def test_default_pack_uses_v5_and_keeps_classic_on_v4(self) -> None:
         """Keep the default pack's singing reference scoped to CECHAR v5."""
@@ -255,6 +258,7 @@ class TestCEVoice(CeluneTestCase):
         assert default.metadata["version"] == cevoice.V5_VERSION
         assert default.voice_order == ("balanced", "calm", "bold", "upbeat")
         assert default.singing_voice == cevoice.SINGING_VOICE_NAME
+        assert default.singing_pitch_range == (54, 72)
         assert (
             default.voices["sing"]["reference_text"]
             == "Moonlight resting, silver-blue, I'll keep one quiet light for you."
@@ -291,6 +295,7 @@ class TestCEVoice(CeluneTestCase):
                     "sing": {
                         "reference_text": "Singing reference.",
                         "cesn": "[lang:en][c3:4,d3:4]Singing.",
+                        "range": {"min": 54, "max": 72},
                     },
                 },
             )
@@ -307,10 +312,29 @@ class TestCEVoice(CeluneTestCase):
                     "balanced": {"reference_text": "Balanced reference."},
                     "sing": {
                         "reference_text": "Singing reference.",
-                        "cesn": "[lang:en][c3:4,d3:4]Singing.",
+                        "cesn": "[lang:en][f#3:4,g3:4]Singing.",
+                        "range": {"min": 54, "max": 72},
                     },
                 },
             )
+
+    def test_cechar_v5_requires_a_valid_singing_range(self) -> None:
+        """Require every newly written v5 singing entry to declare valid bounds."""
+        sample = self._minimal_wav()
+        voices = {"balanced": {"wav": sample}, "sing": {"wav": sample}}
+        metadata: dict[str, cevoice.Manifest] = {
+            "balanced": {"reference_text": "Balanced reference."},
+            "sing": {
+                "reference_text": "Singing reference.",
+                "cesn": "[lang:en][f#3:4,g3:4]Singing.",
+            },
+        }
+        with pytest.raises(CEVoiceError, match="singing voice range is required"):
+            cevoice.write_cechar_v5(self.path, voices, voice_metadata=metadata)
+
+        metadata["sing"]["range"] = {"min": 73, "max": 72}
+        with pytest.raises(CEVoiceError, match="ordered MIDI pitches"):
+            cevoice.write_cechar_v5(self.path, voices, voice_metadata=metadata)
 
     def test_cechar_v4_treats_sing_as_an_ordinary_voice(self) -> None:
         """Keep the reserved singing role scoped to CECHAR v5 and newer."""
@@ -329,6 +353,7 @@ class TestCEVoice(CeluneTestCase):
 
         assert bundle.voice_order == ("balanced", "sing")
         assert bundle.singing_voice is None
+        assert bundle.singing_pitch_range is None
 
     # any types here are resolved dynamically
     def test_asset_checksums_are_case_insensitive(self) -> None:

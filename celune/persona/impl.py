@@ -270,7 +270,7 @@ def persona_debug_overrides_enabled(
     return persona_config(config).get("debug_overrides") is True
 
 
-def _config_text(
+def config_text(
     engine: PersonaEngineView,
     key: str,
     default: str = "",
@@ -384,7 +384,7 @@ def persona_active_character_name(engine: PersonaEngineView) -> str:
     if pack_identity_name:
         return pack_identity_name
 
-    return _config_text(engine, "persona_character_name", "Unknown")
+    return config_text(engine, "persona_character_name", "Unknown")
 
 
 def uses_default_celune_identity(engine: PersonaEngineView) -> bool:

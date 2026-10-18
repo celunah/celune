@@ -8,23 +8,27 @@ from types import SimpleNamespace
 import pytest
 
 from celune.cesn import (
+    CESNSinger,
+    CESNTuplet,
     CESNNoteEvent,
     CESNNotePair,
     CESNRestEvent,
-    CESNSinger,
-    CESNTuplet,
-    _resolve_singer,
     parse_cesn,
     render_cesn,
+    resolve_singer,
 )
 from celune import cevoice
 from celune.exceptions import (
-    CESNAlignmentError,
+    CESNBackendFormatError,
     CESNMatchError,
+    CESNAlignmentError,
     CESNNotationWarning,
     CESNSyntaxError,
+    CESNUnsupportedFeatureError,
+    CESNValidationError,
     InvalidCharacterError,
 )
+from celune.singing import format_cesn_error
 
 
 def test_parse_cesn_returns_typed_note_syllable_pairs() -> None:
@@ -133,6 +137,16 @@ def test_parse_cesn_respects_per_word_pattern_override() -> None:
     assert tuple(pair.syllable for pair in result[0].blocks[0].pairs) == (
         "Qui",
         "et.",
+    )
+
+
+def test_parse_cesn_attaches_ipa_syllables_to_patterned_word() -> None:
+    """Align explicit IPA syllables with the matching lyric pattern and notes."""
+    result = parse_cesn("[lang:en][pattern:qui,et][ipa:/ˈkwaɪ.ət/][c3:4,d3:4] Quiet.")
+
+    assert tuple((pair.syllable, pair.ipa) for pair in result[0].blocks[0].pairs) == (
+        ("Qui", "ˈkwaɪ"),
+        ("et.", "ət"),
     )
 
 
@@ -254,15 +268,29 @@ def test_parse_cesn_warns_on_out_of_scale_notes() -> None:
 
 def test_parse_cesn_rejects_language_missing_from_syllabreak_or_model() -> None:
     """Require an explicit language supported by both notation layers."""
-    with pytest.raises(CESNSyntaxError, match="language must be specified"):
+    with pytest.raises(CESNValidationError, match="language must be specified"):
         parse_cesn("[c3:4] Word.")
-    with pytest.raises(CESNSyntaxError, match="selected model"):
+    with pytest.raises(CESNUnsupportedFeatureError, match="selected model"):
         parse_cesn(
             "[lang:en][c3:4] Word.",
             supported_languages=("fr",),
         )
-    with pytest.raises(CESNSyntaxError, match="syllabreak"):
+    with pytest.raises(CESNUnsupportedFeatureError, match="Syllabreak"):
         parse_cesn("[lang:ja][c3:4] ことば")
+    text = "[lang:en][bpm:120,key:c,scale:supermajor][c3:4] Word."
+    with pytest.raises(
+        CESNUnsupportedFeatureError,
+        match="unsupported CESN scale",
+    ) as error:
+        parse_cesn(text)
+
+    assert error.value.source_start == text.index("[bpm:")
+
+
+def test_parse_cesn_classifies_malformed_values_as_validation_errors() -> None:
+    """Represent malformed CESN values with the validation subtype."""
+    with pytest.raises(CESNValidationError, match="BPM must be a positive integer"):
+        parse_cesn("[lang:en][bpm:0,key:c,scale:major][c3:4] Word.")
 
 
 def test_parse_cesn_resolves_singing_character_pack(
@@ -270,24 +298,27 @@ def test_parse_cesn_resolves_singing_character_pack(
 ) -> None:
     """Attach the resolved CECHAR v5 pack identity to its section."""
     singer = CESNSinger("Celune", Path("celune.cevoice"))
-    monkeypatch.setattr("celune.cesn._resolve_singer", lambda name: singer)
+    monkeypatch.setattr("celune.cesn.resolve_singer", lambda name: singer)
 
     result = parse_cesn("[lang:en][singer:celune][c3:4]Word.")
 
     assert result[0].singer == singer
 
 
-def test_parse_cesn_propagates_invalid_singing_character(
+def test_parse_cesn_classifies_missing_singer_as_unsupported(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Reject a character selection that has no compatible singing voice."""
+    """Locate an unavailable explicit singer as an unsupported CESN feature."""
 
     def reject_singer(name: str) -> CESNSinger:
         raise InvalidCharacterError(name)
 
-    monkeypatch.setattr("celune.cesn._resolve_singer", reject_singer)
-    with pytest.raises(InvalidCharacterError):
+    monkeypatch.setattr("celune.cesn.resolve_singer", reject_singer)
+    with pytest.raises(CESNUnsupportedFeatureError) as caught:
         parse_cesn("[lang:en][singer:classic][c3:4]Word.")
+
+    assert isinstance(caught.value.__cause__, InvalidCharacterError)
+    assert caught.value.source_start == 9
 
 
 def test_resolve_singer_requires_a_v5_pack_with_singing_voice(
@@ -300,6 +331,7 @@ def test_resolve_singer_requires_a_v5_pack_with_singing_voice(
     bundle = SimpleNamespace(
         metadata={"version": cevoice.V5_VERSION},
         singing_voice="sing",
+        singing_pitch_range=(0, 127),
     )
     monkeypatch.setattr(cevoice, "bundled_voices_dir", lambda: tmp_path)
 
@@ -318,18 +350,18 @@ def test_resolve_singer_requires_a_v5_pack_with_singing_voice(
     )
     monkeypatch.setattr(cevoice, "bundle_character_name", lambda _bundle: "Celune")
 
-    assert _resolve_singer("celune") == CESNSinger("Celune", pack_path.resolve())
+    assert resolve_singer("celune") == CESNSinger("Celune", pack_path.resolve())
 
     bundle.singing_voice = None
     with pytest.raises(InvalidCharacterError):
-        _resolve_singer("Celune")
+        resolve_singer("Celune")
 
 
 def test_render_cesn_preserves_sections_patterns_and_rests() -> None:
     """Render one canonical notation string without losing section boundaries."""
     sections = parse_cesn(
         "[lang:en][bpm:120,key:c,scale:major]"
-        "[pattern:qui,et][c3:4,r:1,d3:4]Quiet."
+        "[pattern:qui,et][ipa:/ˈkwaɪ.ət/][c3:4,r:1,d3:4]Quiet."
         "[bpm:160,key:e,scale:minor][e3:4]Word."
     )
 
@@ -342,6 +374,26 @@ def test_render_cesn_preserves_sections_patterns_and_rests() -> None:
     ) == tuple(event for block in sections[0].blocks for event in block.events)
 
 
+def test_parse_and_render_cesn_preserves_slurred_word_and_note_timing() -> None:
+    """Keep aligned notes and durations while marking a word's slur boundary."""
+    sections = parse_cesn(
+        "[lang:en][pattern:cel,lo][ipa:/ˈsɛl.oʊ/][slur:2][c4:4,d4:8]cello."
+    )
+
+    pairs = sections[0].blocks[0].pairs
+    assert tuple(pair.slur_from_previous for pair in pairs) == (False, True)
+    assert tuple(pair.event.duration_beats for pair in pairs) == (
+        Fraction(1),
+        Fraction(1, 2),
+    )
+
+    rendered = render_cesn(sections)
+    reparsed = parse_cesn(rendered)
+
+    assert "[slur:2]" in rendered
+    assert reparsed[0].blocks[0].pairs == pairs
+
+
 @pytest.mark.parametrize(
     "text",
     (
@@ -350,6 +402,14 @@ def test_render_cesn_preserves_sections_patterns_and_rests() -> None:
         "[lang:en][c3:4,,d3:8] Word.",
         "[lang:en][c3:4] Word. [again]",
         "[lang:en][pattern:qui,far][c3:4,d3:4] Quiet.",
+        "[lang:en][ipa:/ˈkwaɪ.ət/][c3:4,d3:4] Quiet.",
+        "[lang:en][pattern:qui,et][ipa:/ˈkwaɪ/][c3:4,d3:4] Quiet.",
+        "[lang:en][pattern:qui,et][ipa:ˈkwaɪ.ət][c3:4,d3:4] Quiet.",
+        "[lang:en][pattern:qui,et][ipa:/ˈkwaɪ..ət/][c3:4,d3:4] Quiet.",
+        "[lang:en][slur:2][c3:4,d3:4] Cello.",
+        "[lang:en][pattern:cel,lo][slur:3][c3:4,d3:4] Cello.",
+        "[lang:en][pattern:cel,lo][slur:2][c3:4,r:4,d3:4] Cello.",
+        "[lang:en][pattern:cel,lo][slur:1][c3:4,d3:4] Cello.",
         "[lang:en][bpm:0,key:c,scale:major][c3:4] Word.",
         "[lang:en][bpm:120,key:c,scale:unknown][c3:4] Word.",
         "[lang:en][tuplet:1,1][c3:4] Word.",
@@ -361,6 +421,32 @@ def test_parse_cesn_rejects_malformed_notation(text: str) -> None:
     """Reject malformed directives, note tags, and syllable patterns."""
     with pytest.raises(CESNSyntaxError):
         parse_cesn(text)
+
+
+def test_parse_cesn_error_tracks_source_span_and_formats_one_line() -> None:
+    """Show a malformed directive with its exact line and one-based column."""
+    text = "[lang:en]\n[bpm:120:key:c,scale:major]\n[c4:4] word.\n[d4:4] another line."
+
+    with pytest.raises(CESNSyntaxError) as caught:
+        parse_cesn(text)
+
+    error = caught.value
+    assert error.source_start == text.index("[bpm:")
+    assert error.source_end == text.index("]", error.source_start) + 1
+    assert format_cesn_error(text, error) == (
+        "Parse error in CESN notation (line 2, column 1):\n\n"
+        "[bpm:120:key:c,scale:major]\n"
+        "^ CESN settings require bpm, key, and scale fields"
+    )
+
+
+def test_format_cesn_error_without_source_span_returns_exception_message() -> None:
+    """Do not invent a source location for backend-only CESN failures."""
+    error = CESNBackendFormatError("prepared score has an invalid header")
+
+    assert format_cesn_error("plain text", error) == (
+        "prepared score has an invalid header"
+    )
 
 
 def test_parse_cesn_reports_missing_note_events_as_alignment_error() -> None:

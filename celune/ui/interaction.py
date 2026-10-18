@@ -29,11 +29,9 @@ __all__ = (
     "_close_menu",
     "_config_autocomplete",
     "_config_explanation",
-    "_config_label",
     "_graceful_exit",
     "_hide_scrollbars_for_exit",
     "_install_windows_signal_handler",
-    "_iter_config_values",
     "_menu_footer",
     "_report_shutdown_error",
     "_run_shutdown_step",
@@ -47,15 +45,16 @@ __all__ = (
     "_signal_handler_windows",
     "_split_command_input",
     "_start_vc_recording",
-    "_stop_vc_debug_capture",
     "_submit_text",
     "action_quit",
     "begin_tutorial",
     "cancel_tutorial",
+    "config_label",
     "consume_buffer",
     "error",
     "finish_tutorial",
     "graceful_exit",
+    "iter_config_values",
     "on_button_pressed",
     "on_key",
     "on_select_menu_widget_cancelled",
@@ -68,6 +67,7 @@ __all__ = (
     "process_command",
     "request_agent_test_response",
     "split_command_input",
+    "stop_vc_debug_capture",
     "toggle_vc_recording",
     "tts_idle",
     "tts_log",
@@ -81,8 +81,8 @@ __all__ = (
 
 def _start_vc_recording(self) -> bool:
     """Start recording from the active system input device for VC."""
-    _app._load_ui_runtime_dependencies()
-    if self.celune is None or not self._is_voice_conversion_mode():
+    _app.ensure_ui_runtime_dependencies()
+    if self.celune is None or not self.is_voice_conversion_mode():
         return False
     if (
         getattr(self.celune, "sleeping", False)
@@ -95,7 +95,7 @@ def _start_vc_recording(self) -> bool:
     ):
         return False
 
-    if self._vc_recording_active():
+    if self.vc_recording_active():
         return True
 
     input_config = getattr(self.celune, "config", None)
@@ -134,12 +134,12 @@ def _start_vc_recording(self) -> bool:
         )
         return False
 
-    channels = _app._device_scalar_int(device_info.get("max_input_channels"), 0)
+    channels = _app.device_scalar_int(device_info.get("max_input_channels"), 0)
     if channels <= 0:
         self.safe_log(_app.string("pipeline.no_audio_device"), "warning")
         return False
 
-    sample_rate = _app._device_scalar_int(
+    sample_rate = _app.device_scalar_int(
         device_info.get("default_samplerate"),
         48000,
     )
@@ -153,7 +153,7 @@ def _start_vc_recording(self) -> bool:
     ai_vad = _app.create_live_voice_activity_detector()
     submission_queue: queue_module.Queue[
         Optional[tuple[_app.AudioChunk, int, str, bool]]
-    ] = queue_module.Queue(maxsize=_app._VC_LIVE_SUBMISSION_QUEUE_SIZE)
+    ] = queue_module.Queue(maxsize=_app.VC_LIVE_SUBMISSION_QUEUE_SIZE)
 
     def submit_live_audio() -> None:
         live_source_id: Optional[int] = None
@@ -341,7 +341,7 @@ def _start_vc_recording(self) -> bool:
 
             if (
                 self._vc_recording_feedback_spike_count
-                >= _app._VC_FEEDBACK_REQUIRED_CONSECUTIVE_SPIKES
+                >= _app.VC_FEEDBACK_REQUIRED_CONSECUTIVE_SPIKES
             ):
                 self._vc_recording_feedback_detected = True
                 should_stop_for_feedback = True
@@ -460,7 +460,7 @@ def toggle_vc_recording(self) -> bool:
     Returns:
         bool: ``True`` when recording started or stopped successfully.
     """
-    if self._vc_recording_active():
+    if self.vc_recording_active():
         with self._vc_recording_lock:
             (
                 stream,
@@ -504,8 +504,8 @@ def _shutdown_live_vc_recording(self) -> None:
     if self.celune is not None:
         self.celune._exit_requested = True
 
-    if not self._vc_recording_active():
-        self._stop_vc_debug_capture(announce=False, discard_pending=True)
+    if not self.vc_recording_active():
+        self.stop_vc_debug_capture(announce=False, discard_pending=True)
         return
 
     with self._vc_recording_lock:
@@ -523,10 +523,10 @@ def _shutdown_live_vc_recording(self) -> None:
     self._shutdown_vc_stream(stream)
     self._stop_live_vc_backend()
     self._join_vc_recording_threads(stop_thread, worker)
-    self._stop_vc_debug_capture(announce=False, discard_pending=True)
+    self.stop_vc_debug_capture(announce=False, discard_pending=True)
 
 
-def _stop_vc_debug_capture(
+def stop_vc_debug_capture(
     self,
     announce: bool = True,
     discard_pending: bool = False,
@@ -638,8 +638,8 @@ def open_settings_menu(self) -> None:
 
     options: list[_app.SelectMenuOption] = []
     paths: list[tuple[str, ...]] = []
-    for path, value in self._iter_config_values(self.celune.config):
-        label = self._config_label(path)
+    for path, value in self.iter_config_values(self.celune.config):
+        label = self.config_label(path)
         options.append(
             _app.SelectMenuOption(
                 label=label,
@@ -672,7 +672,7 @@ def open_settings_menu(self) -> None:
     )
 
 
-def _iter_config_values(
+def iter_config_values(
     config: dict[str, _app.JSONSerializable],
     prefix: tuple[str, ...] = (),
 ) -> Iterator[tuple[tuple[str, ...], _app.JSONSerializable]]:
@@ -680,7 +680,7 @@ def _iter_config_values(
     for key, value in config.items():
         path = (*prefix, key)
         if isinstance(value, dict) and value:
-            yield from _app.CeluneUI._iter_config_values(value, path)
+            yield from _app.CeluneUI.iter_config_values(value, path)
         else:
             yield path, value
 
@@ -715,7 +715,7 @@ def _config_autocomplete(
     return candidates.get(path)
 
 
-def _config_label(path: tuple[str, ...]) -> str:
+def config_label(path: tuple[str, ...]) -> str:
     """Convert a dotted configuration path into a readable setting label."""
     label = " ".join(path).replace("_", " ")
     for source, replacement in (("t2s", "T2S"),):
@@ -797,7 +797,7 @@ def _config_explanation(path: tuple[str, ...]) -> str:
         return explanation
     return _app.string(
         "ui.settings_explanation_generic",
-        setting=_app.CeluneUI._config_label(path),
+        setting=_app.CeluneUI.config_label(path),
         app_name=APP_NAME,
     )
 
@@ -1378,7 +1378,7 @@ def on_key(self, event: _app.events.Key) -> None:
                 event.prevent_default()
                 event.stop()
                 return
-            if self._is_voice_conversion_mode():
+            if self.is_voice_conversion_mode():
                 recording_toggled = self.toggle_vc_recording()
             else:
                 recording_toggled = self.toggle_persona_recording()
@@ -1412,7 +1412,7 @@ def on_button_pressed(self, event: _app.Button.Pressed) -> None:
         return
 
     if event.button == self.vc_mode_button:
-        if self._is_voice_conversion_mode():
+        if self.is_voice_conversion_mode():
             self.set_vc_f0_condition(
                 not bool(getattr(celune, "vc_f0_condition", False))
             )
@@ -1470,7 +1470,7 @@ def on_unmount(self) -> None:
     if self._runtime_log_capture_enabled:
         self._run_shutdown_step(self._disable_runtime_log_capture)
 
-    _app.CeluneUI._instance = None
+    self.release_instance()
 
 
 def tts_idle(self) -> None:
@@ -1695,7 +1695,7 @@ def _graceful_exit(self, return_code: Optional[int] = None) -> None:
                 self.screen,
                 0.0,
                 on_complete=finish_fade,
-                duration=_app._EXIT_FADE_SECONDS,
+                duration=_app.EXIT_FADE_SECONDS,
             )
         except Exception:
             finish_exit()

@@ -17,7 +17,7 @@ async def run_in_daemon_thread[**Parameters, Result](
 ) -> Result:
     """Run one blocking operation without borrowing asyncio's default executor.
 
-    The worker is daemonized so a cancelled or shutdown-bound operation cannot
+    The worker is daemonized so a canceled or shutdown-bound operation cannot
     keep an asyncio runner waiting for its default executor. Backend-owned
     cancellation should still be requested before the owning runtime is closed.
 

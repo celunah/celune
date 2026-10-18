@@ -12,7 +12,7 @@ from celune.registry.tts import (
     model_contract,
 )
 from celune.backends.tts.contracts import (
-    _canonical_inventory,
+    canonical_inventory,
     validate_model_state,
 )
 from celune.exceptions import InvalidCheckpoint, ModelContractError
@@ -57,7 +57,7 @@ def test_loaded_state_is_checked_against_the_exact_inventory() -> None:
         tensor_count=2,
         parameter_count=6,
         dtype_counts=(("torch.bfloat16", 2),),
-        inventory_sha256=_canonical_inventory(
+        inventory_sha256=canonical_inventory(
             {
                 "layer.weight": ((2, 2), "torch.bfloat16"),
                 "layer.bias": ((2,), "torch.bfloat16"),
@@ -87,7 +87,7 @@ def test_dtype_failure_reports_structured_checkpoint_context() -> None:
         tensor_count=1,
         parameter_count=4,
         dtype_counts=(("torch.float16", 1),),
-        inventory_sha256=_canonical_inventory(
+        inventory_sha256=canonical_inventory(
             {
                 "layers.12.self_attn.q_proj.weight": (
                     (2, 2),

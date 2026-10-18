@@ -19,6 +19,7 @@ from .vc import VC_PLAYBACK_GAIN, normalize_vc_audio
 from .i18n import string
 from .utils import (
     rng_replace,
+    cesn_to_text,
     is_april_fools,
     detect_language,
     format_error_message,
@@ -26,33 +27,34 @@ from .utils import (
 )
 from .binding import install_class_functions, install_module_functions
 from .cevoice import default_loader
+from .singing import contains_cesn_note_event
 from .pipeline import (
     close_stream,
-    _format_stat_duration,
-    _run_in_daemon_thread,
-    _invalidate_speech_work,
+    format_stat_duration,
+    run_in_daemon_thread,
+    invalidate_speech_work,
 )
 from .playback import (
     acquire_pipeline,
     release_pipeline,
-    _is_youtube_sfx_url,
-    _queue_playback_done,
-    _download_youtube_sfx,
-    _playback_source_meta,
-    _queue_playback_chunk,
+    is_youtube_sfx_url,
+    queue_playback_done,
+    download_youtube_sfx,
+    playback_source_meta,
+    queue_playback_chunk,
     acquire_pipeline_result,
-    _next_playback_source_id,
-    _register_playback_source,
-    _set_playback_source_status,
-    _clear_playback_source_status,
-    _register_overlay_playback_state,
+    next_playback_source_id,
+    register_playback_source,
+    set_playback_source_status,
+    clear_playback_source_status,
+    register_overlay_playback_state,
 )
 from .audio.dsp import split, resample_audio
 from .constants import BASE_SR, APP_NAME
 from .exceptions import NotAvailableError
 from .conversation import (
-    _store_persona_memories,
-    _classify_persona_memories,
+    store_persona_memories,
+    classify_persona_memories,
 )
 from .persona.impl import compact_persona_history
 from .typing.aliases import AudioChunk
@@ -79,7 +81,9 @@ __all__ = (
     "finish_streaming_sfx_audio",
     "handle_audio_input",
     "play",
+    "play_tutorial_sections",
     "prepare_playback_audio",
+    "prepare_tutorial_sections",
     "queue_sfx_audio",
     "queue_speech",
     "queue_speech_async",
@@ -99,7 +103,7 @@ def deliver_persona_response(engine: Celune, request: str, response: str) -> boo
     if not spoken_text:
         return False
 
-    _store_persona_memories(engine, request)
+    store_persona_memories(engine, request)
     history = getattr(engine, "persona_history", None)
     if isinstance(history, list):
         history.extend(
@@ -117,7 +121,7 @@ def deliver_persona_response(engine: Celune, request: str, response: str) -> boo
     )
     if isinstance(history, list):
         compact_persona_history(engine)
-    _classify_persona_memories(engine, request)
+    classify_persona_memories(engine, request)
     return queued
 
 
@@ -187,7 +191,7 @@ def _resolve_tutorial_display_sections(
     return visible_sections
 
 
-def _prepare_tutorial_sections(
+def prepare_tutorial_sections(
     engine: Celune,
     sections: tuple[str, ...],
     is_active: Callable[[], bool],
@@ -243,7 +247,7 @@ def _prepare_tutorial_sections(
     return None
 
 
-def _play_tutorial_sections(
+def play_tutorial_sections(
     engine: Celune,
     sections: tuple[str, ...],
     audio_sections: tuple[AudioChunk, ...],
@@ -348,7 +352,7 @@ def _play_tutorial_sections(
 
     next_section = 0
     deadline = time.monotonic() + timeout
-    source_meta = getattr(engine, "_playback_source_meta", {})
+    source_meta = getattr(engine, "playback_source_meta", {})
     while is_active() and time.monotonic() < deadline:
         metadata = source_meta.get(source_id, {})
         played_frames = int(float(metadata.get("played_frames", 0.0)))
@@ -757,6 +761,8 @@ def _queue_speech_after_ready(
         text if singing_backend else normalize_special_characters(text, for_tts=True)
     )
     preserved_display_text = display_text if display_text is not None else text
+    if singing_backend and contains_cesn_note_event(preserved_display_text):
+        preserved_display_text = cesn_to_text(preserved_display_text)
     supported_languages = list(engine.backend.supported_languages)
     language_meta = (
         None if singing_backend else detect_language(speech_text, supported_languages)
@@ -896,7 +902,7 @@ async def queue_speech_async(
         return False
 
     if (
-        not await _run_in_daemon_thread(lambda: _wait_for_model_ready(engine))
+        not await run_in_daemon_thread(lambda: _wait_for_model_ready(engine))
         or engine.exit_requested
     ):
         return False
@@ -953,44 +959,44 @@ def queue_sfx_audio(
         playback_sample_rate = BASE_SR
         audio_len = len(audio) / playback_sample_rate
         if log_length:
-            engine.log(f"{playback_sample_rate} Hz, {_format_stat_duration(audio_len)}")
+            engine.log(f"{playback_sample_rate} Hz, {format_stat_duration(audio_len)}")
 
         if keep:
             engine.kept_sfx_audio = [chunk.copy() for chunk in split(audio, BASE_SR, 1)]
 
-        source_id = _next_playback_source_id(engine)
-        _register_overlay_playback_state(
+        source_id = next_playback_source_id(engine)
+        register_overlay_playback_state(
             engine,
             reset_ready_announcement=reset_ready_announcement,
         )
-        _register_playback_source(engine, source_id, kind="sfx", base_gain=volume)
+        register_playback_source(engine, source_id, kind="sfx", base_gain=volume)
         engine.cur_state = "speaking"
         playback_generation = getattr(engine, "_playback_generation", 0)
-        _set_playback_source_status(
+        set_playback_source_status(
             engine,
             source_id,
             string(status_label_key, label=label),
         )
         # push the smallest possible chunks for responsive stopping
         for chunk in split(audio, playback_sample_rate, 1):
-            if not _queue_playback_chunk(
+            if not queue_playback_chunk(
                 engine,
                 source_id,
                 chunk,
                 playback_sample_rate,
                 generation=playback_generation,
             ):
-                _clear_playback_source_status(engine, source_id)
+                clear_playback_source_status(engine, source_id)
                 return False
         if engine.exit_requested:
-            _clear_playback_source_status(engine, source_id)
+            clear_playback_source_status(engine, source_id)
             return False
-        if not _queue_playback_done(
+        if not queue_playback_done(
             engine,
             source_id,
             generation=playback_generation,
         ):
-            _clear_playback_source_status(engine, source_id)
+            clear_playback_source_status(engine, source_id)
             return False
         return True
     except Exception:
@@ -1029,27 +1035,27 @@ def queue_streaming_sfx_audio(
 
     Returns:
         Optional[int]: The persistent playback source id, or ``None`` when the
-            producer belongs to a cancelled playback generation.
+            producer belongs to a canceled playback generation.
     """
     audio = prepare_playback_audio(audio, sample_rate)
     playback_sample_rate = BASE_SR
     audio_len = len(audio) / playback_sample_rate
     if log_length:
-        engine.log(f"{playback_sample_rate} Hz, {_format_stat_duration(audio_len)}")
+        engine.log(f"{playback_sample_rate} Hz, {format_stat_duration(audio_len)}")
 
     active_generation = getattr(engine, "_playback_generation", 0)
     if generation is not None and generation != active_generation:
         return None
     source_generation = active_generation if generation is None else generation
 
-    meta = _playback_source_meta(engine)
+    meta = playback_source_meta(engine)
     if source_id is None or source_id not in meta:
-        source_id = _next_playback_source_id(engine)
-        _register_overlay_playback_state(
+        source_id = next_playback_source_id(engine)
+        register_overlay_playback_state(
             engine,
             reset_ready_announcement=reset_ready_announcement,
         )
-        _register_playback_source(
+        register_playback_source(
             engine,
             source_id,
             kind="sfx",
@@ -1060,13 +1066,13 @@ def queue_streaming_sfx_audio(
     elif float(meta[source_id].get("generation", 0.0)) != float(active_generation):
         return None
 
-    _set_playback_source_status(
+    set_playback_source_status(
         engine,
         source_id,
         string(status_label_key, label=label),
     )
 
-    if len(audio) > 0 and not _queue_playback_chunk(
+    if len(audio) > 0 and not queue_playback_chunk(
         engine,
         source_id,
         audio,
@@ -1087,10 +1093,10 @@ def finish_streaming_sfx_audio(engine: Celune, source_id: Optional[int]) -> None
     """
     if source_id is None:
         return
-    source_meta = _playback_source_meta(engine).get(source_id)
+    source_meta = playback_source_meta(engine).get(source_id)
     if not isinstance(source_meta, dict):
         return
-    _queue_playback_done(
+    queue_playback_done(
         engine,
         source_id,
         generation=int(float(source_meta.get("generation", 0.0))),
@@ -1138,9 +1144,9 @@ def play(
     if engine.exit_requested:
         return False
 
-    downloaded_from_url = _is_youtube_sfx_url(sound_path)
+    downloaded_from_url = is_youtube_sfx_url(sound_path)
     if downloaded_from_url:
-        downloaded_info = _download_youtube_sfx(engine, sound_path)
+        downloaded_info = download_youtube_sfx(engine, sound_path)
         if downloaded_info is None:
             return False
         downloaded, playback_label = downloaded_info
@@ -1200,7 +1206,7 @@ def close(engine: Celune) -> None:
     if not getattr(engine, "test_finished", False):
         engine.log(string("pipeline.exiting"))
     engine._exit_requested = True
-    _invalidate_speech_work(engine)
+    invalidate_speech_work(engine)
     close_stream(engine, abort=True)
 
     engine.text_queue.put(engine.sentinel)

@@ -33,7 +33,7 @@ from .signature import SIGNATURE_NAME, load_signature, verify_manifest_signature
 from .vcs import (
     UPSTREAM_REPOSITORY_URL,
     is_git_checkout,
-    _open_repository,
+    open_repository,
     git_checkout_hint,
 )
 
@@ -127,7 +127,7 @@ def _parse_release(raw: JSONSerializable) -> Optional[ReleaseInfo]:
     tag = raw.get("tag_name")
     if not isinstance(tag, str) or not _is_semver(tag):
         return None
-    if raw.get("draft") is True:
+    if raw.get("draft"):
         return None
 
     asset_url = ""
@@ -309,7 +309,7 @@ def _is_newer_version_tag(candidate: str, current: str) -> bool:
 
 def _current_branch() -> str:
     """Get current branch."""
-    with _open_repository(_repo_root()) as repository:
+    with open_repository(_repo_root()) as repository:
         if repository.head.is_detached:
             return ""
         return repository.active_branch.name
@@ -318,7 +318,7 @@ def _current_branch() -> str:
 def _local_tag() -> str:
     """Get current local tag."""
     try:
-        with _open_repository(_repo_root()) as repository:
+        with open_repository(_repo_root()) as repository:
             tag = repository.git.describe(
                 "HEAD",
                 tags=True,
@@ -331,13 +331,13 @@ def _local_tag() -> str:
 
 def _local_revision() -> str:
     """Get current local revision."""
-    with _open_repository(_repo_root()) as repository:
+    with open_repository(_repo_root()) as repository:
         return repository.head.commit.hexsha
 
 
 def _has_local_changes() -> bool:
     """Does the local repository have any changes pending for commit?"""
-    with _open_repository(_repo_root()) as repository:
+    with open_repository(_repo_root()) as repository:
         return repository.is_dirty(untracked_files=True)
 
 
@@ -348,7 +348,7 @@ def _is_git_checkout() -> bool:
 
 def _update_is_fast_forward() -> bool:
     """Return whether FETCH_HEAD descends from the current local commit."""
-    with _open_repository(_repo_root()) as repository:
+    with open_repository(_repo_root()) as repository:
         return repository.is_ancestor(
             repository.head.commit,
             repository.commit("FETCH_HEAD"),

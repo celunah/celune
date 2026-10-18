@@ -15,18 +15,18 @@ import soundfile as sf
 from fastapi.responses import JSONResponse
 
 from .runtime import (
-    _webui_snapshot,
-    _webui_logs_html,
-    _append_webui_log,
-    _normalized_audio,
-    _set_webui_status,
-    _webui_status_html,
-    _append_webui_error,
-    _webui_resources_html,
-    _webui_vc_mode_active,
-    _webui_submit_snapshot,
-    _webui_vc_controls_update,
-    _webui_audio_waveform_options,
+    webui_snapshot,
+    webui_logs_html,
+    append_webui_log,
+    normalized_audio,
+    set_webui_status,
+    webui_status_html,
+    append_webui_error,
+    webui_resources_html,
+    webui_vc_mode_active,
+    webui_submit_snapshot,
+    webui_vc_controls_update,
+    webui_audio_waveform_options,
 )
 from .. import api as _api
 from ..ui.app import CeluneUI
@@ -38,30 +38,30 @@ from ..typing.aliases import AudioChunk, AudioChunks
 from ..typing.api import WebUiUpdate, WebUiAudioValue, WebUiInputAudioValue
 
 __all__ = (
-    "_build_webui",
-    "_decode_uploaded_audio",
     "_normalize_webui_audio_input",
-    "_voice_conversion_unavailable_response",
-    "_webui_convert_audio",
-    "_webui_cycle_voice",
     "_webui_record_button_update",
-    "_webui_run_command",
     "_webui_select_voice",
-    "_webui_speak",
     "_webui_stop",
     "_webui_stop_button_update",
     "_webui_toggle_recording",
     "_webui_voice_catalog",
     "_webui_voice_choices",
+    "build_webui",
+    "decode_uploaded_audio",
+    "voice_conversion_unavailable_response",
+    "webui_convert_audio",
+    "webui_cycle_voice",
+    "webui_run_command",
+    "webui_speak",
 )
 
 
-def _webui_run_command(text: str) -> bool:
+def webui_run_command(text: str) -> bool:
     """Run one slash command through the main UI command path when available."""
     try:
         parts = CeluneUI.split_command_input(text[1:])
     except ValueError:
-        _append_webui_log(string("webui.command_parsing_error"), "error")
+        append_webui_log(string("webui.command_parsing_error"), "error")
         return False
 
     if not parts:
@@ -74,28 +74,27 @@ def _webui_run_command(text: str) -> bool:
         from ..ui.commands import process_command as process_ui_command
 
         process_ui_command(
-            cast(CeluneUI, _api._WebUiCommandHost(celune)), command, command_args
+            cast(CeluneUI, _api.WebUiCommandHost(celune)), command, command_args
         )
         return True
 
-    # noinspection PyProtectedMember
-    ui = CeluneUI._instance
+    ui = CeluneUI.get_instance()
     if ui is not None:
         ui.call_from_thread(ui.process_command, command, command_args)
         return True
 
     if celune is None:
-        _append_webui_log(string("webui.not_available"), "error")
+        append_webui_log(string("webui.not_available"), "error")
         return False
     from ..ui.commands import process_command as process_ui_command
 
     process_ui_command(
-        cast(CeluneUI, _api._WebUiCommandHost(celune)), command, command_args
+        cast(CeluneUI, _api.WebUiCommandHost(celune)), command, command_args
     )
     return True
 
 
-def _decode_uploaded_audio(
+def decode_uploaded_audio(
     data: bytes,
 ) -> tuple[AudioChunk, int]:
     """Decode uploaded audio bytes into float32 audio and a source sample rate."""
@@ -136,7 +135,7 @@ def _webui_playback_audio(
     return BASE_SR, pcm_audio
 
 
-def _voice_conversion_unavailable_response() -> JSONResponse:
+def voice_conversion_unavailable_response() -> JSONResponse:
     """Return a standard API error for VC-only endpoints in TTS mode."""
     return JSONResponse(
         status_code=409,
@@ -147,7 +146,7 @@ def _voice_conversion_unavailable_response() -> JSONResponse:
     )
 
 
-def _webui_speak(
+def webui_speak(
     content: str,
 ) -> Iterator[
     tuple[
@@ -163,65 +162,65 @@ def _webui_speak(
     """Speak text through the browser UI and return browser audio playback."""
     text = content.strip()
     if not text:
-        snapshot = _webui_submit_snapshot("")
+        snapshot = webui_submit_snapshot("")
         yield snapshot[0], None, *snapshot[1:]
         return
 
     if text.startswith("/"):
-        _webui_run_command(text)
-        snapshot = _webui_submit_snapshot("")
+        webui_run_command(text)
+        snapshot = webui_submit_snapshot("")
         yield snapshot[0], None, *snapshot[1:]
         return
 
     celune = _api.require_celune()
-    if _webui_vc_mode_active(celune):
-        _append_webui_log(string("webui.text_unavailable_in_vc_mode"), "warning")
-        snapshot = _webui_submit_snapshot(text)
+    if webui_vc_mode_active(celune):
+        append_webui_log(string("webui.text_unavailable_in_vc_mode"), "warning")
+        snapshot = webui_submit_snapshot(text)
         yield snapshot[0], None, *snapshot[1:]
         return
     _api.api_log("SPEAK(WEBUI)", text)
 
     current_state = (celune.cur_state or "").strip().lower()
     if current_state == "waking":
-        _append_webui_log(
+        append_webui_log(
             string("webui.not_returned_from_sleep", app_name=APP_NAME), "warning"
         )
-        snapshot = _webui_submit_snapshot(text)
+        snapshot = webui_submit_snapshot(text)
         yield snapshot[0], None, *snapshot[1:]
         return
 
     if getattr(celune, "sleeping", False):
-        _set_webui_status(string("status.waking_up"))
-        snapshot = _webui_submit_snapshot(text)
+        set_webui_status(string("status.waking_up"))
+        snapshot = webui_submit_snapshot(text)
         yield snapshot[0], None, *snapshot[1:]
         wake_async = cast(
             Optional[Callable[[], Awaitable[bool]]],
             getattr(celune, "wake_from_sleep_async", None),
         )
         if wake_async is not None:
-            woke = bool(_api._run_async_runtime_call(wake_async()))
+            woke = bool(_api.run_async_runtime_call(wake_async()))
         else:
             woke = celune.wake_from_sleep()
         if not woke:
-            snapshot = _webui_submit_snapshot(text)
+            snapshot = webui_submit_snapshot(text)
             yield snapshot[0], None, *snapshot[1:]
             return
 
     if persona_talkback_enabled(getattr(celune, "config", {})):
         if not celune.think(text):
-            _append_webui_log(string("webui.busy_try_again"), "warning")
-        snapshot = _webui_submit_snapshot("")
+            append_webui_log(string("webui.busy_try_again"), "warning")
+        snapshot = webui_submit_snapshot("")
         yield snapshot[0], None, *snapshot[1:]
         return
 
     chunks = celune.say_stream(text, save=True)
     if chunks is None:
-        _append_webui_log(string("webui.busy_try_again"), "warning")
-        snapshot = _webui_submit_snapshot(text)
+        append_webui_log(string("webui.busy_try_again"), "warning")
+        snapshot = webui_submit_snapshot(text)
         yield snapshot[0], None, *snapshot[1:]
         return
 
-    snapshot = _webui_submit_snapshot("")
+    snapshot = webui_submit_snapshot("")
     yield snapshot[0], None, *snapshot[1:]
 
     audio_chunks: AudioChunks = []
@@ -234,7 +233,7 @@ def _webui_speak(
             if isinstance(item, Exception):
                 raise item
 
-            audio_chunks.append(_normalized_audio(item))
+            audio_chunks.append(normalized_audio(item))
         audio_value: WebUiAudioValue
         if audio_chunks:
             audio_value = _webui_playback_audio(
@@ -243,19 +242,19 @@ def _webui_speak(
             )
         else:
             audio_value = None
-        snapshot = _webui_submit_snapshot("")
+        snapshot = webui_submit_snapshot("")
         yield snapshot[0], audio_value, *snapshot[1:]
     except Exception as error:
-        _append_webui_error(
+        append_webui_error(
             tagged_string("webui.error", "WEBUI ERROR"),
             error,
             celune=celune,
         )
-        snapshot = _webui_submit_snapshot("")
+        snapshot = webui_submit_snapshot("")
         yield snapshot[0], None, *snapshot[1:]
 
 
-def _webui_convert_audio(
+def webui_convert_audio(
     source_audio: WebUiInputAudioValue,
     conversion_mode: str = "talk",
 ) -> tuple[
@@ -269,12 +268,12 @@ def _webui_convert_audio(
 ]:
     """Convert uploaded audio through the active VC backend for browser playback."""
     if source_audio is None:
-        _append_webui_log(
+        append_webui_log(
             string("webui.upload_audio_first"),
             "warning",
         )
         logs_html, status_html, resources_html, voice_update, send_update, _input = (
-            _webui_snapshot()
+            webui_snapshot()
         )
         return (
             None,
@@ -287,13 +286,13 @@ def _webui_convert_audio(
         )
 
     celune = _api.require_celune()
-    if not _webui_vc_mode_active(celune):
-        _append_webui_log(
+    if not webui_vc_mode_active(celune):
+        append_webui_log(
             string("webui.conversion_only_in_vc_mode"),
             "warning",
         )
         logs_html, status_html, resources_html, voice_update, send_update, _input = (
-            _webui_snapshot()
+            webui_snapshot()
         )
         return (
             source_audio,
@@ -317,13 +316,13 @@ def _webui_convert_audio(
             f0_condition=conversion_mode.strip().lower() == "sing",
         )
     except Exception as error:
-        _append_webui_error(
+        append_webui_error(
             tagged_string("webui.error", "WEBUI ERROR"),
             error,
             celune=celune,
         )
         logs_html, status_html, resources_html, voice_update, send_update, _input = (
-            _webui_snapshot()
+            webui_snapshot()
         )
         return (
             source_audio,
@@ -336,9 +335,9 @@ def _webui_convert_audio(
         )
 
     if output is None:
-        _append_webui_log(string("webui.cannot_convert_right_now"), "warning")
+        append_webui_log(string("webui.cannot_convert_right_now"), "warning")
         logs_html, status_html, resources_html, voice_update, send_update, _input = (
-            _webui_snapshot()
+            webui_snapshot()
         )
         return (
             source_audio,
@@ -352,7 +351,7 @@ def _webui_convert_audio(
 
     converted_audio = _webui_playback_audio(output.audio, output.sample_rate)
     logs_html, status_html, resources_html, voice_update, send_update, _input = (
-        _webui_snapshot()
+        webui_snapshot()
     )
     return (
         None,
@@ -365,7 +364,7 @@ def _webui_convert_audio(
     )
 
 
-def _webui_cycle_voice() -> tuple[
+def webui_cycle_voice() -> tuple[
     str,
     str,
     str,
@@ -376,9 +375,9 @@ def _webui_cycle_voice() -> tuple[
     """Cycle to the next available Celune voice from the browser UI."""
     celune = _api.require_celune()
     if getattr(getattr(celune, "backend", None), "singing", False):
-        return _webui_snapshot()
+        return webui_snapshot()
     if len(celune.voices) < 2 or not bool(celune.current_voice or celune.voices):
-        return _webui_snapshot()
+        return webui_snapshot()
 
     current_voice = celune.current_voice or celune.voices[0]
     current_index = (
@@ -392,14 +391,14 @@ def _webui_cycle_voice() -> tuple[
         getattr(celune, "set_voice_async", None),
     )
     if set_voice_async is not None:
-        switched = bool(_api._run_async_runtime_call(set_voice_async(next_voice)))
+        switched = bool(_api.run_async_runtime_call(set_voice_async(next_voice)))
     else:
         switched = celune.set_voice_and_wait(next_voice)
 
     if not switched:
-        _append_webui_log(string("webui.cannot_change_voice_right_now"), "error")
+        append_webui_log(string("webui.cannot_change_voice_right_now"), "error")
 
-    return _webui_snapshot()
+    return webui_snapshot()
 
 
 def _webui_voice_catalog(celune: _api.Celune) -> tuple[tuple[str, str], ...]:
@@ -505,10 +504,10 @@ def _webui_select_voice(
     """Select one voice through the same asynchronous core switch as the TUI."""
     celune = _api.bound_celune
     if celune is None or not name:
-        return _webui_snapshot()
+        return webui_snapshot()
     if getattr(getattr(celune, "backend", None), "singing", False):
-        _append_webui_log(string("celune.singing_voice_change_unavailable"), "warning")
-        return _webui_snapshot()
+        append_webui_log(string("celune.singing_voice_change_unavailable"), "warning")
+        return webui_snapshot()
     try:
         selection = json.loads(name)
     except json.JSONDecodeError:
@@ -518,8 +517,8 @@ def _webui_select_voice(
     if not isinstance(entry, str) or (
         bundle is not None and not isinstance(bundle, str)
     ):
-        _append_webui_log(string("webui.cannot_change_voice_right_now"), "error")
-        return _webui_snapshot()
+        append_webui_log(string("webui.cannot_change_voice_right_now"), "error")
+        return webui_snapshot()
 
     set_voice_async = cast(
         Optional[Callable[[str], Awaitable[bool]]],
@@ -543,10 +542,10 @@ def _webui_select_voice(
             return False
         return celune.set_voice_and_wait(entry)
 
-    switched = _api._run_async_runtime_call(select_voice())
+    switched = _api.run_async_runtime_call(select_voice())
     if not switched:
-        _append_webui_log(string("webui.cannot_change_voice_right_now"), "error")
-    return _webui_snapshot()
+        append_webui_log(string("webui.cannot_change_voice_right_now"), "error")
+    return webui_snapshot()
 
 
 def _webui_stop() -> tuple[
@@ -560,28 +559,28 @@ def _webui_stop() -> tuple[
     """Stop the active speech request through the shared runtime lifecycle."""
     celune = _api.bound_celune
     if celune is None:
-        return _webui_snapshot()
-    ui = CeluneUI._instance
+        return webui_snapshot()
+    ui = CeluneUI.get_instance()
     if ui is not None:
         recording = (
-            ui._vc_recording_active
-            if _webui_vc_mode_active(celune)
-            else ui._persona_recording_active
+            ui.vc_recording_active
+            if webui_vc_mode_active(celune)
+            else ui.persona_recording_active
         )
         if callable(recording) and recording():
             toggle = (
                 ui.toggle_vc_recording
-                if _webui_vc_mode_active(celune)
+                if webui_vc_mode_active(celune)
                 else ui.toggle_persona_recording
             )
             ui.call_from_thread(toggle)
-            return _webui_snapshot()
+            return webui_snapshot()
     stop_async = cast(
         Optional[Callable[[], Awaitable[bool]]],
         getattr(celune, "force_stop_speech_async", None),
     )
     if stop_async is not None:
-        stopped = bool(_api._run_async_runtime_call(stop_async()))
+        stopped = bool(_api.run_async_runtime_call(stop_async()))
     else:
         stop_sync = getattr(celune, "force_stop_speech", None)
         stopped = (
@@ -590,10 +589,10 @@ def _webui_stop() -> tuple[
             else False
         )
     if stopped:
-        _set_webui_status(string("status.stopped"), "sleeping", source="callback")
+        set_webui_status(string("status.stopped"), "sleeping", source="callback")
     else:
-        _append_webui_log(string("commands.nothing_to_stop"), "warning")
-    return _webui_snapshot()
+        append_webui_log(string("commands.nothing_to_stop"), "warning")
+    return webui_snapshot()
 
 
 def _webui_stop_button_update() -> WebUiUpdate:
@@ -611,7 +610,7 @@ def _webui_stop_button_update() -> WebUiUpdate:
 def _webui_record_button_update() -> WebUiUpdate:
     """Return whether the browser can delegate live capture to the TUI runtime."""
     celune = _api.bound_celune
-    ui = CeluneUI._instance
+    ui = CeluneUI.get_instance()
     if celune is None or ui is None or _api.webui_input_locked:
         return gr.update(interactive=False)
     if getattr(celune, "is_in_tutorial", False):
@@ -629,29 +628,29 @@ def _webui_toggle_recording() -> tuple[
 ]:
     """Toggle the same Persona or live VC capture path used by ``CTRL+R``."""
     celune = _api.bound_celune
-    ui = CeluneUI._instance
+    ui = CeluneUI.get_instance()
     if celune is None or ui is None:
-        _append_webui_log(string("webui.recording_requires_tui"), "warning")
-        return _webui_snapshot()
+        append_webui_log(string("webui.recording_requires_tui"), "warning")
+        return webui_snapshot()
     if getattr(celune, "sleeping", False):
         ui.call_from_thread(ui.wake_from_sleep)
-        return _webui_snapshot()
+        return webui_snapshot()
     if getattr(celune, "cur_state", "") == "waking":
-        return _webui_snapshot()
+        return webui_snapshot()
 
     toggle = (
         ui.toggle_vc_recording
-        if _webui_vc_mode_active(celune)
+        if webui_vc_mode_active(celune)
         else ui.toggle_persona_recording
     )
     ui.call_from_thread(toggle)
-    return _webui_snapshot()
+    return webui_snapshot()
 
 
-def _build_webui() -> gr.Blocks:
+def build_webui() -> gr.Blocks:
     # pylint: disable=E1101
     """Create the browser UI mounted by the API."""
-    _api._configure_webui_theme()
+    _api.configure_webui_theme()
     with gr.Blocks(
         title=APP_NAME,
         fill_height=True,
@@ -670,7 +669,7 @@ def _build_webui() -> gr.Blocks:
                             """
                         )
                     )
-                    logs = gr.HTML(_webui_logs_html())
+                    logs = gr.HTML(webui_logs_html())
                     with gr.Row(elem_id="celune-input-row"):
                         input_box = gr.Textbox(
                             value="",
@@ -705,9 +704,9 @@ def _build_webui() -> gr.Blocks:
                         interactive=False,
                     )
                     with gr.Row(elem_id="celune-footer"):
-                        status = gr.HTML(_webui_status_html(), elem_id="celune-status")
+                        status = gr.HTML(webui_status_html(), elem_id="celune-status")
                         resources = gr.HTML(
-                            _webui_resources_html(),
+                            webui_resources_html(),
                             elem_id="celune-resources",
                         )
                     gr.HTML(
@@ -729,7 +728,7 @@ def _build_webui() -> gr.Blocks:
                         show_label=True,
                         label=string("webui.source_audio_label"),
                         interactive=False,
-                        waveform_options=_webui_audio_waveform_options(),
+                        waveform_options=webui_audio_waveform_options(),
                         elem_id="celune-source-audio",
                     )
                     vc_mode = gr.Radio(
@@ -754,7 +753,7 @@ def _build_webui() -> gr.Blocks:
                         show_label=False,
                         interactive=False,
                         visible="hidden",
-                        waveform_options=_webui_audio_waveform_options(),
+                        waveform_options=webui_audio_waveform_options(),
                         elem_id="celune-converted-audio",
                     )
             audio = gr.Audio(
@@ -764,20 +763,20 @@ def _build_webui() -> gr.Blocks:
                 show_label=False,
                 interactive=False,
                 visible="hidden",
-                waveform_options=_webui_audio_waveform_options(),
+                waveform_options=webui_audio_waveform_options(),
                 elem_id="celune-audio",
             )
             timer = gr.Timer(value=_api.WEBUI_POLL_INTERVAL_SECONDS)
 
         timer.tick(  # type: ignore[missing-attribute]
-            _webui_snapshot,
+            webui_snapshot,
             outputs=[logs, status, resources, voice_button, send_button, input_box],
             api_name=_api.WEBUI_POLL_SNAPSHOT_API_NAME,
             queue=False,
             show_progress="hidden",
         )
         timer.tick(  # type: ignore[missing-attribute]
-            _webui_vc_controls_update,
+            webui_vc_controls_update,
             outputs=[source_audio, vc_mode, convert_button],
             api_name=_api.WEBUI_POLL_VC_API_NAME,
             queue=False,
@@ -791,14 +790,14 @@ def _build_webui() -> gr.Blocks:
             show_progress="hidden",
         )
         demo.load(  # type: ignore[missing-attribute]
-            _webui_snapshot,
+            webui_snapshot,
             outputs=[logs, status, resources, voice_button, send_button, input_box],
             api_name=_api.WEBUI_LOAD_SNAPSHOT_API_NAME,
             queue=False,
             show_progress="hidden",
         )
         demo.load(  # type: ignore[missing-attribute]
-            _webui_vc_controls_update,
+            webui_vc_controls_update,
             outputs=[source_audio, vc_mode, convert_button],
             api_name=_api.WEBUI_LOAD_VC_API_NAME,
             queue=False,
@@ -812,7 +811,7 @@ def _build_webui() -> gr.Blocks:
             show_progress="hidden",
         )
         input_box.submit(  # type: ignore[missing-attribute]
-            _webui_speak,
+            webui_speak,
             inputs=[input_box],
             outputs=[
                 input_box,
@@ -827,7 +826,7 @@ def _build_webui() -> gr.Blocks:
             show_progress="hidden",
         )
         send_button.click(  # type: ignore[missing-attribute]
-            _webui_speak,
+            webui_speak,
             inputs=[input_box],
             outputs=[
                 input_box,
@@ -842,7 +841,7 @@ def _build_webui() -> gr.Blocks:
             show_progress="hidden",
         )
         voice_button.click(  # type: ignore[missing-attribute]
-            _webui_cycle_voice,
+            webui_cycle_voice,
             outputs=[logs, status, resources, voice_button, send_button, input_box],
             api_name=_api.WEBUI_CYCLE_VOICE_API_NAME,
             queue=False,
@@ -856,7 +855,7 @@ def _build_webui() -> gr.Blocks:
             show_progress="hidden",
         )
         convert_button.click(  # type: ignore[missing-attribute]
-            _webui_convert_audio,
+            webui_convert_audio,
             inputs=[source_audio, vc_mode],
             outputs=[
                 source_audio,
@@ -871,7 +870,7 @@ def _build_webui() -> gr.Blocks:
             show_progress="hidden",
         )
 
-    _api._configure_webui_generation_fn_indices(demo.config.get("dependencies", []))
+    _api.configure_webui_generation_fn_indices(demo.config.get("dependencies", []))
     return demo
 
 

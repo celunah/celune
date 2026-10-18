@@ -16,11 +16,11 @@ from celune.registry.tts import (
     TensorInventoryContract,
 )
 from celune.backends.tts.contracts import (
-    _canonical_inventory,
-    _inventory_from_state,
+    canonical_inventory,
+    inventory_from_state,
 )
 from celune.backends.tts.quantization import (
-    _torchao_api,
+    torchao_api,
     quantization_mode,
     quantize_component,
 )
@@ -53,7 +53,7 @@ def test_torchao_quant_api_syntax_warning_is_suppressed() -> None:
 
 def test_torchao_import_skips_native_enum_registration(capsys) -> None:
     """Avoid TorchAO's deprecated Enum pytree registration on current PyTorch."""
-    _torchao_api()
+    torchao_api()
     importlib.import_module("torchao.prototype.mx_formats")
 
     assert (
@@ -63,7 +63,7 @@ def test_torchao_import_skips_native_enum_registration(capsys) -> None:
 
 def test_torchao_uses_version_two_weight_only_configs() -> None:
     """Use TorchAO's current INT8 and FP8 configuration formats."""
-    _quantize, int8_config, fp8_config = _torchao_api()
+    _quantize, int8_config, fp8_config = torchao_api()
 
     assert getattr(int8_config(), "version", None) == 2
     assert getattr(fp8_config(), "version", None) == 2
@@ -111,7 +111,7 @@ def test_quantization_mode_keeps_bfloat16_when_disabled() -> None:
 def test_quantization_policy_only_targets_contract_layer_families() -> None:
     """Keep boundaries out of the contract-selected quantization set."""
     from celune.registry.tts import model_contract
-    from celune.backends.tts.quantization import _is_safe_linear
+    from celune.backends.tts.quantization import is_safe_linear
 
     contract = model_contract(
         "mini",
@@ -120,8 +120,8 @@ def test_quantization_policy_only_targets_contract_layer_families() -> None:
     )
     rule = contract.components[0].quantization
     assert rule is not None
-    assert _is_safe_linear(nn.Linear(4, 4), "flow_lm.layers.0.linear1", rule)
-    assert not _is_safe_linear(nn.Linear(4, 4), "flow_lm.input_linear", rule)
+    assert is_safe_linear(nn.Linear(4, 4), "flow_lm.layers.0.linear1", rule)
+    assert not is_safe_linear(nn.Linear(4, 4), "flow_lm.input_linear", rule)
 
 
 def test_quantization_components_prefer_declared_nested_module() -> None:
@@ -170,7 +170,7 @@ def test_int8_conversion_passes_post_quantization_contract_validation() -> None:
     module = nn.Module()
     module.q_proj = nn.Linear(4, 4, dtype=torch.bfloat16)
     state = module.state_dict()
-    tensors, dtype_counts, parameter_count = _inventory_from_state(state)
+    tensors, dtype_counts, parameter_count = inventory_from_state(state)
     component = ModelComponentContract(
         name="toy",
         artifact_path="model.safetensors",
@@ -178,7 +178,7 @@ def test_int8_conversion_passes_post_quantization_contract_validation() -> None:
             tensor_count=len(tensors),
             parameter_count=parameter_count,
             dtype_counts=tuple(sorted(dtype_counts.items())),
-            inventory_sha256=_canonical_inventory(tensors),
+            inventory_sha256=canonical_inventory(tensors),
         ),
         runtime_dtypes=(RuntimeDtypeRule("", ("torch.bfloat16",)),),
         quantization=QuantizationRule(module_suffixes=("q_proj",)),
@@ -193,7 +193,7 @@ def test_quantization_releases_source_state_before_torchao() -> None:
         "q_proj.weight": torch.ones((4, 4), dtype=torch.bfloat16),
         "q_proj.bias": torch.ones((4,), dtype=torch.bfloat16),
     }
-    tensors, dtype_counts, parameter_count = _inventory_from_state(source_state)
+    tensors, dtype_counts, parameter_count = inventory_from_state(source_state)
     component = ModelComponentContract(
         name="toy",
         artifact_path="model.safetensors",
@@ -201,7 +201,7 @@ def test_quantization_releases_source_state_before_torchao() -> None:
             tensor_count=len(tensors),
             parameter_count=parameter_count,
             dtype_counts=tuple(sorted(dtype_counts.items())),
-            inventory_sha256=_canonical_inventory(tensors),
+            inventory_sha256=canonical_inventory(tensors),
         ),
         runtime_dtypes=(RuntimeDtypeRule("", ("torch.bfloat16",)),),
         quantization=QuantizationRule(module_suffixes=("q_proj",)),
@@ -243,7 +243,7 @@ def test_quantization_releases_source_state_before_torchao() -> None:
         )
 
     with patch(
-        "celune.backends.tts.quantization._torchao_api",
+        "celune.backends.tts.quantization.torchao_api",
         return_value=(fake_quantize, object, object),
     ):
         assert quantize_component(module, component, mode="int8", backend="test") == 1
@@ -254,7 +254,7 @@ def test_quantization_does_not_move_components_between_devices() -> None:
     module = nn.Module()
     module.q_proj = nn.Linear(4, 4, dtype=torch.bfloat16)
     state = module.state_dict()
-    tensors, dtype_counts, parameter_count = _inventory_from_state(state)
+    tensors, dtype_counts, parameter_count = inventory_from_state(state)
     component = ModelComponentContract(
         name="toy",
         artifact_path="model.safetensors",
@@ -262,7 +262,7 @@ def test_quantization_does_not_move_components_between_devices() -> None:
             tensor_count=len(tensors),
             parameter_count=parameter_count,
             dtype_counts=tuple(sorted(dtype_counts.items())),
-            inventory_sha256=_canonical_inventory(tensors),
+            inventory_sha256=canonical_inventory(tensors),
         ),
         runtime_dtypes=(RuntimeDtypeRule("", ("torch.bfloat16",)),),
         quantization=QuantizationRule(module_suffixes=("q_proj",)),
@@ -282,7 +282,7 @@ def test_quantization_does_not_move_components_between_devices() -> None:
     with (
         patch.object(module, "to", side_effect=track_move),
         patch(
-            "celune.backends.tts.quantization._torchao_api",
+            "celune.backends.tts.quantization.torchao_api",
             return_value=(fake_quantize, object, object),
         ),
     ):

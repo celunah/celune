@@ -18,13 +18,13 @@ from celune.vram import (
     validate_vram_preset,
     is_cuda_out_of_memory,
     component_memory_usage,
-    _cuda_total_capacity_bytes,
-    _windows_shared_memory_capacity_bytes,
-    _windows_shared_memory_headroom_bytes,
+    cuda_total_capacity_bytes,
+    windows_shared_memory_capacity_bytes,
+    windows_shared_memory_headroom_bytes,
 )
 from celune.typing.common import Config
 from celune.constants import VRAM_BUDGETS
-from celune.celune import _tts_quantization_enabled
+from celune.celune import tts_quantization_enabled
 
 from .support import CeluneTestCase
 
@@ -98,9 +98,9 @@ class TestVram(CeluneTestCase):
             "celune.config.env_bool",
             side_effect=lambda _name, fallback=False: fallback,
         ):
-            assert _tts_quantization_enabled(None, "qwen3")
-            assert not _tts_quantization_enabled(None, "luxtts")
-            assert not _tts_quantization_enabled({"quantize": False}, "qwen3")
+            assert tts_quantization_enabled(None, "qwen3")
+            assert not tts_quantization_enabled(None, "luxtts")
+            assert not tts_quantization_enabled({"quantize": False}, "qwen3")
 
     def test_cuda_oom_classifier_accepts_worker_wrapped_errors(self) -> None:
         """Verify local and CEDTS-wrapped CUDA OOM errors are recognized."""
@@ -138,9 +138,9 @@ class TestVram(CeluneTestCase):
                 return_value=(1024**3, 12 * 1024**3),
             ),
         ):
-            assert _windows_shared_memory_capacity_bytes() == 16 * 1024**3
-            assert _windows_shared_memory_headroom_bytes() == 2 * 1024**3
-            assert _cuda_total_capacity_bytes() == 28 * 1024**3
+            assert windows_shared_memory_capacity_bytes() == 16 * 1024**3
+            assert windows_shared_memory_headroom_bytes() == 2 * 1024**3
+            assert cuda_total_capacity_bytes() == 28 * 1024**3
 
         with (
             mock.patch("celune.vram.sys.platform", "win32"),
@@ -149,7 +149,7 @@ class TestVram(CeluneTestCase):
                 return_value=mock.Mock(total=64 * 1024**3),
             ),
         ):
-            assert _windows_shared_memory_capacity_bytes() == 48 * 1024**3
+            assert windows_shared_memory_capacity_bytes() == 48 * 1024**3
 
         with (
             mock.patch("celune.vram.sys.platform", "win32"),
@@ -158,11 +158,11 @@ class TestVram(CeluneTestCase):
                 return_value=mock.Mock(total=system_total, available=1024**3),
             ),
         ):
-            assert _windows_shared_memory_headroom_bytes() == 0
+            assert windows_shared_memory_headroom_bytes() == 0
 
         with mock.patch("celune.vram.sys.platform", "linux"):
-            assert _windows_shared_memory_capacity_bytes() == 0
-            assert _windows_shared_memory_headroom_bytes() == 0
+            assert windows_shared_memory_capacity_bytes() == 0
+            assert windows_shared_memory_headroom_bytes() == 0
 
     def test_windows_profile_headroom_combines_dedicated_and_shared_free_memory(
         self,
@@ -179,7 +179,7 @@ class TestVram(CeluneTestCase):
                 "celune.vram.torch.cuda.get_device_capability", return_value=(8, 9)
             ),
             mock.patch(
-                "celune.vram._cuda_total_capacity_bytes", return_value=12 * 1024**3
+                "celune.vram.cuda_total_capacity_bytes", return_value=12 * 1024**3
             ),
         ):
             key = vram_profile_key(config)
@@ -207,7 +207,7 @@ class TestVram(CeluneTestCase):
                 "celune.vram.torch.cuda.get_device_capability", return_value=(8, 9)
             ),
             mock.patch(
-                "celune.vram._cuda_total_capacity_bytes", return_value=12 * 1024**3
+                "celune.vram.cuda_total_capacity_bytes", return_value=12 * 1024**3
             ),
             mock.patch(
                 "celune.vram.torch.cuda.mem_get_info",
@@ -215,7 +215,7 @@ class TestVram(CeluneTestCase):
             ),
             mock.patch("celune.vram.torch.cuda.memory_allocated", return_value=0),
             mock.patch(
-                "celune.vram._windows_shared_memory_headroom_bytes",
+                "celune.vram.windows_shared_memory_headroom_bytes",
                 return_value=10 * 1024**3,
             ),
         ):
@@ -251,7 +251,7 @@ class TestVram(CeluneTestCase):
                 "celune.vram.torch.cuda.get_device_capability", return_value=(8, 9)
             ),
             mock.patch(
-                "celune.vram._cuda_total_capacity_bytes", return_value=28 * 1024**3
+                "celune.vram.cuda_total_capacity_bytes", return_value=28 * 1024**3
             ),
             mock.patch.dict("celune.vram.os.environ", {"CELUNE_TTS_QUANTIZE": "true"}),
         ):

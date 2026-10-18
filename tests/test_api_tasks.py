@@ -34,7 +34,7 @@ class TestApiTaskWebSocket(CeluneTestCase):
     @staticmethod
     def _job(job_id: str = "task-1") -> str:
         """Create one running speech task fixture."""
-        api._remember_speech_job(
+        api.remember_speech_job(
             job_id,
             api.SpeechJob(status="running", created_at=0.0),
         )
@@ -51,7 +51,7 @@ class TestApiTaskWebSocket(CeluneTestCase):
         total: Optional[float] = None,
     ) -> None:
         """Publish one typed task event fixture."""
-        api._publish_task_event(
+        api.publish_task_event(
             job_id,
             api.TaskEvent(
                 task_id=job_id,
@@ -71,7 +71,7 @@ class TestApiTaskWebSocket(CeluneTestCase):
         self._publish(job_id, "started", "running")
         self._publish(job_id, "progress", "running", current=1.0, total=2.0)
         self._publish(job_id, "log", "running", message="Generating")
-        api._update_speech_job(job_id, status="completed")
+        api.update_speech_job(job_id, status="completed")
         self._publish(job_id, "completed", "completed")
 
         with (
@@ -144,8 +144,8 @@ class TestApiTaskWebSocket(CeluneTestCase):
             client.websocket_connect(f"/v1/ws/tasks/{job_id}") as websocket,
         ):
             assert websocket.receive_json()["event"] == "started"
-            api._update_speech_job(job_id, status="failed", error="hidden")
-            api._publish_task_event(
+            api.update_speech_job(job_id, status="failed", error="hidden")
+            api.publish_task_event(
                 job_id,
                 api.TaskEvent(
                     task_id=job_id,
@@ -182,7 +182,7 @@ class TestApiTaskWebSocket(CeluneTestCase):
         for index, terminal in enumerate(terminals, start=1):
             job_id = self._job(f"task-{index}")
             self._publish(job_id, "started", "running")
-            api._update_speech_job(job_id, status=terminal)
+            api.update_speech_job(job_id, status=terminal)
             self._publish(job_id, terminal, terminal)
 
             with (

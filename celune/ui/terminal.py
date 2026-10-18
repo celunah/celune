@@ -16,7 +16,7 @@ from textual.events import Key, Click, Leave, MouseMove
 from textual.widget import Widget
 from textual.message import Message
 
-from ..terminal import _infer_log_severity
+from ..terminal import infer_log_severity
 from ..typing.common import JSONSerializable
 
 
@@ -616,7 +616,7 @@ class LogRedirect:
     @staticmethod
     def _severity_for_message(message: str, default_severity: str) -> str:
         """Infer log severity from one redirected text line."""
-        return _infer_log_severity(message, default_severity)
+        return infer_log_severity(message, default_severity)
 
     def __init__(
         self,

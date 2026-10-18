@@ -47,7 +47,7 @@ def test_map_section_word_timings_keeps_word_mapping_inside_passages() -> None:
 
 def test_build_caption_alignment_sections_combines_text_and_audio_boundaries() -> None:
     """Keep each generated text chunk inside its known combined-audio range."""
-    transcript, sections = captions._build_caption_alignment_sections(
+    transcript, sections = captions.build_caption_alignment_sections(
         "first passage second line",
         (
             (0, 48_000, "first passage"),
@@ -64,7 +64,7 @@ def test_build_caption_alignment_sections_combines_text_and_audio_boundaries() -
 
 def test_build_caption_alignment_sections_merges_empty_display_ranges() -> None:
     """Keep all transcript words covered when chunks outnumber display ranges."""
-    transcript, sections = captions._build_caption_alignment_sections(
+    transcript, sections = captions.build_caption_alignment_sections(
         "one two",
         (
             (0, 48_000, "one"),

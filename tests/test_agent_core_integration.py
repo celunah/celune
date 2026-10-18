@@ -459,7 +459,7 @@ class TestAgentCoreIntegration(CeluneTestCase):
         with mock.patch(
             "celune.agent.core.deliver_persona_response", return_value=True
         ):
-            core._run_agent_route(route)
+            core.run_agent_route(route)
         task = runtime.get_active_task("default")
         assert task is not None
         assert task.state == AgentTaskState.AWAITING_APPROVAL
@@ -475,7 +475,7 @@ class TestAgentCoreIntegration(CeluneTestCase):
         with mock.patch(
             "celune.agent.core.deliver_persona_response", return_value=True
         ):
-            core._run_agent_route(approval_route)
+            core.run_agent_route(approval_route)
 
         assert task.state == AgentTaskState.COMPLETED
         assert executions == [approval.tool_call]
@@ -555,7 +555,7 @@ class TestAgentCoreIntegration(CeluneTestCase):
                 side_effect=AgentStatusTool.execute,
             ) as execute,
         ):
-            core._run_agent_route(route)
+            core.run_agent_route(route)
         assert outputs[0]["response"] == "The agent task completed successfully."
         assert outputs[0]["end"]
 
@@ -652,7 +652,7 @@ class TestAgentCoreIntegration(CeluneTestCase):
         with mock.patch(
             "celune.agent.core.deliver_persona_response", side_effect=record_delivery
         ):
-            assert core._run_agent_route(route)
+            assert core.run_agent_route(route)
 
         metadata = route.routing_metadata
         assert isinstance(metadata, dict)
@@ -755,7 +755,7 @@ class TestAgentCoreIntegration(CeluneTestCase):
                         route=AgentRoute.TASK_INPUT,
                         routing_metadata={"task_id": task.task_id},
                     )
-                    assert core._run_agent_route(route)
+                    assert core.run_agent_route(route)
 
             task = core.agent_runtime.create_task(
                 AgentRequest(
@@ -776,7 +776,7 @@ class TestAgentCoreIntegration(CeluneTestCase):
                 route=AgentRoute.TASK_INPUT,
                 routing_metadata={"task_id": task.task_id},
             )
-            assert core._run_agent_route(route)
+            assert core.run_agent_route(route)
 
         assert list(responses.values()) == delivered
         for request, label in zip(persona.requests, responses):
@@ -808,7 +808,7 @@ class TestAgentCoreIntegration(CeluneTestCase):
 
         route = core.route_input("Please say hello.", persona_ready=True)
         assert route.route.value == "task"
-        core._run_agent_route(route)
+        core.run_agent_route(route)
         metadata = route.routing_metadata
         assert isinstance(metadata, dict)
         task_id = metadata.get("task_id")
@@ -818,7 +818,7 @@ class TestAgentCoreIntegration(CeluneTestCase):
 
         approval_route = core.route_input("Approved.", persona_ready=True)
         assert approval_route.route.value == "approval_response"
-        assert core._run_agent_route(approval_route)
+        assert core.run_agent_route(approval_route)
 
         assert task.state == AgentTaskState.COMPLETED
         result = cast(
@@ -863,7 +863,7 @@ class TestAgentCoreIntegration(CeluneTestCase):
                 "Could you verify the current agent status?", persona_ready=True
             )
             assert route.task_request is not None
-            core._run_agent_route(route)
+            core.run_agent_route(route)
 
         metadata = route.routing_metadata
         assert isinstance(metadata, dict)

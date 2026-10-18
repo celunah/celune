@@ -167,7 +167,7 @@ class TestUpdater(CeluneTestCase):
     def test_git_checkout_detection_handles_a_missing_git_executable(self) -> None:
         """Verify missing Git is treated as unavailable repository metadata."""
         with mock.patch(
-            "celune.vcs._open_repository",
+            "celune.vcs.open_repository",
             side_effect=FileNotFoundError("git"),
         ):
             assert not is_git_checkout(Path.cwd())

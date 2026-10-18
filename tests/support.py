@@ -492,6 +492,7 @@ def make_pipeline_engine() -> SimpleNamespace:
     engine.language = "Auto"
     engine.log_level = "debug"
     engine.current_voice = "balanced"
+    engine.voices = ()
     engine.current_character = None
     engine.persona_attachments = []
     engine.persona_recent_visual_context = ()
@@ -510,8 +511,8 @@ def make_pipeline_engine() -> SimpleNamespace:
     def update_cur_state(state: str) -> None:
         engine.cur_state = state
 
-    engine._update_cur_state = update_cur_state
-    engine._emit_event = mock.Mock()
+    engine.update_cur_state = update_cur_state
+    engine.emit_event = mock.Mock()
     engine.exit_requested = False
     engine.stream = None
     engine._stream = None
@@ -544,7 +545,7 @@ def make_pipeline_engine() -> SimpleNamespace:
     engine.utterance_force_stop = threading.Event()
     engine.speech_generation = 0
     engine._playback_generation = 0
-    engine._playback_chunk_last_queued_at = {}
+    engine.playback_chunk_last_queued_at = {}
     engine.kept_sfx_audio = None
     engine.force_stop_marker = PipelineStates.UTTERANCE_FORCE_END
     engine.log = lambda msg, severity="info", **kwargs: messages.append((msg, severity))
@@ -553,6 +554,8 @@ def make_pipeline_engine() -> SimpleNamespace:
         (msg, severity)
     )
     engine.progress_callback = lambda current, total: progress.append((current, total))
+    engine.change_input_state_callback = mock.Mock()
+    engine.change_voice_lock_state_callback = mock.Mock()
     engine.idle_callback = mock.Mock()
     engine.glow = SimpleNamespace(
         schedule=mock.Mock(),

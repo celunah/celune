@@ -823,6 +823,7 @@ def pytest_report_to_serializable(
     record = _state.records.get(report.nodeid)
     if record is None:
         return None
+    # noinspection PyProtectedMember
     result = report._to_json()
     result["$report_type"] = "TestReport"
     result["user_properties"].extend(

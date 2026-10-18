@@ -343,7 +343,7 @@ def test_worker_proxy_does_not_load_before_consent(tmp_path: Path) -> None:
     """Verify the parent process gates a CEDTS model load before worker IPC."""
     store = ModelConsentStore(tmp_path / "consent.json")
     proxy = object.__new__(RemoteBackendProxy)
-    proxy._request = mock.Mock()
+    proxy.request = mock.Mock()
 
     with (
         mock.patch("celune.registry.consent._STORE", store),
@@ -356,13 +356,13 @@ def test_worker_proxy_does_not_load_before_consent(tmp_path: Path) -> None:
         else:
             raise AssertionError("worker-backed load proceeded without consent")
 
-    proxy._request.assert_not_called()
+    proxy.request.assert_not_called()
 
 
 def test_worker_proxy_blocks_commercially_restricted_models() -> None:
     """Verify commercial policy is enforced before worker model-load IPC."""
     proxy = object.__new__(RemoteBackendProxy)
-    proxy._request = mock.Mock()
+    proxy.request = mock.Mock()
     metadata = get_model_metadata("FireRedTeam/FireRedTTS3")
     assert metadata is not None
     set_commercial_mode(True)
@@ -376,4 +376,4 @@ def test_worker_proxy_blocks_commercially_restricted_models() -> None:
     finally:
         set_commercial_mode(False)
 
-    proxy._request.assert_not_called()
+    proxy.request.assert_not_called()

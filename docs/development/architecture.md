@@ -41,6 +41,16 @@ runtime subclass creation. Integrations should use their callbacks, protocols,
 backend interfaces, and composition points rather than inheriting from these
 single-instance runtime classes.
 
+Celune modules use public functions and properties when they share state or
+behavior across module boundaries. Underscore-prefixed members stay inside
+their owning module or class; adapters around third-party APIs isolate any
+necessary access to upstream protected members.
+
+Playback source identifiers, statuses, metadata, and caption timing live on the
+engine behind typed properties. Playback helpers use those properties rather
+than attaching undeclared attributes dynamically. Queue draining is a shared
+utility used by both the pipeline and agent tools.
+
 When verbose or debug logging is enabled, the loading overlay shows only three
 startup checkpoints: checking dependencies immediately on process startup,
 loading the core at `Celune` construction, and initializing the core during

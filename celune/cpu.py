@@ -4,7 +4,11 @@
 import ctypes
 import platform
 from pathlib import Path
+
+# noinspection PyProtectedMember
 from typing import Optional
+
+# noinspection PyProtectedMember
 from dataclasses import dataclass
 
 __all__ = ["CpuFeatureCheck", "check_cpu_features", "required_cpu_features"]

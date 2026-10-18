@@ -19,7 +19,7 @@ from celune.registry.asr import (
     DEFAULT_PERSONA_SPEECH_MODEL_REVISION,
 )
 from celune.ui.app import CeluneUI, ButtonActions
-from celune.typing.persona import _WhisperProcessor
+from celune.typing.persona import WhisperProcessor
 
 from .support import CeluneTestCase
 
@@ -116,7 +116,7 @@ class TestSpeechInput(CeluneTestCase):
         }
 
         words = WhisperTranscriber._decode_words(
-            cast(_WhisperProcessor, processor),
+            cast(WhisperProcessor, processor),
             raw_segment,
             0.0,
             1.0,
@@ -144,7 +144,7 @@ class TestSpeechInput(CeluneTestCase):
         }
 
         segments = WhisperTranscriber._decode_segments(
-            cast(_WhisperProcessor, processor),
+            cast(WhisperProcessor, processor),
             generated,
         )
 
@@ -229,7 +229,7 @@ class TestSpeechInput(CeluneTestCase):
         transcriber.transcribe.return_value = "hello there"
 
         with (
-            mock.patch("celune.ui.app._load_ui_runtime_dependencies"),
+            mock.patch("celune.ui.app.ensure_ui_runtime_dependencies"),
             mock.patch(
                 "celune.ui.app.sd",
                 SimpleNamespace(InputStream=FakeInputStream),
@@ -352,7 +352,7 @@ class TestSpeechInput(CeluneTestCase):
         monotonic_values = iter((0.0, 0.0, PERSONA_SPEECH_NO_INPUT_TIMEOUT_SECONDS))
 
         with (
-            mock.patch("celune.ui.app._load_ui_runtime_dependencies"),
+            mock.patch("celune.ui.app.ensure_ui_runtime_dependencies"),
             mock.patch(
                 "celune.ui.app.sd",
                 SimpleNamespace(InputStream=FakeInputStream),

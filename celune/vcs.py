@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 UPSTREAM_REPOSITORY_URL = "https://github.com/celunah/celune"
 
 
-def _open_repository(path: Optional[Path] = None) -> Repo:
+def open_repository(path: Optional[Path] = None) -> Repo:
     """Open a repository at ``path`` or discover one from the current directory."""
     from git import Repo
 
@@ -62,7 +62,7 @@ def is_git_checkout(path: Optional[Path] = None) -> bool:
         return _has_git_metadata(checkout_path)
 
     try:
-        with _open_repository(checkout_path) as repository:
+        with open_repository(checkout_path) as repository:
             return (
                 not repository.bare
                 and repository.working_tree_dir is not None
@@ -99,7 +99,7 @@ def get_revision(path: Optional[Path] = None) -> str:
         return ""
 
     try:
-        with _open_repository(path) as repository:
+        with open_repository(path) as repository:
             revision = repository.head.commit.hexsha[:7]
             dirty = "*" if repository.is_dirty(untracked_files=True) else ""
             return f"{revision}{dirty}"
@@ -120,7 +120,7 @@ def get_branch(path: Optional[Path] = None) -> str:
     from git.exc import GitError
 
     try:
-        with _open_repository(path) as repository:
+        with open_repository(path) as repository:
             return repository.active_branch.name
     except (GitError, OSError, TypeError, ValueError):
         return ""

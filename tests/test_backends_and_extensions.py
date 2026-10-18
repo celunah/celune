@@ -10,24 +10,20 @@ import textwrap
 import importlib
 import threading
 import contextlib
-from types import ModuleType, SimpleNamespace
-from typing import Union, Optional, cast
 from pathlib import Path
 from unittest import mock
+from typing import Union, Optional, cast
+from types import ModuleType, SimpleNamespace
 from collections.abc import Iterator, Generator
 
-import numpy as np
 import torch
 import pytest
+import numpy as np
 import soundfile as sf
 
-from celune.cesn import CESNSinger
 from celune.i18n import string
-from celune.utils import discard
-from celune.celune import Celune
-from celune.registry import MODEL_BY_ID
 from celune.exceptions import (
-    CESNSyntaxError,
+    CESNValidationError,
     InvalidExtensionError,
     ExtensionAlreadyRegisteredError,
 )
@@ -37,39 +33,43 @@ from celune.backends.vc import (
 from celune.backends.vc import (
     resolve_vc_backend,
 )
-from celune.backends.tts import BACKEND_MANIFESTS, resolve_backend
-from celune.registry.tts import QWEN3_DEFAULT_MODEL_ID, SOULX_SINGER_CODE_REVISION
-from celune.typing.aliases import AudioChunk
-from celune.extensions.base import CeluneContext, CeluneExtension
+from celune.celune import Celune
+from celune.utils import discard
+from celune.cesn import CESNSinger
 from celune.typing.backends import (
     BackendModel,
     SeedVCModelValue,
-    _SeedVCRealtimeModule,
+    SeedVCRealtimeModule,
+)
+from celune.registry import MODEL_BY_ID
+from celune.backends.tts.luxtts import (
+    LuxTTS,
+    LuxTTSModel,
+    set_vocoder_silence_feature,
+    install_vocoder_decode_guard,
+    install_cpu_duration_correction,
+)
+from celune.typing.aliases import AudioChunk
+from celune.backends.tts.fireredtts3 import (
+    FireRedTTS3,
+    FireRedModel,
+    FireRedRedAE,
+    create_firered_model,
+    FireRedIncrementalDecoder,
+)
+from celune.backends.tts.soulxsinger import (
+    SoulXSinger,
+    decode_score,
+    pitch_to_midi,
+    load_upstream_source,
 )
 from celune.backends.tts.base import CeluneBackend
 from celune.backends.vc.seedvc import CeluneSeedVCBackend
 from celune.extensions.manager import CeluneExtensionManager
-from celune.backends.tts.luxtts import (
-    LuxTTS,
-    _LuxTTSModel,
-    _set_vocoder_silence_feature,
-    _install_vocoder_decode_guard,
-    _install_cpu_duration_correction,
-)
 from celune.dataclasses.pipeline import VoiceConversionRequest
-from celune.backends.tts.fireredtts3 import (
-    FireRedTTS3,
-    _FireRedModel,
-    _FireRedRedAE,
-    _create_firered_model,
-    _FireRedIncrementalDecoder,
-)
-from celune.backends.tts.soulxsinger import (
-    SoulXSinger,
-    _decode_score,
-    _pitch_to_midi,
-    _load_upstream_source,
-)
+from celune.extensions.base import CeluneContext, CeluneExtension
+from celune.backends.tts import BACKEND_MANIFESTS, resolve_backend
+from celune.registry.tts import QWEN3_DEFAULT_MODEL_ID, SOULX_SINGER_CODE_REVISION
 
 from .support import (
     FakeBackend,
@@ -115,17 +115,17 @@ class TestBackend(CeluneTestCase):
         notation = "[bpm:120,key:c,scale:major][lang:en][a4:4] Ah"
 
         with mock.patch(
-            "celune.backends.tts.soulxsinger._resolve_active_singer",
+            "celune.backends.tts.soulxsinger.resolve_active_singer",
             return_value=singer,
         ):
-            section = _decode_score(backend.cesn_to_model(notation))[0]
+            section = decode_score(backend.cesn_to_model(notation))[0]
 
         self.assertEqual((section.bpm, section.key, section.scale), (120, "c", "major"))
         self.assertEqual(section.singer_path, str(singer.bundle_path))
-        self.assertEqual(_pitch_to_midi("a4"), 69)
-        with self.assertRaises(CESNSyntaxError) as error:
+        self.assertEqual(pitch_to_midi("a4"), 69)
+        with self.assertRaises(CESNValidationError) as error:
             backend.cesn_to_model("[#comment only]")
-        self.assertEqual(str(error.exception), string("cesn.no_notation_found"))
+        self.assertEqual(str(error.exception), "No CESN notation found")
 
     def test_soulxsinger_description_uses_a_finite_chunk_rate(self) -> None:
         """Give CEDTS a finite rate for SoulX's complete-score audio chunk."""
@@ -152,7 +152,7 @@ class TestBackend(CeluneTestCase):
                     return_value=environment_root,
                 ),
                 mock.patch(
-                    "celune.backends.tts.soulxsinger._exclusive_lock",
+                    "celune.backends.tts.soulxsinger.exclusive_lock",
                     side_effect=lambda *_args, **_kwargs: (
                         other_worker_installs_source()
                     ),
@@ -162,7 +162,7 @@ class TestBackend(CeluneTestCase):
                 repository_type.return_value.head.commit.hexsha = source_root.name
                 repository_type.return_value.is_dirty.return_value = False
 
-                self.assertEqual(_load_upstream_source(), source_root)
+                self.assertEqual(load_upstream_source(), source_root)
 
             acquire_lock.assert_called_once_with(
                 source_root.parent / ".install.lock",
@@ -179,15 +179,15 @@ class TestBackend(CeluneTestCase):
         notation = "[bpm:120,key:c,scale:major][lang:en][a4:4] Ah"
 
         with mock.patch(
-            "celune.backends.tts.soulxsinger._resolve_active_singer",
+            "celune.backends.tts.soulxsinger.resolve_active_singer",
             return_value=singer,
         ):
             converted = backend.cesn_to_model(notation)
 
-        section = _decode_score(converted)[0]
+        section = decode_score(converted)[0]
         self.assertEqual((section.bpm, section.key, section.scale), (120, "c", "major"))
         self.assertEqual(section.singer_path, str(singer.bundle_path))
-        self.assertEqual(_pitch_to_midi("a4"), 69)
+        self.assertEqual(pitch_to_midi("a4"), 69)
 
     def test_tts_load_oom_does_not_retry_unquantized_model(self) -> None:
         """Verify CUDA OOM releases a partial load without retrying BF16."""
@@ -492,8 +492,8 @@ class TestBackend(CeluneTestCase):
         prompt: dict[str, Union[torch.Tensor, float, int]] = {
             "prompt_features": torch.full((1, 4, 2), -3.0)
         }
-        _set_vocoder_silence_feature(cast(_LuxTTSModel, model), prompt)
-        _install_vocoder_decode_guard(cast(_LuxTTSModel, model))
+        set_vocoder_silence_feature(cast(LuxTTSModel, model), prompt)
+        install_vocoder_decode_guard(cast(LuxTTSModel, model))
 
         decoded = model.vocos.decode(torch.ones(1, 2, 1))
         assert vocoder.input_shape == (1, 2, 22)
@@ -528,7 +528,7 @@ class TestBackend(CeluneTestCase):
 
         onnx_model = FakeOnnxModel()
         model = SimpleNamespace(model=onnx_model)
-        _install_cpu_duration_correction(cast(_LuxTTSModel, model))
+        install_cpu_duration_correction(cast(LuxTTSModel, model))
 
         model.model.run_text_encoder(
             torch.zeros(1, 6, dtype=torch.int64),
@@ -777,7 +777,7 @@ class TestBackend(CeluneTestCase):
             redae=SimpleNamespace(encoder=mock.Mock()),
         )
 
-        FireRedTTS3._configure_bfloat16(cast(_FireRedModel, model))
+        FireRedTTS3._configure_bfloat16(cast(FireRedModel, model))
 
         model.tts_core.backbone_llm.to.assert_called_once_with(dtype=torch.bfloat16)
         model.tts_core.stop_head.to.assert_called_once_with(dtype=torch.bfloat16)
@@ -916,7 +916,7 @@ class TestBackend(CeluneTestCase):
                 "fireredtts3.redae.redae": fake_redae,
             },
         ):
-            result = _create_firered_model(
+            result = create_firered_model(
                 "model-root",
                 log=lambda message, severity: stage_messages.append(
                     (message, severity)
@@ -986,7 +986,7 @@ class TestBackend(CeluneTestCase):
             ),
             mock.patch("celune.backends.tts.fireredtts3.torch.autocast") as autocast,
             mock.patch(
-                "celune.backends.tts.fireredtts3._FireRedIncrementalDecoder",
+                "celune.backends.tts.fireredtts3.FireRedIncrementalDecoder",
                 return_value=incremental_decoder,
             ),
         ):
@@ -1086,10 +1086,10 @@ class TestBackend(CeluneTestCase):
             ),
         )
         redae = cast(
-            _FireRedRedAE,
+            FireRedRedAE,
             SimpleNamespace(decoder=decoder),
         )
-        incremental = _FireRedIncrementalDecoder(redae, torch.device("cpu"), True)
+        incremental = FireRedIncrementalDecoder(redae, torch.device("cpu"), True)
 
         prompt_audio, prompt_start = incremental.push(torch.zeros(1, 1, 1))
         generated_audio, generated_start = incremental.push(torch.zeros(1, 1, 1))
@@ -1186,7 +1186,7 @@ class TestBackend(CeluneTestCase):
         captured: dict[str, Union[str, int, float, bool]] = {}
         if cache_live_runtime:
             backend._live_module = cast(
-                _SeedVCRealtimeModule,
+                SeedVCRealtimeModule,
                 ModuleType("seed_vc.real_time"),
             )
             backend._live_model_set = cast(
@@ -1269,7 +1269,7 @@ class TestBackend(CeluneTestCase):
             {"sampling_rate": 24000},
         )
         realtime_module = ModuleType("seed_vc.real_time")
-        backend._live_module = cast(_SeedVCRealtimeModule, realtime_module)
+        backend._live_module = cast(SeedVCRealtimeModule, realtime_module)
         backend._live_model_set = cast(
             tuple[SeedVCModelValue, ...],
             model_set,
@@ -1277,7 +1277,7 @@ class TestBackend(CeluneTestCase):
         captured: list[tuple[int, float]] = []
 
         def initialize_session(
-            _module: _SeedVCRealtimeModule,
+            _module: SeedVCRealtimeModule,
             _model_set: tuple[SeedVCModelValue, ...],
             _reference: Path,
             sample_rate: int,
@@ -1428,7 +1428,7 @@ class TestBackend(CeluneTestCase):
             return torch.zeros(4)
 
         setattr(module, "custom_infer", custom_infer)  # noqa: B010
-        backend._live_module = cast(_SeedVCRealtimeModule, module)
+        backend._live_module = cast(SeedVCRealtimeModule, module)
         backend._live_model_set = ("model",)
         backend._live_reference_path = Path("reference.wav")
         backend._live_reference_wav = np.zeros(4, dtype=np.float32)
@@ -1527,15 +1527,9 @@ class TestBackend(CeluneTestCase):
 
         setattr(fake_hf_utils, "hf_hub_download", fake_hf_hub_download)  # noqa: B010
         setattr(  # noqa: B010
-            fake_hf_utils,
-            "load_custom_model_from_hf",
-            lambda *args, **kwargs: None,
+            fake_hf_utils, "load_custom_model_from_hf", lambda *args, **kwargs: None
         )
-        setattr(  # noqa: B010
-            fake_wrapper,
-            "load_custom_model_from_hf",
-            lambda *args, **kwargs: None,
-        )
+        setattr(fake_wrapper, "load_custom_model_from_hf", lambda *args, **kwargs: None)  # noqa: B010
         setattr(fake_wrapper, "SeedVCWrapper", type("FakeSeedVCWrapper", (), {}))  # noqa: B010
 
         def import_module(name: str) -> ModuleType:
@@ -1559,7 +1553,10 @@ class TestBackend(CeluneTestCase):
                 ),
             ):
                 backend._load_wrapper_type()
-                resolved = getattr(fake_wrapper, "load_custom_model_from_hf")(  # noqa: B009
+                resolved = getattr(  # noqa: B009
+                    fake_wrapper,
+                    "load_custom_model_from_hf",
+                )(
                     "funasr/campplus",
                     "campplus_cn_common.bin",
                     None,

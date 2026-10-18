@@ -4,6 +4,8 @@
 import re
 import sys
 import ctypes
+
+# noinspection PyProtectedMember
 from typing import IO, Optional, cast
 from collections.abc import Callable
 
@@ -53,12 +55,12 @@ RUNTIME_LOG_FILTER_MESSAGES = frozenset(
 )
 
 
-def _infer_log_severity(message: str, default_severity: str) -> str:
+def infer_log_severity(message: str, default_severity: str) -> str:
     """Infer severity from message content before using its stream default."""
     lowered = message.casefold()
 
     level_match = re.search(
-        r"\[(?P<bracket>info|notice|warn(?:ing)?|error|critical|fatal)\]"
+        r"\[(?P<bracket>info|notice|warn(?:ing)?|error|critical|fatal)]"
         r"|(?:^|\s)(?P<plain>info|notice|warn(?:ing)?|error|critical|fatal)"
         r"(?:\s*:|\s+-)",
         lowered,

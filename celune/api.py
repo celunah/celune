@@ -19,6 +19,7 @@ import ipaddress
 import threading
 import contextlib
 from typing import (
+    Annotated,
     Union,
     Literal,
     Optional,
@@ -58,39 +59,36 @@ from .typing.api import (
 )
 from .celune import Celune
 from .webui.actions import (
-    _build_webui,
-    _webui_speak,
-    _webui_run_command,
-    _decode_uploaded_audio,
-    _voice_conversion_unavailable_response,
+    build_webui,
+    webui_run_command,
+    decode_uploaded_audio,
+    voice_conversion_unavailable_response,
 )
 from .webui.runtime import (
     api_log,
-    _flac_bytes,
+    flac_bytes,
     audio_bytes,
-    _task_status,
+    task_status,
     require_celune,
     stream_headers,
-    _webui_snapshot,
-    _seed_webui_logs,
-    _append_webui_log,
-    _set_webui_status,
-    _forget_speech_job,
-    _update_speech_job,
-    _collect_speech_job,
-    _publish_task_event,
-    _remember_speech_job,
-    _speech_job_snapshot,
-    _webui_vc_mode_active,
-    _wrap_celune_callbacks,
-    _set_active_speech_task,
-    _strip_webui_log_prefix,
-    _subscribe_webui_events,
-    _publish_active_task_log,
-    _subscribe_to_speech_job,
-    _webui_input_placeholder,
-    _unsubscribe_from_speech_job,
-    _subscribe_webui_timed_updates,
+    seed_webui_logs,
+    append_webui_log,
+    set_webui_status,
+    forget_speech_job,
+    update_speech_job,
+    collect_speech_job,
+    publish_task_event,
+    remember_speech_job,
+    speech_job_snapshot,
+    webui_vc_mode_active,
+    wrap_celune_callbacks,
+    set_active_speech_task,
+    subscribe_webui_events,
+    publish_active_task_log,
+    subscribe_to_speech_job,
+    get_webui_input_placeholder,
+    unsubscribe_from_speech_job,
+    subscribe_webui_timed_updates,
 )
 from .registry.consent import (
     consent_status,
@@ -143,15 +141,15 @@ Scope = types.Scope
 ASGIApp = types.ASGIApp
 Receive = types.Receive
 
-_receive_webui_timed_update = webui._receive_webui_timed_update
-_webui_audio_waveform_options = webui._webui_audio_waveform_options
-_input_update = webui._input_update
-_webui_resources_html = webui._webui_resources_html
-_send_button_update = webui._send_button_update
-_webui_status_html = webui._webui_status_html
-_webui_vc_controls_update = webui._webui_vc_controls_update
-_webui_convert_audio = webactions._webui_convert_audio
-_webui_cycle_voice = webactions._webui_cycle_voice
+receive_webui_timed_update = webui.receive_webui_timed_update
+webui_audio_waveform_options = webui.webui_audio_waveform_options
+input_update = webui.input_update
+webui_resources_html = webui.webui_resources_html
+send_button_update = webui.send_button_update
+webui_status_html = webui.webui_status_html
+webui_vc_controls_update = webui.webui_vc_controls_update
+webui_convert_audio = webactions.webui_convert_audio
+webui_cycle_voice = webactions.webui_cycle_voice
 CeluneUI = webui.CeluneUI
 UiTimedUpdate = webui.UiTimedUpdate
 
@@ -370,7 +368,7 @@ webui_event_dispatcher: Optional[EventDispatcher] = None
 webui_event_callbacks: tuple[tuple[EventName, EventCallback], ...] = ()
 
 
-def _invoke_message_callback(
+def invoke_message_callback(
     callback: Callable[..., None],
     msg: str,
     severity: str,
@@ -505,7 +503,7 @@ class TaskSubscription:
         return event
 
 
-def _run_async_runtime_call(
+def run_async_runtime_call(
     awaitable: Awaitable[JSONSerializable],
 ) -> JSONSerializable:
     """Run one async runtime call from a synchronous API or WebUI callback."""
@@ -542,7 +540,7 @@ class SpeechJob:
     subscriptions: list[TaskSubscription] = field(default_factory=list, repr=False)
 
 
-def _configure_webui_theme() -> None:
+def configure_webui_theme() -> None:
     """Sync the browser UI palette with the active CEVOICE-derived theme."""
     global webui_theme_style
 
@@ -644,7 +642,7 @@ def _bind_api_socket(host: str, port: int) -> socket.socket:
     return api_socket
 
 
-def _shutdown_api_for_fatal_error() -> None:
+def shutdown_api_for_fatal_error() -> None:
     """Stop the browser/API surface after a fatal Celune runtime failure."""
     global bound_celune
     bound_celune = None
@@ -808,7 +806,7 @@ def _rate_limited(request: Request) -> bool:
     return _rate_limited_client(_rate_limit_key(request))
 
 
-def _configure_webui_generation_fn_indices(
+def configure_webui_generation_fn_indices(
     dependencies: abc.Sequence[abc.Mapping[str, object]],
 ) -> None:
     """Record Gradio dependency IDs for speech and conversion actions."""
@@ -1329,12 +1327,12 @@ def bind_celune(celune: Celune) -> None:
     webui_timed_update_received_at = 0.0
     webui_timed_update_source = "fallback"
     _unsubscribe_webui_events()
-    _subscribe_webui_events(celune)
-    _subscribe_webui_timed_updates()
-    _configure_webui_theme()
+    subscribe_webui_events(celune)
+    subscribe_webui_timed_updates()
+    configure_webui_theme()
     has_voice = bool(celune.current_voice) or bool(celune.voices)
     webui_input_locked = celune.locked or not has_voice
-    webui_input_placeholder = _webui_input_placeholder(
+    webui_input_placeholder = get_webui_input_placeholder(
         celune,
         webui_input_locked,
         has_voice,
@@ -1345,11 +1343,11 @@ def bind_celune(celune: Celune) -> None:
         or not has_voice
         or getattr(getattr(celune, "backend", None), "singing", False)
     )
-    _seed_webui_logs()
-    _wrap_celune_callbacks(celune)
+    seed_webui_logs()
+    wrap_celune_callbacks(celune)
     if celune.current_voice:
-        _append_webui_log(string("webui.voice_ready", voice=celune.current_voice))
-    _set_webui_status(
+        append_webui_log(string("webui.voice_ready", voice=celune.current_voice))
+    set_webui_status(
         string("status.idle")
         if celune.cur_state == "idle"
         else celune.cur_state.title(),
@@ -1375,7 +1373,7 @@ class _WebUiInputProxy:
         """Discard command input after the browser has submitted it."""
 
 
-class _WebUiCommandHost:
+class WebUiCommandHost:
     """Core-backed command host used when the Textual UI is not mounted."""
 
     def __init__(self, celune: Celune) -> None:
@@ -1397,13 +1395,13 @@ class _WebUiCommandHost:
         loglevel: LogLevel = "info",
     ) -> None:
         """Forward command output to both WebUI state and active task logs."""
-        _publish_active_task_log(message, severity)
-        _append_webui_log(message, severity)
+        publish_active_task_log(message, severity)
+        append_webui_log(message, severity)
         _ = loglevel
 
     def safe_status(self, message: str, severity: str = "info") -> None:
         """Forward a command status to the browser footer."""
-        _set_webui_status(message, severity, source="callback")
+        set_webui_status(message, severity, source="callback")
 
     @staticmethod
     def call_from_thread(
@@ -1443,7 +1441,7 @@ class _WebUiCommandHost:
     def type_and_send(self, text: str, process_commands: bool = True) -> None:
         """Submit a tutorial string through the browser command path."""
         if process_commands and text.startswith("/"):
-            _webui_run_command(text)
+            webui_run_command(text)
         else:
             self.celune.say(text)
 
@@ -1454,15 +1452,6 @@ class _WebUiCommandHost:
     def graceful_exit(self) -> None:
         """Close the bound runtime when the browser receives `/exit`."""
         self.celune.close()
-
-
-configure_webui_theme = _configure_webui_theme
-strip_webui_log_prefix = _strip_webui_log_prefix
-set_webui_status = _set_webui_status
-wrap_celune_callbacks = _wrap_celune_callbacks
-speech_job_snapshot = _speech_job_snapshot
-webui_snapshot = _webui_snapshot
-webui_speak = _webui_speak
 
 
 class RootResponse(BaseModel):
@@ -1546,7 +1535,7 @@ async def authenticate_webui(
 
 async def _cancel_speech_job(job_id: str) -> bool:
     """Ask Core to stop one active speech task and publish its terminal event."""
-    status = _task_status(job_id)
+    status = task_status(job_id)
     if status is None or status in {"completed", "failed", "cancelled"}:
         return False
 
@@ -1567,8 +1556,8 @@ async def _cancel_speech_job(job_id: str) -> bool:
     if not stopped:
         return False
 
-    _update_speech_job(job_id, status="cancelled")
-    _publish_task_event(
+    update_speech_job(job_id, status="cancelled")
+    publish_task_event(
         job_id,
         TaskEvent(
             task_id=job_id,
@@ -1576,7 +1565,7 @@ async def _cancel_speech_job(job_id: str) -> bool:
             status="cancelled",
         ),
     )
-    _set_active_speech_task(None)
+    set_active_speech_task(None)
     return True
 
 
@@ -1650,7 +1639,7 @@ async def speech_task_websocket(websocket: WebSocket, job_id: str) -> None:
         await websocket.close(code=4401)
         return
 
-    subscription = _subscribe_to_speech_job(job_id)
+    subscription = subscribe_to_speech_job(job_id)
     if subscription is None:
         await websocket.close(code=4404)
         return
@@ -1669,7 +1658,7 @@ async def speech_task_websocket(websocket: WebSocket, job_id: str) -> None:
             with contextlib.suppress(asyncio.CancelledError, RuntimeError):
                 await task
     finally:
-        _unsubscribe_from_speech_job(job_id, subscription)
+        unsubscribe_from_speech_job(job_id, subscription)
         if websocket.client_state.name != "DISCONNECTED":
             with contextlib.suppress(RuntimeError):
                 await websocket.close()
@@ -1875,10 +1864,10 @@ def speak_async(body: SpeakRequest) -> JSONResponse:
     api_log("SPEAK(ASYNC)", body.content)
     job_id = uuid.uuid4().hex
     location = f"/v1/speak/jobs/{job_id}"
-    _remember_speech_job(job_id, SpeechJob(status="queued", created_at=time.time()))
-    _set_active_speech_task(job_id)
-    _update_speech_job(job_id, status="running")
-    _publish_task_event(
+    remember_speech_job(job_id, SpeechJob(status="queued", created_at=time.time()))
+    set_active_speech_task(job_id)
+    update_speech_job(job_id, status="running")
+    publish_task_event(
         job_id,
         TaskEvent(
             task_id=job_id,
@@ -1890,12 +1879,12 @@ def speak_async(body: SpeakRequest) -> JSONResponse:
     try:
         chunks = celune.say_stream(body.content, save=body.save)
     except Exception:
-        _set_active_speech_task(None)
-        _forget_speech_job(job_id)
+        set_active_speech_task(None)
+        forget_speech_job(job_id)
         raise
     if chunks is None:
-        _set_active_speech_task(None)
-        _forget_speech_job(job_id)
+        set_active_speech_task(None)
+        forget_speech_job(job_id)
         return JSONResponse(
             status_code=409,
             content={
@@ -1905,7 +1894,7 @@ def speak_async(body: SpeakRequest) -> JSONResponse:
         )
 
     threading.Thread(
-        target=_collect_speech_job,
+        target=collect_speech_job,
         args=(job_id, chunks),
         daemon=True,
         name=f"{APP_NAME}SpeechJob-{job_id[:8]}",
@@ -1958,7 +1947,7 @@ def speak_job(job_id: str) -> Union[Response, JSONResponse]:
     Returns:
         Union[Response, JSONResponse]: A pending/error status payload, or audio.
     """
-    job = _speech_job_snapshot(job_id)
+    job = speech_job_snapshot(job_id)
     if job is None:
         return JSONResponse(
             status_code=404,
@@ -1976,7 +1965,7 @@ def speak_job(job_id: str) -> Union[Response, JSONResponse]:
         return JSONResponse(status_code=status_code, content=content)
 
     return Response(
-        content=job.audio or _flac_bytes(np.empty((0, 2), dtype=np.float32)),
+        content=job.audio or flac_bytes(np.empty((0, 2), dtype=np.float32)),
         media_type="audio/flac",
         headers=stream_headers(),
     )
@@ -1995,7 +1984,7 @@ async def cancel_speech_job(job_id: str) -> Union[TaskCancelResponse, JSONRespon
     Returns:
         Union[TaskCancelResponse, JSONResponse]: The cancellation result or an API error payload.
     """
-    if _task_status(job_id) is None:
+    if task_status(job_id) is None:
         return JSONResponse(
             status_code=404,
             content={
@@ -2062,7 +2051,7 @@ async def voice(body: VoiceRequest) -> Union[ActionResponse, JSONResponse]:
 
 @api.post("/v1/sfx", response_model=None)
 async def sfx(
-    file: UploadFile = File(...),  # noqa: B008
+    file: Annotated[UploadFile, File()],
     keep: bool = Form(True),
 ) -> Union[StreamingResponse, JSONResponse]:
     """Play an uploaded sound effect file and stream the audio chunks back to the caller.
@@ -2091,7 +2080,7 @@ async def sfx(
 
     # noinspection PyBroadException
     try:
-        audio, sr = _decode_uploaded_audio(data)
+        audio, sr = decode_uploaded_audio(data)
         audio = resample_audio(audio, sr)
     except Exception as error:
         celune.log(
@@ -2122,7 +2111,7 @@ async def sfx(
         )
 
     def chunks() -> Iterator[bytes]:
-        yield _flac_bytes(audio)
+        yield flac_bytes(audio)
 
     return StreamingResponse(
         chunks(),
@@ -2133,7 +2122,7 @@ async def sfx(
 
 @api.post("/v1/convert", response_model=None)
 async def convert_audio(
-    file: UploadFile = File(...),  # noqa: B008
+    file: Annotated[UploadFile, File()],
     f0_condition: Optional[bool] = Form(None),
 ) -> Union[StreamingResponse, JSONResponse]:
     """Convert an uploaded source audio file through the active VC backend.
@@ -2147,8 +2136,8 @@ async def convert_audio(
         failed.
     """
     celune = require_celune()
-    if not _webui_vc_mode_active(celune):
-        return _voice_conversion_unavailable_response()
+    if not webui_vc_mode_active(celune):
+        return voice_conversion_unavailable_response()
 
     filename = file.filename or f"convert_{uuid.uuid4()}"
     api_log("CONVERT", filename)
@@ -2165,7 +2154,7 @@ async def convert_audio(
 
     # noinspection PyBroadException
     try:
-        audio, sample_rate = _decode_uploaded_audio(data)
+        audio, sample_rate = decode_uploaded_audio(data)
     except Exception as error:
         celune.log(
             format_error_message(
@@ -2220,7 +2209,7 @@ async def convert_audio(
 
     def chunks() -> Iterator[bytes]:
         prepared_audio = prepare_playback_audio(output.audio, output.sample_rate)
-        yield _flac_bytes(
+        yield flac_bytes(
             prepared_audio,
             sample_rate=BASE_SR,
         )
@@ -2234,7 +2223,7 @@ async def convert_audio(
 
 api = gr.mount_gradio_app(
     api,
-    _build_webui(),
+    build_webui(),
     path="/ui",
     footer_links=[],
     show_error=True,

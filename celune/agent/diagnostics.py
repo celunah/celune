@@ -937,9 +937,9 @@ def _check_interactive_choice(
         },
     )
     original_runtime = engine.agent_runtime
-    original_router = engine._agent_router
+    original_router = engine.agent_router
     engine.agent_runtime = runtime
-    engine._agent_router = AgentInputRouter(engine, runtime)
+    engine.agent_router = AgentInputRouter(engine, runtime)
     try:
         task = _working_task(runtime, "interactive-choice", session_id="default")
         paused = runtime.run(task.request)
@@ -984,7 +984,7 @@ def _check_interactive_choice(
         )
     finally:
         engine.agent_runtime = original_runtime
-        engine._agent_router = original_router
+        engine.agent_router = original_router
 
 
 def _check_interactive_approval(
@@ -1032,9 +1032,9 @@ def _check_interactive_approval(
         },
     )
     original_runtime = engine.agent_runtime
-    original_router = engine._agent_router
+    original_router = engine.agent_router
     engine.agent_runtime = runtime
-    engine._agent_router = AgentInputRouter(engine, runtime)
+    engine.agent_router = AgentInputRouter(engine, runtime)
     try:
         task = _working_task(runtime, "interactive-approval", session_id="default")
         paused = runtime.run(task.request)
@@ -1083,7 +1083,7 @@ def _check_interactive_approval(
         return string("test.agent_user_approval_processed", decision=decision_text)
     finally:
         engine.agent_runtime = original_runtime
-        engine._agent_router = original_router
+        engine.agent_router = original_router
 
 
 def _check_compaction(engine: Celune) -> str:
@@ -1236,20 +1236,20 @@ def _run_tool_checks(
     """
     checks: list[JSON] = []
     original_runtime = engine.agent_runtime
-    original_tools = engine._agent_tools
-    original_schemas = engine._agent_tool_schemas
+    original_tools = engine.agent_tools
+    original_schemas = engine.agent_tool_schemas
     original_mode = engine.mode
     original_speed = engine.speed
     original_reverb = engine.reverb.strength
     original_voice_prompt = engine.voice_prompt
-    old_needle = engine._agent_needle_selector
+    old_needle = engine.agent_needle_selector
     runtime = _runtime(engine, schemas)
     memory = _DiagnosticMemoryStore()
 
     try:
         engine.agent_runtime = runtime
-        engine._agent_tools = tools
-        engine._agent_tool_schemas = schemas
+        engine.agent_tools = tools
+        engine.agent_tool_schemas = schemas
         engine.mode = "agent"
         with tempfile.TemporaryDirectory(prefix="celune-agent-test-") as directory:
             root = Path(directory).resolve()
@@ -1360,13 +1360,13 @@ def _run_tool_checks(
         )
     finally:
         engine.agent_runtime = original_runtime
-        engine._agent_tools = original_tools
-        engine._agent_tool_schemas = original_schemas
+        engine.agent_tools = original_tools
+        engine.agent_tool_schemas = original_schemas
         engine.mode = original_mode
         engine.speed = original_speed
         engine.reverb.strength = original_reverb
         engine.voice_prompt = original_voice_prompt
-        engine._agent_needle_selector = old_needle
+        engine.agent_needle_selector = old_needle
     return checks
 
 
@@ -1500,9 +1500,9 @@ def _patch_tool_side_effects(
     elif name == "wake":
         stack.enter_context(patch.object(engine, "wake_from_sleep", return_value=True))
     elif name == "clear_speech_queue":
-        stack.enter_context(patch.object(engine, "_clear_queue"))
+        stack.enter_context(patch("celune.agent.tools.clear_queue"))
     elif name == "clear_recent_context":
-        stack.enter_context(patch.object(engine, "_reset_persona_conversation"))
+        stack.enter_context(patch.object(engine, "reset_persona_conversation"))
     elif name in {"remember", "recall", "forget"}:
         stack.enter_context(
             patch("celune.agent.tools._memory_store", return_value=memory)

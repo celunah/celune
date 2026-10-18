@@ -14,7 +14,7 @@ from celune.typing.agent import AgentTool
 from celune.agent.needle.models import NeedleRoPE, NeedleModel, NeedleConfig
 from celune.agent.needle.impl import (
     NeedleHandler,
-    _parse_selection,
+    parse_selection,
     convert_needle_safetensors,
 )
 
@@ -141,7 +141,7 @@ class TestNeedleHandler:
         )
 
         catalog = NeedleHandler.catalog_for_tools([tool])
-        selection = _parse_selection(
+        selection = parse_selection(
             '<tool_call>[{"name":"set_timer","arguments":{"minutes":5}}]',
             {"set_timer": "SetTimer"},
         )

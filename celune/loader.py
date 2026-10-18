@@ -170,7 +170,7 @@ def load(self, raise_on_error: bool = False, skip_runtime_check: bool = False) -
     )
 
     self.progress_callback(None, None)
-    if self._is_voice_conversion_mode():
+    if self.is_voice_conversion_mode():
         if self.vc_backend is None:
             self.fatal()
             self.log(string("celune.no_vc_backend"), "error")
@@ -212,7 +212,7 @@ def load(self, raise_on_error: bool = False, skip_runtime_check: bool = False) -
                 raise
             return False
 
-    pipeline_thread = threading.Thread(target=self._run_pipeline_jobs, daemon=True)
+    pipeline_thread = threading.Thread(target=self.run_pipeline_jobs, daemon=True)
     self._generation_thread = None
     self._playback_thread = pipeline_thread
     pipeline_thread.start()
@@ -233,13 +233,13 @@ def load(self, raise_on_error: bool = False, skip_runtime_check: bool = False) -
         return False
 
     warmup_ok = True
-    if not self._is_voice_conversion_mode():
+    if not self.is_voice_conversion_mode():
         warmup_ok = self._warmup()
 
     if warmup_ok:
         self.loaded = True
         self._model_ready.set()
-        self._release_pipeline()
+        self.release_pipeline()
         self.glow.enter()  # Celune has entered your PC
     else:
         self.fatal()
@@ -275,7 +275,7 @@ def load(self, raise_on_error: bool = False, skip_runtime_check: bool = False) -
             loglevel="verbose",
         )
 
-    self._emit_event("ready", ReadyEvent(celune=self))
+    self.emit_event("ready", ReadyEvent(celune=self))
 
     return True
 

@@ -166,14 +166,13 @@ def _has_celune(self) -> bool:
 
 def prepare_theme(self) -> None:
     """Prepare the selected Celune theme before the first rendered frame."""
-    if not _app._RUNTIME_DEPENDENCIES_LOADED:
-        _app._load_ui_runtime_dependencies()
+    _app.ensure_ui_runtime_dependencies()
     _app.colors.configure_theme()
 
     if self._has_celune():
         loader_factory = _app.default_loader
         if loader_factory is None:
-            _app._load_ui_runtime_dependencies()
+            _app.ensure_ui_runtime_dependencies()
             loader_factory = _app.default_loader
         loader = loader_factory() if loader_factory is not None else None
         if loader is not None:
@@ -1058,7 +1057,7 @@ def _load_deferred_runtime(self) -> None:
         celune = self.celune
         if self._startup_loader is not None:
             celune = self._startup_loader()
-        _app._load_ui_runtime_dependencies()
+        _app.ensure_ui_runtime_dependencies()
     except BaseException as exc:
         try:
             self.call_from_thread(self._handle_deferred_runtime_error, exc)
@@ -1127,7 +1126,7 @@ def attach_celune(self, celune: _app.Celune) -> None:
         return
 
     if _app.default_loader is None or _app.ui_resources is None:
-        _app._load_ui_runtime_dependencies()
+        _app.ensure_ui_runtime_dependencies()
     self._log_file_path = _app.main_window_log_path(create_parent=True)
     self._unbind_agent_events()
     self.celune = celune
@@ -1322,7 +1321,7 @@ def _terminal_status_for(self, msg: str, severity: str) -> tuple[str, str]:
     if severity == "warning":
         return "warning", _app.string("osc.action_warning")
 
-    if self._persona_recording_active() or self._vc_recording_active():
+    if self.persona_recording_active() or self.vc_recording_active():
         if self._persona_recording_stop_requested:
             return "recording", _app.string("osc.action_transcribing_speech")
         return "recording", _app.string("osc.action_listening_microphone")
@@ -1339,11 +1338,11 @@ def _terminal_status_for(self, msg: str, severity: str) -> tuple[str, str]:
     if not self.celune_ready:
         return "initializing", _app.string("osc.action_loading_voice_pack")
 
-    if self._agent_task_state in _app._AGENT_AWAITING_STATES:
+    if self._agent_task_state in _app.AGENT_AWAITING_STATES:
         return "awaiting", msg
-    if self._agent_task_state in _app._AGENT_PAUSED_STATES:
+    if self._agent_task_state in _app.AGENT_PAUSED_STATES:
         return "paused", msg
-    if self._agent_task_state in _app._AGENT_ACTIVE_STATES:
+    if self._agent_task_state in _app.AGENT_ACTIVE_STATES:
         return "thinking", msg
     state_actions = {
         "idle": ("ready", _app.string("osc.action_idle")),
@@ -1710,7 +1709,7 @@ def _dismiss_loading_screen(self, *, early: bool = False) -> None:
                 self._animate_opacity(
                     main_container,
                     1.0,
-                    duration=_app._MAIN_UI_FADE_SECONDS,
+                    duration=_app.MAIN_UI_FADE_SECONDS,
                 )
             self.call_after_refresh(self._refresh_logs)
 
@@ -1720,7 +1719,7 @@ def _dismiss_loading_screen(self, *, early: bool = False) -> None:
             overlay.animate(
                 "opacity",
                 0.0,
-                duration=_app._LOADING_FADE_SECONDS,
+                duration=_app.LOADING_FADE_SECONDS,
                 easing="out_cubic",
                 on_complete=show_main_ui,
             )

@@ -49,66 +49,66 @@ from ..persona.impl import persona_enabled, persona_talkback_enabled
 npt = np.typing
 
 __all__ = (
-    "_append_webui_error",
-    "_append_webui_log",
-    "_collect_speech_job",
     "_delete_expired_speech_jobs",
-    "_flac_bytes",
-    "_forget_speech_job",
-    "_input_update",
-    "_normalized_audio",
     "_probe_webui_runtime",
     "_probed_status_text",
-    "_publish_active_task_log",
     "_publish_active_task_progress",
-    "_publish_task_event",
     "_publish_task_progress",
     "_publish_webui_agent_status",
-    "_receive_webui_timed_update",
-    "_remember_speech_job",
-    "_seed_webui_logs",
-    "_send_button_update",
-    "_set_active_speech_task",
-    "_set_webui_status",
-    "_speech_job_snapshot",
-    "_strip_webui_log_prefix",
-    "_subscribe_to_speech_job",
-    "_subscribe_webui_events",
-    "_subscribe_webui_timed_updates",
     "_sync_webui_runtime_locks",
     "_task_event_status",
-    "_task_status",
-    "_unsubscribe_from_speech_job",
-    "_update_speech_job",
     "_voice_button_update",
     "_webui_agent_approval_requested",
     "_webui_agent_choice_requested",
     "_webui_agent_status_message",
     "_webui_agent_task_finished",
     "_webui_agent_task_state_changed",
-    "_webui_audio_waveform_options",
-    "_webui_input_placeholder",
     "_webui_log_line_html",
-    "_webui_logs_html",
     "_webui_persona_input_available",
     "_webui_persona_loaded",
     "_webui_recording_hint",
-    "_webui_resources_html",
-    "_webui_snapshot",
     "_webui_status_color",
-    "_webui_status_html",
-    "_webui_submit_snapshot",
-    "_webui_vc_controls_update",
-    "_webui_vc_mode_active",
-    "_wrap_celune_callbacks",
     "api_log",
+    "append_webui_error",
+    "append_webui_log",
     "audio_bytes",
+    "collect_speech_job",
+    "flac_bytes",
+    "forget_speech_job",
+    "get_webui_input_placeholder",
+    "input_update",
+    "normalized_audio",
+    "publish_active_task_log",
+    "publish_task_event",
+    "receive_webui_timed_update",
+    "remember_speech_job",
     "require_celune",
+    "seed_webui_logs",
+    "send_button_update",
+    "set_active_speech_task",
+    "set_webui_status",
+    "speech_job_snapshot",
     "stream_headers",
+    "strip_webui_log_prefix",
+    "subscribe_to_speech_job",
+    "subscribe_webui_events",
+    "subscribe_webui_timed_updates",
+    "task_status",
+    "unsubscribe_from_speech_job",
+    "update_speech_job",
+    "webui_audio_waveform_options",
+    "webui_logs_html",
+    "webui_resources_html",
+    "webui_snapshot",
+    "webui_status_html",
+    "webui_submit_snapshot",
+    "webui_vc_controls_update",
+    "webui_vc_mode_active",
+    "wrap_celune_callbacks",
 )
 
 
-def _subscribe_webui_events(celune: _api.Celune) -> None:
+def subscribe_webui_events(celune: _api.Celune) -> None:
     """Subscribe the browser UI to the shared typed agent lifecycle events."""
     dispatcher = getattr(celune, "_event_dispatcher", None)
     if not isinstance(dispatcher, EventDispatcher):
@@ -126,16 +126,16 @@ def _subscribe_webui_events(celune: _api.Celune) -> None:
     _api.webui_event_callbacks = callbacks
 
 
-def _subscribe_webui_timed_updates() -> None:
+def subscribe_webui_timed_updates() -> None:
     """Subscribe the browser UI to the shared CEDTS timed-update channel."""
     if _api.webui_timed_update_unsubscribe is not None:
         _api.webui_timed_update_unsubscribe()
     _api.webui_timed_update_unsubscribe = ui_timed_update_channel.subscribe(
-        _receive_webui_timed_update
+        receive_webui_timed_update
     )
 
 
-def _receive_webui_timed_update(update: UiTimedUpdate) -> None:
+def receive_webui_timed_update(update: UiTimedUpdate) -> None:
     """Apply one newer TUI timed update to browser-owned state."""
     celune = _api.bound_celune
     if celune is None or update.runtime_id != str(id(celune)):
@@ -199,7 +199,7 @@ def _publish_webui_agent_status(
     message = _webui_agent_status_message(task_id, fallback_state, fallback_key)
     if message is not None:
         severity = "warning" if "awaiting" in message.casefold() else "info"
-        _set_webui_status(message, severity, source="agent")
+        set_webui_status(message, severity, source="agent")
 
 
 def _webui_agent_task_state_changed(event: AgentTaskStateChangedEvent) -> None:
@@ -247,7 +247,7 @@ def _webui_log_line_html(message: str, severity: str = "info") -> str:
     return f'<span style="color: {color};">{escape(message)}</span>'
 
 
-def _webui_audio_waveform_options() -> gr.WaveformOptions:
+def webui_audio_waveform_options() -> gr.WaveformOptions:
     """Return theme-bound waveform colors for Gradio audio components."""
     primary = colors.SEVERITY_COLORS["celune"]["info"]
     secondary = colors.THEME.secondary or colors.FADED_ACCENT
@@ -258,7 +258,7 @@ def _webui_audio_waveform_options() -> gr.WaveformOptions:
     )
 
 
-def _strip_webui_log_prefix(line: str) -> str:
+def strip_webui_log_prefix(line: str) -> str:
     """Remove persisted timestamp and severity prefixes from one log line."""
     stripped = line.strip()
     if stripped.startswith("[") and "] " in stripped:
@@ -268,7 +268,7 @@ def _strip_webui_log_prefix(line: str) -> str:
     return stripped
 
 
-def _seed_webui_logs() -> None:
+def seed_webui_logs() -> None:
     """Populate the browser log view from the persisted desktop log when available."""
     if _api.webui_logs_seeded:
         return
@@ -291,7 +291,7 @@ def _seed_webui_logs() -> None:
 
     def append_record() -> None:
         if record:
-            _append_webui_log("\n".join(record), record_severity)
+            append_webui_log("\n".join(record), record_severity)
 
     for line in lines:
         match = record_pattern.match(line)
@@ -308,18 +308,18 @@ def _seed_webui_logs() -> None:
         elif record:
             record.append(line)
         else:
-            record.append(_strip_webui_log_prefix(line))
+            record.append(strip_webui_log_prefix(line))
     append_record()
 
 
-def _append_webui_log(msg: str, severity: str = "info") -> None:
+def append_webui_log(msg: str, severity: str = "info") -> None:
     """Store one browser log line."""
     if _api.webui_log_lines and _api.webui_log_lines[-1] == (msg, severity):
         return
     _api.webui_log_lines.append((msg, severity))
 
 
-def _append_webui_error(
+def append_webui_error(
     message: str,
     error: BaseException,
     severity: str = "error",
@@ -327,7 +327,7 @@ def _append_webui_error(
 ) -> None:
     """Store a WebUI error with detail selected by the active log level."""
     runtime = celune or _api.bound_celune
-    _append_webui_log(
+    append_webui_log(
         format_error_message(
             message,
             error,
@@ -337,7 +337,7 @@ def _append_webui_error(
     )
 
 
-def _set_webui_status(
+def set_webui_status(
     msg: str,
     severity: str = "info",
     *,
@@ -390,7 +390,7 @@ def _probe_webui_runtime() -> None:
             _api.webui_status_text != playback_status
             or _api.webui_status_source != "playback"
         ):
-            _set_webui_status(
+            set_webui_status(
                 playback_status,
                 "info",
                 source="playback",
@@ -400,14 +400,14 @@ def _probe_webui_runtime() -> None:
     elif current_state == "sleeping":
         sleeping_log = string("webui.sleeping_log", app_name=APP_NAME)
         if not any(message == sleeping_log for message, _ in _api.webui_log_lines):
-            _append_webui_log(sleeping_log, "sleeping")
+            append_webui_log(sleeping_log, "sleeping")
         sleeping_status, sleeping_severity = _probed_status_text(celune)
         if (
             _api.webui_status_text != sleeping_status
             or _api.webui_status_severity != sleeping_severity
             or _api.webui_status_source in {"callback", "agent", "cedts"}
         ):
-            _set_webui_status(
+            set_webui_status(
                 sleeping_status,
                 sleeping_severity,
                 source="probe",
@@ -424,7 +424,7 @@ def _probe_webui_runtime() -> None:
             or current_state in {"idle", "sleeping", "error"}
         )
         if should_override_status:
-            _set_webui_status(
+            set_webui_status(
                 status_text,
                 severity,
                 source="probe",
@@ -453,7 +453,7 @@ def _probe_webui_runtime() -> None:
         _api.webui_last_resource_advance = now
 
 
-def _wrap_celune_callbacks(celune: _api.Celune) -> None:
+def wrap_celune_callbacks(celune: _api.Celune) -> None:
     """Mirror Celune callbacks into browser UI state without replacing existing handlers."""
     if getattr(celune, "_webui_callbacks_wrapped", False):
         return
@@ -492,9 +492,9 @@ def _wrap_celune_callbacks(celune: _api.Celune) -> None:
         *,
         loglevel: LogLevel = "info",
     ) -> None:
-        _publish_active_task_log(msg, severity)
-        _append_webui_log(msg, severity)
-        _api._invoke_message_callback(original_log, msg, severity, loglevel)
+        publish_active_task_log(msg, severity)
+        append_webui_log(msg, severity)
+        _api.invoke_message_callback(original_log, msg, severity, loglevel)
 
     def wrapped_status(
         msg: str,
@@ -502,17 +502,17 @@ def _wrap_celune_callbacks(celune: _api.Celune) -> None:
         *,
         loglevel: LogLevel = "info",
     ) -> None:
-        _publish_active_task_log(msg, severity)
-        _set_webui_status(msg, severity, source="callback")
-        _api._invoke_message_callback(original_status, msg, severity, loglevel)
+        publish_active_task_log(msg, severity)
+        set_webui_status(msg, severity, source="callback")
+        _api.invoke_message_callback(original_status, msg, severity, loglevel)
 
     def wrapped_error(msg: str) -> None:
-        _publish_active_task_log(
+        publish_active_task_log(
             string("status.could_not_continue", app_name=APP_NAME),
             "error",
         )
-        _append_webui_log(msg, "error")
-        _set_webui_status(msg, "error", source="callback")
+        append_webui_log(msg, "error")
+        set_webui_status(msg, "error", source="callback")
         original_error(msg)
 
     def wrapped_progress(
@@ -533,15 +533,15 @@ def _wrap_celune_callbacks(celune: _api.Celune) -> None:
         _api.webui_progress_total = None
         _sync_webui_runtime_locks(celune, locked=getattr(celune, "locked", False))
         if getattr(celune, "sleeping", False):
-            _set_webui_status(string("status.sleeping"), "sleeping", source="callback")
+            set_webui_status(string("status.sleeping"), "sleeping", source="callback")
         elif getattr(celune, "cur_state", "") not in {"reloading", "waking"}:
-            _set_webui_status(string("status.idle"), source="callback")
+            set_webui_status(string("status.idle"), source="callback")
 
     def wrapped_queue_available() -> None:
         original_queue_available()
         locked = bool(getattr(celune, "is_in_tutorial", False))
         _sync_webui_runtime_locks(celune, locked=locked)
-        _set_webui_status(string("status.speaking"), source="callback")
+        set_webui_status(string("status.speaking"), source="callback")
 
     def wrapped_caption_progress(
         progress: Optional[float],
@@ -571,13 +571,13 @@ def _wrap_celune_callbacks(celune: _api.Celune) -> None:
         original_caption(caption)
 
     def wrapped_voice_changed(name: str) -> None:
-        _append_webui_log(string("webui.voice_changed", voice=name))
+        append_webui_log(string("webui.voice_changed", voice=name))
         original_voice_changed(name)
 
     def wrapped_input_state(locked: bool) -> None:
         has_voice = bool(celune.current_voice) or bool(celune.voices)
         _api.webui_input_locked = locked or not has_voice
-        _api.webui_input_placeholder = _webui_input_placeholder(
+        _api.webui_input_placeholder = get_webui_input_placeholder(
             celune,
             _api.webui_input_locked,
             has_voice,
@@ -599,7 +599,7 @@ def _wrap_celune_callbacks(celune: _api.Celune) -> None:
 
         def wrapped_fatal() -> None:
             original_fatal()
-            _api._shutdown_api_for_fatal_error()
+            _api.shutdown_api_for_fatal_error()
 
         glow.fatal = wrapped_fatal
 
@@ -621,7 +621,7 @@ def _sync_webui_runtime_locks(celune: _api.Celune, *, locked: bool) -> None:
     """Synchronize browser input controls from one runtime transition."""
     has_voice = bool(celune.current_voice) or bool(celune.voices)
     _api.webui_input_locked = locked or not has_voice
-    _api.webui_input_placeholder = _webui_input_placeholder(
+    _api.webui_input_placeholder = get_webui_input_placeholder(
         celune,
         _api.webui_input_locked,
         has_voice,
@@ -664,9 +664,9 @@ def api_log(action: str, content: str, suffix: str = "") -> None:
     preview = content.replace("\n", "\\n").replace("\r", "\\r")[:64]
     if len(content) > 64:
         preview += "..."
-    ui = CeluneUI._instance
+    ui = CeluneUI.get_instance()
     if ui is None or not getattr(ui, "_runtime_log_capture_enabled", False):
-        _append_webui_log(f"{action} {preview!r}{suffix}")
+        append_webui_log(f"{action} {preview!r}{suffix}")
     try:
         print(f"[{timestamp}] {action} {preview!r}{suffix}", flush=True)
     except ValueError:
@@ -674,7 +674,7 @@ def api_log(action: str, content: str, suffix: str = "") -> None:
         pass
 
 
-def _normalized_audio(audio: npt.NDArray[np.float32]) -> npt.NDArray[np.float32]:
+def normalized_audio(audio: npt.NDArray[np.float32]) -> npt.NDArray[np.float32]:
     """Return stereo audio in frame-major form for file encoding."""
     normalized = np.asarray(audio, dtype=np.float32)
     if normalized.ndim == 2 and normalized.shape[0] == 2 and normalized.shape[1] != 2:
@@ -682,12 +682,12 @@ def _normalized_audio(audio: npt.NDArray[np.float32]) -> npt.NDArray[np.float32]
     return normalized
 
 
-def _flac_bytes(audio: npt.NDArray[np.float32], sample_rate: int = BASE_SR) -> bytes:
+def flac_bytes(audio: npt.NDArray[np.float32], sample_rate: int = BASE_SR) -> bytes:
     """Encode audio as PCM24 FLAC bytes."""
     buffer = io.BytesIO()
     sf.write(
         buffer,
-        _normalized_audio(audio),
+        normalized_audio(audio),
         sample_rate,
         format="FLAC",
         subtype="PCM_24",
@@ -721,15 +721,15 @@ def audio_bytes(
         if isinstance(item, Exception):
             raise item
 
-        audio_chunks.append(_normalized_audio(item))
+        audio_chunks.append(normalized_audio(item))
         chunk_count += 1
         if on_chunk is not None:
             on_chunk(chunk_count)
 
     if audio_chunks:
-        yield _flac_bytes(np.concatenate(audio_chunks))
+        yield flac_bytes(np.concatenate(audio_chunks))
     else:
-        yield _flac_bytes(np.empty((0, 2), dtype=np.float32))
+        yield flac_bytes(np.empty((0, 2), dtype=np.float32))
 
 
 def stream_headers(sample_rate: int = BASE_SR) -> dict[str, str]:
@@ -748,14 +748,14 @@ def stream_headers(sample_rate: int = BASE_SR) -> dict[str, str]:
     }
 
 
-def _remember_speech_job(job_id: str, job: _api.SpeechJob) -> None:
+def remember_speech_job(job_id: str, job: _api.SpeechJob) -> None:
     """Store one speech job and remove expired entries."""
     with _api.speech_jobs_lock:
         _delete_expired_speech_jobs(time.time())
         _api.speech_jobs[job_id] = job
 
 
-def _forget_speech_job(job_id: str) -> None:
+def forget_speech_job(job_id: str) -> None:
     """Remove one speech job that was rejected before it could be observed."""
     with _api.speech_jobs_lock:
         job = _api.speech_jobs.pop(job_id, None)
@@ -776,7 +776,7 @@ def _delete_expired_speech_jobs(now: float) -> None:
         _api.speech_jobs.pop(job_id, None)
 
 
-def _update_speech_job(
+def update_speech_job(
     job_id: str,
     *,
     status: TaskStatus,
@@ -793,7 +793,7 @@ def _update_speech_job(
         job.error = error
 
 
-def _publish_task_event(job_id: str, event: _api.TaskEvent) -> None:
+def publish_task_event(job_id: str, event: _api.TaskEvent) -> None:
     """Append one task event and fan it out to current subscriptions."""
     with _api.speech_jobs_lock:
         job = _api.speech_jobs.get(job_id)
@@ -806,7 +806,7 @@ def _publish_task_event(job_id: str, event: _api.TaskEvent) -> None:
         subscription.put(event)
 
 
-def _task_status(job_id: str) -> Optional[TaskStatus]:
+def task_status(job_id: str) -> Optional[TaskStatus]:
     """Return the current task status for API event association."""
     with _api.speech_jobs_lock:
         job = _api.speech_jobs.get(job_id)
@@ -815,7 +815,7 @@ def _task_status(job_id: str) -> Optional[TaskStatus]:
 
 def _task_event_status(job_id: str) -> Optional[TaskStatus]:
     """Return a non-terminal task status suitable for callback events."""
-    status = _task_status(job_id)
+    status = task_status(job_id)
     if status in {"completed", "failed", "cancelled"}:
         return None
     return status
@@ -832,7 +832,7 @@ def _publish_task_progress(
     status = _task_event_status(job_id)
     if status is None:
         return
-    _publish_task_event(
+    publish_task_event(
         job_id,
         _api.TaskEvent(
             task_id=job_id,
@@ -845,7 +845,7 @@ def _publish_task_progress(
     )
 
 
-def _publish_active_task_log(message: str, severity: str = "info") -> None:
+def publish_active_task_log(message: str, severity: str = "info") -> None:
     """Mirror one safe Core status callback into the active speech task."""
     task_id = _api.active_speech_task_id
     if task_id is None:
@@ -860,7 +860,7 @@ def _publish_active_task_log(message: str, severity: str = "info") -> None:
         if severity == "error"
         else message
     )
-    _publish_task_event(
+    publish_task_event(
         task_id,
         _api.TaskEvent(
             task_id=task_id,
@@ -882,12 +882,12 @@ def _publish_active_task_progress(
         _publish_task_progress(task_id, current=current, total=total)
 
 
-def _set_active_speech_task(task_id: Optional[str]) -> None:
+def set_active_speech_task(task_id: Optional[str]) -> None:
     """Set the API task receiving Core speech callbacks."""
     _api.active_speech_task_id = task_id
 
 
-def _subscribe_to_speech_job(job_id: str) -> Optional[_api.TaskSubscription]:
+def subscribe_to_speech_job(job_id: str) -> Optional[_api.TaskSubscription]:
     """Subscribe to one speech job and replay its retained event history."""
     subscription = _api.TaskSubscription(loop=asyncio.get_running_loop())
     with _api.speech_jobs_lock:
@@ -900,7 +900,7 @@ def _subscribe_to_speech_job(job_id: str) -> Optional[_api.TaskSubscription]:
     return subscription
 
 
-def _unsubscribe_from_speech_job(
+def unsubscribe_from_speech_job(
     job_id: str,
     subscription: _api.TaskSubscription,
 ) -> None:
@@ -915,7 +915,7 @@ def _unsubscribe_from_speech_job(
     subscription.close()
 
 
-def _speech_job_snapshot(job_id: str) -> Optional[_api.SpeechJob]:
+def speech_job_snapshot(job_id: str) -> Optional[_api.SpeechJob]:
     """Return a copy of one speech job for response handling."""
     with _api.speech_jobs_lock:
         _delete_expired_speech_jobs(time.time())
@@ -930,7 +930,7 @@ def _speech_job_snapshot(job_id: str) -> Optional[_api.SpeechJob]:
         )
 
 
-def _collect_speech_job(job_id: str, chunks: SpeechStreamQueue) -> None:
+def collect_speech_job(job_id: str, chunks: SpeechStreamQueue) -> None:
     """Consume a speech stream queue and store its final FLAC payload."""
     try:
         audio = b"".join(
@@ -943,10 +943,10 @@ def _collect_speech_job(job_id: str, chunks: SpeechStreamQueue) -> None:
             )
         )
     except Exception as e:
-        if _task_status(job_id) == "cancelled":
-            _set_active_speech_task(None)
+        if task_status(job_id) == "cancelled":
+            set_active_speech_task(None)
             return
-        _update_speech_job(
+        update_speech_job(
             job_id,
             status="failed",
             error=format_error_message(
@@ -955,7 +955,7 @@ def _collect_speech_job(job_id: str, chunks: SpeechStreamQueue) -> None:
                 getattr(_api.bound_celune, "log_level", "info"),
             ),
         )
-        _publish_task_event(
+        publish_task_event(
             job_id,
             _api.TaskEvent(
                 task_id=job_id,
@@ -964,15 +964,15 @@ def _collect_speech_job(job_id: str, chunks: SpeechStreamQueue) -> None:
                 error="generation_failed",
             ),
         )
-        _set_active_speech_task(None)
+        set_active_speech_task(None)
         return
 
-    if _task_status(job_id) == "cancelled":
-        _set_active_speech_task(None)
+    if task_status(job_id) == "cancelled":
+        set_active_speech_task(None)
         return
 
-    _update_speech_job(job_id, status="completed", audio=audio)
-    _publish_task_event(
+    update_speech_job(job_id, status="completed", audio=audio)
+    publish_task_event(
         job_id,
         _api.TaskEvent(
             task_id=job_id,
@@ -981,10 +981,10 @@ def _collect_speech_job(job_id: str, chunks: SpeechStreamQueue) -> None:
             location=f"/v1/speak/jobs/{job_id}",
         ),
     )
-    _set_active_speech_task(None)
+    set_active_speech_task(None)
 
 
-def _webui_logs_html() -> str:
+def webui_logs_html() -> str:
     """Render the mirrored log buffer as terminal-like HTML."""
     if not _api.webui_log_lines:
         content = _webui_log_line_html("Waiting for response...")
@@ -996,7 +996,7 @@ def _webui_logs_html() -> str:
     return f'<div id="celune-log-panel"><pre>{content}</pre></div>'
 
 
-def _webui_status_html() -> str:
+def webui_status_html() -> str:
     """Render the footer status cell."""
     color = _webui_status_color(_api.webui_status_severity)
     return (
@@ -1005,7 +1005,7 @@ def _webui_status_html() -> str:
     )
 
 
-def _webui_resources_html() -> str:
+def webui_resources_html() -> str:
     """Render the footer resource cell."""
     celune = _api.bound_celune
     resource = ""
@@ -1056,7 +1056,7 @@ def _voice_button_update() -> WebUiUpdate:
     )
 
 
-def _webui_vc_mode_active(celune: Optional[_api.Celune]) -> bool:
+def webui_vc_mode_active(celune: Optional[_api.Celune]) -> bool:
     """Return whether the browser UI should expose active VC controls."""
     if celune is None:
         return False
@@ -1092,19 +1092,19 @@ def _webui_recording_hint(celune: Optional[_api.Celune]) -> str:
     """Return the live-recording shortcut shown in the browser footer."""
     if (
         celune is None
-        or CeluneUI._instance is None
+        or CeluneUI.get_instance() is None
         or _api.webui_input_locked
         or getattr(celune, "is_in_tutorial", False)
     ):
         return ""
-    if _webui_vc_mode_active(celune):
+    if webui_vc_mode_active(celune):
         return string("webui.recording_toggle_hint")
     if _webui_persona_input_available(celune):
         return string("webui.recording_voice_hint")
     return ""
 
 
-def _webui_input_placeholder(
+def get_webui_input_placeholder(
     celune: _api.Celune,
     locked: bool,
     has_voice: bool,
@@ -1114,7 +1114,7 @@ def _webui_input_placeholder(
         return string("ui.tutorial_placeholder")
     if locked or not has_voice:
         return string("ui.wait_placeholder")
-    if _webui_vc_mode_active(celune):
+    if webui_vc_mode_active(celune):
         return string("ui.voice_changer_placeholder")
     if getattr(getattr(celune, "backend", None), "singing", False):
         return string("ui.cesn_input_placeholder")
@@ -1123,7 +1123,7 @@ def _webui_input_placeholder(
     return string("ui.input_placeholder")
 
 
-def _input_update(
+def input_update(
     value: Union[Optional[str], _WebUiUnset] = _WEBUI_UNSET,
 ) -> WebUiUpdate:
     """Return the current browser input state."""
@@ -1152,15 +1152,15 @@ def _input_update(
             placeholder=string("ui.tutorial_placeholder"),
         )
     has_voice = bool(celune.current_voice) or bool(celune.voices)
-    vc_mode = _webui_vc_mode_active(celune)
+    vc_mode = webui_vc_mode_active(celune)
     if getattr(celune, "_webui_callbacks_wrapped", False):
         interactive = not _api.webui_input_locked and has_voice and not vc_mode
-        placeholder = _webui_input_placeholder(
+        placeholder = get_webui_input_placeholder(
             celune, _api.webui_input_locked, has_voice
         )
     else:
         interactive = not celune.locked and has_voice and not vc_mode
-        placeholder = _webui_input_placeholder(celune, celune.locked, has_voice)
+        placeholder = get_webui_input_placeholder(celune, celune.locked, has_voice)
     if has_value:
         return gr.update(
             value=value,
@@ -1173,13 +1173,13 @@ def _input_update(
     )
 
 
-def _send_button_update() -> WebUiUpdate:
+def send_button_update() -> WebUiUpdate:
     """Return the current browser send-button state."""
     celune = _api.bound_celune
     if celune is None:
         return gr.update(interactive=False)
     has_voice = bool(celune.current_voice) or bool(celune.voices)
-    vc_mode = _webui_vc_mode_active(celune)
+    vc_mode = webui_vc_mode_active(celune)
     interactive = (
         not _api.webui_input_locked and has_voice and not vc_mode
         if getattr(celune, "_webui_callbacks_wrapped", False)
@@ -1191,14 +1191,14 @@ def _send_button_update() -> WebUiUpdate:
     return gr.update(interactive=interactive)
 
 
-def _webui_vc_controls_update() -> tuple[
+def webui_vc_controls_update() -> tuple[
     WebUiUpdate,
     WebUiUpdate,
     WebUiUpdate,
 ]:
     """Return the current browser VC control state."""
     celune = _api.bound_celune
-    vc_enabled = _webui_vc_mode_active(celune)
+    vc_enabled = webui_vc_mode_active(celune)
     control_interactive = celune is not None and vc_enabled
     return (
         gr.update(interactive=control_interactive),
@@ -1207,7 +1207,7 @@ def _webui_vc_controls_update() -> tuple[
     )
 
 
-def _webui_snapshot() -> tuple[
+def webui_snapshot() -> tuple[
     str,
     str,
     str,
@@ -1216,19 +1216,19 @@ def _webui_snapshot() -> tuple[
     WebUiUpdate,
 ]:
     """Return the current browser UI snapshot."""
-    _seed_webui_logs()
+    seed_webui_logs()
     _probe_webui_runtime()
     return (
-        _webui_logs_html(),
-        _webui_status_html(),
-        _webui_resources_html(),
+        webui_logs_html(),
+        webui_status_html(),
+        webui_resources_html(),
         _voice_button_update(),
-        _send_button_update(),
-        _input_update(),
+        send_button_update(),
+        input_update(),
     )
 
 
-def _webui_submit_snapshot(
+def webui_submit_snapshot(
     input_value: Optional[str],
 ) -> tuple[
     WebUiUpdate,
@@ -1246,9 +1246,9 @@ def _webui_submit_snapshot(
         voice_update,
         send_update,
         _input,
-    ) = _webui_snapshot()
+    ) = webui_snapshot()
     return (
-        _input_update(input_value),
+        input_update(input_value),
         logs_html,
         status_html,
         resources_html,

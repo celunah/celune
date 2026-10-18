@@ -24,7 +24,7 @@ ASR_MODELS: tuple[ModelMetadata, ...] = (
         license_url=_MIT_LICENSE_URL,
         non_commercial=False,
         research_only=False,
-        repository_url=(f"{_HUGGING_FACE_ROOT}{DEFAULT_PERSONA_SPEECH_MODEL_ID}"),
+        repository_url=f"{_HUGGING_FACE_ROOT}{DEFAULT_PERSONA_SPEECH_MODEL_ID}",
         roles=("persona_speech_input",),
     ),
     ModelMetadata(

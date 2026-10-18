@@ -42,6 +42,7 @@ __all__ = [
     "CeluneBackend",
     "cached_hf_snapshot_path",
     "local_hf_offline_mode",
+    "to_numpy_audio",
 ]
 
 
@@ -50,7 +51,7 @@ _MAX_REFERENCE_SECONDS = 10.0
 _RUNTIME_PRIMITIVE_TYPES = (str, bytes, bytearray, int, float, bool, type(None))
 
 
-def _to_numpy_audio(chunk: Union[torch.Tensor, np.ndarray]) -> AudioChunk:
+def to_numpy_audio(chunk: Union[torch.Tensor, np.ndarray]) -> AudioChunk:
     """Convert one streamed tensor or array to normalized one-dimensional audio."""
     if isinstance(chunk, torch.Tensor):
         audio = (

@@ -26,8 +26,8 @@ from celune.cevoice import (
     persona_files_from_bundle,
 )
 from celune.i18n import string
-from celune.utils import discard
 from celune.celune import Celune
+from celune.utils import discard
 from celune.typing.agent import (
     ToolCall,
     AgentTask,
@@ -42,8 +42,8 @@ from celune.typing.agent import (
 from celune.constants import PipelineStates
 from celune.typing.aliases import AudioChunk
 from celune.persona.impl import compact_persona_history
-from celune.persona.capabilities import PersonaCapabilities
 from celune.typing.common import JSON, JSONSerializable
+from celune.persona.capabilities import PersonaCapabilities
 from celune.dataclasses.pipeline import CaptionAlignmentSection
 from celune.persona.prompts import PersonaPromptBuilder, render_markdown_subsection
 
@@ -413,7 +413,7 @@ class TestPipelineAsync(_TestPipelineAsync):
                 return_value={"personality.md": "Debug personality."},
             ),
         ):
-            files = pipeline._persona_manifest_files(cast(Celune, engine))
+            files = pipeline.persona_manifest_files(cast(Celune, engine))
 
         assert files == {"personality.md": "Debug personality."}
 
@@ -997,7 +997,7 @@ class TestPipelineAsync(_TestPipelineAsync):
                     "celune.persona.memory.persona_data_dir",
                     return_value=Path(temp_dir),
                 ):
-                    store = pipeline._persona_memory_store(cast(Celune, engine))
+                    store = pipeline.persona_memory_store(cast(Celune, engine))
 
                 assert store is not None
                 assert store.automatic_max_age_days == 14
@@ -1104,7 +1104,7 @@ class TestPipelineAsync(_TestPipelineAsync):
         engine.vision = SimpleNamespace(post=mock.Mock(return_value=response))
 
         with (
-            mock.patch("celune.conversation._store_persona_memories"),
+            mock.patch("celune.conversation.store_persona_memories"),
             mock.patch("celune.conversation.build_persona_request", return_value={}),
             mock.patch("celune.speech.queue_speech", return_value=True) as q,
         ):
@@ -1389,7 +1389,7 @@ class TestPipelineAsync(_TestPipelineAsync):
                 for index in range(word_count)
             )
 
-        flush_mock = mock.Mock(wraps=pipeline._flush_buffered_speech_chunks)
+        flush_mock = mock.Mock(wraps=pipeline.flush_buffered_speech_chunks)
 
         engine.text_queue.put(
             pipeline.SpeechRequest("raw input", "raw input", save=True, normalize=True)
@@ -1406,12 +1406,12 @@ class TestPipelineAsync(_TestPipelineAsync):
             ),
             mock.patch("celune.pipeline.is_silent_utterance", return_value=(False, 0)),
             mock.patch("celune.pipeline.os.path.exists", return_value=True),
-            mock.patch("celune.pipeline._write_celune_flac"),
+            mock.patch("celune.pipeline.write_celune_flac"),
             mock.patch(
                 "celune.captions.get_caption_aligner",
                 return_value=SimpleNamespace(align_words=align_words),
             ),
-            mock.patch("celune.pipeline._flush_buffered_speech_chunks", new=flush_mock),
+            mock.patch("celune.pipeline.flush_buffered_speech_chunks", new=flush_mock),
         ):
             await self._run_generation_worker(cast(Celune, engine))
 
@@ -1439,7 +1439,7 @@ class TestPipelineAsync(_TestPipelineAsync):
                 ),
             ),
         )
-        caption_states = pipeline._playback_caption_states(cast(Celune, engine))
+        caption_states = pipeline.playback_caption_states(cast(Celune, engine))
         caption_state = next(iter(caption_states.values()))
         self.assertEqual(len(caption_state.segments), 1)
         self.assertEqual(len(caption_state.segments[0].word_start_frames), 2)
@@ -1502,10 +1502,10 @@ class TestPipelineAsync(_TestPipelineAsync):
         assert pipeline.acquire_pipeline(cast(Celune, engine), "speak")
         pipeline.release_pipeline(cast(Celune, engine))
 
-    async def test_missing_singing_notation_reports_error_and_releases_pipeline(
+    async def test_missing_singing_notation_warns_and_releases_pipeline(
         self,
     ) -> None:
-        """Consume lyric-only singing input and show the localized CESN message."""
+        """Warn about lyric-only singing input without changing the status."""
         engine = make_pipeline_engine()
         generate_stream = mock.Mock()
         engine.backend = SimpleNamespace(
@@ -1531,6 +1531,7 @@ class TestPipelineAsync(_TestPipelineAsync):
         engine.dev = False
         engine.recently_saved = None
 
+        engine.status_callback(string("status.generating"))
         assert pipeline.acquire_pipeline(cast(Celune, engine), "speak")
         engine.text_queue.put(
             pipeline.SpeechRequest("plain lyrics", "plain lyrics", save=False)
@@ -1539,10 +1540,69 @@ class TestPipelineAsync(_TestPipelineAsync):
 
         await self._run_generation_worker(cast(Celune, engine))
 
-        assert engine.errors == [string("cesn.no_notation_found")]
+        assert engine.errors == []
+        assert (string("cesn.no_notation_found"), "warning") in engine.messages
+        assert engine.statuses == [(string("status.generating"), "info")]
+        engine.change_input_state_callback.assert_called_once_with(locked=False)
+        engine.change_voice_lock_state_callback.assert_called_once_with(locked=True)
         assert engine.cur_state == "idle"
         assert not engine.locked
         assert engine.text_queue.empty()
+        generate_stream.assert_not_called()
+
+    async def test_malformed_singing_notation_logs_error_and_returns_to_idle(
+        self,
+    ) -> None:
+        """Log the parser problem and return the status to idle."""
+        engine = make_pipeline_engine()
+        generate_stream = mock.Mock()
+        engine.backend = SimpleNamespace(
+            singing=True,
+            generate_stream=generate_stream,
+            supported_languages=("en",),
+        )
+        engine.model_lock = threading.Lock()
+        engine.model = mock.Mock()
+        engine.language = "en"
+        engine.chunk_size = 8
+        engine.voice_prompt = None
+        engine.current_voice = "balanced"
+        engine.speed = 1.0
+        engine.can_use_rubberband = False
+        engine.reverb = SimpleNamespace(
+            strength=0.0,
+            reset=mock.Mock(),
+            flush=mock.Mock(return_value=np.zeros((0, 2), dtype=np.float32)),
+        )
+        engine.queue_avail_callback = mock.Mock()
+        engine.sentinel = PipelineStates.TERMINATE
+        engine.dev = False
+        engine.recently_saved = None
+        notation = "[lang:en]\n[bpm:120:key:c,scale:major][c4:4] word."
+
+        engine.status_callback(string("status.generating"))
+        assert pipeline.acquire_pipeline(cast(Celune, engine), "speak")
+        engine.text_queue.put(pipeline.SpeechRequest(notation, notation, save=False))
+        engine.text_queue.put(engine.sentinel)
+
+        await self._run_generation_worker(cast(Celune, engine))
+
+        diagnostic = next(
+            message
+            for message, severity in engine.messages
+            if severity == "error" and message.startswith("Parse error in CESN")
+        )
+        assert "line 2, column 1" in diagnostic
+        assert "\n\n[bpm:120:key:c,scale:major][c4:4] word.\n^ " in diagnostic
+        assert "Traceback" not in diagnostic
+        assert engine.errors == []
+        assert engine.statuses == [
+            (string("status.generating"), "info"),
+            (string("status.idle"), "info"),
+        ]
+        assert engine.cur_state == "idle"
+        engine.change_input_state_callback.assert_called_once_with(locked=False)
+        engine.change_voice_lock_state_callback.assert_called_once_with(locked=True)
         generate_stream.assert_not_called()
 
     async def test_generation_worker_reloads_language_specific_model_when_needed(
@@ -1585,7 +1645,7 @@ class TestPipelineAsync(_TestPipelineAsync):
             mock.patch("celune.pipeline.split_text", return_value=["bonjour"]),
             mock.patch("celune.pipeline.is_silent_utterance", return_value=(False, 0)),
             mock.patch("celune.pipeline.os.path.exists", return_value=True),
-            mock.patch("celune.pipeline._write_celune_flac"),
+            mock.patch("celune.pipeline.write_celune_flac"),
         ):
             await self._run_generation_worker(cast(Celune, engine))
 
@@ -1593,6 +1653,60 @@ class TestPipelineAsync(_TestPipelineAsync):
         backend.load_model.assert_called_once_with("fake/balanced", lang="fr")
         assert backend.current_language == "fr"
         assert engine.model.kwargs["lang"] == "fr"
+
+    async def test_generation_worker_enters_fatal_state_after_language_reload_failure(
+        self,
+    ) -> None:
+        """Verify failed language reload clears the model and enters fatal state."""
+        engine = make_pipeline_engine()
+        backend = self._LanguageAwareBackend()
+        backend.generate_stream = mock.Mock(wraps=backend.generate_stream)
+        backend.load_model.side_effect = RuntimeError("French reload failed")
+        engine.backend = backend
+        engine.model_lock = threading.Lock()
+        engine.model = mock.Mock()
+        engine.language = "Auto"
+        engine.chunk_size = 8
+        engine.voice_prompt = None
+        engine.current_voice = "balanced"
+        engine.speed = 1.0
+        engine.can_use_rubberband = False
+        engine.reverb = SimpleNamespace(
+            strength=0.0,
+            reset=mock.Mock(),
+            flush=mock.Mock(return_value=np.zeros((0, 2), dtype=np.float32)),
+        )
+        engine.queue_avail_callback = mock.Mock()
+        engine.sentinel = PipelineStates.TERMINATE
+        engine.exit_requested = False
+        engine.dev = False
+        engine.recently_saved = None
+
+        def mark_fatal() -> None:
+            engine.loaded = False
+            engine.locked = True
+
+        engine.fatal = mock.Mock(side_effect=mark_fatal)
+
+        engine.text_queue.put(
+            pipeline.SpeechRequest("bonjour", "bonjour", language="fr", save=False)
+        )
+        engine.text_queue.put(engine.sentinel)
+
+        with (
+            mock.patch("celune.pipeline.split_text", return_value=["bonjour"]),
+            mock.patch("celune.pipeline.is_silent_utterance", return_value=(False, 0)),
+        ):
+            await self._run_generation_worker(cast(Celune, engine))
+
+        backend.unload_model.assert_called_once_with()
+        backend.load_model.assert_called_once_with("fake/balanced", lang="fr")
+        assert engine.model is None
+        assert engine.cur_state == "error"
+        assert not engine.loaded
+        assert engine.locked
+        engine.fatal.assert_called_once_with()
+        backend.generate_stream.assert_not_called()
 
     async def test_generation_worker_disables_smart_buffer_for_realtime_speed(
         self,
@@ -1639,9 +1753,9 @@ class TestPipelineAsync(_TestPipelineAsync):
             mock.patch("celune.pipeline.split_text", return_value=["hello"]),
             mock.patch("celune.pipeline.is_silent_utterance", return_value=(False, 0)),
             mock.patch("celune.pipeline.os.path.exists", return_value=True),
-            mock.patch("celune.pipeline._write_celune_flac"),
+            mock.patch("celune.pipeline.write_celune_flac"),
             mock.patch(
-                "celune.playback._queue_playback_chunk",
+                "celune.playback.queue_playback_chunk",
                 side_effect=lambda _engine, _source_id, audio, _sr, _timing=None: (
                     queued_lengths.append(len(audio))
                 ),
@@ -1697,15 +1811,15 @@ class TestPipelineAsync(_TestPipelineAsync):
             mock.patch("celune.pipeline.split_text", return_value=["hello"]),
             mock.patch("celune.pipeline.is_silent_utterance", return_value=(False, 0)),
             mock.patch("celune.pipeline.os.path.exists", return_value=True),
-            mock.patch("celune.pipeline._write_celune_flac"),
+            mock.patch("celune.pipeline.write_celune_flac"),
             mock.patch(
-                "celune.playback._queue_playback_chunk",
+                "celune.playback.queue_playback_chunk",
                 side_effect=lambda _engine, _source_id, audio, _sr, _timing=None: (
                     queued_lengths.append(len(audio))
                 ),
             ),
             mock.patch(
-                "celune.pipeline._monotonic_time",
+                "celune.pipeline.monotonic_time",
                 side_effect=[0.0, 0.1, 0.2, 2.8, 5.6, 8.4] + [8.4] * 16,
             ),
         ):
@@ -1761,15 +1875,15 @@ class TestPipelineAsync(_TestPipelineAsync):
             mock.patch("celune.pipeline.split_text", return_value=["hello"]),
             mock.patch("celune.pipeline.is_silent_utterance", return_value=(False, 0)),
             mock.patch("celune.pipeline.os.path.exists", return_value=True),
-            mock.patch("celune.pipeline._write_celune_flac"),
+            mock.patch("celune.pipeline.write_celune_flac"),
             mock.patch(
-                "celune.playback._queue_playback_chunk",
+                "celune.playback.queue_playback_chunk",
                 side_effect=lambda _engine, _source_id, audio, _sr, _timing=None: (
                     queued_lengths.append(len(audio))
                 ),
             ),
             mock.patch(
-                "celune.pipeline._monotonic_time",
+                "celune.pipeline.monotonic_time",
                 side_effect=[0.0, 0.5, 2.0, 4.0, 6.0, 6.0] + [6.0] * 16,
             ),
         ):
@@ -1835,7 +1949,7 @@ class TestPipelineAsync(_TestPipelineAsync):
             mock.patch(
                 "celune.pipeline.is_silent_utterance", return_value=(False, 0)
             ) as silent_mock,
-            mock.patch("celune.pipeline._write_celune_flac") as write_mock,
+            mock.patch("celune.pipeline.write_celune_flac") as write_mock,
         ):
             await self._run_generation_worker(cast(Celune, engine))
 
@@ -1879,7 +1993,7 @@ class TestPipelineAsync(_TestPipelineAsync):
         with (
             mock.patch("celune.pipeline.split_text", return_value=["hello"]),
             mock.patch("celune.pipeline.is_silent_utterance", return_value=(False, 0)),
-            mock.patch("celune.pipeline._write_celune_flac"),
+            mock.patch("celune.pipeline.write_celune_flac"),
         ):
             await self._run_generation_worker(cast(Celune, engine))
 
@@ -1922,7 +2036,7 @@ class TestPipelineAsync(_TestPipelineAsync):
         with (
             mock.patch("celune.pipeline.split_text", return_value=["hello"]),
             mock.patch("celune.pipeline.is_silent_utterance", return_value=(True, 2)),
-            mock.patch("celune.playback._queue_playback_chunk") as queue_chunk,
+            mock.patch("celune.playback.queue_playback_chunk") as queue_chunk,
         ):
             await self._run_generation_worker(cast(Celune, engine))
 

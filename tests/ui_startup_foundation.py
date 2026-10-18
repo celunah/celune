@@ -230,7 +230,7 @@ class TestUIStartup(CeluneTestCase):
         """Verify the loading frame uses Celune colors without the engine."""
         ui = CeluneUI()
 
-        with mock.patch("celune.ui.app._load_ui_runtime_dependencies") as load_runtime:
+        with mock.patch("celune.ui.app.ensure_ui_runtime_dependencies") as load_runtime:
             ui._prepare_loading_theme()
 
         load_runtime.assert_not_called()
@@ -480,7 +480,7 @@ class TestUIStartup(CeluneTestCase):
         ui.receive_startup_diagnostic = mock.Mock()
         ui.call_from_thread = mock.Mock()
 
-        with mock.patch.object(ui_app, "_load_ui_runtime_dependencies"):
+        with mock.patch.object(ui_app, "ensure_ui_runtime_dependencies"):
             ui._load_deferred_runtime()
 
         ui.receive_startup_diagnostic.assert_not_called()
@@ -495,7 +495,7 @@ class TestUIStartup(CeluneTestCase):
         ui.receive_startup_diagnostic = mock.Mock()
         ui.call_from_thread = mock.Mock()
 
-        with mock.patch.object(ui_app, "_load_ui_runtime_dependencies"):
+        with mock.patch.object(ui_app, "ensure_ui_runtime_dependencies"):
             ui._load_deferred_runtime()
 
         ui.receive_startup_diagnostic.assert_not_called()
@@ -647,13 +647,13 @@ class TestUIStartup(CeluneTestCase):
             "opacity",
             0.0,
             on_complete=mock.ANY,
-            duration=ui_app._LOADING_FADE_SECONDS,
+            duration=ui_app.LOADING_FADE_SECONDS,
             easing="out_cubic",
         )
         main_fade.assert_called_once_with(
             main_container,
             1.0,
-            duration=ui_app._MAIN_UI_FADE_SECONDS,
+            duration=ui_app.MAIN_UI_FADE_SECONDS,
         )
         assert loading_screen.display is False
         refresh_logs.assert_called_once_with()
@@ -1825,12 +1825,12 @@ class TestUIStartup(CeluneTestCase):
         )
         ui.safe_log = mock.Mock()
         ui.update_resources = mock.Mock()
-        captured_callback: Optional[ui_app._VCAudioCallback] = None
+        captured_callback: Optional[ui_app.VCAudioCallback] = None
         queued_segments: list[tuple[np.ndarray, int, str, Optional[int], bool]] = []
         finished_source_ids: list[Optional[int]] = []
 
         def invoke_captured_callback(
-            callback: ui_app._VCAudioCallback,
+            callback: ui_app.VCAudioCallback,
             audio: np.ndarray,
         ) -> None:
             callback(

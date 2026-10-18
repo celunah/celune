@@ -24,7 +24,7 @@ from .i18n import string
 from .paths import app_data_dir
 from .binding import install_class_functions
 from .typing.aliases import AudioChunk
-from .typing.backends import _StreamingSpeechModel
+from .typing.backends import StreamingSpeechModel
 from .dataclasses.pipeline import AudioOutput, AudioInputRequest
 
 if TYPE_CHECKING:
@@ -53,6 +53,8 @@ __all__ = [
     "VC_VAD_PREROLL_SECONDS",
     "VC_VAD_RMS_THRESHOLD",
     "LiveVoiceActivityDetector",
+    "VCDebugCapture",
+    "VCDebugSaveResult",
     "convert_audio",
     "convert_live_audio",
     "create_live_voice_activity_detector",
@@ -98,7 +100,7 @@ def convert_audio(
     f0_condition: Optional[bool] = None,
 ) -> Optional[AudioOutput]:
     """Convert submitted audio and return the generated VC output."""
-    if not engine._is_voice_conversion_mode():
+    if not engine.is_voice_conversion_mode():
         engine.log(string("celune.audio_conversion_unavailable"), "warning")
         engine.error_callback(string("celune.not_possible"))
         engine.progress_callback(0, 1)
@@ -125,7 +127,7 @@ def convert_live_audio(
     f0_condition: Optional[bool] = None,
 ) -> Optional[AudioOutput]:
     """Convert one low-latency live block through the active VC backend."""
-    if not engine._is_voice_conversion_mode():
+    if not engine.is_voice_conversion_mode():
         return engine.convert_audio(
             audio,
             sample_rate,
@@ -278,7 +280,7 @@ class LiveVoiceActivityDetector:
 
     def __init__(
         self,
-        model: _StreamingSpeechModel,
+        model: StreamingSpeechModel,
         *,
         threshold: float = _LIVE_VAD_THRESHOLD,
         negative_threshold: float = _LIVE_VAD_NEGATIVE_THRESHOLD,
@@ -464,7 +466,7 @@ def create_live_voice_activity_detector() -> Optional[LiveVoiceActivityDetector]
         load_silero_vad = getattr(silero_vad, "load_silero_vad", None)
         if not callable(load_silero_vad):
             return None
-        return LiveVoiceActivityDetector(cast(_StreamingSpeechModel, load_silero_vad()))
+        return LiveVoiceActivityDetector(cast(StreamingSpeechModel, load_silero_vad()))
     except (RuntimeError, AssertionError, ValueError, ImportError):
         return None
 

@@ -38,7 +38,7 @@ from celune.cedts.protocol import (
 )
 from celune.typing.backends import (
     BackendModel,
-    _BackendRuntime,
+    BackendRuntime,
 )
 from celune.cedts import remote, worker
 from celune.backends.environment import (
@@ -80,7 +80,7 @@ class TestBackendEnvironment(_TestBackendEnvironment):
             CEDTSTimeoutError,
             "preload_models timed out after 0.01 seconds",
         ):
-            proxy._request("preload_models", response_timeout=0.01)
+            proxy.request("preload_models", response_timeout=0.01)
 
         proxy.abort.assert_called_once_with()
         proxy._read_response.assert_called_once_with(
@@ -97,23 +97,23 @@ class TestBackendEnvironment(_TestBackendEnvironment):
         proxy._closing = True
         proxy._process = None
         proxy.model = remote.RemoteModelHandle(1)
-        proxy._request = mock.Mock()
+        proxy.request = mock.Mock()
 
         proxy.unload_model()
 
         self.assertIsNone(proxy.model)
-        proxy._request.assert_not_called()
+        proxy.request.assert_not_called()
 
     def test_remote_proxy_allows_slow_model_initialization(self) -> None:
         """Verify model construction receives the long backend-operation deadline."""
         proxy = object.__new__(remote.RemoteBackendProxy)
-        proxy._request = mock.Mock(return_value=7)
+        proxy.request = mock.Mock(return_value=7)
 
         with mock.patch("celune.registry.consent.require_model_consent"):
             handle = proxy.load_model("slow-model")
 
         self.assertEqual(handle.identifier, 7)
-        proxy._request.assert_called_once_with(
+        proxy.request.assert_called_once_with(
             "load_model",
             response_timeout=900.0,
             model_id="slow-model",
@@ -948,7 +948,7 @@ class TestBackendEnvironment(_TestBackendEnvironment):
 
         models: dict[int, BackendModel] = {}
         loaded, next_model_id = worker._run_request(
-            cast(_BackendRuntime, FakeBackend()),
+            cast(BackendRuntime, FakeBackend()),
             {"operation": "load_model", "arguments": {"model_id": "fake"}},
             models,
             1,
@@ -957,7 +957,7 @@ class TestBackendEnvironment(_TestBackendEnvironment):
         model = cast(FakeModel, models[1])
 
         unloaded, _ = worker._run_request(
-            cast(_BackendRuntime, FakeBackend()),
+            cast(BackendRuntime, FakeBackend()),
             {"operation": "unload_model", "arguments": {}},
             models,
             next_model_id,
@@ -1060,7 +1060,7 @@ class TestBackendEnvironment(_TestBackendEnvironment):
         def request() -> None:
             """Wait for the active request to observe the closed worker stream."""
             try:
-                proxy._request(
+                proxy.request(
                     "load_model",
                     response_timeout=900.0,
                     model_id="model",

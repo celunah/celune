@@ -5,7 +5,7 @@ from typing import Protocol
 from ..typing.lua import LuaGlobalValue, LuaValue
 
 
-class _LuaTable(Protocol):
+class LuaTable(Protocol):
     """Minimal table interface needed by the embedded Lua host."""
 
     def __getitem__(self, key: str) -> "LuaValue":
@@ -29,7 +29,7 @@ class LuaRuntimeProtocol(Protocol):
         """
         raise NotImplementedError
 
-    def globals(self) -> _LuaTable:
+    def globals(self) -> LuaTable:
         """Return the runtime's global table."""
         raise NotImplementedError
 
@@ -38,7 +38,7 @@ class LuaRuntimeProtocol(Protocol):
         values: dict[str, "LuaValue"],
         *,
         recursive: bool,
-    ) -> _LuaTable:
+    ) -> LuaTable:
         """Convert Python values into a Lua table.
 
         Args:

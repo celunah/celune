@@ -25,22 +25,22 @@ import numpy as np
 
 from .i18n import string
 from .pipelinecore import (
-    _SFX_DUCK_GAIN,
-    _LEGACY_BUFFER_SECONDS,
-    _SFX_DUCK_FADE_SECONDS,
-    _SMART_BUFFER_SMOOTHING,
-    _SMART_BUFFER_MAX_SECONDS,
-    _SMART_BUFFER_MIN_SECONDS,
-    _PIPELINE_CPU_YIELD_SECONDS,
-    _SMART_BUFFER_REALTIME_SPEED,
-    _MAX_YOUTUBE_DOWNLOAD_RETRIES,
-    _PIPELINE_CPU_MAX_DRAIN_ITEMS,
-    _PIPELINE_CPU_MAX_BUFFER_SECONDS,
-    _PLAYBACK_TRACE_INTERVAL_SECONDS,
-    _SMART_BUFFER_COMPLETE_BELOW_SPEED,
-    _SMART_BUFFER_MIN_SPEED_SAMPLE_SECONDS,
-    _SMART_BUFFER_PROTECTED_PLAYBACK_SECONDS,
-    _monotonic_time,
+    SFX_DUCK_GAIN,
+    LEGACY_BUFFER_SECONDS,
+    SFX_DUCK_FADE_SECONDS,
+    SMART_BUFFER_SMOOTHING,
+    SMART_BUFFER_MAX_SECONDS,
+    SMART_BUFFER_MIN_SECONDS,
+    PIPELINE_CPU_YIELD_SECONDS,
+    SMART_BUFFER_REALTIME_SPEED,
+    MAX_YOUTUBE_DOWNLOAD_RETRIES,
+    PIPELINE_CPU_MAX_DRAIN_ITEMS,
+    PIPELINE_CPU_MAX_BUFFER_SECONDS,
+    PLAYBACK_TRACE_INTERVAL_SECONDS,
+    SMART_BUFFER_COMPLETE_BELOW_SPEED,
+    SMART_BUFFER_MIN_SPEED_SAMPLE_SECONDS,
+    SMART_BUFFER_PROTECTED_PLAYBACK_SECONDS,
+    monotonic_time,
 )
 from .typing.locks import (
     ComponentLockName,
@@ -49,7 +49,7 @@ from .typing.locks import (
     ComponentLockAcquisition,
     ComponentLockRequirement,
 )
-from .utils import available
+from .utils import available, discard
 from .dataclasses.pipeline import (
     SpeechTiming,
     PlaybackChunk,
@@ -72,49 +72,49 @@ if TYPE_CHECKING:
 __all__ = (
     "_acquire_pipeline",
     "_active_speech_source_ids",
-    "_apply_source_gain",
-    "_caption_chunk_word_ranges",
-    "_clear_playback_source_status",
     "_component_busy_message",
     "_config_float",
-    "_config_lines",
-    "_config_text",
     "_config_value_lines",
-    "_dequeue_playback_item",
-    "_download_youtube_sfx",
-    "_flush_buffered_speech_chunks",
-    "_is_youtube_sfx_url",
-    "_next_playback_source_id",
-    "_notify_component_busy",
-    "_notify_speech_playback_finished",
-    "_pipeline_cpu_config",
     "_pipeline_requirements",
-    "_playback_caption_states",
-    "_playback_source_meta",
-    "_playback_source_statuses",
     "_playback_trace",
-    "_queue_playback_chunk",
-    "_queue_playback_done",
-    "_record_caption_playback_segment",
-    "_register_overlay_playback",
-    "_register_overlay_playback_state",
-    "_register_playback_source",
-    "_release_pipeline",
-    "_remember_smart_buffer_speed",
     "_safe_config_int",
-    "_set_playback_source_status",
     "_smart_buffer_config",
     "_smart_buffer_speed_estimate",
-    "_smart_buffer_target_seconds",
     "_summarize_youtube_download_error",
-    "_update_playback_progress",
     "_youtube_download_options",
     "_youtube_sfx_temp_path",
-    "_youtube_sfx_title",
     "acquire_pipeline",
     "acquire_pipeline_result",
+    "apply_source_gain",
+    "caption_chunk_word_ranges",
+    "clear_playback_source_status",
+    "config_lines",
+    "config_text",
     "current_playback_status",
+    "dequeue_playback_item",
+    "download_youtube_sfx",
+    "flush_buffered_speech_chunks",
+    "is_youtube_sfx_url",
+    "next_playback_source_id",
+    "notify_component_busy",
+    "notify_speech_playback_finished",
+    "pipeline_cpu_config",
+    "playback_caption_states",
+    "playback_source_meta",
+    "playback_source_statuses",
+    "queue_playback_chunk",
+    "queue_playback_done",
+    "record_caption_playback_segment",
+    "register_overlay_playback",
+    "register_overlay_playback_state",
+    "register_playback_source",
     "release_pipeline",
+    "remember_smart_buffer_speed",
+    "set_playback_source_status",
+    "should_apply_contention_buffering",
+    "smart_buffer_target_seconds",
+    "update_playback_progress",
+    "youtube_sfx_title",
 )
 
 
@@ -136,7 +136,7 @@ def _component_busy_message(busy: ComponentBusyResult) -> str:
     return ", ".join(component.value.upper() for component in busy.components)
 
 
-def _notify_component_busy(
+def notify_component_busy(
     engine: Celune,
     action: str,
     busy: ComponentBusyResult,
@@ -249,7 +249,7 @@ def acquire_pipeline_result(
         if not acquisition.acquired:
             busy = acquisition.busy
             assert busy is not None
-            _notify_component_busy(engine, action, busy)
+            notify_component_busy(engine, action, busy)
             return acquisition
 
         engine._pipeline_lock_owner = resolved_owner
@@ -299,7 +299,7 @@ def release_pipeline(engine: Celune, playback_idle: bool = True) -> None:
             if engine.cur_state not in {"error", "stopped"} and not getattr(
                 engine, "test_finished", False
             ):
-                state_event = engine._update_cur_state("idle")
+                state_event = engine.update_cur_state("idle")
         engine.log("[LOCK] released", loglevel="verbose")
         engine.log(
             "[LOCK] release complete "
@@ -309,7 +309,7 @@ def release_pipeline(engine: Celune, playback_idle: bool = True) -> None:
             loglevel="debug",
         )
     if state_event is not None:
-        engine._emit_event("state_changed", state_event)
+        engine.emit_event("state_changed", state_event)
 
 
 def _acquire_pipeline(self: Celune, action: str) -> bool:
@@ -317,29 +317,24 @@ def _acquire_pipeline(self: Celune, action: str) -> bool:
     return acquire_pipeline(self, action)
 
 
-def _release_pipeline(self: Celune) -> None:
-    """Release Celune's shared playback pipeline."""
-    release_pipeline(self)
-
-
-def _next_playback_source_id(engine: Celune) -> int:
+def next_playback_source_id(engine: Celune) -> int:
     """Return the next monotonically increasing playback source id."""
-    source_id = getattr(engine, "_next_playback_source_id", 0) + 1
-    engine._next_playback_source_id = source_id
+    source_id = getattr(engine, "next_playback_source_id", 0) + 1
+    engine.next_playback_source_id = source_id
     return source_id
 
 
-def _register_overlay_playback(
+def register_overlay_playback(
     engine: Celune,
 ) -> Optional[StateChangedEvent]:
     """Mark the mixer busy for a newly queued non-speech playback source."""
-    return _register_overlay_playback_state(
+    return register_overlay_playback_state(
         engine,
         reset_ready_announcement=True,
     )
 
 
-def _register_overlay_playback_state(
+def register_overlay_playback_state(
     engine: Celune,
     *,
     reset_ready_announcement: bool,
@@ -348,58 +343,58 @@ def _register_overlay_playback_state(
     state_event = None
     with engine.say_lock:
         if not engine.locked:
-            state_event = engine._update_cur_state("speaking")
+            state_event = engine.update_cur_state("speaking")
         engine.playback_done.clear()
         if reset_ready_announcement:
             engine._ready_announced = False
     return state_event
 
 
-def _playback_source_statuses(engine: Celune) -> dict[int, str]:
+def playback_source_statuses(engine: Celune) -> dict[int, str]:
     """Return the mutable per-source playback status map."""
-    statuses = getattr(engine, "_playback_source_statuses", None)
+    statuses = getattr(engine, "playback_source_statuses", None)
     if isinstance(statuses, dict):
         return statuses
 
     statuses = {}
-    engine._playback_source_statuses = statuses
+    engine.playback_source_statuses = statuses
     return statuses
 
 
 def current_playback_status(engine: Celune) -> Optional[str]:
     """Return the most recently registered status for an active playback source."""
-    statuses = _playback_source_statuses(engine)
+    statuses = playback_source_statuses(engine)
     try:
         return next(reversed(statuses.values()), None)
     except RuntimeError:
         return None
 
 
-def _playback_source_meta(
+def playback_source_meta(
     engine: Celune,
 ) -> dict[int, dict[str, Union[str, float]]]:
     """Return per-source mixer metadata such as kind, gain state, and progress."""
-    meta = getattr(engine, "_playback_source_meta", None)
+    meta = getattr(engine, "playback_source_meta", None)
     if isinstance(meta, dict):
         return meta
 
     meta = {}
-    engine._playback_source_meta = meta
+    engine.playback_source_meta = meta
     return meta
 
 
-def _playback_caption_states(engine: Celune) -> dict[int, CaptionPlaybackState]:
+def playback_caption_states(engine: Celune) -> dict[int, CaptionPlaybackState]:
     """Return per-source caption frame ranges used during streamed playback."""
-    states = getattr(engine, "_playback_caption_states", None)
+    states = getattr(engine, "playback_caption_states", None)
     if isinstance(states, dict):
         return states
 
     states = {}
-    engine._playback_caption_states = states
+    engine.playback_caption_states = states
     return states
 
 
-def _caption_chunk_word_ranges(
+def caption_chunk_word_ranges(
     display_text: str,
     chunks: list[str],
 ) -> tuple[tuple[int, int], ...]:
@@ -410,7 +405,7 @@ def _caption_chunk_word_ranges(
         return tuple((0, 0) for _chunk in chunks)
 
     def normalize_word(word: str) -> str:
-        return re.sub(r"[^\w]+", "", word.casefold())
+        return re.sub(r"\W+", "", word.casefold())
 
     matcher = SequenceMatcher(
         a=[normalize_word(word) for word in speech_words],
@@ -455,7 +450,7 @@ def _caption_chunk_word_ranges(
     return tuple(ranges)
 
 
-def _register_playback_source(
+def register_playback_source(
     engine: Celune,
     source_id: int,
     *,
@@ -467,7 +462,7 @@ def _register_playback_source(
 ) -> None:
     """Register one playback source for status and gain management."""
     clipped = float(np.clip(base_gain, 0.0, 1.0))
-    _playback_source_meta(engine)[source_id] = {
+    playback_source_meta(engine)[source_id] = {
         "kind": kind,
         "base_gain": clipped,
         "current_gain": clipped,
@@ -479,12 +474,12 @@ def _register_playback_source(
         "async_caption_audio": "true" if async_caption_audio else "",
     }
     if kind == "speech" and caption_word_total > 0:
-        _playback_caption_states(engine)[source_id] = CaptionPlaybackState(
+        playback_caption_states(engine)[source_id] = CaptionPlaybackState(
             total_words=caption_word_total
         )
 
 
-def _should_apply_contention_buffering(
+def should_apply_contention_buffering(
     engine: Celune,
     source_ids: collections.abc.Iterable[int],
     has_completed_source: bool,
@@ -493,7 +488,7 @@ def _should_apply_contention_buffering(
     if has_completed_source:
         return False
 
-    source_meta = _playback_source_meta(engine)
+    source_meta = playback_source_meta(engine)
     for source_id in source_ids:
         metadata = source_meta.get(source_id)
         if isinstance(metadata, dict) and metadata.get("low_latency") is True:
@@ -501,7 +496,7 @@ def _should_apply_contention_buffering(
     return True
 
 
-def _record_caption_playback_segment(
+def record_caption_playback_segment(
     engine: Celune,
     source_id: int,
     start_frame: int,
@@ -512,7 +507,7 @@ def _record_caption_playback_segment(
     word_start_frames: tuple[int, ...] = (),
 ) -> None:
     """Record the exact queued audio span produced for one text chunk."""
-    states = _playback_caption_states(engine)
+    states = playback_caption_states(engine)
     state = states.get(source_id)
     if state is None or end_frame <= start_frame or word_end <= word_start:
         return
@@ -530,21 +525,21 @@ def _record_caption_playback_segment(
         )
 
 
-def _set_playback_source_status(engine: Celune, source_id: int, status: str) -> None:
+def set_playback_source_status(engine: Celune, source_id: int, status: str) -> None:
     """Record and surface the current status for one active playback source."""
-    statuses = _playback_source_statuses(engine)
+    statuses = playback_source_statuses(engine)
     statuses[source_id] = status
     engine.status_callback(status)
 
 
-def _clear_playback_source_status(engine: Celune, source_id: int) -> None:
+def clear_playback_source_status(engine: Celune, source_id: int) -> None:
     """Forget one playback-source status and restore the next active status."""
-    statuses = _playback_source_statuses(engine)
+    statuses = playback_source_statuses(engine)
     statuses.pop(source_id, None)
     if statuses:
         engine.status_callback(next(reversed(statuses.values())))
-    _playback_source_meta(engine).pop(source_id, None)
-    _playback_caption_states(engine).pop(source_id, None)
+    playback_source_meta(engine).pop(source_id, None)
+    playback_caption_states(engine).pop(source_id, None)
     if getattr(engine, "_caption_source_id", None) == source_id:
         engine._caption_source_id = None
 
@@ -622,9 +617,9 @@ def _caption_words_at_frame(
     return min(state.total_words, max(0, visible_words))
 
 
-def _notify_speech_playback_finished(engine: Celune, source_id: int) -> None:
+def notify_speech_playback_finished(engine: Celune, source_id: int) -> None:
     """Complete caption progress when one speech source drains independently."""
-    source_meta = _playback_source_meta(engine).get(source_id)
+    source_meta = playback_source_meta(engine).get(source_id)
     if not isinstance(source_meta, dict) or source_meta.get("kind") != "speech":
         return
     caption_source_id = getattr(engine, "_caption_source_id", None)
@@ -635,7 +630,7 @@ def _notify_speech_playback_finished(engine: Celune, source_id: int) -> None:
     _notify_caption_progress(engine, total_frames, total_frames)
 
 
-def _queue_playback_chunk(
+def queue_playback_chunk(
     engine: Celune,
     source_id: int,
     audio: AudioChunk,
@@ -654,7 +649,7 @@ def _queue_playback_chunk(
         if expected_generation != active_playback_generation:
             return False
 
-        meta = _playback_source_meta(engine).get(source_id)
+        meta = playback_source_meta(engine).get(source_id)
         active_generation = getattr(engine, "_active_speech_generation", None)
         if (
             active_generation is not None
@@ -675,7 +670,7 @@ def _queue_playback_chunk(
                 len(audio)
             )
 
-    queue_wait_started_at = _monotonic_time()
+    queue_wait_started_at = monotonic_time()
     engine.audio_queue.put(
         PlaybackChunk(
             source_id=source_id,
@@ -685,10 +680,10 @@ def _queue_playback_chunk(
             generation=expected_generation,
         )
     )
-    enqueued_at = _monotonic_time()
+    enqueued_at = monotonic_time()
     queue_wait_seconds = max(0.0, enqueued_at - queue_wait_started_at)
     with engine.queue_lock:
-        last_queued_by_source = engine._playback_chunk_last_queued_at
+        last_queued_by_source = engine.playback_chunk_last_queued_at
         last_queued_at = last_queued_by_source.get(source_id)
         if last_queued_at is None:
             generation_gap_seconds = 0.0
@@ -701,7 +696,7 @@ def _queue_playback_chunk(
     return True
 
 
-def _dequeue_playback_item(
+def dequeue_playback_item(
     engine: Celune,
     prioritize_speech: bool = False,
     audio_queue: Optional[queue.Queue[object]] = None,
@@ -722,7 +717,7 @@ def _dequeue_playback_item(
         speech_done_index: Optional[int] = None
         for index, pending in enumerate(playback_queue.queue):
             if isinstance(pending, PlaybackChunk):
-                source_meta = _playback_source_meta(engine).get(pending.source_id)
+                source_meta = playback_source_meta(engine).get(pending.source_id)
                 if (
                     isinstance(source_meta, dict)
                     and source_meta.get("kind") == "speech"
@@ -730,7 +725,7 @@ def _dequeue_playback_item(
                     speech_chunk_index = index
                     break
             elif isinstance(pending, PlaybackSourceDone):
-                source_meta = _playback_source_meta(engine).get(pending.source_id)
+                source_meta = playback_source_meta(engine).get(pending.source_id)
                 if (
                     speech_done_index is None
                     and isinstance(source_meta, dict)
@@ -754,9 +749,9 @@ def _dequeue_playback_item(
 
 def _playback_trace(engine: Celune, now: Optional[float] = None) -> None:
     """Emit the consolidated playback timing trace at a safe low frequency."""
-    timestamp = _monotonic_time() if now is None else now
+    timestamp = monotonic_time() if now is None else now
     last_trace_at = float(getattr(engine, "_playback_trace_last_logged_at", 0.0))
-    if timestamp - last_trace_at < _PLAYBACK_TRACE_INTERVAL_SECONDS:
+    if timestamp - last_trace_at < PLAYBACK_TRACE_INTERVAL_SECONDS:
         return
 
     engine._playback_trace_last_logged_at = timestamp
@@ -775,7 +770,7 @@ def _playback_trace(engine: Celune, now: Optional[float] = None) -> None:
     )
 
 
-def _update_playback_progress(
+def update_playback_progress(
     engine: Celune,
     source_buffers: Optional[
         collections.abc.Mapping[int, deque[tuple[AudioChunk, Optional[SpeechTiming]]]]
@@ -785,7 +780,7 @@ def _update_playback_progress(
     if source_buffers is not None and not source_buffers:
         return
 
-    meta = _playback_source_meta(engine)
+    meta = playback_source_meta(engine)
     active_ids = [
         source_id
         for source_id in (source_buffers if source_buffers is not None else meta)
@@ -804,7 +799,7 @@ def _update_playback_progress(
     if total_frames <= 0.0:
         return
 
-    now = _monotonic_time()
+    now = monotonic_time()
     last_emit_at = float(getattr(engine, "_playback_progress_last_emit_at", 0.0))
     last_source_id = getattr(engine, "_playback_progress_last_source_id", None)
     emit_interval = 0.08
@@ -833,7 +828,7 @@ def _update_playback_progress(
     if not isinstance(speech_meta, dict):
         return
     with engine.queue_lock:
-        caption_state = _playback_caption_states(engine).get(speech_source_id)
+        caption_state = playback_caption_states(engine).get(speech_source_id)
         caption_segments = (
             None if caption_state is None else tuple(caption_state.segments)
         )
@@ -870,7 +865,7 @@ def _active_speech_source_ids(
     engine: Celune,
 ) -> set[int]:
     """Return active speech-source ids that should trigger SFX ducking."""
-    meta = _playback_source_meta(engine)
+    meta = playback_source_meta(engine)
     return {
         source_id
         for source_id in source_buffers
@@ -878,7 +873,7 @@ def _active_speech_source_ids(
     }
 
 
-def _apply_source_gain(
+def apply_source_gain(
     audio: AudioChunk,
     source_id: int,
     *,
@@ -889,7 +884,7 @@ def _apply_source_gain(
 ) -> AudioChunk:
     """Apply ducking and smooth gain ramps for one mixer source block."""
     meta = (
-        _playback_source_meta(engine).get(source_id)
+        playback_source_meta(engine).get(source_id)
         if source_meta is None
         else source_meta
     )
@@ -900,7 +895,7 @@ def _apply_source_gain(
     base_gain = float(meta.get("base_gain", 1.0))
     current_gain = float(meta.get("current_gain", base_gain))
     if kind == "sfx":
-        target_gain = base_gain * (_SFX_DUCK_GAIN if speech_active else 1.0)
+        target_gain = base_gain * (SFX_DUCK_GAIN if speech_active else 1.0)
     else:
         target_gain = base_gain
 
@@ -908,14 +903,14 @@ def _apply_source_gain(
         meta["current_gain"] = target_gain
         return np.asarray(audio * target_gain, dtype=np.float32)
 
-    fade_ratio = min(1.0, block_seconds / _SFX_DUCK_FADE_SECONDS)
+    fade_ratio = min(1.0, block_seconds / SFX_DUCK_FADE_SECONDS)
     next_gain = current_gain + (target_gain - current_gain) * fade_ratio
     ramp = np.linspace(current_gain, next_gain, len(audio), dtype=np.float32)
     meta["current_gain"] = next_gain
     return np.asarray(audio * ramp[:, None], dtype=np.float32)
 
 
-def _queue_playback_done(
+def queue_playback_done(
     engine: Celune,
     source_id: int,
     *,
@@ -936,7 +931,7 @@ def _queue_playback_done(
         if expected_generation != active_playback_generation:
             return False
 
-        source_meta = _playback_source_meta(engine).get(source_id)
+        source_meta = playback_source_meta(engine).get(source_id)
         active_generation = getattr(engine, "_active_speech_generation", None)
         if (
             active_generation is not None
@@ -969,7 +964,7 @@ def _queue_playback_done(
         )
     )
     with engine.queue_lock:
-        last_queued_at = getattr(engine, "_playback_chunk_last_queued_at", None)
+        last_queued_at = getattr(engine, "playback_chunk_last_queued_at", None)
         if isinstance(last_queued_at, dict):
             last_queued_at.pop(source_id, None)
     engine.log(
@@ -983,7 +978,7 @@ def _queue_playback_done(
     return True
 
 
-def _flush_buffered_speech_chunks(
+def flush_buffered_speech_chunks(
     engine: Celune,
     source_id: int,
     buffer: AudioChunks,
@@ -998,7 +993,7 @@ def _flush_buffered_speech_chunks(
 
     first_buffer_chunk = True
     for queued_audio in buffer:
-        queued = _queue_playback_chunk(
+        queued = queue_playback_chunk(
             engine,
             source_id,
             queued_audio,
@@ -1018,7 +1013,7 @@ def _flush_buffered_speech_chunks(
         if caption_text is not None and callable(caption_callback):
             engine._caption_source_id = source_id
             caption_callback(caption_text)
-        _set_playback_source_status(engine, source_id, string("status.speaking"))
+        set_playback_source_status(engine, source_id, string("status.speaking"))
         engine.cur_state = "speaking"
         engine.queue_avail_callback()
         return True
@@ -1031,7 +1026,7 @@ def _youtube_sfx_temp_path() -> pathlib.Path:
     return temp_data_dir(create=True) / "temporary_audio.wav"
 
 
-def _is_youtube_sfx_url(value: str) -> bool:
+def is_youtube_sfx_url(value: str) -> bool:
     """Return whether ``value`` looks like a supported YouTube URL."""
     parsed = urllib.parse.urlparse(value.strip())
     if parsed.scheme not in {"http", "https"}:
@@ -1040,7 +1035,7 @@ def _is_youtube_sfx_url(value: str) -> bool:
     return host in {"youtube.com", "youtu.be", "music.youtube.com"}
 
 
-def _youtube_sfx_title(url: str) -> str:
+def youtube_sfx_title(url: str) -> str:
     """Return a friendly title for one YouTube URL when available."""
     query = urllib.parse.urlencode({"url": url, "format": "json"})
     endpoint = f"https://www.youtube.com/oembed?{query}"
@@ -1082,7 +1077,7 @@ def _summarize_youtube_download_error(output: str) -> str:
     return string("pipeline.download_unknown_error")
 
 
-def _download_youtube_sfx(
+def download_youtube_sfx(
     engine: Celune, url: str
 ) -> Optional[tuple[pathlib.Path, str]]:
     """Download one YouTube URL as a temporary WAV file for SFX playback."""
@@ -1097,7 +1092,7 @@ def _download_youtube_sfx(
     with contextlib.suppress(OSError):
         output_path.unlink(missing_ok=True)
 
-    title = _youtube_sfx_title(url)
+    title = youtube_sfx_title(url)
     out_tmpl = str(output_path.with_suffix(".%(ext)s"))
     engine.status_callback(string("status.downloading_audio"))
     engine.log(f"[SFX] Downloading audio from {url}...")
@@ -1125,7 +1120,9 @@ def _download_youtube_sfx(
         url,
     ]
     failure_reason = string("pipeline.download_unknown_error")
-    total_attempts = _MAX_YOUTUBE_DOWNLOAD_RETRIES + 1
+    discard(failure_reason)
+
+    total_attempts = MAX_YOUTUBE_DOWNLOAD_RETRIES + 1
 
     for attempt in range(1, total_attempts + 1):
         with contextlib.suppress(OSError):
@@ -1154,7 +1151,7 @@ def _download_youtube_sfx(
         if attempt < total_attempts:
             engine.log(
                 f"{string('pipeline.download_failed')}: {failure_reason}; "
-                f"{string('pipeline.download_retry', retry_count=attempt, max_retries=_MAX_YOUTUBE_DOWNLOAD_RETRIES)}",
+                f"{string('pipeline.download_retry', retry_count=attempt, max_retries=MAX_YOUTUBE_DOWNLOAD_RETRIES)}",
                 "warning",
             )
             continue
@@ -1166,7 +1163,7 @@ def _download_youtube_sfx(
     return None
 
 
-def _config_text(engine: Celune, key: str, default: str) -> str:
+def config_text(engine: Celune, key: str, default: str) -> str:
     """Read a string configuration value with a fallback."""
     value = engine.config.get(key)
     if isinstance(value, str) and value.strip():
@@ -1175,7 +1172,7 @@ def _config_text(engine: Celune, key: str, default: str) -> str:
     return default
 
 
-def _config_lines(engine: Celune, key: str) -> tuple[str, ...]:
+def config_lines(engine: Celune, key: str) -> tuple[str, ...]:
     """Read a text or text-list configuration value as non-empty lines."""
     return _config_value_lines(engine.config.get(key))
 
@@ -1264,26 +1261,26 @@ def _smart_buffer_config(
     engine: Celune,
 ) -> tuple[bool, float, float, float, float, float, float]:
     """Return Celune's fixed adaptive speech-buffer settings."""
-    del engine
+    discard(engine)
     return (
         True,
-        _SMART_BUFFER_REALTIME_SPEED,
-        _SMART_BUFFER_PROTECTED_PLAYBACK_SECONDS,
-        _SMART_BUFFER_MIN_SECONDS,
-        _SMART_BUFFER_MIN_SPEED_SAMPLE_SECONDS,
-        _SMART_BUFFER_MAX_SECONDS,
-        _SMART_BUFFER_COMPLETE_BELOW_SPEED,
+        SMART_BUFFER_REALTIME_SPEED,
+        SMART_BUFFER_PROTECTED_PLAYBACK_SECONDS,
+        SMART_BUFFER_MIN_SECONDS,
+        SMART_BUFFER_MIN_SPEED_SAMPLE_SECONDS,
+        SMART_BUFFER_MAX_SECONDS,
+        SMART_BUFFER_COMPLETE_BELOW_SPEED,
     )
 
 
-def _pipeline_cpu_config(engine: Celune) -> tuple[bool, float, int, float]:
+def pipeline_cpu_config(engine: Celune) -> tuple[bool, float, int, float]:
     """Return Celune's bounded cooperative playback-pressure controls."""
-    del engine
+    discard(engine)
     return (
         True,
-        _PIPELINE_CPU_MAX_BUFFER_SECONDS,
-        _PIPELINE_CPU_MAX_DRAIN_ITEMS,
-        _PIPELINE_CPU_YIELD_SECONDS,
+        PIPELINE_CPU_MAX_BUFFER_SECONDS,
+        PIPELINE_CPU_MAX_DRAIN_ITEMS,
+        PIPELINE_CPU_YIELD_SECONDS,
     )
 
 
@@ -1303,7 +1300,7 @@ def _smart_buffer_speed_estimate(
     return None
 
 
-def _smart_buffer_target_seconds(
+def smart_buffer_target_seconds(
     engine: Celune,
     speech_len: float,
     generation_elapsed: float,
@@ -1320,7 +1317,7 @@ def _smart_buffer_target_seconds(
     ) = _smart_buffer_config(engine)
 
     if not enabled:
-        return _LEGACY_BUFFER_SECONDS
+        return LEGACY_BUFFER_SECONDS
 
     speed_estimate = _smart_buffer_speed_estimate(
         engine,
@@ -1342,15 +1339,15 @@ def _smart_buffer_target_seconds(
     return min(max_seconds, max(minimum_seconds, target_seconds))
 
 
-def _remember_smart_buffer_speed(engine: Celune, generation_speed: float) -> None:
+def remember_smart_buffer_speed(engine: Celune, generation_speed: float) -> None:
     """Update the engine's rolling generation-speed estimate."""
     if generation_speed <= 0.0:
         return
 
     previous = getattr(engine, "smart_buffer_generation_speed", None)
     if isinstance(previous, (int, float)) and previous > 0.0:
-        generation_speed = (float(previous) * (1.0 - _SMART_BUFFER_SMOOTHING)) + (
-            generation_speed * _SMART_BUFFER_SMOOTHING
+        generation_speed = (float(previous) * (1.0 - SMART_BUFFER_SMOOTHING)) + (
+            generation_speed * SMART_BUFFER_SMOOTHING
         )
     engine.smart_buffer_generation_speed = generation_speed
 
@@ -1366,6 +1363,6 @@ def install_engine(target):
         target,
         {
             "_acquire_pipeline": _acquire_pipeline,
-            "_release_pipeline": _release_pipeline,
+            "release_pipeline": release_pipeline,
         },
     )

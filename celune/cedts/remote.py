@@ -26,7 +26,7 @@ from .protocol import (
     CEDTS_VERSION,
     CORE_CAPABILITIES,
     DEFAULT_CEDTS_LIMITS,
-    _WORKER_TRACEBACK_MARKER,
+    WORKER_TRACEBACK_MARKER,
     CEDTSLimits,
     build_packet,
     send_message,
@@ -39,7 +39,7 @@ from .protocol import (
 )
 from ..terminal import (
     RUNTIME_LOG_FILTER_MESSAGES,
-    _infer_log_severity,
+    infer_log_severity,
 )
 from ..exceptions import (
     CEDTSError,
@@ -260,8 +260,8 @@ _WORKER_ERROR_CODE = "backend_worker_error"
 def _worker_exception(error_type: Optional[str], message: str) -> Exception:
     """Rebuild a typed worker error and attach its transported traceback as a note."""
     worker_traceback = ""
-    if _WORKER_TRACEBACK_MARKER in message:
-        message, _, worker_traceback = message.rpartition(_WORKER_TRACEBACK_MARKER)
+    if WORKER_TRACEBACK_MARKER in message:
+        message, _, worker_traceback = message.rpartition(WORKER_TRACEBACK_MARKER)
     cedts_error_types: dict[str, type[CEDTSError]] = {
         f"{error_class.__module__}.{error_class.__qualname__}": error_class
         for error_class in (
@@ -557,7 +557,7 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
                     and message.startswith(" ")
                 ):
                     return severity, True, message[1:], first
-        severity = _infer_log_severity(text, "info")
+        severity = infer_log_severity(text, "info")
         return severity, False, text, "info"
 
     @staticmethod
@@ -1348,7 +1348,7 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
 
     def _load_description(self) -> None:
         """Load static backend metadata from the worker."""
-        description = cast(BackendDescription, self._request("describe"))
+        description = cast(BackendDescription, self.request("describe"))
         self.name = description["name"]
         self.chunk_rate = description["chunk_rate"]
         self.supported_languages = tuple(description["supported_languages"])
@@ -1362,7 +1362,7 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
         self.is_fake = description["is_fake"]
         self.singing = description.get("singing", False)
 
-    def _request(
+    def request(
         self,
         operation: str,
         *,
@@ -1713,7 +1713,7 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
         self, model: str, lang: Optional[str] = None
     ) -> tuple[bool, Optional[str]]:
         """Check model availability inside the worker environment."""
-        value = self._request("model_is_available_locally", model=model, lang=lang)
+        value = self.request("model_is_available_locally", model=model, lang=lang)
         return cast(tuple[bool, Optional[str]], value)
 
     @property
@@ -1757,7 +1757,7 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
 
         require_model_consent(model_id)
         self.quantization_attempted = getattr(self, "quantization_requested", False)
-        value = self._request(
+        value = self.request(
             "load_model",
             response_timeout=_BACKEND_MODEL_LOAD_TIMEOUT_SECONDS,
             model_id=model_id,
@@ -1765,7 +1765,7 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
         )
         if getattr(self, "quantization_requested", False):
             self.quantization_active = bool(
-                self._request("call", method="runtime_quantization_active")
+                self.request("call", method="runtime_quantization_active")
             )
         else:
             self.quantization_active = False
@@ -1777,7 +1777,7 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
 
         for model_id in self.all_model_ids:
             require_model_consent(model_id)
-        self._request(
+        self.request(
             "preload_models",
             response_timeout=_BACKEND_MODEL_OPERATION_TIMEOUT_SECONDS,
         )
@@ -1797,17 +1797,17 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
         ):
             self.model = None
             return
-        self._request("unload_model", release_cuda_cache=release_cuda_cache)
+        self.request("unload_model", release_cuda_cache=release_cuda_cache)
         self.model = None
 
     def disable_runtime_quantization(self) -> None:
         """Disable worker-side quantization before a BF16 recovery load."""
         super().disable_runtime_quantization()
-        self._request("call", method="disable_runtime_quantization")
+        self.request("call", method="disable_runtime_quantization")
 
     def vram_report(self) -> JSON:
         """Return the worker process and backend model memory report."""
-        report = cast(JSON, self._request("call", method="vram_report"))
+        report = cast(JSON, self.request("call", method="vram_report"))
         report["process_scope"] = "worker"
         return report
 
@@ -1827,28 +1827,28 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
     def cesn_to_model(self, text: str) -> str:
         """Convert complete CESN text in the selected worker backend."""
         if self.uses_voice_bundles:
-            result = self._request(
+            result = self.request(
                 "call",
                 method="cesn_to_model",
                 text=text,
                 voice_bundle=str(active_bundle_path()),
             )
         else:
-            result = self._request("call", method="cesn_to_model", text=text)
+            result = self.request("call", method="cesn_to_model", text=text)
         return cast(str, result)
 
     def resolve_generation_language(self, lang: Optional[str]) -> Optional[str]:
         """Resolve a language using the worker backend implementation."""
         return cast(
             Optional[str],
-            self._request("call", method="resolve_generation_language", lang=lang),
+            self.request("call", method="resolve_generation_language", lang=lang),
         )
 
     def should_reload_for_language(self, lang: Optional[str]) -> bool:
         """Ask the worker whether a language change needs a model reload."""
         return cast(
             bool,
-            self._request("call", method="should_reload_for_language", lang=lang),
+            self.request("call", method="should_reload_for_language", lang=lang),
         )
 
     def _await_shutdown_ack(
@@ -2076,7 +2076,7 @@ class RemoteVCBackendProxy(CeluneVCBackend):
         self._require_seedvc_model_consents()
         return cast(
             AudioOutput,
-            self._worker._request("convert", request=request),
+            self._worker.request("convert", request=request),
         )
 
     def convert_live(self, request: VoiceConversionRequest) -> AudioOutput:
@@ -2084,12 +2084,12 @@ class RemoteVCBackendProxy(CeluneVCBackend):
         self._require_seedvc_model_consents()
         return cast(
             AudioOutput,
-            self._worker._request("call", method="convert_live", request=request),
+            self._worker.request("call", method="convert_live", request=request),
         )
 
     def stop_live(self) -> None:
         """Reset the isolated backend's live conversion session."""
-        self._worker._request("call", method="stop_live")
+        self._worker.request("call", method="stop_live")
 
     def vram_report(self) -> JSON:
         """Return the voice-conversion worker's memory report."""

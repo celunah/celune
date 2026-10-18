@@ -39,13 +39,13 @@ __all__ = (
     "_interrupt_active_agent_for_input",
     "_load_agent_tool_selector",
     "_log_route_decision",
-    "_run_agent_route",
     "_select_agent_tool",
     "_speak_agent_classification_failure",
     "agent_needle_error",
     "agent_needle_ready",
     "classify_input",
     "route_input",
+    "run_agent_route",
 )
 
 
@@ -87,7 +87,7 @@ def classify_input(
         AgentClassificationResult: The typed conversation-first classification.
     """
     ready = self.persona_ready if persona_ready is None else persona_ready
-    return self._agent_router.classify(text, persona_ready=ready)
+    return self.agent_router.classify(text, persona_ready=ready)
 
 
 def route_input(
@@ -108,7 +108,7 @@ def route_input(
     if self.test_finished:
         raise RuntimeError("Celune test mode has finished")
     ready = self.persona_ready if persona_ready is None else persona_ready
-    result = self._agent_router.route(text, persona_ready=ready)
+    result = self.agent_router.route(text, persona_ready=ready)
     self._log_route_decision(text, result)
     return result
 
@@ -138,7 +138,7 @@ def _log_route_decision(
 
 def agent_needle_ready(self) -> bool:
     """Return whether the production Needle selector is loaded and usable."""
-    return self._agent_needle_selector is not None
+    return self.agent_needle_selector is not None
 
 
 def agent_needle_error(self) -> Optional[str]:
@@ -148,13 +148,13 @@ def agent_needle_error(self) -> Optional[str]:
 
 def _load_agent_tool_selector(self) -> AgentToolSelector:
     """Load the verified Needle selector only when an agent task needs it."""
-    if self._agent_needle_selector is not None:
-        return self._agent_needle_selector
+    if self.agent_needle_selector is not None:
+        return self.agent_needle_selector
     try:
         with huggingface_progress(self.progress_callback):
             selector = NeedleToolSelector.from_pretrained(
-                self._agent_tools,
-                schemas=self._agent_tool_schemas,
+                self.agent_tools,
+                schemas=self.agent_tool_schemas,
             )
     except (ModelConsentDeclined, ModelConsentRequired):
         raise
@@ -172,7 +172,7 @@ def _load_agent_tool_selector(self) -> AgentToolSelector:
         raise NeedleSelectionError(
             "Needle selector is unavailable for the agent runtime"
         ) from exc
-    self._agent_needle_selector = selector
+    self.agent_needle_selector = selector
     self._agent_needle_error = None
     return selector
 
@@ -193,11 +193,7 @@ def _execute_agent_tool(
 ) -> ToolExecutionResult:
     """Execute one allowlisted production tool through its typed boundary."""
     tool = next(
-        (
-            candidate
-            for candidate in self._agent_tools
-            if candidate.name == call["name"]
-        ),
+        (candidate for candidate in self.agent_tools if candidate.name == call["name"]),
         None,
     )
     if tool is None:
@@ -229,7 +225,7 @@ def _execute_agent_tool(
         }
 
 
-def _run_agent_route(self, route: AgentClassificationResult) -> bool:
+def run_agent_route(self, route: AgentClassificationResult) -> bool:
     """Consume a routed task through the shared agent runtime."""
     if self.test_finished:
         return False

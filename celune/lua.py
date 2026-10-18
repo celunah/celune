@@ -7,7 +7,11 @@ import threading
 from pathlib import Path
 from importlib import import_module
 from collections.abc import Callable
+
+# noinspection PyProtectedMember
 from dataclasses import fields, is_dataclass
+
+# noinspection PyProtectedMember
 from typing import TYPE_CHECKING, Optional, cast
 
 from .utils import format_error
@@ -16,7 +20,7 @@ from .typing.lua import LuaScalar, LuaValue
 from .extensions.base import CeluneExtension
 from .typing.events import EventName, EventPayload
 from .extensions.events import RegisteredEventHandler
-from .dataclasses.lua import LuaRuntimeProtocol, _LuaTable
+from .dataclasses.lua import LuaRuntimeProtocol, LuaTable
 
 if TYPE_CHECKING:
     from .celune import Celune
@@ -170,7 +174,7 @@ class LuaRuntimeManager:
             raise TypeError("Lua event callback is not callable")
         if not enabled:
             return
-        lua_callback = cast(Callable[[_LuaTable], None], callback)
+        lua_callback = cast(Callable[[LuaTable], None], callback)
 
         typed_event_name = event_name
 

@@ -73,6 +73,9 @@ SUPPORTED_PERSONA_FILENAMES: Final[tuple[str, ...]] = (
 
 # Celune now provides two unique identities as of her 6-month anniversary
 DEFAULT_CEVOICE_PACK_SHA256: Final[str] = (
+    "8422d3f0a455fd5fd89bc4a687a8fb9e7a56a1746d89e4fe3404e29a7004bc5e"
+)
+PREVIOUS_DEFAULT_CEVOICE_PACK_SHA256: Final[str] = (
     "35db55adca450062806e20d6c8ae1fc0c0ad5de569cb422321981de80e567851"
 )
 CLASSIC_CEVOICE_PACK_SHA256: Final[str] = (
@@ -82,6 +85,7 @@ OFFICIAL_CEVOICE_PACK_SHA256S: Final[frozenset[str]] = frozenset(
     {
         # natural pack
         DEFAULT_CEVOICE_PACK_SHA256,
+        PREVIOUS_DEFAULT_CEVOICE_PACK_SHA256,
         # OG pack
         CLASSIC_CEVOICE_PACK_SHA256,
     }
@@ -129,6 +133,16 @@ class CEVoice:
         compare=False,
     )
     _compression: Optional[int] = field(default=None, repr=False, compare=False)
+
+    @property
+    def is_indexed(self) -> bool:
+        """Return whether the pack uses the indexed CECHAR payload layout."""
+        return self._payload is not None
+
+    @property
+    def compression(self) -> Optional[int]:
+        """Return the indexed payload compression mode, when the pack has one."""
+        return self._compression
 
     @classmethod
     def open(cls, path: Union[str, Path]) -> CEVoice:
@@ -260,6 +274,20 @@ class CEVoice:
         ):
             return SINGING_VOICE_NAME
         return None
+
+    @property
+    def singing_pitch_range(self) -> Optional[tuple[int, int]]:
+        """Return the singing voice's MIDI range, or the legacy full range."""
+        if self.singing_voice is None:
+            return None
+        voice = self.voices.get(SINGING_VOICE_NAME)
+        if not isinstance(voice, dict):
+            return None
+        pitch_range = voice.get("range")
+        if pitch_range is None:
+            return (0, 127)
+        range_data = cast(Manifest, pitch_range)
+        return cast(int, range_data["min"]), cast(int, range_data["max"])
 
     def asset(self, voice: str, kind: str) -> CEVoiceAsset:
         """Return metadata for one named voice asset.
@@ -810,9 +838,14 @@ def _write_indexed_cechar(
                 cesn = voice_entry.get("cesn")
                 if not isinstance(cesn, str) or not cesn.strip():
                     raise CEVoiceError("singing voice cesn is required")
+                if "range" not in voice_entry:
+                    raise CEVoiceError("singing voice range is required")
+                _validate_singing_pitch_range(voice_entry["range"])
             else:
                 if voice_entry.get("cesn") is not None:
                     raise CEVoiceError(f"voice '{voice}' cesn must be null")
+                if "range" in voice_entry:
+                    raise CEVoiceError("singing voice range is only valid for sing")
                 voice_entry["cesn"] = None
         voice_entry["assets"] = cast(ManifestValue, manifest_assets)
         manifest_voices[voice] = voice_entry
@@ -1119,7 +1152,7 @@ def _bundle_mutation_data(
         for kind, reference in raw_assets.items():
             name = (
                 _v4_reference_name(reference, f"voice '{voice}' asset '{kind}'")
-                if bundle._payload is not None
+                if bundle.is_indexed
                 else f"{voice}.{kind}"
             )
             voices[voice][kind] = data[name]
@@ -1128,6 +1161,11 @@ def _bundle_mutation_data(
             key: value for key, value in voice_data.items() if key != "assets"
         }
 
+    if bundle.metadata.get("version") == V5_VERSION:
+        singing_metadata = voice_metadata.get(SINGING_VOICE_NAME)
+        if singing_metadata is not None and "range" not in singing_metadata:
+            singing_metadata["range"] = {"min": 0, "max": 127}
+
     bundle_assets: dict[str, bytes] = {}
     raw_bundle_assets = cast(
         dict[str, ManifestValue], bundle.metadata.get("assets", {})
@@ -1135,7 +1173,7 @@ def _bundle_mutation_data(
     for name, reference in raw_bundle_assets.items():
         entry_name = (
             _v4_reference_name(reference, f"bundle asset '{name}'")
-            if bundle._payload is not None
+            if bundle.is_indexed
             else name
         )
         bundle_assets[name] = data[entry_name]
@@ -1143,7 +1181,7 @@ def _bundle_mutation_data(
 
     extra_assets = (
         {name: content for name, content in data.items() if name not in referenced}
-        if bundle._payload is not None
+        if bundle.is_indexed
         else {}
     )
     return metadata, voices, voice_metadata, bundle_assets, extra_assets
@@ -1157,7 +1195,7 @@ def _voice_entry_names(bundle: CEVoice) -> dict[tuple[str, str], str]:
         for kind, reference in assets.items():
             name = (
                 _v4_reference_name(reference, f"voice '{voice}' asset '{kind}'")
-                if bundle._payload is not None
+                if bundle.is_indexed
                 else f"{voice}.{kind}"
             )
             result[(voice, kind)] = name
@@ -1185,7 +1223,7 @@ def _atomic_rewrite_cevoice(
     os.close(descriptor)
     temporary_path = Path(temporary_name)
     try:
-        if original._payload is not None:
+        if original.is_indexed:
             _write_indexed_cechar(
                 temporary_path,
                 voices,
@@ -1193,7 +1231,7 @@ def _atomic_rewrite_cevoice(
                 voice_metadata,
                 bundle_assets,
                 cast(int, original.metadata["version"]),
-                cast(int, original._compression),
+                cast(int, original.compression),
                 entry_order,
                 extra_assets,
                 voice_asset_names,
@@ -1561,16 +1599,19 @@ def _validate_v4_semantic_metadata(
             cesn = voice_data.get("cesn")
             if not isinstance(cesn, str) or not cesn.strip():
                 raise CEVoiceError("singing voice cesn is required")
+            if "range" in voice_data:
+                _validate_singing_pitch_range(voice_data["range"])
             assets = voice_data.get("assets")
             if not isinstance(assets, dict) or "wav" not in assets:
                 raise CEVoiceError("singing voice must provide a wav asset")
             reference_text = voice_data.get("reference_text")
             if not isinstance(reference_text, str) or not reference_text.strip():
                 raise CEVoiceError("singing voice reference_text is required")
-        elif version == V5_VERSION and (
-            "cesn" not in voice_data or voice_data["cesn"] is not None
-        ):
-            raise CEVoiceError(f"voice '{voice}' cesn must be null")
+        elif version == V5_VERSION:
+            if "cesn" not in voice_data or voice_data["cesn"] is not None:
+                raise CEVoiceError(f"voice '{voice}' cesn must be null")
+            if "range" in voice_data:
+                raise CEVoiceError("singing voice range is only valid for sing")
         cfg_scale = voice_data.get("cfg_scale")
         if cfg_scale is not None and (
             not isinstance(cfg_scale, (int, float))
@@ -1588,6 +1629,24 @@ def _validate_v4_semantic_metadata(
         voice_persona = voice_data.get("persona")
         if voice_persona is not None:
             _validate_persona_metadata(voice_persona)
+
+
+def _validate_singing_pitch_range(value: object) -> None:
+    """Validate a CECHAR v5 singing range expressed as MIDI note numbers."""
+    if not isinstance(value, dict):
+        raise CEVoiceError("singing voice range must be an object")
+    minimum = value.get("min")
+    maximum = value.get("max")
+    if (
+        not isinstance(minimum, int)
+        or isinstance(minimum, bool)
+        or not isinstance(maximum, int)
+        or isinstance(maximum, bool)
+        or not 0 <= minimum <= maximum <= 127
+    ):
+        raise CEVoiceError(
+            "singing voice range must contain ordered MIDI pitches from 0 to 127"
+        )
 
 
 def _v4_reference_name(value: ManifestValue, field_name: str) -> str:

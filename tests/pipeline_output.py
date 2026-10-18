@@ -1,21 +1,22 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for pipeline helpers that do not perform real synthesis."""
 
+import json as _json
 import tempfile
 import threading
-import json as _json
+from types import SimpleNamespace
 from typing import cast
 from pathlib import Path
 from unittest import mock
-from types import SimpleNamespace
 
-import pytest
 import numpy as np
+import pytest
 import soundfile as sf
 
-from celune.celune import Celune
+from celune import singing, pipeline
+from celune import metadata as celune_metadata
 from celune.cesn import CESNSinger, parse_cesn, render_cesn
-from celune import pipeline, metadata as celune_metadata, singing
+from celune.celune import Celune
 
 from .support import (
     FakeStream,
@@ -86,7 +87,7 @@ class TestPipelineAsync(_TestPipelineAsync):
         active_singer = CESNSinger("Test Singer", Path("singer.cevoice"))
         monkeypatch.setattr(
             singing,
-            "_resolve_active_singer",
+            "resolve_active_singer",
             lambda: active_singer,
         )
         canonical_notation = canonical_notation.replace(
@@ -129,7 +130,7 @@ class TestPipelineAsync(_TestPipelineAsync):
             ),
             mock.patch.object(pipeline, "split_text") as split,
         ):
-            assert singing._prepare_synthesis_chunks(
+            assert singing.prepare_synthesis_chunks(
                 cast(Celune, engine), "score", pipeline.split_text
             ) == [payload]
 
@@ -137,13 +138,22 @@ class TestPipelineAsync(_TestPipelineAsync):
 
     def test_singing_input_detection_requires_a_note_event(self) -> None:
         """Recognize CESN events while ignoring prose and comment-only input."""
-        assert not singing._contains_cesn_note_event("plain lyrics")
-        assert not singing._contains_cesn_note_event("[#only a comment]")
-        assert not singing._contains_cesn_note_event(
+        assert not singing.contains_cesn_note_event("plain lyrics")
+        assert not singing.contains_cesn_note_event("[#only a comment]")
+        assert not singing.contains_cesn_note_event(
             "[lang:en][bpm:120,key:c,scale:major]"
         )
-        assert singing._contains_cesn_note_event("[a4:4] Ah")
-        assert singing._contains_cesn_note_event("[r:1]")
+        assert singing.contains_cesn_note_event("[a4:4] Ah")
+        assert singing.contains_cesn_note_event("[r:1]")
+
+    def test_singing_output_filename_uses_plain_cesn_lyrics(self) -> None:
+        """Use lyric words instead of CESN tags in the output filename."""
+        notation = "[lang:en][pattern:cel,lo][slur:2][c4:4,d4:4]cello!"
+
+        assert (
+            pipeline._output_filename_fragment(notation, singing_backend=True)
+            == "cello"
+        )
 
     def test_singing_backend_logs_out_of_scale_cesn_warning(
         self,
@@ -155,7 +165,7 @@ class TestPipelineAsync(_TestPipelineAsync):
         engine.backend.cesn_to_model = mock.Mock(side_effect=lambda text: text)
         monkeypatch.setattr(
             singing,
-            "_resolve_active_singer",
+            "resolve_active_singer",
             lambda: CESNSinger("Test Singer", Path("singer.cevoice")),
         )
 
@@ -180,17 +190,17 @@ class TestPipelineAsync(_TestPipelineAsync):
             sf.write(
                 str(path), np.zeros((8, 2), dtype=np.float32), 48000, format="FLAC"
             )
-            pipeline.write_flac_metadata(
+            celune_metadata.write_flac_metadata(
                 str(path),
                 {"artist": "Celune", "date": 2026, "invalid=key": "ignored"},
             )
-            blocks, _ = pipeline.flac_metadata_blocks(path.read_bytes())
+            blocks, _ = celune_metadata.flac_metadata_blocks(path.read_bytes())
             comment_block = next(
                 payload
                 for block_type, payload in blocks
                 if block_type == celune_metadata._FLAC_VORBIS_COMMENT_BLOCK
             )
-            _, comments = pipeline.parse_vorbis_comment_block(comment_block)
+            _, comments = celune_metadata.parse_vorbis_comment_block(comment_block)
         assert ("artist", "Celune") in comments
         assert ("date", "2026") in comments
         assert ("invalid=key", "ignored") not in comments
@@ -243,7 +253,7 @@ class TestPipelineAsync(_TestPipelineAsync):
             use_normalization=False,
             current_character="Fixture",
         )
-        metadata = pipeline.celune_metadata_payload(
+        metadata = celune_metadata.celune_metadata_payload(
             cast(Celune, engine),
             text="hello",
             display_text="one two three four five six",
@@ -257,7 +267,7 @@ class TestPipelineAsync(_TestPipelineAsync):
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "voice.flac"
             metadata["created_at"] = "2026-05-16T10:00:00+00:00"
-            pipeline.write_celune_flac(
+            celune_metadata.write_celune_flac(
                 cast(Celune, engine),
                 str(path),
                 np.zeros((8, 2), dtype=np.float32),
@@ -265,13 +275,13 @@ class TestPipelineAsync(_TestPipelineAsync):
                 "PCM_24",
                 metadata,
             )
-            blocks, _ = pipeline.flac_metadata_blocks(path.read_bytes())
+            blocks, _ = celune_metadata.flac_metadata_blocks(path.read_bytes())
             comment_block = next(
                 payload
                 for block_type, payload in blocks
                 if block_type == celune_metadata._FLAC_VORBIS_COMMENT_BLOCK
             )
-            _, comments = pipeline.parse_vorbis_comment_block(comment_block)
+            _, comments = celune_metadata.parse_vorbis_comment_block(comment_block)
             tags = dict(comments)
         assert tags["artist"] == "Fixture"
         assert tags["album"] == "Celune via fake"
@@ -286,12 +296,12 @@ class TestPipelineAsync(_TestPipelineAsync):
         """
         engine = make_pipeline_engine()
         timing = pipeline.SpeechTiming(start_time=1.0, first_playback_time=1.25)
-        with mock.patch("celune.pipeline._monotonic_time", return_value=1.25):
+        with mock.patch("celune.pipeline.monotonic_time", return_value=1.25):
             pipeline.log_first_playback(cast(Celune, engine), timing)
         assert engine.messages[-1] == ("TTFP 0.25s", "info")
 
-        assert pipeline._format_stat_duration(0.25) == "0:00"
-        assert pipeline._format_stat_duration(60.0) == "1:00"
+        assert pipeline.format_stat_duration(0.25) == "0:00"
+        assert pipeline.format_stat_duration(60.0) == "1:00"
 
         stream = FakeStream()
         holder = SimpleNamespace(stream=stream, _stream=stream, _current_sr=48000)

@@ -3,9 +3,11 @@
 
 from __future__ import annotations
 
+# noinspection PyProtectedMember
 from typing import Optional, cast
 from collections.abc import Mapping
 
+from .utils import discard
 from .config import config_value
 from .typing.modes import OperationMode
 from .typing.common import JSONSerializable
@@ -43,6 +45,7 @@ def resolve_operation_mode(
         normalized = candidate.strip().casefold()
         if normalized in _LEGACY_INPUT_MODES:
             candidate = None
+            discard(candidate)
         elif normalized in OPERATION_MODES:
             resolved = normalized
             if resolved == "agent" and AGENT_MODE_REDIRECT_TARGET is not None:

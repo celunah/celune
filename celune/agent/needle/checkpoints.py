@@ -153,7 +153,7 @@ def _load_config(path: Path) -> dict[str, JSONSerializable]:
     return cast(dict[str, JSONSerializable], value)
 
 
-def _expected_dtype(
+def resolve_expected_dtype(
     config: Mapping[str, JSONSerializable],
 ) -> torch.dtype:
     """Resolve the declared runtime tensor dtype from the model configuration."""
@@ -199,7 +199,7 @@ def validate_needle_safetensors(
         raise NeedleCheckpointError(
             "Needle configuration is invalid for the runtime model"
         ) from exc
-    dtype = expected_dtype or _expected_dtype(config_mapping)
+    dtype = expected_dtype or resolve_expected_dtype(config_mapping)
     target = NeedleModel(model_config).to(dtype=dtype)
     target_state = target.state_dict()
     tensors: dict[str, torch.Tensor] = {}

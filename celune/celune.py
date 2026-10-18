@@ -31,6 +31,7 @@ from .modes import (
     resolve_operation_mode,
 )
 from .utils import (
+    clear_queue,
     discard,
     available,
     format_error_message,
@@ -48,7 +49,6 @@ from .cevoice import (
 )
 from .pipeline import (
     split_text,
-    clear_queue,
     close_stream,
     playback_worker_job,
     generation_worker_job,
@@ -81,6 +81,8 @@ from .typing.agent import (
     AgentTaskConfig,
     AgentToolSelector,
     AgentCancellationReason,
+    AgentTool,
+    AgentToolSchema,
 )
 from .typing.locks import (
     ComponentLockName,
@@ -100,7 +102,7 @@ from .typing.celune import (
     CeluneStateAccessors,
     VoiceLockStateCallback,
     CaptionProgressCallback,
-    _BundleWithPath,
+    BundleWithPath,
 )
 from .chroma import AudioRGBGlow
 from .dataclasses.celune import (
@@ -122,6 +124,7 @@ from .dataclasses.events import (
     CharacterChangedEvent,
     CharacterUnloadedEvent,
 )
+from .dataclasses.pipeline import CaptionPlaybackState
 from .typing.aliases import LogLevel
 from .locks import ComponentLockLease
 from .typing.modes import BackendMode
@@ -148,6 +151,31 @@ from .config import Config, config_bool, config_value, normalize_log_level
 npt = np.typing
 
 
+@dataclass
+class _ReloadSnapshot:
+    """Rollback state captured before a backend or CEVOICE hot reload."""
+
+    backend: CeluneBackend
+    restorable_backend_spec: Union[str, type[CeluneBackend]]
+    backend_spec: Optional[Union[str, type[CeluneBackend]]]
+    backend_kwargs: dict[str, JSONSerializable]
+    vc_backend: Optional[CeluneVCBackend]
+    restorable_vc_backend_spec: Optional[Union[str, type[CeluneVCBackend]]]
+    vc_backend_spec: Optional[Union[str, type[CeluneVCBackend]]]
+    voice_conversion_backend: str
+    tts_backend: str
+    input_mode: str
+    model: Optional[BackendModel]
+    model_name: str
+    voices: tuple[str, ...]
+    current_voice: Optional[str]
+    current_character: Optional[str]
+    current_character_persona: Optional[CEVoicePersona]
+    voice_bundle_is_default: bool
+    loaded: bool
+    cur_state: str
+
+
 def _load_speech_module():
     """Import speech helpers after the pipeline facade has been initialized."""
     from . import speech
@@ -166,15 +194,15 @@ stop_live_audio_input = speech_module.stop_live_audio_input
 _TTS_KV_CACHE_BACKENDS = frozenset({"qwen3", "fireredtts3", "voxcpm2"})
 
 
-def _config_str(value: JSONSerializable) -> Optional[str]:
+def config_str(value: JSONSerializable) -> Optional[str]:
     """Return a config value only when it is a string."""
     return value if isinstance(value, str) else None
 
 
 def _configured_locale(config: Config) -> Optional[str]:
     """Return one explicit locale override from env or config when provided."""
-    env_value = _config_str(os.getenv("CELUNE_LOCALE"))
-    configured_value = _config_str(config_value(config, "locale"))
+    env_value = config_str(os.getenv("CELUNE_LOCALE"))
+    configured_value = config_str(config_value(config, "locale"))
     candidate = env_value if env_value is not None else configured_value
     if candidate is None:
         return None
@@ -185,7 +213,7 @@ def _configured_locale(config: Config) -> Optional[str]:
     return normalized
 
 
-def _config_int(value: JSONSerializable, default: int) -> int:
+def config_int(value: JSONSerializable, default: int) -> int:
     """Return a config value as an integer when it is scalar-like."""
     if isinstance(value, bool):
         raise TypeError("boolean is not an integer config value")
@@ -196,7 +224,7 @@ def _config_int(value: JSONSerializable, default: int) -> int:
     raise TypeError("config value cannot be converted to int")
 
 
-def _tts_quantization_enabled(
+def tts_quantization_enabled(
     config: Optional[Mapping[str, JSONSerializable]],
     backend_spec: CoreBackendSpec,
 ) -> bool:
@@ -223,9 +251,9 @@ def _resolve_input_mode(config: Config, requested_mode: Optional[str] = None) ->
     """Resolve Celune's active input mode from config and optional override."""
     candidate = requested_mode
     if candidate is None:
-        candidate = _config_str(config_value(config, "input_mode"))
+        candidate = config_str(config_value(config, "input_mode"))
     if candidate is None:
-        configured_mode = _config_str(config_value(config, "mode"))
+        configured_mode = config_str(config_value(config, "mode"))
         if configured_mode in {"text_to_speech", "tts", "voice_conversion", "revoice"}:
             candidate = configured_mode
     if candidate is None:
@@ -272,7 +300,7 @@ def _core_backend_target(
     )
 
 
-def _agent_task_config(config: Config) -> AgentTaskConfig:
+def agent_task_config(config: Config) -> AgentTaskConfig:
     """Build the agent task limits from the nested ``agent`` settings."""
     raw = config.get("agent")
     values = raw if isinstance(raw, dict) else {}
@@ -363,7 +391,7 @@ def _unload_backend_model(
         backend.unload_model()
 
 
-def _dispose_backend(
+def dispose_backend(
     backend: Union[CeluneBackend, CeluneVCBackend],
     release_cuda_cache: bool = True,
 ) -> None:
@@ -398,35 +426,116 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
     """The character engine for Celune."""
 
     _normalizer_load_epoch: int
+    _next_playback_source_id: int
+    _playback_source_statuses: dict[int, str]
+    _playback_source_meta: dict[int, dict[str, Union[str, float]]]
+    _playback_caption_states: dict[int, CaptionPlaybackState]
 
     def __init_subclass__(cls, **kwargs: Never) -> Never:
         raise TypeError(f"{__class__.__name__} is final and cannot be subclassed")
 
     _instance: ClassVar[Optional["Celune"]] = None
 
-    @dataclass
-    class _ReloadSnapshot:
-        """Rollback state captured before a backend or CEVOICE hot reload."""
+    @property
+    def next_playback_source_id(self) -> int:
+        """Return the most recently allocated playback source identifier."""
+        return getattr(self, "_next_playback_source_id", 0)
 
-        backend: CeluneBackend
-        restorable_backend_spec: Union[str, type[CeluneBackend]]
-        backend_spec: Optional[Union[str, type[CeluneBackend]]]
-        backend_kwargs: dict[str, JSONSerializable]
-        vc_backend: Optional[CeluneVCBackend]
-        restorable_vc_backend_spec: Optional[Union[str, type[CeluneVCBackend]]]
-        vc_backend_spec: Optional[Union[str, type[CeluneVCBackend]]]
-        voice_conversion_backend: str
-        tts_backend: str
-        input_mode: str
-        model: Optional[BackendModel]
-        model_name: str
-        voices: tuple[str, ...]
-        current_voice: Optional[str]
-        current_character: Optional[str]
-        current_character_persona: Optional[CEVoicePersona]
-        voice_bundle_is_default: bool
-        loaded: bool
-        cur_state: str
+    @next_playback_source_id.setter
+    def next_playback_source_id(self, value: int) -> None:
+        """Store the most recently allocated playback source identifier."""
+        self._next_playback_source_id = value
+
+    @property
+    def playback_source_statuses(self) -> dict[int, str]:
+        """Return playback status labels keyed by source identifier."""
+        statuses = getattr(self, "_playback_source_statuses", None)
+        if statuses is None:
+            statuses = {}
+            self._playback_source_statuses = statuses
+        return statuses
+
+    @playback_source_statuses.setter
+    def playback_source_statuses(self, value: dict[int, str]) -> None:
+        """Replace the playback status map."""
+        self._playback_source_statuses = value
+
+    @property
+    def playback_source_meta(self) -> dict[int, dict[str, Union[str, float]]]:
+        """Return metadata for queued playback sources."""
+        metadata = getattr(self, "_playback_source_meta", None)
+        if metadata is None:
+            metadata = {}
+            self._playback_source_meta = metadata
+        return metadata
+
+    @playback_source_meta.setter
+    def playback_source_meta(
+        self,
+        value: dict[int, dict[str, Union[str, float]]],
+    ) -> None:
+        """Replace the playback source metadata map."""
+        self._playback_source_meta = value
+
+    @property
+    def playback_caption_states(self) -> dict[int, CaptionPlaybackState]:
+        """Return caption timing state keyed by playback source identifier."""
+        states = getattr(self, "_playback_caption_states", None)
+        if states is None:
+            states = {}
+            self._playback_caption_states = states
+        return states
+
+    @playback_caption_states.setter
+    def playback_caption_states(
+        self,
+        value: dict[int, CaptionPlaybackState],
+    ) -> None:
+        """Replace the caption timing state map."""
+        self._playback_caption_states = value
+
+    @property
+    def agent_tools(self) -> tuple[AgentTool, ...]:
+        """Return the tools registered with this engine's local agent runtime."""
+        return self._agent_tools
+
+    @agent_tools.setter
+    def agent_tools(self, tools: tuple[AgentTool, ...]) -> None:
+        """Replace the registered agent tools for controlled runtime setup."""
+        self._agent_tools = tools
+
+    @property
+    def agent_tool_schemas(self) -> Mapping[str, AgentToolSchema]:
+        """Return the validated schemas advertised by the local agent runtime."""
+        return self._agent_tool_schemas
+
+    @agent_tool_schemas.setter
+    def agent_tool_schemas(self, schemas: Mapping[str, AgentToolSchema]) -> None:
+        """Replace the registered schemas during controlled runtime setup."""
+        self._agent_tool_schemas = schemas
+
+    @property
+    def agent_router(self) -> AgentInputRouter:
+        """Return the input router bound to this engine's agent runtime."""
+        return self._agent_router
+
+    @agent_router.setter
+    def agent_router(self, router: AgentInputRouter) -> None:
+        """Replace the router when the engine installs a test runtime."""
+        self._agent_router = router
+
+    @property
+    def agent_needle_selector(self) -> Optional[AgentToolSelector]:
+        """Return the optional external tool selector configured for this engine."""
+        return self._agent_needle_selector
+
+    @agent_needle_selector.setter
+    def agent_needle_selector(
+        self,
+        selector: Optional[AgentToolSelector],
+    ) -> None:
+        """Replace the optional selector during controlled runtime setup."""
+        self._agent_needle_selector = selector
 
     def __init__(
         self,
@@ -517,8 +626,8 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
         set_locale(_configured_locale(config) or get_system_locale())
         self.mode: OperationMode = resolve_operation_mode(config)
         if backend_mode == "agent_test":
-            self._agent_tools = agent_test_tools(self)
-            self._agent_tool_schemas = agent_test_tool_schemas()
+            self.agent_tools = agent_test_tools(self)
+            self.agent_tool_schemas = agent_test_tool_schemas()
         else:
             agent_config = config.get("agent")
             local_management = (
@@ -530,11 +639,11 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
                 if isinstance(agent_config, dict)
                 else False
             )
-            self._agent_tools = production_agent_tools(
+            self.agent_tools = production_agent_tools(
                 self,
                 include_local_management=local_management,
             )
-            self._agent_tool_schemas = production_agent_tool_schemas(
+            self.agent_tool_schemas = production_agent_tool_schemas(
                 include_local_management=local_management,
             )
             if local_management and config.get("mode") == "agent":
@@ -548,15 +657,15 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
                     ),
                     "warning",
                 )
-        self._agent_needle_selector = agent_tool_selector
+        self.agent_needle_selector = agent_tool_selector
         self._agent_needle_error: Optional[str] = None
         self._agent_persona_bridge = PersonaAgentBridge(
             self,
-            self._agent_tool_schemas,
+            self.agent_tool_schemas,
         )
         self.input_mode = _resolve_input_mode(config, input_mode)
         self.agent_runtime = AgentRuntime(
-            tools=self._agent_tools,
+            tools=self.agent_tools,
             event_dispatcher=self._event_dispatcher,
             celune=self,
             planner=self._agent_persona_bridge.plan,
@@ -565,10 +674,10 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
             tool_result_handler=self._agent_persona_bridge.handle_tool_result,
             responder=self._agent_persona_bridge.respond,
             compactor=self._agent_persona_bridge.compact,
-            tool_schemas=self._agent_tool_schemas,
-            task_config=_agent_task_config(config),
+            tool_schemas=self.agent_tool_schemas,
+            task_config=agent_task_config(config),
         )
-        self._agent_router = AgentInputRouter(self, self.agent_runtime)
+        self.agent_router = AgentInputRouter(self, self.agent_runtime)
         glow_color = "#cebaff"
         loader = default_loader()
         if loader is not None:
@@ -594,14 +703,14 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
             vc_backend,
         )
         self.vc_f0_condition = False if vc_f0_condition is None else vc_f0_condition
-        select_voice_bundle(_config_str(config_value(config, "voice_bundle")))
+        select_voice_bundle(config_str(config_value(config, "voice_bundle")))
         preset = resolve_vram_preset(config)
 
         if tts_backend is None:
             tts_backend = preset.default_backend
 
         backend_kwargs: dict[str, Optional[Union[bool, str]]] = {
-            "quantize": _tts_quantization_enabled(config, tts_backend),
+            "quantize": tts_quantization_enabled(config, tts_backend),
         }
         if isinstance(tts_backend, CeluneBackend):
             tts_backend.quantization_requested = bool(backend_kwargs["quantize"])
@@ -690,9 +799,9 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
             ) from e
 
         if vc_backend is None and self.input_mode == "voice_conversion":
-            vc_backend = _config_str(
+            vc_backend = config_str(
                 config_value(config, "voice_conversion_backend")
-            ) or _config_str(config_value(config, "vc_backend"))
+            ) or config_str(config_value(config, "vc_backend"))
             if vc_backend is None:
                 vc_backend = "seed-vc"
 
@@ -800,11 +909,11 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
         Args:
             value: The new runtime-state label to store.
         """
-        event = self._update_cur_state(value)
+        event = self.update_cur_state(value)
         if event is not None:
-            self._emit_event("state_changed", event)
+            self.emit_event("state_changed", event)
 
-    def _update_cur_state(self, value: str) -> Optional[StateChangedEvent]:
+    def update_cur_state(self, value: str) -> Optional[StateChangedEvent]:
         """Store a runtime state and return its event without dispatching it.
 
         Args:
@@ -1110,7 +1219,7 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
         self.glow.fatal = wrapped_fatal
         self.glow._celune_fatal_wrapped = True
 
-    def _emit_event(self, event_name: EventName, event: EventPayload) -> None:
+    def emit_event(self, event_name: EventName, event: EventPayload) -> None:
         """Dispatch one typed event through Celune's internal event bus."""
         self.log(
             f"[EVENT] emit name={event_name} payload={type(event).__name__}",
@@ -1159,7 +1268,7 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
                     path.unlink(missing_ok=True)
 
     @staticmethod
-    def _bundle_path_string(bundle: Optional[_BundleWithPath]) -> Optional[str]:
+    def _bundle_path_string(bundle: Optional[BundleWithPath]) -> Optional[str]:
         """Return one bundle path as a string when it is available."""
         if bundle is None:
             return None
@@ -1177,7 +1286,7 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
         if old_character and new_character:
             if old_character == new_character and old_bundle_path == new_bundle_path:
                 return
-            self._emit_event(
+            self.emit_event(
                 "character_changed",
                 CharacterChangedEvent(
                     celune=self,
@@ -1191,7 +1300,7 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
             return
 
         if new_character:
-            self._emit_event(
+            self.emit_event(
                 "character_loaded",
                 CharacterLoadedEvent(
                     celune=self,
@@ -1203,7 +1312,7 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
             return
 
         if old_character:
-            self._emit_event(
+            self.emit_event(
                 "character_unloaded",
                 CharacterUnloadedEvent(
                     celune=self,
@@ -1228,7 +1337,7 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
             )
 
     def is_voice_conversion_mode(self) -> bool:
-        """Public interface for Celune._is_voice_conversion_mode.
+        """Return whether this Celune instance is in voice-conversion mode.
 
         Returns:
             bool: Whether this Celune instance is currently in voice conversion mode.
@@ -1246,11 +1355,6 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
         if self._is_voice_conversion_mode() and self.vc_backend is not None:
             return self.vc_backend.name
         return self.backend.name
-
-    @staticmethod
-    def _clear_queue(q: queue.Queue) -> None:
-        """Drain all pending items from a queue."""
-        clear_queue(q)
 
     def _acquire_component_lease(
         self,
@@ -1462,14 +1566,14 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
         if self.exit_requested:
             _shutdown_backend(self.backend, release_cuda_cache)
         elif close_backends:
-            _dispose_backend(self.backend, release_cuda_cache=release_cuda_cache)
+            dispose_backend(self.backend, release_cuda_cache=release_cuda_cache)
         else:
             _unload_backend_model(self.backend, release_cuda_cache)
         if include_vc and self.vc_backend is not None:
             if self.exit_requested:
                 _shutdown_backend(self.vc_backend, release_cuda_cache)
             elif close_backends:
-                _dispose_backend(
+                dispose_backend(
                     self.vc_backend,
                     release_cuda_cache=release_cuda_cache,
                 )
@@ -1570,7 +1674,7 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
     ) -> dict[str, JSONSerializable]:
         """Return constructor kwargs needed to instantiate one backend specification."""
         backend_kwargs: dict[str, JSONSerializable] = {
-            "quantize": _tts_quantization_enabled(self.config, backend_spec),
+            "quantize": tts_quantization_enabled(self.config, backend_spec),
         }
         raw_name = getattr(backend_spec, "name", None)
         backend_name = (
@@ -1602,7 +1706,7 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
 
     def _capture_reload_snapshot(self) -> _ReloadSnapshot:
         """Capture the current backend runtime state for rollback."""
-        return self._ReloadSnapshot(
+        return _ReloadSnapshot(
             backend=self.backend,
             restorable_backend_spec=self._restorable_backend_spec(),
             backend_spec=self._backend_spec,
@@ -1808,8 +1912,7 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
         preferred_voice: Optional[str] = None,
     ) -> bool:
         """Synchronously switch to a new backend family with rollback on failure."""
-        # noinspection PyProtectedMember
-        snapshot: Optional[Celune._ReloadSnapshot] = None
+        snapshot: Optional[_ReloadSnapshot] = None
         candidate_kwargs: dict[str, JSONSerializable] = {}
         candidate_backend: Optional[CeluneBackend] = None
         candidate_vc_backend: Optional[CeluneVCBackend] = None
@@ -1864,9 +1967,9 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
                 if candidate_backend.uses_voice_bundles:
                     candidate_backend.validate_refs()
                 if previous_vc_backend is not None:
-                    _dispose_backend(previous_vc_backend)
+                    dispose_backend(previous_vc_backend)
                 if previous_backend is not candidate_backend:
-                    _dispose_backend(previous_backend)
+                    dispose_backend(previous_backend)
                 candidate_backend.preload_models()
 
                 (
@@ -1926,12 +2029,12 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
                 if available("f0_condition", obj=candidate_vc_backend):
                     candidate_vc_backend.f0_condition = self.vc_f0_condition
                 if previous_backend is not None:
-                    _dispose_backend(previous_backend)
+                    dispose_backend(previous_backend)
                 if (
                     previous_vc_backend is not None
                     and previous_vc_backend is not candidate_vc_backend
                 ):
-                    _dispose_backend(previous_vc_backend)
+                    dispose_backend(previous_vc_backend)
                 candidate_vc_backend.preload_models()
 
                 self.vc_backend = candidate_vc_backend
@@ -1965,7 +2068,7 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
                     raise BackendError("no voices found")
                 self.voice_changed_callback(candidate_voice)
                 if previous_voice != candidate_voice:
-                    self._emit_event(
+                    self.emit_event(
                         "voice_changed",
                         VoiceChangedEvent(
                             celune=self,
@@ -2111,8 +2214,7 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
         preferred_voice: Optional[str] = None,
     ) -> bool:
         """Synchronously switch to a new CEVOICE bundle with rollback on failure."""
-        # noinspection PyProtectedMember
-        snapshot: Optional[Celune._ReloadSnapshot] = None
+        snapshot: Optional[_ReloadSnapshot] = None
         previous_bundle = active_bundle_path()
         loaded_model: Optional[PreTrainedModel] = None
 
@@ -2153,7 +2255,7 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
             if snapshot.current_character != self.current_character or str(
                 previous_bundle
             ) != str(active_bundle_path()):
-                self._reset_persona_conversation()
+                self.reset_persona_conversation()
 
             if not self._is_voice_conversion_mode():
                 model, model_name = self._load_backend_voice_runtime(
@@ -2189,7 +2291,7 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
                 self.voice_bundle_is_default,
             )
             if snapshot.current_voice != candidate_voice:
-                self._emit_event(
+                self.emit_event(
                     "voice_changed",
                     VoiceChangedEvent(
                         celune=self,
@@ -2418,7 +2520,7 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
                     )
 
         try:
-            port = _config_int(options.get("port", 2060), 2060)
+            port = config_int(options.get("port", 2060), 2060)
         except (TypeError, ValueError):
             invalid_port = options.get("port", 2060)
             self.log(
@@ -2435,7 +2537,7 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
             port = 2060
 
         try:
-            requests_per_minute = _config_int(
+            requests_per_minute = config_int(
                 options.get("rate_limit_per_minute", 60),
                 60,
             )
@@ -2549,7 +2651,7 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
             if isinstance(vision, PersonaClient):
                 with contextlib.suppress(Exception):
                     vision.interrupt()
-            self._emit_event("shutdown", ShutdownEvent(celune=self))
+            self.emit_event("shutdown", ShutdownEvent(celune=self))
             try:
                 if self.extension_manager is not None:
                     self.extension_manager.unregister_all()
@@ -2599,11 +2701,11 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
 
     def _close_agent_tool_selector(self) -> None:
         """Release the optional loaded Needle handler during engine shutdown."""
-        selector = self._agent_needle_selector
+        selector = self.agent_needle_selector
         if isinstance(selector, NeedleToolSelector):
             with contextlib.suppress(Exception):
                 selector.handler.close()
-        self._agent_needle_selector = None
+        self.agent_needle_selector = None
 
     def fatal(self) -> None:
         """Mark Celune state as fatal and prevent further operations."""
@@ -2631,7 +2733,7 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
         generation_task = asyncio.create_task(generation_worker_job(self))
         await asyncio.gather(generation_task, playback_task)
 
-    def _run_pipeline_jobs(self) -> None:
+    def run_pipeline_jobs(self) -> None:
         """Start Celune's async speech pipeline inside one engine thread."""
         asyncio.run(self._pipeline_jobs())
 

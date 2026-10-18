@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import time
 import queue
+
+# noinspection PyProtectedMember
 from typing import TYPE_CHECKING, Union, Optional
 
 import numpy as np
@@ -13,10 +15,10 @@ from .i18n import string, tagged_string
 from .utils import format_error_message
 from .playback import (
     release_pipeline,
-    _queue_playback_done,
-    _next_playback_source_id,
-    _register_playback_source,
-    _flush_buffered_speech_chunks,
+    queue_playback_done,
+    next_playback_source_id,
+    register_playback_source,
+    flush_buffered_speech_chunks,
 )
 from .audio.dsp import is_silent_utterance
 from .constants import BASE_SR, APP_NAME
@@ -88,12 +90,12 @@ def play_prepared_speech(
         if audio is None or not audio.size:
             raise NotAvailableError("prepared speech has no audio")
         audio = np.asarray(audio, dtype=np.float32)
-        source_id = _next_playback_source_id(engine)
+        source_id = next_playback_source_id(engine)
         caption_enabled = (
             engine.config.get("captions") is True and caption_worker is not None
         )
         words = tuple(item.display_text.split())
-        _register_playback_source(
+        register_playback_source(
             engine,
             source_id,
             kind="speech",
@@ -140,7 +142,7 @@ def play_prepared_speech(
             )
             release_pipeline(engine, playback_idle=False)
         else:
-            _flush_buffered_speech_chunks(
+            flush_buffered_speech_chunks(
                 engine,
                 source_id,
                 [audio],
@@ -148,7 +150,7 @@ def play_prepared_speech(
                 False,
                 item.stream_queue,
             )
-            _queue_playback_done(
+            queue_playback_done(
                 engine,
                 source_id,
                 release_pipeline_when_finished=True,

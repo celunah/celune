@@ -51,7 +51,7 @@ class _VoxCPMRuntime(Protocol):
     residual_lm: _VoxCPMLanguageModel
 
 
-class _VoxCPMModel(Protocol):
+class VoxCPMModel(Protocol):
     """Loaded VoxCPM model surface used by the cache adapter."""
 
     tts_model: _VoxCPMRuntime
@@ -185,7 +185,7 @@ class QuantizedStaticKVCache:
         )
         self.scales[key_value_index, layer_index, ..., :prefix_length, :].copy_(scales)
 
-    def _store_step(
+    def store_step(
         self,
         layer_index: int,
         position: int,
@@ -233,7 +233,7 @@ class QuantizedStaticKVCache:
             values.squeeze(-2).to(self.dtype)
         )
 
-    def _attention_states(
+    def attention_states(
         self,
         layer_index: int,
         sequence_length: int,
@@ -333,13 +333,13 @@ def _voxcpm_quantized_forward_step(
         )
 
     position = cache_layer.cache.current_length - 1
-    cache_layer.cache._store_step(
+    cache_layer.cache.store_step(
         cache_layer.layer_index,
         position,
         key_states,
         value_states,
     )
-    key_cache, value_cache = cache_layer.cache._attention_states(
+    key_cache, value_cache = cache_layer.cache.attention_states(
         cache_layer.layer_index,
         position + 1,
     )
@@ -361,7 +361,7 @@ def _voxcpm_quantized_forward_step(
     return attention.o_proj(attn_output)
 
 
-def install_voxcpm_quantized_cache(model: _VoxCPMModel, enabled: bool) -> bool:
+def install_voxcpm_quantized_cache(model: VoxCPMModel, enabled: bool) -> bool:
     """Install compact caches on both VoxCPM autoregressive language models.
 
     Args:

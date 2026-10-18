@@ -14,7 +14,7 @@ import pytest
 from celune.typing.common import JSONSerializable
 from celune.agent.needle.models import NeedleModel
 from celune.persona.capabilities import PersonaCapabilities
-from celune.agent.needle.impl import _parse_single_selection
+from celune.agent.needle.impl import parse_single_selection
 from celune.typing.agent import (
     ToolCall,
     AgentOutput,
@@ -257,8 +257,8 @@ class TestNeedleSelector:
         with pytest.raises(NeedleSelectionError):
             selector(_context(), _output(" "))
         with pytest.raises(NeedleSelectionError):
-            _parse_single_selection("not json", {})
-        selection = _parse_single_selection(
+            parse_single_selection("not json", {})
+        selection = parse_single_selection(
             '[{"name":"one","arguments":{}},{"name":"two","arguments":{}}]',
             {},
         )

@@ -352,7 +352,7 @@ def confirm_repair() -> bool:
     return False
 
 
-def _sync_arguments(system_name: str, uv: Path) -> list[str]:
+def sync_arguments(system_name: str, uv: Path) -> list[str]:
     """Return the platform-safe dependency synchronization command."""
     command = [str(uv), "sync", "--dev"]
     if system_name == "Windows":
@@ -473,7 +473,7 @@ def main() -> int:
     if repair_requested and not _recreate_virtual_environment(uv):
         print("Celune setup did not complete successfully.")
         return 1
-    if not _run(_sync_arguments(system_name, uv)):
+    if not _run(sync_arguments(system_name, uv)):
         print("Celune's Python environment could not be synchronized.")
         ok = False
 

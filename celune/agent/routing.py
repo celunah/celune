@@ -12,7 +12,7 @@ from ..i18n import string
 from .runtime import AgentRuntime
 from ..modes import mode_allows_agents
 from ..vram import agent_vram_compatible
-from ..exceptions import _EmptyClassifierOutput
+from ..exceptions import EmptyClassifierOutput
 from ..typing.common import JSON, JSONSerializable
 from ..typing.persona import PersonaClientResponse
 from ..conversation import build_agent_classification_request
@@ -333,7 +333,7 @@ class AgentInputRouter:
                 error=exc,
                 task=task,
             )
-        except _EmptyClassifierOutput as exc:
+        except EmptyClassifierOutput as exc:
             return self._classifier_failure(
                 AgentClassificationFailureKind.EMPTY_OUTPUT,
                 str(exc),
@@ -387,7 +387,7 @@ class AgentInputRouter:
                 return cast(JSON, decoded)
             raise TypeError("classifier response content must be a JSON object")
         if found_field and not found_text:
-            raise _EmptyClassifierOutput("classifier response output was empty")
+            raise EmptyClassifierOutput("classifier response output was empty")
         if not found_text:
             raise ValueError("classifier response did not contain structured output")
         raise ValueError("classifier response content was empty")

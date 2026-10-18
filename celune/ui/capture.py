@@ -15,7 +15,7 @@ from typing import Union, Optional, cast
 from textual.color import Color
 
 from . import app as _app
-from .constants import _CAPTION_FADE_SECONDS
+from .constants import CAPTION_FADE_SECONDS
 from ..binding import install_class_functions
 
 __all__ = (
@@ -36,10 +36,8 @@ __all__ = (
     "_flush_vc_recording_chunk_locked",
     "_get_persona_speech_transcriber",
     "_hide_caption_widgets",
-    "_is_voice_conversion_mode",
     "_join_vc_recording_threads",
     "_normalize_vc_overlap_audio",
-    "_persona_recording_active",
     "_persona_recording_audio_locked",
     "_persona_speech_end_delay_seconds",
     "_persona_speech_language",
@@ -66,13 +64,14 @@ __all__ = (
     "_vc_input_rms",
     "_vc_live_chunk_frames",
     "_vc_live_chunk_overlap_frames",
-    "_vc_recording_active",
     "_vc_vad_hangover_frames",
     "_vc_vad_preroll_frames",
     "_with_darkened_brightness",
     "change_input_state",
     "change_voice_lock_state",
+    "is_voice_conversion_mode",
     "on_uilog_message",
+    "persona_recording_active",
     "pulse_border",
     "refresh_vc_controls",
     "safe_caption_progress",
@@ -82,6 +81,7 @@ __all__ = (
     "set_vc_f0_condition",
     "toggle_persona_recording",
     "tts_caption",
+    "vc_recording_active",
 )
 
 
@@ -160,7 +160,7 @@ def _animate_opacity(
     opacity: float,
     on_complete: Optional[Callable[[], None]] = None,
     token: Optional[int] = None,
-    duration: float = _CAPTION_FADE_SECONDS,
+    duration: float = CAPTION_FADE_SECONDS,
 ) -> None:
     """Fade one widget through its mutable CSS opacity property.
 
@@ -566,8 +566,7 @@ def safe_status(self, msg: str, severity: str = "info") -> None:
     ):
         return
 
-    if not _app._RUNTIME_DEPENDENCIES_LOADED:
-        _app._load_ui_runtime_dependencies()
+    _app.ensure_ui_runtime_dependencies()
 
     if severity not in _app.colors.SEVERITY_COLORS["celune"]:
         self.safe_log(
@@ -621,8 +620,7 @@ def safe_log(
     if levels.get(active_log_level, 0) < levels.get(loglevel, 0):
         return
 
-    if not _app._RUNTIME_DEPENDENCIES_LOADED:
-        _app._load_ui_runtime_dependencies()
+    _app.ensure_ui_runtime_dependencies()
 
     if severity not in _app.colors.SEVERITY_COLORS["celune"]:
         severity = "info"
@@ -666,7 +664,7 @@ def safe_log_dev(self, msg: str, severity: str = "info") -> None:
     self.safe_log(msg, severity, loglevel="verbose")
 
 
-def _is_voice_conversion_mode(self) -> bool:
+def is_voice_conversion_mode(self) -> bool:
     """Return whether the attached Celune instance is running in VC mode."""
     return bool(
         self.celune is not None and getattr(self.celune, "vc_backend", None) is not None
@@ -684,7 +682,7 @@ def refresh_vc_controls(self) -> None:
     if self.vc_mode_button is None or self.celune is None:
         return
 
-    is_vc_mode = self._is_voice_conversion_mode()
+    is_vc_mode = self.is_voice_conversion_mode()
     self._set_vc_controls_visibility(is_vc_mode)
     if not is_vc_mode:
         self._cancel_vc_recording(announce=False)
@@ -724,7 +722,7 @@ def set_vc_f0_condition(self, enabled: bool, announce: bool = True) -> None:
         )
 
 
-def _persona_recording_active(self) -> bool:
+def persona_recording_active(self) -> bool:
     """Return whether Persona microphone capture is active."""
     return self._persona_recording_stream is not None
 
@@ -992,15 +990,15 @@ def _request_persona_recording_stop(self) -> bool:
 
 def _start_persona_recording(self) -> bool:
     """Start push-to-talk microphone capture for the active Persona."""
-    _app._load_ui_runtime_dependencies()
+    _app.ensure_ui_runtime_dependencies()
     if (
         self.celune is None
-        or self._is_voice_conversion_mode()
+        or self.is_voice_conversion_mode()
         or not self._persona_loaded()
         or not _app.persona_talkback_enabled(self.celune.config)
     ):
         return False
-    if self._persona_recording_active():
+    if self.persona_recording_active():
         return True
 
     input_config = getattr(self.celune, "config", None)
@@ -1034,12 +1032,12 @@ def _start_persona_recording(self) -> bool:
         )
         return False
 
-    channels = _app._device_scalar_int(device_info.get("max_input_channels"), 0)
+    channels = _app.device_scalar_int(device_info.get("max_input_channels"), 0)
     if channels <= 0:
         self.safe_log(_app.string("pipeline.no_audio_device"), "warning")
         return False
 
-    sample_rate = _app._device_scalar_int(
+    sample_rate = _app.device_scalar_int(
         device_info.get("default_samplerate"),
         48000,
     )
@@ -1191,7 +1189,7 @@ def toggle_persona_recording(self) -> bool:
     Returns:
         ``True`` when recording was stopped or started successfully.
     """
-    if self._persona_recording_active():
+    if self.persona_recording_active():
         return self._request_persona_recording_stop()
     return self._start_persona_recording()
 
@@ -1229,7 +1227,7 @@ def _shutdown_persona_recording(self) -> None:
         component_lease.release()
 
 
-def _vc_recording_active(self) -> bool:
+def vc_recording_active(self) -> bool:
     """Return whether live VC recording is active in the TUI."""
     return self._vc_recording_stream is not None
 
@@ -1244,18 +1242,18 @@ def _vc_feedback_rise_detected(
     current_rms: float,
 ) -> bool:
     """Return whether the latest RMS jump looks like runaway feedback."""
-    if previous_rms < _app._VC_FEEDBACK_RMS_MIN_PREVIOUS:
+    if previous_rms < _app.VC_FEEDBACK_RMS_MIN_PREVIOUS:
         return False
-    if current_rms < _app._VC_FEEDBACK_RMS_MIN_CURRENT:
+    if current_rms < _app.VC_FEEDBACK_RMS_MIN_CURRENT:
         return False
-    if current_rms < previous_rms * _app._VC_FEEDBACK_RMS_RISE_RATIO:
+    if current_rms < previous_rms * _app.VC_FEEDBACK_RMS_RISE_RATIO:
         return False
-    return (current_rms - previous_rms) >= _app._VC_FEEDBACK_RMS_RISE_DELTA
+    return (current_rms - previous_rms) >= _app.VC_FEEDBACK_RMS_RISE_DELTA
 
 
 def _vc_feedback_min_capture_frames(sample_rate: int) -> int:
     """Return the minimum capture length before feedback auto-stop is allowed."""
-    return max(1, int(sample_rate * _app._VC_FEEDBACK_MIN_CAPTURE_SECONDS))
+    return max(1, int(sample_rate * _app.VC_FEEDBACK_MIN_CAPTURE_SECONDS))
 
 
 def _request_vc_recording_feedback_stop(self) -> None:
@@ -1368,7 +1366,7 @@ def _clear_vc_preroll_locked(self) -> None:
 
 def _vc_input_has_voice(audio: _app.npt.NDArray[_app.np.float32]) -> bool:
     """Return whether one microphone callback likely contains voice activity."""
-    _app._load_ui_runtime_dependencies()
+    _app.ensure_ui_runtime_dependencies()
     return _app.vc_input_has_voice(audio)
 
 
@@ -1376,7 +1374,7 @@ def _normalize_vc_overlap_audio(
     audio: _app.npt.NDArray[_app.np.float32],
 ) -> _app.npt.NDArray[_app.np.float32]:
     """Normalize one VC overlap chunk into valid mono or stereo time-first audio."""
-    _app._load_ui_runtime_dependencies()
+    _app.ensure_ui_runtime_dependencies()
     normalized = _app.np.asarray(audio, dtype=_app.np.float32)
     if normalized.ndim == 1:
         return normalized
@@ -1397,7 +1395,7 @@ def _crossfade_vc_overlap(
     current_head: _app.npt.NDArray[_app.np.float32],
 ) -> _app.npt.NDArray[_app.np.float32]:
     """Crossfade two same-rate VC overlap regions into one seamless bridge."""
-    _app._load_ui_runtime_dependencies()
+    _app.ensure_ui_runtime_dependencies()
     overlap_frames = min(len(previous_tail), len(current_head))
     if overlap_frames <= 0:
         return _app.np.zeros((0, 2), dtype=_app.np.float32)
@@ -1579,7 +1577,7 @@ def _join_vc_recording_threads(
 
 def _cancel_vc_recording(self, announce: bool = True) -> bool:
     """Stop VC recording without submitting audio for conversion."""
-    if not self._vc_recording_active():
+    if not self.vc_recording_active():
         return False
 
     with self._vc_recording_lock:
@@ -1606,7 +1604,7 @@ def _cancel_vc_recording(self, announce: bool = True) -> bool:
 
 def _stop_vc_recording_for_feedback(self) -> None:
     """Stop live VC recording after detecting a sudden feedback-like RMS spike."""
-    if not self._vc_recording_active():
+    if not self.vc_recording_active():
         return
 
     with self._vc_recording_lock:

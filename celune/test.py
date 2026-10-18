@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import time
 import threading
+
+# noinspection PyProtectedMember
 from typing import TYPE_CHECKING, Optional
 from collections.abc import Callable
 
@@ -51,14 +53,14 @@ def _start_agent_test_pipeline(engine: Celune) -> None:
         engine.loaded = True
         engine.model_ready.set()
         pipeline_thread = threading.Thread(
-            target=engine._run_pipeline_jobs,
+            target=engine.run_pipeline_jobs,
             daemon=True,
         )
         engine._playback_thread = pipeline_thread
         pipeline_thread.start()
 
     if engine.locked:
-        engine._release_pipeline()
+        engine.release_pipeline()
 
 
 def _agent_test_route_failure(
@@ -100,7 +102,7 @@ def _check(name: str, status: str, detail: str) -> JSON:
     return {"name": name, "status": status, "detail": detail}
 
 
-def _agent_test_succeeded(result: Optional[JSON]) -> bool:
+def agent_test_succeeded(result: Optional[JSON]) -> bool:
     """Return whether a completed agent diagnostic recorded overall success."""
     return result is not None and result.get("success") is True
 
@@ -214,7 +216,7 @@ def _run_live_checks(
     checks.append(_check("live.routing", "passed", string("test.agent_routing_passed")))
 
     try:
-        delivered = engine._run_agent_route(route)
+        delivered = engine.run_agent_route(route)
         final_state = _task_state(engine, task_id)
         if final_state != AgentTaskState.COMPLETED.value:
             if final_state in {

@@ -7,7 +7,7 @@ from unittest import mock
 
 from celune.agent import AgentOutput, agent_mode_enabled
 from celune.modes import resolve_operation_mode
-from celune.celune import _agent_task_config
+from celune.celune import agent_task_config
 from celune.persona.impl import persona_enabled, persona_context_size
 from celune.typing.common import Config
 from celune.typing.persona import PersonaModel, PersonaProcessor, PersonaTokenizer
@@ -68,9 +68,9 @@ class TestOperationMode(CeluneTestCase):
         assert persona_context_size({"persona": {"context_size": 8192}}) == 2048
         assert persona_context_size({}) == 2048
         assert (
-            _agent_task_config({"agent": {"context_size": 32768}}).context_size == 8192
+            agent_task_config({"agent": {"context_size": 32768}}).context_size == 8192
         )
-        assert _agent_task_config({}).context_size == 8192
+        assert agent_task_config({}).context_size == 8192
 
 
 class TestPersonaCapabilities(CeluneTestCase):

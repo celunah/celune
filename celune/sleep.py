@@ -70,7 +70,7 @@ def _sleep_config(self) -> tuple[bool, int, dict[str, bool]]:
         unload_config = {}
 
     try:
-        timeout = _core._config_int(sleep_config.get("timeout", 10), 10)
+        timeout = _core.config_int(sleep_config.get("timeout", 10), 10)
     except (TypeError, ValueError):
         timeout = 10
 
@@ -139,7 +139,7 @@ def enter_sleep_mode(self) -> bool:
                 "[SLEEP] enter deferred "
                 f"locked={self.locked} state={self.cur_state} "
                 f"playback_active={playback_active} "
-                f"playback_sources={len(self._playback_source_meta)} "
+                f"playback_sources={len(self.playback_source_meta)} "
                 f"playback_done={self.playback_done.is_set()}",
                 loglevel="debug",
             )
@@ -180,7 +180,7 @@ def enter_sleep_mode(self) -> bool:
                 self.unload_normalizer_state(release_cuda_cache=False)
 
             if unload["vc"] and not unload["tts"] and self.vc_backend is not None:
-                _core._dispose_backend(self.vc_backend, release_cuda_cache=False)
+                _core.dispose_backend(self.vc_backend, release_cuda_cache=False)
     finally:
         self.model_ready.set()
 
@@ -214,7 +214,7 @@ def wake_from_sleep(self) -> bool:
 
         try:
             with self._model_lock:
-                if self._is_voice_conversion_mode():
+                if self.is_voice_conversion_mode():
                     if self.vc_backend is None:
                         raise NotAvailableError(
                             "cannot wake without a configured voice conversion backend"
@@ -244,7 +244,7 @@ def wake_from_sleep(self) -> bool:
                         if not self._warmup():
                             self._raise_warmup_error("warmup failed after sleep")
 
-                is_voice_conversion = self._is_voice_conversion_mode()
+                is_voice_conversion = self.is_voice_conversion_mode()
                 if (
                     not is_voice_conversion
                     and unload["persona"]
@@ -325,7 +325,7 @@ def _run_wake_background_jobs(self, unload: dict[str, bool]) -> None:
             if (
                 unload["vc"]
                 and self.vc_backend is not None
-                and not self._is_voice_conversion_mode()
+                and not self.is_voice_conversion_mode()
             ):
                 with self._model_lock:
                     if self.exit_requested or self.sleeping:

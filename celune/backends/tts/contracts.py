@@ -20,7 +20,12 @@ from ...registry.tts import (
 )
 from ...exceptions import InvalidCheckpoint, ModelContractError
 
-__all__ = ["validate_model_state", "validate_safetensors_artifact"]
+__all__ = [
+    "canonical_inventory",
+    "inventory_from_state",
+    "validate_model_state",
+    "validate_safetensors_artifact",
+]
 
 
 def _sha256(path: Path) -> str:
@@ -32,7 +37,7 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _canonical_inventory(
+def canonical_inventory(
     tensors: Mapping[str, tuple[tuple[int, ...], str]],
 ) -> str:
     """Hash sorted tensor names, shapes, and dtypes as a stable inventory."""
@@ -61,7 +66,7 @@ def _dtype_name(dtype: object) -> str:
     }.get(value, value)
 
 
-def _inventory_from_state(
+def inventory_from_state(
     state: Mapping[str, torch.Tensor],
 ) -> tuple[dict[str, tuple[tuple[int, ...], str]], Counter[str], int]:
     """Build a structural inventory from a loaded PyTorch state dictionary."""
@@ -192,7 +197,7 @@ def validate_model_state(
     checkpoint_filename = filename or "model.safetensors"
     checkpoint_path = path or name
     try:
-        tensors, dtype_counts, parameter_count = _inventory_from_state(state)
+        tensors, dtype_counts, parameter_count = inventory_from_state(state)
     except ModelContractError as exc:
         raise _invalid_state(
             backend=backend,
@@ -231,7 +236,7 @@ def validate_model_state(
                 path=checkpoint_path,
                 reason=f"{name} dtype counts mismatch: expected {expected_counts}, got {dict(dtype_counts)}",
             )
-        inventory_digest = _canonical_inventory(tensors)
+        inventory_digest = canonical_inventory(tensors)
         if inventory_digest != contract.inventory_sha256:
             raise _invalid_state(
                 backend=backend,
@@ -376,7 +381,7 @@ def _inventory_from_header(
         tensor_count=len(tensors),
         parameter_count=parameter_count,
         dtype_counts=tuple(sorted(dtype_counts.items())),
-        inventory_sha256=_canonical_inventory(tensors),
+        inventory_sha256=canonical_inventory(tensors),
     )
 
 

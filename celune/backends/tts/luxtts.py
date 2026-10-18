@@ -18,7 +18,7 @@ from huggingface_hub import snapshot_download
 
 from .base import (
     CeluneBackend,
-    _to_numpy_audio,
+    to_numpy_audio,
     local_hf_offline_mode,
     cached_hf_snapshot_path,
 )
@@ -43,7 +43,13 @@ from ...cevoice import CEVoiceLoader, default_loader
 from ...registry.consent import require_model_consent
 from ...paths import temp_data_dir, huggingface_progress, huggingface_hub_cache_dir
 
-__all__ = ["LuxTTS"]
+__all__ = [
+    "LuxTTS",
+    "LuxTTSModel",
+    "install_cpu_duration_correction",
+    "install_vocoder_decode_guard",
+    "set_vocoder_silence_feature",
+]
 
 _LUXTTS_TRANSCRIBER_FILES = [
     "config.json",
@@ -107,7 +113,7 @@ class _LuxTTSOnnxModel(Protocol):
         raise NotImplementedError("protocol not defined")
 
 
-class _LuxTTSModel(BackendModel, Protocol):
+class LuxTTSModel(BackendModel, Protocol):
     """Subset of LuxTTS required by Celune's adapter."""
 
     model: _LuxTTSOnnxModel
@@ -137,11 +143,11 @@ class _LuxTTSModel(BackendModel, Protocol):
         raise NotImplementedError("protocol not defined")
 
 
-def _load_runtime_class() -> Callable[..., _LuxTTSModel]:
+def _load_runtime_class() -> Callable[..., LuxTTSModel]:
     """Load LuxTTS only inside its isolated backend environment."""
     from zipvoice.luxvoice import LuxTTS as RuntimeLuxTTS
 
-    return cast(Callable[..., _LuxTTSModel], RuntimeLuxTTS)
+    return cast(Callable[..., LuxTTSModel], RuntimeLuxTTS)
 
 
 def _runtime_device() -> str:
@@ -200,8 +206,8 @@ def _pad_vocoder_features(
     return torch.cat((features, tail), dim=-1)
 
 
-def _set_vocoder_silence_feature(
-    model: _LuxTTSModel,
+def set_vocoder_silence_feature(
+    model: LuxTTSModel,
     encoded_prompt: _LuxPrompt,
 ) -> None:
     """Give the Vocos guard the prompt's final silent acoustic feature."""
@@ -221,7 +227,7 @@ def _set_vocoder_silence_feature(
     setattr(vocoder, _LUXTTS_VOCODER_SILENCE_FEATURE, silence_feature)
 
 
-def _install_cpu_duration_correction(model: _LuxTTSModel) -> None:
+def install_cpu_duration_correction(model: LuxTTSModel) -> None:
     """Correct the CPU ONNX duration ratio before prompt frames are removed."""
     onnx_model = getattr(model, "model", None)
     if onnx_model is None:
@@ -288,7 +294,7 @@ def _install_cpu_duration_correction(model: _LuxTTSModel) -> None:
     )
 
 
-def _install_vocoder_decode_guard(model: _LuxTTSModel) -> None:
+def install_vocoder_decode_guard(model: LuxTTSModel) -> None:
     """Protect the isolated LuxTTS Vocos decoder from empty short outputs."""
     vocoder = getattr(model, "vocos", None)
     if vocoder is None:
@@ -323,7 +329,7 @@ def _install_vocoder_decode_guard(model: _LuxTTSModel) -> None:
     vocoder.decode = MethodType(guarded_decode, vocoder)
 
 
-class LuxTTS(CeluneBackend[_LuxTTSModel]):
+class LuxTTS(CeluneBackend[LuxTTSModel]):
     """Celune's CPU-capable LuxTTS voice-cloning backend."""
 
     name: str = "luxtts"
@@ -449,7 +455,7 @@ class LuxTTS(CeluneBackend[_LuxTTSModel]):
             required_files,
         )
 
-    def load_model(self, model_id: str, **kwargs) -> _LuxTTSModel:
+    def load_model(self, model_id: str, **kwargs) -> LuxTTSModel:
         """Load LuxTTS on CUDA when available, otherwise use its CPU path."""
         del kwargs
         metadata = require_model_consent(model_id)
@@ -476,8 +482,8 @@ class LuxTTS(CeluneBackend[_LuxTTSModel]):
                 device=device,
                 threads=self._threads,
             )
-        _install_cpu_duration_correction(model)
-        _install_vocoder_decode_guard(model)
+        install_cpu_duration_correction(model)
+        install_vocoder_decode_guard(model)
         return model
 
     def prepare_model_loading(self) -> None:
@@ -513,7 +519,7 @@ class LuxTTS(CeluneBackend[_LuxTTSModel]):
             )
 
     def generate_stream(
-        self, model: _LuxTTSModel, **kwargs
+        self, model: LuxTTSModel, **kwargs
     ) -> Iterator[tuple[AudioChunk, int, Optional[dict]]]:
         """Generate one normalized, complete LuxTTS waveform for Celune."""
         text = kwargs.pop("text", None)
@@ -554,7 +560,7 @@ class LuxTTS(CeluneBackend[_LuxTTSModel]):
                 ),
                 rms=0.01,
             )
-            _set_vocoder_silence_feature(model, encoded_prompt)
+            set_vocoder_silence_feature(model, encoded_prompt)
             try:
                 waveform = model.generate_speech(
                     text,
@@ -573,7 +579,7 @@ class LuxTTS(CeluneBackend[_LuxTTSModel]):
                 )
 
         audio = np.ascontiguousarray(
-            np.clip(_to_numpy_audio(waveform), -1.0, 1.0), dtype=np.float32
+            np.clip(to_numpy_audio(waveform), -1.0, 1.0), dtype=np.float32
         )
         if audio.size == 0:
             raise ValueError("LuxTTS produced no acoustic frames for the input")

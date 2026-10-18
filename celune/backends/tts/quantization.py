@@ -17,8 +17,10 @@ from ...registry.tts import QuantizationRule, ModelComponentContract
 
 __all__ = [
     "QuantizationMode",
+    "is_safe_linear",
     "quantization_mode",
     "quantize_component",
+    "torchao_api",
 ]
 
 
@@ -66,7 +68,7 @@ def _is_quantized_tensor(tensor: torch.Tensor) -> bool:
     return tensor.__class__.__module__.startswith("torchao.")
 
 
-def _is_safe_linear(
+def is_safe_linear(
     module: nn.Module,
     fully_qualified_name: str,
     rule: QuantizationRule,
@@ -88,7 +90,7 @@ def _import_torchao_quantization():
     return quantization
 
 
-def _torchao_api() -> tuple[
+def torchao_api() -> tuple[
     Callable[..., None],
     Callable[[], _QuantizationConfig],
     Callable[[], _QuantizationConfig],
@@ -182,16 +184,14 @@ def quantize_component(
         path=component.artifact_path,
         runtime_dtypes=component.runtime_dtypes,
     )
-    quantize, int8_config, fp8_config = _torchao_api()
+    quantize, int8_config, fp8_config = torchao_api()
     config = _quantization_config(mode, int8_config, fp8_config)
     try:
         try:
             quantize(
                 module,
                 config,
-                filter_fn=lambda candidate, name: _is_safe_linear(
-                    candidate, name, rule
-                ),
+                filter_fn=lambda candidate, name: is_safe_linear(candidate, name, rule),
             )
         except Exception as exc:
             raise BackendError(
@@ -203,7 +203,7 @@ def quantize_component(
         converted = sum(
             1
             for name, candidate in module.named_modules()
-            if _is_safe_linear(candidate, name, rule)
+            if is_safe_linear(candidate, name, rule)
             and _is_quantized_tensor(candidate.weight)
         )
         if converted == 0:

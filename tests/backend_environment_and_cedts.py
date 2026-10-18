@@ -46,7 +46,7 @@ from celune.typing.backends import (
     BackendModel,
     BackendGeneration,
     BackendArgumentValue,
-    _BackendRuntime,
+    BackendRuntime,
 )
 from celune.backends import environment
 from celune.cedts import remote, worker
@@ -54,7 +54,7 @@ from celune.backends.environment import (
     BACKEND_MANIFESTS,
     BackendManifest,
     BackendEnvironmentManager,
-    _exclusive_lock,
+    exclusive_lock,
     backend_manifest,
 )
 from celune.dataclasses.pipeline import AudioOutput, VoiceConversionRequest
@@ -75,20 +75,20 @@ class TestBackendEnvironment(CeluneTestCase):
             singing=True,
             uses_voice_bundles=True,
         )
-        description = worker._describe(cast(_BackendRuntime, backend))
+        description = worker._describe(cast(BackendRuntime, backend))
         self.assertTrue(description["singing"])
 
         proxy = object.__new__(remote.RemoteBackendProxy)
-        proxy._request = mock.Mock(return_value=description)
+        proxy.request = mock.Mock(return_value=description)
         proxy._load_description()
         self.assertTrue(proxy.singing)
 
         notation = "[c3:4] hello"
-        proxy._request.return_value = "backend-format"
+        proxy.request.return_value = "backend-format"
         bundle_path = Path("custom.cevoice")
         with mock.patch.object(remote, "active_bundle_path", return_value=bundle_path):
             self.assertEqual(proxy.cesn_to_model(notation), "backend-format")
-        proxy._request.assert_called_with(
+        proxy.request.assert_called_with(
             "call",
             method="cesn_to_model",
             text=notation,
@@ -108,7 +108,7 @@ class TestBackendEnvironment(CeluneTestCase):
         notation = "[c3:4] hello"
         with mock.patch.object(worker, "select_voice_bundle") as select_bundle:
             response, _ = worker._run_request(
-                cast(_BackendRuntime, SingingBackend()),
+                cast(BackendRuntime, SingingBackend()),
                 cast(
                     WorkerRequest,
                     {
@@ -192,7 +192,7 @@ class TestBackendEnvironment(CeluneTestCase):
             for voice in ("Standard", "Alternate"):
                 arguments = dict(request_arguments, voice=voice)
                 response, _ = worker._run_request(
-                    cast(_BackendRuntime, backend),
+                    cast(BackendRuntime, backend),
                     cast(
                         WorkerRequest,
                         {"operation": "generate_stream", "arguments": arguments},
@@ -695,14 +695,14 @@ class TestBackendEnvironment(CeluneTestCase):
                         "4",
                     )
 
-    def test_exclusive_lock_times_out_while_another_handle_owns_it(self) -> None:
+    def testexclusive_lock_times_out_while_another_handle_owns_it(self) -> None:
         """Verify the operating-system lock blocks a second installer."""
         with tempfile.TemporaryDirectory() as temporary_directory:
             lock_path = Path(temporary_directory) / "install.lock"
             with (
-                _exclusive_lock(lock_path, timeout=1.0),
+                exclusive_lock(lock_path, timeout=1.0),
                 self.assertRaises(BackendEnvironmentError),
-                _exclusive_lock(lock_path, timeout=0.01),
+                exclusive_lock(lock_path, timeout=0.01),
             ):
                 pass
 
@@ -971,7 +971,7 @@ class TestBackendEnvironment(CeluneTestCase):
                 """Represent a method that must never be remotely exposed."""
                 return "secret"
 
-        backend = cast(_BackendRuntime, FakeBackend())
+        backend = cast(BackendRuntime, FakeBackend())
         with self.assertRaises(CEDTSError):
             worker._run_request(
                 backend,
@@ -1002,7 +1002,7 @@ class TestBackendEnvironment(CeluneTestCase):
                 """Return a minimal JSON-compatible VRAM report."""
                 return {"process_scope": "worker"}
 
-        backend = cast(_BackendRuntime, FakeBackend())
+        backend = cast(BackendRuntime, FakeBackend())
         response, next_model_id = worker._run_request(
             backend,
             {
@@ -1046,7 +1046,7 @@ class TestBackendEnvironment(CeluneTestCase):
 
     def test_worker_request_validation_normalizes_malformed_arguments(self) -> None:
         """Verify non-object and invalid operation arguments become protocol errors."""
-        backend = cast(_BackendRuntime, object())
+        backend = cast(BackendRuntime, object())
         malformed_requests = (
             {"operation": "describe", "arguments": []},
             {"operation": "model_is_available_locally", "arguments": {}},
@@ -1158,7 +1158,7 @@ class TestBackendEnvironment(CeluneTestCase):
         backend = FakeBackend()
         models: dict[int, BackendModel] = {}
         loaded, next_model_id = worker._run_request(
-            cast(_BackendRuntime, backend),
+            cast(BackendRuntime, backend),
             cast(
                 WorkerRequest,
                 {
@@ -1182,7 +1182,7 @@ class TestBackendEnvironment(CeluneTestCase):
         self.assertEqual(loaded_settings["voice"], "celune")
 
         generated, _ = worker._run_request(
-            cast(_BackendRuntime, backend),
+            cast(BackendRuntime, backend),
             cast(
                 WorkerRequest,
                 {
@@ -1218,7 +1218,7 @@ class TestBackendEnvironment(CeluneTestCase):
         for request in malformed_arguments:
             with self.subTest(request=request), self.assertRaises(CEDTSError):
                 worker._run_request(
-                    cast(_BackendRuntime, backend),
+                    cast(BackendRuntime, backend),
                     cast(WorkerRequest, request),
                     models,
                     next_model_id,
@@ -1244,7 +1244,7 @@ class TestBackendEnvironment(CeluneTestCase):
 
         def run_stream() -> None:
             response, _ = worker._run_request(
-                cast(_BackendRuntime, FakeBackend()),
+                cast(BackendRuntime, FakeBackend()),
                 {
                     "operation": "generate_stream",
                     "arguments": {"model_id": 1},
@@ -1280,7 +1280,7 @@ class TestBackendEnvironment(CeluneTestCase):
                 cancellation.set()
 
         response, _ = worker._run_request(
-            cast(_BackendRuntime, FakeBackend()),
+            cast(BackendRuntime, FakeBackend()),
             {
                 "operation": "generate_stream",
                 "arguments": {"model_id": 1},
@@ -2021,7 +2021,7 @@ class TestBackendEnvironment(CeluneTestCase):
             mock.patch.object(worker, "_WORKER_STDERR", io.StringIO()),
         ):
             response, _ = worker._run_request(
-                cast(_BackendRuntime, FakeBackend()),
+                cast(BackendRuntime, FakeBackend()),
                 {"operation": "generate_stream", "arguments": {"model_id": 1}},
                 {1: object()},
                 2,
@@ -2061,7 +2061,7 @@ class TestBackendEnvironment(CeluneTestCase):
         cancellation = threading.Event()
         cancellation.set()
         response, _ = worker._run_request(
-            cast(_BackendRuntime, FakeBackend()),
+            cast(BackendRuntime, FakeBackend()),
             {"operation": "generate_stream", "arguments": {"model_id": 1}},
             {1: object()},
             2,

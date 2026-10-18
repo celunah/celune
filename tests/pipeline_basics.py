@@ -83,7 +83,7 @@ class TestPipeline(CeluneTestCase):
         """Verify playback pressure protection defaults to a small bounded window."""
         engine = make_pipeline_engine()
 
-        assert pipeline._pipeline_cpu_config(cast(Celune, engine)) == (
+        assert pipeline.pipeline_cpu_config(cast(Celune, engine)) == (
             True,
             12.0,
             4,
@@ -91,7 +91,7 @@ class TestPipeline(CeluneTestCase):
         )
 
         engine.config = {}
-        assert pipeline._pipeline_cpu_config(cast(Celune, engine)) == (
+        assert pipeline.pipeline_cpu_config(cast(Celune, engine)) == (
             True,
             12.0,
             4,
@@ -101,7 +101,7 @@ class TestPipeline(CeluneTestCase):
     def test_playback_contention_grows_reserve_after_lag_and_underflow(self) -> None:
         """Verify contention evidence expands the playback reserve target."""
         engine = make_pipeline_engine()
-        monitor = pipeline._PlaybackContentionMonitor(cast(Celune, engine))
+        monitor = pipeline.PlaybackContentionMonitor(cast(Celune, engine))
 
         assert monitor.target_seconds() == 2.0
         monitor.observe_scheduler_lag(0.2)
@@ -122,7 +122,7 @@ class TestPipeline(CeluneTestCase):
                 "celune.speech.prepare_playback_audio",
                 side_effect=lambda audio, sample_rate: audio,
             ),
-            mock.patch("celune.speech._queue_playback_chunk", return_value=True),
+            mock.patch("celune.speech.queue_playback_chunk", return_value=True),
         ):
             source_id = speech.queue_streaming_sfx_audio(
                 cast(Celune, engine),
@@ -133,17 +133,17 @@ class TestPipeline(CeluneTestCase):
             )
 
         assert source_id is not None
-        assert not pipeline._should_apply_contention_buffering(
+        assert not pipeline.should_apply_contention_buffering(
             cast(Celune, engine),
             (source_id,),
             False,
         )
-        assert pipeline._should_apply_contention_buffering(
+        assert pipeline.should_apply_contention_buffering(
             cast(Celune, engine),
             (),
             False,
         )
-        assert not pipeline._should_apply_contention_buffering(
+        assert not pipeline.should_apply_contention_buffering(
             cast(Celune, engine),
             (),
             True,
@@ -154,7 +154,7 @@ class TestPipeline(CeluneTestCase):
         engine = make_pipeline_engine()
         engine.config = {"pipeline_cpu": {"enabled": False}}
 
-        assert pipeline._pipeline_cpu_config(cast(Celune, engine)) == (
+        assert pipeline.pipeline_cpu_config(cast(Celune, engine)) == (
             True,
             12.0,
             4,
@@ -294,7 +294,7 @@ class TestPipeline(CeluneTestCase):
         engine._active_speech_generation = 1
         engine.utterance_force_stop.set()
 
-        queued = pipeline._queue_playback_chunk(
+        queued = pipeline.queue_playback_chunk(
             cast(Celune, engine),
             1,
             np.zeros((8, 2), dtype=np.float32),
@@ -311,7 +311,7 @@ class TestPipeline(CeluneTestCase):
         engine.playback_contention_level = 0.75
         engine.playback_underflows = 2
 
-        assert pipeline._queue_playback_chunk(
+        assert pipeline.queue_playback_chunk(
             cast(Celune, engine),
             1,
             np.zeros((8, 2), dtype=np.float32),
@@ -331,8 +331,8 @@ class TestPipeline(CeluneTestCase):
         engine = make_pipeline_engine()
         audio = np.zeros((8, 2), dtype=np.float32)
 
-        assert pipeline._queue_playback_chunk(cast(Celune, engine), 1, audio, 48000)
-        assert pipeline._queue_playback_chunk(cast(Celune, engine), 1, audio, 48000)
+        assert pipeline.queue_playback_chunk(cast(Celune, engine), 1, audio, 48000)
+        assert pipeline.queue_playback_chunk(cast(Celune, engine), 1, audio, 48000)
 
         assert engine.playback_queue_wait_seconds >= 0.0
         assert engine.playback_generation_gap_seconds >= 0.0
@@ -341,10 +341,10 @@ class TestPipeline(CeluneTestCase):
     def test_playback_writer_records_wait_gap_and_write_duration(self) -> None:
         """Verify the persistent writer exposes each application-side timing stage."""
         engine = make_pipeline_engine()
-        monitor = pipeline._PlaybackContentionMonitor(cast(Celune, engine))
+        monitor = pipeline.PlaybackContentionMonitor(cast(Celune, engine))
         writer = pipeline._PlaybackWriter(cast(Celune, engine), monitor)
         pipeline.register_playback_source(cast(Celune, engine), 1, kind="speech")
-        pipeline._playback_source_meta(cast(Celune, engine))[1]["total_frames"] = 8.0
+        pipeline.playback_source_meta(cast(Celune, engine))[1]["total_frames"] = 8.0
         engine.caption_progress_callback = mock.Mock()
 
         with mock.patch(
@@ -360,7 +360,7 @@ class TestPipeline(CeluneTestCase):
         assert engine.playback_writer_gap_seconds == 0.0
         assert engine.playback_writer_write_seconds >= 0.0
         assert (
-            pipeline._playback_source_meta(cast(Celune, engine))[1]["played_frames"]
+            pipeline.playback_source_meta(cast(Celune, engine))[1]["played_frames"]
             == 8.0
         )
         engine.caption_progress_callback.assert_not_called()
@@ -372,31 +372,31 @@ class TestPipeline(CeluneTestCase):
         """Verify captions do not finish against a still-growing speech source."""
         engine = make_pipeline_engine()
         pipeline.register_playback_source(cast(Celune, engine), 1, kind="speech")
-        source_meta = pipeline._playback_source_meta(cast(Celune, engine))[1]
+        source_meta = pipeline.playback_source_meta(cast(Celune, engine))[1]
         source_meta["total_frames"] = 8.0
         source_meta["played_frames"] = 8.0
         engine.caption_progress_callback = mock.Mock()
 
-        pipeline._update_playback_progress(cast(Celune, engine))
+        pipeline.update_playback_progress(cast(Celune, engine))
 
         engine.caption_progress_callback.assert_not_called()
 
         source_meta["total_frames"] = 16.0
         source_meta["played_frames"] = 8.0
         engine._playback_progress_last_emit_at = 0.0
-        pipeline._update_playback_progress(cast(Celune, engine))
+        pipeline.update_playback_progress(cast(Celune, engine))
 
         engine.caption_progress_callback.assert_not_called()
 
         source_meta["total_frames_final"] = 1.0
         engine._playback_progress_last_emit_at = 0.0
-        pipeline._update_playback_progress(cast(Celune, engine))
+        pipeline.update_playback_progress(cast(Celune, engine))
 
         engine.caption_progress_callback.assert_called_once_with(8.0, 16.0)
 
         source_meta["played_frames"] = 16.0
         engine._playback_progress_last_emit_at = 0.0
-        pipeline._update_playback_progress(cast(Celune, engine))
+        pipeline.update_playback_progress(cast(Celune, engine))
 
         assert engine.caption_progress_callback.call_args_list[-1] == mock.call(
             16.0, 16.0
@@ -404,15 +404,15 @@ class TestPipeline(CeluneTestCase):
 
     def test_caption_chunk_ranges_follow_source_text_chunks(self) -> None:
         """Verify source chunk boundaries map to stable display word ranges."""
-        assert pipeline._caption_chunk_word_ranges(
+        assert pipeline.caption_chunk_word_ranges(
             "one two three four", ["one two", "three four"]
         ) == ((0, 2), (2, 4))
 
-        assert pipeline._caption_chunk_word_ranges(
+        assert pipeline.caption_chunk_word_ranges(
             "one two three", ["one", "two three"]
         ) == ((0, 1), (1, 3))
 
-        assert pipeline._caption_chunk_word_ranges(
+        assert pipeline.caption_chunk_word_ranges(
             "Read foo_bar items and wait.",
             ["Read foo underscore bar items", "and wait."],
         ) == ((0, 3), (3, 5))
@@ -426,7 +426,7 @@ class TestPipeline(CeluneTestCase):
             kind="speech",
             caption_word_total=4,
         )
-        pipeline._record_caption_playback_segment(
+        pipeline.record_caption_playback_segment(
             cast(Celune, engine),
             1,
             0,
@@ -436,24 +436,24 @@ class TestPipeline(CeluneTestCase):
             ("one", "two"),
             word_start_frames=(60, 90),
         )
-        pipeline._record_caption_playback_segment(
+        pipeline.record_caption_playback_segment(
             cast(Celune, engine), 1, 100, 400, 2, 4, ("three", "four")
         )
-        source_meta = pipeline._playback_source_meta(cast(Celune, engine))[1]
+        source_meta = pipeline.playback_source_meta(cast(Celune, engine))[1]
         source_meta["total_frames"] = 400.0
         source_meta["played_frames"] = 50.0
         engine._caption_source_id = 1
         engine.progress_callback = mock.Mock()
         engine.caption_progress_callback = mock.Mock()
 
-        pipeline._update_playback_progress(cast(Celune, engine))
+        pipeline.update_playback_progress(cast(Celune, engine))
 
         engine.caption_progress_callback.assert_called_once_with(50.0, 400.0, 0)
 
         source_meta["total_frames"] = 600.0
         source_meta["played_frames"] = 250.0
         engine._playback_progress_last_emit_at = 0.0
-        pipeline._update_playback_progress(cast(Celune, engine))
+        pipeline.update_playback_progress(cast(Celune, engine))
 
         assert engine.caption_progress_callback.call_args_list[-1] == mock.call(
             250.0, 600.0, 3
@@ -472,11 +472,11 @@ class TestPipeline(CeluneTestCase):
         engine._caption_source_id = 2
         engine.caption_progress_callback = mock.Mock()
 
-        pipeline._notify_speech_playback_finished(cast(Celune, engine), 1)
+        pipeline.notify_speech_playback_finished(cast(Celune, engine), 1)
 
         engine.caption_progress_callback.assert_not_called()
 
-        pipeline._notify_speech_playback_finished(cast(Celune, engine), 2)
+        pipeline.notify_speech_playback_finished(cast(Celune, engine), 2)
 
         engine.caption_progress_callback.assert_called_once_with(1.0, 1.0)
 
@@ -501,7 +501,7 @@ class TestPipeline(CeluneTestCase):
         assert not fake_stream.aborted
         assert engine.stream is fake_stream
         assert engine.audio_queue.get_nowait() == engine.force_stop_marker
-        assert not pipeline._queue_playback_chunk(
+        assert not pipeline.queue_playback_chunk(
             celune_engine,
             1,
             np.zeros((8, 2), dtype=np.float32),
@@ -583,7 +583,7 @@ class TestPipeline(CeluneTestCase):
             )
 
         with mock.patch(
-            "celune.pipeline._register_playback_source",
+            "celune.pipeline.register_playback_source",
             side_effect=register_and_queue,
         ):
             assert pipeline.play_signal(cast(Celune, engine), "readiness")
@@ -639,7 +639,7 @@ class TestPipelineAsync(CeluneAsyncTestCase):
         engine.model_ready.wait = mock.Mock(side_effect=mark_ready)
         run_in_daemon_thread = mock.AsyncMock(side_effect=lambda function: function())
 
-        with mock.patch("celune.speech._run_in_daemon_thread", run_in_daemon_thread):
+        with mock.patch("celune.speech.run_in_daemon_thread", run_in_daemon_thread):
             queued = await pipeline.queue_speech_async(
                 cast(Celune, engine),
                 "hello",
@@ -655,7 +655,7 @@ class TestPipelineAsync(CeluneAsyncTestCase):
 
     async def test_pipeline_blocking_work_uses_daemon_threads(self) -> None:
         """Verify blocked pipeline work cannot hold asyncio executor shutdown open."""
-        assert await pipeline._run_in_daemon_thread(
+        assert await pipeline.run_in_daemon_thread(
             lambda: threading.current_thread().daemon
         )
 
@@ -809,7 +809,7 @@ class TestPipelineAsync(CeluneAsyncTestCase):
         self.assertEqual(request.display_text, raw_text)
 
     def test_queue_speech_preserves_cesn_for_singing_backend(self) -> None:
-        """Preserve CESN tags and lyrics through speech request admission."""
+        """Preserve CESN for synthesis and expose plain lyrics as caption text."""
         engine = make_pipeline_engine()
         engine.backend.singing = True
         notation = (
@@ -829,7 +829,7 @@ class TestPipelineAsync(CeluneAsyncTestCase):
 
         request = engine.text_queue.get_nowait()
         self.assertEqual(request.text, notation)
-        self.assertEqual(request.display_text, notation)
+        self.assertEqual(request.display_text, "I love you.")
         self.assertEqual(request.synthesis_sections, (notation,))
         self.assertEqual(request.language, "en")
         detect_language.assert_not_called()
@@ -1065,7 +1065,7 @@ class TestPipelineAsync(CeluneAsyncTestCase):
                     return_value=True,
                 ),
                 mock.patch(
-                    "celune.playback._youtube_sfx_title",
+                    "celune.playback.youtube_sfx_title",
                     return_value="Fixture Video Title",
                 ),
                 mock.patch(
@@ -1108,7 +1108,7 @@ class TestPipelineAsync(CeluneAsyncTestCase):
                     return_value=True,
                 ),
                 mock.patch(
-                    "celune.playback._youtube_sfx_title",
+                    "celune.playback.youtube_sfx_title",
                     return_value="Fixture Video Title",
                 ),
                 mock.patch("celune.playback.running_compiled", return_value=True),
@@ -1174,7 +1174,7 @@ class TestPipelineAsync(CeluneAsyncTestCase):
                     return_value=True,
                 ),
                 mock.patch(
-                    "celune.playback._youtube_sfx_title",
+                    "celune.playback.youtube_sfx_title",
                     return_value="Fixture Video Title",
                 ),
                 mock.patch(
@@ -1215,7 +1215,7 @@ class TestPipelineAsync(CeluneAsyncTestCase):
                     return_value=True,
                 ),
                 mock.patch(
-                    "celune.playback._youtube_sfx_title",
+                    "celune.playback.youtube_sfx_title",
                     return_value="Fixture Video Title",
                 ),
                 mock.patch(
@@ -1256,7 +1256,7 @@ class TestPipelineAsync(CeluneAsyncTestCase):
                     return_value=True,
                 ),
                 mock.patch(
-                    "celune.playback._youtube_sfx_title",
+                    "celune.playback.youtube_sfx_title",
                     return_value="Fixture Video Title",
                 ),
                 mock.patch(
@@ -1299,7 +1299,7 @@ class TestPipelineAsync(CeluneAsyncTestCase):
                     return_value=True,
                 ),
                 mock.patch(
-                    "celune.playback._youtube_sfx_title",
+                    "celune.playback.youtube_sfx_title",
                     return_value="Fixture Video Title",
                 ),
                 mock.patch(
@@ -1370,7 +1370,7 @@ class TestPipelineAsync(CeluneAsyncTestCase):
 
         with (
             mock.patch(
-                "celune.speech._download_youtube_sfx",
+                "celune.speech.download_youtube_sfx",
                 return_value=(downloaded, "Fixture Video Title"),
             ) as download,
             mock.patch("celune.speech.os.path.exists", return_value=True),
@@ -1403,7 +1403,7 @@ class TestPipelineAsync(CeluneAsyncTestCase):
 
         with (
             mock.patch(
-                "celune.speech._download_youtube_sfx",
+                "celune.speech.download_youtube_sfx",
                 return_value=(downloaded, "Fixture Video Title"),
             ),
             mock.patch("celune.speech.os.path.exists", return_value=True),
@@ -1432,7 +1432,7 @@ class TestPipelineAsync(CeluneAsyncTestCase):
 
         with (
             mock.patch(
-                "celune.speech._download_youtube_sfx",
+                "celune.speech.download_youtube_sfx",
                 return_value=(downloaded, "Fixture Video Title"),
             ),
             mock.patch("celune.speech.os.path.exists", return_value=True),
@@ -1910,7 +1910,7 @@ class TestPipelineAsync(CeluneAsyncTestCase):
         with (
             mock.patch("celune.pipeline.sd.OutputStream", return_value=fake_stream),
             mock.patch(
-                "celune.pipeline._monotonic_time",
+                "celune.pipeline.monotonic_time",
                 side_effect=lambda: next(monotonic_values),
             ),
         ):

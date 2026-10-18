@@ -30,12 +30,14 @@ from ..typing.worker import (
 from ..dataclasses.pipeline import AudioOutput, VoiceConversionRequest
 
 __all__ = [
+    "CALL_ARGUMENT_SCHEMAS",
     "CEDTS_VERSION",
     "CONTROL_PACKET_KINDS",
     "CORE_CAPABILITIES",
     "DEFAULT_CEDTS_LIMITS",
     "SUPPORTED_OPERATIONS",
     "WORKER_CAPABILITIES",
+    "WORKER_TRACEBACK_MARKER",
     "CEDTSLimits",
     "WorkerPayload",
     "build_packet",
@@ -94,7 +96,7 @@ _CEDTS_AUDIO_PEAK = np.float32(0.95)
 _TENSOR_MEDIA_TYPES = frozenset({"application/x-tensor"})
 _VALID_DTYPES = frozenset({"bool", "float32", "float64", "int8", "int16", "uint8"})
 CEDTS_VERSION = (1, 1)
-_WORKER_TRACEBACK_MARKER = "\n\n--- CEDTS worker traceback ---\n"
+WORKER_TRACEBACK_MARKER = "\n\n--- CEDTS worker traceback ---\n"
 CONTROL_PACKET_KINDS = frozenset(
     {
         "hello",
@@ -137,7 +139,7 @@ _PROTOCOL_OPERATIONS = frozenset(
 )
 _UI_OPERATIONS = frozenset({"ui_timed_update"})
 _VALID_OPERATIONS = SUPPORTED_OPERATIONS | _PROTOCOL_OPERATIONS | _UI_OPERATIONS
-_CALL_ARGUMENT_SCHEMAS: dict[str, tuple[frozenset[str], frozenset[str]]] = {
+CALL_ARGUMENT_SCHEMAS: dict[str, tuple[frozenset[str], frozenset[str]]] = {
     "disable_runtime_quantization": (frozenset({"method"}), frozenset()),
     "runtime_quantization_active": (frozenset({"method"}), frozenset()),
     "vram_report": (frozenset({"method"}), frozenset()),
@@ -1504,7 +1506,7 @@ def _validate_call_arguments(value: dict[str, object]) -> None:
     method = value.get("method")
     if not isinstance(method, str):
         raise _worker_protocol_error("backend_worker_callback_method_is_invalid")
-    schema = _CALL_ARGUMENT_SCHEMAS.get(method)
+    schema = CALL_ARGUMENT_SCHEMAS.get(method)
     if schema is None:
         raise _worker_protocol_error("backend_worker_callback_arguments_are_invalid")
     required_fields, optional_fields = schema

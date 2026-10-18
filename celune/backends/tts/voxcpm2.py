@@ -20,7 +20,7 @@ from .base import (
     cached_hf_snapshot_path,
 )
 from .base import (
-    _to_numpy_audio as normalize_streamed_audio,
+    to_numpy_audio as normalize_streamed_audio,
 )
 from . import get_version
 from ...i18n import string
@@ -31,7 +31,7 @@ from ...registry.consent import require_model_consent
 from ...typing.aliases import AudioChunk, AudioChunks
 from ...registry.tts import TTS_DEFAULT_VOICE, VOXCPM2_VOICE_MODELS
 from ...paths import huggingface_progress, huggingface_hub_cache_dir
-from .voxcpm_cache import _VoxCPMModel, install_voxcpm_quantized_cache
+from .voxcpm_cache import VoxCPMModel, install_voxcpm_quantized_cache
 
 _VOXCPM_RUNTIME_KV_CACHE_LENGTH = 2048
 
@@ -201,7 +201,7 @@ class VoxCPM2(CeluneBackend[VoxCPM]):
             raise RuntimeError("VoxCPM2 did not expose a compatible text tokenizer")
         runtime.text_tokenizer = _VoxCPMTextTokenizer(tokenizer)
 
-    _to_numpy_audio = staticmethod(normalize_streamed_audio)
+    to_numpy_audio = staticmethod(normalize_streamed_audio)
 
     def model_is_available_locally(
         self, model: str, lang: Optional[str] = None
@@ -293,7 +293,7 @@ class VoxCPM2(CeluneBackend[VoxCPM]):
                     max_len=10,
                 )
         install_voxcpm_quantized_cache(
-            cast(_VoxCPMModel, self.model),
+            cast(VoxCPMModel, self.model),
             self.quantize_kv_cache,
         )
         return self.model
@@ -430,7 +430,7 @@ class VoxCPM2(CeluneBackend[VoxCPM]):
                 first_chunk_time: Optional[float] = None
 
                 for chunk in stream:
-                    audio = self._to_numpy_audio(chunk)
+                    audio = self.to_numpy_audio(chunk)
                     if audio.size == 0:
                         continue
                     if first_chunk_time is None:

@@ -107,7 +107,7 @@ if TYPE_CHECKING:
 
     from .terminal import LogRedirect, UILogHandler
     from ..typing.agent import AgentTask
-    from ..typing.aliases import LogLevel, AudioChunk, AudioChunks, _VCAudioCallback
+    from ..typing.aliases import LogLevel, AudioChunk, AudioChunks, VCAudioCallback
 
     colors: ModuleType
 
@@ -204,7 +204,7 @@ _UI_RUNTIME_EXPORTS = (
 if TYPE_CHECKING:
     _UI_TYPE_EXPORTS = (
         AgentTask,
-        _VCAudioCallback,
+        VCAudioCallback,
         LogRedirect,
         UILogHandler,
         sd,
@@ -256,7 +256,7 @@ if TYPE_CHECKING:
 _RUNTIME_LOG_REDIRECT_FILTER_MESSAGES: frozenset[str] = frozenset()
 
 if not TYPE_CHECKING:
-    _VCAudioCallback = Callable[..., None]
+    VCAudioCallback = Callable[..., None]
 
 
 def format_error(error: BaseException, log_level: Union[LogLevel, bool]) -> str:
@@ -615,7 +615,7 @@ def set_terminal_title(
     write_terminal_title(status, output)
 
 
-def _load_ui_runtime_dependencies() -> None:
+def ensure_ui_runtime_dependencies() -> None:
     """Load optional UI integrations after the first loading frame is visible."""
     global _RUNTIME_DEPENDENCIES_LOADED
     if _RUNTIME_DEPENDENCIES_LOADED:
@@ -745,17 +745,17 @@ def _load_ui_runtime_dependencies() -> None:
     _RUNTIME_DEPENDENCIES_LOADED = True
 
 
-_LOADING_FADE_SECONDS = 1.0
-_MAIN_UI_FADE_SECONDS = 0.6
-_EXIT_FADE_SECONDS = 0.6
-_VC_FEEDBACK_MIN_CAPTURE_SECONDS = 0.35
-_VC_FEEDBACK_REQUIRED_CONSECUTIVE_SPIKES = 2
-_VC_FEEDBACK_RMS_MIN_PREVIOUS = 0.05
-_VC_FEEDBACK_RMS_MIN_CURRENT = 0.18
-_VC_FEEDBACK_RMS_RISE_RATIO = 2.0
-_VC_FEEDBACK_RMS_RISE_DELTA = 0.08
-_VC_LIVE_SUBMISSION_QUEUE_SIZE = 3
-_AGENT_ACTIVE_STATES = frozenset(
+LOADING_FADE_SECONDS = 1.0
+MAIN_UI_FADE_SECONDS = 0.6
+EXIT_FADE_SECONDS = 0.6
+VC_FEEDBACK_MIN_CAPTURE_SECONDS = 0.35
+VC_FEEDBACK_REQUIRED_CONSECUTIVE_SPIKES = 2
+VC_FEEDBACK_RMS_MIN_PREVIOUS = 0.05
+VC_FEEDBACK_RMS_MIN_CURRENT = 0.18
+VC_FEEDBACK_RMS_RISE_RATIO = 2.0
+VC_FEEDBACK_RMS_RISE_DELTA = 0.08
+VC_LIVE_SUBMISSION_QUEUE_SIZE = 3
+AGENT_ACTIVE_STATES = frozenset(
     {
         AgentTaskState.QUEUED,
         AgentTaskState.IDLE,
@@ -767,13 +767,13 @@ _AGENT_ACTIVE_STATES = frozenset(
         AgentTaskState.CANCELLING,
     }
 )
-_AGENT_AWAITING_STATES = frozenset(
+AGENT_AWAITING_STATES = frozenset(
     {AgentTaskState.AWAITING_APPROVAL, AgentTaskState.AWAITING_CHOICE}
 )
-_AGENT_PAUSED_STATES = frozenset({AgentTaskState.PAUSED, AgentTaskState.INTERRUPTED})
+AGENT_PAUSED_STATES = frozenset({AgentTaskState.PAUSED, AgentTaskState.INTERRUPTED})
 
 
-def _device_scalar_int(value: Optional[AudioDeviceInfoValue], default: int) -> int:
+def device_scalar_int(value: Optional[AudioDeviceInfoValue], default: int) -> int:
     """Return one audio-device metadata value as an integer when possible."""
     if isinstance(value, bool):
         return default
@@ -1018,6 +1018,16 @@ class CeluneUI(App, CeluneUIMethodSurface):
     ENABLE_COMMAND_PALETTE = False
     CSS = CELUNE_CSS
     _instance: ClassVar[Optional[CeluneUI]] = None
+
+    @classmethod
+    def get_instance(cls) -> Optional[CeluneUI]:
+        """Return the active UI instance, if one has been created."""
+        return cls._instance
+
+    def release_instance(self) -> None:
+        """Release this UI instance from the process-wide singleton slot."""
+        if type(self)._instance is self:
+            type(self)._instance = None
 
     def __init__(
         self,
@@ -1390,7 +1400,7 @@ class CeluneUI(App, CeluneUIMethodSurface):
             current_playback_status(self.celune) if self.celune is not None else None
         )
         agent_is_active = self._agent_task_state in (
-            _AGENT_ACTIVE_STATES | _AGENT_AWAITING_STATES | _AGENT_PAUSED_STATES
+            AGENT_ACTIVE_STATES | AGENT_AWAITING_STATES | AGENT_PAUSED_STATES
         )
         if (
             playback_status is not None
@@ -1696,7 +1706,7 @@ class CeluneUI(App, CeluneUIMethodSurface):
         """Return the unlocked input placeholder without blocking the UI."""
         from ..persona.impl import persona_enabled, persona_talkback_enabled
 
-        if self._is_voice_conversion_mode():
+        if self.is_voice_conversion_mode():
             return string("ui.voice_changer_placeholder")
 
         if getattr(getattr(self.celune, "backend", None), "singing", False):

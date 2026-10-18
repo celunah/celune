@@ -6,7 +6,11 @@ import os
 import sys
 import math
 import contextlib
+
+# noinspection PyProtectedMember
 from dataclasses import dataclass
+
+# noinspection PyProtectedMember
 from typing import Optional, cast
 from collections.abc import Mapping, Iterator
 
@@ -91,7 +95,7 @@ class VramProfile:
 VRAM_PROFILES: dict[tuple[str, ...], VramProfile] = {}
 
 
-def _windows_shared_memory_capacity_bytes() -> int:
+def windows_shared_memory_capacity_bytes() -> int:
     """Return the maximum WDDM shared-memory pool from installed system RAM."""
     if sys.platform != "win32":
         return 0
@@ -103,7 +107,7 @@ def _windows_shared_memory_capacity_bytes() -> int:
     )
 
 
-def _windows_shared_memory_headroom_bytes() -> int:
+def windows_shared_memory_headroom_bytes() -> int:
     """Return the shared-memory capacity currently free above the system reserve."""
     if sys.platform != "win32":
         return 0
@@ -111,15 +115,15 @@ def _windows_shared_memory_headroom_bytes() -> int:
     available_bytes = psutil.virtual_memory().available
     reserve_bytes = VRAM_SYSTEM_RESERVE_GIB * 1024**3
     return min(
-        _windows_shared_memory_capacity_bytes(),
+        windows_shared_memory_capacity_bytes(),
         max(0, available_bytes - reserve_bytes),
     )
 
 
-def _cuda_total_capacity_bytes() -> int:
+def cuda_total_capacity_bytes() -> int:
     """Return dedicated CUDA memory plus maximum Windows WDDM shared memory."""
     _, dedicated_bytes = torch.cuda.mem_get_info(0)
-    return dedicated_bytes + _windows_shared_memory_capacity_bytes()
+    return dedicated_bytes + windows_shared_memory_capacity_bytes()
 
 
 def is_cuda_out_of_memory(error: BaseException) -> bool:
@@ -532,8 +536,8 @@ VRAM_PROFILES.update(
                 "ce72a7c22aacb493fb94478de3bfbe834c61844a; "
                 "Whisper 41f01f3fe87f28c78e2fbf8b568835947dd65ed9"
             ),
-            dtype=("TTS mixed; Persona bfloat16 compute; Whisper bfloat16 compute"),
-            quantization=("Persona 4bit; Whisper int8; TTS fp8 requested but inactive"),
+            dtype="TTS mixed; Persona bfloat16 compute; Whisper bfloat16 compute",
+            quantization="Persona 4bit; Whisper int8; TTS fp8 requested but inactive",
             components=("tts:qwen3", "persona:qwen3-vl-4b", "whisper"),
             context_size=2048,
         ),
@@ -565,7 +569,7 @@ def vram_profile_fits(
         except (RuntimeError, AssertionError):
             return None
         if sys.platform == "win32":
-            available_bytes += _windows_shared_memory_headroom_bytes()
+            available_bytes += windows_shared_memory_headroom_bytes()
             system_reserve_bytes = 0
         else:
             system_reserve_bytes = VRAM_SYSTEM_RESERVE_GIB * 1024**3
@@ -615,7 +619,7 @@ def validate_vram_preset(
 
     warnings: list[str] = []
     if torch.cuda.is_available():
-        total_bytes = _cuda_total_capacity_bytes()
+        total_bytes = cuda_total_capacity_bytes()
         total_gb = math.ceil(total_bytes / 1024**3)
 
         tier = configured_tier
@@ -665,7 +669,7 @@ def resolve_vram_preset(
 
     # downgrade VRAM preset if user doesn't have enough VRAM for the currently selected preset
     if torch.cuda.is_available():
-        total_bytes = _cuda_total_capacity_bytes()
+        total_bytes = cuda_total_capacity_bytes()
         total_gb = math.ceil(total_bytes / 1024**3)
 
         while VRAM_REQUIREMENTS[tier] > total_gb and tier != "low":
@@ -933,6 +937,7 @@ def backend_vram_report(name: str, model: object) -> JSON:
     }
 
 
+# noinspection PyBroadException
 def _backend_report(backend: object, name: str) -> JSON:
     """Return a backend-owned report, including reports from isolated workers."""
     report_method = getattr(backend, "vram_report", None)
@@ -1018,7 +1023,7 @@ def runtime_vram_report(
             )
         )
 
-    selector = getattr(runtime, "_agent_needle_selector", None)
+    selector = getattr(runtime, "agent_needle_selector", None)
     agent_handler = getattr(selector, "handler", None)
     agent_model = getattr(agent_handler, "model", None)
     if agent_model is not None:

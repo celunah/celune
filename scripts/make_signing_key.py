@@ -24,7 +24,7 @@ def _repository_root() -> Path:
     return Path(__file__).resolve().parent.parent
 
 
-def _default_output_path() -> Path:
+def default_output_path() -> Path:
     """Return the platform's default protected release-key destination."""
     local_app_data = os.environ.get("LOCALAPPDATA")
     if os.name == "nt" and local_app_data:
@@ -221,7 +221,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output",
         type=Path,
-        default=_default_output_path(),
+        default=default_output_path(),
         help=_localized_string("release.signing_key_output_help"),
     )
     return parser.parse_args()

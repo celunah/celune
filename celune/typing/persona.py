@@ -213,14 +213,14 @@ class PersonaModel(Protocol):
         raise NotImplementedError("protocol not defined")
 
 
-class _WhisperProcessorOutput(Protocol):
+class WhisperProcessorOutput(Protocol):
     """Protocol for tensor fields returned by a Whisper processor."""
 
     input_features: Tensor
     attention_mask: Optional[Tensor]
 
 
-class _WhisperProcessor(Protocol):  # noqa: PYI046
+class WhisperProcessor(Protocol):
     """Protocol for the processor operations used by the transcriber."""
 
     def __call__(
@@ -230,7 +230,7 @@ class _WhisperProcessor(Protocol):  # noqa: PYI046
         sampling_rate: int,
         return_tensors: str,
         return_attention_mask: bool,
-    ) -> _WhisperProcessorOutput:
+    ) -> WhisperProcessorOutput:
         """Prepare one audio sample for Whisper."""
 
     def batch_decode(
@@ -247,7 +247,7 @@ class _WhisperProcessor(Protocol):  # noqa: PYI046
         """
 
 
-class _WhisperModel(Protocol):  # noqa: PYI046
+class WhisperModel(Protocol):
     """Protocol for the model operations used by the transcriber."""
 
     def eval(self) -> None:
@@ -271,7 +271,7 @@ class _WhisperModel(Protocol):  # noqa: PYI046
         """
 
 
-class _EmotionModelConfig(Protocol):  # noqa: PYI046
+class EmotionModelConfig(Protocol):
     """Protocol for model configs that expose emotion label mappings."""
 
     id2label: Mapping[Union[int, str], str]

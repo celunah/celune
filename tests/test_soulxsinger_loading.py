@@ -77,7 +77,7 @@ def test_soulxsinger_preload_prepares_nltk_data() -> None:
             "model_is_available_locally",
             return_value=(True, "cached"),
         ),
-        mock.patch.object(soulxsinger, "_load_upstream_source"),
+        mock.patch.object(soulxsinger, "load_upstream_source"),
         mock.patch.object(soulxsinger, "_ensure_nltk_data") as ensure_nltk_data,
     ):
         backend.preload_models()
@@ -148,7 +148,7 @@ def test_soulxsinger_load_model_reports_each_loading_stage(tmp_path: Path) -> No
     with (
         mock.patch.object(soulxsinger, "require_model_consent"),
         mock.patch.object(soulxsinger.torch.cuda, "is_available", return_value=True),
-        mock.patch.object(soulxsinger, "_load_upstream_source", return_value=tmp_path),
+        mock.patch.object(soulxsinger, "load_upstream_source", return_value=tmp_path),
         mock.patch.object(
             soulxsinger.importlib,
             "import_module",

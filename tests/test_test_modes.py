@@ -17,7 +17,7 @@ from textual.widgets import TextArea
 
 from celune import entrypoint
 from celune.i18n import string
-from celune.test import run_agent_test, _agent_test_succeeded
+from celune.test import run_agent_test, agent_test_succeeded
 from celune.celune import Celune
 from celune.config import config_log_level
 from celune.ui.app import CeluneUI
@@ -147,9 +147,9 @@ class TestCommandTests:
 
     def test_agent_test_exit_status_requires_a_successful_report(self) -> None:
         """Missing and failed diagnostic reports must map to a failure exit."""
-        assert not _agent_test_succeeded(None)
-        assert not _agent_test_succeeded({"success": False})
-        assert _agent_test_succeeded({"success": True})
+        assert not agent_test_succeeded(None)
+        assert not agent_test_succeeded({"success": False})
+        assert agent_test_succeeded({"success": True})
 
     def test_failed_agent_report_exits_after_the_test_ui_returns(self) -> None:
         """Suppress the startup warning and fail after the report UI closes."""
@@ -369,7 +369,7 @@ class TestFinishedLifecycleTests(CeluneTestCase):
         """The controlled agent task completes through routing and production tools."""
         core = self._make_core()
         assert core.backend_mode == "agent_test"
-        assert tuple(tool.name for tool in core._agent_tools) == (
+        assert tuple(tool.name for tool in core.agent_tools) == (
             "local_current_working_directory",
         )
         persona = _TestPersonaClient()
@@ -377,8 +377,8 @@ class TestFinishedLifecycleTests(CeluneTestCase):
         core.persona_ready = True
         selector = NeedleToolSelector(
             cast(NeedleHandler, _TestNeedleHandler()),
-            core._agent_tools,
-            schemas=core._agent_tool_schemas,
+            core.agent_tools,
+            schemas=core.agent_tool_schemas,
         )
         with (
             mock.patch("celune.test.run_agent_feature_checks", return_value=[]),
@@ -576,7 +576,7 @@ class TestFinishedLifecycleTests(CeluneTestCase):
         route = AgentClassificationResult(
             classification=AgentInputClassification.TASK,
             confidence=0.9,
-            task_request=core._agent_router._make_request(
+            task_request=core.agent_router._make_request(
                 "Check the current working directory."
             ),
             route=AgentRoute.TASK,

@@ -1123,7 +1123,7 @@ class TestCeluneCore(_TestCeluneCore):
         celune.locked = False
         celune.loaded = True
         celune.cur_state = "idle"
-        celune._playback_source_meta[1] = {"kind": "sfx"}
+        celune.playback_source_meta[1] = {"kind": "sfx"}
 
         with mock.patch("celune.voice.play_signal") as play_signal_mock:
             assert not celune.enter_sleep_mode()

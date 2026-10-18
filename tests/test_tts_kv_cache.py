@@ -9,7 +9,7 @@ from torch import nn
 
 from celune.backends.tts.voxcpm_cache import (
     QuantizedStaticKVCache,
-    _VoxCPMModel,
+    VoxCPMModel,
     install_voxcpm_quantized_cache,
 )
 
@@ -147,7 +147,7 @@ def test_voxcpm_cache_quantizes_old_prefix_and_keeps_recent_tail() -> None:
     assert cache.residual.shape[-2] == 2
     assert cache.current_length == 3
     torch.testing.assert_close(
-        cache._attention_states(0, 3)[0],
+        cache.attention_states(0, 3)[0],
         keys,
         atol=0.03,
         rtol=0,
@@ -156,7 +156,7 @@ def test_voxcpm_cache_quantizes_old_prefix_and_keeps_recent_tail() -> None:
     position = cache.step()
     next_key = torch.tensor([[[[7.0, 8.0]]]])
     next_value = next_key + 1
-    cache.get_layer_cache(0).cache._store_step(
+    cache.get_layer_cache(0).cache.store_step(
         0,
         position,
         next_key,
@@ -164,7 +164,7 @@ def test_voxcpm_cache_quantizes_old_prefix_and_keeps_recent_tail() -> None:
     )
     expected_keys = torch.cat((keys, next_key), dim=-2)
     expected_values = torch.cat((values, next_value), dim=-2)
-    actual_keys, actual_values = cache._attention_states(0, 4)
+    actual_keys, actual_values = cache.attention_states(0, 4)
     torch.testing.assert_close(actual_keys, expected_keys, atol=0.04, rtol=0)
     torch.testing.assert_close(actual_values, expected_values, atol=0.04, rtol=0)
 
@@ -176,7 +176,7 @@ def test_voxcpm_adapter_patches_both_cache_backed_language_models() -> None:
         "celune.backends.tts.voxcpm_cache.quantized_kv_cache_mode",
         return_value="int8",
     ):
-        assert install_voxcpm_quantized_cache(cast(_VoxCPMModel, model), enabled=True)
+        assert install_voxcpm_quantized_cache(cast(VoxCPMModel, model), enabled=True)
 
     for language_model in (
         model.tts_model.base_lm,
@@ -209,7 +209,7 @@ def test_voxcpm_adapter_leaves_native_caches_when_disabled() -> None:
         return_value=None,
     ):
         assert not install_voxcpm_quantized_cache(
-            cast(_VoxCPMModel, model),
+            cast(VoxCPMModel, model),
             enabled=False,
         )
 

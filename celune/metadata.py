@@ -51,7 +51,7 @@ def _is_json_value(value: JSONSerializable) -> bool:
     return False
 
 
-def _celune_metadata_payload(
+def celune_metadata_payload(
     engine: Celune,
     *,
     text: str,
@@ -109,7 +109,7 @@ def _read_vorbis_string(payload: bytes, offset: int) -> tuple[bytes, int]:
     return payload[offset:end], end
 
 
-def _parse_vorbis_comment_block(payload: bytes) -> tuple[bytes, list[tuple[str, str]]]:
+def parse_vorbis_comment_block(payload: bytes) -> tuple[bytes, list[tuple[str, str]]]:
     """Parse a Vorbis comment block into a vendor string and field pairs."""
     vendor, offset = _read_vorbis_string(payload, 0)
     if offset + 4 > len(payload):
@@ -144,7 +144,7 @@ def _encode_vorbis_comment_block(
     return bytes(payload)
 
 
-def _flac_metadata_blocks(data: bytes) -> tuple[list[tuple[int, bytes]], int]:
+def flac_metadata_blocks(data: bytes) -> tuple[list[tuple[int, bytes]], int]:
     """Return FLAC metadata blocks and the byte offset where audio frames start."""
     if not data.startswith(_FLAC_MAGIC):
         raise ValueError("not a FLAC file")
@@ -192,7 +192,7 @@ def _stringify_flac_metadata(value: JSONSerializable) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True)
 
 
-def _write_flac_metadata(path: str, tags: JSON) -> None:
+def write_flac_metadata(path: str, tags: JSON) -> None:
     """Write arbitrary valid FLAC Vorbis comment tags to ``path``."""
     valid_tags = {
         key: _stringify_flac_metadata(value)
@@ -204,7 +204,7 @@ def _write_flac_metadata(path: str, tags: JSON) -> None:
 
     path_obj = pathlib.Path(path)
     data = path_obj.read_bytes()
-    blocks, audio_offset = _flac_metadata_blocks(data)
+    blocks, audio_offset = flac_metadata_blocks(data)
     audio_data = data[audio_offset:]
 
     comment_index: Optional[int] = None
@@ -213,7 +213,7 @@ def _write_flac_metadata(path: str, tags: JSON) -> None:
     for index, (block_type, payload) in enumerate(blocks):
         if block_type == _FLAC_VORBIS_COMMENT_BLOCK:
             comment_index = index
-            vendor, comments = _parse_vorbis_comment_block(payload)
+            vendor, comments = parse_vorbis_comment_block(payload)
             break
 
     replaced_keys = {key.casefold() for key in valid_tags}
@@ -232,7 +232,7 @@ def _write_flac_metadata(path: str, tags: JSON) -> None:
     path_obj.write_bytes(_encode_flac_metadata_blocks(blocks) + audio_data)
 
 
-def _write_celune_flac(
+def write_celune_flac(
     engine: Celune,
     path: str,
     audio: AudioChunk,
@@ -276,4 +276,4 @@ def _write_celune_flac(
         "created_at": created_at,
         "date": datetime.datetime.now(datetime.UTC).year,
     }
-    _write_flac_metadata(path, tags)
+    write_flac_metadata(path, tags)

@@ -10,10 +10,13 @@ from typing import cast
 from contextlib import contextmanager
 from collections.abc import Callable, Generator
 
-import torch
-import torch.utils._pytree
+# noinspection PyProtectedMember
+import torch.utils._pytree as pytree
 
-__all__ = ["torchao_compatibility"]
+__all__ = [
+    "suppress_torchao_quantization_syntax_warning",
+    "torchao_compatibility",
+]
 
 
 _TORCHAO_IMPORT_LOCK = threading.RLock()
@@ -39,7 +42,7 @@ def _is_native_opaque_enum(value: type) -> bool:
 def _register_torchao_constant(value: type) -> type:
     """Register non-Enum TorchAO constants using the active PyTorch API."""
     if not _is_native_opaque_enum(value):
-        torch.utils._pytree.register_constant(value)
+        pytree.register_constant(value)
     return value
 
 
@@ -55,7 +58,7 @@ def _patch_torchao_decorator() -> None:
 
 
 @contextmanager
-def _suppress_torchao_quantization_syntax_warning() -> Generator[None, None, None]:
+def suppress_torchao_quantization_syntax_warning() -> Generator[None, None, None]:
     """Suppress TorchAO's invalid-regex SyntaxWarning during startup imports."""
     with warnings.catch_warnings():
         warnings.filterwarnings(
@@ -79,14 +82,13 @@ def torchao_compatibility() -> Generator[None, None, None]:
     that may load TorchAO, and TorchAO's decorator is retained afterward for
     modules imported later in the process.
     """
-    pytree = torch.utils._pytree
     register_constant = cast(Callable[[type], None], pytree.register_constant)
 
     def register_constant_compat(cls: type) -> None:
         if not _is_native_opaque_enum(cls):
             register_constant(cls)
 
-    with _TORCHAO_IMPORT_LOCK, _suppress_torchao_quantization_syntax_warning():
+    with _TORCHAO_IMPORT_LOCK, suppress_torchao_quantization_syntax_warning():
         _patch_torchao_decorator()
         setattr(
             pytree,

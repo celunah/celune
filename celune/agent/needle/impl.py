@@ -34,7 +34,7 @@ from .checkpoints import (
     NEEDLE_TOKENIZER_FILE,
     NeedlePickleConverter,
     NeedlePreparedCheckpoint,
-    _expected_dtype,
+    resolve_expected_dtype,
     prepare_needle_checkpoint,
 )
 from ...typing.agent import (
@@ -67,6 +67,8 @@ __all__ = [
     "NeedleTokenizer",
     "NeedleToolSelector",
     "convert_needle_safetensors",
+    "parse_selection",
+    "parse_single_selection",
 ]
 
 
@@ -116,7 +118,7 @@ def _normalized_tools(
     return normalized, original_names
 
 
-def _parse_single_selection(
+def parse_single_selection(
     text: str,
     original_names: Mapping[str, str],
 ) -> NeedleToolCall:
@@ -157,7 +159,7 @@ def _json_candidates(text: str) -> list[object]:
     return candidates
 
 
-def _parse_selection(
+def parse_selection(
     text: str,
     original_names: Mapping[str, str],
 ) -> NeedleToolSelection:
@@ -277,7 +279,7 @@ class NeedleHandler:
         selected_device = torch.device(
             device or ("cuda" if torch.cuda.is_available() else "cpu")
         )
-        model = NeedleModel(config).to(dtype=_expected_dtype(config_data))
+        model = NeedleModel(config).to(dtype=resolve_expected_dtype(config_data))
         normalized_state = cast(
             dict[str, torch.Tensor],
             torch.load(converted_path, map_location="cpu", weights_only=True),
@@ -371,7 +373,7 @@ class NeedleHandler:
             max_new_tokens=max_new_tokens,
         )
         text = self.tokenizer.decode(generated[0].tolist())
-        return _parse_selection(text, original_names)
+        return parse_selection(text, original_names)
 
     @torch.inference_mode()
     def select_one_tool(
@@ -387,7 +389,7 @@ class NeedleHandler:
             max_new_tokens=max_new_tokens,
         )
         text = self.tokenizer.decode(generated[0].tolist())
-        return _parse_single_selection(text, original_names)
+        return parse_single_selection(text, original_names)
 
     def select_registered_tools(
         self,

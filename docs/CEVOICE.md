@@ -147,6 +147,7 @@ Each voice entry may also include:
 | `reference_text` | Optional non-empty transcript for the voice's reference audio |
 | `persona` | Optional style/rule additions layered on the shared Persona metadata |
 | `cesn` | In CECHAR v5, required for `sing` and `null` for speaking voices |
+| `range` | For CECHAR v5 `sing`, inclusive `min` and `max` MIDI pitches from 0 to 127 |
 
 Supported `persona` fields are:
 
@@ -179,9 +180,13 @@ may omit `voice_order`; Celune then lists every voice except `sing`. If an
 explicit `voice_order` or `default_voice` selects `sing`, the pack is invalid.
 
 The singing entry requires a WAV asset, a non-empty `reference_text`, a
-non-empty `cesn` score, and explicit `null` values for `cfg_scale` and
-`persona`. Every ordinary TTS voice must include `cesn: null`. Celune does not
-apply speaking Persona or VoxCPM2 guidance settings to the singing entry.
+non-empty `cesn` score, a `range` object, and explicit `null` values for
+`cfg_scale` and `persona`. The range contains inclusive MIDI `min` and `max`
+integers from 0 through 127, with `min` no greater than `max`. New packs written
+with `write_cechar_v5()` must declare it. For compatibility, older v5 packs
+without `range` remain readable and use the full MIDI range (0–127). Every
+ordinary TTS voice must include `cesn: null`. Celune does not apply speaking
+Persona or VoxCPM2 guidance settings to the singing entry.
 Future singing backends must select only `sing`; they must report that singing
 is unavailable when the pack has no `sing` entry and must not fall back to a
 speaking voice.
@@ -206,9 +211,10 @@ V5 retains v4's name-only file list and binary jump table. For example:
     },
     "sing": {
       "cfg_scale": null,
-      "cesn": "[lang:en][c3:4,d3:4]Singing.",
+      "cesn": "[lang:en][f#3:4,g3:4]Singing.",
       "reference_text": "Singing reference transcript...",
       "persona": null,
+      "range": {"min": 54, "max": 72},
       "assets": {"wav": "sing.wav"}
     }
   }
@@ -439,16 +445,18 @@ write_cechar_v5(
         "balanced": {"reference_text": "Speaking transcript."},
         "sing": {
             "reference_text": "Singing transcript.",
-            "cesn": "[lang:en][c3:4,d3:4]Singing.",
+            "cesn": "[lang:en][f#3:4,g3:4]Singing.",
+            "range": {"min": 54, "max": 72},
         },
     },
 )
 ```
 
 The v5 writer adds `cfg_scale: null` and `persona: null` to `voices.sing`, and
-adds `cesn: null` to every speaking voice. It rejects a missing singing score
-or non-null CESN metadata on a speaking voice. Ordinary TTS continues to use
-the speaking voices listed in `voice_order`.
+adds `cesn: null` to every speaking voice. It requires a singing pitch range,
+rejects a missing singing score, and rejects non-null CESN metadata on a
+speaking voice. Ordinary TTS continues to use the speaking voices listed in
+`voice_order`.
 
 ## Minimal bundle recipe
 
@@ -538,6 +546,7 @@ Celune's bundled `default.cevoice` uses:
 - per-voice `persona`: response-style refinements layered onto the shared character
 - `cfg_scale`: `2.4` for `balanced`, `bold`, and `upbeat`; `3.0` for `calm`
 - `reference_text`: the transcript matching each bundled reference `wav`
+- `sing.range`: MIDI pitches 54–72 (F#3–C5), inclusive
 - both `wav` and `pt` assets for each voice
 - a `sing` WAV reference with transcript `Moonlight resting, silver-blue, I'll keep one quiet light for you.`; Celune keeps this voice out of `voice_order` and TTS selection
 

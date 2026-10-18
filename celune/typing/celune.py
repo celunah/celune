@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from collections.abc import Callable, Iterator, Awaitable
+from collections.abc import Callable, Iterator, Awaitable, Mapping
 from typing import TYPE_CHECKING, Union, Optional, Protocol
 
 import torch
@@ -25,10 +25,13 @@ if TYPE_CHECKING:
 
     from .agent import (
         ToolCall,
+        AgentTool,
+        AgentToolSchema,
         AgentToolSelector,
         ToolExecutionResult,
         AgentClassificationResult,
     )
+    from ..agent.routing import AgentInputRouter
     from .locks import ComponentLockOwner, ComponentBusyResult
     from ..locks import ComponentLockManager
     from ..chroma import AudioRGBGlow
@@ -246,6 +249,46 @@ class CeluneConversationSurface:
 class CeluneAgentSurface:
     """Typed surface for agent routing and tool execution entrypoints."""
 
+    @property
+    def agent_tools(self) -> tuple[AgentTool, ...]:
+        """Expose tools registered by the agent runtime."""
+        ...  # noqa: PIE790
+
+    @agent_tools.setter
+    def agent_tools(self, tools: tuple[AgentTool, ...]) -> None:
+        """Replace tools during controlled runtime setup."""
+        ...  # noqa: PIE790
+
+    @property
+    def agent_tool_schemas(self) -> Mapping[str, AgentToolSchema]:
+        """Expose schemas registered by the agent runtime."""
+        ...  # noqa: PIE790
+
+    @agent_tool_schemas.setter
+    def agent_tool_schemas(self, schemas: Mapping[str, AgentToolSchema]) -> None:
+        """Replace schemas during controlled runtime setup."""
+        ...  # noqa: PIE790
+
+    @property
+    def agent_router(self) -> AgentInputRouter:
+        """Expose the input router owned by the agent runtime."""
+        ...  # noqa: PIE790
+
+    @agent_router.setter
+    def agent_router(self, router: AgentInputRouter) -> None:
+        """Replace the router during controlled runtime setup."""
+        ...  # noqa: PIE790
+
+    @property
+    def agent_needle_selector(self) -> Optional[AgentToolSelector]:
+        """Expose the optional Needle selector owned by the runtime."""
+        ...  # noqa: PIE790
+
+    @agent_needle_selector.setter
+    def agent_needle_selector(self, selector: Optional[AgentToolSelector]) -> None:
+        """Replace the optional selector during controlled setup."""
+        ...  # noqa: PIE790
+
     _interrupt_active_agent_for_input: Callable[..., bool]
     classify_input: Callable[..., AgentClassificationResult]
     route_input: Callable[..., AgentClassificationResult]
@@ -255,7 +298,7 @@ class CeluneAgentSurface:
     _load_agent_tool_selector: Callable[..., AgentToolSelector]
     _select_agent_tool: Callable[..., Optional[ToolCall]]
     _execute_agent_tool: Callable[..., ToolExecutionResult]
-    _run_agent_route: Callable[..., bool]
+    run_agent_route: Callable[..., bool]
     _speak_agent_classification_failure: Callable[..., bool]
 
 
@@ -279,8 +322,50 @@ class CeluneVoiceConversionSurface:
 class CelunePipelineSurface:
     """Typed surface for pipeline coordination entrypoints."""
 
+    @property
+    def next_playback_source_id(self) -> int:
+        """Expose the most recently allocated playback source identifier."""
+        ...  # noqa: PIE790
+
+    @next_playback_source_id.setter
+    def next_playback_source_id(self, value: int) -> None:
+        """Store the most recently allocated playback source identifier."""
+        ...  # noqa: PIE790
+
+    @property
+    def playback_source_statuses(self) -> dict[int, str]:
+        """Expose playback status labels keyed by source identifier."""
+        ...  # noqa: PIE790
+
+    @playback_source_statuses.setter
+    def playback_source_statuses(self, value: dict[int, str]) -> None:
+        """Replace the playback status map."""
+        ...  # noqa: PIE790
+
+    @property
+    def playback_source_meta(self) -> dict[int, dict[str, Union[str, float]]]:
+        """Expose metadata for queued playback sources."""
+        ...  # noqa: PIE790
+
+    @playback_source_meta.setter
+    def playback_source_meta(
+        self, value: dict[int, dict[str, Union[str, float]]]
+    ) -> None:
+        """Replace the playback source metadata map."""
+        ...  # noqa: PIE790
+
+    @property
+    def playback_caption_states(self) -> dict[int, CaptionPlaybackState]:
+        """Expose caption timing by playback source identifier."""
+        ...  # noqa: PIE790
+
+    @playback_caption_states.setter
+    def playback_caption_states(self, value: dict[int, CaptionPlaybackState]) -> None:
+        """Replace the caption timing state map."""
+        ...  # noqa: PIE790
+
     _acquire_pipeline: Callable[..., bool]
-    _release_pipeline: Callable[..., None]
+    release_pipeline: Callable[..., None]
     _stop_pipeline_jobs: Callable[..., None]
 
 
@@ -302,7 +387,7 @@ class CeluneMethodSurface(
     _start_wake_background_jobs: Callable[..., None]
     _run_wake_background_jobs: Callable[..., None]
     set_voices: Callable[..., None]
-    _reset_persona_conversation: Callable[..., None]
+    reset_persona_conversation: Callable[..., None]
     load_voice_bundle: Callable[..., bool]
     load_available_voices: Callable[..., bool]
     set_voice: Callable[..., bool]
@@ -413,7 +498,7 @@ class CeluneStateAccessors:
     _playback_source_meta: dict[int, dict[str, Union[str, float]]]
     _playback_caption_states: dict[int, CaptionPlaybackState]
     _caption_source_id: Optional[int]
-    _playback_chunk_last_queued_at: dict[int, float]
+    playback_chunk_last_queued_at: dict[int, float]
     _playback_trace_last_logged_at: float
     _playback_progress_last_emit_at: float
     _playback_progress_last_source_id: int
@@ -526,7 +611,7 @@ class CeluneStateAccessors:
         return self._speech_generation
 
 
-class _BundleWithPath(Protocol):  # noqa: PYI046
+class BundleWithPath(Protocol):
     """Protocol for bundle-like objects that expose a path."""
 
     @property

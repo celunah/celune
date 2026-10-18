@@ -9,7 +9,7 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, cast
 
 from ..typing.persona import PersonaClientResponse
-from ..conversation import _extract_persona_text, build_persona_request
+from ..conversation import extract_persona_text, build_persona_request
 from ..persona.impl import compact_persona_history, persona_history_messages
 from ..typing.agent import (
     ToolResult,
@@ -149,7 +149,7 @@ class PersonaAgentBridge:
                 and isinstance(completion_tokens, int)
             ):
                 context.task.update_context_tokens(prompt_tokens + completion_tokens)
-            spoken_text = _extract_persona_text(response_payload)
+            spoken_text = extract_persona_text(response_payload)
             if not spoken_text:
                 raise RuntimeError("Persona returned an empty agent response")
             return {

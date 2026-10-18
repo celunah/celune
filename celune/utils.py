@@ -5,6 +5,7 @@ import os
 import re
 import math
 import time
+import queue
 import random
 import inspect
 import datetime
@@ -30,6 +31,19 @@ from .vcs import get_revision as _get_repository_revision
 from .terminal import supports_ansi as terminal_supports_ansi
 
 _LANGUAGE_DETECTOR = LanguageDetectorBuilder.from_all_spoken_languages().build()
+
+
+def clear_queue(q: queue.Queue) -> None:
+    """Drain all pending items from a queue.
+
+    Args:
+        q: The queue to empty.
+    """
+    try:
+        while True:
+            q.get_nowait()
+    except queue.Empty:
+        pass
 
 
 def get_revision() -> str:
@@ -901,7 +915,7 @@ def cesn_to_text(cesn: str) -> str:
     Returns:
         str: The extracted text.
     """
-    cesn = re.sub(r"\[(.*?)\]", "", cesn)
+    cesn = re.sub(r"\[(.*?)]", "", cesn)
     cesn = re.sub(r"\s+", " ", cesn)
 
     return cesn.strip()

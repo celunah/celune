@@ -247,6 +247,11 @@ def exit_api_model_request(token: Token[bool]) -> None:
     _API_MODEL_REQUEST.reset(token)
 
 
+def is_api_model_request() -> bool:
+    """Return whether the current context is handling an API request."""
+    return _API_MODEL_REQUEST.get()
+
+
 def record_model_consent(
     model_id: str,
     revision: str,

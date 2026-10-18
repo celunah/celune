@@ -85,23 +85,16 @@ _MemoryClassifier = Callable[[JSON], "PersonaClientResponse"]
 __all__ = (
     "_build_persona_source_material",
     "_build_retrieved_memory_bundle",
-    "_classify_persona_memories",
     "_configured_agent_context_size",
     "_configured_persona_instructions",
-    "_effective_voice_prompt",
-    "_extract_persona_text",
     "_legacy_boundaries_source",
     "_legacy_examples_source",
     "_legacy_identity_source",
     "_legacy_personality_source",
     "_legacy_speech_style_source",
     "_persona_emotion_analyzer",
-    "_persona_manifest_files",
     "_persona_memory_classifier_context",
-    "_persona_memory_store",
     "_persona_mood_or_state",
-    "_store_persona_memories",
-    "_think_persona",
     "_think_worker",
     "_wait_for_persona_playback",
     "build_agent_classification_request",
@@ -109,8 +102,15 @@ __all__ = (
     "build_persona_context",
     "build_persona_messages",
     "build_persona_request",
+    "classify_persona_memories",
+    "effective_voice_prompt",
+    "extract_persona_text",
+    "persona_manifest_files",
+    "persona_memory_store",
+    "store_persona_memories",
     "think",
     "think_async",
+    "think_persona",
 )
 
 _PERSONA_EXPORTS = tuple(
@@ -208,9 +208,9 @@ def _persona_mood_or_state(
     request: str,
 ) -> str:
     """Return the Persona state string for the current request."""
-    from .playback import _config_text
+    from .playback import config_text
 
-    configured_state = _config_text(engine, "persona_state", "")
+    configured_state = config_text(engine, "persona_state", "")
     if configured_state:
         return configured_state
 
@@ -232,7 +232,7 @@ def _persona_mood_or_state(
     return summary.target_state
 
 
-def _persona_memory_store(engine: Celune) -> Optional[PersonaMemoryStore]:
+def persona_memory_store(engine: Celune) -> Optional[PersonaMemoryStore]:
     """Return the configured Persona memory store for this engine."""
     existing = getattr(engine, "persona_memory_store", None)
     if isinstance(existing, PersonaMemoryStore):
@@ -283,9 +283,9 @@ def _persona_memory_store(engine: Celune) -> Optional[PersonaMemoryStore]:
     return store
 
 
-def _store_persona_memories(engine: Celune, request: str) -> None:
+def store_persona_memories(engine: Celune, request: str) -> None:
     """Persist long-term memory candidates extracted from the user request."""
-    store = _persona_memory_store(engine)
+    store = persona_memory_store(engine)
     if store is None:
         return
 
@@ -326,11 +326,11 @@ def _persona_memory_classifier_context(
     return "\n\n".join(sections)
 
 
-def _classify_persona_memories(engine: Celune, request: str) -> None:
+def classify_persona_memories(engine: Celune, request: str) -> None:
     """Classify and persist unmatched durable user facts without blocking reply logic."""
-    from .pipeline import _MEMORY_CLASSIFIER_SYSTEM_PROMPT
+    from .pipeline import MEMORY_CLASSIFIER_SYSTEM_PROMPT
 
-    store = _persona_memory_store(engine)
+    store = persona_memory_store(engine)
     if store is None or store.collect_candidates(request):
         return
 
@@ -368,11 +368,11 @@ def _classify_persona_memories(engine: Celune, request: str) -> None:
         "model": persona_model_id(engine.config),
         "quantization": persona_quantization(engine.config),
         "quantized": True,
-        "system": _MEMORY_CLASSIFIER_SYSTEM_PROMPT,
+        "system": MEMORY_CLASSIFIER_SYSTEM_PROMPT,
         "user": context,
         "request": context,
         "messages": [
-            {"role": "system", "content": _MEMORY_CLASSIFIER_SYSTEM_PROMPT},
+            {"role": "system", "content": MEMORY_CLASSIFIER_SYSTEM_PROMPT},
             {"role": "user", "content": context},
         ],
         "max_new_tokens": 180,
@@ -385,7 +385,7 @@ def _classify_persona_memories(engine: Celune, request: str) -> None:
         response = classifier(payload)
         response.raise_for_status()
         candidates = classifier_memory_candidates(
-            _extract_persona_text(response.json()),
+            extract_persona_text(response.json()),
             minimum_confidence=float(minimum_confidence),
             maximum_candidates=max(1, int(maximum_candidates)),
         )
@@ -416,7 +416,7 @@ def _build_retrieved_memory_bundle(
     engine: Celune, request: str
 ) -> RetrievedMemoryBundle:
     """Return retrieved long-term memory for the current request."""
-    from .playback import _config_lines
+    from .playback import config_lines
 
     direct_memories = getattr(engine, "retrieved_long_term_memory", None)
     if isinstance(direct_memories, list):
@@ -427,7 +427,7 @@ def _build_retrieved_memory_bundle(
         ]
         return RetrievedMemoryBundle(memories=tuple(memories))
 
-    store = _persona_memory_store(engine)
+    store = persona_memory_store(engine)
     if store is not None:
         character_name = persona_active_character_name(engine)
         memories = tuple(
@@ -439,11 +439,11 @@ def _build_retrieved_memory_bundle(
             return RetrievedMemoryBundle(memories=memories)
 
     return RetrievedMemoryBundle(
-        memories=_config_lines(engine, "persona_long_term_memory")
+        memories=config_lines(engine, "persona_long_term_memory")
     )
 
 
-def _persona_manifest_files(engine: Celune) -> dict[str, str]:
+def persona_manifest_files(engine: Celune) -> dict[str, str]:
     """Return whitelisted persona Markdown files for the active engine persona."""
     loader = default_loader()
     if loader is None:
@@ -487,10 +487,10 @@ def _legacy_identity_source(profile: CharacterProfile) -> str:
 
 def _legacy_personality_source(engine: Celune) -> str:
     """Render legacy persona settings into the v3 personality source slot."""
-    from .playback import _config_text
+    from .playback import config_text
 
     blocks: list[str] = []
-    persona_text = _config_text(
+    persona_text = config_text(
         engine,
         "persona_persona",
         default_persona_persona(),
@@ -553,7 +553,7 @@ def _build_persona_source_material(
     character_profile: CharacterProfile,
 ) -> PersonaSourceMaterial:
     """Build v3 prompt source material from package files with legacy fallback."""
-    persona_files = _persona_manifest_files(engine)
+    persona_files = persona_manifest_files(engine)
     return PersonaSourceMaterial(
         identity=persona_files.get("identity.md", "")
         or _legacy_identity_source(character_profile),
@@ -591,11 +591,11 @@ def build_persona_context(
     Returns:
         PersonaContext: The built context for Persona.
     """
-    from .playback import _config_text
+    from .playback import config_text
 
     name = persona_active_character_name(engine)
     voice = getattr(engine, "current_voice", None) or "balanced"
-    voice_prompt = _effective_voice_prompt(engine)
+    voice_prompt = effective_voice_prompt(engine)
     traits = persona_style_traits(engine)
 
     voice_notes = f"Selected voice: {voice}."
@@ -605,16 +605,16 @@ def build_persona_context(
     character_profile = CharacterProfile(
         name=name,
         age=pack_identity_text(engine, "age")
-        or _config_text(engine, "persona_character_age", default_persona_age(engine)),
+        or config_text(engine, "persona_character_age", default_persona_age(engine)),
         gender=pack_identity_text(engine, "gender")
-        or _config_text(
+        or config_text(
             engine, "persona_character_gender", default_persona_gender(engine)
         ),
         profile=pack_identity_text(engine, "profile")
-        or _config_text(engine, "persona_character_profile", ""),
+        or config_text(engine, "persona_character_profile", ""),
     )
     persona_card = PersonaCard(
-        persona=_config_text(
+        persona=config_text(
             engine,
             "persona_persona",
             default_persona_persona(),
@@ -625,7 +625,7 @@ def build_persona_context(
         detail=traits["detail"],
         formality=traits["formality"],
         enthusiasm=traits["enthusiasm"],
-        context=_config_text(
+        context=config_text(
             engine,
             "persona_context",
             default_persona_context(),
@@ -661,7 +661,7 @@ def build_persona_context(
     )
 
 
-def _effective_voice_prompt(engine: Celune) -> Optional[str]:
+def effective_voice_prompt(engine: Celune) -> Optional[str]:
     """Return the active voice prompt only when the engine supports it."""
     supported = getattr(engine, "voice_prompt_supported", None)
     if callable(supported) and not supported():
@@ -796,7 +796,7 @@ def build_agent_classification_request(
     Returns:
         JSON: A Persona-compatible classification request.
     """
-    from .pipeline import _AGENT_CLASSIFICATION_INSTRUCTIONS
+    from .pipeline import AGENT_CLASSIFICATION_INSTRUCTIONS
 
     context = build_persona_context(
         engine,
@@ -804,15 +804,17 @@ def build_agent_classification_request(
         include_memory_context=False,
     )
     persona_prompt = PersonaPromptBuilder.build(context)
-    system_prompt = f"{persona_prompt}\n\n{_AGENT_CLASSIFICATION_INSTRUCTIONS}"
+    system_prompt = f"{persona_prompt}\n\n{AGENT_CLASSIFICATION_INSTRUCTIONS}"
     if routing_context is not None:
         system_prompt = (
             f"{system_prompt}\n\nActive routing context:\n"
             f"{json.dumps(routing_context, ensure_ascii=True, sort_keys=True)}"
         )
     clean_request = request.strip()
-    messages: list[JSON] = [cast(JSON, {"role": "system", "content": system_prompt})]
-    messages.append(cast(JSON, {"role": "user", "content": clean_request}))
+    messages: list[JSON] = [
+        cast(JSON, {"role": "system", "content": system_prompt}),
+        cast(JSON, {"role": "user", "content": clean_request}),
+    ]
     return {
         "format": "celune_agent_classification",
         "format_version": 1,
@@ -834,7 +836,7 @@ def build_agent_classification_request(
     }
 
 
-def _extract_persona_text(payload: JSONSerializable) -> str:
+def extract_persona_text(payload: JSONSerializable) -> str:
     """Extract spoken text from common Persona response payload shapes."""
     if isinstance(payload, str):
         return payload.strip()
@@ -857,12 +859,12 @@ def _extract_persona_text(payload: JSONSerializable) -> str:
     if isinstance(choices, list) and choices:
         first = choices[0]
         if isinstance(first, dict):
-            return _extract_persona_text(first)
+            return extract_persona_text(first)
 
     return ""
 
 
-def _think_persona(engine: Celune, request: str) -> bool:
+def think_persona(engine: Celune, request: str) -> bool:
     """Let Celune think about the input given, and speak back.
 
     Args:
@@ -872,9 +874,9 @@ def _think_persona(engine: Celune, request: str) -> bool:
     Returns:
         bool: Whether Celune completed the thinking action successfully or not.
     """
-    from .playback import _notify_component_busy
+    from .playback import notify_component_busy
 
-    _store_persona_memories(engine, request)
+    store_persona_memories(engine, request)
     payload = build_persona_request(engine, request)
     attachments = getattr(engine, "persona_attachments", None)
     lease = None
@@ -887,7 +889,7 @@ def _think_persona(engine: Celune, request: str) -> bool:
         if not acquisition.acquired:
             busy = acquisition.busy
             assert busy is not None
-            _notify_component_busy(engine, "think", busy)
+            notify_component_busy(engine, "think", busy)
             if isinstance(attachments, list):
                 attachments.clear()
             return False
@@ -900,7 +902,7 @@ def _think_persona(engine: Celune, request: str) -> bool:
 
         response = vision.post(json=payload)
         response.raise_for_status()
-        spoken_text = _extract_persona_text(response.json())
+        spoken_text = extract_persona_text(response.json())
     except Exception as e:
         engine.log(
             format_error_message(
@@ -940,7 +942,7 @@ def _think_persona(engine: Celune, request: str) -> bool:
     )
     if isinstance(history, list):
         compact_persona_history(engine)
-    _classify_persona_memories(engine, request)
+    classify_persona_memories(engine, request)
     return queued
 
 
@@ -1047,7 +1049,7 @@ def _think_worker(self: Celune) -> None:
                     self.say(clarification)
                 continue
             if route.route != AgentRoute.CONVERSATION:
-                self._run_agent_route(route)
+                self.run_agent_route(route)
                 continue
 
             if persona_loading:
@@ -1067,7 +1069,7 @@ def _think_worker(self: Celune) -> None:
                 self.say(text)
                 continue
 
-            if not _think_persona(self, text):
+            if not think_persona(self, text):
                 self.log(string("celune.say_instead"), "warning")
                 self.say(text)
     finally:
@@ -1101,4 +1103,4 @@ def install_pipeline(target):
     install_module_functions(
         target, {name: globals()[name] for name in _PERSONA_EXPORTS}
     )
-    target["think"] = _think_persona
+    target["think"] = think_persona

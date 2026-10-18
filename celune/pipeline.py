@@ -30,47 +30,47 @@ from .paths import (
 )
 from .utils import (
     discard,
+    clear_queue,
+    cesn_to_text,
     format_number,
     format_error_message,
 )
 from .singing import (
-    _contains_cesn_note_event,
-    _prepare_synthesis_chunks,
+    contains_cesn_note_event,
+    format_cesn_error,
+    prepare_synthesis_chunks,
 )
 from .metadata import (
-    _write_celune_flac,
-    _write_flac_metadata,
-    _flac_metadata_blocks,
-    _celune_metadata_payload,
-    _parse_vorbis_comment_block,
+    write_celune_flac,
+    celune_metadata_payload,
 )
 from .playback import (
     acquire_pipeline,
     release_pipeline,
-    _apply_source_gain,
-    _youtube_sfx_title,
-    _pipeline_cpu_config,
-    _queue_playback_done,
-    _download_youtube_sfx,
-    _playback_source_meta,
-    _queue_playback_chunk,
-    _dequeue_playback_item,
+    apply_source_gain,
+    youtube_sfx_title,
+    pipeline_cpu_config,
+    queue_playback_done,
+    download_youtube_sfx,
+    playback_source_meta,
+    queue_playback_chunk,
+    dequeue_playback_item,
     current_playback_status,
-    _next_playback_source_id,
-    _playback_caption_states,
-    _playback_source_statuses,
-    _register_playback_source,
-    _update_playback_progress,
-    _caption_chunk_word_ranges,
-    _register_overlay_playback,
-    _set_playback_source_status,
-    _remember_smart_buffer_speed,
-    _smart_buffer_target_seconds,
-    _clear_playback_source_status,
-    _flush_buffered_speech_chunks,
-    _notify_speech_playback_finished,
-    _record_caption_playback_segment,
-    _should_apply_contention_buffering,
+    next_playback_source_id,
+    playback_caption_states,
+    playback_source_statuses,
+    register_playback_source,
+    update_playback_progress,
+    caption_chunk_word_ranges,
+    register_overlay_playback,
+    set_playback_source_status,
+    remember_smart_buffer_speed,
+    smart_buffer_target_seconds,
+    clear_playback_source_status,
+    flush_buffered_speech_chunks,
+    notify_speech_playback_finished,
+    record_caption_playback_segment,
+    should_apply_contention_buffering,
 )
 from .audio.dsp import (
     soften,
@@ -87,9 +87,9 @@ from .constants import (
     APP_SLUG,
 )
 from .pipelinecore import (
-    _PIPELINE_CPU_YIELD_SECONDS,
-    _PLAYBACK_BUFFER_STARTUP_GRACE_SECONDS,
-    _monotonic_time,
+    PIPELINE_CPU_YIELD_SECONDS,
+    PLAYBACK_BUFFER_STARTUP_GRACE_SECONDS,
+    monotonic_time,
 )
 from .dataclasses.pipeline import (
     SpeechTiming,
@@ -99,21 +99,21 @@ from .dataclasses.pipeline import (
 )
 from .i18n import string, tagged_string
 from .config import resolve_audio_device
+from .threads import run_in_daemon_thread
 from .typing.common import JSONSerializable
 from .binding import install_class_functions
-from .analysis import _schedule_voice_analysis
+from .analysis import schedule_voice_analysis
+from .reload import reload_model_for_language
 from .typing.pipeline import SpeechStreamQueue
-from .contention import _PlaybackContentionMonitor
+from .contention import PlaybackContentionMonitor
 from .typing.aliases import AudioChunk, AudioChunks
-from .captions import _build_caption_alignment_sections
-from .exceptions import BackendError, NotAvailableError
+from .captions import build_caption_alignment_sections
+from .conversation import think_persona, effective_voice_prompt
 from .vram import is_cuda_out_of_memory, release_cuda_after_oom
-from .conversation import _think_persona, _effective_voice_prompt
-from .threads import run_in_daemon_thread as _run_in_daemon_thread
+from .exceptions import BackendError, CESNError, NotAvailableError
 from .prepared import play_prepared_speech, finish_tutorial_audio_capture
 
 if TYPE_CHECKING:
-    from .celune import Celune
     from .speech import (
         say,
         play,
@@ -130,58 +130,59 @@ if TYPE_CHECKING:
         queue_streaming_sfx_audio,
         finish_streaming_sfx_audio,
     )
-    from .captions import CaptionAlignmentWorker
     from .playback import (
-        _config_text,
-        _config_lines,
-        _notify_component_busy,
+        config_text,
+        config_lines,
+        notify_component_busy,
         acquire_pipeline_result,
     )
     from .conversation import (
         think,
-        _extract_persona_text,
-        _persona_memory_store,
+        extract_persona_text,
+        persona_memory_store,
         build_persona_context,
         build_persona_request,
         build_persona_messages,
-        _persona_manifest_files,
+        persona_manifest_files,
         build_persona_character_card,
         build_agent_classification_request,
     )
+    from .celune import Celune
+    from .captions import CaptionAlignmentWorker
 
     _PIPELINE_TYPE_EXPORTS = (
-        _effective_voice_prompt,
-        _extract_persona_text,
-        _persona_manifest_files,
-        _persona_memory_store,
+        effective_voice_prompt,
+        extract_persona_text,
+        persona_manifest_files,
+        persona_memory_store,
         build_agent_classification_request,
         build_persona_character_card,
         build_persona_context,
         build_persona_messages,
         build_persona_request,
         think,
-        _apply_source_gain,
-        _clear_playback_source_status,
-        _config_lines,
-        _config_text,
-        _dequeue_playback_item,
-        _download_youtube_sfx,
-        _flush_buffered_speech_chunks,
-        _next_playback_source_id,
-        _notify_component_busy,
-        _notify_speech_playback_finished,
-        _pipeline_cpu_config,
-        _playback_source_meta,
-        _playback_source_statuses,
-        _queue_playback_chunk,
-        _queue_playback_done,
-        _register_overlay_playback,
-        _register_playback_source,
-        _remember_smart_buffer_speed,
-        _set_playback_source_status,
-        _smart_buffer_target_seconds,
-        _update_playback_progress,
-        _youtube_sfx_title,
+        apply_source_gain,
+        clear_playback_source_status,
+        config_lines,
+        config_text,
+        dequeue_playback_item,
+        download_youtube_sfx,
+        flush_buffered_speech_chunks,
+        next_playback_source_id,
+        notify_component_busy,
+        notify_speech_playback_finished,
+        pipeline_cpu_config,
+        playback_source_meta,
+        playback_source_statuses,
+        queue_playback_chunk,
+        queue_playback_done,
+        register_overlay_playback,
+        register_playback_source,
+        remember_smart_buffer_speed,
+        set_playback_source_status,
+        smart_buffer_target_seconds,
+        update_playback_progress,
+        youtube_sfx_title,
         acquire_pipeline,
         acquire_pipeline_result,
         current_playback_status,
@@ -226,7 +227,7 @@ def _stop_pipeline_jobs(self: Celune) -> None:
     """Stop startup pipeline workers after an initialization failure."""
     with self.queue_lock:
         self.text_queue.put(self.sentinel)
-        if self._is_voice_conversion_mode():
+        if self.is_voice_conversion_mode():
             self.audio_queue.put(self.sentinel)
 
     if self._playback_thread is not None:
@@ -264,7 +265,7 @@ def _prioritize_playback_thread() -> None:
 class _PlaybackWriter:
     """Write mixed audio on one persistent thread with reserve accounting."""
 
-    def __init__(self, engine: Celune, monitor: _PlaybackContentionMonitor) -> None:
+    def __init__(self, engine: Celune, monitor: PlaybackContentionMonitor) -> None:
         self._engine = engine
         self._monitor = monitor
         self._queue: queue.Queue[Optional[_PlaybackWriteItem]] = queue.Queue()
@@ -316,14 +317,14 @@ class _PlaybackWriter:
 
     def _record_played_frames(self, item: _PlaybackWriteItem) -> None:
         """Advance source positions after one mixed block reaches the output."""
-        source_meta = _playback_source_meta(self._engine)
+        source_meta = playback_source_meta(self._engine)
         for source_id in item.source_ids:
             metadata = source_meta.get(source_id)
             if isinstance(metadata, dict):
                 metadata["played_frames"] = float(
                     metadata.get("played_frames", 0.0)
                 ) + float(len(item.audio))
-        _update_playback_progress(self._engine)
+        update_playback_progress(self._engine)
 
     def _run(self) -> None:
         """Consume the output queue until a stop marker is received."""
@@ -537,7 +538,7 @@ class _PlaybackInputReader:
             self._thread = None
 
 
-_AGENT_CLASSIFICATION_INSTRUCTIONS = (
+AGENT_CLASSIFICATION_INSTRUCTIONS = (
     "This is an internal routing request, not a character response. The routing "
     "output rules below take priority over any character-response, speech, or "
     "conversation-style guidance in the Persona context. Classify the latest user "
@@ -581,11 +582,20 @@ _AGENT_CLASSIFICATION_INSTRUCTIONS = (
 )
 
 
-def _format_stat_duration(seconds: float) -> str:
+def format_stat_duration(seconds: float) -> str:
     """Format a duration as whole minutes and seconds for engine statistics."""
     whole_seconds = max(0, int(seconds))
     minutes, remaining_seconds = divmod(whole_seconds, 60)
     return f"{minutes}:{remaining_seconds:02d}"
+
+
+def _output_filename_fragment(text: str, *, singing_backend: bool) -> str:
+    """Return a safe filename fragment, removing CESN tags for singing text."""
+    filename_text = text
+    if singing_backend and contains_cesn_note_event(text):
+        filename_text = cesn_to_text(text)
+    first_words = "_".join(filename_text.split()[:3]).lower()
+    return re.sub(r"[^a-zA-Z0-9_]", "", first_words)
 
 
 def _saved_output_speech_seconds() -> float:
@@ -606,7 +616,7 @@ def _saved_output_speech_seconds() -> float:
 
 
 _MAX_SILENT_UTTERANCE_RETRIES = 3
-_MEMORY_CLASSIFIER_SYSTEM_PROMPT = """You classify durable user facts for long-term memory.
+MEMORY_CLASSIFIER_SYSTEM_PROMPT = """You classify durable user facts for long-term memory.
 Return JSON only in this exact shape:
 {"memories":[{"content":"...","importance":1,"confidence":0.0}]}
 
@@ -616,19 +626,6 @@ Do not include assistant statements, temporary requests, jokes, guesses, passwor
 tokens, financial details, medical details, or unrelated conversation. If there is no durable
 fact, return {"memories":[]}.
 """
-
-
-def clear_queue(q: queue.Queue) -> None:
-    """Drain all pending items from a queue.
-
-    Args:
-        q: The queue to empty.
-    """
-    try:
-        while True:
-            q.get_nowait()
-    except queue.Empty:
-        pass
 
 
 def log_first_playback(engine: Celune, timing: Optional[SpeechTiming]) -> None:
@@ -654,7 +651,7 @@ def log_first_playback(engine: Celune, timing: Optional[SpeechTiming]) -> None:
         if not isinstance(elapsed, float):
             return
     else:
-        elapsed = _monotonic_time() - start_time
+        elapsed = monotonic_time() - start_time
 
     engine.log(f"TTFP {format_number(elapsed, 2)}s")
 
@@ -737,8 +734,8 @@ def force_stop_speech(engine: Celune) -> bool:
             engine.locked
             or engine.cur_state in {"generating", "speaking"}
             or not engine.playback_done.is_set()
-            or bool(_playback_source_meta(engine))
-            or bool(_playback_source_statuses(engine))
+            or bool(playback_source_meta(engine))
+            or bool(playback_source_statuses(engine))
         )
 
     if not is_active:
@@ -746,12 +743,12 @@ def force_stop_speech(engine: Celune) -> bool:
         return False
 
     engine.log(string("pipeline.forcefully_stopping_speech"))
-    _invalidate_speech_work(engine)
+    invalidate_speech_work(engine)
 
     return True
 
 
-def _invalidate_speech_work(engine: Celune) -> None:
+def invalidate_speech_work(engine: Celune) -> None:
     """Invalidate queued and in-flight speech generations immediately."""
     engine.utterance_force_stop.set()
 
@@ -931,19 +928,19 @@ def play_signal(engine: Celune, signal_type: str) -> bool:
     # Celune to become deadlocked, or it won't have an effect, so please call
     # Celune._try_play_signal() instead of calling this method directly
     if signal_type == "readiness":
-        source_id = _next_playback_source_id(engine)
-        state_event = _register_overlay_playback(engine)
-        _register_playback_source(engine, source_id, kind="sfx")
-        if not _queue_playback_chunk(engine, source_id, signal, BASE_SR):
+        source_id = next_playback_source_id(engine)
+        state_event = register_overlay_playback(engine)
+        register_playback_source(engine, source_id, kind="sfx")
+        if not queue_playback_chunk(engine, source_id, signal, BASE_SR):
             return False
-        if not _queue_playback_done(
+        if not queue_playback_done(
             engine,
             source_id,
             notify_idle_when_finished=True,
         ):
             return False
         if state_event is not None:
-            engine._emit_event("state_changed", state_event)
+            engine.emit_event("state_changed", state_event)
         return True
 
     if acquire_pipeline(engine, f"play {signal_type} signal"):
@@ -953,12 +950,12 @@ def play_signal(engine: Celune, signal_type: str) -> bool:
                 engine.cur_state = "sleeping"
             elif signal_type != "working":
                 engine.cur_state = "speaking"
-        source_id = _next_playback_source_id(engine)
-        _register_playback_source(engine, source_id, kind="sfx")
-        if not _queue_playback_chunk(engine, source_id, signal, BASE_SR):
+        source_id = next_playback_source_id(engine)
+        register_playback_source(engine, source_id, kind="sfx")
+        if not queue_playback_chunk(engine, source_id, signal, BASE_SR):
             release_pipeline(engine)
             return False
-        if not _queue_playback_done(
+        if not queue_playback_done(
             engine,
             source_id,
             release_pipeline_when_finished=release_to_idle,
@@ -1037,8 +1034,9 @@ def _process_generation_request(
         release_pipeline(engine)
         return
 
+    fatal_model_reload = False
     while True:
-        source_id = _next_playback_source_id(engine)
+        source_id = next_playback_source_id(engine)
         prepared_sections: list[AudioChunk] = []
         try:
             engine.model_ready.wait()
@@ -1056,7 +1054,7 @@ def _process_generation_request(
                 release_pipeline(engine)
                 break
 
-            start_time = _monotonic_time()
+            start_time = monotonic_time()
             engine.log(f"[GEN] {display_text}")
             engine.log(
                 "[GEN] start "
@@ -1067,12 +1065,12 @@ def _process_generation_request(
             )
             speech_len = 0.0
             buffered_speech_len = 0.0
-            smart_buffer_target_seconds = _smart_buffer_target_seconds(
+            buffer_target_seconds = smart_buffer_target_seconds(
                 engine,
                 0.0,
                 0.0,
             )
-            engine.smart_buffer_target_seconds = smart_buffer_target_seconds
+            engine.smart_buffer_target_seconds = buffer_target_seconds
             speech_timing = SpeechTiming(start_time)
             pushed_audio = False
             stream_frame_count = 0
@@ -1096,19 +1094,21 @@ def _process_generation_request(
                 chunks = list(item.synthesis_sections)
             elif getattr(
                 engine.backend, "singing", False
-            ) and not _contains_cesn_note_event(text):
+            ) and not text.lstrip().startswith("["):
                 message = string("cesn.no_notation_found")
                 engine.progress_callback(0, 1)
-                engine.error_callback(message)
+                engine.log(message, "warning")
                 if item.audio_capture_queue is not None:
                     item.audio_capture_queue.put(NotAvailableError(message))
                 if stream_queue is not None:
                     stream_queue.put(NotAvailableError(message))
                     stream_queue.put(None)
                 release_pipeline(engine)
+                engine.change_input_state_callback(locked=False)
+                engine.change_voice_lock_state_callback(locked=len(engine.voices) < 2)
                 break
             else:
-                chunks = _prepare_synthesis_chunks(engine, text, split_text)
+                chunks = prepare_synthesis_chunks(engine, text, split_text)
             if not chunks:
                 engine.progress_callback(0, 1)
                 engine.error_callback(string("pipeline.nothing_to_say"))
@@ -1136,7 +1136,7 @@ def _process_generation_request(
                 and caption_worker is not None
             )
             if not capture_tutorial_audio:
-                _register_playback_source(
+                register_playback_source(
                     engine,
                     source_id,
                     kind="speech",
@@ -1145,7 +1145,7 @@ def _process_generation_request(
                         caption_word_total if caption_alignment_enabled else 0
                     ),
                 )
-            caption_word_ranges = _caption_chunk_word_ranges(display_text, chunks)
+            caption_word_ranges = caption_chunk_word_ranges(display_text, chunks)
 
             for chunk_index, chunk_text in enumerate(chunks):
                 if engine.exit_requested:
@@ -1161,10 +1161,10 @@ def _process_generation_request(
                 if (
                     not caption_alignment_enabled
                     and source_id is not None
-                    and source_id in _playback_caption_states(engine)
+                    and source_id in playback_caption_states(engine)
                 ):
                     with engine.queue_lock:
-                        source_meta = _playback_source_meta(engine).get(source_id)
+                        source_meta = playback_source_meta(engine).get(source_id)
                         if isinstance(source_meta, dict):
                             chunk_start_frames = int(
                                 float(source_meta.get("total_frames", 0.0))
@@ -1195,11 +1195,6 @@ def _process_generation_request(
                 last_timing: Optional[dict] = None
 
                 with engine.model_lock:
-                    if engine.model is None:
-                        raise NotAvailableError(
-                            "cannot generate without a model reference"
-                        )
-
                     resolve_generation_language = getattr(
                         engine.backend,
                         "resolve_generation_language",
@@ -1213,33 +1208,11 @@ def _process_generation_request(
                         target_language if isinstance(target_language, str) else None
                     )
 
-                    should_reload_for_language = getattr(
-                        engine.backend,
-                        "should_reload_for_language",
-                        None,
-                    )
-                    if callable(should_reload_for_language) and (
-                        should_reload_for_language(target_language)
-                    ):
-                        active_voice = (
-                            engine.current_voice or engine.backend.default_voice
-                        )
-                        if active_voice is None:
-                            raise NotAvailableError(
-                                "cannot switch language without an active voice"
-                            )
-
-                        model_id = engine.backend.model_id_for_voice(active_voice)
-                        engine.log(
-                            f"[RELOAD] Loading {model_id} for language: {target_language}",
-                            loglevel="verbose",
-                        )
-                        engine.backend.unload_model()
-                        engine.model = engine.backend.load_model(
-                            model_id,
-                            lang=target_language,
-                        )
-                        engine.model_name = model_id
+                    try:
+                        reload_model_for_language(engine, caption_language)
+                    except Exception:
+                        fatal_model_reload = engine.model is None
+                        raise
 
                     for (
                         audio_chunk,
@@ -1250,7 +1223,7 @@ def _process_generation_request(
                         text=chunk_text,
                         language=target_language,
                         chunk_size=engine.chunk_size,
-                        instruct=_effective_voice_prompt(engine),
+                        instruct=effective_voice_prompt(engine),
                         voice=engine.current_voice,
                         temperature=generation_params["temperature"],
                         top_k=generation_params["top_k"],
@@ -1341,25 +1314,25 @@ def _process_generation_request(
                         speech_len += chunk_dur
                         buffered_speech_len += chunk_dur
                         generation_elapsed = max(
-                            _monotonic_time() - start_time,
+                            monotonic_time() - start_time,
                             1e-6,
                         )
-                        smart_buffer_target_seconds = _smart_buffer_target_seconds(
+                        buffer_target_seconds = smart_buffer_target_seconds(
                             engine,
                             speech_len,
                             generation_elapsed,
                         )
-                        engine.smart_buffer_target_seconds = smart_buffer_target_seconds
+                        engine.smart_buffer_target_seconds = buffer_target_seconds
 
                         if (
                             not capture_tutorial_audio
                             and not caption_alignment_enabled
                             and (
-                                smart_buffer_target_seconds <= 0.0
-                                or buffered_speech_len >= smart_buffer_target_seconds
+                                buffer_target_seconds <= 0.0
+                                or buffered_speech_len >= buffer_target_seconds
                             )
                         ):
-                            pushed_audio = _flush_buffered_speech_chunks(
+                            pushed_audio = flush_buffered_speech_chunks(
                                 engine,
                                 source_id,
                                 buffer,
@@ -1418,7 +1391,7 @@ def _process_generation_request(
                                 (chunk_start_frames, caption_audio_frames, chunk_text)
                             )
                     else:
-                        pushed_audio = _flush_buffered_speech_chunks(
+                        pushed_audio = flush_buffered_speech_chunks(
                             engine,
                             source_id,
                             buffer,
@@ -1430,15 +1403,15 @@ def _process_generation_request(
                     buffered_speech_len = 0.0
                     if (
                         not caption_alignment_enabled or caption_worker is None
-                    ) and source_id in _playback_caption_states(engine):
+                    ) and source_id in playback_caption_states(engine):
                         with engine.queue_lock:
-                            source_meta = _playback_source_meta(engine).get(source_id)
+                            source_meta = playback_source_meta(engine).get(source_id)
                             chunk_end_frames = (
                                 int(float(source_meta.get("total_frames", 0.0)))
                                 if isinstance(source_meta, dict)
                                 else chunk_start_frames
                             )
-                        _record_caption_playback_segment(
+                        record_caption_playback_segment(
                             engine,
                             source_id,
                             chunk_start_frames,
@@ -1455,7 +1428,7 @@ def _process_generation_request(
             if generated_text_parts:
                 text = timing_text
 
-            generation_time = max(_monotonic_time() - start_time, 1e-6)
+            generation_time = max(monotonic_time() - start_time, 1e-6)
 
             engine.log(
                 "[GEN] stream complete "
@@ -1512,12 +1485,12 @@ def _process_generation_request(
 
             generation_speed = speech_len / generation_time
             engine.log(
-                f"{_format_stat_duration(speech_len)}, "
+                f"{format_stat_duration(speech_len)}, "
                 f"{format_number(generation_time, 2)}s, "
                 f"{format_number(generation_speed, 2)}x"
             )
-            _remember_smart_buffer_speed(engine, generation_speed)
-            engine.smart_buffer_target_seconds = _smart_buffer_target_seconds(
+            remember_smart_buffer_speed(engine, generation_speed)
+            engine.smart_buffer_target_seconds = smart_buffer_target_seconds(
                 engine,
                 speech_len,
                 generation_time,
@@ -1525,7 +1498,7 @@ def _process_generation_request(
             engine.log(f"TTFC {format_number(speech_timing.ttfc_ms(), 1)}ms")
 
             if buffer and not capture_tutorial_audio and not caption_alignment_enabled:
-                _flush_buffered_speech_chunks(
+                flush_buffered_speech_chunks(
                     engine,
                     source_id,
                     buffer,
@@ -1568,7 +1541,7 @@ def _process_generation_request(
                             full_audio.append(tail)
                             caption_audio_frames += len(tail)
                         else:
-                            queued_tail = _queue_playback_chunk(
+                            queued_tail = queue_playback_chunk(
                                 engine,
                                 source_id,
                                 tail,
@@ -1600,7 +1573,7 @@ def _process_generation_request(
                                 finish_stream=False,
                             )
                         else:
-                            _queue_playback_done(
+                            queue_playback_done(
                                 engine,
                                 source_id,
                                 release_pipeline_when_finished=False,
@@ -1636,7 +1609,7 @@ def _process_generation_request(
                         full_audio.clear()
                     if caption_audio_sections:
                         transcript, alignment_sections = (
-                            _build_caption_alignment_sections(
+                            build_caption_alignment_sections(
                                 display_text,
                                 tuple(caption_audio_sections),
                             )
@@ -1680,8 +1653,10 @@ def _process_generation_request(
                         "%Y%m%d%H%M%S"
                     )
 
-                    first_words = "_".join(text.split()[:3]).lower()
-                    first_words = re.sub(r"[^a-zA-Z0-9_]", "", first_words)
+                    first_words = _output_filename_fragment(
+                        text,
+                        singing_backend=bool(getattr(engine.backend, "singing", False)),
+                    )
 
                     output_dir = outputs_dir()
                     if not output_dir.exists():
@@ -1704,7 +1679,7 @@ def _process_generation_request(
                         actual_saved_path = str(output_dir / file_name)
                         sample_rate = BASE_SR
                         subtype = "PCM_24"
-                        metadata = _celune_metadata_payload(
+                        metadata = celune_metadata_payload(
                             engine,
                             text=text,
                             display_text=display_text,
@@ -1714,7 +1689,7 @@ def _process_generation_request(
                             included_kept_sfx=kept_sfx_audio is not None,
                         )
                         try:
-                            _write_celune_flac(
+                            write_celune_flac(
                                 engine,
                                 actual_saved_path,
                                 wav,
@@ -1745,7 +1720,7 @@ def _process_generation_request(
                     )
                     release_pipeline(engine, playback_idle=False)
                 else:
-                    _queue_playback_done(
+                    queue_playback_done(
                         engine,
                         source_id,
                         release_pipeline_when_finished=True,
@@ -1782,13 +1757,18 @@ def _process_generation_request(
 
             cuda_oom = is_cuda_out_of_memory(original_error)
             recovery_error: Optional[Exception] = None
-            if not cuda_oom and getattr(engine.backend, "quantization_active", False):
+            if (
+                not cuda_oom
+                and not isinstance(original_error, CESNError)
+                and getattr(engine.backend, "quantization_active", False)
+            ):
                 try:
                     _recover_quantized_tts(engine, request_language)
                 except Exception as caught_recovery_error:
                     recovery_error = caught_recovery_error
 
             error = recovery_error or original_error
+            cesn_error = isinstance(error, CESNError)
             if item.audio_capture_queue is not None:
                 item.audio_capture_queue.put(error)
             short_input_error = _is_short_input_generation_error(error)
@@ -1808,6 +1788,8 @@ def _process_generation_request(
                 )
             elif short_input_error:
                 engine.log(input_too_short_message, "warning")
+            elif isinstance(error, CESNError):
+                engine.log(format_cesn_error(text, error), "error")
             else:
                 engine.log(
                     format_error_message(
@@ -1822,11 +1804,20 @@ def _process_generation_request(
             elif stream_queue is not None:
                 stream_queue.put(error)
                 stream_queue.put(None)
-            engine.cur_state = "idle" if short_input_error or cuda_oom else "error"
+            engine.cur_state = (
+                "idle" if short_input_error or cuda_oom or cesn_error else "error"
+            )
             release_pipeline(engine)
+            if cesn_error:
+                engine.status_callback(string("status.idle"))
+            if fatal_model_reload:
+                engine.fatal()
             engine.progress_callback(0, 1)
             if short_input_error:
                 engine.status_callback(input_too_short_message, "warning")
+            elif cesn_error:
+                engine.change_input_state_callback(locked=False)
+                engine.change_voice_lock_state_callback(locked=len(engine.voices) < 2)
             else:
                 engine.error_callback(
                     string("pipeline.could_not_generate", app_name=APP_NAME)
@@ -1847,12 +1838,12 @@ async def generation_worker_job(engine: Celune) -> None:
         caption_worker = CaptionAlignmentWorker(engine.log, engine.log_level)
 
     while True:
-        item = await _run_in_daemon_thread(engine.text_queue.get)
+        item = await run_in_daemon_thread(engine.text_queue.get)
         engine.regenerate = False
 
         if item is engine.sentinel:
             if caption_worker is not None:
-                await _run_in_daemon_thread(
+                await run_in_daemon_thread(
                     lambda: caption_worker.close(
                         lambda: engine.audio_queue.put(engine.sentinel)
                     )
@@ -1861,7 +1852,7 @@ async def generation_worker_job(engine: Celune) -> None:
                 try:
                     engine.audio_queue.put_nowait(engine.sentinel)
                 except queue.Full:
-                    await _run_in_daemon_thread(
+                    await run_in_daemon_thread(
                         lambda: engine.audio_queue.put(engine.sentinel)
                     )
             break
@@ -1885,7 +1876,7 @@ async def generation_worker_job(engine: Celune) -> None:
         engine.utterance_force_stop.clear()
         engine._active_speech_generation = request.generation
         try:
-            await _run_in_daemon_thread(
+            await run_in_daemon_thread(
                 lambda request=request: _process_generation_request(
                     engine,
                     request,
@@ -2025,7 +2016,7 @@ def _finalize_playback_idle(
         ):
             engine.log(string("pipeline.analyzing"), loglevel="verbose")
             saved = pathlib.Path(saved_path)
-            _schedule_voice_analysis(
+            schedule_voice_analysis(
                 analysis_audio,
                 BASE_SR,
                 saved.name,
@@ -2048,8 +2039,12 @@ def _finalize_playback_idle(
             and not getattr(engine, "_ready_announced", False)
         ):
             is_vc_mode = False
+            is_singing = False
+
+            discard(is_singing)
             discard(is_vc_mode)
-            mode_check = getattr(engine, "_is_voice_conversion_mode", None)
+            mode_check = getattr(engine, "is_voice_conversion_mode", None)
+
             if callable(mode_check):
                 is_vc_mode = bool(mode_check())
             else:
@@ -2057,10 +2052,22 @@ def _finalize_playback_idle(
                     getattr(engine, "input_mode", "text_to_speech")
                     == "voice_conversion"
                 )
+
+            is_singing = getattr(engine.backend, "singing", False)
+
             if is_vc_mode:
-                engine.log(string("pipeline.ready_to_vc"))
+                engine.log(
+                    string("pipeline.ready", action=string("pipeline.action_vc"))
+                )
+            elif is_singing:
+                engine.log(
+                    string("pipeline.ready", action=string("pipeline.action_sing"))
+                )
             else:
-                engine.log(string("pipeline.ready_to_speak"))
+                engine.log(
+                    string("pipeline.ready", action=string("pipeline.action_speak"))
+                )
+
             engine._ready_announced = True
 
     if torch.cuda.is_available():
@@ -2094,13 +2101,13 @@ async def playback_worker_job(engine: Celune) -> None:
         max_buffer_seconds,
         max_drain_items,
         yield_seconds,
-    ) = _pipeline_cpu_config(engine)
+    ) = pipeline_cpu_config(engine)
     buffered_seconds = 0.0
-    contention = _PlaybackContentionMonitor(engine)
+    contention = PlaybackContentionMonitor(engine)
     writer = _PlaybackWriter(engine, contention)
     input_reader = _PlaybackInputReader(engine)
     input_reader.start()
-    last_monitor_at = _monotonic_time()
+    last_monitor_at = monotonic_time()
     buffering_started_at: Optional[float] = None
     rebuffer_wait_started_at: Optional[float] = None
     pending_idle_marker: Optional[PlaybackSourceDone] = None
@@ -2124,7 +2131,7 @@ async def playback_worker_job(engine: Celune) -> None:
         nonlocal rebuffer_wait_started_at
         if rebuffer_wait_started_at is None:
             return
-        finished_at = _monotonic_time() if now is None else now
+        finished_at = monotonic_time() if now is None else now
         engine.playback_rebuffer_wait_seconds += max(
             0.0,
             finished_at - rebuffer_wait_started_at,
@@ -2134,7 +2141,7 @@ async def playback_worker_job(engine: Celune) -> None:
     def playback_is_idle() -> bool:
         """Return whether every queued playback stage has drained."""
         with engine.queue_lock:
-            registered_sources = bool(_playback_source_meta(engine))
+            registered_sources = bool(playback_source_meta(engine))
         return (
             not source_buffers
             and not source_done
@@ -2205,8 +2212,8 @@ async def playback_worker_job(engine: Celune) -> None:
             "error",
         )
         engine.error_callback(string("pipeline.playback_error"))
-        await _run_in_daemon_thread(lambda: writer.stop(clear=True))
-        await _run_in_daemon_thread(lambda: close_stream(engine, True))
+        await run_in_daemon_thread(lambda: writer.stop(clear=True))
+        await run_in_daemon_thread(lambda: close_stream(engine, True))
         engine._stream = None
         engine._current_sr = None
         source_buffers.clear()
@@ -2215,11 +2222,11 @@ async def playback_worker_job(engine: Celune) -> None:
         buffered_seconds = 0.0
         buffering_started_at = None
         publish_buffered_seconds()
-        for source_id in tuple(_playback_source_meta(engine)):
-            _notify_speech_playback_finished(engine, source_id)
-        _playback_source_statuses(engine).clear()
-        _playback_source_meta(engine).clear()
-        _playback_caption_states(engine).clear()
+        for source_id in tuple(playback_source_meta(engine)):
+            notify_speech_playback_finished(engine, source_id)
+        playback_source_statuses(engine).clear()
+        playback_source_meta(engine).clear()
+        playback_caption_states(engine).clear()
         engine._caption_source_id = None
         engine.playback_done.set()
         release_pipeline(engine)
@@ -2237,14 +2244,14 @@ async def playback_worker_job(engine: Celune) -> None:
         source_done.clear()
         buffered_seconds = 0.0
         buffering_started_at = None
-        await _run_in_daemon_thread(lambda: writer.stop(clear=True))
+        await run_in_daemon_thread(lambda: writer.stop(clear=True))
         publish_buffered_seconds()
-        _playback_source_statuses(engine).clear()
-        _playback_source_meta(engine).clear()
-        _playback_caption_states(engine).clear()
+        playback_source_statuses(engine).clear()
+        playback_source_meta(engine).clear()
+        playback_caption_states(engine).clear()
         engine._caption_source_id = None
         _reset_glow_audio_reactivity(engine)
-        await _run_in_daemon_thread(lambda: close_stream(engine, True))
+        await run_in_daemon_thread(lambda: close_stream(engine, True))
         engine.playback_done.set()
         release_pipeline(engine)
         if getattr(engine, "_active_speech_generation", None) is None:
@@ -2257,11 +2264,11 @@ async def playback_worker_job(engine: Celune) -> None:
     async def drain_pending_items() -> bool:
         nonlocal buffered_seconds, buffering_started_at, last_monitor_at, stop_requested
 
-        now = _monotonic_time()
+        now = monotonic_time()
         contention.sample_cpu(now)
         if source_buffers or writer.pending_seconds > 0.0:
             contention.observe_scheduler_lag(
-                max(0.0, now - last_monitor_at - _PIPELINE_CPU_YIELD_SECONDS)
+                max(0.0, now - last_monitor_at - PIPELINE_CPU_YIELD_SECONDS)
             )
         last_monitor_at = now
         drained_items = 0
@@ -2277,7 +2284,7 @@ async def playback_worker_job(engine: Celune) -> None:
             ):
                 break
             try:
-                pending = _dequeue_playback_item(
+                pending = dequeue_playback_item(
                     engine,
                     prioritize_speech=True,
                     audio_queue=input_reader.queue,
@@ -2305,7 +2312,7 @@ async def playback_worker_job(engine: Celune) -> None:
                     )
                     buffered_seconds += len(pending.audio) / max(1, pending.sample_rate)
                     if buffering_started_at is None:
-                        buffering_started_at = _monotonic_time()
+                        buffering_started_at = monotonic_time()
             elif isinstance(pending, PlaybackSourceDone):
                 if pending.generation != getattr(engine, "_playback_generation", 0):
                     continue
@@ -2324,8 +2331,8 @@ async def playback_worker_job(engine: Celune) -> None:
                 clear_queue(engine.audio_queue)
             input_reader.clear()
 
-            await _run_in_daemon_thread(lambda: writer.stop(clear=True))
-            await _run_in_daemon_thread(lambda: close_stream(engine, True))
+            await run_in_daemon_thread(lambda: writer.stop(clear=True))
+            await run_in_daemon_thread(lambda: close_stream(engine, True))
             publish_buffered_seconds()
             input_reader.stop()
             release_pipeline(engine)
@@ -2373,7 +2380,7 @@ async def playback_worker_job(engine: Celune) -> None:
                 source_buffers.setdefault(item.source_id, deque()).extend(blocks)
                 buffered_seconds += len(item.audio) / max(1, item.sample_rate)
                 if buffering_started_at is None:
-                    buffering_started_at = _monotonic_time()
+                    buffering_started_at = monotonic_time()
         elif isinstance(item, PlaybackSourceDone):
             if item.generation != getattr(engine, "_playback_generation", 0):
                 continue
@@ -2394,7 +2401,7 @@ async def playback_worker_job(engine: Celune) -> None:
             if not await drain_pending_items():
                 break
 
-            apply_contention_buffering = _should_apply_contention_buffering(
+            apply_contention_buffering = should_apply_contention_buffering(
                 engine,
                 source_buffers,
                 bool(source_done),
@@ -2404,8 +2411,8 @@ async def playback_worker_job(engine: Celune) -> None:
                 await handle_playback_error(writer_error)
                 break
 
-            contention.sample_cpu(_monotonic_time())
-            now = _monotonic_time()
+            contention.sample_cpu(monotonic_time())
+            now = monotonic_time()
             if (
                 apply_contention_buffering
                 and contention.requires_rebuffer()
@@ -2424,24 +2431,24 @@ async def playback_worker_job(engine: Celune) -> None:
                 and buffered_seconds + writer.pending_seconds
                 < contention.target_seconds()
                 and buffering_started_at is not None
-                and _monotonic_time() - buffering_started_at
-                < _PLAYBACK_BUFFER_STARTUP_GRACE_SECONDS
+                and monotonic_time() - buffering_started_at
+                < PLAYBACK_BUFFER_STARTUP_GRACE_SECONDS
             ):
                 await asyncio.sleep(0.005)
                 continue
 
             buffering_started_at = None
 
-            if not await _run_in_daemon_thread(
+            if not await run_in_daemon_thread(
                 lambda: _ensure_playback_stream(engine, BASE_SR)
             ):
                 source_buffers.clear()
                 source_done.clear()
                 buffered_seconds = 0.0
                 finish_rebuffer_wait()
-                _playback_source_statuses(engine).clear()
-                _playback_source_meta(engine).clear()
-                _playback_caption_states(engine).clear()
+                playback_source_statuses(engine).clear()
+                playback_source_meta(engine).clear()
+                playback_caption_states(engine).clear()
                 engine._caption_source_id = None
                 release_pipeline(engine)
                 if engine.cur_state not in {"error", "stopped"} and not getattr(
@@ -2458,7 +2465,7 @@ async def playback_worker_job(engine: Celune) -> None:
             if not ready_ids:
                 break
 
-            playback_meta = _playback_source_meta(engine)
+            playback_meta = playback_source_meta(engine)
             speech_active = any(
                 playback_meta.get(source_id, {}).get("kind") == "speech"
                 for source_id in ready_ids
@@ -2471,7 +2478,7 @@ async def playback_worker_job(engine: Celune) -> None:
 
             for source_id in ready_ids:
                 block, timing = source_buffers[source_id][0]
-                block_audio = _apply_source_gain(
+                block_audio = apply_source_gain(
                     np.asarray(block[:block_len], dtype=np.float32),
                     source_id,
                     speech_active=speech_active,
@@ -2509,7 +2516,7 @@ async def playback_worker_job(engine: Celune) -> None:
                 log_first_playback(engine, timing_to_log)
                 engine.glow.schedule(mixed)
                 writer.submit(mixed, tuple(ready_ids))
-                _update_playback_progress(engine, source_buffers)
+                update_playback_progress(engine, source_buffers)
                 if yield_seconds > 0.0:
                     await asyncio.sleep(yield_seconds)
             except Exception as e:
@@ -2529,8 +2536,8 @@ async def playback_worker_job(engine: Celune) -> None:
                 for source_id in newly_complete:
                     marker = source_done.pop(source_id)
                     engine.recently_saved = marker.saved_path
-                    _notify_speech_playback_finished(engine, source_id)
-                    _clear_playback_source_status(engine, source_id)
+                    notify_speech_playback_finished(engine, source_id)
+                    clear_playback_source_status(engine, source_id)
                     if marker.release_pipeline:
                         release_pipeline(
                             engine,
@@ -2557,8 +2564,8 @@ async def playback_worker_job(engine: Celune) -> None:
             for source_id in orphaned:
                 marker = source_done.pop(source_id)
                 engine.recently_saved = marker.saved_path
-                _notify_speech_playback_finished(engine, source_id)
-                _clear_playback_source_status(engine, source_id)
+                notify_speech_playback_finished(engine, source_id)
+                clear_playback_source_status(engine, source_id)
                 if marker.release_pipeline:
                     release_pipeline(
                         engine,
@@ -2581,10 +2588,10 @@ async def playback_worker_job(engine: Celune) -> None:
             and not source_done
             and writer.pending_seconds <= 0.0
         ):
-            await _run_in_daemon_thread(writer.wait_empty)
+            await run_in_daemon_thread(writer.wait_empty)
             if (writer_error := writer.error) is not None:
                 await handle_playback_error(writer_error)
-            await _run_in_daemon_thread(writer.stop)
+            await run_in_daemon_thread(writer.stop)
             input_reader.stop()
             finalize_pending_idle()
             break
@@ -2602,33 +2609,33 @@ def _install_pipeline_facade() -> None:
             **{
                 value.__name__: value
                 for value in (
-                    _effective_voice_prompt,
-                    _think_persona,
-                    _apply_source_gain,
-                    _clear_playback_source_status,
-                    _dequeue_playback_item,
-                    _download_youtube_sfx,
-                    _flush_buffered_speech_chunks,
-                    _next_playback_source_id,
-                    _notify_speech_playback_finished,
-                    _pipeline_cpu_config,
-                    _playback_source_meta,
-                    _playback_source_statuses,
-                    _queue_playback_chunk,
-                    _queue_playback_done,
-                    _register_overlay_playback,
-                    _register_playback_source,
-                    _remember_smart_buffer_speed,
-                    _set_playback_source_status,
-                    _smart_buffer_target_seconds,
-                    _update_playback_progress,
-                    _youtube_sfx_title,
+                    effective_voice_prompt,
+                    think_persona,
+                    apply_source_gain,
+                    clear_playback_source_status,
+                    dequeue_playback_item,
+                    download_youtube_sfx,
+                    flush_buffered_speech_chunks,
+                    next_playback_source_id,
+                    notify_speech_playback_finished,
+                    pipeline_cpu_config,
+                    playback_source_meta,
+                    playback_source_statuses,
+                    queue_playback_chunk,
+                    queue_playback_done,
+                    register_overlay_playback,
+                    register_playback_source,
+                    remember_smart_buffer_speed,
+                    set_playback_source_status,
+                    smart_buffer_target_seconds,
+                    update_playback_progress,
+                    youtube_sfx_title,
                     acquire_pipeline,
                     current_playback_status,
                     release_pipeline,
                 )
             },
-            "think": _think_persona,
+            "think": think_persona,
         }
     )
     playback.install(globals())
@@ -2644,17 +2651,6 @@ def install_engine(target):
     install_class_functions(target, {"_stop_pipeline_jobs": _stop_pipeline_jobs})
 
 
-celune_metadata_payload = _celune_metadata_payload
-parse_vorbis_comment_block = _parse_vorbis_comment_block
-flac_metadata_blocks = _flac_metadata_blocks
-write_flac_metadata = _write_flac_metadata
-write_celune_flac = _write_celune_flac
 saved_output_speech_seconds = _saved_output_speech_seconds
-register_playback_source = _register_playback_source
-set_playback_source_status = _set_playback_source_status
 get_current_playback_status = current_playback_status
-queue_playback_chunk = _queue_playback_chunk
-queue_playback_done = _queue_playback_done
-youtube_sfx_title = _youtube_sfx_title
-download_youtube_sfx = _download_youtube_sfx
 finalize_playback_idle = _finalize_playback_idle

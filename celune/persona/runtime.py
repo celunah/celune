@@ -172,7 +172,7 @@ class PersonaBackend:
         """Request cancellation of the current model generation."""
         self._generation_cancelled.set()
 
-    def _reset_generation_cancellation(self) -> None:
+    def reset_generation_cancellation(self) -> None:
         """Allow a new generation after a previous cancellation request."""
         self._generation_cancelled.clear()
 
@@ -623,7 +623,7 @@ class PersonaRuntime:
         )
         quantization = self._allowed_quantization(quantization)
         with self.lock:
-            self.backend._reset_generation_cancellation()
+            self.backend.reset_generation_cancellation()
             self.backend.load(model_id, quantization)
             return self.backend.generate(
                 request,

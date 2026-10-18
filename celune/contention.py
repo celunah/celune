@@ -6,28 +6,30 @@ from __future__ import annotations
 import os
 import threading
 import contextlib
+
+# noinspection PyProtectedMember
 from typing import TYPE_CHECKING
 
 import psutil
 
 from .pipelinecore import (
-    _PLAYBACK_BUFFER_MAX_SECONDS,
-    _PLAYBACK_BUFFER_MIN_SECONDS,
-    _PLAYBACK_CONTENTION_CPU_START,
-    _PLAYBACK_CONTENTION_CPU_CRITICAL,
-    _PLAYBACK_CONTENTION_STABLE_DECAY,
-    _PLAYBACK_CONTENTION_REBUFFER_LEVEL,
-    _PLAYBACK_CONTENTION_SAMPLE_SECONDS,
-    _PLAYBACK_BUFFER_CRITICAL_MAX_SECONDS,
-    _PLAYBACK_CONTENTION_LAG_START_SECONDS,
-    _PLAYBACK_CONTENTION_LAG_CRITICAL_SECONDS,
+    PLAYBACK_BUFFER_MAX_SECONDS,
+    PLAYBACK_BUFFER_MIN_SECONDS,
+    PLAYBACK_CONTENTION_CPU_START,
+    PLAYBACK_CONTENTION_CPU_CRITICAL,
+    PLAYBACK_CONTENTION_STABLE_DECAY,
+    PLAYBACK_CONTENTION_REBUFFER_LEVEL,
+    PLAYBACK_CONTENTION_SAMPLE_SECONDS,
+    PLAYBACK_BUFFER_CRITICAL_MAX_SECONDS,
+    PLAYBACK_CONTENTION_LAG_START_SECONDS,
+    PLAYBACK_CONTENTION_LAG_CRITICAL_SECONDS,
 )
 
 if TYPE_CHECKING:
     from .celune import Celune
 
 
-class _PlaybackContentionMonitor:
+class PlaybackContentionMonitor:
     """Estimate playback contention from CPU pressure and output timing."""
 
     def __init__(self, engine: Celune) -> None:
@@ -57,7 +59,7 @@ class _PlaybackContentionMonitor:
     def sample_cpu(self, now: float) -> None:
         """Sample system and process CPU without blocking the playback loop."""
         with self._lock:
-            if now - self._last_sample_at < _PLAYBACK_CONTENTION_SAMPLE_SECONDS:
+            if now - self._last_sample_at < PLAYBACK_CONTENTION_SAMPLE_SECONDS:
                 return
             self._last_sample_at = now
 
@@ -76,13 +78,13 @@ class _PlaybackContentionMonitor:
         pressure = max(
             self._pressure(
                 cpu_percent,
-                _PLAYBACK_CONTENTION_CPU_START,
-                _PLAYBACK_CONTENTION_CPU_CRITICAL,
+                PLAYBACK_CONTENTION_CPU_START,
+                PLAYBACK_CONTENTION_CPU_CRITICAL,
             ),
             self._pressure(
                 normalized_process_percent,
-                _PLAYBACK_CONTENTION_CPU_START,
-                _PLAYBACK_CONTENTION_CPU_CRITICAL,
+                PLAYBACK_CONTENTION_CPU_START,
+                PLAYBACK_CONTENTION_CPU_CRITICAL,
             ),
         )
 
@@ -90,7 +92,7 @@ class _PlaybackContentionMonitor:
             if pressure > 0.0:
                 self._level = max(self._level * 0.9, pressure)
             else:
-                self._level *= _PLAYBACK_CONTENTION_STABLE_DECAY
+                self._level *= PLAYBACK_CONTENTION_STABLE_DECAY
             self._publish_locked()
 
     def observe_scheduler_lag(self, delay_seconds: float) -> None:
@@ -98,8 +100,8 @@ class _PlaybackContentionMonitor:
         self._observe_pressure(
             self._pressure(
                 delay_seconds,
-                _PLAYBACK_CONTENTION_LAG_START_SECONDS,
-                _PLAYBACK_CONTENTION_LAG_CRITICAL_SECONDS,
+                PLAYBACK_CONTENTION_LAG_START_SECONDS,
+                PLAYBACK_CONTENTION_LAG_CRITICAL_SECONDS,
             )
         )
 
@@ -110,7 +112,7 @@ class _PlaybackContentionMonitor:
             if pressure > 0.0:
                 self._level = max(self._level * 0.9, pressure)
             else:
-                self._level *= _PLAYBACK_CONTENTION_STABLE_DECAY
+                self._level *= PLAYBACK_CONTENTION_STABLE_DECAY
             self._publish_locked()
 
     def observe_write(
@@ -127,35 +129,35 @@ class _PlaybackContentionMonitor:
             else:
                 write_pressure = self._pressure(
                     max(0.0, elapsed_seconds - block_seconds),
-                    _PLAYBACK_CONTENTION_LAG_START_SECONDS,
-                    _PLAYBACK_CONTENTION_LAG_CRITICAL_SECONDS,
+                    PLAYBACK_CONTENTION_LAG_START_SECONDS,
+                    PLAYBACK_CONTENTION_LAG_CRITICAL_SECONDS,
                 )
                 if write_pressure > 0.0:
                     self._level = max(self._level * 0.9, write_pressure)
                 else:
-                    self._level *= _PLAYBACK_CONTENTION_STABLE_DECAY
+                    self._level *= PLAYBACK_CONTENTION_STABLE_DECAY
             self._publish_locked()
 
     def target_seconds(self) -> float:
         """Return the current reserve target, rising as contention increases."""
         with self._lock:
-            max_seconds = _PLAYBACK_BUFFER_MAX_SECONDS + (
-                (_PLAYBACK_BUFFER_CRITICAL_MAX_SECONDS - _PLAYBACK_BUFFER_MAX_SECONDS)
+            max_seconds = PLAYBACK_BUFFER_MAX_SECONDS + (
+                (PLAYBACK_BUFFER_CRITICAL_MAX_SECONDS - PLAYBACK_BUFFER_MAX_SECONDS)
                 * self._level
             )
-            return _PLAYBACK_BUFFER_MIN_SECONDS + (
-                (max_seconds - _PLAYBACK_BUFFER_MIN_SECONDS) * self._level
+            return PLAYBACK_BUFFER_MIN_SECONDS + (
+                (max_seconds - PLAYBACK_BUFFER_MIN_SECONDS) * self._level
             )
 
     def capacity_seconds(self) -> float:
         """Return the maximum reserve allowed at the current contention level."""
         with self._lock:
-            return _PLAYBACK_BUFFER_MAX_SECONDS + (
-                (_PLAYBACK_BUFFER_CRITICAL_MAX_SECONDS - _PLAYBACK_BUFFER_MAX_SECONDS)
+            return PLAYBACK_BUFFER_MAX_SECONDS + (
+                (PLAYBACK_BUFFER_CRITICAL_MAX_SECONDS - PLAYBACK_BUFFER_MAX_SECONDS)
                 * self._level
             )
 
     def requires_rebuffer(self) -> bool:
         """Return whether contention is high enough to pause for more reserve."""
         with self._lock:
-            return self._level >= _PLAYBACK_CONTENTION_REBUFFER_LEVEL
+            return self._level >= PLAYBACK_CONTENTION_REBUFFER_LEVEL

@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 from cryptography.hazmat.primitives import serialization
 
-from scripts.make_signing_key import _default_output_path, make_signing_key
+from scripts.make_signing_key import default_output_path, make_signing_key
 
 
 def _empty_project(root: Path) -> None:
@@ -57,7 +57,7 @@ def test_default_key_path_uses_the_existing_celune_key_store(
     """Select the Celune LocalAppData key path on Windows."""
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
 
-    assert _default_output_path() == (
+    assert default_output_path() == (
         tmp_path / "Celune" / "keys" / "release-ed25519-private.pem"
     )
 

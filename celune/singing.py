@@ -9,28 +9,51 @@ from typing import TYPE_CHECKING
 from collections.abc import Callable
 
 from .cesn import (
-    _NOTE_EVENT_PATTERN,
-    _resolve_active_singer,
-    _tokens,
+    NOTE_EVENT_PATTERN,
     parse_cesn,
     render_cesn,
+    resolve_active_singer,
+    tokens,
 )
-from .exceptions import CESNNotationWarning
+from .i18n import string
+from .exceptions import CESNError, CESNNotationWarning
 
 if TYPE_CHECKING:
     from .celune import Celune
 
 
-def _contains_cesn_note_event(text: str) -> bool:
+def contains_cesn_note_event(text: str) -> bool:
     """Return whether CESN tags contain at least one valid note or rest event."""
-    for is_tag, value in _tokens(text):
+    for is_tag, value in tokens(text):
         if not is_tag or value.strip().startswith("#"):
             continue
         if any(
-            _NOTE_EVENT_PATTERN.fullmatch(event.strip()) for event in value.split(",")
+            NOTE_EVENT_PATTERN.fullmatch(event.strip()) for event in value.split(",")
         ):
             return True
     return False
+
+
+def format_cesn_error(text: str, error: CESNError) -> str:
+    """Format a CESN failure with its source line and one-based location."""
+    offset = error.source_start
+    if offset is None:
+        return str(error)
+    offset = min(max(offset, 0), len(text))
+    line_start = text.rfind("\n", 0, offset) + 1
+    line_end = text.find("\n", offset)
+    if line_end < 0:
+        line_end = len(text)
+    line = text[line_start:line_end].removesuffix("\r")
+    line_number = text.count("\n", 0, line_start) + 1
+    column_number = offset - line_start + 1
+    caret_prefix = text[line_start:offset].expandtabs()
+    header = string(
+        "cesn.parse_error_location",
+        line=line_number,
+        column=column_number,
+    )
+    return f"{header}\n\n{line}\n{caret_prefix}^ {error}"
 
 
 def _prepare_synthesis_text(engine: Celune, text: str) -> str:
@@ -45,7 +68,7 @@ def _prepare_synthesis_text(engine: Celune, text: str) -> str:
                 supported_languages=tuple(engine.backend.supported_languages),
             )
         if any(section.singer is None for section in sections):
-            active_singer = _resolve_active_singer()
+            active_singer = resolve_active_singer()
             sections = tuple(
                 replace(section, singer=active_singer)
                 if section.singer is None
@@ -58,7 +81,7 @@ def _prepare_synthesis_text(engine: Celune, text: str) -> str:
     return engine.backend.cesn_to_model(text)
 
 
-def _prepare_synthesis_chunks(
+def prepare_synthesis_chunks(
     engine: Celune,
     text: str,
     splitter: Callable[[Celune, str], list[str]],

@@ -21,8 +21,8 @@ from .protocol import (
     WORKER_CAPABILITIES,
     DEFAULT_CEDTS_LIMITS,
     SUPPORTED_OPERATIONS,
-    _CALL_ARGUMENT_SCHEMAS,
-    _WORKER_TRACEBACK_MARKER,
+    CALL_ARGUMENT_SCHEMAS,
+    WORKER_TRACEBACK_MARKER,
     CEDTSLimits,
     build_packet,
     send_message,
@@ -53,7 +53,7 @@ from ..typing.backends import (
     BackendModel,
     BackendArguments,
     BackendDescription,
-    _BackendRuntime,
+    BackendRuntime,
 )
 from ..backends.environment import BackendManifest, backend_manifest
 from ..dataclasses.pipeline import VoiceConversionRequest
@@ -92,64 +92,64 @@ def _remember_message_id(
     return True
 
 
-def _mini_constructor() -> abc.Callable[..., _BackendRuntime]:
+def _mini_constructor() -> abc.Callable[..., BackendRuntime]:
     """Load the approved Mini backend constructor on demand."""
     from ..backends.tts.mini import Mini
 
-    return cast(abc.Callable[..., _BackendRuntime], Mini)
+    return cast(abc.Callable[..., BackendRuntime], Mini)
 
 
-def _qwen3_constructor() -> abc.Callable[..., _BackendRuntime]:
+def _qwen3_constructor() -> abc.Callable[..., BackendRuntime]:
     """Load the approved Qwen3 backend constructor on demand."""
     from ..backends.tts.qwen3 import Qwen3
 
-    return cast(abc.Callable[..., _BackendRuntime], Qwen3)
+    return cast(abc.Callable[..., BackendRuntime], Qwen3)
 
 
-def _fireredtts3_constructor() -> abc.Callable[..., _BackendRuntime]:
+def _fireredtts3_constructor() -> abc.Callable[..., BackendRuntime]:
     """Load the approved FireRedTTS3 backend constructor on demand."""
     from ..backends.tts.fireredtts3 import FireRedTTS3
 
-    return cast(abc.Callable[..., _BackendRuntime], FireRedTTS3)
+    return cast(abc.Callable[..., BackendRuntime], FireRedTTS3)
 
 
-def _dotstts_constructor() -> abc.Callable[..., _BackendRuntime]:
+def _dotstts_constructor() -> abc.Callable[..., BackendRuntime]:
     """Load the approved DotsTTS backend constructor on demand."""
     from ..backends.tts.dotstts import DotsTtsMF
 
-    return cast(abc.Callable[..., _BackendRuntime], DotsTtsMF)
+    return cast(abc.Callable[..., BackendRuntime], DotsTtsMF)
 
 
-def _voxcpm2_constructor() -> abc.Callable[..., _BackendRuntime]:
+def _voxcpm2_constructor() -> abc.Callable[..., BackendRuntime]:
     """Load the approved VoxCPM2 backend constructor on demand."""
     from ..backends.tts.voxcpm2 import VoxCPM2
 
-    return cast(abc.Callable[..., _BackendRuntime], VoxCPM2)
+    return cast(abc.Callable[..., BackendRuntime], VoxCPM2)
 
 
-def _luxtts_constructor() -> abc.Callable[..., _BackendRuntime]:
+def _luxtts_constructor() -> abc.Callable[..., BackendRuntime]:
     """Load the approved LuxTTS backend constructor on demand."""
     from ..backends.tts.luxtts import LuxTTS
 
-    return cast(abc.Callable[..., _BackendRuntime], LuxTTS)
+    return cast(abc.Callable[..., BackendRuntime], LuxTTS)
 
 
-def _soulxsinger_constructor() -> abc.Callable[..., _BackendRuntime]:
+def _soulxsinger_constructor() -> abc.Callable[..., BackendRuntime]:
     """Load the approved SoulX-Singer backend constructor on demand."""
     from ..backends.tts.soulxsinger import SoulXSinger
 
-    return cast(abc.Callable[..., _BackendRuntime], SoulXSinger)
+    return cast(abc.Callable[..., BackendRuntime], SoulXSinger)
 
 
-def _seed_vc_constructor() -> abc.Callable[..., _BackendRuntime]:
+def _seed_vc_constructor() -> abc.Callable[..., BackendRuntime]:
     """Load the approved Seed-VC backend constructor on demand."""
     from ..backends.vc.seedvc import CeluneSeedVCBackend
 
-    return cast(abc.Callable[..., _BackendRuntime], CeluneSeedVCBackend)
+    return cast(abc.Callable[..., BackendRuntime], CeluneSeedVCBackend)
 
 
 _BACKEND_REGISTRY: abc.Mapping[
-    str, tuple[str, abc.Callable[[], abc.Callable[..., _BackendRuntime]]]
+    str, tuple[str, abc.Callable[[], abc.Callable[..., BackendRuntime]]]
 ] = {
     "mini": ("tts", _mini_constructor),
     "qwen3": ("tts", _qwen3_constructor),
@@ -248,7 +248,7 @@ def _load_backend(
     log: abc.Callable[[str, str], None],
     fatal: abc.Callable[[], None],
     kwargs: BackendArguments,
-) -> _BackendRuntime:
+) -> BackendRuntime:
     """Construct one backend from the worker's approved static registry."""
     try:
         expected_kind, constructor_loader = _BACKEND_REGISTRY[manifest.backend_id]
@@ -266,7 +266,7 @@ def _load_backend(
     return constructor(log=log, fatal=fatal, **kwargs)
 
 
-def _describe(backend: _BackendRuntime) -> BackendDescription:
+def _describe(backend: BackendRuntime) -> BackendDescription:
     """Return the backend metadata required by the core proxy."""
     return cast(
         BackendDescription,
@@ -313,11 +313,11 @@ def _error_response(
         )
         available_length = max(
             0,
-            limits.max_string_length - len(message) - len(_WORKER_TRACEBACK_MARKER),
+            limits.max_string_length - len(message) - len(WORKER_TRACEBACK_MARKER),
         )
         if available_length:
             message = (
-                f"{message}{_WORKER_TRACEBACK_MARKER}"
+                f"{message}{WORKER_TRACEBACK_MARKER}"
                 f"{worker_traceback[:available_length]}"
             )
     message = message[: limits.max_string_length]
@@ -380,11 +380,11 @@ def _stream_value_summary(value: WorkerValue) -> str:
 
 
 def _backend_method_map(
-    backend: _BackendRuntime,
+    backend: BackendRuntime,
 ) -> dict[str, abc.Callable[..., WorkerValue]]:
     """Return only the explicitly supported backend callback methods."""
     method_map: dict[str, abc.Callable[..., WorkerValue]] = {}
-    for method_name in _CALL_ARGUMENT_SCHEMAS:
+    for method_name in CALL_ARGUMENT_SCHEMAS:
         method = getattr(backend, method_name, None)
         if callable(method):
             method_map[method_name] = cast(abc.Callable[..., WorkerValue], method)
@@ -394,7 +394,7 @@ def _backend_method_map(
 def _validate_request_arguments(
     operation: object,
     arguments: object,
-    backend: Optional[_BackendRuntime] = None,
+    backend: Optional[BackendRuntime] = None,
 ) -> dict[str, WorkerValue]:
     """Validate one request's operation, argument object, and method allowlist."""
     if not isinstance(operation, str) or operation not in SUPPORTED_OPERATIONS:
@@ -447,12 +447,9 @@ def _validate_request_arguments(
         _validate_backend_arguments(checked, {"model_id"})
     elif operation == "call":
         method_name = checked.get("method")
-        if (
-            not isinstance(method_name, str)
-            or method_name not in _CALL_ARGUMENT_SCHEMAS
-        ):
+        if not isinstance(method_name, str) or method_name not in CALL_ARGUMENT_SCHEMAS:
             raise _worker_protocol_error("backend_worker_method_is_not_allowed")
-        required, optional = _CALL_ARGUMENT_SCHEMAS[method_name]
+        required, optional = CALL_ARGUMENT_SCHEMAS[method_name]
         allowed = required | optional
         if not set(checked).issubset(allowed):
             raise _worker_protocol_error("backend_worker_method_arguments_are_invalid")
@@ -535,7 +532,7 @@ def _validate_backend_arguments(
 
 
 def _run_request(
-    backend: _BackendRuntime,
+    backend: BackendRuntime,
     request: WorkerRequest,
     models: dict[int, BackendModel],
     next_model_id: int,

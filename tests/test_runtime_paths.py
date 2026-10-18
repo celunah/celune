@@ -223,6 +223,7 @@ class TestRuntimePath(CeluneTestCase):
 
     def test_huggingface_progress_forwards_disabled_transfer_updates(self) -> None:
         """Verify quiet Hugging Face bars still update Celune's progress callback."""
+        # noinspection PyProtectedMember
         from huggingface_hub import file_download, _snapshot_download
 
         callback = mock.Mock()

@@ -29,8 +29,8 @@ from ...i18n import string
 from ...utils import available
 from ...typing.backends import (
     SeedVCModelValue,
-    _SeedVCWrapper,
-    _SeedVCRealtimeModule,
+    SeedVCWrapper,
+    SeedVCRealtimeModule,
 )
 from .base import CeluneVCBackend
 from ...registry import OTHER_MODELS
@@ -115,9 +115,9 @@ class CeluneSeedVCBackend(CeluneVCBackend):
         self.inference_cfg_rate = inference_cfg_rate
         self.f0_condition = f0_condition
         self.auto_f0_adjust = auto_f0_adjust
-        self._wrapper: Optional[_SeedVCWrapper] = None
-        self._live_module: Optional[_SeedVCRealtimeModule] = None
-        self._prepared_live_module: Optional[_SeedVCRealtimeModule] = None
+        self._wrapper: Optional[SeedVCWrapper] = None
+        self._live_module: Optional[SeedVCRealtimeModule] = None
+        self._prepared_live_module: Optional[SeedVCRealtimeModule] = None
         self._live_model_set: Optional[tuple[SeedVCModelValue, ...]] = None
         self._live_session_key: Optional[tuple[Path, int]] = None
         self._live_reference_path: Optional[Path] = None
@@ -197,7 +197,7 @@ class CeluneSeedVCBackend(CeluneVCBackend):
         wrapper_module.load_custom_model_from_hf = load_custom_model_from_hf
 
     @classmethod
-    def _load_wrapper_type(cls) -> type[_SeedVCWrapper]:
+    def _load_wrapper_type(cls) -> type[SeedVCWrapper]:
         """Import and return the Seed-VC wrapper class."""
         try:
             hf_utils_module = importlib.import_module("seed_vc.hf_utils")
@@ -208,9 +208,9 @@ class CeluneSeedVCBackend(CeluneVCBackend):
             ) from e
 
         cls._configure_seedvc_downloads(hf_utils_module, wrapper_module)
-        return cast(type[_SeedVCWrapper], wrapper_module.SeedVCWrapper)
+        return cast(type[SeedVCWrapper], wrapper_module.SeedVCWrapper)
 
-    def _get_wrapper(self) -> _SeedVCWrapper:
+    def _get_wrapper(self) -> SeedVCWrapper:
         """Return a cached Seed-VC wrapper instance."""
         _require_seedvc_model_consents()
         with self._wrapper_lock:
@@ -223,7 +223,7 @@ class CeluneSeedVCBackend(CeluneVCBackend):
 
     def _get_live_runtime(
         self,
-    ) -> tuple[_SeedVCRealtimeModule, tuple[SeedVCModelValue, ...]]:
+    ) -> tuple[SeedVCRealtimeModule, tuple[SeedVCModelValue, ...]]:
         """Return the cached native Seed-VC real-time module and model set."""
         _require_seedvc_model_consents()
         with self._wrapper_lock:
@@ -275,7 +275,7 @@ class CeluneSeedVCBackend(CeluneVCBackend):
                 importlib.import_module(module_name)
 
     @classmethod
-    def _load_live_module(cls) -> _SeedVCRealtimeModule:
+    def _load_live_module(cls) -> SeedVCRealtimeModule:
         """Load Seed-VC's native real-time module without launching its GUI."""
         script_path = cls._find_live_script()
         if script_path is None:
@@ -287,7 +287,7 @@ class CeluneSeedVCBackend(CeluneVCBackend):
                 if available(module_name):
                     with cls._suppress_native_stdout():
                         imported = __import__(module_name, fromlist=["*"])
-                    return cast(_SeedVCRealtimeModule, imported)
+                    return cast(SeedVCRealtimeModule, imported)
             raise ImportError(string("seedvc.live_path_required"))
 
         module_name = "celune_seedvc_realtime"
@@ -311,7 +311,7 @@ class CeluneSeedVCBackend(CeluneVCBackend):
             module.load_custom_model_from_hf = hf_utils.load_custom_model_from_hf
         except ImportError:
             pass
-        return cast(_SeedVCRealtimeModule, module)
+        return cast(SeedVCRealtimeModule, module)
 
     @staticmethod
     def _find_live_script() -> Optional[Path]:
@@ -425,7 +425,7 @@ class CeluneSeedVCBackend(CeluneVCBackend):
 
     def _initialize_live_session(
         self,
-        realtime_module: _SeedVCRealtimeModule,
+        realtime_module: SeedVCRealtimeModule,
         model_set: tuple[SeedVCModelValue, ...],
         reference_path: Path,
         input_sample_rate: int,

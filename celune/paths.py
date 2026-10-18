@@ -179,6 +179,7 @@ def configure_numba_cache() -> Path:
     return cache_dir
 
 
+# noinspection PyPep8Naming
 @contextlib.contextmanager
 def huggingface_progress(
     callback: Optional[Callable[[Optional[float], Optional[float]], None]],

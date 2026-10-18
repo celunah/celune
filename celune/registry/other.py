@@ -39,7 +39,7 @@ OTHER_MODELS: tuple[ModelMetadata, ...] = (
         license_url=_APACHE_2_LICENSE_URL,
         non_commercial=False,
         research_only=False,
-        repository_url=(f"{_HUGGING_FACE_ROOT}{PERSONA_MEMORY_EMBEDDING_MODEL}"),
+        repository_url=f"{_HUGGING_FACE_ROOT}{PERSONA_MEMORY_EMBEDDING_MODEL}",
         roles=("persona_memory_embedding",),
     ),
     ModelMetadata(

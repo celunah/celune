@@ -21,7 +21,7 @@ from huggingface_hub import snapshot_download
 
 from .base import (
     CeluneBackend,
-    _to_numpy_audio,
+    to_numpy_audio,
     local_hf_offline_mode,
     cached_hf_snapshot_path,
 )
@@ -42,15 +42,21 @@ if TYPE_CHECKING:
     from transformers.cache_utils import Cache
     from transformers.configuration_utils import PreTrainedConfig
 
-__all__ = ["FireRedTTS3"]
+__all__ = [
+    "FireRedIncrementalDecoder",
+    "FireRedModel",
+    "FireRedRedAE",
+    "FireRedTTS3",
+    "create_firered_model",
+]
 
 _FIRERED_ATTENTION_IMPLEMENTATION = "sdpa"
 
 
-class _FireRedModel(BackendModel, Protocol):
+class FireRedModel(BackendModel, Protocol):
     """Subset of FireRedTTS3 used by the Celune streaming adapter."""
 
-    redae: "_FireRedRedAE"
+    redae: "FireRedRedAE"
     tts_core: "_FireRedCore"
     spk_extractor: "_FireRedSpeakerExtractor"
     device: torch.device
@@ -60,7 +66,7 @@ class _FireRedModel(BackendModel, Protocol):
         raise NotImplementedError("protocol not defined")
 
 
-class _FireRedRedAE(Protocol):
+class FireRedRedAE(Protocol):
     """RedAE methods required for incremental FireRed decoding."""
 
     sample_rate: int
@@ -162,12 +168,12 @@ class _FireRedAudioDecoder(Protocol):
     istft_head: _FireRedISTFTHead
 
 
-class _FireRedIncrementalDecoder:
+class FireRedIncrementalDecoder:
     """Decode FireRed latent batches without re-running the completed prefix."""
 
     def __init__(
         self,
-        redae: _FireRedRedAE,
+        redae: FireRedRedAE,
         device: torch.device,
         quantize_kv_cache: bool,
     ) -> None:
@@ -291,7 +297,7 @@ class _FireRedIncrementalDecoder:
 
         audio = ola[:, start:end] / envelope[:, start:end].clamp_min(1e-11)
         self._raw_cursor = end
-        return _to_numpy_audio(audio), start - self._padding
+        return to_numpy_audio(audio), start - self._padding
 
     def push(self, latents: torch.Tensor) -> tuple[Optional[AudioChunk], int]:
         """Decode one latent batch and return its stable audio segment."""
@@ -303,7 +309,7 @@ class _FireRedIncrementalDecoder:
         return self._drain(self._frame_count * self._hop_length + self._padding)
 
 
-def _create_firered_model(
+def create_firered_model(
     model_root: str,
     *,
     log: Optional[Callable[[str, str], None]] = None,
@@ -312,7 +318,7 @@ def _create_firered_model(
     ] = None,
     cpu_first: bool = False,
     quantize_kv_cache: bool = True,
-) -> _FireRedModel:
+) -> FireRedModel:
     """Construct FireRedTTS3 with Celune's supported attention path.
 
     Args:
@@ -323,7 +329,7 @@ def _create_firered_model(
         quantize_kv_cache: Whether to use a supported compact attention cache.
 
     Returns:
-        _FireRedModel: The loaded FireRedTTS3 model.
+        FireRedModel: The loaded FireRedTTS3 model.
     """
     from transformers import Qwen3Config
     from fireredtts3.llm import fireredtts3_base
@@ -528,7 +534,7 @@ def _create_firered_model(
         announce("fireredtts3.model_loading", 0)
         model_class = CpuFirstFireRedTTS3 if cpu_first else FireRedTTS3Model
         return cast(
-            _FireRedModel,
+            FireRedModel,
             model_class(
                 model_root,
                 use_fasttext=False,
@@ -545,7 +551,7 @@ def _create_firered_model(
         redae_module.Qwen3Config = original_qwen3_config
 
 
-class FireRedTTS3(CeluneBackend[_FireRedModel]):
+class FireRedTTS3(CeluneBackend[FireRedModel]):
     """Celune FireRedTTS3 zero-shot voice-cloning backend."""
 
     name: str = "fireredtts3"
@@ -886,7 +892,7 @@ class FireRedTTS3(CeluneBackend[_FireRedModel]):
         _ = (Qwen3Config, fireredtts3_base, FireRedTTS3Model, redae_module)
 
     @staticmethod
-    def _configure_bfloat16(model: _FireRedModel) -> _FireRedModel:
+    def _configure_bfloat16(model: FireRedModel) -> FireRedModel:
         """Use BF16 for FireRedTTS3's memory-heavy transformer components."""
         tts_core = getattr(model, "tts_core", None)
         redae = getattr(model, "redae", None)
@@ -905,7 +911,7 @@ class FireRedTTS3(CeluneBackend[_FireRedModel]):
         return model
 
     @staticmethod
-    def _move_quantized_model_to_cuda(model: _FireRedModel) -> _FireRedModel:
+    def _move_quantized_model_to_cuda(model: FireRedModel) -> FireRedModel:
         """Move a CPU-quantized FireRedTTS3 model to CUDA exactly once."""
         device = torch.device("cuda")
         model.redae.to(device)
@@ -916,7 +922,7 @@ class FireRedTTS3(CeluneBackend[_FireRedModel]):
 
     @staticmethod
     def _stream_latents(
-        model: _FireRedModel,
+        model: FireRedModel,
         *,
         language: str,
         prompt_text: str,
@@ -931,6 +937,7 @@ class FireRedTTS3(CeluneBackend[_FireRedModel]):
         """Yield FireRed latent patches with prompt trimming metadata."""
         with torch.inference_mode():
             input_text = f"<|{language}|><|sot|>{prompt_text}{text}<|eot|>"
+            # noinspection PyProtectedMember
             text_tokens = model._tokenize_text(input_text)
 
             prompt_audio = prompt_audio[:1]
@@ -982,7 +989,7 @@ class FireRedTTS3(CeluneBackend[_FireRedModel]):
         ):
             self._preload_source_modules()
 
-    def load_model(self, model_id: str, **kwargs) -> _FireRedModel:
+    def load_model(self, model_id: str, **kwargs) -> FireRedModel:
         """Load FireRedTTS3 model assets and configure its BF16 path."""
         del kwargs
         metadata = require_model_consent(model_id)
@@ -1003,7 +1010,7 @@ class FireRedTTS3(CeluneBackend[_FireRedModel]):
             self._source_context(source_root),
             self._suppress_backend_output(),
         ):
-            model = _create_firered_model(
+            model = create_firered_model(
                 path,
                 log=self.log,
                 report_progress=self.report_progress,
@@ -1021,7 +1028,7 @@ class FireRedTTS3(CeluneBackend[_FireRedModel]):
         return model
 
     def generate_stream(
-        self, model: _FireRedModel, **kwargs
+        self, model: FireRedModel, **kwargs
     ) -> Iterator[tuple[AudioChunk, int, Optional[dict]]]:
         """Generate progressive Celune-compatible audio chunks with FireRedTTS3."""
         text = kwargs.pop("text", None)
@@ -1071,7 +1078,7 @@ class FireRedTTS3(CeluneBackend[_FireRedModel]):
 
         def stream_decoded_audio() -> Iterator[tuple[AudioChunk, int, int]]:
             """Yield generated audio using one cached incremental decoder."""
-            decoder: Optional[_FireRedIncrementalDecoder] = None
+            decoder: Optional[FireRedIncrementalDecoder] = None
             prompt_samples = 0
             sample_rate = 0
             audio_batch: list[AudioChunk] = []
@@ -1094,7 +1101,7 @@ class FireRedTTS3(CeluneBackend[_FireRedModel]):
                 seed=seed,
             ):
                 if decoder is None:
-                    decoder = _FireRedIncrementalDecoder(
+                    decoder = FireRedIncrementalDecoder(
                         model.redae,
                         model.device,
                         self.quantize_kv_cache,

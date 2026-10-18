@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+# noinspection PyProtectedMember
 from typing import TYPE_CHECKING, Union, Literal, Optional, cast
 from collections.abc import Mapping, Callable
 
@@ -169,7 +170,7 @@ def _cache_layer_types(config: PreTrainedConfig) -> Optional[list[str]]:
     return normalized
 
 
-class _QuantizedKVCacheLayer(CacheLayerMixin):
+class QuantizedKVCacheLayer(CacheLayerMixin):
     """One attention layer with a quantized prefix and compute-dtype tail."""
 
     is_sliding = False
@@ -255,7 +256,7 @@ class _QuantizedKVCacheLayer(CacheLayerMixin):
             self.keys = combined_keys
             self.values = combined_values
 
-        return self._dequantized_cache()
+        return self.dequantized_cache()
 
     def get_mask_sizes(
         self,
@@ -484,7 +485,7 @@ class _QuantizedKVCacheLayer(CacheLayerMixin):
             quantized = normalized.to(cast(torch.dtype, self.quantized_dtype))
         return quantized, scale.to(self._scale_dtype)
 
-    def _dequantized_cache(self) -> tuple[torch.Tensor, torch.Tensor]:
+    def dequantized_cache(self) -> tuple[torch.Tensor, torch.Tensor]:
         """Return the complete cache in the model's compute dtype."""
         residual_keys, residual_values = self._residual_states()
         prefix_keys = self._dequantize(
@@ -547,7 +548,7 @@ class QuantizedKVCache(Cache):
             raise ValueError("model cache layout is not supported")
         layers = cast(
             list[CacheLayerMixin],
-            [_QuantizedKVCacheLayer(mode, residual_length) for _ in layer_types],
+            [QuantizedKVCacheLayer(mode, residual_length) for _ in layer_types],
         )
         super().__init__(
             layers=cast(
@@ -559,12 +560,12 @@ class QuantizedKVCache(Cache):
     def __iter__(self):
         """Expose dequantized tuples for compatibility consumers."""
         for layer in self.layers:
-            if not isinstance(layer, _QuantizedKVCacheLayer):
+            if not isinstance(layer, QuantizedKVCacheLayer):
                 raise TypeError("unexpected quantized cache layer")
             if not layer.is_initialized:
                 yield layer.keys, layer.values
                 continue
-            keys, values = layer._dequantized_cache()
+            keys, values = layer.dequantized_cache()
             yield keys, values
 
     def __getitem__(self, layer_idx: int) -> tuple[torch.Tensor, torch.Tensor]:
@@ -575,11 +576,11 @@ class QuantizedKVCache(Cache):
                 f"attempted to access layer with index {layer_idx}"
             )
         layer = self.layers[layer_idx]
-        if not isinstance(layer, _QuantizedKVCacheLayer):
+        if not isinstance(layer, QuantizedKVCacheLayer):
             raise TypeError("unexpected quantized cache layer")
         if not layer.is_initialized:
             return cast(tuple[torch.Tensor, torch.Tensor], (layer.keys, layer.values))
-        return layer._dequantized_cache()
+        return layer.dequantized_cache()
 
     def to_legacy_cache(self) -> tuple[tuple[torch.Tensor, torch.Tensor], ...]:
         """Convert each layer to full-precision legacy key/value tensors."""

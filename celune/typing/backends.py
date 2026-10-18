@@ -93,7 +93,7 @@ class MiniModel(Protocol):
         raise NotImplementedError("protocol not defined")
 
 
-class _StreamingSpeechModel(Protocol):  # noqa: PYI046
+class StreamingSpeechModel(Protocol):
     """Protocol for stateful streaming speech detectors."""
 
     def __call__(self, audio: torch.Tensor, sample_rate: int) -> torch.Tensor:
@@ -103,7 +103,7 @@ class _StreamingSpeechModel(Protocol):  # noqa: PYI046
         """Reset the detector's internal streaming state."""
 
 
-class _SeedVCWrapper(Protocol):  # noqa: PYI046
+class SeedVCWrapper(Protocol):
     """Protocol for the dynamically loaded Seed-VC wrapper."""
 
     def convert_voice(self, **kwargs: SeedVCArgument) -> SeedVCGenerator:
@@ -117,7 +117,7 @@ class _SeedVCWrapper(Protocol):  # noqa: PYI046
         """
 
 
-class _BackendRuntime(Protocol):  # noqa: PYI046
+class BackendRuntime(Protocol):
     """Runtime method surface used by the generic worker loop."""
 
     model: Optional[BackendModel]
@@ -167,7 +167,7 @@ class _BackendRuntime(Protocol):  # noqa: PYI046
         """Convert one voice-conversion request."""
 
 
-class _LoguruLogger(Protocol):  # noqa: PYI046
+class LoguruLogger(Protocol):
     """Subset of Loguru's logger interface used by the DotsTTS backend."""
 
     def disable(self, name: str) -> None:
@@ -177,7 +177,7 @@ class _LoguruLogger(Protocol):  # noqa: PYI046
         """Enable one logger namespace."""
 
 
-class _SeedVCRealtimeModule(Protocol):  # noqa: PYI046
+class SeedVCRealtimeModule(Protocol):
     """Subset of Seed-VC's real-time module used by its backend."""
 
     device: torch.device

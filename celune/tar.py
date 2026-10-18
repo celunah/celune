@@ -3,6 +3,8 @@
 
 import os
 import re
+
+# noinspection PyProtectedMember
 from typing import Optional
 from pathlib import Path, PurePosixPath, PureWindowsPath
 

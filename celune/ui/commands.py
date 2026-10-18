@@ -159,14 +159,14 @@ def _run_tutorial_sequence(
         return token == ui.tutorial_token and ui.tutorial_active
 
     try:
-        from ..speech import _play_tutorial_sections, _prepare_tutorial_sections
+        from ..speech import play_tutorial_sections, prepare_tutorial_sections
 
         sections = tuple(text for text, _action, _display_text in steps)
         display_sections = tuple(
             text if display_text is None else display_text
             for text, _action, display_text in steps
         )
-        audio_sections = _prepare_tutorial_sections(
+        audio_sections = prepare_tutorial_sections(
             ui.celune,
             sections,
             is_active,
@@ -183,7 +183,7 @@ def _run_tutorial_sequence(
             if action is not None:
                 ui.call_from_thread(action)
 
-        if not _play_tutorial_sections(
+        if not play_tutorial_sections(
             ui.celune,
             sections,
             audio_sections,
@@ -347,6 +347,7 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
             ui.safe_log(string("commands.help_cesn_notes"))
             ui.safe_log(string("commands.help_cesn_rest"))
             ui.safe_log(string("commands.help_cesn_pattern"))
+            ui.safe_log(string("commands.help_cesn_ipa"))
             ui.safe_log(string("commands.help_cesn_tuplet"))
             ui.safe_log(string("commands.help_cesn_singer"))
         return
@@ -818,7 +819,7 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
             ui.safe_log(string("commands.vc_debug_not_enabled"), "warning")
             return
         ui.safe_log(string("commands.vc_debug_stopping"))
-        ui._stop_vc_debug_capture(announce=True)
+        ui.stop_vc_debug_capture(announce=True)
         return
     if command == "xvectoronly":
         backend = ui.celune.backend

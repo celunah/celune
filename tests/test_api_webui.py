@@ -194,10 +194,10 @@ class TestApiWebUI(CeluneTestCase):
         self,
     ) -> None:
         """Verify unauthenticated local WebUI calls can show the browser consent gate."""
-        from celune.registry.consent import _API_MODEL_REQUEST
+        from celune.registry.consent import is_api_model_request
 
         async def inspect_request(_request: Request) -> Response:
-            assert _API_MODEL_REQUEST.get()
+            assert is_api_model_request()
             return Response("ok")
 
         response = asyncio.run(
@@ -208,7 +208,7 @@ class TestApiWebUI(CeluneTestCase):
         )
 
         assert response.status_code == 200
-        assert not _API_MODEL_REQUEST.get()
+        assert not is_api_model_request()
 
     def test_api_security_only_leaves_the_root_and_favicon_public(self) -> None:
         """Verify status and version routes require a key with API auth enabled."""
@@ -376,7 +376,7 @@ class TestApiWebUI(CeluneTestCase):
             ("origin", "http://127.0.0.1:2060"),
         )
 
-        dependencies = api._build_webui().config.get("dependencies", [])
+        dependencies = api.build_webui().config.get("dependencies", [])
         generation_indices = {
             dependency["api_name"]: dependency["id"]
             for dependency in dependencies
@@ -746,7 +746,7 @@ class TestApiWebUI(CeluneTestCase):
                 voice_update,
                 send_update,
                 input_update,
-            ) = api.webui_snapshot()
+            ) = webui.webui_snapshot()
 
         assert "Ready to speak." in logs_html
         assert "--celune-ui-accent:" in api.webui_theme_style
@@ -784,7 +784,7 @@ class TestApiWebUI(CeluneTestCase):
             return_value=("VRAM: 10.66/11.94 GB available",),
         ):
             _logs, _status, _resources, voice_update, send_update, input_update = (
-                api.webui_snapshot()
+                webui.webui_snapshot()
             )
         assert not input_update["interactive"]
         assert input_update["placeholder"] == "Please wait"
@@ -804,7 +804,7 @@ class TestApiWebUI(CeluneTestCase):
                 voice_update2,
                 send_update2,
                 input_update2,
-            ) = api.webui_snapshot()
+            ) = webui.webui_snapshot()
         assert input_update2["interactive"]
         assert input_update2["placeholder"] == string("ui.input_placeholder")
         assert send_update2["interactive"]
@@ -881,14 +881,14 @@ class TestApiWebUI(CeluneTestCase):
         celune.caption_progress_callback(1.0, 2.0)
         api.webui_progress_current = 1.0
         api.webui_progress_total = 1.0
-        _status = api._webui_status_html()
+        _status = api.webui_status_html()
         assert string("status.speaking") in _status
         assert "Hello there" not in _status
         assert "50%" not in _status
         assert "100%" not in _status
 
         celune.error_callback("backend failed")
-        assert "backend failed" in api._webui_status_html()
+        assert "backend failed" in api.webui_status_html()
         assert any(
             message == "backend failed" and severity == "error"
             for message, severity in api.webui_log_lines
@@ -927,7 +927,7 @@ class TestApiWebUI(CeluneTestCase):
                 return_value=("VRAM: first",),
             ),
         ):
-            list(api.webui_speak("hello"))
+            list(webui_actions.webui_speak("hello"))
 
         think.assert_called_once_with("hello")
         say_stream.assert_not_called()
@@ -940,7 +940,7 @@ class TestApiWebUI(CeluneTestCase):
             mock.patch("celune.api.CeluneUI._instance", None),
             mock.patch("celune.ui.commands.process_command") as process_command,
         ):
-            assert api._webui_run_command("/help")
+            assert webui_actions.webui_run_command("/help")
 
         process_command.assert_called_once()
         assert process_command.call_args.args[1:] == ("help", [])
@@ -968,7 +968,7 @@ class TestApiWebUI(CeluneTestCase):
             status_severity="info",
             status_marquee_offset=2,
         )
-        api._receive_webui_timed_update(update)
+        webui.receive_webui_timed_update(update)
         assert api.webui_resource_page == 3
         assert api.webui_active_theme_name == "celune_light"
         assert api.webui_timed_update_sequence == 4
@@ -987,7 +987,7 @@ class TestApiWebUI(CeluneTestCase):
         with mock.patch(
             "celune.webui.runtime.main_window_log_path", return_value=log_path
         ):
-            api._seed_webui_logs()
+            api.seed_webui_logs()
 
         assert list(api.webui_log_lines) == [
             ("first line\nsecond line", "warning"),
@@ -1015,7 +1015,7 @@ class TestApiWebUI(CeluneTestCase):
             return_value=("VRAM: 10.66/11.94 GB available",),
         ):
             _logs, _status, _resources, voice_update, send_update, input_update = (
-                api.webui_snapshot()
+                webui.webui_snapshot()
             )
         assert not input_update["interactive"]
         assert input_update["placeholder"] == string("ui.tutorial_placeholder")
@@ -1042,7 +1042,7 @@ class TestApiWebUI(CeluneTestCase):
             return_value=("VRAM: 10.66/11.94 GB available",),
         ):
             _logs, _status, _resources, _voice, _send, input_update = (
-                api.webui_snapshot()
+                webui.webui_snapshot()
             )
 
         assert input_update["placeholder"] == string("ui.voice_changer_placeholder")
@@ -1056,7 +1056,7 @@ class TestApiWebUI(CeluneTestCase):
             ),
         )
 
-        source_update, mode_update, button_update = api._webui_vc_controls_update()
+        source_update, mode_update, button_update = api.webui_vc_controls_update()
 
         assert not source_update["interactive"]
         assert not mode_update["interactive"]
@@ -1071,7 +1071,7 @@ class TestApiWebUI(CeluneTestCase):
             ),
         )
 
-        source_update, mode_update, button_update = api._webui_vc_controls_update()
+        source_update, mode_update, button_update = api.webui_vc_controls_update()
 
         assert source_update["interactive"]
         assert mode_update["interactive"]
@@ -1098,7 +1098,7 @@ class TestApiWebUI(CeluneTestCase):
             return_value=("VRAM: 10.66/11.94 GB available",),
         ):
             _logs, status_html, _resources, voice_update, send_update, input_update = (
-                api.webui_snapshot()
+                webui.webui_snapshot()
             )
 
         assert f"{api.APP_NAME} could not start" in status_html
@@ -1124,15 +1124,15 @@ class TestApiWebUI(CeluneTestCase):
         api.bound_celune = celune
         api.webui_input_locked = False
 
-        input_update = api._input_update()
-        send_update = api._send_button_update()
+        input_update = webui.input_update()
+        send_update = webui.send_button_update()
 
         assert not input_update["interactive"]
         assert not send_update["interactive"]
 
     def test_seeded_logs_strip_persisted_time_prefix(self) -> None:
         """Verify persisted log timestamps do not show up in the browser log view."""
-        stripped = api.strip_webui_log_prefix(
+        stripped = webui.strip_webui_log_prefix(
             "[2026-06-11T14:22:01] [WARNING] Something happened"
         )
         assert stripped == "Something happened"
@@ -1248,7 +1248,7 @@ class TestApiWebUI(CeluneTestCase):
 
     def test_webui_audio_waveform_options_follow_primary_color(self) -> None:
         """Verify Gradio audio waveform colors are driven by Celune's primary color."""
-        options = api._webui_audio_waveform_options()
+        options = api.webui_audio_waveform_options()
 
         assert (
             options.waveform_progress_color
@@ -1267,8 +1267,8 @@ class TestApiWebUI(CeluneTestCase):
 
     def test_webui_log_buffer_deduplicates_adjacent_callback_entries(self) -> None:
         """Verify overlapping log forwarding cannot print one WebUI line twice."""
-        api._append_webui_log("same line", "warning")
-        api._append_webui_log("same line", "warning")
+        api.append_webui_log("same line", "warning")
+        api.append_webui_log("same line", "warning")
 
         assert list(api.webui_log_lines) == [("same line", "warning")]
 
@@ -1293,7 +1293,7 @@ class TestApiWebUI(CeluneTestCase):
                 "celune.webui.runtime.persona_talkback_enabled", return_value=True
             ),
         ):
-            placeholder = api._webui_input_placeholder(celune, False, True)
+            placeholder = webui.get_webui_input_placeholder(celune, False, True)
 
         assert placeholder == string("ui.say_placeholder")
 
@@ -1319,7 +1319,7 @@ class TestApiWebUI(CeluneTestCase):
                 "celune.webui.runtime.persona_talkback_enabled", return_value=True
             ),
         ):
-            placeholder = api._webui_input_placeholder(celune, False, True)
+            placeholder = webui.get_webui_input_placeholder(celune, False, True)
 
         assert placeholder == string("ui.cesn_input_placeholder")
 
@@ -1381,7 +1381,7 @@ class TestApiWebUI(CeluneTestCase):
                 return_value=("VRAM: available",),
             ),
         ):
-            resources_html = api._webui_resources_html()
+            resources_html = api.webui_resources_html()
 
         assert string("webui.recording_voice_hint") in resources_html
 
@@ -1404,7 +1404,7 @@ class TestApiWebUI(CeluneTestCase):
             return_value=("VRAM: 10.66/11.94 GB available",),
         ):
             logs_html, status_html, _resources, _voice, _send, _input = (
-                api.webui_snapshot()
+                webui.webui_snapshot()
             )
 
         assert "currently sleeping. Type anything to wake up." in logs_html
@@ -1436,7 +1436,9 @@ class TestApiWebUI(CeluneTestCase):
             ),
             mock.patch("celune.api.time.monotonic", return_value=10.1),
         ):
-            _logs, status_html, _resources, _voice, _send, _input = api.webui_snapshot()
+            _logs, status_html, _resources, _voice, _send, _input = (
+                webui.webui_snapshot()
+            )
 
         assert "Normalizing" in status_html
 
@@ -1450,7 +1452,7 @@ class TestApiWebUI(CeluneTestCase):
                 is_in_tutorial=False,
                 locked=False,
                 cur_state="speaking",
-                _playback_source_statuses={1: "Playing fixture.wav"},
+                playback_source_statuses={1: "Playing fixture.wav"},
             ),
         )
         api.webui_last_probed_state = "idle"
@@ -1463,7 +1465,9 @@ class TestApiWebUI(CeluneTestCase):
             ),
             mock.patch("celune.api.time.monotonic", return_value=10.1),
         ):
-            _logs, status_html, _resources, _voice, _send, _input = api.webui_snapshot()
+            _logs, status_html, _resources, _voice, _send, _input = (
+                webui.webui_snapshot()
+            )
 
         assert "Playing fixture.wav" in status_html
 
@@ -1488,7 +1492,7 @@ class TestApiWebUI(CeluneTestCase):
             return_value=("VRAM: 10.66/11.94 GB available",),
         ):
             logs_html, status_html, _resources, _voice, _send, _input = (
-                api.webui_snapshot()
+                webui.webui_snapshot()
             )
 
         assert "currently sleeping. Type anything to wake up." in logs_html
@@ -1501,7 +1505,7 @@ class TestApiWebUI(CeluneTestCase):
         ui.call_from_thread = mock.Mock(side_effect=lambda fn, *args: fn(*args))
 
         with mock.patch("celune.api.CeluneUI._instance", ui):
-            updates = list(api.webui_speak("/help"))
+            updates = list(webui_actions.webui_speak("/help"))
 
         ui.process_command.assert_called_once_with("help", [])
         assert len(updates) == 1
@@ -1511,7 +1515,7 @@ class TestApiWebUI(CeluneTestCase):
     def test_webui_slash_command_reports_missing_core(self) -> None:
         """Verify slash commands report a missing core instead of requiring TUI."""
         with mock.patch("celune.api.CeluneUI._instance", None):
-            updates = list(api.webui_speak("/help"))
+            updates = list(webui_actions.webui_speak("/help"))
 
         assert len(updates) == 1
         assert "not currently available" in updates[0][2]
@@ -1543,7 +1547,7 @@ class TestApiWebUI(CeluneTestCase):
             "celune.api.ui_resources.resource_pages",
             return_value=("VRAM: 10.66/11.94 GB available",),
         ):
-            updates = list(api.webui_speak("hello"))
+            updates = list(webui_actions.webui_speak("hello"))
 
         assert len(updates) >= 2
         first_input, first_audio, *_first_rest = updates[0]
@@ -1594,7 +1598,7 @@ class TestApiWebUI(CeluneTestCase):
             "celune.api.ui_resources.resource_pages",
             return_value=("VRAM: 10.66/11.94 GB available",),
         ):
-            updates = list(api.webui_speak("wake me"))
+            updates = list(webui_actions.webui_speak("wake me"))
 
         assert len(updates) >= 3
         assert calls == ["wake", "say:wake me"]
@@ -1629,7 +1633,7 @@ class TestApiWebUI(CeluneTestCase):
             "celune.api.ui_resources.resource_pages",
             return_value=("VRAM: 10.66/11.94 GB available",),
         ):
-            _snapshot = api._webui_cycle_voice()
+            _snapshot = webui_actions.webui_cycle_voice()
 
         assert calls == ["calm"]
 
@@ -1660,7 +1664,7 @@ class TestApiWebUI(CeluneTestCase):
             "celune.api.ui_resources.resource_pages",
             return_value=("VRAM: 10.66/11.94 GB available",),
         ):
-            source_value, browser_audio, *_rest = api._webui_convert_audio(
+            source_value, browser_audio, *_rest = webui_actions.webui_convert_audio(
                 (44100, np.zeros((16, 2), dtype=np.float32)),
                 "sing",
             )
@@ -1716,7 +1720,7 @@ class TestApiWebUI(CeluneTestCase):
             "celune.api.ui_resources.resource_pages",
             return_value=("VRAM: 10.66/11.94 GB available",),
         ):
-            _source_value, browser_audio, *_rest = api._webui_convert_audio(
+            _source_value, browser_audio, *_rest = webui_actions.webui_convert_audio(
                 (44100, source_pcm)
             )
 
@@ -1746,8 +1750,10 @@ class TestApiWebUI(CeluneTestCase):
             "celune.api.ui_resources.resource_pages",
             return_value=("VRAM: 10.66/11.94 GB available",),
         ):
-            source_value, browser_audio, logs_html, *_rest = api._webui_convert_audio(
-                (44100, np.zeros((8, 2), dtype=np.float32))
+            source_value, browser_audio, logs_html, *_rest = (
+                webui_actions.webui_convert_audio(
+                    (44100, np.zeros((8, 2), dtype=np.float32))
+                )
             )
 
         assert source_value is not None
@@ -1757,7 +1763,7 @@ class TestApiWebUI(CeluneTestCase):
 
     def test_build_webui_exposes_tts_and_vc_tabs(self) -> None:
         """Verify the browser UI separates TTS and VC into distinct tabs."""
-        demo = api._build_webui()
+        demo = api.build_webui()
         config = demo.config
         assert all(
             api.webui_theme_style not in str(component)
@@ -1838,8 +1844,12 @@ class TestApiWebUI(CeluneTestCase):
             ),
             mock.patch("celune.api.time.monotonic", side_effect=[10.0, 12.2]),
         ):
-            _logs1, status1, resources1, _voice1, _send1, _input1 = api.webui_snapshot()
-            _logs2, status2, resources2, _voice2, _send2, _input2 = api.webui_snapshot()
+            _logs1, status1, resources1, _voice1, _send1, _input1 = (
+                webui.webui_snapshot()
+            )
+            _logs2, status2, resources2, _voice2, _send2, _input2 = (
+                webui.webui_snapshot()
+            )
 
         assert "Speaking" in status1
         assert "Speaking" in status2

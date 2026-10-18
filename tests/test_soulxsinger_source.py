@@ -31,7 +31,7 @@ def test_soulxsinger_source_clones_into_revision_directory() -> None:
             mock.patch("git.Repo") as repository_type,
         ):
             repository_type.clone_from.side_effect = clone_source
-            assert soulxsinger._load_upstream_source() == source_root
+            assert soulxsinger.load_upstream_source() == source_root
 
         repository_type.clone_from.assert_called_once_with(
             soulxsinger.SOULX_SINGER_CODE_REPOSITORY,

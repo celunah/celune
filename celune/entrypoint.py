@@ -1369,11 +1369,9 @@ def start(
             if active_test_mode == "agent":
                 test_config = configured_test_config
                 test_backend = configured_test_backend
-                from celune.compat import _suppress_torchao_quantization_syntax_warning
+                from celune.compat import suppress_torchao_quantization_syntax_warning
 
-                runtime_startup_context = (
-                    _suppress_torchao_quantization_syntax_warning()
-                )
+                runtime_startup_context = suppress_torchao_quantization_syntax_warning()
             else:
                 runtime_startup_context = contextlib.nullcontext()
 
@@ -1439,9 +1437,9 @@ def start(
                 if ui.return_code not in (None, 0):
                     sys.exit(runtime.ExitCodes.EXIT_FAILURE.value)
                 if active_test_mode == "agent":
-                    from celune.test import _agent_test_succeeded
+                    from celune.test import agent_test_succeeded
 
-                    if not _agent_test_succeeded(celune.test_result):
+                    if not agent_test_succeeded(celune.test_result):
                         sys.exit(runtime.ExitCodes.EXIT_FAILURE.value)
             finally:
                 _STARTUP_DIAGNOSTIC_SINK = None

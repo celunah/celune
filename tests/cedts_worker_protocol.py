@@ -41,7 +41,7 @@ from celune.cedts.protocol import (
     receive_payloads,
 )
 from celune.typing.backends import (
-    _BackendRuntime,
+    BackendRuntime,
 )
 from celune.backends.environment import (
     BACKEND_MANIFESTS,
@@ -958,7 +958,7 @@ finally:
 
         def run_conversion() -> None:
             response, _ = worker._run_request(
-                cast(_BackendRuntime, FakeBackend()),
+                cast(BackendRuntime, FakeBackend()),
                 {
                     "operation": "convert",
                     "arguments": {

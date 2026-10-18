@@ -15,7 +15,7 @@ from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 from ..utils import discard
 from ..typing.common import JSONSerializable
 from ..typing.aliases import AudioChunk, EmbeddingVector
-from ..typing.persona import PersonaModel, PersonaTokenizer, _EmotionModelConfig
+from ..typing.persona import PersonaModel, PersonaTokenizer, EmotionModelConfig
 
 GOEMOTIONS_LABELS: tuple[str, ...] = (
     "admiration",
@@ -230,7 +230,7 @@ class PersonaEmotionAnalyzer:
         self.last_error = ""
 
     @staticmethod
-    def _resolve_labels(config: Optional[_EmotionModelConfig]) -> tuple[str, ...]:
+    def _resolve_labels(config: Optional[EmotionModelConfig]) -> tuple[str, ...]:
         """Return label names from model config or GoEmotions defaults."""
         raw = None if config is None else config.id2label
         if isinstance(raw, Mapping):

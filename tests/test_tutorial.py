@@ -14,7 +14,7 @@ from celune import pipeline
 from celune.ui import commands
 from celune.i18n import string
 from celune.celune import Celune
-from celune.speech import _play_tutorial_sections, _prepare_tutorial_sections
+from celune.speech import play_tutorial_sections, prepare_tutorial_sections
 from celune.ui.app import CeluneUI
 from celune.prepared import play_prepared_speech
 from celune.dataclasses.pipeline import (
@@ -115,8 +115,8 @@ def test_tutorial_keeps_each_utterance_separate_and_syncs_actions(
         return True
 
     monkeypatch.setattr(commands, "threading", SimpleNamespace(Thread=ImmediateThread))
-    monkeypatch.setattr("celune.speech._prepare_tutorial_sections", prepare)
-    monkeypatch.setattr("celune.speech._play_tutorial_sections", play)
+    monkeypatch.setattr("celune.speech.prepare_tutorial_sections", prepare)
+    monkeypatch.setattr("celune.speech.play_tutorial_sections", play)
 
     commands.tutorial(cast(CeluneUI, ui))
 
@@ -212,9 +212,9 @@ def test_tutorial_stops_after_cancellation(monkeypatch) -> None:
         ui.tutorial_active = False
         ui.tutorial_token += 1
 
-    monkeypatch.setattr("celune.speech._prepare_tutorial_sections", prepare)
+    monkeypatch.setattr("celune.speech.prepare_tutorial_sections", prepare)
     monkeypatch.setattr(
-        "celune.speech._play_tutorial_sections",
+        "celune.speech.play_tutorial_sections",
         lambda *_args, **_kwargs: events.append("play") or True,
     )
 
@@ -233,7 +233,7 @@ def test_tutorial_cancels_when_speech_cannot_be_queued(monkeypatch) -> None:
     ui = _tutorial_ui(events)
     ui.tutorial_active = True
     monkeypatch.setattr(
-        "celune.speech._prepare_tutorial_sections",
+        "celune.speech.prepare_tutorial_sections",
         lambda *_args: None,
     )
 
@@ -264,7 +264,7 @@ def test_tutorial_generation_is_batched_without_normalization(monkeypatch) -> No
 
     monkeypatch.setattr("celune.speech._queue_speech_request", queue_speech)
 
-    prepared_audio = _prepare_tutorial_sections(
+    prepared_audio = prepare_tutorial_sections(
         cast(Celune, SimpleNamespace()),
         sections,
         lambda: True,
@@ -320,8 +320,8 @@ def test_pipeline_captures_tutorial_sections_without_playback() -> None:
     )
 
     with (
-        mock.patch("celune.pipeline._effective_voice_prompt", return_value=None),
-        mock.patch("celune.pipeline._smart_buffer_target_seconds", return_value=0.0),
+        mock.patch("celune.pipeline.effective_voice_prompt", return_value=None),
+        mock.patch("celune.pipeline.smart_buffer_target_seconds", return_value=0.0),
         mock.patch("celune.prepared.is_silent_utterance", return_value=(False, 0)),
     ):
         pipeline._process_generation_request(
@@ -351,7 +351,7 @@ def test_tutorial_playback_stitches_audio_with_caption_transcript(monkeypatch) -
     source_id = 7
     engine = SimpleNamespace(
         playback_done=mock.Mock(),
-        _playback_source_meta={source_id: {"played_frames": 48_009}},
+        playback_source_meta={source_id: {"played_frames": 48_009}},
     )
     engine.playback_done.wait.return_value = True
     captured_audio: list[np.ndarray] = []
@@ -372,7 +372,7 @@ def test_tutorial_playback_stitches_audio_with_caption_transcript(monkeypatch) -
     monkeypatch.setattr("celune.speech._queue_speech_request", queue_speech)
     starts: list[int] = []
 
-    assert _play_tutorial_sections(
+    assert play_tutorial_sections(
         cast(Celune, engine),
         sections,
         audio,
@@ -424,8 +424,8 @@ def test_prepared_tutorial_playback_aligns_combined_transcript(monkeypatch) -> N
         error_callback=mock.Mock(),
     )
     caption_worker = mock.Mock()
-    monkeypatch.setattr("celune.prepared._next_playback_source_id", lambda _engine: 5)
-    monkeypatch.setattr("celune.prepared._register_playback_source", mock.Mock())
+    monkeypatch.setattr("celune.prepared.next_playback_source_id", lambda _engine: 5)
+    monkeypatch.setattr("celune.prepared.register_playback_source", mock.Mock())
     monkeypatch.setattr("celune.prepared.release_pipeline", mock.Mock())
     monkeypatch.setattr("celune.prepared.string", lambda key, **_kwargs: key)
 

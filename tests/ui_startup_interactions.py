@@ -74,10 +74,10 @@ class TestUIStartup(_TestUIStartup):
         )
         ui.safe_log = mock.Mock()
         ui.update_resources = mock.Mock()
-        captured_callback: Optional[ui_app._VCAudioCallback] = None
+        captured_callback: Optional[ui_app.VCAudioCallback] = None
 
         def invoke_captured_callback(
-            callback: ui_app._VCAudioCallback,
+            callback: ui_app.VCAudioCallback,
             audio: np.ndarray,
         ) -> None:
             callback(
@@ -171,7 +171,7 @@ class TestUIStartup(_TestUIStartup):
         )
         ui.safe_log = mock.Mock()
         ui.update_resources = mock.Mock()
-        captured_callback: Optional[ui_app._VCAudioCallback] = None
+        captured_callback: Optional[ui_app.VCAudioCallback] = None
 
         class FakeAIVAD:
             """Tiny AI VAD stub with a deterministic speech onset."""
@@ -195,7 +195,7 @@ class TestUIStartup(_TestUIStartup):
         fake_vad = FakeAIVAD()
 
         def invoke_captured_callback(
-            callback: ui_app._VCAudioCallback,
+            callback: ui_app.VCAudioCallback,
             audio: np.ndarray,
         ) -> None:
             callback(
@@ -301,10 +301,10 @@ class TestUIStartup(_TestUIStartup):
         )
         ui.safe_log = mock.Mock()
         ui.update_resources = mock.Mock()
-        captured_callback: Optional[ui_app._VCAudioCallback] = None
+        captured_callback: Optional[ui_app.VCAudioCallback] = None
 
         def invoke_captured_callback(
-            callback: ui_app._VCAudioCallback,
+            callback: ui_app.VCAudioCallback,
             audio: np.ndarray,
         ) -> None:
             callback(
@@ -415,7 +415,7 @@ class TestUIStartup(_TestUIStartup):
         )
         ui.safe_log = mock.Mock()
         ui.update_resources = mock.Mock()
-        captured_callback: Optional[ui_app._VCAudioCallback] = None
+        captured_callback: Optional[ui_app.VCAudioCallback] = None
 
         class FakeAIVAD:
             """Tiny AI VAD stub forcing every callback to non-speech."""
@@ -446,7 +446,7 @@ class TestUIStartup(_TestUIStartup):
         fake_vad = FakeAIVAD()
 
         def invoke_captured_callback(
-            callback: ui_app._VCAudioCallback,
+            callback: ui_app.VCAudioCallback,
             audio: np.ndarray,
         ) -> None:
             callback(
@@ -538,7 +538,7 @@ class TestUIStartup(_TestUIStartup):
         )
         ui.safe_log = mock.Mock()
         ui.update_resources = mock.Mock()
-        captured_callback: Optional[ui_app._VCAudioCallback] = None
+        captured_callback: Optional[ui_app.VCAudioCallback] = None
 
         class FlakyAIVAD:
             """Tiny AI VAD stub that fails once and then keeps working."""
@@ -574,7 +574,7 @@ class TestUIStartup(_TestUIStartup):
         fake_vad = FlakyAIVAD()
 
         def invoke_captured_callback(
-            callback: ui_app._VCAudioCallback,
+            callback: ui_app.VCAudioCallback,
             audio: np.ndarray,
         ) -> None:
             callback(
@@ -778,7 +778,7 @@ class TestUIStartup(_TestUIStartup):
                 screen,
                 0.0,
                 on_complete=mock.ANY,
-                duration=ui_app._EXIT_FADE_SECONDS,
+                duration=ui_app.EXIT_FADE_SECONDS,
             )
             ui._shutdown_runtime.assert_not_called()
             ui.exit.assert_not_called()
@@ -1564,7 +1564,7 @@ class TestUIStartup(_TestUIStartup):
         ui = CeluneUI()
         ui.celune = cast(
             Celune,
-            SimpleNamespace(_playback_source_statuses={1: "Playing fixture.wav"}),
+            SimpleNamespace(playback_source_statuses={1: "Playing fixture.wav"}),
         )
         ui.status = cast(Label, FakeLabel())
 

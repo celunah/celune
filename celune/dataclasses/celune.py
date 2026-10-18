@@ -335,24 +335,24 @@ CELUNE_FORWARDED_PROPERTIES = (
         "_playback_generation", "_pipeline_state", "playback_generation"
     ),
     ForwardedPropertySpec(
-        "_next_playback_source_id",
+        "next_playback_source_id",
         "_pipeline_state",
         "next_playback_source_id",
     ),
     ForwardedPropertySpec(
-        "_playback_source_statuses",
+        "playback_source_statuses",
         "_pipeline_state",
         "playback_source_statuses",
     ),
     ForwardedPropertySpec(
-        "_playback_source_meta", "_pipeline_state", "playback_source_meta"
+        "playback_source_meta", "_pipeline_state", "playback_source_meta"
     ),
     ForwardedPropertySpec(
-        "_playback_caption_states", "_pipeline_state", "playback_caption_states"
+        "playback_caption_states", "_pipeline_state", "playback_caption_states"
     ),
     ForwardedPropertySpec("_caption_source_id", "_pipeline_state", "caption_source_id"),
     ForwardedPropertySpec(
-        "_playback_chunk_last_queued_at",
+        "playback_chunk_last_queued_at",
         "_pipeline_state",
         "playback_chunk_last_queued_at",
     ),

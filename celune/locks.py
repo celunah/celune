@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import threading
 from types import TracebackType
+
+# noinspection PyProtectedMember
 from typing import Self, Optional
 from collections.abc import Sequence
 

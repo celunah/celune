@@ -16,6 +16,8 @@ instances can exhaust GPU resources and is not a supported usage pattern.
 
 import sys as _sys
 from collections.abc import Callable
+
+# noinspection PyProtectedMember
 from typing import TYPE_CHECKING, Union
 
 from .i18n import string

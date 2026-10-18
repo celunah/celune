@@ -191,12 +191,70 @@ class InvalidCharacterError(CEVoiceError):
 class CESNError(ValueError, CeluneError):
     """Base class for Celune Singing Notation parsing failures."""
 
+    def __init__(self, message: str) -> None:
+        """Initialize a notation error without an attached source location."""
+        self.source_start: Optional[int] = None
+        self.source_end: Optional[int] = None
+        super().__init__(message)
+
 
 class CESNSyntaxError(CESNError):
-    """CESN notation is malformed."""
+    """Compatibility base for typed CESN notation failures."""
 
 
-class CESNAlignmentError(CESNError):
+class CESNValidationError(CESNSyntaxError):
+    """CESN notation is malformed or violates a notation invariant."""
+
+
+class CESNUnsupportedFeatureError(CESNSyntaxError):
+    """CESN requests a feature unsupported by the parser or selected backend."""
+
+
+class CESNBackendFormatError(CESNSyntaxError):
+    """A serialized CESN score violates a backend-specific format contract."""
+
+
+class CESNRangeError(CESNValidationError):
+    """A CESN note is outside the selected singing voice's pitch range."""
+
+    def __init__(
+        self,
+        note: str,
+        midi_note: int,
+        character_name: str,
+        minimum_midi: int,
+        maximum_midi: int,
+    ) -> None:
+        """Initialize a pitch-range failure with the note and voice limits."""
+        self.note = note[0].upper() + note[1:]
+        self.midi_note = midi_note
+        self.character_name = character_name
+        self.minimum_midi = minimum_midi
+        self.maximum_midi = maximum_midi
+        pitch_names = (
+            "C",
+            "C#",
+            "D",
+            "D#",
+            "E",
+            "F",
+            "F#",
+            "G",
+            "G#",
+            "A",
+            "A#",
+            "B",
+        )
+        minimum_name = f"{pitch_names[minimum_midi % 12]}{minimum_midi // 12 - 1}"
+        maximum_name = f"{pitch_names[maximum_midi % 12]}{maximum_midi // 12 - 1}"
+        super().__init__(
+            f"note {self.note} (MIDI {midi_note}) is outside {character_name}'s "
+            f"acceptable range: {minimum_name}–{maximum_name} "
+            f"(MIDI {minimum_midi}–{maximum_midi})"
+        )
+
+
+class CESNAlignmentError(CESNValidationError):
     """The note-event count does not match the lyric syllable count."""
 
     def __init__(self, note_count: int, syllable_count: int) -> None:
@@ -209,7 +267,7 @@ class CESNAlignmentError(CESNError):
         )
 
 
-class CESNMatchError(CESNError):
+class CESNMatchError(CESNValidationError):
     """A note event has no corresponding lyric syllable."""
 
     def __init__(self, note_index: int, note_event: str, syllable_count: int) -> None:
@@ -337,13 +395,13 @@ class InvalidCheckpoint(ModelContractError):
         super().__init__(": ".join((details[0], "; ".join(details[1:]))))
 
 
-class _EmptyClassifierOutput(ValueError):
+class EmptyClassifierOutput(ValueError):
     """Identify a response that contains an empty structured-output field."""
 
 
-class _EspeakExecutableNotFound(FileNotFoundError):
-    """Identify eSpeak NG launch failures for a concise user warning."""
+class EspeakExecutableNotFound(FileNotFoundError):
+    """Identify eSpeak-NG launch failures for a concise user warning."""
 
 
-class _OnnxRuntimeNotFound(ImportError):
-    """Identify a missing ONNX Runtime install for a concise user warning."""
+class OnnxRuntimeNotFound(ImportError):
+    """Identify a missing ONNX Runtime installation for a concise user warning."""

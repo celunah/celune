@@ -15,8 +15,8 @@ from ..typing.persona import (
     WhisperScalar,
     WhisperSegmentPayload,
     WhisperGenerationPayload,
-    _WhisperModel,
-    _WhisperProcessor,
+    WhisperModel,
+    WhisperProcessor,
 )
 from ..audio.dsp import resample_audio
 from ..typing.aliases import AudioChunk
@@ -72,8 +72,8 @@ class WhisperTranscriber:
         metadata = get_model_metadata(self.model_id)
         self._revision = metadata.revision if metadata is not None else None
         self.language = language.strip() if language and language.strip() else None
-        self._processor: Optional[_WhisperProcessor] = None
-        self._model: Optional[_WhisperModel] = None
+        self._processor: Optional[WhisperProcessor] = None
+        self._model: Optional[WhisperModel] = None
         self._device: Optional[Device] = None
         self._dtype: Optional[DType] = None
         self._is_multilingual = True
@@ -82,7 +82,7 @@ class WhisperTranscriber:
         self._progress_callback = progress_callback
 
     @property
-    def loaded_model(self) -> Optional[_WhisperModel]:
+    def loaded_model(self) -> Optional[WhisperModel]:
         """Return the loaded Whisper model, if speech recognition initialized it."""
         return self._model
 
@@ -125,7 +125,7 @@ class WhisperTranscriber:
                 model_kwargs["revision"] = self._revision
             with huggingface_progress(self._progress_callback):
                 model = cast(
-                    _WhisperModel,
+                    WhisperModel,
                     AutoModelForSpeechSeq2Seq.from_pretrained(
                         self.model_id,
                         dtype=torch.bfloat16,
@@ -136,7 +136,7 @@ class WhisperTranscriber:
                     ),
                 )
                 self._processor = cast(
-                    _WhisperProcessor,
+                    WhisperProcessor,
                     AutoProcessor.from_pretrained(self.model_id, **model_kwargs),
                 )
             model.eval()
@@ -215,7 +215,7 @@ class WhisperTranscriber:
 
     @staticmethod
     def _decode_segments(
-        processor: _WhisperProcessor,
+        processor: WhisperProcessor,
         generated: WhisperGenerationPayload,
     ) -> tuple[WhisperSegment, ...]:
         """Extract timestamped text segments from a Whisper generation result."""
@@ -277,7 +277,7 @@ class WhisperTranscriber:
 
     @staticmethod
     def _decode_words(
-        processor: _WhisperProcessor,
+        processor: WhisperProcessor,
         raw_segment: WhisperSegmentPayload,
         segment_start: float,
         segment_end: float,

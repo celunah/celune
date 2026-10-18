@@ -16,7 +16,7 @@ from collections.abc import Mapping, Callable
 
 import psutil
 
-from ..utils import format_error_message
+from ..utils import clear_queue, format_error_message
 from ..exceptions import LocalManagementError as _LocalManagementError
 from ..typing.agent import (
     ToolCall,
@@ -293,7 +293,7 @@ def _capabilities(engine: Celune, _call: ToolCall, _context: AgentContext) -> JS
         "persona_loading": engine.persona_loading,
         "voice_prompt": engine.voice_prompt_supported(),
         "needle_ready": engine.agent_needle_ready,
-        "tools": cast(JSONSerializable, sorted(engine._agent_tool_schemas)),
+        "tools": cast(JSONSerializable, sorted(engine.agent_tool_schemas)),
     }
 
 
@@ -342,7 +342,7 @@ def _health(engine: Celune, _call: ToolCall, _context: AgentContext) -> JSON:
         "engine_loaded": engine.loaded,
         "model_ready": engine.model_ready.is_set(),
         "persona_ready": engine.persona_ready,
-        "agent_tools_registered": bool(engine._agent_tools),
+        "agent_tools_registered": bool(engine.agent_tools),
         "agent_mode": engine.mode == "agent",
     }
     return {
@@ -401,8 +401,8 @@ def _clear_speech_queue(
     engine: Celune, _call: ToolCall, _context: AgentContext
 ) -> JSON:
     """Clear pending speech and audio queue items."""
-    engine._clear_queue(engine.text_queue)
-    engine._clear_queue(engine.audio_queue)
+    clear_queue(engine.text_queue)
+    clear_queue(engine.audio_queue)
     return {"cleared": True}
 
 
@@ -494,7 +494,7 @@ def _forget(engine: Celune, call: ToolCall, _context: AgentContext) -> JSON:
 
 def _clear_context(engine: Celune, _call: ToolCall, _context: AgentContext) -> JSON:
     """Clear recent Persona context while retaining long-term memory."""
-    engine._reset_persona_conversation()
+    engine.reset_persona_conversation()
     return {"cleared": True}
 
 
