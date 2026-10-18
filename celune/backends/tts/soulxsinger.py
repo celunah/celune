@@ -549,7 +549,10 @@ class SoulXSinger(CeluneBackend[_SoulXRuntime]):
         metadata = require_model_consent(SOULX_SINGER_MODEL_ID)
         available, _ = self.model_is_available_locally(SOULX_SINGER_MODEL_ID)
         if not available:
-            self.log(string("tts.model_downloading", model_id=SOULX_SINGER_MODEL_ID))
+            self.log(
+                string("tts.model_downloading", model_id=SOULX_SINGER_MODEL_ID),
+                "info",
+            )
             with huggingface_progress(self.report_progress):
                 snapshot_download(
                     repo_id=SOULX_SINGER_MODEL_ID,
@@ -599,7 +602,7 @@ class SoulXSinger(CeluneBackend[_SoulXRuntime]):
 
         available, snapshot_path = self.model_is_available_locally(model_id)
         if not available or snapshot_path is None:
-            self.log(string("tts.model_downloading", model_id=model_id))
+            self.log(string("tts.model_downloading", model_id=model_id), "info")
             with huggingface_progress(self.report_progress):
                 snapshot_path = snapshot_download(
                     repo_id=model_id,

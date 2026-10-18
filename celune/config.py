@@ -340,7 +340,7 @@ def resolve_audio_device_with_info(
         # noinspection PyUnusedLocal
         direct_info = None
     except ImportError:
-        pass
+        sd = None
     else:
         if (
             isinstance(direct_info, Mapping)

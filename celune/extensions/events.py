@@ -670,7 +670,8 @@ def iter_subscriptions(
     if not isinstance(subscriptions, tuple):
         return ()
     normalized: list[EventSubscription] = []
-    for item in subscriptions:
+    legacy_subscriptions = cast(tuple[object, ...], subscriptions)
+    for item in legacy_subscriptions:
         if isinstance(item, EventSubscription):
             normalized.append(item)
         elif isinstance(item, str):

@@ -115,7 +115,6 @@ if TYPE_CHECKING:
     import numpy as np
     import numpy.typing as npt
 
-    from . import resources as ui_resources
     from ..vc import (
         VC_PLAYBACK_GAIN,
         VCDebugCapture,
@@ -669,7 +668,9 @@ def _load_ui_runtime_dependencies() -> None:
     import sounddevice as sd
     import numpy.typing as npt
 
-    from . import resources as ui_resources
+    from . import resources as loaded_ui_resources
+
+    ui_resources = loaded_ui_resources
     from ..vc import (
         VC_PLAYBACK_GAIN,
         LiveVoiceActivityDetector,

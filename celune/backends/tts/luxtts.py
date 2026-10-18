@@ -8,7 +8,7 @@ import hashlib
 import contextlib
 from pathlib import Path
 from types import MethodType
-from typing import Union, ClassVar, Optional, Protocol, cast
+from typing import Union, Optional, Protocol, cast
 from collections.abc import Mapping, Callable, Iterator, Generator
 
 import torch
@@ -330,7 +330,7 @@ class LuxTTS(CeluneBackend[_LuxTTSModel]):
     uses_voice_bundles: bool = True
     chunk_rate: float = 1.0
     supported_languages: tuple[str, ...] = ("en",)
-    voice_models: ClassVar[Optional[Mapping[str, str]]] = LUXTTS_VOICE_MODELS
+    voice_models: Optional[Mapping[str, str]] = LUXTTS_VOICE_MODELS
     default_voice: Optional[str] = TTS_DEFAULT_VOICE
 
     def __init__(
