@@ -457,6 +457,9 @@ def change_voice_lock_state(
 ) -> None:
     """Set voice-cycle and voice-menu availability independently.
 
+    Singing backends keep cycling locked while allowing the singing-pack menu
+    when the core is idle or asleep.
+
     Args:
         locked: Whether the press action should be unavailable.
         can_open_menu: Whether holding the button can open the voice menu.
@@ -468,7 +471,12 @@ def change_voice_lock_state(
         getattr(getattr(self, "celune", None), "backend", None), "singing", False
     ):
         locked = True
-        can_open_menu = False
+        celune = self.celune
+        core_state = getattr(celune, "cur_state", "idle")
+        can_open_menu = bool(getattr(self, "celune_ready", False)) and core_state in {
+            "idle",
+            "sleeping",
+        }
 
     def update() -> None:
         self.style_button.actions = _app.ButtonActions(

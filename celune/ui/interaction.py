@@ -6,21 +6,21 @@ from __future__ import annotations
 import os
 import re
 import sys
-import queue as queue_module
 import shlex
 import types
 import ctypes
 import asyncio
 import threading
 import contextlib
-from copy import deepcopy
 from uuid import uuid4
-from typing import TYPE_CHECKING, Optional, cast
+from copy import deepcopy
+import queue as queue_module
 from collections.abc import Callable, Iterator
+from typing import TYPE_CHECKING, Optional, cast
 
 from . import app as _app
-from ..binding import install_class_functions
 from ..constants import SIGTSTP, APP_NAME
+from ..binding import install_class_functions
 
 if TYPE_CHECKING:
     from ..vc import VCDebugSaveResult
@@ -826,12 +826,10 @@ def _menu_footer(
 
 
 def open_voice_menu(self) -> None:
-    """Open a voice menu containing every available CEVOICE/CECHAR entry."""
+    """Open a voice or singing-pack menu for the active backend."""
     if self.celune is None or self._active_menu is not None:
         return
-    if getattr(getattr(self.celune, "backend", None), "singing", False):
-        self.safe_log(_app.string("celune.singing_voice_change_unavailable"), "warning")
-        return
+    singing_backend = getattr(getattr(self.celune, "backend", None), "singing", False)
 
     from ..cevoice import (
         CEVoice,
@@ -867,6 +865,21 @@ def open_voice_menu(self) -> None:
                 character=pack_name,
                 variant=path.stem,
             )
+        if singing_backend:
+            singing_voice = bundle.singing_voice
+            if singing_voice is None:
+                continue
+            self._voice_menu_paths[pack_name] = path
+            options.append(
+                _app.SelectMenuOption(
+                    label=pack_name,
+                    value=singing_voice,
+                    editable=False,
+                    confirm_value=singing_voice,
+                )
+            )
+            continue
+
         voices = bundle.voice_order
         if not voices:
             continue
@@ -893,9 +906,8 @@ def open_voice_menu(self) -> None:
         return
 
     for index, option in enumerate(options):
-        if (
-            self._voice_menu_paths.get(option.label) == active_bundle
-            and option.value == active_voice
+        if self._voice_menu_paths.get(option.label) == active_bundle and (
+            singing_backend or option.value == active_voice
         ):
             options.insert(0, options.pop(index))
             break
@@ -909,7 +921,7 @@ def open_voice_menu(self) -> None:
                 option,
                 option_count=len(options),
                 confirm_hint=_app.string("ui.voice_confirm_hint"),
-                include_search=True,
+                include_search=not singing_backend,
             ),
         ),
         "voice",

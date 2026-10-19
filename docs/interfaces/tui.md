@@ -37,11 +37,13 @@ the mode button toggles talk/sing F0 conditioning. Touch users can use this
 visible button rather than keyboard shortcuts.
 
 When the active TTS backend supports singing, the input placeholder asks for
-CESN notation and the ordinary voice button is disabled because the backend
-uses a dedicated singing voice role. `/help` adds a short CESN syntax glossary
-for language, tempo and scale, notes, rests, syllable patterns, tuplets, singer
-selection, and comments. CESN input is preserved as written through request
-submission so its directives and note tags reach the parser intact. If a request
+CESN notation. A short press on the voice button remains disabled, while a hold
+opens a menu containing only packs with a CECHAR v5 `sing` voice. Each pack has
+one non-searchable singing choice; selecting it reloads that character pack.
+`/help` adds a short CESN syntax glossary for notation order, language, tempo
+and scale, notes, rests, IPA pronunciation, slurs, tuplets, singer selection,
+and comments. CESN input is preserved as written through request submission so
+its directives and note tags reach the parser intact. If a request
 is rejected before generation while the engine is idle, the error remains visible
 and the input prompt returns to the active mode. See
 [CESN format and parsing](../formats/cesn.md) for the complete notation reference.

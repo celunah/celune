@@ -48,7 +48,10 @@ The voice button uses `press` to cycle to the next loaded voice and `hold` to
 open the voice selector. These capabilities are independent, so the UI can set
 `ButtonActions(press=False, hold=True)` while Celune sleeps. A short press then
 does nothing, while a hold opens the selector; confirming a voice wakes Celune
-before applying the selected voice.
+before applying the selected voice. With a singing backend, voice cycling stays
+locked and the hold menu lists only packs that provide the reserved `sing`
+voice. Since each pack provides one singing role, the menu has no entry search;
+confirming a row loads that character pack.
 
 ## Conversation flow
 

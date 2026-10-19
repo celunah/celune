@@ -8,6 +8,7 @@ import sys
 import asyncio
 import tempfile
 import subprocess
+
 from pathlib import Path
 from unittest import mock
 from types import SimpleNamespace
@@ -29,9 +30,9 @@ from celune.ui.app import (
 from celune.i18n import string
 from celune.celune import Celune
 from celune.typing.locks import (
+    ComponentBusyResult,
     ComponentLockName,
     ComponentLockOwner,
-    ComponentBusyResult,
 )
 from celune.ui import app as ui_app
 from celune.constants import APP_NAME
@@ -41,8 +42,8 @@ from celune.typing.aliases import LogLevel
 from celune.terminal import set_terminal_title
 from celune.ui.headless import CeluneHeadlessUI
 from celune.typing.common import JSONSerializable
-from celune.ui.commands import process_command, attachment_source
-from tests.support import FakeBackend, FakeVCBackend, CeluneTestCase
+from celune.ui.commands import attachment_source, process_command
+from tests.support import CeluneTestCase, FakeBackend, FakeVCBackend
 
 from .ui_startup_interactions import TestUIStartup as _TestUIStartup
 
@@ -108,8 +109,8 @@ class TestRuntime(CeluneTestCase):
         assert button.actions == ButtonActions(press=True, hold=False)
         assert not button.has_class("-actions-disabled")
 
-    def test_singing_backend_disables_voice_cycle_and_menu(self) -> None:
-        """Disable both ordinary voice controls while a singing backend is active."""
+    def test_singing_backend_locks_voice_cycle_and_keeps_menu_available(self) -> None:
+        """Keep style cycling locked while allowing the singing-pack menu."""
         button = VoiceButton(
             "Voice",
             actions=ButtonActions(press=True, hold=True),
@@ -118,6 +119,7 @@ class TestRuntime(CeluneTestCase):
             CeluneUI,
             SimpleNamespace(
                 celune=SimpleNamespace(backend=SimpleNamespace(singing=True)),
+                celune_ready=True,
                 style_button=button,
                 update_resources=mock.Mock(),
                 _run_on_ui_thread=lambda callback: callback(),
@@ -130,7 +132,123 @@ class TestRuntime(CeluneTestCase):
             can_open_menu=True,
         )
 
+        assert button.actions == ButtonActions(press=False, hold=True)
+
+        ui.celune.cur_state = "reloading"
+        CeluneUI.change_voice_lock_state(ui, locked=True)
         assert button.actions == ButtonActions(press=False, hold=False)
+
+    def test_singing_voice_menu_lists_only_one_non_searchable_singing_entry(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Offer only CECHAR singing roles as single, non-searchable menu rows."""
+        from celune import cevoice
+
+        singing_path = tmp_path / "singer.cechar"
+        speaking_path = tmp_path / "speaker.cevoice"
+        singing_path.touch()
+        speaking_path.touch()
+
+        def open_pack(path: Path) -> SimpleNamespace:
+            return SimpleNamespace(
+                path=path,
+                voice_order=("balanced", "bold"),
+                singing_voice="sing" if path == singing_path else None,
+            )
+
+        show_menu = mock.Mock()
+        ui = cast(
+            CeluneUI,
+            SimpleNamespace(
+                celune=SimpleNamespace(backend=SimpleNamespace(singing=True)),
+                _active_menu=None,
+                _voice_menu_paths={},
+                safe_log=mock.Mock(),
+                _show_menu=show_menu,
+                _menu_footer=CeluneUI._menu_footer,
+            ),
+        )
+
+        with (
+            mock.patch.object(cevoice, "bundled_voices_dir", return_value=tmp_path),
+            mock.patch.object(cevoice, "active_bundle_path", return_value=singing_path),
+            mock.patch.object(cevoice.CEVoice, "open", side_effect=open_pack),
+            mock.patch.object(
+                cevoice,
+                "bundle_display_name",
+                side_effect=lambda bundle: bundle.path.stem.title(),
+            ),
+        ):
+            CeluneUI.open_voice_menu(ui)
+
+        menu = show_menu.call_args.args[0]
+        assert len(menu.options) == 1
+        option = menu.options[0]
+        assert option.label == "Singer"
+        assert option.value == "sing"
+        assert option.confirm_value == "sing"
+        assert not option.editable
+        assert option.autocomplete_values is None
+        assert string("ui.menu_hint_search") not in menu.footer_builder(option)
+        assert ui._voice_menu_paths == {"Singer": singing_path}
+        assert show_menu.call_args.args[1] == "voice"
+
+    def test_singing_voice_menu_selection_reloads_only_the_character_pack(self) -> None:
+        """Select a singing-capable pack without unlocking voice-style switching."""
+        from celune import cevoice
+
+        bundle_path = Path("singer.cechar")
+        calls: list[Path] = []
+        set_voice = mock.Mock(return_value=True)
+
+        def set_bundle(path: Path) -> bool:
+            calls.append(path)
+            return True
+
+        fake_celune = SimpleNamespace(
+            backend=SimpleNamespace(singing=True),
+            sleeping=False,
+            set_cevoice_and_wait=set_bundle,
+            set_voice_and_wait=set_voice,
+            voices=("balanced", "bold"),
+            current_voice="balanced",
+        )
+        ui = SimpleNamespace(
+            celune=fake_celune,
+            _voice_menu_paths={"Singer": bundle_path},
+            celune_styles=(),
+            style_index=0,
+            tts_voice_changed=mock.Mock(),
+            change_voice_lock_state=mock.Mock(),
+            safe_log=mock.Mock(),
+        )
+        apply_voice_selection = cast(
+            Callable[[CeluneUI, dict[str, JSONSerializable]], Awaitable[None]],
+            getattr(
+                CeluneUI._apply_voice_selection,
+                "__wrapped__",
+                CeluneUI._apply_voice_selection,
+            ),
+        )
+
+        with mock.patch.object(
+            cevoice, "active_bundle_path", return_value=Path("old.cechar")
+        ):
+            asyncio.run(
+                apply_voice_selection(
+                    cast(CeluneUI, ui),
+                    {"pack": "Singer", "entry": "sing"},
+                )
+            )
+
+        assert calls == [bundle_path]
+        set_voice.assert_not_called()
+        assert ui.celune_styles == ("balanced", "bold")
+        ui.change_voice_lock_state.assert_called_once_with(
+            locked=True,
+            can_open_menu=True,
+        )
 
     def test_voice_button_long_press_message_waits_for_release(self) -> None:
         """Verify a held voice button posts its modal message after release."""
@@ -611,8 +729,10 @@ class TestUICommand(CeluneTestCase):
 
         messages = [message for message, _severity in self.logs]
         assert string("commands.help_cesn_header") in messages
+        assert string("commands.help_cesn_order") in messages
         assert string("commands.help_cesn_notes") in messages
         assert string("commands.help_cesn_ipa") in messages
+        assert string("commands.help_cesn_slur") in messages
         assert string("commands.help_cesn_singer") in messages
 
     def _process_command(self, command: str, args: list[str]) -> None:

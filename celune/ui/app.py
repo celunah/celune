@@ -21,9 +21,9 @@ from typing import (
     final,
 )
 from pathlib import Path
+import queue as queue_module
 from io import TextIOWrapper
 from types import ModuleType
-import queue as queue_module
 from dataclasses import field, dataclass
 from collections.abc import Callable, Iterator
 
@@ -1734,10 +1734,10 @@ class CeluneUI(App, CeluneUIMethodSurface):
         """Load the selected pack and voice without blocking the Textual loop."""
         if self.celune is None:
             return
-        if getattr(getattr(self.celune, "backend", None), "singing", False):
-            self.safe_log(string("celune.singing_voice_change_unavailable"), "warning")
-            return
-        from ..cevoice import active_bundle_path
+        singing_backend = getattr(
+            getattr(self.celune, "backend", None), "singing", False
+        )
+        from ..cevoice import SINGING_VOICE_NAME, active_bundle_path
 
         pack = value.get("pack")
         entry = value.get("entry")
@@ -1745,6 +1745,8 @@ class CeluneUI(App, CeluneUIMethodSurface):
             self._voice_menu_paths.get(pack) if isinstance(pack, str) else None
         )
         if bundle_path is None or not isinstance(entry, str):
+            return
+        if singing_backend and entry != SINGING_VOICE_NAME:
             return
 
         try:
@@ -1755,7 +1757,14 @@ class CeluneUI(App, CeluneUIMethodSurface):
                 self.safe_log(string("ui.voice_change_failed"), "warning")
                 return
 
-            if active_bundle_path() == bundle_path:
+            if singing_backend:
+                if active_bundle_path() == bundle_path:
+                    return
+                loaded = await run_in_daemon_thread(
+                    self.celune.set_cevoice_and_wait,
+                    bundle_path,
+                )
+            elif active_bundle_path() == bundle_path:
                 loaded = await run_in_daemon_thread(
                     self.celune.set_voice_and_wait,
                     entry,
@@ -1774,9 +1783,19 @@ class CeluneUI(App, CeluneUIMethodSurface):
                 self.safe_log(string("ui.voice_change_failed"), "warning")
                 return
             self.celune_styles = self.celune.voices
-            self.style_index = self.celune_styles.index(entry)
-            self.tts_voice_changed(entry)
-            self.change_voice_lock_state(locked=len(self.celune_styles) < 2)
+            current_voice = getattr(self.celune, "current_voice", None)
+            if singing_backend:
+                if (
+                    isinstance(current_voice, str)
+                    and current_voice in self.celune_styles
+                ):
+                    self.style_index = self.celune_styles.index(current_voice)
+                    self.tts_voice_changed(current_voice)
+                self.change_voice_lock_state(locked=True, can_open_menu=True)
+            else:
+                self.style_index = self.celune_styles.index(entry)
+                self.tts_voice_changed(entry)
+                self.change_voice_lock_state(locked=len(self.celune_styles) < 2)
         except Exception as error:
             self.safe_log(
                 format_error_message(

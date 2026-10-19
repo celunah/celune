@@ -6,27 +6,27 @@ from __future__ import annotations
 import os
 import asyncio
 import threading
+from typing import TYPE_CHECKING, Optional, cast
 from pathlib import Path
 from urllib.parse import urlparse
 from collections.abc import Callable, Awaitable
-from typing import TYPE_CHECKING, Optional, cast
 
 import soundfile as sf
 
+from ..i18n import string, tagged_string
+from ..vram import vram_report_int, format_vram_bytes, runtime_vram_report
 from ..utils import (
     available,
     replace_ipa,
     format_number,
     format_error_message,
 )
-from ..constants import APP_NAME
-from ..i18n import string, tagged_string
+from ..cevoice import active_bundle_path, resolve_bundle_path
 from ..threads import run_in_daemon_thread
+from ..constants import APP_NAME
 from ..exceptions import InvalidExtensionError
 from ..audio.server import restart_audio_server
 from ..persona.capabilities import PersonaCapabilities
-from ..cevoice import active_bundle_path, resolve_bundle_path
-from ..vram import vram_report_int, format_vram_bytes, runtime_vram_report
 
 if TYPE_CHECKING:
     from .app import CeluneUI
@@ -342,12 +342,13 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
         ui.safe_log(string("commands.help_help"))
         if getattr(ui.celune.backend, "singing", False):
             ui.safe_log(string("commands.help_cesn_header"))
+            ui.safe_log(string("commands.help_cesn_order"))
             ui.safe_log(string("commands.help_cesn_language"))
             ui.safe_log(string("commands.help_cesn_music"))
             ui.safe_log(string("commands.help_cesn_notes"))
             ui.safe_log(string("commands.help_cesn_rest"))
-            ui.safe_log(string("commands.help_cesn_pattern"))
             ui.safe_log(string("commands.help_cesn_ipa"))
+            ui.safe_log(string("commands.help_cesn_slur"))
             ui.safe_log(string("commands.help_cesn_tuplet"))
             ui.safe_log(string("commands.help_cesn_singer"))
         return
