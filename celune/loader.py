@@ -439,7 +439,7 @@ def _warmup(
     active_voice = voice if voice is not None else self.current_voice
     warmup_text = "Hello. I am here, and I am listening carefully."
     if active_backend.singing:
-        warmup_text = "[bpm:120,key:c,scale:major][lang:en][a4:4] Ah"
+        warmup_text = "[bpm:120,key:c,scale:major][lang:en][a4:4][ɑ] Ah"
 
     forced_error = os.getenv("CELUNE_FORCE_ERROR") in {
         "1",

@@ -1226,6 +1226,25 @@ class TestCeluneCore(_TestCeluneCore):
 
         assert exc_info.value.__cause__ is cause
 
+    def test_singing_warmup_includes_an_explicit_ipa_syllable(self) -> None:
+        """Give singing backends a CESN probe that follows the explicit IPA syntax."""
+        celune = self._make_celune({})
+        celune.backend.singing = True
+        celune.model = {"model_id": "fake/balanced", "kwargs": {}}
+        celune.backend.model = celune.model
+
+        with mock.patch.object(
+            celune.backend,
+            "generate_stream",
+            return_value=iter(()),
+        ) as generate_stream:
+            assert celune._warmup()
+
+        generate_stream.assert_called_once()
+        assert generate_stream.call_args.kwargs["text"] == (
+            "[bpm:120,key:c,scale:major][lang:en][a4:4][ɑ] Ah"
+        )
+
     def test_nonfatal_warmup_failure_does_not_enter_fatal_error_state(self) -> None:
         """Verify rollback-scoped warmup failures stay non-fatal."""
         celune = self._make_celune({})

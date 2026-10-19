@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Tests for CESN directives, sections, syllables, and notation rendering."""
+"""Tests for CESN directives, IPA alignment, sections, and rendering."""
 
 from pathlib import Path
 from fractions import Fraction
@@ -7,92 +7,116 @@ from types import SimpleNamespace
 
 import pytest
 
+from celune import cevoice
 from celune.cesn import (
     CESNSinger,
     CESNTuplet,
-    CESNNoteEvent,
     CESNNotePair,
+    CESNNoteEvent,
     CESNRestEvent,
     parse_cesn,
     render_cesn,
     resolve_singer,
 )
-from celune import cevoice
 from celune.exceptions import (
-    CESNBackendFormatError,
     CESNMatchError,
     CESNAlignmentError,
     CESNNotationWarning,
-    CESNSyntaxError,
-    CESNUnsupportedFeatureError,
     CESNValidationError,
     InvalidCharacterError,
+    CESNSyntaxError,
+    CESNBackendFormatError,
+    CESNUnsupportedFeatureError,
 )
 from celune.singing import format_cesn_error
 
 
-def test_parse_cesn_returns_typed_note_syllable_pairs() -> None:
-    """Parse dotted durations and force the requested syllabification language."""
-    result = parse_cesn("[lang:en][c3:4d,d3:8,e3:16] Text to sing.")
+def test_parse_cesn_returns_typed_note_ipa_pairs() -> None:
+    """Align each explicit IPA syllable with one pitched note."""
+    result = parse_cesn("[lang:en][c3:4d,d3:8,e3:16][tɛkst.tu.sɪŋ] Text to sing.")
 
     assert result[0].blocks[0].pairs == (
-        CESNNotePair(CESNNoteEvent("c3", 4, True), "Text "),
-        CESNNotePair(CESNNoteEvent("d3", 8, False), "to "),
-        CESNNotePair(CESNNoteEvent("e3", 16, False), "sing."),
+        CESNNotePair(CESNNoteEvent("c3", 4, True), "tɛkst"),
+        CESNNotePair(CESNNoteEvent("d3", 8, False), "tu"),
+        CESNNotePair(CESNNoteEvent("e3", 16, False), "sɪŋ"),
+    )
+    assert result[0].blocks[0].lyrics == "Text to sing."
+
+
+def test_parse_cesn_converts_xsampa_input_to_canonical_ipa() -> None:
+    """Convert explicitly marked ASCII X-SAMPA before note alignment."""
+    notation = '[lang:en][c4:4,d4:4][x-sampa:"tSEl.oU]cello'
+    sections = parse_cesn(notation)
+
+    assert tuple(pair.ipa for pair in sections[0].blocks[0].pairs) == (
+        "ˈtʃɛl",
+        "oʊ",
+    )
+    assert "[ˈtʃɛl.oʊ]cello" in render_cesn(sections)
+
+
+@pytest.mark.parametrize(
+    ("pronunciation", "message"),
+    (
+        ("ˈtSEl.oU", "ASCII characters only"),
+        ("/tSEl.oU/", "without slash delimiters"),
+        ("tSEl$", "unsupported X-SAMPA symbol"),
+    ),
+)
+def test_parse_cesn_rejects_invalid_xsampa(
+    pronunciation: str,
+    message: str,
+) -> None:
+    """Reject non-ASCII, delimited, or unknown X-SAMPA transcription."""
+    notation = f"[lang:en][c4:4][x-sampa:{pronunciation}]cello"
+    with pytest.raises(CESNValidationError, match=message) as caught:
+        parse_cesn(notation)
+    assert caught.value.source_start == notation.index("[x-sampa:")
+    assert caught.value.source_end == notation.index("]", caught.value.source_start) + 1
+
+
+def test_parse_cesn_preserves_lyrics_without_syllabifying_them() -> None:
+    """Keep whole lyric spelling while IPA provides note-aligned syllables."""
+    result = parse_cesn("[lang:en][c3:4,d3:4,e3:4][ˈsɪl.vɚ.bluː] silver-blue.")
+
+    assert result[0].blocks[0].lyrics == "silver-blue."
+    assert tuple(pair.ipa for pair in result[0].blocks[0].pairs) == (
+        "ˈsɪl",
+        "vɚ",
+        "bluː",
     )
 
 
-def test_parse_cesn_splits_syllables_with_syllabreak() -> None:
-    """Use Syllabreak boundaries while preserving punctuation and separators."""
-    result = parse_cesn(
-        "[lang:en][c3:1,d3:2,e3:4,f3:8,g3:16,a3:32,b3:2] "
-        "Moonlight resting, silver-blue."
-    )
+def test_parse_cesn_adds_punctuation_rests_and_preserves_explicit_rests() -> None:
+    """Append phrase rests after punctuation without duplicating explicit rests."""
+    period_sections = parse_cesn("[lang:en][c3:4][a]Finished.")
+    comma_sections = parse_cesn("[lang:en][c3:4][a]Continue,")
+    explicit_sections = parse_cesn("[lang:en][c3:4][a]Finished.[r:2]")
 
-    assert tuple(pair.syllable for pair in result[0].blocks[0].pairs) == (
-        "Moon",
-        "light ",
-        "re",
-        "sting, ",
-        "sil",
-        "ver-",
-        "blue.",
-    )
-
-
-def test_parse_cesn_syllabifies_non_english_with_selected_language() -> None:
-    """Pass the explicit ISO language code through to Syllabreak."""
-    result = parse_cesn("[lang:rus][c3:4,d3:4] здраво")
-
-    assert tuple(pair.syllable for pair in result[0].blocks[0].pairs) == (
-        "здра",
-        "во",
-    )
+    assert period_sections[0].blocks[-1].events == (CESNRestEvent(2, False),)
+    assert comma_sections[0].blocks[-1].events == (CESNRestEvent(4, False),)
+    assert tuple(
+        event
+        for block in explicit_sections[0].blocks
+        for event in block.events
+        if isinstance(event, CESNRestEvent)
+    ) == (CESNRestEvent(2, False),)
+    rendered = render_cesn(period_sections)
+    assert "Finished.[r:2]" in rendered
+    assert render_cesn(parse_cesn(rendered)) == rendered
 
 
-def test_parse_cesn_aligns_default_singing_reference() -> None:
-    """Align the default pack's singing transcript using explicit English."""
+def test_parse_cesn_aligns_explicit_ipa_for_a_lyric_phrase() -> None:
+    """Require IPA boundaries for each note without changing phrase text."""
     note_list = ",".join("c3:4" for _ in range(14))
-    result = parse_cesn(
-        "[lang:en]"
-        f"[{note_list}] Moonlight resting, silver-blue, I'll keep one quiet light for you."
-    )
+    ipa = ".".join("a" for _ in range(14))
+    lyrics = "Moonlight resting, silver-blue, I'll keep one quiet light for you."
+    result = parse_cesn(f"[lang:en][{note_list}][{ipa}] {lyrics}")
 
-    assert tuple(pair.syllable for pair in result[0].blocks[0].pairs) == (
-        "Moon",
-        "light ",
-        "re",
-        "sting, ",
-        "sil",
-        "ver-",
-        "blue, ",
-        "I'll ",
-        "keep ",
-        "one ",
-        "quiet ",
-        "light ",
-        "for ",
-        "you.",
+    assert result[0].blocks[0].lyrics == lyrics
+    assert len(result[0].blocks[0].pairs) == 14
+    assert tuple(pair.ipa for pair in result[0].blocks[0].pairs) == tuple(
+        "a" for _ in range(14)
     )
 
 
@@ -122,41 +146,32 @@ def test_parse_default_cechar_singing_notation() -> None:
         Fraction(0),
     )
 
-    assert duration == Fraction(37, 2)
+    assert duration == Fraction(45, 2)
     assert sections[0].bpm == 108
-    assert duration * 60 / sections[0].bpm == Fraction(185, 18)
+    assert duration * 60 / sections[0].bpm == Fraction(25, 2)
     assert len(warning_messages) == 2
     assert "note a3:4" in warning_messages[0]
     assert "note c4:4" in warning_messages[1]
 
 
-def test_parse_cesn_respects_per_word_pattern_override() -> None:
-    """Use an explicit pattern for the next word without a fixed dictionary."""
-    result = parse_cesn("[lang:en][pattern:qui,et][c3:4,d3:4] Quiet.")
+def test_parse_cesn_aligns_explicit_ipa_syllables_to_notes() -> None:
+    """Use raw IPA after the note list and preserve the unsplit lyric word."""
+    result = parse_cesn("[lang:en][c3:4,d3:4][ˈkwaɪ.ət] Quiet.")
 
-    assert tuple(pair.syllable for pair in result[0].blocks[0].pairs) == (
-        "Qui",
-        "et.",
+    assert tuple(pair.ipa for pair in result[0].blocks[0].pairs) == (
+        "ˈkwaɪ",
+        "ət",
     )
-
-
-def test_parse_cesn_attaches_ipa_syllables_to_patterned_word() -> None:
-    """Align explicit IPA syllables with the matching lyric pattern and notes."""
-    result = parse_cesn("[lang:en][pattern:qui,et][ipa:/ˈkwaɪ.ət/][c3:4,d3:4] Quiet.")
-
-    assert tuple((pair.syllable, pair.ipa) for pair in result[0].blocks[0].pairs) == (
-        ("Qui", "ˈkwaɪ"),
-        ("et.", "ət"),
-    )
+    assert result[0].blocks[0].lyrics == "Quiet."
 
 
 def test_parse_cesn_keeps_rests_out_of_note_syllable_pairs() -> None:
     """Keep rest timing in event order without consuming lyric syllables."""
-    result = parse_cesn("[lang:en][c3:4,r:1d] Word.")
+    result = parse_cesn("[lang:en][c3:4,r:1d][wɜːd] Word.")
     block = result[0].blocks[0]
 
     assert block.events == (
-        CESNNotePair(CESNNoteEvent("c3", 4, False), "Word."),
+        CESNNotePair(CESNNoteEvent("c3", 4, False), "wɜːd"),
         CESNRestEvent(1, True),
     )
     assert len(block.pairs) == 1
@@ -164,9 +179,12 @@ def test_parse_cesn_keeps_rests_out_of_note_syllable_pairs() -> None:
 
 def test_parse_cesn_scales_next_tuplet_events_then_expires() -> None:
     """Scale the next actual note events by the tuplet's exact duration ratio."""
-    result = parse_cesn("[lang:en][tuplet:3,2][c3:4]One[d3:4]two[e3:4]three[f3:4]four.")
-    pairs = result[0].blocks
-    events = tuple(block.pairs[0].event for block in pairs)
+    result = parse_cesn(
+        "[lang:en][tuplet:3,2][c3:4][wʌn]One"
+        "[d3:4][tu]two[e3:4][θɹi]three[f3:4][fɔɹ]four."
+    )
+    blocks = tuple(block for block in result[0].blocks if block.pairs)
+    events = tuple(block.pairs[0].event for block in blocks)
 
     assert tuple(event.tuplet for event in events) == (
         CESNTuplet(3, 2),
@@ -186,8 +204,8 @@ def test_parse_cesn_scales_next_tuplet_events_then_expires() -> None:
 def test_parse_cesn_counts_rests_in_tuplets_and_renders_groups() -> None:
     """Count rests as tuplet events and preserve repeated groups when rendered."""
     notation = (
-        "[lang:en][tuplet:3,2][c3:4,r:4,d3:4]One two."
-        "[tuplet:3,2][f3:4,g3:4,a3:4]three four five."
+        "[lang:en][tuplet:3,2][c3:4,r:4,d3:4][wʌn.tu]One two."
+        "[tuplet:3,2][f3:4,g3:4,a3:4][θɹi.fɔɹ.faɪv]three four five."
     )
     sections = parse_cesn(notation)
     rendered = render_cesn(sections)
@@ -199,7 +217,7 @@ def test_parse_cesn_counts_rests_in_tuplets_and_renders_groups() -> None:
     )
 
     assert sum(event.tuplet_start for event in events) == 2
-    assert tuple(event.duration_beats for event in events) == (
+    assert tuple(event.duration_beats for event in events if event.tuplet) == (
         Fraction(2, 3),
         Fraction(2, 3),
         Fraction(2, 3),
@@ -207,36 +225,50 @@ def test_parse_cesn_counts_rests_in_tuplets_and_renders_groups() -> None:
         Fraction(2, 3),
         Fraction(2, 3),
     )
+    assert tuple(
+        event.duration_beats
+        for event in events
+        if isinstance(event, CESNRestEvent) and event.tuplet is None
+    ) == (Fraction(2), Fraction(2))
 
 
 def test_parse_cesn_rejects_incomplete_tuplets_and_section_changes() -> None:
     """Require every tuplet to finish before the notation or section ends."""
-    with pytest.raises(CESNSyntaxError, match="missing 2 event"):
-        parse_cesn("[lang:en][tuplet:3,2][c3:4]One.")
+    with pytest.raises(CESNSyntaxError, match="missing 1 event"):
+        parse_cesn("[lang:en][tuplet:3,2][c3:4][wʌn]One.")
 
     with pytest.raises(CESNSyntaxError, match="section boundary"):
         parse_cesn(
-            "[lang:en][tuplet:3,2][c3:4]One[bpm:140,key:c,scale:major][d3:4]Two."
+            "[lang:en][tuplet:3,2][c3:4][wʌn]One"
+            "[bpm:140,key:c,scale:major][d3:4][tu]Two."
         )
 
 
 def test_parse_cesn_ignores_comments_and_accepts_multiple_note_blocks() -> None:
     """Ignore comment tags and retain successive note/lyric blocks in a section."""
-    result = parse_cesn("[lang:en][#intro][c3:4]Word. [#ignored][d3:4]Quiet.")
+    result = parse_cesn(
+        "[lang:en][#intro][c3:4][wɜːd]Word. [#ignored][d3:4][ɡɹeɪt]Great."
+    )
 
     assert len(result) == 1
-    assert tuple(block.lyrics for block in result[0].blocks) == (
+    assert tuple(block.lyrics for block in result[0].blocks if block.lyrics) == (
         "Word. ",
-        "Quiet.",
+        "Great.",
     )
+    assert tuple(
+        event
+        for block in result[0].blocks
+        for event in block.events
+        if isinstance(event, CESNRestEvent)
+    ) == (CESNRestEvent(2, False), CESNRestEvent(2, False))
 
 
 def test_parse_cesn_starts_sections_when_musical_state_changes() -> None:
     """Split inference sections at tempo, key, scale, and language changes."""
     result = parse_cesn(
-        "[lang:en][bpm:120,key:c,scale:major][c3:4]Word."
-        "[bpm:160,key:e,scale:minor][e3:4]Quiet."
-        "[lang:de][g3:4]Wort."
+        "[lang:en][bpm:120,key:c,scale:major][c3:4][wɜːd]Word."
+        "[bpm:160,key:e,scale:minor][e3:4][kwaɪt]Quiet."
+        "[lang:de][g3:4][vɔɹt]Wort."
     )
 
     assert tuple(
@@ -249,35 +281,29 @@ def test_parse_cesn_starts_sections_when_musical_state_changes() -> None:
     )
 
 
-def test_parse_cesn_applies_directives_between_note_tag_and_lyrics() -> None:
-    """Allow musical and language tags anywhere before the next lyric text."""
-    result = parse_cesn("[d3:4][lang:en][bpm:140,key:d,scale:major]Word.")
-
-    assert (result[0].language, result[0].bpm, result[0].key) == (
-        "en",
-        140,
-        "d",
-    )
+def test_parse_cesn_requires_settings_before_note_list() -> None:
+    """Require extra tags before notes and IPA immediately after the notes."""
+    with pytest.raises(CESNValidationError, match="must precede the note list"):
+        parse_cesn("[d3:4][lang:en][bpm:140,key:d,scale:major][wɜːd]Word.")
 
 
 def test_parse_cesn_warns_on_out_of_scale_notes() -> None:
     """Report a pitch that is not in the current key and scale."""
     with pytest.warns(CESNNotationWarning, match="outside c major"):
-        parse_cesn("[lang:en][bpm:120,key:c,scale:major][c#3:4]Word.")
+        parse_cesn("[lang:en][bpm:120,key:c,scale:major][c#3:4][wɜːd]Word.")
 
 
-def test_parse_cesn_rejects_language_missing_from_syllabreak_or_model() -> None:
-    """Require an explicit language supported by both notation layers."""
+def test_parse_cesn_checks_only_explicit_language_and_model_support() -> None:
+    """Require a language tag and check it against the selected model."""
     with pytest.raises(CESNValidationError, match="language must be specified"):
-        parse_cesn("[c3:4] Word.")
+        parse_cesn("[c3:4][wɜːd] Word.")
     with pytest.raises(CESNUnsupportedFeatureError, match="selected model"):
         parse_cesn(
-            "[lang:en][c3:4] Word.",
+            "[lang:en][c3:4][wɜːd] Word.",
             supported_languages=("fr",),
         )
-    with pytest.raises(CESNUnsupportedFeatureError, match="Syllabreak"):
-        parse_cesn("[lang:ja][c3:4] ことば")
-    text = "[lang:en][bpm:120,key:c,scale:supermajor][c3:4] Word."
+    parse_cesn("[lang:ja][c3:4,d3:4,e3:4][ko.to.ba] ことば")
+    text = "[lang:en][bpm:120,key:c,scale:supermajor][c3:4][wɜːd] Word."
     with pytest.raises(
         CESNUnsupportedFeatureError,
         match="unsupported CESN scale",
@@ -290,7 +316,7 @@ def test_parse_cesn_rejects_language_missing_from_syllabreak_or_model() -> None:
 def test_parse_cesn_classifies_malformed_values_as_validation_errors() -> None:
     """Represent malformed CESN values with the validation subtype."""
     with pytest.raises(CESNValidationError, match="BPM must be a positive integer"):
-        parse_cesn("[lang:en][bpm:0,key:c,scale:major][c3:4] Word.")
+        parse_cesn("[lang:en][bpm:0,key:c,scale:major][c3:4][wɜːd] Word.")
 
 
 def test_parse_cesn_resolves_singing_character_pack(
@@ -300,7 +326,7 @@ def test_parse_cesn_resolves_singing_character_pack(
     singer = CESNSinger("Celune", Path("celune.cevoice"))
     monkeypatch.setattr("celune.cesn.resolve_singer", lambda name: singer)
 
-    result = parse_cesn("[lang:en][singer:celune][c3:4]Word.")
+    result = parse_cesn("[lang:en][singer:celune][c3:4][wɜːd]Word.")
 
     assert result[0].singer == singer
 
@@ -315,7 +341,7 @@ def test_parse_cesn_classifies_missing_singer_as_unsupported(
 
     monkeypatch.setattr("celune.cesn.resolve_singer", reject_singer)
     with pytest.raises(CESNUnsupportedFeatureError) as caught:
-        parse_cesn("[lang:en][singer:classic][c3:4]Word.")
+        parse_cesn("[lang:en][singer:classic][c3:4][wɜːd]Word.")
 
     assert isinstance(caught.value.__cause__, InvalidCharacterError)
     assert caught.value.source_start == 9
@@ -353,16 +379,19 @@ def test_resolve_singer_requires_a_v5_pack_with_singing_voice(
     assert resolve_singer("celune") == CESNSinger("Celune", pack_path.resolve())
 
     bundle.singing_voice = None
-    with pytest.raises(InvalidCharacterError):
+    with pytest.raises(InvalidCharacterError) as error:
         resolve_singer("Celune")
+    assert str(error.value) == (
+        "Character 'Celune' is missing or has no usable CECHAR v5 singing voice"
+    )
 
 
-def test_render_cesn_preserves_sections_patterns_and_rests() -> None:
+def test_render_cesn_preserves_sections_ipa_and_rests() -> None:
     """Render one canonical notation string without losing section boundaries."""
     sections = parse_cesn(
         "[lang:en][bpm:120,key:c,scale:major]"
-        "[pattern:qui,et][ipa:/ˈkwaɪ.ət/][c3:4,r:1,d3:4]Quiet."
-        "[bpm:160,key:e,scale:minor][e3:4]Word."
+        "[c3:4,r:1,d3:4][ˈkwaɪ.ət]Quiet."
+        "[bpm:160,key:e,scale:minor][e3:4][wɜːd]Word."
     )
 
     rendered = render_cesn(sections)
@@ -374,11 +403,9 @@ def test_render_cesn_preserves_sections_patterns_and_rests() -> None:
     ) == tuple(event for block in sections[0].blocks for event in block.events)
 
 
-def test_parse_and_render_cesn_preserves_slurred_word_and_note_timing() -> None:
-    """Keep aligned notes and durations while marking a word's slur boundary."""
-    sections = parse_cesn(
-        "[lang:en][pattern:cel,lo][ipa:/ˈsɛl.oʊ/][slur:2][c4:4,d4:8]cello."
-    )
+def test_parse_and_render_cesn_preserves_slurred_ipa_and_note_timing() -> None:
+    """Keep aligned IPA syllables and durations while marking a slur group."""
+    sections = parse_cesn("[lang:en][slur:2][c4:4,d4:8][ˈsɛl.oʊ]cello.")
 
     pairs = sections[0].blocks[0].pairs
     assert tuple(pair.slur_from_previous for pair in pairs) == (False, True)
@@ -391,6 +418,7 @@ def test_parse_and_render_cesn_preserves_slurred_word_and_note_timing() -> None:
     reparsed = parse_cesn(rendered)
 
     assert "[slur:2]" in rendered
+    assert "[c4:4,d4:8][ˈsɛl.oʊ]" in rendered
     assert reparsed[0].blocks[0].pairs == pairs
 
 
@@ -400,25 +428,25 @@ def test_parse_and_render_cesn_preserves_slurred_word_and_note_timing() -> None:
         "[c3:3] Word.",
         "[lang:en][c3:3] Word.",
         "[lang:en][c3:4,,d3:8] Word.",
-        "[lang:en][c3:4] Word. [again]",
+        "[lang:en][c3:4][wɜːd] Word. [again]",
         "[lang:en][pattern:qui,far][c3:4,d3:4] Quiet.",
         "[lang:en][ipa:/ˈkwaɪ.ət/][c3:4,d3:4] Quiet.",
-        "[lang:en][pattern:qui,et][ipa:/ˈkwaɪ/][c3:4,d3:4] Quiet.",
-        "[lang:en][pattern:qui,et][ipa:ˈkwaɪ.ət][c3:4,d3:4] Quiet.",
-        "[lang:en][pattern:qui,et][ipa:/ˈkwaɪ..ət/][c3:4,d3:4] Quiet.",
-        "[lang:en][slur:2][c3:4,d3:4] Cello.",
-        "[lang:en][pattern:cel,lo][slur:3][c3:4,d3:4] Cello.",
-        "[lang:en][pattern:cel,lo][slur:2][c3:4,r:4,d3:4] Cello.",
-        "[lang:en][pattern:cel,lo][slur:1][c3:4,d3:4] Cello.",
-        "[lang:en][bpm:0,key:c,scale:major][c3:4] Word.",
-        "[lang:en][bpm:120,key:c,scale:unknown][c3:4] Word.",
-        "[lang:en][tuplet:1,1][c3:4] Word.",
-        "[lang:en][tuplet:3,0][c3:4] Word.",
-        "[lang:en][tuplet:3,x][c3:4] Word.",
+        "[lang:en][c3:4,d3:4][ˈkwaɪ] Quiet.",
+        "[lang:en][c3:4,d3:4][/ˈkwaɪ.ət/] Quiet.",
+        "[lang:en][c3:4,d3:4][ˈkwaɪ..ət] Quiet.",
+        "[lang:en][slur:2][c3:4,d3:4][ˈsɛl] Cello.",
+        "[lang:en][slur:3][c3:4,d3:4][ˈsɛl.oʊ] Cello.",
+        "[lang:en][slur:2][c3:4,r:4,d3:4][ˈsɛl.oʊ] Cello.",
+        "[lang:en][slur:1][c3:4][sɛl] Cell.",
+        "[lang:en][bpm:0,key:c,scale:major][c3:4][wɜːd] Word.",
+        "[lang:en][bpm:120,key:c,scale:unknown][c3:4][wɜːd] Word.",
+        "[lang:en][tuplet:1,1][c3:4][wɜːd] Word.",
+        "[lang:en][tuplet:3,0][c3:4][wɜːd] Word.",
+        "[lang:en][tuplet:3,x][c3:4][wɜːd] Word.",
     ),
 )
 def test_parse_cesn_rejects_malformed_notation(text: str) -> None:
-    """Reject malformed directives, note tags, and syllable patterns."""
+    """Reject malformed directives, note tags, and IPA syllable groups."""
     with pytest.raises(CESNSyntaxError):
         parse_cesn(text)
 
@@ -450,18 +478,20 @@ def test_format_cesn_error_without_source_span_returns_exception_message() -> No
 
 
 def test_parse_cesn_reports_missing_note_events_as_alignment_error() -> None:
-    """Report lyric syllables left without pitched note events."""
+    """Report IPA syllables left without pitched note events."""
+    notation = "[lang:en][c3:4][tɛkst.tu.sɪŋ] Text to sing"
     with pytest.raises(CESNAlignmentError) as error:
-        parse_cesn("[lang:en][c3:4] Text to sing")
+        parse_cesn(notation)
 
     assert error.value.note_count == 1
     assert error.value.syllable_count == 3
+    assert error.value.source_start == notation.index("[tɛkst")
 
 
 def test_parse_cesn_reports_unmatched_note_events() -> None:
-    """Report the first pitched event that has no lyric syllable."""
+    """Report the first pitched event that has no corresponding IPA syllable."""
     with pytest.raises(CESNMatchError) as error:
-        parse_cesn("[lang:en][c3:4,d3:8] hmm")
+        parse_cesn("[lang:en][c3:4,d3:8][hɪm] hmm")
 
     assert error.value.note_index == 1
     assert error.value.note_event == "d3:8"
@@ -469,7 +499,7 @@ def test_parse_cesn_reports_unmatched_note_events() -> None:
 
 
 def test_parse_cesn_reports_note_without_lyrics_as_match_error() -> None:
-    """Report a pitched note that is not followed by any lyric syllable."""
+    """Report a pitched note group that has no following IPA or lyric text."""
     with pytest.raises(CESNMatchError) as error:
         parse_cesn("[lang:en][c3:4]")
 

@@ -1,7 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Tests for explicit CESN IPA pronunciation overrides."""
+"""Tests for explicit CESN IPA syllable alignment."""
 
 import json
+
 from pathlib import Path
 from unittest import mock
 from types import SimpleNamespace
@@ -12,24 +13,24 @@ import numpy as np
 
 from celune.exceptions import (
     BackendError,
-    CESNBackendFormatError,
-    CESNRangeError,
     CESNValidationError,
+    CESNRangeError,
+    CESNBackendFormatError,
 )
 from celune.cesn import CESNSinger
 from celune.backends.tts.soulxsinger import (
     SoulXSinger,
     decode_score,
-    pitch_to_midi,
     _SoulXRuntime,
+    pitch_to_midi,
 )
 
 
 @pytest.mark.parametrize(
     ("ipa", "expected_phonemes", "expected_error"),
     (
-        ("/ˈkwaɪ.ət/", "en_K-W-AY1 en_AH0-T", None),
-        ("/ˈkwaɪ.ɲ/", None, "soulx_ipa_unsupported"),
+        ("ˈkwaɪ.ət", "en_K-W-AY1 en_AH0-T", None),
+        ("ˈkwaɪ.ɲ", None, "soulx_ipa_unsupported"),
     ),
 )
 def test_generate_stream_uses_or_rejects_explicit_ipa(
@@ -37,11 +38,10 @@ def test_generate_stream_uses_or_rejects_explicit_ipa(
     expected_phonemes: Optional[str],
     expected_error: Optional[str],
 ) -> None:
-    """Use IPA phones instead of G2P and reject phones outside SoulX's inventory."""
+    """Convert each explicit IPA syllable and reject unsupported phone symbols."""
     backend = object.__new__(SoulXSinger)
     backend.name = "soulxsinger"
     singer = CESNSinger("Test Singer", Path("singer.cevoice"))
-    phonemizer = mock.Mock(side_effect=AssertionError("G2P must be bypassed"))
     processor = SimpleNamespace(
         phone2idx={
             "en_K": 0,
@@ -58,7 +58,6 @@ def test_generate_stream_uses_or_rejects_explicit_ipa(
     runtime = SimpleNamespace(
         model=inference_model,
         processor=processor,
-        phonemizer=phonemizer,
         sample_rate=24000,
         inference_steps=4,
         cfg=1.5,
@@ -70,7 +69,7 @@ def test_generate_stream_uses_or_rejects_explicit_ipa(
     singer_loader = SimpleNamespace(bundle=singer_bundle)
     with mock.patch.object(backend, "load_model", return_value=runtime):
         loaded_runtime = backend.load_model("soulxsinger")
-    notation = f"[lang:en][pattern:qui,et][ipa:{ipa}][g3:4,a3:4]Quiet."
+    notation = f"[lang:en][g3:4,a3:4][{ipa}]Quiet."
 
     with (
         mock.patch(
@@ -90,7 +89,7 @@ def test_generate_stream_uses_or_rejects_explicit_ipa(
         mock.patch.object(
             SoulXSinger,
             "_validate_singing_voice",
-            return_value=("[lang:en][g3:4]Ah", Path("sing.wav")),
+            return_value=("[lang:en][g3:4][ɑ]Ah", Path("sing.wav")),
         ),
         mock.patch.object(SoulXSinger, "_prompt_data", return_value={}),
         mock.patch(
@@ -104,19 +103,24 @@ def test_generate_stream_uses_or_rejects_explicit_ipa(
             with pytest.raises(BackendError) as error:
                 list(backend.generate_stream(loaded_runtime, text=notation))
             assert error.value.error_code == expected_error
+            assert str(error.value) == (
+                "SoulX-Singer cannot represent the supplied IPA in its English "
+                "ARPAbet inventory"
+            )
 
-    phonemizer.assert_not_called()
     if expected_phonemes is not None:
         processor.process.assert_called_once()
-        assert processor.process.call_args.args[0]["phoneme"] == expected_phonemes
-        assert processor.process.call_args.args[0]["text"] == "Qui et."
+        assert processor.process.call_args.args[0]["phoneme"] == (
+            f"{expected_phonemes} <SP>"
+        )
+        assert "text" not in processor.process.call_args.args[0]
 
 
 def test_slurred_cesn_keeps_distinct_syllables_as_note_events() -> None:
     """Keep a new slurred syllable's pitch, phones, and duration."""
     backend = object.__new__(SoulXSinger)
     singer = CESNSinger("Test Singer", Path("singer.cevoice"))
-    notation = "[lang:en][pattern:cel,lo][ipa:/ˈtʃɛl.oʊ/][slur:2][c4:4,d4:4]cello."
+    notation = "[lang:en][slur:2][c4:4,d4:4][ˈtʃɛl.oʊ]cello."
     with mock.patch(
         "celune.backends.tts.soulxsinger.resolve_active_singer",
         return_value=singer,
@@ -124,7 +128,6 @@ def test_slurred_cesn_keeps_distinct_syllables_as_note_events() -> None:
         score_text = backend.cesn_to_model(notation)
 
     section = decode_score(score_text)[0]
-    phonemizer = mock.Mock(side_effect=AssertionError("IPA must bypass G2P"))
     runtime = cast(
         _SoulXRuntime,
         SimpleNamespace(
@@ -136,19 +139,20 @@ def test_slurred_cesn_keeps_distinct_syllables_as_note_events() -> None:
                     "en_OW0": 3,
                 }
             ),
-            phonemizer=phonemizer,
         ),
     )
 
     metadata = SoulXSinger._metadata(section.events, section.bpm, runtime)
 
-    assert metadata["note_type"] == "2 2"
-    assert metadata["duration"] == "0.5 0.5"
-    assert metadata["note_pitch"] == "60 62"
-    assert metadata["phoneme"] == "en_CH-EH1-L en_OW0"
-    assert tuple(event.slur_from_previous for event in section.events) == (False, True)
-    phonemizer.assert_not_called()
-
+    assert metadata["note_type"] == "2 2 1"
+    assert metadata["duration"] == "0.5 0.5 1"
+    assert metadata["note_pitch"] == "60 62 0"
+    assert metadata["phoneme"] == "en_CH-EH1-L en_OW0 <SP>"
+    assert tuple(event.slur_from_previous for event in section.events) == (
+        False,
+        True,
+        False,
+    )
     legacy_payload = json.loads(score_text)
     for raw_event in legacy_payload["sections"][0]["events"]:
         raw_event.pop("slur_from_previous")
@@ -160,7 +164,7 @@ def test_slurred_repeated_phones_use_soulx_continuation_type() -> None:
     """Use SoulX continuation only when the following event repeats the phones."""
     backend = object.__new__(SoulXSinger)
     singer = CESNSinger("Test Singer", Path("singer.cevoice"))
-    notation = "[lang:en][pattern:la,la][ipa:/ˈlɑ.ˈlɑ/][slur:2][c4:4,d4:4]lala."
+    notation = "[lang:en][slur:2][c4:4,d4:4][ˈlɑ.ˈlɑ]lala."
     with mock.patch(
         "celune.backends.tts.soulxsinger.resolve_active_singer",
         return_value=singer,
@@ -172,22 +176,21 @@ def test_slurred_repeated_phones_use_soulx_continuation_type() -> None:
         _SoulXRuntime,
         SimpleNamespace(
             processor=SimpleNamespace(phone2idx={"en_L": 0, "en_AA1": 1}),
-            phonemizer=mock.Mock(side_effect=AssertionError("IPA must bypass G2P")),
         ),
     )
 
     metadata = SoulXSinger._metadata(section.events, section.bpm, runtime)
 
-    assert metadata["note_type"] == "2 3"
-    assert metadata["note_pitch"] == "60 62"
-    assert metadata["phoneme"] == "en_L-AA1 en_L-AA1"
+    assert metadata["note_type"] == "2 3 1"
+    assert metadata["note_pitch"] == "60 62 0"
+    assert metadata["phoneme"] == "en_L-AA1 en_L-AA1 <SP>"
 
 
 @pytest.mark.parametrize(
     "text",
     (
         "not prepared score JSON",
-        '{"backend":"soulxsinger","version":1,"sections":[]}',
+        '{"backend":"soulxsinger","version":2,"sections":[]}',
     ),
 )
 def test_decode_score_classifies_invalid_backend_payload(
@@ -219,9 +222,9 @@ def test_cesn_preprocessing_uses_the_selected_singers_pitch_range() -> None:
         return_value=singer,
     ):
         with pytest.raises(CESNRangeError) as error:
-            backend.cesn_to_model("[lang:en][bpm:120,key:f#,scale:major][f3:4]Ah.")
+            backend.cesn_to_model("[lang:en][bpm:120,key:f#,scale:major][f3:4][æ]Ah.")
         payload = backend.cesn_to_model(
-            "[lang:en][bpm:120,key:f#,scale:major][f#3:4]Ah."
+            "[lang:en][bpm:120,key:f#,scale:major][f#3:4][æ]Ah."
         )
 
     assert str(error.value) == (
@@ -239,6 +242,6 @@ def test_cesn_preprocessing_allows_a_different_characters_pitch_range() -> None:
         "celune.backends.tts.soulxsinger.resolve_active_singer",
         return_value=singer,
     ):
-        payload = backend.cesn_to_model("[lang:en][f5:4]Ah.")
+        payload = backend.cesn_to_model("[lang:en][f5:4][ɛ]Ah.")
 
     assert decode_score(payload)[0].events[0].pitch == "f5"

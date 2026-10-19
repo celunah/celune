@@ -10,18 +10,22 @@ import textwrap
 import importlib
 import threading
 import contextlib
+from types import ModuleType, SimpleNamespace
+from typing import Union, Optional, cast
 from pathlib import Path
 from unittest import mock
-from typing import Union, Optional, cast
-from types import ModuleType, SimpleNamespace
 from collections.abc import Iterator, Generator
 
+import numpy as np
 import torch
 import pytest
-import numpy as np
 import soundfile as sf
 
+from celune.cesn import CESNSinger
 from celune.i18n import string
+from celune.utils import discard
+from celune.celune import Celune
+from celune.registry import MODEL_BY_ID
 from celune.exceptions import (
     CESNValidationError,
     InvalidExtensionError,
@@ -33,15 +37,18 @@ from celune.backends.vc import (
 from celune.backends.vc import (
     resolve_vc_backend,
 )
-from celune.celune import Celune
-from celune.utils import discard
-from celune.cesn import CESNSinger
+from celune.backends.tts import BACKEND_MANIFESTS, resolve_backend
+from celune.registry.tts import QWEN3_DEFAULT_MODEL_ID, SOULX_SINGER_CODE_REVISION
+from celune.typing.aliases import AudioChunk
+from celune.extensions.base import CeluneContext, CeluneExtension
 from celune.typing.backends import (
     BackendModel,
     SeedVCModelValue,
     SeedVCRealtimeModule,
 )
-from celune.registry import MODEL_BY_ID
+from celune.backends.tts.base import CeluneBackend
+from celune.backends.vc.seedvc import CeluneSeedVCBackend
+from celune.extensions.manager import CeluneExtensionManager
 from celune.backends.tts.luxtts import (
     LuxTTS,
     LuxTTSModel,
@@ -49,13 +56,13 @@ from celune.backends.tts.luxtts import (
     install_vocoder_decode_guard,
     install_cpu_duration_correction,
 )
-from celune.typing.aliases import AudioChunk
+from celune.dataclasses.pipeline import VoiceConversionRequest
 from celune.backends.tts.fireredtts3 import (
     FireRedTTS3,
     FireRedModel,
     FireRedRedAE,
-    create_firered_model,
     FireRedIncrementalDecoder,
+    create_firered_model,
 )
 from celune.backends.tts.soulxsinger import (
     SoulXSinger,
@@ -63,13 +70,6 @@ from celune.backends.tts.soulxsinger import (
     pitch_to_midi,
     load_upstream_source,
 )
-from celune.backends.tts.base import CeluneBackend
-from celune.backends.vc.seedvc import CeluneSeedVCBackend
-from celune.extensions.manager import CeluneExtensionManager
-from celune.dataclasses.pipeline import VoiceConversionRequest
-from celune.extensions.base import CeluneContext, CeluneExtension
-from celune.backends.tts import BACKEND_MANIFESTS, resolve_backend
-from celune.registry.tts import QWEN3_DEFAULT_MODEL_ID, SOULX_SINGER_CODE_REVISION
 
 from .support import (
     FakeBackend,
@@ -97,7 +97,8 @@ class TestBackend(CeluneTestCase):
     def test_singing_capability_defaults_off_and_base_cesn_is_noop(self) -> None:
         """Keep ordinary TTS unchanged until a singing backend opts in."""
         notation = (
-            "[lang:en][bpm:120,key:c,scale:major][c3:4d,d3:8,e3:16] Text to sing."
+            "[lang:en][bpm:120,key:c,scale:major]"
+            "[c3:4d,d3:8,e3:16][tɛkst.tu.sɪŋ] Text to sing."
         )
         backend = FakeBackend()
         self.assertFalse(backend.singing)
@@ -112,7 +113,7 @@ class TestBackend(CeluneTestCase):
         """Keep musical defaults in the score payload and reject lyric-only input."""
         backend = object.__new__(SoulXSinger)
         singer = CESNSinger("Test Singer", Path("singer.cevoice"))
-        notation = "[bpm:120,key:c,scale:major][lang:en][a4:4] Ah"
+        notation = "[bpm:120,key:c,scale:major][lang:en][a4:4][ɑ] Ah"
 
         with mock.patch(
             "celune.backends.tts.soulxsinger.resolve_active_singer",
@@ -176,7 +177,7 @@ class TestBackend(CeluneTestCase):
         backend = object.__new__(SoulXSinger)
         backend.name = "soulxsinger"
         singer = CESNSinger("Test Singer", Path("singer.cevoice"))
-        notation = "[bpm:120,key:c,scale:major][lang:en][a4:4] Ah"
+        notation = "[bpm:120,key:c,scale:major][lang:en][a4:4][ɑ] Ah"
 
         with mock.patch(
             "celune.backends.tts.soulxsinger.resolve_active_singer",

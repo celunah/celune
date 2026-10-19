@@ -303,35 +303,34 @@ remove_cevoice_entries("my_pack.cevoice", ["identity.md"])
 
 `parse_cesn(text: str, *, supported_languages: Optional[tuple[str, ...]] =
 None) -> tuple[CESNSection, ...]` parses the section-based notation and aligns
-pitched notes with syllables. A `CESNSection` carries BPM, key, scale,
-explicit language, singer identity, and ordered note blocks. A block keeps
-`CESNNotePair` entries and `CESNRestEvent` values in event order. Each note
-pair stores its orthographic syllable and an optional IPA override syllable;
-rests consume neither. In notation, `[ipa:...]` requires a matching
-`[pattern:...]` and replaces G2P for that word. `render_cesn(sections:
+explicit IPA syllables with pitched notes. A `CESNSection` carries BPM, key,
+scale, explicit language, singer identity, and ordered note blocks. A block
+keeps `CESNNotePair` entries and `CESNRestEvent` values in event order. Each
+note pair stores its IPA syllable and slur state; rests consume no syllable.
+Every group follows `[extra tags][notes][raw dot-separated IPA] lyrics`, with
+one IPA syllable per pitched note. `render_cesn(sections:
 tuple[CESNSection, ...]) -> str`
 serializes all sections into one canonical notation string with settings
 repeated at each section boundary. `CESNTuplet(actual_count, normal_count)`
 scales the next `actual_count` note/rest events by `normal_count / actual_count`
 and then expires. Each parsed note/rest exposes its exact `duration_beats` as a
 `fractions.Fraction`; `tuplet_start` identifies where the directive belongs in
-canonical rendering. Language tags are required and are checked against
-Syllabreak; providing `supported_languages` also checks the selected model.
+canonical rendering. Language tags are required; providing
+`supported_languages` checks the selected model.
 
 ```python
 from celune.cesn import parse_cesn, render_cesn
 
 sections = parse_cesn(
-    "[lang:en][bpm:120,key:c,scale:major][pattern:qui,et]"
-    "[tuplet:3,2][c3:4,r:4,d3:4]Quiet."
+    "[lang:en][bpm:120,key:c,scale:major][tuplet:3,2][c3:4,r:4,d3:4][ˈkwaɪ.ət]Quiet."
 )
 notation = render_cesn(sections)
 ```
 
 The parser raises `CESNValidationError` for malformed notation,
 `CESNUnsupportedFeatureError` for unsupported scales, languages, or explicit
-singers, `CESNAlignmentError` when syllables outnumber pitched notes, and
-`CESNMatchError` when a pitched event has no syllable. These types inherit from
+singers, `CESNAlignmentError` when IPA syllables outnumber pitched notes, and
+`CESNMatchError` when a pitched event has no IPA syllable. These types inherit from
 `CESNSyntaxError` for compatibility. Resolving the active singer can raise
 `InvalidCharacterError` when its CECHAR v5 pack has no `sing` voice. Out-of-scale
 pitches emit `CESNNotationWarning`. Singing backend preprocessing raises

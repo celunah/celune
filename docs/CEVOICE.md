@@ -211,7 +211,7 @@ V5 retains v4's name-only file list and binary jump table. For example:
     },
     "sing": {
       "cfg_scale": null,
-      "cesn": "[lang:en][f#3:4,g3:4]Singing.",
+      "cesn": "[lang:en][f#3:4,g3:4][ˈsɪŋ.ɪŋ]Singing.",
       "reference_text": "Singing reference transcript...",
       "persona": null,
       "range": {"min": 54, "max": 72},
@@ -445,7 +445,7 @@ write_cechar_v5(
         "balanced": {"reference_text": "Speaking transcript."},
         "sing": {
             "reference_text": "Singing transcript.",
-            "cesn": "[lang:en][f#3:4,g3:4]Singing.",
+            "cesn": "[lang:en][f#3:4,g3:4][ˈsɪŋ.ɪŋ]Singing.",
             "range": {"min": 54, "max": 72},
         },
     },

@@ -27,7 +27,7 @@ screen.
 | `dotstts` | TTS | `celune.backends.tts.dotstts:DotsTtsMF` | Celune's `dots.tts` fork; Python 3.12. |
 | `voxcpm2` | TTS | `celune.backends.tts.voxcpm2:VoxCPM2` | `voxcpm>=2.0.0`; Python 3.12. |
 | `luxtts` | TTS | `celune.backends.tts.luxtts:LuxTTS` | CUDA-first LuxTTS worker with CPU ONNX fallback, its ZipVoice/LinaCodec VCS dependencies, and English prompt transcription. |
-| `soulxsinger` | TTS | `celune.backends.tts.soulxsinger:SoulXSinger` | Score-conditioned singing; Python 3.12, pinned upstream source and Transformers 4.41.2, Syllabreak and `iso639-lang` for CESN, English G2P, CUDA. |
+| `soulxsinger` | TTS | `celune.backends.tts.soulxsinger:SoulXSinger` | Score-conditioned singing; Python 3.12, pinned upstream source and Transformers 4.41.2, `iso639-lang` for CESN, explicit English IPA, CUDA. |
 | `seed-vc` | VC | `celune.backends.vc.seedvc:CeluneSeedVCBackend` | Celune's Seed-VC fork. |
 
 Most workers share a compatibility baseline that includes GitPython for
@@ -170,18 +170,15 @@ The model repository is licensed under Apache-2.0; its terms are separate from
 Celune's source license. The registry pins both model weights and source code.
 The worker downloads only `config.yaml` and `model.pt` from the reviewed model
 revision, then strictly loads the checkpoint state dictionary. Preloading also
-prepares the pinned source checkout and the three English NLTK resources used by
-`g2p_en`; CEDTS starts reporting progress before importing NLTK, then reports
-progress for each resource. It reuses data found on NLTK's search path and
-downloads only missing resources into Celune's app-data `nltk_data` directory.
-The worker imports NLTK during its synchronous startup preparation, before
-CEDTS starts background request threads. On Windows, the isolated SoulX worker
-also defaults `OPENBLAS_NUM_THREADS` to `1` unless the host already sets it.
-Together these prevent NLTK's SciPy/OpenBLAS import from hanging during DLL
-loading in a CEDTS request thread and limit BLAS thread oversubscription.
-During model loading, the worker reports progress and logs as it imports the
-model, reads its config and checkpoint, applies weights, transfers the model to
-CUDA, and prepares the score processor and phonemizer.
+prepares the pinned source checkout. The score author supplies IPA directly,
+so the worker does not install or download G2P dictionaries. On Windows, the
+isolated SoulX worker defaults `OPENBLAS_NUM_THREADS` to `1` unless the host
+already sets it, limiting BLAS thread oversubscription.
+During worker startup, SoulX imports its pinned model and processor modules
+before CEDTS starts handling requests. Model loading reuses those cached modules
+and reports numeric progress through config and checkpoint loading, weight
+application, CUDA transfer, and score-processor setup without logging each
+internal step. Direct callers still load the pinned modules on demand.
 The score processor decodes its reference WAV through `soundfile` and calls
 `torchaudio.functional.resample` only when resampling is needed, so this path
 does not require TorchCodec or FFmpeg.
@@ -194,24 +191,22 @@ An incomplete checkout is removed before the next installation attempt.
 
 The backend accepts English CESN and requires an active CECHAR v5 pack with a
 hidden `sing` WAV and `cesn` reference. It uses that reference as the prompt,
-converts note-event syllables through English G2P, maps pitches to MIDI note
-numbers, and converts CESN beat lengths to seconds using each section's BPM.
-For a word with an explicit `[pattern:...]` and `[ipa:...]`, it converts each
-IPA syllable into the model's English ARPAbet inventory instead of running G2P
-on that syllable. Unsupported IPA sounds raise a backend error before model
-inference. See the [CESN format](../formats/cesn.md) for the supported notation
-and conversion behavior.
+converts each explicitly supplied IPA syllable into the model's English
+ARPAbet inventory, maps pitches to MIDI note numbers, and converts CESN beat
+lengths to seconds using each section's BPM. It does not infer pronunciation or
+syllable boundaries from the lyric spelling. Unsupported IPA sounds raise a
+backend error before model inference. See the [CESN format](../formats/cesn.md)
+for the notation and conversion behavior.
 Changes in singer, tempo, key, or scale remain section boundaries; the model
 synthesizes each section and Celune concatenates the resulting audio. SoulX
 returns one complete 24 kHz waveform, so it does not stream partial score audio.
 
 The startup probe is CESN notation with explicit `[bpm:120,key:c,scale:major]`
-metadata and the synthetic note `[a4:4] Ah`. A singing backend rejects input
+metadata and the synthetic note `[a4:4][ɑ] Ah`. A singing backend rejects input
 without any note or rest event with `No CESN notation found.` It requires a CUDA
-GPU. The first use also prepares the small English NLTK resources used by
-`g2p_en` during preloading. If the source checkout,
-phonemizer resources, model weights, or singing reference cannot be prepared,
-the backend reports a localized error and does not synthesize the request.
+GPU. If the source checkout, model weights, or singing reference cannot be
+prepared, the backend raises an English technical error and does not synthesize
+the request.
 
 ## Model weight contracts
 
@@ -327,7 +322,7 @@ Each `CESNSection` has one singer, language, BPM, key, and scale. A change to
 any of those values begins a new section. A singing backend must reset its
 inference state at each section boundary, process the section metadata, and
 combine the sections into the final model notation or rendered output. Parsed
-blocks retain note/syllable pairs and positioned rests; out-of-scale notes
+blocks retain note/IPA pairs and positioned rests; out-of-scale notes
 remain available after a `CESNNotationWarning` is displayed.
 
 `[tuplet:a,b]` scales the next `a` pitched-note or rest events by `b/a` and
@@ -336,11 +331,11 @@ exposes its effective duration in quarter-note beats so a backend can convert
 it to the model's timing units. Tuplets may span adjacent blocks but cannot
 overlap or cross a section boundary.
 
-The core parser requires an explicit `[lang:...]` tag and uses Syllabreak with
-that language. It rejects languages unsupported by either Syllabreak or the
-selected model. `[singer:...]` resolves a character name to a CECHAR v5 pack
-with a hidden `sing` voice, and `[pattern:...]` can replace automatic
-syllabification for the next word. See
+The core parser requires an explicit `[lang:...]` tag and rejects languages
+unsupported by the selected model. Each note group uses the order
+`[extra tags][notes][raw IPA] lyrics`; the author supplies one dot-separated
+IPA syllable per pitched note. `[singer:...]` resolves a character name to a
+CECHAR v5 pack with a hidden `sing` voice. See
 [`parse_cesn()` and the CESN format](../formats/cesn.md) for tag syntax, data
 types, and errors.
 

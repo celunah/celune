@@ -79,7 +79,8 @@ class TestPipelineAsync(_TestPipelineAsync):
         """Convert CESN once before buffering splits a long request."""
         engine = make_pipeline_engine()
         notation = (
-            "[lang:en][bpm:120,key:c,scale:major][c3:4d,d3:8,e3:16] Text to sing."
+            "[lang:en][bpm:120,key:c,scale:major]"
+            "[c3:4d,d3:8,e3:16][tɛkst.tu.sɪŋ] Text to sing."
         )
         canonical_notation = render_cesn(
             parse_cesn(notation, supported_languages=("en",))
@@ -148,11 +149,20 @@ class TestPipelineAsync(_TestPipelineAsync):
 
     def test_singing_output_filename_uses_plain_cesn_lyrics(self) -> None:
         """Use lyric words instead of CESN tags in the output filename."""
-        notation = "[lang:en][pattern:cel,lo][slur:2][c4:4,d4:4]cello!"
+        notation = "[lang:en][slur:2][c4:4,d4:4][ˈtʃɛl.oʊ]cello!"
 
         assert (
             pipeline._output_filename_fragment(notation, singing_backend=True)
             == "cello"
+        )
+
+    def test_output_filename_prefix_distinguishes_speech_and_singing(self) -> None:
+        """Use distinct output filename markers for speech and singing."""
+        assert pipeline._output_filename_prefix(singing_backend=False) == (
+            f"{pipeline.APP_SLUG}_speech"
+        )
+        assert pipeline._output_filename_prefix(singing_backend=True) == (
+            f"{pipeline.APP_SLUG}_singing"
         )
 
     def test_singing_backend_logs_out_of_scale_cesn_warning(
@@ -174,7 +184,7 @@ class TestPipelineAsync(_TestPipelineAsync):
                 Celune,
                 engine,
             ),
-            "[lang:en][bpm:120,key:c,scale:major][c#3:4]Word.",
+            "[lang:en][bpm:120,key:c,scale:major][c#3:4][wɜːd]Word.",
         )
 
         assert any("outside c major" in message for message, _ in engine.messages)
@@ -222,6 +232,12 @@ class TestPipelineAsync(_TestPipelineAsync):
                 format="FLAC",
             )
             sf.write(
+                output_dir / "celune_singing_c.flac",
+                np.zeros((48000, 2), dtype=np.float32),
+                48000,
+                format="FLAC",
+            )
+            sf.write(
                 output_dir / "other.flac",
                 np.zeros((48000, 2), dtype=np.float32),
                 48000,
@@ -231,7 +247,7 @@ class TestPipelineAsync(_TestPipelineAsync):
             with mock.patch("celune.pipeline.outputs_dir", return_value=output_dir):
                 total_seconds = pipeline.saved_output_speech_seconds()
 
-        assert total_seconds == pytest.approx(1.5)
+        assert total_seconds == pytest.approx(2.5)
 
     def test_celune_metadata_and_flac_writer_create_expected_tags(self) -> None:
         """Verify Celune metadata payloads and saved FLAC tags.

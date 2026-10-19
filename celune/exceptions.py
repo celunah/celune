@@ -182,10 +182,10 @@ class InvalidCharacterError(CEVoiceError):
 
     def __init__(self, character_name: str) -> None:
         """Initialize a failed character selection with its requested name."""
-        from .i18n import string
-
         self.character_name = character_name
-        super().__init__(string("cesn.invalid_singer", character=character_name))
+        super().__init__(
+            f"Character {character_name!r} is missing or has no usable CECHAR v5 singing voice"
+        )
 
 
 class CESNError(ValueError, CeluneError):

@@ -1,71 +1,18 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for SoulX-Singer model loading progress and preparation."""
 
-import builtins
-from typing import Any
 from pathlib import Path
 from unittest import mock
 from types import SimpleNamespace
 
-from celune.i18n import string
+import pytest
+
+from celune.exceptions import BackendError
 from celune.backends.tts import soulxsinger
 
 
-def test_soulxsinger_prepares_nltk_before_worker_requests() -> None:
-    """Load NLTK in the worker startup thread before CEDTS starts requests."""
-    backend = object.__new__(soulxsinger.SoulXSinger)
-
-    with mock.patch.object(soulxsinger.importlib, "import_module") as import_module:
-        backend.prepare_model_loading()
-
-    import_module.assert_called_once_with("nltk")
-
-
-def test_soulxsinger_nltk_preparation_reports_resource_progress(
-    tmp_path: Path,
-) -> None:
-    """Report progress while preparing the English phonemizer datasets."""
-    nltk = mock.Mock()
-    nltk.data = mock.Mock(path=[])
-    nltk.data.find.side_effect = LookupError
-    nltk.download.return_value = True
-    report_progress = mock.Mock()
-    log = mock.Mock()
-    import_nltk = builtins.__import__
-
-    def check_import_order(name: str, *args: Any, **kwargs: Any) -> Any:
-        if name == "nltk":
-            assert log.call_args_list == [
-                mock.call(string("soulx.phonemizer_data_preparing"), "info")
-            ]
-            assert report_progress.call_args_list == [mock.call(0, 3)]
-        return import_nltk(name, *args, **kwargs)
-
-    with (
-        mock.patch.dict(soulxsinger.sys.modules, {"nltk": nltk}),
-        mock.patch.object(soulxsinger, "app_data_dir", return_value=tmp_path),
-        mock.patch("builtins.__import__", side_effect=check_import_order),
-    ):
-        soulxsinger._ensure_nltk_data(report_progress, log)
-
-    assert [call.args[0] for call in nltk.download.call_args_list] == [
-        "averaged_perceptron_tagger_eng",
-        "cmudict",
-        "punkt_tab",
-    ]
-    assert report_progress.call_args_list == [
-        mock.call(0, 3),
-        mock.call(1, 3),
-        mock.call(2, 3),
-        mock.call(3, 3),
-    ]
-    assert log.call_args_list[0] == mock.call(
-        string("soulx.phonemizer_data_preparing"), "info"
-    )
-
-
-def test_soulxsinger_preload_prepares_nltk_data() -> None:
-    """Prepare phonemizer datasets before the worker loads model weights."""
+def test_soulxsinger_preload_prepares_only_the_pinned_source() -> None:
+    """Prepare the pinned source without downloading G2P resources."""
     backend = object.__new__(soulxsinger.SoulXSinger)
     backend.log = mock.Mock()
     backend._progress_callback = mock.Mock()
@@ -77,12 +24,23 @@ def test_soulxsinger_preload_prepares_nltk_data() -> None:
             "model_is_available_locally",
             return_value=(True, "cached"),
         ),
-        mock.patch.object(soulxsinger, "load_upstream_source"),
-        mock.patch.object(soulxsinger, "_ensure_nltk_data") as ensure_nltk_data,
+        mock.patch.object(soulxsinger, "load_upstream_source") as load_source,
     ):
         backend.preload_models()
 
-    ensure_nltk_data.assert_called_once_with(backend.report_progress, backend.log)
+    load_source.assert_called_once_with()
+    backend.log.assert_not_called()
+
+
+def test_soulxsinger_errors_use_english_diagnostics() -> None:
+    """Keep backend exception text independent of the active locale."""
+    backend = object.__new__(soulxsinger.SoulXSinger)
+
+    with pytest.raises(BackendError) as error:
+        backend.load_model("unsupported")
+
+    assert error.value.error_code == "soulx_unsupported_model"
+    assert str(error.value) == "SoulX-Singer does not support model 'unsupported'"
 
 
 def test_soulxsinger_reference_wav_loader_uses_soundfile_and_resamples() -> None:
@@ -119,8 +77,10 @@ def test_soulxsinger_reference_wav_loader_uses_soundfile_and_resamples() -> None
     )
 
 
-def test_soulxsinger_load_model_reports_each_loading_stage(tmp_path: Path) -> None:
-    """Forward model construction, checkpoint, CUDA, and processor stages."""
+def test_soulxsinger_load_model_reports_progress_without_stage_logs(
+    tmp_path: Path,
+) -> None:
+    """Report numeric loading progress without logging internal setup steps."""
     backend = object.__new__(soulxsinger.SoulXSinger)
     backend.log = mock.Mock()
     backend._progress_callback = mock.Mock()
@@ -153,7 +113,7 @@ def test_soulxsinger_load_model_reports_each_loading_stage(tmp_path: Path) -> No
             soulxsinger.importlib,
             "import_module",
             side_effect=modules.__getitem__,
-        ),
+        ) as import_module,
         mock.patch.object(
             backend,
             "model_is_available_locally",
@@ -164,21 +124,18 @@ def test_soulxsinger_load_model_reports_each_loading_stage(tmp_path: Path) -> No
             "load",
             return_value={"state_dict": {}},
         ),
-        mock.patch.object(
-            soulxsinger,
-            "_load_nltk_phonemizer",
-            return_value=mock.Mock(),
-        ),
         mock.patch.object(soulxsinger.sys, "path", [*soulxsinger.sys.path]),
         mock.patch.dict(soulxsinger.sys.modules, {"omegaconf": omega_module}),
     ):
+        backend.prepare_model_loading()
         backend.load_model(soulxsinger.SOULX_SINGER_MODEL_ID)
 
+    assert import_module.call_args_list == [
+        mock.call("soulxsinger.models.soulxsinger"),
+        mock.call("soulxsinger.utils.data_processor"),
+    ]
     assert backend._progress_callback.call_args_list == [
-        mock.call(step, 8) for step in range(9)
+        mock.call(step, 7) for step in range(8)
     ]
     assert processor_module.load_wav is soulxsinger._load_soulx_reference_wav
-    logged_messages = [call.args[0] for call in backend.log.call_args_list]
-    assert string("soulx.checkpoint_loading") in logged_messages
-    assert string("soulx.cuda_transfer") in logged_messages
-    assert logged_messages[-1] == string("soulx.model_ready")
+    backend.log.assert_not_called()

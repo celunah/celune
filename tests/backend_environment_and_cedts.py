@@ -7,14 +7,16 @@ import json
 import tempfile
 import threading
 import subprocess
-from pathlib import Path
-from unittest import mock
 from types import SimpleNamespace
 from typing import IO, Optional, cast
+from pathlib import Path
+from unittest import mock
 from collections import OrderedDict, abc, deque
 
 import numpy as np
 
+from celune.cedts import remote, worker
+from celune.backends import environment
 from celune.exceptions import (
     CEDTSError,
     CEDTSEOFError,
@@ -44,12 +46,10 @@ from celune.cedts.protocol import (
 )
 from celune.typing.backends import (
     BackendModel,
+    BackendRuntime,
     BackendGeneration,
     BackendArgumentValue,
-    BackendRuntime,
 )
-from celune.backends import environment
-from celune.cedts import remote, worker
 from celune.backends.environment import (
     BACKEND_MANIFESTS,
     BackendManifest,
@@ -377,13 +377,14 @@ class TestBackendEnvironment(CeluneTestCase):
             for manifest in BACKEND_MANIFESTS.values()
         )
 
-    def test_soulxsinger_manifest_has_cesn_and_phonemizer_dependencies(self) -> None:
-        """Install CESN and English G2P dependencies in the SoulX worker."""
+    def test_soulxsinger_manifest_has_explicit_ipa_dependencies(self) -> None:
+        """Keep the SoulX worker free from automatic CESN phonemizers."""
         requirements = BACKEND_MANIFESTS["soulxsinger"].requirements
-        assert "syllabreak>=0.20.1,<0.21.0" in requirements
         assert "iso639-lang>=2.0.0,<3.0.0" in requirements
-        assert "g2p_en==2.1.0" in requirements
-        assert "nltk==3.9.2" in requirements
+        assert not any(
+            requirement.lower().startswith(("syllabreak", "g2p_en", "nltk"))
+            for requirement in requirements
+        )
         assert "omegaconf==2.3.0" in requirements
 
     def test_soulxsinger_pins_its_upstream_transformers_compatibility(self) -> None:
@@ -650,7 +651,7 @@ class TestBackendEnvironment(CeluneTestCase):
             assert run.call_args_list[0].args[0][3] == "3.13"
 
     def test_soulx_worker_defaults_openblas_to_one_thread_on_windows(self) -> None:
-        """Keep SoulX's Windows phonemizer import from creating a BLAS thread pool."""
+        """Keep SoulX's Windows worker from oversubscribing OpenBLAS threads."""
         if os.name != "nt":
             self.skipTest("SoulX OpenBLAS worker default is Windows-specific")
 

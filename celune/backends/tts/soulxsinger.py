@@ -11,6 +11,7 @@ import shutil
 import importlib
 import unicodedata
 from pathlib import Path
+from types import ModuleType
 from dataclasses import field, dataclass
 from typing import Union, Optional, Protocol, cast
 from collections.abc import Mapping, Callable, Iterator
@@ -27,7 +28,6 @@ from ...cesn import (
     resolve_active_singer,
 )
 from ...paths import (
-    app_data_dir,
     huggingface_progress,
     backend_environments_dir,
     huggingface_hub_cache_dir,
@@ -40,15 +40,14 @@ from ...cevoice import (
     default_loader,
     bundle_character_name,
 )
-from ...i18n import string
 from ...exceptions import (
     BackendError,
     CEVoiceError,
-    CESNBackendFormatError,
     CESNRangeError,
-    CESNUnsupportedFeatureError,
     CESNValidationError,
     InvalidCharacterError,
+    CESNBackendFormatError,
+    CESNUnsupportedFeatureError,
 )
 from ...registry.tts import (
     TTS_DEFAULT_VOICE,
@@ -72,8 +71,7 @@ __all__ = [
 ]
 
 _MODEL_FILES = ["config.yaml", "model.pt"]
-_MODEL_LOAD_STEPS = 8
-_ARPABET_PATTERN = re.compile(r"[A-Z]+[0-2]?")
+_MODEL_LOAD_STEPS = 7
 _ARPABET_VOWELS = frozenset(
     {
         "AA",
@@ -182,18 +180,11 @@ class _SoulXDataProcessor(Protocol):
     ) -> dict[str, Optional[torch.Tensor]]: ...
 
 
-class _Phonemizer(Protocol):
-    """English G2P callable used to populate SoulX phoneme metadata."""
-
-    def __call__(self, text: str) -> list[str]: ...
-
-
 @dataclass(frozen=True)
 class _ScoreEvent:
     """One event converted from an aligned CESN note pair or rest."""
 
     pitch: Optional[str]
-    syllable: Optional[str]
     duration_numerator: int
     duration_denominator: int
     rest: bool
@@ -219,13 +210,21 @@ class _SoulXRuntime:
 
     model: _SoulXInferenceModel
     processor: _SoulXDataProcessor
-    phonemizer: _Phonemizer
     sample_rate: int
     inference_steps: int
     cfg: float
     prompt_cache: dict[str, dict[str, Optional[torch.Tensor]]] = field(
         default_factory=dict
     )
+
+
+@dataclass
+class _SoulXSourceModules:
+    """Pinned source modules loaded before CEDTS request threads start."""
+
+    root: Path
+    model: ModuleType
+    processor: ModuleType
 
 
 def _ipa_to_arpabet(ipa: str) -> tuple[str, ...]:
@@ -287,7 +286,6 @@ def _score_event(event: Union[CESNNotePair, CESNRestEvent]) -> _ScoreEvent:
         duration = event.duration_beats
         return _ScoreEvent(
             pitch=None,
-            syllable=None,
             duration_numerator=duration.numerator,
             duration_denominator=duration.denominator,
             rest=True,
@@ -296,7 +294,6 @@ def _score_event(event: Union[CESNNotePair, CESNRestEvent]) -> _ScoreEvent:
         duration = event.event.duration_beats
         return _ScoreEvent(
             pitch=event.event.pitch,
-            syllable=event.syllable.strip(),
             duration_numerator=duration.numerator,
             duration_denominator=duration.denominator,
             rest=False,
@@ -340,7 +337,6 @@ def _score_to_dict(section: _ScoreSection) -> dict[str, object]:
         "events": [
             {
                 "pitch": event.pitch,
-                "syllable": event.syllable,
                 "duration": [
                     event.duration_numerator,
                     event.duration_denominator,
@@ -369,7 +365,7 @@ def decode_score(text: str) -> tuple[_ScoreSection, ...]:
     if (
         not isinstance(payload, dict)
         or payload.get("backend") != "soulxsinger"
-        or payload.get("version") != 1
+        or payload.get("version") != 2
     ):
         raise CESNBackendFormatError("prepared CESN score has an invalid header")
     raw_sections = payload.get("sections")
@@ -413,7 +409,6 @@ def decode_score(text: str) -> tuple[_ScoreSection, ...]:
                 raise CESNBackendFormatError("prepared CESN event must be an object")
             duration = raw_event.get("duration")
             pitch = raw_event.get("pitch")
-            syllable = raw_event.get("syllable")
             rest = raw_event.get("rest")
             ipa = raw_event.get("ipa")
             slur_from_previous = raw_event.get("slur_from_previous", False)
@@ -431,19 +426,14 @@ def decode_score(text: str) -> tuple[_ScoreSection, ...]:
                 or (ipa is not None and (not isinstance(ipa, str) or not ipa.strip()))
                 or (
                     rest
-                    and (
-                        pitch is not None
-                        or syllable is not None
-                        or ipa is not None
-                        or slur_from_previous
-                    )
+                    and (pitch is not None or ipa is not None or slur_from_previous)
                 )
                 or (
                     not rest
                     and (
                         not isinstance(pitch, str)
-                        or not isinstance(syllable, str)
-                        or not syllable.strip()
+                        or not isinstance(ipa, str)
+                        or not ipa.strip()
                     )
                 )
             ):
@@ -453,7 +443,6 @@ def decode_score(text: str) -> tuple[_ScoreSection, ...]:
             events.append(
                 _ScoreEvent(
                     pitch=cast(Optional[str], pitch),
-                    syllable=cast(Optional[str], syllable),
                     duration_numerator=duration[0],
                     duration_denominator=duration[1],
                     rest=rest,
@@ -510,60 +499,6 @@ def _pitch_to_midi_for_singer(
     return midi_note
 
 
-def _ensure_nltk_data(
-    report_progress: Optional[
-        Callable[[Optional[float], Optional[float]], None]
-    ] = None,
-    log: Optional[Callable[[str, str], None]] = None,
-) -> None:
-    """Install pinned English G2P data and report progress for each resource.
-
-    Args:
-        report_progress: Optional callback receiving completed resource count and total.
-        log: Optional callback for localized preparation status messages.
-    """
-    resources = {
-        "averaged_perceptron_tagger_eng": "taggers/averaged_perceptron_tagger_eng",
-        "cmudict": "corpora/cmudict",
-        "punkt_tab": "tokenizers/punkt_tab/english",
-    }
-    total = len(resources)
-    if log is not None:
-        log(string("soulx.phonemizer_data_preparing"), "info")
-    if report_progress is not None:
-        report_progress(0, total)
-
-    import nltk
-
-    nltk_root = app_data_dir(create=True) / "nltk_data"
-    nltk_root.mkdir(parents=True, exist_ok=True)
-    nltk_root_text = str(nltk_root)
-    if nltk_root_text not in nltk.data.path:
-        nltk.data.path.insert(0, nltk_root_text)
-    for step, (resource, resource_path) in enumerate(resources.items(), start=1):
-        if log is not None:
-            log(
-                string(
-                    "soulx.phonemizer_data_progress",
-                    step=step,
-                    total=total,
-                ),
-                "info",
-            )
-        try:
-            nltk.data.find(resource_path)
-        except LookupError:
-            if not nltk.download(resource, download_dir=nltk_root_text, quiet=True):
-                raise BackendError(
-                    string("soulx.phonemizer_data_failed"),
-                    error_code="soulx_phonemizer_data_failed",
-                )
-        if report_progress is not None:
-            report_progress(step, total)
-    if log is not None:
-        log(string("soulx.phonemizer_data_ready"), "info")
-
-
 def load_upstream_source() -> Path:
     """Return the exact pinned SoulX source checkout, downloading it once if needed."""
     from git import Repo
@@ -579,7 +514,7 @@ def load_upstream_source() -> Path:
                     repository = Repo(source_root)
                 except Exception as error:
                     raise BackendError(
-                        string("soulx.source_unavailable"),
+                        "Unable to prepare the pinned SoulX-Singer source",
                         error_code="soulx_source_revision_mismatch",
                     ) from error
                 if (
@@ -587,7 +522,7 @@ def load_upstream_source() -> Path:
                     or repository.is_dirty()
                 ):
                     raise BackendError(
-                        string("soulx.source_unavailable"),
+                        "Unable to prepare the pinned SoulX-Singer source",
                         error_code="soulx_source_revision_mismatch",
                     )
                 return source_root
@@ -604,7 +539,7 @@ def load_upstream_source() -> Path:
                 repository.git.checkout(SOULX_SINGER_CODE_REVISION)
                 if repository.head.commit.hexsha != SOULX_SINGER_CODE_REVISION:
                     raise BackendError(
-                        string("soulx.source_unavailable"),
+                        "Unable to prepare the pinned SoulX-Singer source",
                         error_code="soulx_source_revision_mismatch",
                     )
             except Exception as error:
@@ -613,25 +548,17 @@ def load_upstream_source() -> Path:
                 if isinstance(error, BackendError):
                     raise
                 raise BackendError(
-                    string("soulx.source_unavailable"),
+                    "Unable to prepare the pinned SoulX-Singer source",
                     error_code="soulx_source_unavailable",
                 ) from error
     except Exception as error:
         if isinstance(error, BackendError):
             raise
         raise BackendError(
-            string("soulx.source_unavailable"),
+            "Unable to prepare the pinned SoulX-Singer source",
             error_code="soulx_source_unavailable",
         ) from error
     return source_root
-
-
-def _load_nltk_phonemizer() -> _Phonemizer:
-    """Prepare English G2P resources and return the installed phonemizer."""
-    _ensure_nltk_data()
-    from g2p_en import G2p
-
-    return cast(_Phonemizer, G2p())
 
 
 def _load_soulx_reference_wav(
@@ -686,11 +613,34 @@ class SoulXSinger(CeluneBackend[_SoulXRuntime]):
             quantize_kv_cache=False,
             singing=True,
         )
+        self._source_modules: Optional[_SoulXSourceModules] = None
         self._validate_refs()
 
+    def _prepare_source_modules(self) -> _SoulXSourceModules:
+        """Load the pinned model and processor modules once, before inference."""
+        source_modules = getattr(self, "_source_modules", None)
+        if isinstance(source_modules, _SoulXSourceModules):
+            return source_modules
+
+        source_root = load_upstream_source()
+        if str(source_root) not in sys.path:
+            sys.path.insert(0, str(source_root))
+
+        model_module = importlib.import_module("soulxsinger.models.soulxsinger")
+        processor_module = importlib.import_module("soulxsinger.utils.data_processor")
+        processor_module.load_wav = _load_soulx_reference_wav
+
+        source_modules = _SoulXSourceModules(
+            root=source_root,
+            model=model_module,
+            processor=processor_module,
+        )
+        self._source_modules = source_modules
+        return source_modules
+
     def prepare_model_loading(self) -> None:
-        """Import NLTK before CEDTS runs backend work in request threads."""
-        importlib.import_module("nltk")
+        """Prime pinned SoulX imports before CEDTS starts request threads."""
+        self._prepare_source_modules()
 
     @staticmethod
     def _get_default_loader() -> Optional[CEVoiceLoader]:
@@ -739,14 +689,10 @@ class SoulXSinger(CeluneBackend[_SoulXRuntime]):
         return cached_hf_snapshot_path(model, _MODEL_FILES, SOULX_SINGER_REVISION)
 
     def preload_models(self) -> None:
-        """Prepare reviewed weights, pinned source, and English phonemizer data."""
+        """Prepare the reviewed model weights and pinned SoulX source."""
         metadata = require_model_consent(SOULX_SINGER_MODEL_ID)
         available, _ = self.model_is_available_locally(SOULX_SINGER_MODEL_ID)
         if not available:
-            self.log(
-                string("tts.model_downloading", model_id=SOULX_SINGER_MODEL_ID),
-                "info",
-            )
             with huggingface_progress(self.report_progress):
                 snapshot_download(
                     repo_id=SOULX_SINGER_MODEL_ID,
@@ -754,49 +700,42 @@ class SoulXSinger(CeluneBackend[_SoulXRuntime]):
                     allow_patterns=_MODEL_FILES,
                     cache_dir=str(huggingface_hub_cache_dir(create=True)),
                 )
-        self.log(string("soulx.source_preparing"), "info")
         load_upstream_source()
-        self.log(string("soulx.source_ready"), "info")
-        _ensure_nltk_data(self.report_progress, self.log)
 
     def load_model(self, model_id: str, **kwargs: object) -> _SoulXRuntime:
-        """Load the pinned checkpoint and report each model-loading stage."""
+        """Load the pinned checkpoint and prepare the score processor."""
         del kwargs
         if model_id != SOULX_SINGER_MODEL_ID:
             raise BackendError(
-                string("soulx.unsupported_model"),
+                f"SoulX-Singer does not support model {model_id!r}",
                 error_code="soulx_unsupported_model",
             )
         metadata = require_model_consent(model_id)
         if not torch.cuda.is_available():
             raise BackendError(
-                string("soulx.cuda_required"),
+                "SoulX-Singer requires a CUDA-capable GPU",
                 error_code="soulx_cuda_required",
             )
 
-        def report_stage(message_key: str, step: int) -> None:
-            """Report one visible model-loading stage to the worker and Celune."""
-            self.log(string(message_key), "info")
+        def report_stage(step: int) -> None:
+            """Report numeric progress for one model-loading stage."""
             self.report_progress(step, _MODEL_LOAD_STEPS)
 
-        report_stage("soulx.model_loading", 0)
-        source_root = load_upstream_source()
-        if str(source_root) not in sys.path:
-            sys.path.insert(0, str(source_root))
-        module = importlib.import_module("soulxsinger.models.soulxsinger")
-        processor_module = importlib.import_module("soulxsinger.utils.data_processor")
-        processor_module.load_wav = _load_soulx_reference_wav
+        report_stage(0)
+        source_modules = self._prepare_source_modules()
+        source_root = source_modules.root
+        module = source_modules.model
+        processor_module = source_modules.processor
         try:
             from omegaconf import OmegaConf
         except ImportError as error:
             raise BackendError(
-                string("soulx.dependencies_missing"),
+                "SoulX-Singer requires the OmegaConf package",
                 error_code="soulx_dependencies_missing",
             ) from error
 
         available, snapshot_path = self.model_is_available_locally(model_id)
         if not available or snapshot_path is None:
-            self.log(string("tts.model_downloading", model_id=model_id), "info")
             with huggingface_progress(self.report_progress):
                 snapshot_path = snapshot_download(
                     repo_id=model_id,
@@ -806,16 +745,16 @@ class SoulXSinger(CeluneBackend[_SoulXRuntime]):
                 )
 
         snapshot = Path(snapshot_path)
-        report_stage("soulx.config_loading", 1)
+        report_stage(1)
         config = OmegaConf.load(str(snapshot / "config.yaml"))
         config_values = cast(Mapping[str, object], config)
         audio_config = cast(Mapping[str, object], config_values["audio"])
         inference_config = cast(Mapping[str, object], config_values["infer"])
         device = torch.device("cuda")
         model_type = cast(Callable[..., torch.nn.Module], module.SoulXSinger)
-        report_stage("soulx.model_constructing", 2)
+        report_stage(2)
         model = model_type(config)
-        report_stage("soulx.checkpoint_loading", 3)
+        report_stage(3)
         checkpoint = cast(
             Mapping[str, object],
             torch.load(
@@ -825,9 +764,9 @@ class SoulXSinger(CeluneBackend[_SoulXRuntime]):
             ),
         )
         state_dict = cast(Mapping[str, torch.Tensor], checkpoint["state_dict"])
-        report_stage("soulx.weights_loading", 4)
+        report_stage(4)
         model.load_state_dict(state_dict, strict=True)
-        report_stage("soulx.cuda_transfer", 5)
+        report_stage(5)
         model.half()
         mel = getattr(model, "mel", None)
         if isinstance(mel, torch.nn.Module):
@@ -838,7 +777,7 @@ class SoulXSinger(CeluneBackend[_SoulXRuntime]):
         processor_type = cast(
             Callable[..., _SoulXDataProcessor], processor_module.DataProcessor
         )
-        report_stage("soulx.processor_loading", 6)
+        report_stage(6)
         processor = processor_type(
             hop_size=int(audio_config["hop_size"]),
             sample_rate=int(audio_config["sample_rate"]),
@@ -847,17 +786,14 @@ class SoulXSinger(CeluneBackend[_SoulXRuntime]):
             ),
             device=str(device),
         )
-        report_stage("soulx.phonemizer_loading", 7)
         runtime = _SoulXRuntime(
             model=cast(_SoulXInferenceModel, model),
             processor=processor,
-            phonemizer=_load_nltk_phonemizer(),
             sample_rate=int(audio_config["sample_rate"]),
             inference_steps=int(inference_config["n_steps"]),
             cfg=float(inference_config["cfg"]),
         )
         self.model = runtime
-        self.log(string("soulx.model_ready"), "info")
         self.report_progress(_MODEL_LOAD_STEPS, _MODEL_LOAD_STEPS)
         return runtime
 
@@ -870,7 +806,7 @@ class SoulXSinger(CeluneBackend[_SoulXRuntime]):
         return json.dumps(
             {
                 "backend": self.name,
-                "version": 1,
+                "version": 2,
                 "sections": [_score_to_dict(section) for section in prepared],
             },
             ensure_ascii=False,
@@ -964,7 +900,6 @@ class SoulXSinger(CeluneBackend[_SoulXRuntime]):
         phonemes: list[str] = []
         pitches: list[str] = []
         note_types: list[str] = []
-        texts: list[str] = []
         previous_phone_tokens: Optional[tuple[str, ...]] = None
         for event in events:
             beats = event.duration_numerator / event.duration_denominator
@@ -973,43 +908,27 @@ class SoulXSinger(CeluneBackend[_SoulXRuntime]):
                 phonemes.append("<SP>")
                 pitches.append("0")
                 note_types.append("1")
-                texts.append("<SP>")
                 previous_phone_tokens = None
                 continue
 
-            syllable = (event.syllable or "").strip()
-            if event.ipa is not None:
-                try:
-                    phone_tokens = list(_ipa_to_arpabet(event.ipa))
-                except ValueError as error:
-                    raise BackendError(
-                        string("soulx.ipa_unsupported"),
-                        error_code="soulx_ipa_unsupported",
-                    ) from error
-            else:
-                phone_tokens = [
-                    token.upper()
-                    for token in runtime.phonemizer(syllable)
-                    if isinstance(token, str)
-                    and _ARPABET_PATTERN.fullmatch(token.upper())
-                ]
-            phone_symbols = [f"en_{token}" for token in phone_tokens]
-            if (
-                not syllable
-                or not phone_symbols
-                or any(
-                    symbol not in runtime.processor.phone2idx
-                    for symbol in phone_symbols
+            if event.ipa is None:
+                raise CESNBackendFormatError(
+                    "prepared CESN note is missing its IPA syllable"
                 )
-            ):
-                if event.ipa is not None:
-                    raise BackendError(
-                        string("soulx.ipa_unsupported"),
-                        error_code="soulx_ipa_unsupported",
-                    )
+            try:
+                phone_tokens = list(_ipa_to_arpabet(event.ipa))
+            except ValueError as error:
                 raise BackendError(
-                    string("soulx.phonemizer_failed"),
-                    error_code="soulx_phonemizer_failed",
+                    "SoulX-Singer cannot represent the supplied IPA in its English ARPAbet inventory",
+                    error_code="soulx_ipa_unsupported",
+                ) from error
+            phone_symbols = [f"en_{token}" for token in phone_tokens]
+            if not phone_symbols or any(
+                symbol not in runtime.processor.phone2idx for symbol in phone_symbols
+            ):
+                raise BackendError(
+                    "SoulX-Singer cannot represent the supplied IPA in its English ARPAbet inventory",
+                    error_code="soulx_ipa_unsupported",
                 )
             phonemes.append("en_" + "-".join(phone_tokens))
             if character_name is not None and pitch_range is not None:
@@ -1026,12 +945,10 @@ class SoulXSinger(CeluneBackend[_SoulXRuntime]):
                 and tuple(phone_tokens) == previous_phone_tokens
             )
             note_types.append("3" if is_repeated_slur else "2")
-            texts.append(syllable)
             previous_phone_tokens = tuple(phone_tokens)
 
         return {
             "duration": " ".join(durations),
-            "text": " ".join(texts),
             "phoneme": " ".join(phonemes),
             "note_pitch": " ".join(pitches),
             "note_type": " ".join(note_types),
@@ -1045,7 +962,7 @@ class SoulXSinger(CeluneBackend[_SoulXRuntime]):
         """Generate one complete score waveform from the CECHAR singing reference."""
         text = kwargs.pop("text", None)
         if not isinstance(text, str) or not text.strip():
-            raise ValueError(string("tts.text_required"))
+            raise ValueError("text must be a non-empty string")
         if not text.lstrip().startswith("{"):
             if not contains_cesn_note_event(text):
                 raise CESNValidationError("No CESN notation found")
@@ -1103,7 +1020,7 @@ class SoulXSinger(CeluneBackend[_SoulXRuntime]):
         )
         if audio_output.size == 0:
             raise BackendError(
-                string("soulx.empty_audio"),
+                "SoulX-Singer generated no audio",
                 error_code="soulx_empty_audio",
             )
         yield (

@@ -18,16 +18,16 @@ import hashlib
 import tempfile
 import threading
 import contextlib
+from typing import Final, Union, BinaryIO, Optional, cast
 from pathlib import Path
 from dataclasses import field, dataclass
 from collections.abc import Mapping, Callable, Sequence
-from typing import Final, Union, BinaryIO, Optional, cast
 
 import numpy as np
 
 from .i18n import string
-from .exceptions import CEVoiceError
 from .paths import project_root, temp_data_dir, voices_data_dir
+from .exceptions import CEVoiceError
 from .typing.cevoice import Manifest, ManifestValue, VoiceManifest
 
 # CECHAR v2 and v3 (Celune v4 format)
@@ -73,9 +73,12 @@ SUPPORTED_PERSONA_FILENAMES: Final[tuple[str, ...]] = (
 
 # Celune now provides two unique identities as of her 6-month anniversary
 DEFAULT_CEVOICE_PACK_SHA256: Final[str] = (
-    "8422d3f0a455fd5fd89bc4a687a8fb9e7a56a1746d89e4fe3404e29a7004bc5e"
+    "6aa4f7928e9333c89f9836635beae159b53a861bcb207f9e5a34b81ed717426a"
 )
 PREVIOUS_DEFAULT_CEVOICE_PACK_SHA256: Final[str] = (
+    "8422d3f0a455fd5fd89bc4a687a8fb9e7a56a1746d89e4fe3404e29a7004bc5e"
+)
+LEGACY_DEFAULT_CEVOICE_PACK_SHA256: Final[str] = (
     "35db55adca450062806e20d6c8ae1fc0c0ad5de569cb422321981de80e567851"
 )
 CLASSIC_CEVOICE_PACK_SHA256: Final[str] = (
@@ -86,6 +89,7 @@ OFFICIAL_CEVOICE_PACK_SHA256S: Final[frozenset[str]] = frozenset(
         # natural pack
         DEFAULT_CEVOICE_PACK_SHA256,
         PREVIOUS_DEFAULT_CEVOICE_PACK_SHA256,
+        LEGACY_DEFAULT_CEVOICE_PACK_SHA256,
         # OG pack
         CLASSIC_CEVOICE_PACK_SHA256,
     }

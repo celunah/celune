@@ -813,7 +813,8 @@ class TestPipelineAsync(CeluneAsyncTestCase):
         engine = make_pipeline_engine()
         engine.backend.singing = True
         notation = (
-            "[lang:en]\n[bpm:120,key:c,scale:major]\n[c4:4,d4:4,e4:2] I love you."
+            "[lang:en]\n[bpm:120,key:c,scale:major]\n"
+            "[c4:4,d4:4,e4:2][aɪ.lʌv.juː] I love you."
         )
 
         with mock.patch("celune.speech.detect_language") as detect_language:

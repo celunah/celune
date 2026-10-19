@@ -233,7 +233,7 @@ class TestCEVoice(CeluneTestCase):
                 "balanced": {"reference_text": "Balanced reference."},
                 "sing": {
                     "reference_text": "Singing reference.",
-                    "cesn": "[lang:en][f#3:4,g3:4]Singing.",
+                    "cesn": "[lang:en][f#3:4,g3:4][ˈsɪŋ.ɪŋ]Singing.",
                     "range": {"min": 54, "max": 72},
                 },
             },
@@ -247,7 +247,9 @@ class TestCEVoice(CeluneTestCase):
         assert bundle.voices["balanced"]["cesn"] is None
         assert bundle.voices["sing"]["cfg_scale"] is None
         assert bundle.voices["sing"]["persona"] is None
-        assert bundle.voices["sing"]["cesn"] == "[lang:en][f#3:4,g3:4]Singing."
+        assert bundle.voices["sing"]["cesn"] == (
+            "[lang:en][f#3:4,g3:4][ˈsɪŋ.ɪŋ]Singing."
+        )
         assert bundle.singing_pitch_range == (54, 72)
 
     def test_default_pack_uses_v5_and_keeps_classic_on_v4(self) -> None:
@@ -265,10 +267,14 @@ class TestCEVoice(CeluneTestCase):
         )
         assert default.voices["sing"]["cesn"] == (
             "[bpm:108,key:g#,scale:natural_minor][lang:en]"
-            "[a3:4,b3:4d] Moonlight [c#4:4,b3:4d] resting "
-            "[g#3:4,a#3:8,a#3:4] silver-blue. [tuplet:3,2][r:1,g#3:4] I'll "
-            "[a#3:4] keep [b3:4] one [pattern:qui,et][tuplet:3,2]"
-            "[c#4:4,c4:4] quiet [g#3:4] light [r:2,g#3:4] for [f#3:4] you."
+            "[a3:4,b3:4d][ˈmuːn.laɪt] Moonlight "
+            "[c#4:4,b3:4d][ˈrɛs.tɪŋ] resting "
+            "[g#3:4,a#3:8,a#3:4][ˈsɪl.vɚ.bluː] silver-blue. "
+            "[tuplet:3,2][r:1,g#3:4][ˈaɪl] I'll "
+            "[a#3:4][ˈkiːp] keep [b3:4][ˈwʌn] one "
+            "[tuplet:3,2][c#4:4,c4:4][ˈkwaɪ.ət] quiet "
+            "[g#3:4][ˈlaɪt] light [r:2,g#3:4][fɚ] for "
+            "[f#3:4][ˈjuː] you."
         )
         assert all(
             default.voices[voice]["cesn"] is None for voice in default.voice_order
@@ -291,10 +297,10 @@ class TestCEVoice(CeluneTestCase):
                 self.path,
                 {"balanced": {"wav": sample}, "sing": {"wav": sample}},
                 voice_metadata={
-                    "balanced": {"cesn": "[lang:en][c3:4]Speaking."},
+                    "balanced": {"cesn": "[lang:en][c3:4,d3:4][ˈspiː.kɪŋ]Speaking."},
                     "sing": {
                         "reference_text": "Singing reference.",
-                        "cesn": "[lang:en][c3:4,d3:4]Singing.",
+                        "cesn": "[lang:en][c3:4,d3:4][ˈsɪŋ.ɪŋ]Singing.",
                         "range": {"min": 54, "max": 72},
                     },
                 },
@@ -312,7 +318,7 @@ class TestCEVoice(CeluneTestCase):
                     "balanced": {"reference_text": "Balanced reference."},
                     "sing": {
                         "reference_text": "Singing reference.",
-                        "cesn": "[lang:en][f#3:4,g3:4]Singing.",
+                        "cesn": "[lang:en][f#3:4,g3:4][ˈsɪŋ.ɪŋ]Singing.",
                         "range": {"min": 54, "max": 72},
                     },
                 },
@@ -326,7 +332,7 @@ class TestCEVoice(CeluneTestCase):
             "balanced": {"reference_text": "Balanced reference."},
             "sing": {
                 "reference_text": "Singing reference.",
-                "cesn": "[lang:en][f#3:4,g3:4]Singing.",
+                "cesn": "[lang:en][f#3:4,g3:4][ˈsɪŋ.ɪŋ]Singing.",
             },
         }
         with pytest.raises(CEVoiceError, match="singing voice range is required"):

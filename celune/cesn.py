@@ -6,23 +6,22 @@ import warnings
 import unicodedata
 from pathlib import Path
 from fractions import Fraction
-from functools import lru_cache
 from dataclasses import dataclass
-from typing import Union, Optional, NamedTuple
+from typing import Union, Optional, NamedTuple, cast
 
-from syllabreak import Syllabreak
 from iso639 import Lang, exceptions
 
 from .exceptions import (
-    CEVoiceError,
     CESNError,
+    CEVoiceError,
     CESNMatchError,
     CESNAlignmentError,
     CESNNotationWarning,
-    CESNUnsupportedFeatureError,
     CESNValidationError,
     InvalidCharacterError,
+    CESNUnsupportedFeatureError,
 )
+from .xsampa import to_ipa as xsampa_to_ipa
 
 
 class CESNTuplet(NamedTuple):
@@ -33,7 +32,7 @@ class CESNTuplet(NamedTuple):
 
 
 class CESNNoteEvent(NamedTuple):
-    """A pitched note and duration assigned to one lyric syllable."""
+    """A pitched note, duration, and optional tuplet timing."""
 
     pitch: str
     note_type: int
@@ -62,11 +61,10 @@ class CESNRestEvent(NamedTuple):
 
 
 class CESNNotePair(NamedTuple):
-    """One pitched note aligned with a lyric syllable and optional overrides."""
+    """One pitched note aligned with an explicit IPA syllable."""
 
     event: CESNNoteEvent
-    syllable: str
-    ipa: Optional[str] = None
+    ipa: str
     slur_from_previous: bool = False
 
 
@@ -87,7 +85,7 @@ class CESNBlock:
 
     @property
     def pairs(self) -> tuple[CESNNotePair, ...]:
-        """Return pitched event/syllable pairs, excluding rests."""
+        """Return pitched event/IPA pairs, excluding rests."""
         return tuple(event for event in self.events if isinstance(event, CESNNotePair))
 
 
@@ -146,12 +144,15 @@ def _parse_cesn(
     supported_languages: Optional[tuple[str, ...]] = None,
     location: list[int],
 ) -> tuple[CESNSection, ...]:
-    """Parse CESN directives, align lyrics, and return fixed-state sections.
+    """Parse CESN directives, align pronunciation, and return fixed-state sections.
 
     Each section begins when its singer, language, BPM, key, or scale changes.
-    Lyrics use the explicitly selected language for Syllabreak; automatic
-    language detection is never used. Rests remain in each block's event stream
-    but do not consume a lyric syllable.
+    Every pitched note requires one dot-separated pronunciation syllable. Raw
+    IPA is retained and marked X-SAMPA is converted to IPA. The original lyrics
+    remain intact on each block; no spelling-based syllabification is performed.
+    Rests remain in each block's event stream but consume no pronunciation.
+    A lyric block ending in a period or comma gains an automatic half-note or
+    quarter-note rest unless an explicit trailing rest already follows it.
 
     Args:
         text: Complete CESN notation containing directive and note tags.
@@ -163,8 +164,8 @@ def _parse_cesn(
     Raises:
         CESNValidationError: Notation is malformed or violates a score invariant.
         CESNUnsupportedFeatureError: A feature or language is unavailable.
-        CESNAlignmentError: There are more lyric syllables than pitched notes.
-        CESNMatchError: A pitched note has no corresponding lyric syllable.
+        CESNAlignmentError: The IPA syllable and pitched note counts differ.
+        CESNMatchError: A pitched note has no corresponding IPA syllable.
     """
     if not isinstance(text, str):
         raise CESNValidationError("cesn input must be a string")
@@ -172,11 +173,9 @@ def _parse_cesn(
     state = _CESNState()
     pending_events: Optional[tuple[_CESNEvent, ...]] = None
     pending_lyrics: list[str] = []
-    pending_pattern: Optional[tuple[str, ...]] = None
     pending_ipa: Optional[tuple[str, ...]] = None
     pending_slur: Optional[int] = None
     pending_note_span = (0, 1)
-    pending_pattern_span: Optional[tuple[int, int]] = None
     pending_ipa_span: Optional[tuple[int, int]] = None
     pending_slur_span: Optional[tuple[int, int]] = None
     active_tuplet_span: Optional[tuple[int, int]] = None
@@ -240,11 +239,11 @@ def _parse_cesn(
             section_state = block_state
         section_blocks.append(block)
 
-    def finish_pending() -> None:
-        nonlocal pending_events, pending_lyrics, pending_pattern, pending_ipa
+    def finish_pending(*, following_rest_only: bool = False) -> None:
+        nonlocal pending_events, pending_lyrics, pending_ipa
         nonlocal pending_slur
         nonlocal pending_state
-        nonlocal pending_note_span, pending_pattern_span, pending_ipa_span
+        nonlocal pending_note_span, pending_ipa_span
         nonlocal pending_slur_span
         if pending_events is None:
             return
@@ -261,56 +260,45 @@ def _parse_cesn(
 
         if pending_state.language is None:
             raise CESNValidationError("CESN language must be specified before notes")
-        if pending_ipa is not None:
-            if pending_pattern is None:
-                raise CESNValidationError(
-                    "CESN IPA override requires a syllable pattern"
-                )
-            if len(pending_ipa) != len(pending_pattern):
-                raise CESNValidationError(
-                    "CESN IPA syllables must match the syllable pattern"
-                )
+        if not lyrics and note_events:
+            raise CESNMatchError(0, _format_note_event(note_events[0]), 0)
+        if lyrics and not note_events:
+            raise CESNValidationError("CESN lyrics require pitched note events")
+        if note_events and pending_ipa is None:
+            raise CESNValidationError(
+                "CESN IPA syllables are required for pitched notes"
+            )
         if pending_slur is not None:
-            if pending_pattern is None:
-                raise CESNValidationError("CESN slur requires a syllable pattern")
-            if len(pending_pattern) != pending_slur:
+            if len(note_events) != pending_slur:
                 raise CESNValidationError(
-                    "CESN slur count must match its syllable pattern"
+                    "CESN slur count must match its pitched note count"
                 )
             if any(
                 isinstance(event, CESNRestEvent)
                 for event in pending_events[:pending_slur]
             ):
                 raise CESNValidationError("CESN slur cannot include a rest")
-        syllabification_language = _syllabreak_language(pending_state.language)
         if supported_languages is not None and not _model_supports_language(
-            pending_state.language,
-            syllabification_language,
-            supported_languages,
+            pending_state.language, supported_languages
         ):
             raise CESNUnsupportedFeatureError(
                 f"language {pending_state.language!r} is not supported by the selected model"
             )
 
-        if not lyrics and note_events:
-            raise CESNMatchError(0, _format_note_event(note_events[0]), 0)
         if not lyrics and not rests:
             raise CESNValidationError("CESN note list cannot be empty")
 
-        syllables = (
-            _syllabify(lyrics, syllabification_language, pending_pattern)
-            if lyrics
-            else ()
-        )
-        if len(note_events) > len(syllables):
-            index = len(syllables)
+        ipa_syllables = pending_ipa or ()
+        if len(note_events) > len(ipa_syllables):
+            index = len(ipa_syllables)
             raise CESNMatchError(
                 index,
                 _format_note_event(note_events[index]),
-                len(syllables),
+                len(ipa_syllables),
             )
-        if len(note_events) < len(syllables):
-            raise CESNAlignmentError(len(note_events), len(syllables))
+        if len(note_events) < len(ipa_syllables):
+            location[:] = pending_ipa_span or location
+            raise CESNAlignmentError(len(note_events), len(ipa_syllables))
 
         event_items: list[Union[CESNNotePair, CESNRestEvent]] = []
         note_index = 0
@@ -318,15 +306,9 @@ def _parse_cesn(
             if isinstance(event, CESNRestEvent):
                 event_items.append(event)
                 continue
-            ipa = (
-                pending_ipa[note_index]
-                if pending_ipa is not None and note_index < len(pending_ipa)
-                else None
-            )
             pair = CESNNotePair(
                 event,
-                syllables[note_index],
-                ipa,
+                ipa_syllables[note_index],
                 slur_from_previous=(
                     pending_slur is not None and 0 < note_index < pending_slur
                 ),
@@ -351,21 +333,47 @@ def _parse_cesn(
             CESNBlock(lyrics=lyrics, events=tuple(event_items)),
             pending_state,
         )
+        trailing_text = lyrics.rstrip()
+        if (
+            trailing_text
+            and trailing_text[-1] in {".", ","}
+            and not following_rest_only
+            and not (event_items and isinstance(event_items[-1], CESNRestEvent))
+        ):
+            note_type = 2 if trailing_text.endswith(".") else 4
+            rest = cast(
+                CESNRestEvent,
+                apply_tuplet((CESNRestEvent(note_type, False),))[0],
+            )
+            append_block(CESNBlock(lyrics="", events=(rest,)), pending_state)
         pending_events = None
         pending_lyrics = []
-        pending_pattern = None
         pending_ipa = None
         pending_slur = None
         pending_state = None
         pending_note_span = (0, 1)
-        pending_pattern_span = None
         pending_ipa_span = None
         pending_slur_span = None
 
-    def finish_pending_at(current_start: int, current_end: int) -> None:
+    def finish_pending_at(
+        current_start: int,
+        current_end: int,
+        *,
+        following_tag: Optional[str] = None,
+    ) -> None:
         if pending_events is not None:
             location[:] = pending_note_span
-        finish_pending()
+        following_rest_only = False
+        if following_tag is not None:
+            try:
+                following_events = _parse_note_events(following_tag)
+            except CESNValidationError:
+                pass
+            else:
+                following_rest_only = bool(following_events) and all(
+                    isinstance(event, CESNRestEvent) for event in following_events
+                )
+        finish_pending(following_rest_only=following_rest_only)
         location[:] = [current_start, current_end]
 
     for is_tag, value, start, end in _tokens_with_spans(text):
@@ -387,13 +395,43 @@ def _parse_cesn(
         pending_has_no_lyrics = (
             pending_events is not None and not "".join(pending_lyrics).strip()
         )
-        if pending_has_no_lyrics and directive == "tuplet":
-            raise CESNValidationError("CESN tuplet must precede the events it affects")
-        if not (
+        pending_event_items: tuple[_CESNEvent, ...] = ()
+        if pending_events is not None:
+            pending_event_items = pending_events
+        pending_has_pitched_notes = any(
+            isinstance(event, CESNNoteEvent) for event in pending_event_items
+        )
+        if (
             pending_has_no_lyrics
-            and directive in {"bpm", "ipa", "lang", "pattern", "singer", "slur"}
+            and pending_has_pitched_notes
+            and directive == "tuplet"
         ):
-            finish_pending_at(start, end)
+            raise CESNValidationError("CESN tuplet must precede the events it affects")
+        if (
+            pending_has_no_lyrics
+            and pending_has_pitched_notes
+            and directive in {"bpm", "lang", "singer", "slur"}
+        ):
+            raise CESNValidationError(
+                "CESN settings and feature tags must precede the note list"
+            )
+        is_raw_ipa_syllable_list = (
+            pending_has_no_lyrics
+            and pending_has_pitched_notes
+            and not separator
+            and directive not in {"slur", "tuplet"}
+        )
+        is_xsampa_syllable_list = (
+            pending_has_no_lyrics
+            and pending_has_pitched_notes
+            and separator
+            and directive == "x-sampa"
+        )
+        is_pronunciation_syllable_list = (
+            is_raw_ipa_syllable_list or is_xsampa_syllable_list
+        )
+        if not is_pronunciation_syllable_list:
+            finish_pending_at(start, end, following_tag=tag)
 
         if separator and directive == "bpm":
             changes = _parse_tempo_key_scale(tag)
@@ -413,7 +451,6 @@ def _parse_cesn(
 
         if separator and directive == "lang":
             language = _parse_language(argument)
-            _syllabreak_language(language)
             updated = _CESNState(
                 bpm=state.bpm,
                 key=state.key,
@@ -454,27 +491,22 @@ def _parse_cesn(
                     pending_state = updated
             continue
 
-        if separator and directive == "pattern":
-            if pending_pattern is not None:
-                raise CESNValidationError(
-                    "CESN pattern must be followed by a lyric word"
-                )
-            pending_pattern = _parse_pattern(argument)
-            pending_pattern_span = (start, end)
-            continue
-
-        if separator and directive == "ipa":
+        if is_pronunciation_syllable_list:
             if pending_ipa is not None:
                 raise CESNValidationError(
-                    "CESN IPA override must be used only once per word"
+                    "CESN pronunciation syllables may appear only once"
                 )
-            pending_ipa = _parse_ipa(argument)
+            pending_ipa = (
+                _parse_xsampa(argument) if is_xsampa_syllable_list else _parse_ipa(tag)
+            )
             pending_ipa_span = (start, end)
             continue
 
         if directive == "slur":
             if pending_slur is not None:
-                raise CESNValidationError("CESN slur must be used only once per word")
+                raise CESNValidationError(
+                    "CESN slur must be used only once per note group"
+                )
             if not separator:
                 raise CESNValidationError("CESN slur requires a syllable count")
             pending_slur = _parse_slur_count(argument)
@@ -500,17 +532,12 @@ def _parse_cesn(
         pending_note_span = (start, end)
 
     finish_pending_at(location[0], location[1])
-    if pending_pattern is not None:
-        location[:] = pending_pattern_span or location
-        raise CESNValidationError("CESN pattern must be followed by a lyric word")
     if pending_ipa is not None:
         location[:] = pending_ipa_span or location
-        raise CESNValidationError(
-            "CESN ipa override requires a syllable pattern and word"
-        )
+        raise CESNValidationError("CESN IPA syllables require notes and lyrics")
     if pending_slur is not None:
         location[:] = pending_slur_span or location
-        raise CESNValidationError("CESN slur requires a syllable pattern and word")
+        raise CESNValidationError("CESN slur requires pitched notes and IPA syllables")
     if active_tuplet is not None:
         location[:] = active_tuplet_span or location
         raise CESNValidationError(f"CESN tuplet is missing {tuplet_remaining} event(s)")
@@ -525,7 +552,7 @@ def parse_cesn(
     *,
     supported_languages: Optional[tuple[str, ...]] = None,
 ) -> tuple[CESNSection, ...]:
-    """Parse CESN and attach source offsets to notation errors.
+    """Parse CESN, convert marked X-SAMPA, and locate notation errors.
 
     Args:
         text: Complete CESN notation containing directive and note tags.
@@ -537,8 +564,8 @@ def parse_cesn(
     Raises:
         CESNValidationError: If the notation is malformed or violates an invariant.
         CESNUnsupportedFeatureError: If a requested language or feature is unsupported.
-        CESNAlignmentError: If syllables outnumber pitched notes.
-        CESNMatchError: If a pitched event has no corresponding syllable.
+        CESNAlignmentError: If IPA syllables outnumber pitched notes.
+        CESNMatchError: If a pitched event has no corresponding IPA syllable.
     """
     location = [0, 1]
     try:
@@ -556,9 +583,9 @@ def parse_cesn(
 def render_cesn(sections: tuple[CESNSection, ...]) -> str:
     """Render parsed sections as one canonical, section-marked CESN string.
 
-    Pitched note/syllable pairs are rendered individually so explicit patterns
-    survive serialization. Slurred words stay grouped, and rests remain at their
-    original event position.
+    Each block keeps its original lyric text and groups its notes with their
+    explicitly segmented IPA syllables. Slurs, explicit rests, and automatic
+    punctuation rests retain their event order.
 
     Args:
         sections: Parsed CESN sections in inference order.
@@ -576,49 +603,50 @@ def render_cesn(sections: tuple[CESNSection, ...]) -> str:
             rendered.append(f"[singer:{section.singer.name}]")
         for block in section.blocks:
             items = block.events
-            index = 0
-            while index < len(items):
-                item = items[index]
-                if isinstance(item, CESNRestEvent):
-                    rendered.append(_format_tuplet_start(item))
-                    rendered.append(_format_rest_event(item))
-                    index += 1
-                    continue
+            if not items:
+                rendered.append(block.lyrics)
+                continue
+            note_events = tuple(
+                item.event if isinstance(item, CESNNotePair) else item for item in items
+            )
+            if any(event.tuplet_start for event in note_events[1:]):
+                raise CESNValidationError(
+                    "CESN tuplet must begin at the start of a note list"
+                )
 
-                if item.slur_from_previous:
-                    raise CESNValidationError("cesn slur has no first syllable")
-                group_end = index + 1
-                next_item = items[group_end] if group_end < len(items) else None
-                if (
-                    index == 0
-                    and isinstance(next_item, CESNNotePair)
-                    and next_item.slur_from_previous
-                ):
-                    while group_end < len(items):
-                        next_item = items[group_end]
-                        if not isinstance(next_item, CESNNotePair):
-                            break
-                        if not next_item.slur_from_previous:
-                            break
-                        group_end += 1
-                    _render_slurred_word(items[index:group_end], rendered)
-                    index = group_end
-                    continue
-
-                rendered.append(_format_tuplet_start(item.event))
-                rendered.append(f"[{_format_note_event(item.event)}]")
-                if item.ipa is not None:
-                    word_ranges = _word_ranges(item.syllable)
-                    if len(word_ranges) != 1:
-                        raise CESNValidationError(
-                            "CESN IPA override must align with one lyric word"
-                        )
-                    start, end = word_ranges[0]
-                    rendered.append(
-                        f"[pattern:{item.syllable[start:end]}][ipa:/{item.ipa}/]"
+            rendered.append(_format_tuplet_start(note_events[0]))
+            pairs = tuple(item for item in items if isinstance(item, CESNNotePair))
+            slurred_positions = tuple(
+                index for index, pair in enumerate(pairs) if pair.slur_from_previous
+            )
+            if slurred_positions:
+                if slurred_positions != tuple(range(1, len(pairs))):
+                    raise CESNValidationError(
+                        "CESN slur must cover every note in its group"
                     )
-                rendered.append(item.syllable)
-                index += 1
+                pair_positions = tuple(
+                    index
+                    for index, item in enumerate(items)
+                    if isinstance(item, CESNNotePair)
+                )
+                if any(
+                    isinstance(item, CESNRestEvent)
+                    for item in items[pair_positions[0] : pair_positions[-1] + 1]
+                ):
+                    raise CESNValidationError("CESN slur cannot include a rest")
+                rendered.append(f"[slur:{len(pairs)}]")
+
+            event_text = ",".join(
+                _format_event_contents(event) for event in note_events
+            )
+            rendered.append(f"[{event_text}]")
+            if pairs:
+                if any(not pair.ipa for pair in pairs):
+                    raise CESNValidationError(
+                        "CESN pitched notes require explicit IPA syllables"
+                    )
+                rendered.append(f"[{'.'.join(pair.ipa for pair in pairs)}]")
+            rendered.append(block.lyrics)
     return "".join(rendered)
 
 
@@ -736,47 +764,12 @@ def _event_duration_beats(
     return duration
 
 
-def _syllabreak_language(language: str) -> str:
-    """Map an explicit language tag to a supported Syllabreak language."""
-    supported = _supported_syllabreak_languages()
-    if language in supported:
-        return language
-
-    pieces = language.split("-")
-    primary = pieces[0]
-    try:
-        language_info = Lang(primary)
-    except (
-        exceptions.DeprecatedLanguageValue,
-        exceptions.InvalidLanguageValue,
-    ) as error:
-        raise CESNUnsupportedFeatureError(
-            f"language {language!r} is not supported by Syllabreak"
-        ) from error
-
-    language_code = language_info.pt3 or primary
-    script = next(
-        (piece for piece in pieces[1:] if len(piece) == 4 and piece.isalpha()),
-        None,
-    )
-    syllabreak_code = (
-        f"{language_code}-{script}" if script is not None else language_code
-    )
-    if syllabreak_code not in supported:
-        raise CESNUnsupportedFeatureError(
-            f"language {language!r} is not supported by Syllabreak"
-        )
-    return syllabreak_code
-
-
 def _model_supports_language(
     language: str,
-    syllabreak_language: str,
     supported_languages: tuple[str, ...],
 ) -> bool:
-    """Return whether the model and Syllabreak accept the same language."""
+    """Return whether the model accepts an explicit CESN language tag."""
     language_keys = _language_equivalents(language)
-    language_keys.update(_language_equivalents(syllabreak_language))
     model_keys: set[str] = set()
     for supported in supported_languages:
         model_keys.update(_language_equivalents(supported.casefold()))
@@ -882,75 +875,40 @@ def resolve_active_singer() -> CESNSinger:
     )
 
 
-def _parse_pattern(value: str) -> tuple[str, ...]:
-    """Parse comma-separated syllable fragments for the next lyric word."""
-    pieces = tuple(piece.strip() for piece in value.split(","))
-    if not pieces or any(not piece or not _is_one_word(piece) for piece in pieces):
-        raise CESNValidationError("CESN pattern must contain comma-separated syllables")
-    return pieces
-
-
 def _parse_ipa(value: str) -> tuple[str, ...]:
-    """Parse a slash-delimited IPA word into explicitly divided syllables."""
+    """Parse dot-separated IPA syllables without a tag prefix or slashes."""
     source = unicodedata.normalize("NFC", value.strip())
-    if len(source) < 3 or not source.startswith("/") or not source.endswith("/"):
-        raise CESNValidationError("CESN IPA override must be slash-delimited")
-    syllables = tuple(part.strip() for part in source[1:-1].split("."))
-    if not syllables or any(not syllable or "/" in syllable for syllable in syllables):
-        raise CESNValidationError("CESN IPA override must contain IPA syllables")
+    if not source or "/" in source or ":" in source:
+        raise CESNValidationError(
+            "CESN IPA syllables must be written without labels or slash delimiters"
+        )
+    syllables = tuple(part.strip() for part in source.split("."))
+    if any(not syllable for syllable in syllables):
+        raise CESNValidationError("CESN IPA syllables cannot be empty")
     return syllables
 
 
+def _parse_xsampa(value: str) -> tuple[str, ...]:
+    """Convert explicit X-SAMPA syllables to the parser's canonical IPA."""
+    if "/" in value:
+        raise CESNValidationError(
+            "CESN X-SAMPA syllables must be written without slash delimiters"
+        )
+    try:
+        ipa = xsampa_to_ipa(value)
+    except ValueError as error:
+        raise CESNValidationError(str(error)) from error
+    return _parse_ipa(ipa)
+
+
 def _parse_slur_count(value: str) -> int:
-    """Parse the number of syllables in a word-scoped slur."""
+    """Parse the number of notes in a slurred score group."""
     if not value.isdecimal():
         raise CESNValidationError("CESN slur count must be an integer of at least two")
     count = int(value)
     if count < 2:
         raise CESNValidationError("CESN slur count must be an integer of at least two")
     return count
-
-
-def _render_slurred_word(
-    items: tuple[Union[CESNNotePair, CESNRestEvent], ...],
-    rendered: list[str],
-) -> None:
-    """Render a word-scoped slur as one aligned note-list/lyric block."""
-    pairs = tuple(item for item in items if isinstance(item, CESNNotePair))
-    if len(pairs) != len(items) or len(pairs) < 2:
-        raise CESNValidationError("CESN slur must contain adjacent pitched notes")
-    fragments: list[str] = []
-    for pair in pairs:
-        word_ranges = _word_ranges(pair.syllable)
-        if len(word_ranges) != 1:
-            raise CESNValidationError("CESN slur must align with one lyric word")
-        start, end = word_ranges[0]
-        fragments.append(pair.syllable[start:end])
-    lyrics = "".join(pair.syllable for pair in pairs)
-    word_ranges = _word_ranges(lyrics)
-    if (
-        len(word_ranges) != 1
-        or "".join(fragments) != lyrics[word_ranges[0][0] : word_ranges[0][1]]
-    ):
-        raise CESNValidationError("CESN slur must align with one lyric word")
-    rendered.append(_format_tuplet_start(pairs[0].event))
-    rendered.append(f"[pattern:{','.join(fragments)}]")
-    if any(pair.ipa is not None for pair in pairs):
-        if any(pair.ipa is None for pair in pairs):
-            raise CESNValidationError(
-                "CESN slur IPA overrides must cover every syllable"
-            )
-        rendered.append(f"[ipa:/{'.'.join(pair.ipa or '' for pair in pairs)}/]")
-    rendered.append(f"[slur:{len(pairs)}]")
-    events = ",".join(_format_note_event(pair.event) for pair in pairs)
-    rendered.append(f"[{events}]")
-    rendered.append(lyrics)
-
-
-def _is_one_word(value: str) -> bool:
-    """Return whether a pattern fragment contains exactly one word."""
-    spans = _word_ranges(value)
-    return len(spans) == 1 and spans[0] == (0, len(value))
 
 
 def _parse_note_events(source: str) -> tuple[_CESNEvent, ...]:
@@ -989,7 +947,14 @@ def _format_note_event(event: CESNNoteEvent) -> str:
 def _format_rest_event(event: CESNRestEvent) -> str:
     """Return the canonical textual representation of one rest."""
     dotted = "d" if event.dotted else ""
-    return f"[r:{event.note_type}{dotted}]"
+    return f"r:{event.note_type}{dotted}"
+
+
+def _format_event_contents(event: _CESNEvent) -> str:
+    """Return one note-list event without its surrounding brackets."""
+    if isinstance(event, CESNRestEvent):
+        return _format_rest_event(event)
+    return _format_note_event(event)
 
 
 def _format_tuplet_start(event: Union[CESNNoteEvent, CESNRestEvent]) -> str:
@@ -999,127 +964,6 @@ def _format_tuplet_start(event: Union[CESNNoteEvent, CESNRestEvent]) -> str:
     if event.tuplet is None:
         raise CESNValidationError("CESN tuplet start has no ratio")
     return f"[tuplet:{event.tuplet.actual_count},{event.tuplet.normal_count}]"
-
-
-def _syllabify(
-    text: str,
-    language: str,
-    pattern: Optional[tuple[str, ...]] = None,
-) -> tuple[str, ...]:
-    """Split lyrics with explicit Syllabreak language and preserve separators."""
-    marker = _syllable_marker(text)
-    words = _word_ranges(text)
-    if not words:
-        return ()
-
-    syllables: list[str] = []
-    cursor = 0
-    for word_index, (start, end) in enumerate(words):
-        word = text[start:end]
-        leading = ""
-        if syllables:
-            syllables[-1] += text[cursor:start]
-        else:
-            leading = text[:start]
-
-        if pattern is not None and word_index == 0:
-            word_syllables = _apply_pattern(word, pattern)
-        else:
-            marked = _syllabifier(marker).syllabify(word, lang=language)
-            word_syllables = [part for part in marked.split(marker) if part]
-        if not word_syllables:
-            raise CESNValidationError("Syllabreak returned no syllables for a word")
-        if not syllables and leading:
-            word_syllables[0] = leading + word_syllables[0]
-        syllables.extend(word_syllables)
-        cursor = end
-
-    syllables[-1] += text[cursor:]
-    return tuple(syllables)
-
-
-def _word_ranges(text: str) -> tuple[tuple[int, int], ...]:
-    """Return Unicode letter-word spans, retaining internal apostrophes."""
-    ranges: list[tuple[int, int]] = []
-    cursor = 0
-    while cursor < len(text):
-        if not text[cursor].isalpha():
-            cursor += 1
-            continue
-        start = cursor
-        cursor += 1
-        while cursor < len(text):
-            character = text[cursor]
-            if (
-                character.isalpha()
-                or unicodedata.category(character).startswith("M")
-                or (
-                    character in {"'", "’"}
-                    and cursor + 1 < len(text)
-                    and text[cursor - 1].isalpha()
-                    and text[cursor + 1].isalpha()
-                )
-            ):
-                cursor += 1
-            else:
-                break
-        ranges.append((start, cursor))
-    return tuple(ranges)
-
-
-def _apply_pattern(word: str, pattern: tuple[str, ...]) -> list[str]:
-    """Apply explicit syllable fragments while preserving lyric spelling."""
-    word_clusters = _grapheme_clusters(word)
-    pattern_clusters = tuple(_grapheme_clusters(piece) for piece in pattern)
-
-    def normalize(value: str) -> str:
-        """Normalize case and Unicode composition before pattern comparison."""
-        return unicodedata.normalize("NFC", value).casefold()
-
-    if normalize("".join("".join(group) for group in pattern_clusters)) != normalize(
-        "".join(word_clusters)
-    ):
-        raise CESNValidationError("CESN pattern does not match its lyric word")
-
-    result: list[str] = []
-    offset = 0
-    for clusters in pattern_clusters:
-        result.append("".join(word_clusters[offset : offset + len(clusters)]))
-        offset += len(clusters)
-    return result
-
-
-def _grapheme_clusters(text: str) -> list[str]:
-    """Group combining marks with their preceding Unicode code point."""
-    clusters: list[str] = []
-    for character in text:
-        if unicodedata.category(character).startswith("M") and clusters:
-            clusters[-1] += character
-        else:
-            clusters.append(character)
-    return clusters
-
-
-def _syllable_marker(text: str) -> str:
-    """Choose a private-use delimiter that does not occur in the lyrics."""
-    for start, end in ((0xE000, 0xF8FF), (0xF0000, 0xFFFFD), (0x100000, 0x10FFFD)):
-        for codepoint in range(start, end + 1):
-            marker = chr(codepoint)
-            if marker not in text:
-                return marker
-    raise CESNValidationError("CESN lyrics exhaust private-use unicode characters")
-
-
-@lru_cache(maxsize=1)
-def _supported_syllabreak_languages() -> frozenset[str]:
-    """Return the language identifiers exposed by the installed Syllabreak."""
-    return frozenset(Syllabreak().supported_languages())
-
-
-@lru_cache(maxsize=16)
-def _syllabifier(marker: str) -> Syllabreak:
-    """Return a cached Syllabreak engine with the requested boundary marker."""
-    return Syllabreak(marker)
 
 
 def _note_is_in_scale(pitch: str, key: str, scale: str) -> bool:

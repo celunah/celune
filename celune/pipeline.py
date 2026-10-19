@@ -598,19 +598,29 @@ def _output_filename_fragment(text: str, *, singing_backend: bool) -> str:
     return re.sub(r"[^a-zA-Z0-9_]", "", first_words)
 
 
+def _output_filename_prefix(*, singing_backend: bool) -> str:
+    """Return the output filename prefix for speech or singing audio."""
+    output_kind = "singing" if singing_backend else "speech"
+    return f"{APP_SLUG}_{output_kind}"
+
+
 def _saved_output_speech_seconds() -> float:
-    """Return cumulative saved speech duration from Celune-generated output files."""
+    """Return cumulative duration from saved speech and singing outputs."""
     output_dir = outputs_dir()
     if not output_dir.exists():
         return 0.0
 
     total_seconds = 0.0
-    pattern = f"{APP_SLUG}_speech_*.flac"
-    for path in output_dir.glob(pattern):
-        try:
-            total_seconds += sf.info(path).duration
-        except (OSError, RuntimeError, TypeError, ValueError):
-            continue
+    patterns = (
+        f"{_output_filename_prefix(singing_backend=False)}_*.flac",
+        f"{_output_filename_prefix(singing_backend=True)}_*.flac",
+    )
+    for pattern in patterns:
+        for path in output_dir.glob(pattern):
+            try:
+                total_seconds += sf.info(path).duration
+            except (OSError, RuntimeError, TypeError, ValueError):
+                continue
 
     return total_seconds
 
@@ -1653,9 +1663,13 @@ def _process_generation_request(
                         "%Y%m%d%H%M%S"
                     )
 
+                    singing_backend = bool(getattr(engine.backend, "singing", False))
                     first_words = _output_filename_fragment(
                         text,
-                        singing_backend=bool(getattr(engine.backend, "singing", False)),
+                        singing_backend=singing_backend,
+                    )
+                    filename_prefix = _output_filename_prefix(
+                        singing_backend=singing_backend
                     )
 
                     output_dir = outputs_dir()
@@ -1674,7 +1688,7 @@ def _process_generation_request(
                             )
 
                     if output_dir.exists():
-                        file_name = f"{APP_SLUG}_speech_{timestamp}_{first_words}.flac"
+                        file_name = f"{filename_prefix}_{timestamp}_{first_words}.flac"
                         saved_path = str(pathlib.Path("outputs") / file_name)
                         actual_saved_path = str(output_dir / file_name)
                         sample_rate = BASE_SR
