@@ -1,0 +1,32 @@
+#include <windows.h>
+
+IDI_CELUNE ICON "@_celune_icon_path@"
+
+VS_VERSION_INFO VERSIONINFO
+    FILEVERSION @_windows_version_numbers@
+    PRODUCTVERSION @_windows_version_numbers@
+    FILEFLAGSMASK VS_FFI_FILEFLAGSMASK
+    FILEFLAGS 0x0L
+    FILEOS VOS_NT_WINDOWS32
+    FILETYPE VFT_APP
+    FILESUBTYPE VFT2_UNKNOWN
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904B0"
+        BEGIN
+            VALUE "CompanyName", "https://github.com/celunah\0"
+            VALUE "FileDescription", "Celune Launcher\0"
+            VALUE "FileVersion", "@_windows_version@\0"
+            VALUE "InternalName", "celune.exe\0"
+            VALUE "LegalCopyright", "celunah - Under Apache 2.0 license.\0"
+            VALUE "OriginalFilename", "celune.exe\0"
+            VALUE "ProductName", "Celune Launcher\0"
+            VALUE "ProductVersion", "@_windows_version@\0"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END

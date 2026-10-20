@@ -11,6 +11,9 @@ endif()
 string(REGEX REPLACE "^version = \"([^\"]+)\".*$" "\\1" CELUNE_VERSION "${_version_line}")
 
 project(CeluneNativeBuilder VERSION "${CELUNE_VERSION}" LANGUAGES C)
+if(WIN32)
+    enable_language(RC)
+endif()
 
 set(CELUNE_BUILD_MODE "unsigned" CACHE STRING "Release signature mode")
 set_property(CACHE CELUNE_BUILD_MODE PROPERTY STRINGS unsigned signed)
@@ -63,6 +66,28 @@ if(WIN32)
         message(FATAL_ERROR "Configure the Windows build with the Visual Studio C compiler")
     endif()
     set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+
+    string(REGEX REPLACE "\\+.*$" "" _windows_version "${CELUNE_VERSION}")
+    if(NOT _windows_version MATCHES "^[0-9]+(\\.[0-9]+)?(\\.[0-9]+)?(\\.[0-9]+)?$")
+        message(FATAL_ERROR "Project version '${_windows_version}' is not a valid Windows version string")
+    endif()
+    string(REPLACE "." ";" _windows_version_components "${_windows_version}")
+    list(LENGTH _windows_version_components _windows_version_component_count)
+    while(_windows_version_component_count LESS 4)
+        list(APPEND _windows_version_components 0)
+        list(LENGTH _windows_version_components _windows_version_component_count)
+    endwhile()
+    list(JOIN _windows_version_components "," _windows_version_numbers)
+    set(_celune_icon_path "${CMAKE_CURRENT_SOURCE_DIR}/resources/celune.ico")
+    configure_file(
+        "${CMAKE_CURRENT_SOURCE_DIR}/resources/celune.rc.in"
+        "${CMAKE_CURRENT_BINARY_DIR}/celune.rc"
+        @ONLY
+    )
+    set(_launcher_resource_file "${CMAKE_CURRENT_BINARY_DIR}/celune.rc")
+    set_source_files_properties("${_launcher_resource_file}" PROPERTIES
+        OBJECT_DEPENDS "${_celune_icon_path}"
+    )
 elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     if(NOT CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
         message(FATAL_ERROR "The Linux launcher requires GCC or Clang")
@@ -185,7 +210,7 @@ if(WIN32)
     list(APPEND _launcher_sources
         launcher/windows/runtime.c
         launcher/windows/terminal.c
-        resources/celune.res
+        "${_launcher_resource_file}"
     )
 else()
     list(APPEND _launcher_sources
@@ -252,10 +277,6 @@ set(_nuitka_arguments
     "${CMAKE_CURRENT_SOURCE_DIR}/nuitka_main.py"
 )
 if(WIN32)
-    string(REGEX REPLACE "\\+.*$" "" _windows_version "${CELUNE_VERSION}")
-    if(NOT _windows_version MATCHES "^[0-9]+(\\.[0-9]+)?(\\.[0-9]+)?(\\.[0-9]+)?$")
-        message(FATAL_ERROR "Project version '${_windows_version}' is not a valid Windows version string")
-    endif()
     list(PREPEND _nuitka_arguments
         --msvc=latest
         --include-windows-runtime-dlls=yes

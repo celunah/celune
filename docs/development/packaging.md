@@ -66,6 +66,10 @@ CRT matches the launcher's `/MT` runtime. Install CMake 3.25 or newer, `uv`, and
 the platform C compiler and build tools before configuring. Windows requires
 the Visual Studio 2022 C++ tools. Linux also needs `appimagetool`.
 
+CMake configures `resources/celune.rc.in` with the project version from
+`pyproject.toml`, then compiles and links that resource with the Windows C
+launcher. It supplies the Celune icon and the `Celune Launcher` file identity.
+
 On Windows, Nuitka includes Windows runtime DLLs, and the tracked
 `resources/vcruntime140.dll` is placed beside the release executables and added
 to the update manifest and archive. Linux builds produce the launcher,
