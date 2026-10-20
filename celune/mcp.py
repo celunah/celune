@@ -17,12 +17,12 @@ from mcp.server.transport_security import TransportSecuritySettings
 from starlette.responses import Response
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from .exceptions import CEVoiceError
 from .i18n import string
-from .backends.vc import VC_BACKENDS
 from .backends.tts import BACKENDS
-from .singing import validate_singing_notation
+from .backends.vc import VC_BACKENDS
+from .exceptions import CEVoiceError
 from .threads import run_in_daemon_thread
+from .singing import validate_singing_notation
 from .typing.pipeline import SpeechStreamQueue
 from .cevoice import CEVoice, bundled_voices_dir
 
