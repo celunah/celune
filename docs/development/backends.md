@@ -324,15 +324,16 @@ immediately.
 
 `CeluneBackend` accepts `singing: bool = False`. A singing-capable TTS backend
 opts in by passing `singing=True` to the base initializer. For a request with
-CESN tags, Celune parses the complete notation, validates the explicit
-language against the backend's `supported_languages`, records warnings in the
-runtime log, and serializes all sections before calling
-`cesn_to_model(text)`. The hook is called once before generation chunking.
+CESN tags, Celune parses the original notation, validates the explicit language
+against the backend's `supported_languages`, and records warnings in the runtime
+log before calling `cesn_to_model(text)`. It passes the user's original source
+so backend validation can report exact line and character locations. The hook
+is called once before generation chunking.
 
 `celune/cesn.py` owns parsing, syllabification, and canonical rendering.
-`celune/singing.py` validates backend language support, assigns the active
-singing voice when no singer tag is present, and calls the backend hook before
-the pipeline chunks the request.
+`celune/singing.py` validates backend language support and calls the backend hook
+before the pipeline chunks the request. A backend resolves its active singer
+when the notation does not name one.
 
 Each `CESNSection` has one singer, language, BPM, key, and scale. A change to
 any of those values begins a new section. A singing backend must reset its
@@ -355,11 +356,12 @@ CECHAR v5 pack with a hidden `sing` voice. See
 [`parse_cesn()` and the CESN format](../formats/cesn.md) for tag syntax, data
 types, and errors.
 
-The hook signature remains `cesn_to_model(self, text: str) -> str`. Its input
-contains the canonical, complete notation with settings repeated at section
-boundaries. Override it to translate those sections into the selected model's
-notation. The base implementation returns the input unchanged. Ordinary TTS
-backends leave `singing` false and do not invoke CESN parsing.
+The hook signature remains `cesn_to_model(self, text: str) -> str`. Its input is
+the complete source notation, which may contain X-SAMPA or omit a singer tag.
+Override it to parse the sections and translate them into the selected model's
+notation while preserving source locations for validation errors. The base
+implementation returns the input unchanged. Ordinary TTS backends leave
+`singing` false and do not invoke CESN parsing.
 
 ## Adding a backend
 

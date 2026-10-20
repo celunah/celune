@@ -4,36 +4,94 @@
 import queue
 import base64
 import asyncio
+from types import SimpleNamespace
 from typing import cast
 from pathlib import Path
 from unittest import mock
-from types import SimpleNamespace
 
-import pytest
 import numpy as np
+import pytest
+import mcp.types as mcp_types
+import mcp.server.mcpserver.exceptions as mcp_exceptions
 from fastapi.testclient import TestClient
-from mcp.types import AudioContent, CallToolResult
-from mcp.server.mcpserver.exceptions import ToolError
 
 from celune import api, mcp
 from celune.typing.pipeline import SpeechStreamQueue
+
 from .support import CeluneTestCase
+
+AudioContent = mcp_types.AudioContent
+CallToolResult = mcp_types.CallToolResult
+ToolError = mcp_exceptions.ToolError
 
 
 class TestMcpServer(CeluneTestCase):
     """Verify the registered MCP tools share the Celune runtime."""
 
-    def test_server_registers_the_five_core_tools(self) -> None:
-        """Expose speech, singing, Persona, voice, and backend controls."""
+    def test_server_registers_the_seven_core_tools(self) -> None:
+        """Expose lifecycle, speech, singing, Persona, voice, and backend tools."""
         tools = asyncio.run(mcp.mcp_server.list_tools())
 
         assert [tool.name for tool in tools] == [
+            "status",
+            "wake",
             "speak",
             "sing",
             "run_persona",
             "change_voice",
             "change_backend",
         ]
+
+    def test_status_reports_sleep_and_readiness(self) -> None:
+        """Report current runtime readiness without waking a sleeping engine."""
+        engine = SimpleNamespace(
+            cur_state="sleeping",
+            loaded=False,
+            sleeping=True,
+            locked=False,
+            model_ready=SimpleNamespace(is_set=mock.Mock(return_value=True)),
+        )
+
+        with mock.patch.object(mcp, "_require_celune", return_value=engine):
+            result = cast(
+                CallToolResult,
+                asyncio.run(mcp.mcp_server.call_tool("status", {})),
+            )
+
+        assert result.structured_content == {
+            "engine_state": "sleeping",
+            "loaded": False,
+            "sleeping": True,
+            "locked": False,
+            "ready": False,
+        }
+
+    def test_wake_waits_for_core_wake_and_reports_resulting_status(self) -> None:
+        """Wake through Celune's asynchronous lifecycle before returning status."""
+        engine = SimpleNamespace(
+            cur_state="idle",
+            loaded=True,
+            sleeping=False,
+            locked=False,
+            model_ready=SimpleNamespace(is_set=mock.Mock(return_value=True)),
+            wake_from_sleep_async=mock.AsyncMock(return_value=True),
+        )
+
+        with mock.patch.object(mcp, "_require_celune", return_value=engine):
+            result = cast(
+                CallToolResult,
+                asyncio.run(mcp.mcp_server.call_tool("wake", {})),
+            )
+
+        assert result.structured_content == {
+            "engine_state": "idle",
+            "loaded": True,
+            "sleeping": False,
+            "locked": False,
+            "ready": True,
+            "awake": True,
+        }
+        engine.wake_from_sleep_async.assert_awaited_once_with()
 
     def test_http_mount_runs_inside_the_api_lifespan(self) -> None:
         """Start the MCP session manager with the parent REST API lifecycle."""

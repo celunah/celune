@@ -4,13 +4,14 @@
 import re
 import warnings
 import unicodedata
+from typing import Union, Optional, NamedTuple, cast
 from pathlib import Path
 from fractions import Fraction
-from dataclasses import dataclass
-from typing import Union, Optional, NamedTuple, cast
+from dataclasses import field, dataclass
 
 from iso639 import Lang, exceptions
 
+from .xsampa import to_ipa as xsampa_to_ipa
 from .exceptions import (
     CESNError,
     CEVoiceError,
@@ -21,7 +22,6 @@ from .exceptions import (
     InvalidCharacterError,
     CESNUnsupportedFeatureError,
 )
-from .xsampa import to_ipa as xsampa_to_ipa
 
 
 class CESNTuplet(NamedTuple):
@@ -82,6 +82,12 @@ class CESNBlock:
 
     lyrics: str
     events: tuple[Union[CESNNotePair, CESNRestEvent], ...]
+    _source_note_spans: tuple[Optional[tuple[int, int]], ...] = field(
+        default=(), compare=False, repr=False
+    )
+    _source_ipa_spans: tuple[Optional[tuple[int, int]], ...] = field(
+        default=(), compare=False, repr=False
+    )
 
     @property
     def pairs(self) -> tuple[CESNNotePair, ...]:
@@ -172,8 +178,10 @@ def _parse_cesn(
 
     state = _CESNState()
     pending_events: Optional[tuple[_CESNEvent, ...]] = None
+    pending_event_spans: tuple[Optional[tuple[int, int]], ...] = ()
     pending_lyrics: list[str] = []
     pending_ipa: Optional[tuple[str, ...]] = None
+    pending_ipa_spans: tuple[tuple[int, int], ...] = ()
     pending_slur: Optional[int] = None
     pending_note_span = (0, 1)
     pending_ipa_span: Optional[tuple[int, int]] = None
@@ -241,6 +249,7 @@ def _parse_cesn(
 
     def finish_pending(*, following_rest_only: bool = False) -> None:
         nonlocal pending_events, pending_lyrics, pending_ipa
+        nonlocal pending_event_spans, pending_ipa_spans
         nonlocal pending_slur
         nonlocal pending_state
         nonlocal pending_note_span, pending_ipa_span
@@ -301,10 +310,16 @@ def _parse_cesn(
             raise CESNAlignmentError(len(note_events), len(ipa_syllables))
 
         event_items: list[Union[CESNNotePair, CESNRestEvent]] = []
+        source_note_spans: list[Optional[tuple[int, int]]] = []
+        source_ipa_spans: list[Optional[tuple[int, int]]] = []
         note_index = 0
+        event_index = 0
         for event in pending_events:
             if isinstance(event, CESNRestEvent):
                 event_items.append(event)
+                source_note_spans.append(None)
+                source_ipa_spans.append(None)
+                event_index += 1
                 continue
             pair = CESNNotePair(
                 event,
@@ -314,7 +329,10 @@ def _parse_cesn(
                 ),
             )
             event_items.append(pair)
+            source_note_spans.append(pending_event_spans[event_index])
+            source_ipa_spans.append(pending_ipa_spans[note_index])
             note_index += 1
+            event_index += 1
             if not _note_is_in_scale(
                 event.pitch,
                 pending_state.key,
@@ -330,7 +348,12 @@ def _parse_cesn(
                 )
 
         append_block(
-            CESNBlock(lyrics=lyrics, events=tuple(event_items)),
+            CESNBlock(
+                lyrics=lyrics,
+                events=tuple(event_items),
+                _source_note_spans=tuple(source_note_spans),
+                _source_ipa_spans=tuple(source_ipa_spans),
+            ),
             pending_state,
         )
         trailing_text = lyrics.rstrip()
@@ -347,8 +370,10 @@ def _parse_cesn(
             )
             append_block(CESNBlock(lyrics="", events=(rest,)), pending_state)
         pending_events = None
+        pending_event_spans = ()
         pending_lyrics = []
         pending_ipa = None
+        pending_ipa_spans = ()
         pending_slur = None
         pending_state = None
         pending_note_span = (0, 1)
@@ -491,13 +516,20 @@ def _parse_cesn(
                     pending_state = updated
             continue
 
+        tag_content_start = start + 1 + (len(value) - len(value.lstrip()))
         if is_pronunciation_syllable_list:
             if pending_ipa is not None:
                 raise CESNValidationError(
                     "CESN pronunciation syllables may appear only once"
                 )
+            pronunciation = argument if is_xsampa_syllable_list else tag
+            pronunciation_offset = tag_content_start + tag.find(pronunciation)
             pending_ipa = (
                 _parse_xsampa(argument) if is_xsampa_syllable_list else _parse_ipa(tag)
+            )
+            pending_ipa_spans = _ipa_source_spans(
+                pronunciation,
+                pronunciation_offset,
             )
             pending_ipa_span = (start, end)
             continue
@@ -523,9 +555,11 @@ def _parse_cesn(
             active_tuplet_span = (start, end)
             continue
 
-        events = apply_tuplet(_parse_note_events(tag))
+        events = _parse_note_events(tag)
         if not events:
             raise CESNValidationError("CESN note list cannot be empty")
+        pending_event_spans = _note_event_source_spans(tag, tag_content_start)
+        events = apply_tuplet(events)
         pending_events = events
         pending_lyrics = []
         pending_state = state
@@ -936,6 +970,43 @@ def _parse_note_events(source: str) -> tuple[_CESNEvent, ...]:
             )
         offset += len(raw_event) + 1
     return tuple(events)
+
+
+def _note_event_source_spans(
+    source: str,
+    source_start: int,
+) -> tuple[Optional[tuple[int, int]], ...]:
+    """Locate each pitched event's pitch text inside its original note tag."""
+    spans: list[Optional[tuple[int, int]]] = []
+    offset = 0
+    for raw_event in source.split(","):
+        candidate = raw_event.strip()
+        match = NOTE_EVENT_PATTERN.fullmatch(candidate)
+        if match is None:
+            raise CESNValidationError(f"malformed CESN note event at offset {offset}")
+        pitch = match.group("pitch")
+        if pitch is None:
+            spans.append(None)
+        else:
+            candidate_start = (
+                source_start + offset + len(raw_event) - len(raw_event.lstrip())
+            )
+            start = candidate_start + match.start("pitch")
+            spans.append((start, start + len(pitch)))
+        offset += len(raw_event) + 1
+    return tuple(spans)
+
+
+def _ipa_source_spans(value: str, source_start: int) -> tuple[tuple[int, int], ...]:
+    """Locate each dot-separated IPA or X-SAMPA syllable in its source tag."""
+    spans: list[tuple[int, int]] = []
+    offset = 0
+    for syllable in value.split("."):
+        stripped = syllable.strip()
+        start = source_start + offset + len(syllable) - len(syllable.lstrip())
+        spans.append((start, start + len(stripped)))
+        offset += len(syllable) + 1
+    return tuple(spans)
 
 
 def _format_note_event(event: CESNNoteEvent) -> str:

@@ -11,25 +11,17 @@ import shutil
 import tempfile
 import importlib
 import unicodedata
-
-from pathlib import Path
 from types import ModuleType
-from dataclasses import dataclass, field
-from typing import Optional, Protocol, Union, cast
-from collections.abc import Callable, Iterator, Mapping
+from typing import Union, Optional, Protocol, cast
+from pathlib import Path
+from dataclasses import field, dataclass
+from collections.abc import Mapping, Callable, Iterator
 
-import torch
 import numpy as np
+import torch
 from huggingface_hub import snapshot_download
 
-from ...typing.common import JSON
-from ...typing.aliases import AudioChunk
-from ..environment import exclusive_lock
-from ...singing import contains_cesn_note_event
-from ...registry.consent import require_model_consent
-from ...registry.other import SOULX_SINGER_RMVPE_MODEL_ID
-from .base import CeluneBackend, cached_hf_snapshot_path, to_numpy_audio
-
+from .base import CeluneBackend, to_numpy_audio, cached_hf_snapshot_path
 from ...cesn import (
     CESNSection,
     CESNNotePair,
@@ -38,34 +30,41 @@ from ...cesn import (
     resolve_active_singer,
 )
 from ...paths import (
+    huggingface_progress,
     backend_environments_dir,
     huggingface_hub_cache_dir,
-    huggingface_progress,
 )
 from ...cevoice import (
+    V5_VERSION,
+    SINGING_VOICE_NAME,
     CEVoice,
     CEVoiceLoader,
-    SINGING_VOICE_NAME,
-    V5_VERSION,
-    bundle_character_name,
     default_loader,
+    bundle_character_name,
 )
+from ...singing import contains_cesn_note_event
 from ...exceptions import (
     BackendError,
+    CESNIPAError,
     CEVoiceError,
-    CESNUnsupportedFeatureError,
-    CESNBackendFormatError,
     CESNRangeError,
     CESNValidationError,
     InvalidCharacterError,
+    CESNBackendFormatError,
+    CESNUnsupportedFeatureError,
 )
+from ..environment import exclusive_lock
 from ...registry.tts import (
-    SOULX_SINGER_MODEL_ID,
-    SOULX_SINGER_CODE_REPOSITORY,
-    SOULX_SINGER_CODE_REVISION,
-    SOULX_SINGER_REVISION,
     TTS_DEFAULT_VOICE,
+    SOULX_SINGER_MODEL_ID,
+    SOULX_SINGER_REVISION,
+    SOULX_SINGER_CODE_REVISION,
+    SOULX_SINGER_CODE_REPOSITORY,
 )
+from ...typing.common import JSON
+from ...registry.other import SOULX_SINGER_RMVPE_MODEL_ID
+from ...typing.aliases import AudioChunk
+from ...registry.consent import require_model_consent
 
 __all__ = [
     "SoulXSinger",
@@ -208,6 +207,10 @@ class _ScoreEvent:
     rest: bool
     ipa: Optional[str] = None
     slur_from_previous: bool = False
+    note_source_start: Optional[int] = None
+    note_source_end: Optional[int] = None
+    ipa_source_start: Optional[int] = None
+    ipa_source_end: Optional[int] = None
 
 
 @dataclass(frozen=True)
@@ -247,11 +250,26 @@ class _SoulXSourceModules:
     f0: Optional[ModuleType] = None
 
 
+class _UnrepresentableIPASymbol(ValueError):
+    """Identify one IPA symbol that cannot be encoded as an ARPAbet phone."""
+
+    def __init__(self, character: str, offset: int) -> None:
+        self.character = character
+        self.offset = offset
+        super().__init__("unsupported English IPA symbol")
+
+
 def _ipa_to_arpabet(ipa: str) -> tuple[str, ...]:
     """Convert supported English IPA symbols into SoulX's ARPAbet phones."""
+    return tuple(token for token, _start, _end in _ipa_to_arpabet_symbols(ipa))
+
+
+def _ipa_to_arpabet_symbols(ipa: str) -> tuple[tuple[str, int, int], ...]:
+    """Return ARPAbet phones with the IPA spans that produced each phone."""
     source = unicodedata.normalize("NFC", ipa)
-    phones: list[str] = []
+    phones: list[tuple[str, int, int]] = []
     pending_stress: Optional[str] = None
+    pending_stress_offset: Optional[int] = None
     has_vowel = False
     offset = 0
 
@@ -262,8 +280,9 @@ def _ipa_to_arpabet(ipa: str) -> tuple[str, ...]:
             continue
         if character in {"ˈ", "ˌ"}:
             if pending_stress is not None:
-                raise ValueError("multiple stress markers before a vowel")
+                raise _UnrepresentableIPASymbol(character, offset)
             pending_stress = "1" if character == "ˈ" else "2"
+            pending_stress_offset = offset
             offset += 1
             continue
 
@@ -276,7 +295,7 @@ def _ipa_to_arpabet(ipa: str) -> tuple[str, ...]:
             None,
         )
         if symbol is None:
-            raise ValueError("unsupported English IPA symbol")
+            raise _UnrepresentableIPASymbol(character, offset)
 
         phone = _IPA_TO_ARPABET[symbol]
         if phone in _ARPABET_VOWELS:
@@ -286,21 +305,47 @@ def _ipa_to_arpabet(ipa: str) -> tuple[str, ...]:
                 stress = pending_stress or "0"
             else:
                 stress = pending_stress or "0"
-            phones.append(f"{phone}{stress}")
+            phones.append((f"{phone}{stress}", offset, offset + len(symbol)))
             pending_stress = None
+            pending_stress_offset = None
             has_vowel = True
         else:
-            phones.append(phone)
+            phones.append((phone, offset, offset + len(symbol)))
         offset += len(symbol)
 
-    if not phones or not has_vowel or pending_stress is not None:
-        raise ValueError(
-            "IPA syllable must contain a vowel and complete stress markers"
-        )
+    if pending_stress is not None:
+        stress_offset = pending_stress_offset or 0
+        raise _UnrepresentableIPASymbol(source[stress_offset], stress_offset)
+    if not phones or not has_vowel:
+        raise _UnrepresentableIPASymbol(source, 0)
     return tuple(phones)
 
 
-def _score_event(event: Union[CESNNotePair, CESNRestEvent]) -> _ScoreEvent:
+def _raise_unrepresentable_ipa(
+    event: _ScoreEvent,
+    error: _UnrepresentableIPASymbol,
+) -> None:
+    """Raise a localized CESN error and attach the source IPA location."""
+    error_character = error.character
+    failure = CESNIPAError(error_character)
+    if event.ipa_source_start is not None and event.ipa_source_end is not None:
+        start = event.ipa_source_start + error.offset
+        end = start + max(1, len(error_character))
+        if end <= event.ipa_source_end:
+            failure.source_start = start
+            failure.source_end = end
+        else:
+            failure.source_start = event.ipa_source_start
+            failure.source_end = event.ipa_source_end
+    raise failure
+
+
+def _score_event(
+    event: Union[CESNNotePair, CESNRestEvent],
+    *,
+    note_source_span: Optional[tuple[int, int]] = None,
+    ipa_source_span: Optional[tuple[int, int]] = None,
+) -> _ScoreEvent:
     """Convert one parsed CESN event into the backend's stable event shape."""
     if isinstance(event, CESNRestEvent):
         duration = event.duration_beats
@@ -319,6 +364,10 @@ def _score_event(event: Union[CESNNotePair, CESNRestEvent]) -> _ScoreEvent:
             rest=False,
             ipa=event.ipa,
             slur_from_previous=event.slur_from_previous,
+            note_source_start=(note_source_span[0] if note_source_span else None),
+            note_source_end=(note_source_span[1] if note_source_span else None),
+            ipa_source_start=(ipa_source_span[0] if ipa_source_span else None),
+            ipa_source_end=(ipa_source_span[1] if ipa_source_span else None),
         )
     raise TypeError(type(event).__name__)
 
@@ -326,16 +375,42 @@ def _score_event(event: Union[CESNNotePair, CESNRestEvent]) -> _ScoreEvent:
 def _serialize_section(section: CESNSection) -> _ScoreSection:
     """Convert one CESN section while retaining its exact beat fractions."""
     singer = section.singer or resolve_active_singer()
-    events = tuple(
-        _score_event(event) for block in section.blocks for event in block.events
-    )
+    events_list: list[_ScoreEvent] = []
+    for block in section.blocks:
+        for index, event in enumerate(block.events):
+            note_spans = block._source_note_spans
+            ipa_spans = block._source_ipa_spans
+            note_span = note_spans[index] if index < len(note_spans) else None
+            ipa_span = ipa_spans[index] if index < len(ipa_spans) else None
+            score_event = _score_event(
+                event,
+                note_source_span=note_span,
+                ipa_source_span=ipa_span,
+            )
+            if score_event.ipa is not None:
+                try:
+                    _ipa_to_arpabet_symbols(score_event.ipa)
+                except _UnrepresentableIPASymbol as error:
+                    _raise_unrepresentable_ipa(score_event, error)
+                except ValueError:
+                    _raise_unrepresentable_ipa(
+                        score_event,
+                        _UnrepresentableIPASymbol(score_event.ipa, 0),
+                    )
+            events_list.append(score_event)
+    events = tuple(events_list)
     for event in events:
         if not event.rest:
-            _pitch_to_midi_for_singer(
-                event.pitch or "",
-                singer.name,
-                singer.pitch_range,
-            )
+            try:
+                _pitch_to_midi_for_singer(
+                    event.pitch or "",
+                    singer.name,
+                    singer.pitch_range,
+                )
+            except CESNRangeError as error:
+                error.source_start = event.note_source_start
+                error.source_end = event.note_source_end
+                raise
     return _ScoreSection(
         bpm=section.bpm,
         key=section.key,
@@ -364,6 +439,17 @@ def _score_to_dict(section: _ScoreSection) -> dict[str, object]:
                 "rest": event.rest,
                 **({"ipa": event.ipa} if event.ipa is not None else {}),
                 "slur_from_previous": event.slur_from_previous,
+                **(
+                    {
+                        "note_source_start": event.note_source_start,
+                        "note_source_end": event.note_source_end,
+                        "ipa_source_start": event.ipa_source_start,
+                        "ipa_source_end": event.ipa_source_end,
+                    }
+                    if event.ipa_source_start is not None
+                    and event.ipa_source_end is not None
+                    else {}
+                ),
             }
             for event in section.events
         ],
@@ -432,6 +518,28 @@ def decode_score(text: str) -> tuple[_ScoreSection, ...]:
             rest = raw_event.get("rest")
             ipa = raw_event.get("ipa")
             slur_from_previous = raw_event.get("slur_from_previous", False)
+            note_source_start = raw_event.get("note_source_start")
+            note_source_end = raw_event.get("note_source_end")
+            ipa_source_start = raw_event.get("ipa_source_start")
+            ipa_source_end = raw_event.get("ipa_source_end")
+            has_source_spans = all(
+                isinstance(value, int) and not isinstance(value, bool) and value >= 0
+                for value in (
+                    note_source_start,
+                    note_source_end,
+                    ipa_source_start,
+                    ipa_source_end,
+                )
+            )
+            missing_source_spans = all(
+                value is None
+                for value in (
+                    note_source_start,
+                    note_source_end,
+                    ipa_source_start,
+                    ipa_source_end,
+                )
+            )
             if (
                 not isinstance(duration, list)
                 or len(duration) != 2
@@ -443,6 +551,20 @@ def decode_score(text: str) -> tuple[_ScoreSection, ...]:
                 or duration[1] <= 0
                 or not isinstance(rest, bool)
                 or not isinstance(slur_from_previous, bool)
+                or not (has_source_spans or missing_source_spans)
+                or (
+                    has_source_spans
+                    and (
+                        cast(int, note_source_end) < cast(int, note_source_start)
+                        or cast(int, ipa_source_end) < cast(int, ipa_source_start)
+                    )
+                )
+                or (
+                    rest
+                    and (
+                        not missing_source_spans or pitch is not None or ipa is not None
+                    )
+                )
                 or (ipa is not None and (not isinstance(ipa, str) or not ipa.strip()))
                 or (
                     rest
@@ -468,6 +590,18 @@ def decode_score(text: str) -> tuple[_ScoreSection, ...]:
                     rest=rest,
                     ipa=cast(Optional[str], ipa),
                     slur_from_previous=slur_from_previous,
+                    note_source_start=(
+                        cast(int, note_source_start) if has_source_spans else None
+                    ),
+                    note_source_end=(
+                        cast(int, note_source_end) if has_source_spans else None
+                    ),
+                    ipa_source_start=(
+                        cast(int, ipa_source_start) if has_source_spans else None
+                    ),
+                    ipa_source_end=(
+                        cast(int, ipa_source_end) if has_source_spans else None
+                    ),
                 )
             )
         sections.append(
@@ -1111,27 +1245,39 @@ class SoulXSinger(CeluneBackend[_SoulXRuntime]):
                     "prepared CESN note is missing its IPA syllable"
                 )
             try:
-                phone_tokens = list(_ipa_to_arpabet(event.ipa))
-            except ValueError as error:
-                raise BackendError(
-                    "SoulX-Singer cannot represent the supplied IPA in its English ARPAbet inventory",
-                    error_code="soulx_ipa_unsupported",
-                ) from error
-            phone_symbols = [f"en_{token}" for token in phone_tokens]
-            if not phone_symbols or any(
-                symbol not in runtime.processor.phone2idx for symbol in phone_symbols
-            ):
-                raise BackendError(
-                    "SoulX-Singer cannot represent the supplied IPA in its English ARPAbet inventory",
-                    error_code="soulx_ipa_unsupported",
+                phone_spans = list(_ipa_to_arpabet_symbols(event.ipa))
+            except _UnrepresentableIPASymbol as error:
+                _raise_unrepresentable_ipa(event, error)
+            except ValueError:
+                _raise_unrepresentable_ipa(
+                    event,
+                    _UnrepresentableIPASymbol(event.ipa, 0),
                 )
+            phone_tokens = [phone for phone, _start, _end in phone_spans]
+            phone_symbols = [f"en_{token}" for token in phone_tokens]
+            if not phone_symbols:
+                _raise_unrepresentable_ipa(
+                    event,
+                    _UnrepresentableIPASymbol(event.ipa, 0),
+                )
+            for symbol, (_phone, start, end) in zip(phone_symbols, phone_spans):
+                if symbol not in runtime.processor.phone2idx:
+                    _raise_unrepresentable_ipa(
+                        event,
+                        _UnrepresentableIPASymbol(event.ipa[start:end], start),
+                    )
             phonemes.append("en_" + "-".join(phone_tokens))
             if character_name is not None and pitch_range is not None:
-                midi_pitch = _pitch_to_midi_for_singer(
-                    event.pitch or "",
-                    character_name,
-                    pitch_range,
-                )
+                try:
+                    midi_pitch = _pitch_to_midi_for_singer(
+                        event.pitch or "",
+                        character_name,
+                        pitch_range,
+                    )
+                except CESNRangeError as error:
+                    error.source_start = event.note_source_start
+                    error.source_end = event.note_source_end
+                    raise
             else:
                 midi_pitch = pitch_to_midi(event.pitch or "")
             pitches.append(str(midi_pitch))

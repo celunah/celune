@@ -4,19 +4,22 @@
 # Import groups follow Celune's project-specific Ruff ordering.
 # pylint: disable=ungrouped-imports
 
+import json as _json
 import tempfile
 import threading
-import json as _json
-from pathlib import Path
-from unittest import mock
 from types import SimpleNamespace
 from typing import Optional, cast
+from pathlib import Path
+from unittest import mock
 from collections.abc import Iterator
 
-import pytest
 import numpy as np
+import pytest
 
 from celune import pipeline
+from celune.i18n import string
+from celune.utils import discard
+from celune.celune import Celune
 from celune.cevoice import (
     CEVoice,
     CEVoiceLoader,
@@ -25,9 +28,8 @@ from celune.cevoice import (
     PersonaStyleValues,
     persona_files_from_bundle,
 )
-from celune.i18n import string
-from celune.celune import Celune
-from celune.utils import discard
+from celune.constants import PipelineStates
+from celune.persona.impl import compact_persona_history
 from celune.typing.agent import (
     ToolCall,
     AgentTask,
@@ -39,18 +41,16 @@ from celune.typing.agent import (
     AgentToolDangerLevel,
     AgentToolArgumentSchema,
 )
-from celune.constants import PipelineStates
-from celune.typing.aliases import AudioChunk
-from celune.persona.impl import compact_persona_history
 from celune.typing.common import JSON, JSONSerializable
-from celune.persona.capabilities import PersonaCapabilities
-from celune.dataclasses.pipeline import CaptionAlignmentSection
+from celune.typing.aliases import AudioChunk
 from celune.persona.prompts import PersonaPromptBuilder, render_markdown_subsection
+from celune.dataclasses.pipeline import CaptionAlignmentSection
+from celune.persona.capabilities import PersonaCapabilities
 
 from .support import make_pipeline_engine
 from .platform import LINUX_ONLY, WINDOWS_ONLY
-from .test_persona_memory import StubEmbeddingMemoryStore
 from .pipeline_basics import TestPipelineAsync as _TestPipelineAsync
+from .test_persona_memory import StubEmbeddingMemoryStore
 
 
 @pytest.mark.anyio
@@ -1593,7 +1593,7 @@ class TestPipelineAsync(_TestPipelineAsync):
             if severity == "error" and message.startswith("Parse error in CESN")
         )
         assert "line 2, column 1" in diagnostic
-        assert "\n\n[bpm:120:key:c,scale:major][c4:4] word.\n^ " in diagnostic
+        assert "\n\n[bpm:120:key:c,scale:major][c4:4] word.\n^" in diagnostic
         assert "Traceback" not in diagnostic
         assert engine.errors == []
         assert engine.statuses == [

@@ -49,6 +49,7 @@ from ..exceptions import (
     CEDTSPayloadError,
     CEDTSTimeoutError,
     CEDTSProtocolError,
+    CESNValidationError,
 )
 from ..typing.common import JSON
 from ..typing.worker import (
@@ -257,8 +258,14 @@ def _emit_log(
 _WORKER_ERROR_CODE = "backend_worker_error"
 
 
-def _worker_exception(error_type: Optional[str], message: str) -> Exception:
-    """Rebuild a typed worker error and attach its transported traceback as a note."""
+def _worker_exception(
+    error_type: Optional[str],
+    message: str,
+    *,
+    source_start: Optional[int] = None,
+    source_end: Optional[int] = None,
+) -> Exception:
+    """Rebuild a typed worker error and attach transported diagnostics."""
     worker_traceback = ""
     if WORKER_TRACEBACK_MARKER in message:
         message, _, worker_traceback = message.rpartition(WORKER_TRACEBACK_MARKER)
@@ -279,6 +286,17 @@ def _worker_exception(error_type: Optional[str], message: str) -> Exception:
             error = CEDTSTimeoutError("worker response", 0.0, message=message)
         else:
             error = cedts_error_type(message)
+    elif error_type in {
+        "celune.exceptions.CESNValidationError",
+        "celune.exceptions.CESNUnsupportedFeatureError",
+        "celune.exceptions.CESNIPAError",
+        "celune.exceptions.CESNRangeError",
+        "celune.exceptions.CESNAlignmentError",
+        "celune.exceptions.CESNMatchError",
+    }:
+        error = CESNValidationError(message)
+        error.source_start = source_start
+        error.source_end = source_end
     else:
         safe_error_type = error_type or "unknown worker error type"
         error = BackendError(
@@ -1052,6 +1070,8 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
         raise _worker_exception(
             error_type if isinstance(error_type, str) else None,
             error if isinstance(error, str) else str(error),
+            source_start=response.get("source_start"),
+            source_end=response.get("source_end"),
         )
 
     def _receive_handshake_packet(
@@ -1443,6 +1463,8 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
             raise _worker_exception(
                 response.get("error_type"),
                 response.get("error", "backend worker failed"),
+                source_start=response.get("source_start"),
+                source_end=response.get("source_end"),
             )
         return response.get("value")
 
@@ -1683,6 +1705,8 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
             raise _worker_exception(
                 response.get("error_type"),
                 response.get("error", "backend worker failed"),
+                source_start=response.get("source_start"),
+                source_end=response.get("source_end"),
             )
         return response
 

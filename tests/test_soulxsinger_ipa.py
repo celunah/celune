@@ -2,23 +2,23 @@
 """Tests for explicit CESN IPA syllable alignment."""
 
 import json
-from pathlib import Path
-from unittest import mock
 from types import SimpleNamespace
 from typing import Optional, cast
+from pathlib import Path
+from unittest import mock
 
-import pytest
 import numpy as np
+import pytest
 
-from celune.exceptions import (
-    BackendError,
-    CESNBackendFormatError,
-    CESNRangeError,
-    CESNValidationError,
-)
 from celune.cesn import CESNSinger
 from celune.cevoice import CEVoiceLoader
-
+from celune.singing import format_cesn_error
+from celune.exceptions import (
+    CESNIPAError,
+    CESNRangeError,
+    CESNValidationError,
+    CESNBackendFormatError,
+)
 from celune.backends.tts.soulxsinger import (
     SoulXSinger,
     decode_score,
@@ -28,10 +28,10 @@ from celune.backends.tts.soulxsinger import (
 
 
 @pytest.mark.parametrize(
-    ("ipa", "expected_phonemes", "expected_error"),
+    ("ipa", "expected_phonemes", "expected_character"),
     (
         ("ˈkwaɪ.ət", "en_K-W-AY1 en_AH0-T", None),
-        ("ˈkwaɪ.ɲ", None, "soulx_ipa_unsupported"),
+        ("ˈkwaɪ.ɲ", None, "ɲ"),
     ),
 )
 @pytest.mark.parametrize(
@@ -41,7 +41,7 @@ from celune.backends.tts.soulxsinger import (
 def test_generate_stream_uses_or_rejects_explicit_ipa(
     ipa: str,
     expected_phonemes: Optional[str],
-    expected_error: Optional[str],
+    expected_character: Optional[str],
     high_precision: bool,
     expected_control: str,
 ) -> None:
@@ -139,17 +139,25 @@ def test_generate_stream_uses_or_rejects_explicit_ipa(
             {"soundfile": SimpleNamespace(write=mock.Mock())},
         ),
     ):
-        if expected_error is None:
+        if expected_character is None:
             chunks = list(backend.generate_stream(loaded_runtime, text=notation))
             assert chunks[0][0].shape == (48000,)
             assert chunks[0][0][0] == pytest.approx(0.5)
         else:
-            with pytest.raises(BackendError) as error:
+            with pytest.raises(CESNIPAError) as error:
                 list(backend.generate_stream(loaded_runtime, text=notation))
-            assert error.value.error_code == expected_error
+            assert error.value.character == expected_character
+            assert error.value.source_start == notation.index(expected_character)
+            assert error.value.source_end == notation.index(expected_character) + 1
             assert str(error.value) == (
-                "SoulX-Singer cannot represent the supplied IPA in its English "
-                "ARPAbet inventory"
+                f"SoulX-Singer cannot encode IPA character {expected_character}."
+            )
+            assert format_cesn_error(notation, error.value) == (
+                "Parse error in CESN notation (line 1, column "
+                f"{notation.index(expected_character) + 1}):\n\n"
+                f"{notation}\n"
+                f"{' ' * notation.index(expected_character)}^ "
+                "SoulX-Singer cannot encode IPA character ɲ."
             )
 
     if expected_phonemes is not None:
@@ -335,18 +343,23 @@ def test_cesn_preprocessing_uses_the_selected_singers_pitch_range() -> None:
     """Reject out-of-range notes with the CECHAR singing voice's named bounds."""
     backend = object.__new__(SoulXSinger)
     singer = CESNSinger("Celune", Path("singer.cevoice"), (54, 72))
+    notation = "[lang:en][bpm:120,key:f#,scale:major][f3:4][æ]Ah."
     with mock.patch(
         "celune.backends.tts.soulxsinger.resolve_active_singer",
         return_value=singer,
     ):
         with pytest.raises(CESNRangeError) as error:
-            backend.cesn_to_model("[lang:en][bpm:120,key:f#,scale:major][f3:4][æ]Ah.")
+            backend.cesn_to_model(notation)
         payload = backend.cesn_to_model(
             "[lang:en][bpm:120,key:f#,scale:major][f#3:4][æ]Ah."
         )
 
-    assert str(error.value) == (
-        "note F3 (MIDI 53) is outside Celune's acceptable range: F#3–C5 (MIDI 54–72)"
+    assert str(error.value) == "note F3 is outside Celune's singing range (F#3–C5)."
+    assert error.value.source_start == notation.index("f3")
+    assert error.value.source_end == notation.index("f3") + 2
+    assert f"{' ' * notation.index('f3')}^~" in format_cesn_error(
+        notation,
+        error.value,
     )
     assert isinstance(error.value, CESNValidationError)
     assert decode_score(payload)[0].events[0].pitch == "f#3"

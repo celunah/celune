@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for CESN directives, IPA alignment, sections, and rendering."""
 
+from types import SimpleNamespace
 from pathlib import Path
 from fractions import Fraction
-from types import SimpleNamespace
 
 import pytest
 
@@ -18,17 +18,17 @@ from celune.cesn import (
     render_cesn,
     resolve_singer,
 )
+from celune.singing import format_cesn_error
 from celune.exceptions import (
     CESNMatchError,
+    CESNSyntaxError,
     CESNAlignmentError,
     CESNNotationWarning,
     CESNValidationError,
     InvalidCharacterError,
-    CESNSyntaxError,
     CESNBackendFormatError,
     CESNUnsupportedFeatureError,
 )
-from celune.singing import format_cesn_error
 
 
 def test_parse_cesn_returns_typed_note_ipa_pairs() -> None:
@@ -461,10 +461,12 @@ def test_parse_cesn_error_tracks_source_span_and_formats_one_line() -> None:
     error = caught.value
     assert error.source_start == text.index("[bpm:")
     assert error.source_end == text.index("]", error.source_start) + 1
+    malformed_tag = text[error.source_start : error.source_end]
     assert format_cesn_error(text, error) == (
         "Parse error in CESN notation (line 2, column 1):\n\n"
         "[bpm:120:key:c,scale:major]\n"
-        "^ CESN settings require bpm, key, and scale fields"
+        f"{'^' + '~' * (len(malformed_tag) - 1)} "
+        "CESN settings require bpm, key, and scale fields"
     )
 
 

@@ -34,6 +34,7 @@ from .protocol import (
     limits_from_capabilities,
 )
 from ..exceptions import (
+    CESNError,
     CEDTSError,
     CEDTSEOFError,
     CEDTSStreamError,
@@ -51,9 +52,9 @@ from ..typing.worker import (
 from ..typing.aliases import LogLevel
 from ..typing.backends import (
     BackendModel,
+    BackendRuntime,
     BackendArguments,
     BackendDescription,
-    BackendRuntime,
 )
 from ..backends.environment import BackendManifest, backend_manifest
 from ..dataclasses.pipeline import VoiceConversionRequest
@@ -321,11 +322,19 @@ def _error_response(
                 f"{worker_traceback[:available_length]}"
             )
     message = message[: limits.max_string_length]
-    return {
+    response: WorkerResponse = {
         "ok": False,
         "error": message,
         "error_type": f"{error_type.__module__}.{error_type.__qualname__}",
     }
+    if (
+        isinstance(error, CESNError)
+        and error.source_start is not None
+        and error.source_end is not None
+    ):
+        response["source_start"] = error.source_start
+        response["source_end"] = error.source_end
+    return response
 
 
 def _release_worker_models(models: dict[int, BackendModel]) -> None:

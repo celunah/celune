@@ -23,6 +23,8 @@ from celune.utils import format_error
 from celune.exceptions import (
     CEDTSError,
     BackendError,
+    CESNValidationError,
+    CESNBackendFormatError,
 )
 from celune.backends.tts import resolve_backend
 from celune.typing.worker import (
@@ -57,6 +59,52 @@ from .backend_proxy_lifecycle import TestBackendEnvironment as _TestBackendEnvir
 
 class TestBackendEnvironment(_TestBackendEnvironment):
     """Exercise the CEDTS worker wire protocol in subprocesses."""
+
+    def test_cedts_preserves_cesn_error_source_spans(self) -> None:
+        """Return worker-side CESN diagnostics as source-aware parser errors."""
+        stream = io.BytesIO()
+        with mock.patch.object(worker, "_WORKER_STDERR", io.StringIO()):
+            error = CESNValidationError("unsupported score value")
+            error.source_start = 8
+            error.source_end = 10
+            response = worker._error_response(error)
+
+        send_message(
+            stream,
+            build_packet(
+                "error",
+                "call",
+                cast(dict[str, WorkerValue], response),
+            ),
+        )
+        stream.seek(0)
+        packet = receive_message(stream)
+        data = cast(dict[str, WorkerValue], packet["data"])
+        restored = remote._worker_exception(
+            cast(str, data["error_type"]),
+            cast(str, data["error"]),
+            source_start=cast(int, data["source_start"]),
+            source_end=cast(int, data["source_end"]),
+        )
+
+        self.assertIsInstance(restored, CESNValidationError)
+        self.assertEqual(restored.source_start, 8)
+        self.assertEqual(restored.source_end, 10)
+        self.assertEqual(str(restored), "unsupported score value")
+
+    def test_remote_proxy_keeps_internal_cesn_format_errors_as_backend_errors(
+        self,
+    ) -> None:
+        """Keep invalid prepared scores on the ordinary backend error path."""
+        error = remote._worker_exception(
+            f"{CESNBackendFormatError.__module__}.{CESNBackendFormatError.__qualname__}",
+            "prepared CESN score has an invalid pitch",
+            source_start=4,
+            source_end=7,
+        )
+
+        self.assertIsInstance(error, BackendError)
+        self.assertEqual(error.error_type, "celune.exceptions.CESNBackendFormatError")
 
     def test_worker_response_serialization_error_reaches_traceback_file(
         self,
@@ -220,7 +268,7 @@ raise SystemExit(worker.main())
                 cast(
                     dict[str, WorkerValue],
                     {
-                        "versions": [[1, 1]],
+                        "versions": [[1, 2]],
                         "capabilities": remote.CORE_CAPABILITIES,
                         "required_capabilities": {"streaming": True},
                     },
@@ -469,7 +517,7 @@ raise SystemExit(worker.main())
                     cast(
                         dict[str, WorkerValue],
                         {
-                            "versions": [[1, 1]],
+                            "versions": [[1, 2]],
                             "capabilities": remote.CORE_CAPABILITIES,
                             "required_capabilities": {"streaming": True},
                         },
@@ -787,7 +835,7 @@ finally:
                     cast(
                         dict[str, WorkerValue],
                         {
-                            "versions": [[1, 1]],
+                            "versions": [[1, 2]],
                             "capabilities": remote.CORE_CAPABILITIES,
                             "required_capabilities": {"streaming": True},
                         },
@@ -1093,7 +1141,7 @@ raise SystemExit(worker.main())
                     cast(
                         dict[str, WorkerValue],
                         {
-                            "versions": [[1, 1]],
+                            "versions": [[1, 2]],
                             "capabilities": remote.CORE_CAPABILITIES,
                             "required_capabilities": {"streaming": True},
                         },

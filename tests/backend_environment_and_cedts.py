@@ -914,7 +914,7 @@ class TestBackendEnvironment(CeluneTestCase):
             return len(payload).to_bytes(4, "big") + payload
 
         nested_packet = (
-            b'{"cedts_version":[1,1],"kind":"request","message_id":"nested",'
+            b'{"cedts_version":[1,2],"kind":"request","message_id":"nested",'
             b'"reply_to":null,"operation":"describe","data":{"arguments":'
             + b'{"value":'
             + b"[" * 65
@@ -923,7 +923,7 @@ class TestBackendEnvironment(CeluneTestCase):
             + b"}}}"
         )
         oversized_collection = {
-            "cedts_version": [1, 1],
+            "cedts_version": [1, 2],
             "kind": "request",
             "message_id": "collection",
             "reply_to": None,
@@ -931,7 +931,7 @@ class TestBackendEnvironment(CeluneTestCase):
             "data": {"arguments": {"value": list(range(1025))}},
         }
         unknown_packet_field = {
-            "cedts_version": [1, 1],
+            "cedts_version": [1, 2],
             "kind": "request",
             "message_id": "unknown-field",
             "reply_to": None,
@@ -949,7 +949,7 @@ class TestBackendEnvironment(CeluneTestCase):
 
         oversized_string = json.dumps(
             {
-                "cedts_version": [1, 1],
+                "cedts_version": [1, 2],
                 "kind": "request",
                 "message_id": "string",
                 "reply_to": None,
@@ -1075,7 +1075,7 @@ class TestBackendEnvironment(CeluneTestCase):
                 cast(
                     dict[str, WorkerValue],
                     {
-                        "versions": [[1, 1]],
+                        "versions": [[1, 2]],
                         "capabilities": remote.CORE_CAPABILITIES,
                         "unexpected": True,
                     },

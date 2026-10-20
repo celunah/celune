@@ -6,14 +6,15 @@ import os
 import time
 import threading
 import subprocess
+from types import SimpleNamespace
+from typing import IO, Optional, cast
 from pathlib import Path
 from unittest import mock
 from contextlib import suppress
-from types import SimpleNamespace
-from typing import IO, Optional, cast
 from collections import OrderedDict, deque
 from collections.abc import Callable, Generator
 
+from celune.cedts import remote, worker
 from celune.exceptions import (
     CEDTSError,
     BackendError,
@@ -40,17 +41,16 @@ from celune.typing.backends import (
     BackendModel,
     BackendRuntime,
 )
-from celune.cedts import remote, worker
 from celune.backends.environment import (
     BACKEND_MANIFESTS,
     BackendManifest,
     BackendEnvironment,
 )
 
+from .backend_processes import ShutdownProcess
 from .backend_environment_and_cedts import (
     TestBackendEnvironment as _TestBackendEnvironment,
 )
-from .backend_processes import ShutdownProcess
 
 
 class TestBackendEnvironment(_TestBackendEnvironment):
@@ -1462,20 +1462,20 @@ class TestBackendEnvironment(_TestBackendEnvironment):
 
     def test_worker_handshake_negotiates_the_cedts_capabilities(self) -> None:
         """Verify the worker accepts a compatible hello and rejects requirements it lacks."""
-        self.assertEqual(remote.CEDTS_VERSION, (1, 1))
+        self.assertEqual(remote.CEDTS_VERSION, (1, 2))
         hello = build_packet(
             "hello",
             "handshake",
             cast(
                 dict[str, WorkerValue],
                 {
-                    "versions": [[1, 1]],
+                    "versions": [[1, 2]],
                     "capabilities": remote.CORE_CAPABILITIES,
                     "required_capabilities": {"streaming": True},
                 },
             ),
         )
-        self.assertEqual(hello["cedts_version"], [1, 1])
+        self.assertEqual(hello["cedts_version"], [1, 2])
         negotiated = worker._negotiate_hello(hello)
         self.assertEqual(negotiated["streaming"], True)
         self.assertEqual(negotiated["cancellation"], True)
@@ -1486,7 +1486,7 @@ class TestBackendEnvironment(_TestBackendEnvironment):
             cast(
                 dict[str, WorkerValue],
                 {
-                    "versions": [[2, 1]],
+                    "versions": [[1, 1]],
                     "capabilities": remote.CORE_CAPABILITIES,
                     "required_capabilities": {"streaming": True},
                 },
@@ -1501,7 +1501,7 @@ class TestBackendEnvironment(_TestBackendEnvironment):
             cast(
                 dict[str, WorkerValue],
                 {
-                    "versions": [[1, 1]],
+                    "versions": [[1, 2]],
                     "capabilities": remote.CORE_CAPABILITIES,
                     "required_capabilities": {"callback": True},
                 },
@@ -1530,7 +1530,7 @@ class TestBackendEnvironment(_TestBackendEnvironment):
             cast(
                 dict[str, WorkerValue],
                 {
-                    "versions": [[1, 1]],
+                    "versions": [[1, 2]],
                     "capabilities": offered_capabilities,
                 },
             ),
@@ -1629,7 +1629,7 @@ class TestBackendEnvironment(_TestBackendEnvironment):
                 cast(
                     dict[str, WorkerValue],
                     {
-                        "cedts_version": [1, 1],
+                        "cedts_version": [1, 2],
                         "capabilities": remote.CORE_CAPABILITIES,
                     },
                 ),
@@ -1669,7 +1669,7 @@ class TestBackendEnvironment(_TestBackendEnvironment):
                 cast(
                     dict[str, WorkerValue],
                     {
-                        "cedts_version": [1, 1],
+                        "cedts_version": [1, 2],
                         "capabilities": remote.CORE_CAPABILITIES,
                     },
                 ),
@@ -1777,7 +1777,7 @@ class TestBackendEnvironment(_TestBackendEnvironment):
                 cast(
                     dict[str, WorkerValue],
                     {
-                        "cedts_version": [1, 1],
+                        "cedts_version": [1, 2],
                         "capabilities": remote.CORE_CAPABILITIES,
                     },
                 ),
@@ -1876,7 +1876,7 @@ class TestBackendEnvironment(_TestBackendEnvironment):
                 cast(
                     dict[str, WorkerValue],
                     {
-                        "cedts_version": [1, 1],
+                        "cedts_version": [1, 2],
                         "capabilities": small_capabilities,
                     },
                 ),

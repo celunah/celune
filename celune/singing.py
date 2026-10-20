@@ -4,20 +4,12 @@
 from __future__ import annotations
 
 import warnings
-from dataclasses import replace
-from collections.abc import Callable
 from typing import TYPE_CHECKING, Optional
+from collections.abc import Callable
 
-from .cesn import (
-    NOTE_EVENT_PATTERN,
-    parse_cesn,
-    render_cesn,
-    resolve_active_singer,
-    tokens,
-)
+from .cesn import NOTE_EVENT_PATTERN, tokens, parse_cesn
 from .i18n import string
 from .exceptions import CESNError, CESNNotationWarning
-
 
 if TYPE_CHECKING:
     from .celune import Celune
@@ -48,13 +40,20 @@ def format_cesn_error(text: str, error: CESNError) -> str:
     line = text[line_start:line_end].removesuffix("\r")
     line_number = text.count("\n", 0, line_start) + 1
     column_number = offset - line_start + 1
-    caret_prefix = text[line_start:offset].expandtabs()
+    caret_prefix = " " * len(text[line_start:offset].expandtabs())
+    span_end = error.source_end if error.source_end is not None else offset + 1
+    span_end = min(max(span_end, offset + 1), line_start + len(line))
+    marker_width = max(
+        1,
+        len(text[line_start:span_end].expandtabs()) - len(caret_prefix),
+    )
     header = string(
         "cesn.parse_error_location",
         line=line_number,
         column=column_number,
     )
-    return f"{header}\n\n{line}\n{caret_prefix}^ {error}"
+    marker = f"{caret_prefix}^{'~' * (marker_width - 1)}"
+    return f"{header}\n\n{line}\n{marker} {error}"
 
 
 def validate_singing_notation(engine: Celune, text: str) -> Optional[str]:
@@ -81,21 +80,12 @@ def _prepare_synthesis_text(engine: Celune, text: str) -> str:
     if "[" in text:
         with warnings.catch_warnings(record=True) as notation_warnings:
             warnings.simplefilter("always", CESNNotationWarning)
-            sections = parse_cesn(
+            parse_cesn(
                 text,
                 supported_languages=tuple(engine.backend.supported_languages),
             )
-        if any(section.singer is None for section in sections):
-            active_singer = resolve_active_singer()
-            sections = tuple(
-                replace(section, singer=active_singer)
-                if section.singer is None
-                else section
-                for section in sections
-            )
         for notation_warning in notation_warnings:
             engine.log(str(notation_warning.message), "warning")
-        text = render_cesn(sections)
     return engine.backend.cesn_to_model(text)
 
 

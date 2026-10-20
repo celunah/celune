@@ -95,7 +95,7 @@ _AUDIO_MEDIA_TYPES = frozenset(
 _CEDTS_AUDIO_PEAK = np.float32(0.95)
 _TENSOR_MEDIA_TYPES = frozenset({"application/x-tensor"})
 _VALID_DTYPES = frozenset({"bool", "float32", "float64", "int8", "int16", "uint8"})
-CEDTS_VERSION = (1, 1)
+CEDTS_VERSION = (1, 2)
 WORKER_TRACEBACK_MARKER = "\n\n--- CEDTS worker traceback ---\n"
 CONTROL_PACKET_KINDS = frozenset(
     {
@@ -1537,7 +1537,17 @@ def _validate_response_data(
     required: Optional[set[str]] = None,
 ) -> None:
     """Validate response, stream-terminal, and shutdown acknowledgement data."""
-    allowed = {"ok", "value", "error", "error_type", "stream", "done", "cancelled"}
+    allowed = {
+        "ok",
+        "value",
+        "error",
+        "error_type",
+        "source_start",
+        "source_end",
+        "stream",
+        "done",
+        "cancelled",
+    }
     required_fields = {"ok"} if required is None else required
     _validate_exact_fields(data, required_fields, allowed - required_fields)
     _validate_bool(data["ok"], "backend worker response status")
@@ -1549,11 +1559,16 @@ def _validate_response_data(
             raise _worker_protocol_error(
                 "response_field_is_invalid", field_name=field_name
             )
+    _validate_error_source_span(data)
 
 
 def _validate_error_data(data: dict[str, object]) -> None:
     """Validate a structured error packet."""
-    _validate_exact_fields(data, {"ok", "error", "error_type"})
+    _validate_exact_fields(
+        data,
+        {"ok", "error", "error_type"},
+        {"source_start", "source_end"},
+    )
     _validate_bool(data["ok"], "backend worker error status")
     if (
         data["ok"] is not False
@@ -1561,6 +1576,25 @@ def _validate_error_data(data: dict[str, object]) -> None:
         or not isinstance(data["error_type"], str)
     ):
         raise _worker_protocol_error("backend_worker_error_data_is_invalid")
+    _validate_error_source_span(data)
+
+
+def _validate_error_source_span(data: dict[str, object]) -> None:
+    """Require valid paired, zero-based source offsets on worker errors."""
+    source_start = data.get("source_start")
+    source_end = data.get("source_end")
+    if source_start is None and source_end is None:
+        return
+    if (
+        data.get("ok") is not False
+        or not isinstance(source_start, int)
+        or isinstance(source_start, bool)
+        or source_start < 0
+        or not isinstance(source_end, int)
+        or isinstance(source_end, bool)
+        or source_end <= source_start
+    ):
+        raise _worker_protocol_error("backend_worker_error_source_span_is_invalid")
 
 
 def _validate_state_data(data: dict[str, object]) -> None:

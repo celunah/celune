@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Celune exception classes."""
 
+from typing import TYPE_CHECKING, Union, Optional, Protocol
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional, Protocol, Union
 
 from .typing.common import JSON
 
@@ -210,6 +210,17 @@ class CESNUnsupportedFeatureError(CESNSyntaxError):
     """CESN requests a feature unsupported by the parser or selected backend."""
 
 
+class CESNIPAError(CESNUnsupportedFeatureError):
+    """The selected singing backend cannot encode an IPA character."""
+
+    def __init__(self, character: str) -> None:
+        """Initialize an unrepresentable IPA character error."""
+        from .i18n import string
+
+        self.character = character
+        super().__init__(string("cesn.ipa_unrepresentable", character=character))
+
+
 class CESNBackendFormatError(CESNSyntaxError):
     """A serialized CESN score violates a backend-specific format contract."""
 
@@ -247,10 +258,16 @@ class CESNRangeError(CESNValidationError):
         )
         minimum_name = f"{pitch_names[minimum_midi % 12]}{minimum_midi // 12 - 1}"
         maximum_name = f"{pitch_names[maximum_midi % 12]}{maximum_midi // 12 - 1}"
+        from .i18n import string
+
         super().__init__(
-            f"note {self.note} (MIDI {midi_note}) is outside {character_name}'s "
-            f"acceptable range: {minimum_name}–{maximum_name} "
-            f"(MIDI {minimum_midi}–{maximum_midi})"
+            string(
+                "cesn.note_out_of_range",
+                note=self.note,
+                character=character_name,
+                minimum=minimum_name,
+                maximum=maximum_name,
+            )
         )
 
 

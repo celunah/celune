@@ -4,31 +4,35 @@
 from __future__ import annotations
 
 import ipaddress
+from typing import TYPE_CHECKING, Union, Optional
 from pathlib import Path
-from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import TYPE_CHECKING, Optional, Union
+from collections.abc import AsyncGenerator
 
 import psutil
-from mcp.server import MCPServer
-from mcp.server.mcpserver import Audio
-from mcp.server.mcpserver.exceptions import ToolError
-from mcp.server.transport_security import TransportSecuritySettings
+import mcp.server as mcp_server
+import mcp.server.mcpserver as mcp_mcpserver
+import mcp.server.transport_security as mcp_transport_security
+import mcp.server.mcpserver.exceptions as mcp_exceptions
+from starlette.types import Send, Scope, ASGIApp, Receive
 from starlette.responses import Response
-from starlette.types import ASGIApp, Receive, Scope, Send
 
 from .i18n import string
-from .backends.tts import BACKENDS
-from .backends.vc import VC_BACKENDS
-from .exceptions import CEVoiceError
-from .threads import run_in_daemon_thread
-from .singing import validate_singing_notation
-from .typing.pipeline import SpeechStreamQueue
 from .cevoice import CEVoice, bundled_voices_dir
-
+from .singing import validate_singing_notation
+from .threads import run_in_daemon_thread
+from .exceptions import CEVoiceError
+from .backends.vc import VC_BACKENDS
+from .backends.tts import BACKENDS
+from .typing.pipeline import SpeechStreamQueue
 
 if TYPE_CHECKING:
     from .celune import Celune
+
+MCPServer = mcp_server.MCPServer
+Audio = mcp_mcpserver.Audio
+ToolError = mcp_exceptions.ToolError
+TransportSecuritySettings = mcp_transport_security.TransportSecuritySettings
 
 _transport_security = TransportSecuritySettings(
     allowed_hosts=["127.0.0.1:*", "localhost:*", "[::1]:*"],
@@ -146,6 +150,34 @@ async def _generate_audio(content: str, save: bool, *, singing: bool) -> Audio:
     return Audio(data=audio_data, format="flac")
 
 
+def _runtime_status(engine: Celune) -> dict[str, Union[str, bool]]:
+    """Return the current engine state and whether runtime actions can proceed."""
+    return {
+        "engine_state": engine.cur_state,
+        "loaded": engine.loaded,
+        "sleeping": engine.sleeping,
+        "locked": engine.locked,
+        "ready": (
+            engine.loaded
+            and not engine.sleeping
+            and not engine.locked
+            and engine.model_ready.is_set()
+        ),
+    }
+
+
+async def status() -> dict[str, Union[str, bool]]:
+    """Read whether Celune is awake, loaded, and ready for runtime actions."""
+    return _runtime_status(_require_celune())
+
+
+async def wake() -> dict[str, Union[str, bool]]:
+    """Wake Celune from sleep and return the resulting runtime status."""
+    engine = _require_celune()
+    awake = await engine.wake_from_sleep_async()
+    return {**_runtime_status(engine), "awake": awake}
+
+
 def _find_installed_pack(pack_name: str) -> Optional[Path]:
     """Find a voice pack by installed filename or stem, never by arbitrary path."""
     normalized_name = pack_name.casefold()
@@ -228,8 +260,10 @@ async def change_backend(backend_name: str) -> str:
 
 
 def _create_mcp_server() -> MCPServer:
-    """Create an MCP server with Celune's five public control tools."""
+    """Create an MCP server with Celune's seven public control tools."""
     server = MCPServer("Celune")
+    server.add_tool(status, description=string("mcp.status_description"))
+    server.add_tool(wake, description=string("mcp.wake_description"))
     server.add_tool(speak, description=string("mcp.speak_description"))
     server.add_tool(sing, description=string("mcp.sing_description"))
     server.add_tool(run_persona, description=string("mcp.run_persona_description"))
