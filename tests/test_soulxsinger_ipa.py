@@ -10,19 +10,20 @@ from typing import Optional, cast
 import pytest
 import numpy as np
 
-from celune.cesn import CESNSinger
-from celune.cevoice import CEVoiceLoader
-from celune.backends.tts.soulxsinger import (
-    SoulXSinger,
-    decode_score,
-    _SoulXRuntime,
-    pitch_to_midi,
-)
 from celune.exceptions import (
     BackendError,
     CESNBackendFormatError,
     CESNRangeError,
     CESNValidationError,
+)
+from celune.cesn import CESNSinger
+from celune.cevoice import CEVoiceLoader
+
+from celune.backends.tts.soulxsinger import (
+    SoulXSinger,
+    decode_score,
+    _SoulXRuntime,
+    pitch_to_midi,
 )
 
 
@@ -49,6 +50,16 @@ def test_generate_stream_uses_or_rejects_explicit_ipa(
     backend.name = "soulxsinger"
     backend.high_precision = high_precision
     singer = CESNSinger("Test Singer", Path("singer.cevoice"))
+    processed_metadata: list[dict[str, object]] = []
+
+    def process(metadata: dict[str, object], *_args: object) -> dict[str, object]:
+        processed_metadata.append(dict(metadata))
+        for key in ("duration", "phoneme", "note_pitch", "note_type"):
+            value = metadata[key]
+            assert isinstance(value, str)
+            metadata[key] = value.split()
+        return metadata
+
     processor = SimpleNamespace(
         phone2idx={
             "en_K": 0,
@@ -57,19 +68,29 @@ def test_generate_stream_uses_or_rejects_explicit_ipa(
             "en_AH0": 3,
             "en_T": 4,
         },
-        process=mock.Mock(side_effect=lambda metadata, *_args: metadata),
+        process=mock.Mock(side_effect=process),
         hop_size=480,
     )
     inference_model = SimpleNamespace(
         infer=mock.Mock(
             side_effect=[
-                np.ones(48000, dtype=np.float32),
-                np.ones(48000, dtype=np.float32),
+                np.concatenate(
+                    (
+                        np.full(48000, -0.5, dtype=np.float32),
+                        np.full(48000, 0.5, dtype=np.float32),
+                    )
+                ),
+                np.concatenate(
+                    (
+                        np.full(48000, -0.5, dtype=np.float32),
+                        np.full(48000, 0.5, dtype=np.float32),
+                    )
+                ),
             ]
         )
     )
     f0_extractor = SimpleNamespace(
-        process=mock.Mock(return_value=np.full(100, 200.0, dtype=np.float32))
+        process=mock.Mock(return_value=np.full(200, 200.0, dtype=np.float32))
     )
     runtime = SimpleNamespace(
         model=inference_model,
@@ -119,7 +140,9 @@ def test_generate_stream_uses_or_rejects_explicit_ipa(
         ),
     ):
         if expected_error is None:
-            list(backend.generate_stream(loaded_runtime, text=notation))
+            chunks = list(backend.generate_stream(loaded_runtime, text=notation))
+            assert chunks[0][0].shape == (48000,)
+            assert chunks[0][0][0] == pytest.approx(0.5)
         else:
             with pytest.raises(BackendError) as error:
                 list(backend.generate_stream(loaded_runtime, text=notation))
@@ -131,20 +154,32 @@ def test_generate_stream_uses_or_rejects_explicit_ipa(
 
     if expected_phonemes is not None:
         assert processor.process.call_count == (2 if high_precision else 1)
-        target_metadata = processor.process.call_args_list[-1].args[0]
-        assert target_metadata["phoneme"] == (f"{expected_phonemes} <SP>")
+        target_metadata = processed_metadata[-1]
+        assert target_metadata["phoneme"] == (f"<SP> {expected_phonemes} <SP>")
         assert "text" not in target_metadata
+        duration_metadata = target_metadata["duration"]
+        pitch_metadata = target_metadata["note_pitch"]
+        note_type_metadata = target_metadata["note_type"]
+        assert isinstance(duration_metadata, str)
+        assert isinstance(pitch_metadata, str)
+        assert isinstance(note_type_metadata, str)
+        assert duration_metadata.split()[0] == "2"
+        assert pitch_metadata.split()[0] == "0"
+        assert note_type_metadata.split()[0] == "1"
         assert [
             call.kwargs["control"] for call in inference_model.infer.call_args_list
         ] == (["score", "melody"] if high_precision else ["score"])
         assert inference_model.infer.call_args.kwargs["control"] == expected_control
         if high_precision:
-            target_f0 = [float(value) for value in target_metadata["f0"].split()]
+            f0_metadata = target_metadata["f0"]
+            assert isinstance(f0_metadata, str)
+            target_f0 = [float(value) for value in f0_metadata.split()]
             expected_frames = int(
-                sum(float(value) for value in target_metadata["duration"].split()) * 50
+                sum(float(value) for value in duration_metadata.split()) * 50
             )
             assert len(target_f0) == expected_frames
-            assert target_f0[0] == pytest.approx(196.0, abs=0.003)
+            assert target_f0[:100] == [0.0] * 100
+            assert target_f0[100] == pytest.approx(196.0, abs=0.003)
             assert any(value == pytest.approx(220.0) for value in target_f0)
             assert target_f0[-1] == 0.0
         else:

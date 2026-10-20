@@ -22,24 +22,25 @@ import torch
 import numpy as np
 from huggingface_hub import snapshot_download
 
-from .base import CeluneBackend, cached_hf_snapshot_path, to_numpy_audio
-from ..environment import exclusive_lock
 from ...typing.common import JSON
 from ...typing.aliases import AudioChunk
+from ..environment import exclusive_lock
 from ...singing import contains_cesn_note_event
 from ...registry.consent import require_model_consent
 from ...registry.other import SOULX_SINGER_RMVPE_MODEL_ID
-from ...paths import (
-    backend_environments_dir,
-    huggingface_hub_cache_dir,
-    huggingface_progress,
-)
+from .base import CeluneBackend, cached_hf_snapshot_path, to_numpy_audio
+
 from ...cesn import (
     CESNSection,
     CESNNotePair,
     CESNRestEvent,
     parse_cesn,
     resolve_active_singer,
+)
+from ...paths import (
+    backend_environments_dir,
+    huggingface_hub_cache_dir,
+    huggingface_progress,
 )
 from ...cevoice import (
     CEVoice,
@@ -49,13 +50,6 @@ from ...cevoice import (
     bundle_character_name,
     default_loader,
 )
-from ...registry.tts import (
-    SOULX_SINGER_MODEL_ID,
-    SOULX_SINGER_CODE_REPOSITORY,
-    SOULX_SINGER_CODE_REVISION,
-    SOULX_SINGER_REVISION,
-    TTS_DEFAULT_VOICE,
-)
 from ...exceptions import (
     BackendError,
     CEVoiceError,
@@ -64,6 +58,13 @@ from ...exceptions import (
     CESNRangeError,
     CESNValidationError,
     InvalidCharacterError,
+)
+from ...registry.tts import (
+    SOULX_SINGER_MODEL_ID,
+    SOULX_SINGER_CODE_REPOSITORY,
+    SOULX_SINGER_CODE_REVISION,
+    SOULX_SINGER_REVISION,
+    TTS_DEFAULT_VOICE,
 )
 
 __all__ = [
@@ -75,6 +76,7 @@ __all__ = [
 
 _MODEL_FILES = ["config.yaml", "model.pt"]
 _MODEL_LOAD_STEPS = 8
+_MODEL_ONSET_PREROLL_SECONDS = 2.0
 _ARPABET_VOWELS = frozenset(
     {
         "AA",
@@ -576,6 +578,20 @@ def _natural_f0_contour(
         frame_cursor = frame_end
 
     return " ".join(f"{frequency:.10g}" for frequency in contour)
+
+
+def _prepend_onset_rest(
+    metadata: dict[str, str],
+    duration_seconds: float,
+) -> dict[str, str]:
+    """Add silent model context before a target without changing its score."""
+    return {
+        **metadata,
+        "duration": f"{duration_seconds:.10g} {metadata['duration']}",
+        "phoneme": f"<SP> {metadata['phoneme']}",
+        "note_pitch": f"0 {metadata['note_pitch']}",
+        "note_type": f"1 {metadata['note_type']}",
+    }
 
 
 def _serialize_f0(values: np.ndarray) -> str:
@@ -1195,9 +1211,22 @@ class SoulXSinger(CeluneBackend[_SoulXRuntime]):
                     character_name=character_name,
                     pitch_range=loader.bundle.singing_pitch_range or (0, 127),
                 )
+                onset_preroll_frames = round(
+                    _MODEL_ONSET_PREROLL_SECONDS
+                    * model.sample_rate
+                    / model.processor.hop_size
+                )
+                onset_preroll_samples = onset_preroll_frames * model.processor.hop_size
+                onset_preroll_seconds = onset_preroll_samples / model.sample_rate
+                model_metadata = _prepend_onset_rest(
+                    target_metadata,
+                    onset_preroll_seconds,
+                )
                 with torch.inference_mode():
                     if high_precision:
-                        score_target_data = model.processor.process(target_metadata)
+                        score_target_data = model.processor.process(
+                            dict(model_metadata)
+                        )
                         performance = model.model.infer(
                             {"prompt": prompt_data, "target": score_target_data},
                             auto_shift=False,
@@ -1214,8 +1243,8 @@ class SoulXSinger(CeluneBackend[_SoulXRuntime]):
                         extracted_f0 = self._extract_performance_f0(
                             model,
                             performance_audio,
-                        )
-                        target_metadata["f0"] = _natural_f0_contour(
+                        )[onset_preroll_frames:]
+                        target_f0 = _natural_f0_contour(
                             section.events,
                             target_metadata["duration"].split(),
                             target_metadata["note_pitch"].split(),
@@ -1223,7 +1252,10 @@ class SoulXSinger(CeluneBackend[_SoulXRuntime]):
                             model.sample_rate,
                             model.processor.hop_size,
                         )
-                        target_data = model.processor.process(target_metadata)
+                        model_metadata["f0"] = " ".join(
+                            ["0"] * onset_preroll_frames + target_f0.split()
+                        )
+                        target_data = model.processor.process(dict(model_metadata))
                         audio = model.model.infer(
                             {"prompt": prompt_data, "target": target_data},
                             auto_shift=False,
@@ -1234,7 +1266,7 @@ class SoulXSinger(CeluneBackend[_SoulXRuntime]):
                             use_fp16=True,
                         )
                     else:
-                        target_data = model.processor.process(target_metadata)
+                        target_data = model.processor.process(dict(model_metadata))
                         audio = model.model.infer(
                             {"prompt": prompt_data, "target": target_data},
                             auto_shift=False,
@@ -1244,12 +1276,16 @@ class SoulXSinger(CeluneBackend[_SoulXRuntime]):
                             control="score",
                             use_fp16=True,
                         )
-                audio_sections.append(
-                    np.ascontiguousarray(
-                        np.clip(to_numpy_audio(audio), -1.0, 1.0),
-                        dtype=np.float32,
-                    )
+                generated_audio = np.ascontiguousarray(
+                    np.clip(to_numpy_audio(audio), -1.0, 1.0),
+                    dtype=np.float32,
                 )
+                if generated_audio.size <= onset_preroll_samples:
+                    raise BackendError(
+                        "SoulX-Singer generated no audio after onset conditioning",
+                        error_code="soulx_empty_audio",
+                    )
+                audio_sections.append(generated_audio[onset_preroll_samples:])
         finally:
             for loader in owned_loaders.values():
                 loader.close()

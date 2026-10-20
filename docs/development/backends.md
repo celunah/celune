@@ -212,6 +212,10 @@ melody-conditioned pass. This keeps the score's note centers while retaining
 within-note pitch movement from the teacher performance. The singer reference
 uses its measured F0 track, cached with its prompt tensors. High-precision mode
 therefore takes longer and uses more memory than the default score path.
+Each section is conditioned with a two-second leading rest so the first sung
+event is not placed at the model's generation boundary. Celune removes those
+rest samples and their F0 frames before returning audio, preserving the written
+score timing.
 
 The startup probe is CESN notation with explicit `[bpm:120,key:c,scale:major]`
 metadata and the synthetic note `[a4:4][ɑ] Ah`. A singing backend rejects input
