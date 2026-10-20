@@ -40,6 +40,11 @@ from pydantic import Field, BaseModel
 from starlette import types, concurrency, datastructures
 from starlette.middleware import base as middleware_base
 
+from .mcp import (
+    configure_mcp_host_allowlist,
+    mcp_app,
+    mcp_lifespan,
+)
 from .speech import (
     prepare_playback_audio,
 )
@@ -111,10 +116,12 @@ from .webui import actions as webactions
 from .registry.types import ModelMetadata
 from .ui import resources as ui_resources
 from .typing.common import JSONSerializable
+from .singing import validate_singing_notation
 from .extensions.events import EventDispatcher
 from .utils import available, format_error_message
 from .typing.events import EventName, EventCallback
 from .paths import api_key_path, project_root, app_data_dir
+
 
 Callable = abc.Callable
 Iterator = abc.Iterator
@@ -153,7 +160,7 @@ webui_cycle_voice = webactions.webui_cycle_voice
 CeluneUI = webui.CeluneUI
 UiTimedUpdate = webui.UiTimedUpdate
 
-api = FastAPI(title=f"{APP_NAME}API")
+api = FastAPI(title=f"{APP_NAME}API", lifespan=mcp_lifespan)
 
 API_KEY_PREFIX = "C-"
 API_KEY_ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
@@ -1847,6 +1854,44 @@ def speak(body: SpeakRequest) -> Union[StreamingResponse, JSONResponse]:
     )
 
 
+@api.post("/v1/sing", response_model=None)
+def sing(body: SpeakRequest) -> Union[StreamingResponse, JSONResponse]:
+    """Validate CESN, queue singing, and stream generated audio to the caller."""
+    celune = require_celune()
+    if not getattr(getattr(celune, "backend", None), "singing", False):
+        return JSONResponse(
+            status_code=409,
+            content={
+                "error": "unsupported_operation",
+                "message": string("api.singing_backend_required"),
+            },
+        )
+
+    notation_error = validate_singing_notation(celune, body.content)
+    if notation_error is not None:
+        return JSONResponse(
+            status_code=422,
+            content={"error": "invalid_notation", "message": notation_error},
+        )
+
+    api_log("SING", body.content)
+    chunks = celune.say_stream(body.content, save=body.save)
+    if chunks is None:
+        return JSONResponse(
+            status_code=409,
+            content={
+                "error": "not_ready",
+                "message": string("webui.busy_try_again"),
+            },
+        )
+
+    return StreamingResponse(
+        audio_bytes(chunks),
+        media_type="audio/flac",
+        headers=stream_headers(),
+    )
+
+
 @api.post("/v1/speak/async", response_model=None)
 def speak_async(body: SpeakRequest) -> JSONResponse:
     """Queue speech, return immediately, and expose the eventual result as a job.
@@ -2230,6 +2275,7 @@ api = gr.mount_gradio_app(
     css=WEBUI_CSS,
     head=WEBUI_HEAD,
 )
+api.mount("/", app=mcp_app)
 
 
 def run_api(
@@ -2255,6 +2301,7 @@ def run_api(
 
     configure_api_security(token=token, requests_per_minute=requests_per_minute)
     bind_host = resolve_api_host(token=auth_token, host=host)
+    configure_mcp_host_allowlist(bind_host)
 
     def _default_started(bhost: str, bport: int) -> None:
         message = string(

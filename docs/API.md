@@ -1,6 +1,6 @@
 # REST API
 
-Celune can expose a local REST API for speech, sound effects, and voice control.
+Celune can expose a local REST API for speech, singing, sound effects, and voice control.
 The API is enabled by default in `default_config.yaml`:
 
 ```yaml
@@ -98,6 +98,7 @@ api_key = key_file.read_text(encoding="utf-8").strip()
 | `POST` | `/ui/key` | Exchange the API key for a browser WebUI session. |
 | `POST` | `/v1/think` | Ask Celune to think through Persona and reply asynchronously through her normal speech pipeline. |
 | `POST` | `/v1/speak` | Queue speech and keep the HTTP request open until `audio/flac` is ready. |
+| `POST` | `/v1/sing` | Validate CESN, queue singing, and stream the result as `audio/flac`. |
 | `POST` | `/v1/speak/async` | Queue speech and return `202 Accepted` immediately with a job ID. |
 | `GET` | `/v1/speak/jobs/{job_id}` | Poll an async speech job; returns `202` while pending and `audio/flac` when complete. |
 | `POST` | `/v1/speak/jobs/{job_id}/cancel` | Explicitly request cancellation of an active async speech job. |
@@ -107,6 +108,12 @@ api_key = key_file.read_text(encoding="utf-8").strip()
 | `POST` | `/v1/convert` | Upload audio for voice conversion in VC mode. |
 | `GET` | `/v1/models` | List built-in models, pinned revisions, license details, and consent state. |
 | `POST` | `/v1/models/consent` | Record consent for one exact model revision. |
+
+`/v1/sing` uses the same `content` and optional `save` fields as `/v1/speak`.
+It requires a singing-capable backend and valid CESN notation. It returns
+`409 Conflict` when the backend is not ready for singing and `422 Unprocessable
+Content` with a line and column for malformed notation. The optional MCP server
+is available at `/mcp`; see [MCP server](interfaces/mcp.md).
 
 `/v1` and `/v1/version` are authenticated JSON endpoints. The root redirect is
 useful when a browser opens the API port; programmatic clients should call the

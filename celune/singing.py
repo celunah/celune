@@ -5,8 +5,8 @@ from __future__ import annotations
 
 import warnings
 from dataclasses import replace
-from typing import TYPE_CHECKING
 from collections.abc import Callable
+from typing import TYPE_CHECKING, Optional
 
 from .cesn import (
     NOTE_EVENT_PATTERN,
@@ -17,6 +17,7 @@ from .cesn import (
 )
 from .i18n import string
 from .exceptions import CESNError, CESNNotationWarning
+
 
 if TYPE_CHECKING:
     from .celune import Celune
@@ -54,6 +55,23 @@ def format_cesn_error(text: str, error: CESNError) -> str:
         column=column_number,
     )
     return f"{header}\n\n{line}\n{caret_prefix}^ {error}"
+
+
+def validate_singing_notation(engine: Celune, text: str) -> Optional[str]:
+    """Return a user-readable error when input is not valid CESN notation."""
+    if not contains_cesn_note_event(text):
+        return string("cesn.no_notation_found")
+
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", CESNNotationWarning)
+            parse_cesn(
+                text,
+                supported_languages=tuple(engine.backend.supported_languages),
+            )
+    except CESNError as error:
+        return format_cesn_error(text, error)
+    return None
 
 
 def _prepare_synthesis_text(engine: Celune, text: str) -> str:

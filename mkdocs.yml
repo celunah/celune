@@ -59,6 +59,7 @@ nav:
       - CLI: interfaces/cli.md
       - TUI: interfaces/tui.md
       - REST API: API.md
+      - MCP server: interfaces/mcp.md
       - Extensions: interfaces/extensions.md
   - Formats:
       - CEVOICE/CECHAR: CEVOICE.md
