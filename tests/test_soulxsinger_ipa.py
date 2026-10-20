@@ -10,12 +10,6 @@ from typing import Optional, cast
 import pytest
 import numpy as np
 
-from celune.exceptions import (
-    BackendError,
-    CESNValidationError,
-    CESNRangeError,
-    CESNBackendFormatError,
-)
 from celune.cesn import CESNSinger
 from celune.cevoice import CEVoiceLoader
 from celune.backends.tts.soulxsinger import (
@@ -23,6 +17,12 @@ from celune.backends.tts.soulxsinger import (
     decode_score,
     _SoulXRuntime,
     pitch_to_midi,
+)
+from celune.exceptions import (
+    BackendError,
+    CESNBackendFormatError,
+    CESNRangeError,
+    CESNValidationError,
 )
 
 
@@ -57,15 +57,24 @@ def test_generate_stream_uses_or_rejects_explicit_ipa(
             "en_AH0": 3,
             "en_T": 4,
         },
-        process=mock.Mock(return_value={"target": "target"}),
+        process=mock.Mock(side_effect=lambda metadata, *_args: metadata),
         hop_size=480,
     )
     inference_model = SimpleNamespace(
-        infer=mock.Mock(return_value=np.array([0.25], dtype=np.float32))
+        infer=mock.Mock(
+            side_effect=[
+                np.ones(48000, dtype=np.float32),
+                np.ones(48000, dtype=np.float32),
+            ]
+        )
+    )
+    f0_extractor = SimpleNamespace(
+        process=mock.Mock(return_value=np.full(100, 200.0, dtype=np.float32))
     )
     runtime = SimpleNamespace(
         model=inference_model,
         processor=processor,
+        f0_extractor=f0_extractor,
         sample_rate=24000,
         inference_steps=4,
         cfg=1.5,
@@ -104,6 +113,10 @@ def test_generate_stream_uses_or_rejects_explicit_ipa(
             "celune.backends.tts.soulxsinger.to_numpy_audio",
             side_effect=lambda audio: audio,
         ),
+        mock.patch.dict(
+            "sys.modules",
+            {"soundfile": SimpleNamespace(write=mock.Mock())},
+        ),
     ):
         if expected_error is None:
             list(backend.generate_stream(loaded_runtime, text=notation))
@@ -117,10 +130,13 @@ def test_generate_stream_uses_or_rejects_explicit_ipa(
             )
 
     if expected_phonemes is not None:
-        processor.process.assert_called_once()
-        target_metadata = processor.process.call_args.args[0]
+        assert processor.process.call_count == (2 if high_precision else 1)
+        target_metadata = processor.process.call_args_list[-1].args[0]
         assert target_metadata["phoneme"] == (f"{expected_phonemes} <SP>")
         assert "text" not in target_metadata
+        assert [
+            call.kwargs["control"] for call in inference_model.infer.call_args_list
+        ] == (["score", "melody"] if high_precision else ["score"])
         assert inference_model.infer.call_args.kwargs["control"] == expected_control
         if high_precision:
             target_f0 = [float(value) for value in target_metadata["f0"].split()]
@@ -150,6 +166,11 @@ def test_high_precision_prompt_metadata_contains_frame_aligned_f0(
         processor=processor,
         sample_rate=24000,
         prompt_cache={},
+        f0_extractor=SimpleNamespace(
+            process=mock.Mock(
+                return_value=np.array([196.5, 0.0, 200.0], dtype=np.float32)
+            )
+        ),
     )
     loader = SimpleNamespace(
         bundle=SimpleNamespace(
@@ -171,12 +192,11 @@ def test_high_precision_prompt_metadata_contains_frame_aligned_f0(
         )
 
     prompt_metadata = processor.process.call_args.args[0]
-    prompt_f0 = [float(value) for value in prompt_metadata["f0"].split()]
-    expected_frames = int(
-        sum(float(value) for value in prompt_metadata["duration"].split()) * 50
+    assert prompt_metadata["f0"] == "196.5 0 200"
+    runtime.f0_extractor.process.assert_called_once_with(
+        str(tmp_path / "reference.wav"),
+        verbose=False,
     )
-    assert len(prompt_f0) == expected_frames
-    assert prompt_f0[0] == pytest.approx(196.0, abs=0.003)
 
 
 def test_slurred_cesn_keeps_distinct_syllables_as_note_events() -> None:

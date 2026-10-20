@@ -8,18 +8,32 @@ import sys
 import json
 import time
 import shutil
+import tempfile
 import importlib
 import unicodedata
+
 from pathlib import Path
 from types import ModuleType
-from dataclasses import field, dataclass
-from typing import Union, Optional, Protocol, cast
-from collections.abc import Mapping, Callable, Iterator
+from dataclasses import dataclass, field
+from typing import Optional, Protocol, Union, cast
+from collections.abc import Callable, Iterator, Mapping
 
 import torch
 import numpy as np
 from huggingface_hub import snapshot_download
 
+from .base import CeluneBackend, cached_hf_snapshot_path, to_numpy_audio
+from ..environment import exclusive_lock
+from ...typing.common import JSON
+from ...typing.aliases import AudioChunk
+from ...singing import contains_cesn_note_event
+from ...registry.consent import require_model_consent
+from ...registry.other import SOULX_SINGER_RMVPE_MODEL_ID
+from ...paths import (
+    backend_environments_dir,
+    huggingface_hub_cache_dir,
+    huggingface_progress,
+)
 from ...cesn import (
     CESNSection,
     CESNNotePair,
@@ -27,41 +41,30 @@ from ...cesn import (
     parse_cesn,
     resolve_active_singer,
 )
-from ...paths import (
-    huggingface_progress,
-    backend_environments_dir,
-    huggingface_hub_cache_dir,
-)
 from ...cevoice import (
-    V5_VERSION,
-    SINGING_VOICE_NAME,
     CEVoice,
     CEVoiceLoader,
-    default_loader,
+    SINGING_VOICE_NAME,
+    V5_VERSION,
     bundle_character_name,
+    default_loader,
+)
+from ...registry.tts import (
+    SOULX_SINGER_MODEL_ID,
+    SOULX_SINGER_CODE_REPOSITORY,
+    SOULX_SINGER_CODE_REVISION,
+    SOULX_SINGER_REVISION,
+    TTS_DEFAULT_VOICE,
 )
 from ...exceptions import (
     BackendError,
     CEVoiceError,
+    CESNUnsupportedFeatureError,
+    CESNBackendFormatError,
     CESNRangeError,
     CESNValidationError,
     InvalidCharacterError,
-    CESNBackendFormatError,
-    CESNUnsupportedFeatureError,
 )
-from ...registry.tts import (
-    TTS_DEFAULT_VOICE,
-    SOULX_SINGER_MODEL_ID,
-    SOULX_SINGER_REVISION,
-    SOULX_SINGER_CODE_REVISION,
-    SOULX_SINGER_CODE_REPOSITORY,
-)
-from ...typing.common import JSON
-from ...typing.aliases import AudioChunk
-from ..environment import exclusive_lock
-from ...singing import contains_cesn_note_event
-from ...registry.consent import require_model_consent
-from .base import CeluneBackend, to_numpy_audio, cached_hf_snapshot_path
 
 __all__ = [
     "SoulXSinger",
@@ -71,7 +74,7 @@ __all__ = [
 ]
 
 _MODEL_FILES = ["config.yaml", "model.pt"]
-_MODEL_LOAD_STEPS = 7
+_MODEL_LOAD_STEPS = 8
 _ARPABET_VOWELS = frozenset(
     {
         "AA",
@@ -150,6 +153,7 @@ _IPA_TO_ARPABET = {
 _IPA_TO_ARPABET_SYMBOLS = tuple(sorted(_IPA_TO_ARPABET, key=len, reverse=True))
 _PITCH_PATTERN = re.compile(r"(?P<step>[a-g])(?P<accidental>[#b]?)(?P<octave>-?\d+)")
 _PITCH_CLASSES = {"c": 0, "d": 2, "e": 4, "f": 5, "g": 7, "a": 9, "b": 11}
+_RMVPE_FILES = ["rmvpe/rmvpe.pt"]
 
 
 class _SoulXInferenceModel(Protocol):
@@ -179,6 +183,17 @@ class _SoulXDataProcessor(Protocol):
         metadata: dict[str, str],
         wav_path: Optional[str] = None,
     ) -> dict[str, Optional[torch.Tensor]]: ...
+
+
+class _SoulXF0Extractor(Protocol):
+    """Framewise F0 extractor from the pinned SoulX preprocessing source."""
+
+    def process(
+        self,
+        audio_path: str,
+        *,
+        verbose: Optional[bool] = None,
+    ) -> np.ndarray: ...
 
 
 @dataclass(frozen=True)
@@ -214,6 +229,7 @@ class _SoulXRuntime:
     sample_rate: int
     inference_steps: int
     cfg: float
+    f0_extractor: Optional[_SoulXF0Extractor] = None
     prompt_cache: dict[str, dict[str, Optional[torch.Tensor]]] = field(
         default_factory=dict
     )
@@ -226,6 +242,7 @@ class _SoulXSourceModules:
     root: Path
     model: ModuleType
     processor: ModuleType
+    f0: Optional[ModuleType] = None
 
 
 def _ipa_to_arpabet(ipa: str) -> tuple[str, ...]:
@@ -500,28 +517,37 @@ def _pitch_to_midi_for_singer(
     return midi_note
 
 
-def _f0_contour(
+def _natural_f0_contour(
     events: tuple[_ScoreEvent, ...],
     durations: list[str],
     pitches: list[str],
+    extracted_f0: np.ndarray,
     sample_rate: int,
     hop_size: int,
 ) -> str:
-    """Expand note pitches into one F0 value per SoulX mel frame.
+    """Recenter a score-guided performance contour on each written note.
 
     Args:
         events: Ordered score notes and rests.
         durations: Event durations in seconds, formatted for SoulX metadata.
         pitches: Event pitches as MIDI values, with rests represented as zero.
+        extracted_f0: Framewise F0 extracted from a score-conditioned teacher pass.
         sample_rate: Sample rate used by the model processor.
         hop_size: Number of samples between model frames.
 
     Returns:
-        str: Space-separated F0 values in Hz, with zero for rests.
+        str: Space-separated F0 values in Hz, with zero for rests and unvoiced frames.
     """
     frame_rate = sample_rate / hop_size
     total_frames = int(sum(float(duration) for duration in durations) * frame_rate)
-    contour: list[str] = []
+    source_f0 = np.asarray(extracted_f0, dtype=np.float64).reshape(-1)
+    source_f0 = np.where(np.isfinite(source_f0) & (source_f0 > 0), source_f0, 0.0)
+    if len(source_f0) < total_frames:
+        source_f0 = np.pad(source_f0, (0, total_frames - len(source_f0)))
+    else:
+        source_f0 = source_f0[:total_frames]
+
+    contour = np.zeros(total_frames, dtype=np.float64)
     elapsed = 0.0
     frame_cursor = 0
 
@@ -533,15 +559,32 @@ def _f0_contour(
             frame_end = min(total_frames, int(np.round(elapsed * frame_rate)))
         frame_end = max(frame_cursor, frame_end)
 
-        frequency = 0.0
-        if not event.rest:
+        if not event.rest and frame_end > frame_cursor:
             midi_pitch = int(pitches[index])
-            frequency = 440.0 * 2.0 ** ((midi_pitch - 69) / 12.0)
-
-        contour.extend([f"{frequency:.10g}"] * (frame_end - frame_cursor))
+            target_frequency = 440.0 * 2.0 ** ((midi_pitch - 69) / 12.0)
+            event_f0 = source_f0[frame_cursor:frame_end]
+            voiced = event_f0 > 0
+            if np.any(voiced):
+                cents = 1200.0 * np.log2(event_f0[voiced] / target_frequency)
+                centered_cents = cents - np.median(cents)
+                event_contour = contour[frame_cursor:frame_end]
+                event_contour[voiced] = target_frequency * np.exp2(
+                    centered_cents / 1200.0
+                )
+            else:
+                contour[frame_cursor:frame_end] = target_frequency
         frame_cursor = frame_end
 
-    return " ".join(contour)
+    return " ".join(f"{frequency:.10g}" for frequency in contour)
+
+
+def _serialize_f0(values: np.ndarray) -> str:
+    """Serialize finite positive F0 values, retaining zero-valued unvoiced frames."""
+    frequencies = np.asarray(values, dtype=np.float64).reshape(-1)
+    frequencies = np.where(
+        np.isfinite(frequencies) & (frequencies > 0), frequencies, 0.0
+    )
+    return " ".join(f"{frequency:.10g}" for frequency in frequencies)
 
 
 def load_upstream_source() -> Path:
@@ -678,7 +721,7 @@ class SoulXSinger(CeluneBackend[_SoulXRuntime]):
         self._validate_refs()
 
     def _prepare_source_modules(self) -> _SoulXSourceModules:
-        """Load the pinned model and processor modules once, before inference."""
+        """Load the pinned model and enabled preprocessing modules once."""
         source_modules = getattr(self, "_source_modules", None)
         if isinstance(source_modules, _SoulXSourceModules):
             return source_modules
@@ -690,11 +733,17 @@ class SoulXSinger(CeluneBackend[_SoulXRuntime]):
         model_module = importlib.import_module("soulxsinger.models.soulxsinger")
         processor_module = importlib.import_module("soulxsinger.utils.data_processor")
         processor_module.load_wav = _load_soulx_reference_wav
+        f0_module = (
+            importlib.import_module("preprocess.tools.f0_extraction")
+            if getattr(self, "high_precision", False)
+            else None
+        )
 
         source_modules = _SoulXSourceModules(
             root=source_root,
             model=model_module,
             processor=processor_module,
+            f0=f0_module,
         )
         self._source_modules = source_modules
         return source_modules
@@ -747,7 +796,42 @@ class SoulXSinger(CeluneBackend[_SoulXRuntime]):
         del lang
         if model != SOULX_SINGER_MODEL_ID:
             return False, None
-        return cached_hf_snapshot_path(model, _MODEL_FILES, SOULX_SINGER_REVISION)
+        available, snapshot_path = cached_hf_snapshot_path(
+            model,
+            _MODEL_FILES,
+            SOULX_SINGER_REVISION,
+        )
+        if available and getattr(self, "high_precision", False):
+            f0_available, _ = cached_hf_snapshot_path(
+                SOULX_SINGER_RMVPE_MODEL_ID,
+                _RMVPE_FILES,
+            )
+            return f0_available, snapshot_path
+        return available, snapshot_path
+
+    def _ensure_f0_checkpoint(self) -> Path:
+        """Return the reviewed RMVPE checkpoint, downloading it when required."""
+        metadata = require_model_consent(SOULX_SINGER_RMVPE_MODEL_ID)
+        available, snapshot_path = cached_hf_snapshot_path(
+            SOULX_SINGER_RMVPE_MODEL_ID,
+            _RMVPE_FILES,
+            metadata.revision,
+        )
+        if not available or snapshot_path is None:
+            with huggingface_progress(self.report_progress):
+                snapshot_path = snapshot_download(
+                    repo_id=SOULX_SINGER_RMVPE_MODEL_ID,
+                    revision=metadata.revision,
+                    allow_patterns=_RMVPE_FILES,
+                    cache_dir=str(huggingface_hub_cache_dir(create=True)),
+                )
+        checkpoint = Path(snapshot_path) / _RMVPE_FILES[0]
+        if not checkpoint.is_file():
+            raise BackendError(
+                "SoulX-Singer RMVPE checkpoint is unavailable",
+                error_code="soulx_f0_checkpoint_unavailable",
+            )
+        return checkpoint
 
     def preload_models(self) -> None:
         """Prepare the reviewed model weights and pinned SoulX source."""
@@ -761,6 +845,8 @@ class SoulXSinger(CeluneBackend[_SoulXRuntime]):
                     allow_patterns=_MODEL_FILES,
                     cache_dir=str(huggingface_hub_cache_dir(create=True)),
                 )
+        if getattr(self, "high_precision", False):
+            self._ensure_f0_checkpoint()
         load_upstream_source()
 
     def load_model(self, model_id: str, **kwargs: object) -> _SoulXRuntime:
@@ -847,12 +933,32 @@ class SoulXSinger(CeluneBackend[_SoulXRuntime]):
             ),
             device=str(device),
         )
+        f0_extractor: Optional[_SoulXF0Extractor] = None
+        if getattr(self, "high_precision", False):
+            if source_modules.f0 is None:
+                raise BackendError(
+                    "SoulX-Singer F0 extraction source is unavailable",
+                    error_code="soulx_f0_extractor_unavailable",
+                )
+            f0_type = cast(
+                Callable[..., _SoulXF0Extractor], source_modules.f0.F0Extractor
+            )
+            f0_extractor = f0_type(
+                str(self._ensure_f0_checkpoint()),
+                device=str(device),
+                is_half=True,
+                target_sr=int(audio_config["sample_rate"]),
+                hop_size=int(audio_config["hop_size"]),
+                verbose=False,
+            )
+        report_stage(7)
         runtime = _SoulXRuntime(
             model=cast(_SoulXInferenceModel, model),
             processor=processor,
             sample_rate=int(audio_config["sample_rate"]),
             inference_steps=int(inference_config["n_steps"]),
             cfg=float(inference_config["cfg"]),
+            f0_extractor=f0_extractor,
         )
         self.model = runtime
         self.report_progress(_MODEL_LOAD_STEPS, _MODEL_LOAD_STEPS)
@@ -936,7 +1042,6 @@ class SoulXSinger(CeluneBackend[_SoulXRuntime]):
                 ),
                 section.bpm,
                 runtime,
-                high_precision=high_precision,
                 character_name=(
                     bundle_character_name(loader.bundle) or loader.bundle.path.stem
                 ),
@@ -948,6 +1053,15 @@ class SoulXSinger(CeluneBackend[_SoulXRuntime]):
             key: " ".join(section[key] for section in metadata_sections)
             for key in metadata_sections[0]
         }
+        if high_precision:
+            if runtime.f0_extractor is None:
+                raise BackendError(
+                    "SoulX-Singer F0 extraction is unavailable",
+                    error_code="soulx_f0_extractor_unavailable",
+                )
+            prompt_metadata["f0"] = _serialize_f0(
+                runtime.f0_extractor.process(str(reference_wav), verbose=False)
+            )
         prompt_data = runtime.processor.process(prompt_metadata, str(reference_wav))
         runtime.prompt_cache[cache_key] = prompt_data
         return prompt_data
@@ -957,7 +1071,6 @@ class SoulXSinger(CeluneBackend[_SoulXRuntime]):
         events: tuple[_ScoreEvent, ...],
         bpm: int,
         runtime: _SoulXRuntime,
-        high_precision: bool = False,
         character_name: Optional[str] = None,
         pitch_range: Optional[tuple[int, int]] = None,
     ) -> dict[str, str]:
@@ -1019,15 +1132,25 @@ class SoulXSinger(CeluneBackend[_SoulXRuntime]):
             "note_pitch": " ".join(pitches),
             "note_type": " ".join(note_types),
         }
-        if high_precision:
-            metadata["f0"] = _f0_contour(
-                events,
-                durations,
-                pitches,
-                runtime.sample_rate,
-                runtime.processor.hop_size,
-            )
         return metadata
+
+    @staticmethod
+    def _extract_performance_f0(
+        runtime: _SoulXRuntime,
+        audio: np.ndarray,
+    ) -> np.ndarray:
+        """Extract a score-conditioned performance F0 track from temporary audio."""
+        if runtime.f0_extractor is None:
+            raise BackendError(
+                "SoulX-Singer F0 extraction is unavailable",
+                error_code="soulx_f0_extractor_unavailable",
+            )
+        import soundfile as sf
+
+        with tempfile.TemporaryDirectory(prefix="celune-soulx-f0-") as directory:
+            audio_path = Path(directory) / "performance.wav"
+            sf.write(audio_path, audio, runtime.sample_rate, subtype="FLOAT")
+            return runtime.f0_extractor.process(str(audio_path), verbose=False)
 
     def generate_stream(
         self,
@@ -1069,21 +1192,58 @@ class SoulXSinger(CeluneBackend[_SoulXRuntime]):
                     section.events,
                     section.bpm,
                     model,
-                    high_precision=high_precision,
                     character_name=character_name,
                     pitch_range=loader.bundle.singing_pitch_range or (0, 127),
                 )
-                target_data = model.processor.process(target_metadata)
                 with torch.inference_mode():
-                    audio = model.model.infer(
-                        {"prompt": prompt_data, "target": target_data},
-                        auto_shift=False,
-                        pitch_shift=0,
-                        n_steps=model.inference_steps,
-                        cfg=model.cfg,
-                        control="melody" if high_precision else "score",
-                        use_fp16=True,
-                    )
+                    if high_precision:
+                        score_target_data = model.processor.process(target_metadata)
+                        performance = model.model.infer(
+                            {"prompt": prompt_data, "target": score_target_data},
+                            auto_shift=False,
+                            pitch_shift=0,
+                            n_steps=model.inference_steps,
+                            cfg=model.cfg,
+                            control="score",
+                            use_fp16=True,
+                        )
+                        performance_audio = np.ascontiguousarray(
+                            np.clip(to_numpy_audio(performance), -1.0, 1.0),
+                            dtype=np.float32,
+                        )
+                        extracted_f0 = self._extract_performance_f0(
+                            model,
+                            performance_audio,
+                        )
+                        target_metadata["f0"] = _natural_f0_contour(
+                            section.events,
+                            target_metadata["duration"].split(),
+                            target_metadata["note_pitch"].split(),
+                            extracted_f0,
+                            model.sample_rate,
+                            model.processor.hop_size,
+                        )
+                        target_data = model.processor.process(target_metadata)
+                        audio = model.model.infer(
+                            {"prompt": prompt_data, "target": target_data},
+                            auto_shift=False,
+                            pitch_shift=0,
+                            n_steps=model.inference_steps,
+                            cfg=model.cfg,
+                            control="melody",
+                            use_fp16=True,
+                        )
+                    else:
+                        target_data = model.processor.process(target_metadata)
+                        audio = model.model.infer(
+                            {"prompt": prompt_data, "target": target_data},
+                            auto_shift=False,
+                            pitch_shift=0,
+                            n_steps=model.inference_steps,
+                            cfg=model.cfg,
+                            control="score",
+                            use_fp16=True,
+                        )
                 audio_sections.append(
                     np.ascontiguousarray(
                         np.clip(to_numpy_audio(audio), -1.0, 1.0),

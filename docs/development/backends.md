@@ -170,7 +170,11 @@ The model repository is licensed under Apache-2.0; its terms are separate from
 Celune's source license. The registry pins both model weights and source code.
 The worker downloads only `config.yaml` and `model.pt` from the reviewed model
 revision, then strictly loads the checkpoint state dictionary. Preloading also
-prepares the pinned source checkout. The score author supplies IPA directly,
+prepares the pinned source checkout. High-precision mode additionally downloads
+the pinned `rmvpe/rmvpe.pt` checkpoint from the
+[SoulX-Singer preprocessing model](https://huggingface.co/Soul-AILab/SoulX-Singer-Preprocess),
+which is also listed under its Apache-2.0 license. That checkpoint is not
+downloaded when score mode is selected. The score author supplies IPA directly,
 so the worker does not install or download G2P dictionaries. On Windows, the
 isolated SoulX worker defaults `OPENBLAS_NUM_THREADS` to `1` unless the host
 already sets it, limiting BLAS thread oversubscription.
@@ -200,6 +204,14 @@ for the notation and conversion behavior.
 Changes in singer, tempo, key, or scale remain section boundaries; the model
 synthesizes each section and Celune concatenates the resulting audio. SoulX
 returns one complete 24 kHz waveform, so it does not stream partial score audio.
+By default, each section uses one score-conditioned inference pass. With
+`backend_options.soulxsinger.high_precision: true`, Celune first makes a
+score-conditioned teacher pass, extracts its framewise F0 with RMVPE, recenters
+each note's median pitch on the written CESN pitch, then performs a second
+melody-conditioned pass. This keeps the score's note centers while retaining
+within-note pitch movement from the teacher performance. The singer reference
+uses its measured F0 track, cached with its prompt tensors. High-precision mode
+therefore takes longer and uses more memory than the default score path.
 
 The startup probe is CESN notation with explicit `[bpm:120,key:c,scale:major]`
 metadata and the synthetic note `[a4:4][ɑ] Ah`. A singing backend rejects input

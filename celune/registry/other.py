@@ -11,6 +11,8 @@ NORMALIZER_MODEL_ID = "lunahr/CeluneNorm-0.6B-v2.0-ctx2048"
 CAPTION_ALIGNMENT_MODEL_ID = "sadda-speech/wav2vec2-espeak-ctc"
 NEEDLE_MODEL_ID = "Cactus-Compute/needle"
 NEEDLE_MODEL_REVISION = "5f89b4307696d669c3df1d38ae057e6e1728b107"
+SOULX_SINGER_RMVPE_MODEL_ID = "Soul-AILab/SoulX-Singer-Preprocess"
+SOULX_SINGER_RMVPE_REVISION = "af0295c6a2b8fd6e3626b09efe6165251339d6bd"
 
 _APACHE_2_LICENSE_URL = "https://www.apache.org/licenses/LICENSE-2.0"
 _MIT_LICENSE_URL = "https://opensource.org/license/mit"
@@ -89,6 +91,18 @@ OTHER_MODELS: tuple[ModelMetadata, ...] = (
         research_only=False,
         repository_url=f"{_HUGGING_FACE_ROOT}{NEEDLE_MODEL_ID}",
         roles=("agent",),
+    ),
+    ModelMetadata(
+        model_id=SOULX_SINGER_RMVPE_MODEL_ID,
+        display_name="SoulX-Singer RMVPE F0 extractor",
+        category="other",
+        revision=SOULX_SINGER_RMVPE_REVISION,
+        license_id="apache-2.0",
+        license_url=_APACHE_2_LICENSE_URL,
+        non_commercial=False,
+        research_only=False,
+        repository_url=f"{_HUGGING_FACE_ROOT}{SOULX_SINGER_RMVPE_MODEL_ID}",
+        roles=("singing_f0_extraction",),
     ),
     ModelMetadata(
         model_id="Plachta/Seed-VC",

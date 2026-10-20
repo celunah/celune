@@ -50,9 +50,13 @@ backend_options:
     high_precision: true
 ```
 
-In this mode, Celune expands CESN note pitches into a frame-aligned F0 contour
-for both the singer reference and requested score. The current CESN pitch syntax
-still specifies notes, so this option does not add pitch bends or cents offsets.
+This mode downloads SoulX-Singer's pinned RMVPE F0 extractor checkpoint if it is
+not already cached. Celune measures the singer reference's F0, generates a
+score-conditioned teacher performance, extracts its natural pitch movement,
+re-centers each note on the written pitch, and then synthesizes a final
+melody-conditioned performance. This adds a second inference pass, so it takes
+longer than the default score mode. CESN still specifies note pitches; this
+option does not add explicit pitch bends or cents offsets to the notation.
 
 Set `commercial: true` when Celune is used commercially. Models marked
 non-commercial or research-only, models with unknown license restrictions, and

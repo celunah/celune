@@ -4,32 +4,37 @@
 import re
 import json
 import asyncio
-from types import SimpleNamespace
+
 from typing import cast
 from pathlib import Path
 from unittest import mock
+from types import SimpleNamespace
 
 from starlette.requests import Request
 
 from celune import api
 from celune.i18n import string
+from celune.backends.vc import seedvc
+from celune.cedts.remote import RemoteBackendProxy
 from celune.registry import ALL_MODELS, get_model_metadata
+from celune.agent.needle import checkpoints as needle_checkpoints
 from celune.exceptions import (
     ModelConsentDeclined,
     ModelConsentRequired,
     ModelCommercialUseRestricted,
 )
-from celune.backends.vc import seedvc
-from celune.agent.needle import checkpoints as needle_checkpoints
-from celune.cedts.remote import RemoteBackendProxy
-from celune.registry.other import OTHER_MODELS
+from celune.registry.other import (
+    OTHER_MODELS,
+    SOULX_SINGER_RMVPE_MODEL_ID,
+    SOULX_SINGER_RMVPE_REVISION,
+)
 from celune.registry.consent import (
     ModelConsentStore,
     consent_prompt_text,
-    set_commercial_mode,
     record_model_consent,
     require_model_consent,
     resolve_model_metadata,
+    set_commercial_mode,
 )
 
 
@@ -54,6 +59,16 @@ def test_catalogs_have_unique_pinned_models_and_explicit_unknown_terms() -> None
     assert unknown.non_commercial is None
     assert unknown.research_only is None
     assert unknown.requires_consent
+
+
+def test_soulxsinger_rmvpe_checkpoint_has_reviewed_model_metadata() -> None:
+    """Register the optional high-precision F0 extractor under its pinned terms."""
+    metadata = get_model_metadata(SOULX_SINGER_RMVPE_MODEL_ID)
+
+    assert metadata is not None
+    assert metadata.revision == SOULX_SINGER_RMVPE_REVISION
+    assert metadata.license_id == "apache-2.0"
+    assert metadata.commercial_use_allowed
 
 
 def test_commercial_mode_requires_reviewed_commercial_terms() -> None:

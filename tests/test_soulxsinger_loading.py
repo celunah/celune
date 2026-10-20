@@ -16,6 +16,7 @@ def test_soulxsinger_preload_prepares_only_the_pinned_source() -> None:
     backend = object.__new__(soulxsinger.SoulXSinger)
     backend.log = mock.Mock()
     backend._progress_callback = mock.Mock()
+    backend.high_precision = False
 
     with (
         mock.patch.object(soulxsinger, "require_model_consent"),
@@ -25,11 +26,35 @@ def test_soulxsinger_preload_prepares_only_the_pinned_source() -> None:
             return_value=(True, "cached"),
         ),
         mock.patch.object(soulxsinger, "load_upstream_source") as load_source,
+        mock.patch.object(backend, "_ensure_f0_checkpoint") as load_f0,
     ):
         backend.preload_models()
 
     load_source.assert_called_once_with()
+    load_f0.assert_not_called()
     backend.log.assert_not_called()
+
+
+def test_soulxsinger_preload_downloads_f0_checkpoint_only_in_melody_mode() -> None:
+    """Fetch the separate RMVPE checkpoint only when high precision is enabled."""
+    backend = object.__new__(soulxsinger.SoulXSinger)
+    backend.log = mock.Mock()
+    backend._progress_callback = mock.Mock()
+    backend.high_precision = True
+
+    with (
+        mock.patch.object(soulxsinger, "require_model_consent"),
+        mock.patch.object(
+            backend,
+            "model_is_available_locally",
+            return_value=(True, "cached"),
+        ),
+        mock.patch.object(soulxsinger, "load_upstream_source"),
+        mock.patch.object(backend, "_ensure_f0_checkpoint") as load_f0,
+    ):
+        backend.preload_models()
+
+    load_f0.assert_called_once_with()
 
 
 def test_soulxsinger_errors_use_english_diagnostics() -> None:
@@ -77,13 +102,16 @@ def test_soulxsinger_reference_wav_loader_uses_soundfile_and_resamples() -> None
     )
 
 
+@pytest.mark.parametrize("high_precision", (False, True))
 def test_soulxsinger_load_model_reports_progress_without_stage_logs(
     tmp_path: Path,
+    high_precision: bool,
 ) -> None:
     """Report numeric loading progress without logging internal setup steps."""
     backend = object.__new__(soulxsinger.SoulXSinger)
     backend.log = mock.Mock()
     backend._progress_callback = mock.Mock()
+    backend.high_precision = high_precision
     model = mock.Mock()
     processor = mock.Mock()
     model_module = SimpleNamespace(SoulXSinger=mock.Mock(return_value=model))
@@ -91,9 +119,14 @@ def test_soulxsinger_load_model_reports_progress_without_stage_logs(
         DataProcessor=mock.Mock(return_value=processor),
         load_wav=mock.Mock(),
     )
+    f0_extractor = mock.Mock()
+    f0_module = SimpleNamespace(
+        F0Extractor=mock.Mock(return_value=f0_extractor),
+    )
     modules = {
         "soulxsinger.models.soulxsinger": model_module,
         "soulxsinger.utils.data_processor": processor_module,
+        "preprocess.tools.f0_extraction": f0_module,
     }
     omega_conf = SimpleNamespace(
         load=mock.Mock(
@@ -120,6 +153,11 @@ def test_soulxsinger_load_model_reports_progress_without_stage_logs(
             return_value=(True, str(tmp_path)),
         ),
         mock.patch.object(
+            backend,
+            "_ensure_f0_checkpoint",
+            return_value=tmp_path / "rmvpe.pt",
+        ) as ensure_f0,
+        mock.patch.object(
             soulxsinger.torch,
             "load",
             return_value={"state_dict": {}},
@@ -128,14 +166,31 @@ def test_soulxsinger_load_model_reports_progress_without_stage_logs(
         mock.patch.dict(soulxsinger.sys.modules, {"omegaconf": omega_module}),
     ):
         backend.prepare_model_loading()
-        backend.load_model(soulxsinger.SOULX_SINGER_MODEL_ID)
+        runtime = backend.load_model(soulxsinger.SOULX_SINGER_MODEL_ID)
 
-    assert import_module.call_args_list == [
+    expected_imports = [
         mock.call("soulxsinger.models.soulxsinger"),
         mock.call("soulxsinger.utils.data_processor"),
     ]
+    if high_precision:
+        expected_imports.append(mock.call("preprocess.tools.f0_extraction"))
+    assert import_module.call_args_list == expected_imports
     assert backend._progress_callback.call_args_list == [
-        mock.call(step, 7) for step in range(8)
+        mock.call(step, 8) for step in range(9)
     ]
     assert processor_module.load_wav is soulxsinger._load_soulx_reference_wav
+    if high_precision:
+        ensure_f0.assert_called_once_with()
+        f0_module.F0Extractor.assert_called_once_with(
+            str(tmp_path / "rmvpe.pt"),
+            device="cuda",
+            is_half=True,
+            target_sr=24000,
+            hop_size=256,
+            verbose=False,
+        )
+        assert runtime.f0_extractor is f0_extractor
+    else:
+        ensure_f0.assert_not_called()
+        assert runtime.f0_extractor is None
     backend.log.assert_not_called()
