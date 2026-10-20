@@ -2,7 +2,6 @@
 """Tests for explicit CESN IPA syllable alignment."""
 
 import json
-
 from pathlib import Path
 from unittest import mock
 from types import SimpleNamespace
@@ -18,6 +17,7 @@ from celune.exceptions import (
     CESNBackendFormatError,
 )
 from celune.cesn import CESNSinger
+from celune.cevoice import CEVoiceLoader
 from celune.backends.tts.soulxsinger import (
     SoulXSinger,
     decode_score,
@@ -33,14 +33,21 @@ from celune.backends.tts.soulxsinger import (
         ("ˈkwaɪ.ɲ", None, "soulx_ipa_unsupported"),
     ),
 )
+@pytest.mark.parametrize(
+    ("high_precision", "expected_control"),
+    ((False, "score"), (True, "melody")),
+)
 def test_generate_stream_uses_or_rejects_explicit_ipa(
     ipa: str,
     expected_phonemes: Optional[str],
     expected_error: Optional[str],
+    high_precision: bool,
+    expected_control: str,
 ) -> None:
     """Convert each explicit IPA syllable and reject unsupported phone symbols."""
     backend = object.__new__(SoulXSinger)
     backend.name = "soulxsinger"
+    backend.high_precision = high_precision
     singer = CESNSinger("Test Singer", Path("singer.cevoice"))
     processor = SimpleNamespace(
         phone2idx={
@@ -51,6 +58,7 @@ def test_generate_stream_uses_or_rejects_explicit_ipa(
             "en_T": 4,
         },
         process=mock.Mock(return_value={"target": "target"}),
+        hop_size=480,
     )
     inference_model = SimpleNamespace(
         infer=mock.Mock(return_value=np.array([0.25], dtype=np.float32))
@@ -110,10 +118,65 @@ def test_generate_stream_uses_or_rejects_explicit_ipa(
 
     if expected_phonemes is not None:
         processor.process.assert_called_once()
-        assert processor.process.call_args.args[0]["phoneme"] == (
-            f"{expected_phonemes} <SP>"
+        target_metadata = processor.process.call_args.args[0]
+        assert target_metadata["phoneme"] == (f"{expected_phonemes} <SP>")
+        assert "text" not in target_metadata
+        assert inference_model.infer.call_args.kwargs["control"] == expected_control
+        if high_precision:
+            target_f0 = [float(value) for value in target_metadata["f0"].split()]
+            expected_frames = int(
+                sum(float(value) for value in target_metadata["duration"].split()) * 50
+            )
+            assert len(target_f0) == expected_frames
+            assert target_f0[0] == pytest.approx(196.0, abs=0.003)
+            assert any(value == pytest.approx(220.0) for value in target_f0)
+            assert target_f0[-1] == 0.0
+        else:
+            assert "f0" not in target_metadata
+
+
+def test_high_precision_prompt_metadata_contains_frame_aligned_f0(
+    tmp_path: Path,
+) -> None:
+    """Prepare frame-aligned reference F0 when melody conditioning is enabled."""
+    reference_bundle = tmp_path / "singer.cevoice"
+    reference_bundle.write_bytes(b"voice pack")
+    processor = SimpleNamespace(
+        phone2idx={"en_AA0": 0},
+        process=mock.Mock(return_value={"prompt": "prompt"}),
+        hop_size=480,
+    )
+    runtime = SimpleNamespace(
+        processor=processor,
+        sample_rate=24000,
+        prompt_cache={},
+    )
+    loader = SimpleNamespace(
+        bundle=SimpleNamespace(
+            path=reference_bundle,
+            singing_pitch_range=(0, 127),
         )
-        assert "text" not in processor.process.call_args.args[0]
+    )
+
+    with mock.patch(
+        "celune.backends.tts.soulxsinger.bundle_character_name",
+        return_value="Test Singer",
+    ):
+        SoulXSinger._prompt_data(
+            cast(_SoulXRuntime, runtime),
+            cast(CEVoiceLoader, loader),
+            "[lang:en][g3:4][ɑ]Ah",
+            tmp_path / "reference.wav",
+            high_precision=True,
+        )
+
+    prompt_metadata = processor.process.call_args.args[0]
+    prompt_f0 = [float(value) for value in prompt_metadata["f0"].split()]
+    expected_frames = int(
+        sum(float(value) for value in prompt_metadata["duration"].split()) * 50
+    )
+    assert len(prompt_f0) == expected_frames
+    assert prompt_f0[0] == pytest.approx(196.0, abs=0.003)
 
 
 def test_slurred_cesn_keeps_distinct_syllables_as_note_events() -> None:

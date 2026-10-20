@@ -10,6 +10,7 @@ import json
 import math
 import uuid
 import queue
+import ctypes
 import inspect
 import pathlib
 import contextlib
@@ -49,7 +50,6 @@ from .typing.locks import (
     ComponentLockAcquisition,
     ComponentLockRequirement,
 )
-from .utils import available, discard
 from .dataclasses.pipeline import (
     SpeechTiming,
     PlaybackChunk,
@@ -57,6 +57,7 @@ from .dataclasses.pipeline import (
     CaptionPlaybackState,
     CaptionPlaybackSegment,
 )
+from .utils import available, discard
 from .locks import ComponentLockManager
 from .typing.common import JSONSerializable
 from .typing.pipeline import SpeechStreamQueue
@@ -116,6 +117,24 @@ __all__ = (
     "update_playback_progress",
     "youtube_sfx_title",
 )
+
+
+def prioritize_playback_writer_thread() -> None:
+    """Raise the playback writer above normal priority on supported Windows hosts."""
+    if os.name != "nt":
+        return
+
+    try:
+        windll = getattr(ctypes, "WinDLL", None)
+        if not callable(windll):
+            return
+        windll = cast(collections.abc.Callable[..., ctypes.CDLL], windll)
+        win_dll = windll("kernel32", use_last_error=True)
+        current_thread = win_dll.GetCurrentThread()
+        if not win_dll.SetThreadPriority(current_thread, 1):
+            return
+    except (AttributeError, OSError, TypeError):
+        return
 
 
 def _pipeline_requirements(action: str) -> tuple[ComponentLockRequirement, ...]:

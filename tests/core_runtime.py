@@ -308,6 +308,37 @@ class TestCeluneCore(CeluneTestCase):
         assert resolve.call_args.kwargs["quantize_kv_cache"] is False
         assert celune._backend_reload_kwargs("voxcpm2")["quantize_kv_cache"] is False
 
+    def test_soulxsinger_backend_options_reach_initial_and_reloaded_backends(
+        self,
+    ) -> None:
+        """Forward namespaced SoulX options during initial load and reload."""
+        with (
+            mock.patch("celune.celune.AudioRGBGlow", FakeGlow),
+            mock.patch("celune.celune.default_loader", return_value=None),
+            mock.patch("celune.celune.persona_is_available", return_value=False),
+            mock.patch(
+                "celune.celune.resolve_backend_name",
+                return_value="soulxsinger",
+            ),
+            mock.patch(
+                "celune.celune.resolve_backend",
+                return_value=FakeBackend(),
+            ) as resolve,
+        ):
+            celune = Celune(
+                config={
+                    "backend_options": {
+                        "soulxsinger": {"high_precision": True},
+                    },
+                },
+                tts_backend="soulxsinger",
+            )
+            self.addCleanup(self._close_celune, celune)
+
+        assert resolve.call_args.kwargs["high_precision"] is True
+        assert celune._backend_reload_kwargs("soulxsinger")["high_precision"] is True
+        assert "high_precision" not in celune._backend_reload_kwargs("mini")
+
     def test_constructor_accepts_backend_alias_for_vc_runtime(self) -> None:
         """Verify ``backend=`` can configure the VC runtime in VC mode."""
         with (

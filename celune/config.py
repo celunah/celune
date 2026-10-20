@@ -2,11 +2,12 @@
 """Configuration helpers for Celune."""
 
 import os
+from pathlib import Path
 from copy import deepcopy
 
 # noinspection PyProtectedMember
 from typing import Optional, cast
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 
 from .i18n import string
 from .typing.config import (
@@ -16,6 +17,7 @@ from .typing.config import (
     AudioDeviceInfoValue,
     AudioDeviceQueryResult,
 )
+from .paths import api_key_path
 from .constants import APP_NAME
 from .typing.aliases import LogLevel
 from .typing.common import Config, JSONSerializable
@@ -74,6 +76,167 @@ def config_value(
     if not config:
         return default
     return config.get(key, default)
+
+
+def config_int(value: JSONSerializable, default: int) -> int:
+    """Return a config value as an integer when it is scalar-like."""
+    if isinstance(value, bool):
+        raise TypeError("boolean is not an integer config value")
+    if isinstance(value, (int, float, str)):
+        return int(value)
+    if value is None:
+        return default
+    raise TypeError("config value cannot be converted to int")
+
+
+def config_backend_options(
+    config: Optional[Mapping[str, JSONSerializable]],
+    backend_name: Optional[str],
+) -> dict[str, JSONSerializable]:
+    """Return constructor options configured for one backend.
+
+    Args:
+        config: Loaded YAML configuration, or ``None``.
+        backend_name: Registered name of the selected backend.
+
+    Returns:
+        dict[str, JSONSerializable]: Options configured for that backend.
+    """
+    if backend_name is None:
+        return {}
+
+    options_by_backend = config_value(config, "backend_options")
+    if not isinstance(options_by_backend, dict):
+        return {}
+
+    options = options_by_backend.get(backend_name.strip().lower())
+    if not isinstance(options, dict):
+        return {}
+
+    return cast(dict[str, JSONSerializable], options)
+
+
+def config_api_settings(
+    config: Optional[Mapping[str, JSONSerializable]],
+    log: Callable[[str, str], None],
+    path_factory: Callable[[bool], Path] = api_key_path,
+) -> tuple[bool, str, int, Optional[str], int, str]:
+    """Resolve API access, authentication, port, and rate-limit settings.
+
+    Args:
+        config: Loaded YAML configuration, or ``None``.
+        log: Callback for user-visible API configuration warnings.
+        path_factory: Callback that creates the local API key path.
+
+    Returns:
+        tuple[bool, str, int, Optional[str], int, str]: Enabled state, bind host,
+            port, token, request limit, and access level.
+    """
+    api_config = config_value(config, "api", {})
+
+    if isinstance(api_config, bool):
+        enabled = api_config
+        options: Mapping[str, JSONSerializable] = {}
+    elif api_config is None:
+        enabled = False
+        options = {}
+    elif isinstance(api_config, dict):
+        enabled = bool(api_config.get("enabled", True))
+        options = api_config
+    else:
+        enabled = bool(api_config)
+        options = {}
+
+    configured_access = options.get("access")
+    if configured_access is None:
+        legacy_host = str(options.get("host", "127.0.0.1")).strip().casefold()
+        access_level = (
+            "same_machine"
+            if legacy_host in {"localhost", "127.0.0.1", "::1"}
+            else "same_network"
+        )
+    elif isinstance(configured_access, str) and configured_access in {
+        "same_machine",
+        "same_network",
+        "everyone",
+    }:
+        access_level = str(configured_access)
+    else:
+        log(
+            string(
+                "celune.api_access_invalid",
+                app_name=APP_NAME,
+                access=configured_access,
+            ),
+            "warning",
+        )
+        access_level = "same_machine"
+
+    host = "0.0.0.0" if access_level == "same_network" else "127.0.0.1"
+    token_value = options.get("token")
+    token = str(token_value).strip() if token_value is not None else None
+    if enabled:
+        key_file = path_factory(True)
+        env_token = os.getenv("CELUNE_API_TOKEN", "").strip()
+        uses_generated_key = not token and not env_token
+        try:
+            from .api import get_or_create_api_key
+        except ModuleNotFoundError:
+            token = token or env_token or None
+        else:
+            token = get_or_create_api_key(token, path=key_file)
+            if uses_generated_key:
+                log(
+                    string(
+                        "celune.api_key_file",
+                        app_name=APP_NAME,
+                        path=str(key_file),
+                    ),
+                    "info",
+                )
+
+    try:
+        port = config_int(options.get("port", 2060), 2060)
+    except (TypeError, ValueError):
+        invalid_port = options.get("port", 2060)
+        log(
+            string("celune.api_port_invalid", app_name=APP_NAME, port=invalid_port),
+            "warning",
+        )
+        port = 2060
+
+    if not 1 <= port <= 65535:
+        log(
+            string("celune.api_port_out_of_range", app_name=APP_NAME, port=port),
+            "warning",
+        )
+        port = 2060
+
+    try:
+        requests_per_minute = config_int(
+            options.get("rate_limit_per_minute", 60),
+            60,
+        )
+    except (TypeError, ValueError):
+        invalid_ratelimit = options.get("rate_limit_per_minute", 60)
+        log(
+            string(
+                "celune.api_rate_limit_invalid",
+                app_name=APP_NAME,
+                rate=invalid_ratelimit,
+            ),
+            "warning",
+        )
+        requests_per_minute = 60
+
+    return (
+        enabled,
+        host,
+        port,
+        token,
+        max(0, requests_per_minute),
+        access_level,
+    )
 
 
 def config_bool(

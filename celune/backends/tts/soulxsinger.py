@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Score-conditioned SoulX-Singer integration for CECHAR v5 packs."""
+"""Score- and F0-conditioned SoulX-Singer integration for CECHAR v5 packs."""
 
 from __future__ import annotations
 
@@ -172,6 +172,7 @@ class _SoulXDataProcessor(Protocol):
     """Metadata processor used by the pinned upstream model."""
 
     phone2idx: Mapping[str, int]
+    hop_size: int
 
     def process(
         self,
@@ -499,6 +500,50 @@ def _pitch_to_midi_for_singer(
     return midi_note
 
 
+def _f0_contour(
+    events: tuple[_ScoreEvent, ...],
+    durations: list[str],
+    pitches: list[str],
+    sample_rate: int,
+    hop_size: int,
+) -> str:
+    """Expand note pitches into one F0 value per SoulX mel frame.
+
+    Args:
+        events: Ordered score notes and rests.
+        durations: Event durations in seconds, formatted for SoulX metadata.
+        pitches: Event pitches as MIDI values, with rests represented as zero.
+        sample_rate: Sample rate used by the model processor.
+        hop_size: Number of samples between model frames.
+
+    Returns:
+        str: Space-separated F0 values in Hz, with zero for rests.
+    """
+    frame_rate = sample_rate / hop_size
+    total_frames = int(sum(float(duration) for duration in durations) * frame_rate)
+    contour: list[str] = []
+    elapsed = 0.0
+    frame_cursor = 0
+
+    for index, event in enumerate(events):
+        elapsed += float(durations[index])
+        if index == len(events) - 1:
+            frame_end = total_frames
+        else:
+            frame_end = min(total_frames, int(np.round(elapsed * frame_rate)))
+        frame_end = max(frame_cursor, frame_end)
+
+        frequency = 0.0
+        if not event.rest:
+            midi_pitch = int(pitches[index])
+            frequency = 440.0 * 2.0 ** ((midi_pitch - 69) / 12.0)
+
+        contour.extend([f"{frequency:.10g}"] * (frame_end - frame_cursor))
+        frame_cursor = frame_end
+
+    return " ".join(contour)
+
+
 def load_upstream_source() -> Path:
     """Return the exact pinned SoulX source checkout, downloading it once if needed."""
     from git import Repo
@@ -587,7 +632,7 @@ def _load_soulx_reference_wav(
 
 
 class SoulXSinger(CeluneBackend[_SoulXRuntime]):
-    """Score-controlled singing backend driven by a CECHAR v5 ``sing`` voice."""
+    """Score- or F0-controlled singing backend using a CECHAR v5 ``sing`` voice."""
 
     name = "soulxsinger"
     chunk_rate = 1.0
@@ -602,9 +647,24 @@ class SoulXSinger(CeluneBackend[_SoulXRuntime]):
         fatal: Optional[Callable[[], None]] = None,
         quantize: bool = True,
         quantize_kv_cache: bool = True,
+        high_precision: bool = False,
     ) -> None:
-        """Initialize SoulX-Singer with Celune's common TTS backend contract."""
+        """Initialize SoulX-Singer with its selected pitch-conditioning mode.
+
+        Args:
+            log: Backend logging callback.
+            fatal: Optional callback for unrecoverable worker failures.
+            quantize: Shared quantization request, ignored by this backend.
+            quantize_kv_cache: Shared cache policy, ignored by this backend.
+            high_precision: Use frame-aligned F0 conditioning instead of score
+                conditioning.
+
+        Raises:
+            TypeError: If ``high_precision`` is not a boolean.
+        """
         del quantize, quantize_kv_cache
+        if not isinstance(high_precision, bool):
+            raise TypeError("high_precision must be a boolean")
         super().__init__(
             log=log,
             model_name=SOULX_SINGER_MODEL_ID,
@@ -613,6 +673,7 @@ class SoulXSinger(CeluneBackend[_SoulXRuntime]):
             quantize_kv_cache=False,
             singing=True,
         )
+        self.high_precision = high_precision
         self._source_modules: Optional[_SoulXSourceModules] = None
         self._validate_refs()
 
@@ -846,10 +907,13 @@ class SoulXSinger(CeluneBackend[_SoulXRuntime]):
         loader: CEVoiceLoader,
         score_text: str,
         reference_wav: Path,
+        high_precision: bool = False,
     ) -> dict[str, Optional[torch.Tensor]]:
-        """Build or retrieve the model's cached prompt tensors for one singer."""
+        """Build or retrieve prompt tensors for the selected conditioning mode."""
         stat = loader.bundle.path.stat()
         cache_key = f"{loader.bundle.path.resolve()}:{stat.st_mtime_ns}:{stat.st_size}"
+        if high_precision:
+            cache_key = f"{cache_key}:melody"
         prompt_data = runtime.prompt_cache.get(cache_key)
         if prompt_data is not None:
             return prompt_data
@@ -872,6 +936,7 @@ class SoulXSinger(CeluneBackend[_SoulXRuntime]):
                 ),
                 section.bpm,
                 runtime,
+                high_precision=high_precision,
                 character_name=(
                     bundle_character_name(loader.bundle) or loader.bundle.path.stem
                 ),
@@ -892,10 +957,11 @@ class SoulXSinger(CeluneBackend[_SoulXRuntime]):
         events: tuple[_ScoreEvent, ...],
         bpm: int,
         runtime: _SoulXRuntime,
+        high_precision: bool = False,
         character_name: Optional[str] = None,
         pitch_range: Optional[tuple[int, int]] = None,
     ) -> dict[str, str]:
-        """Translate score events into SoulX fields, including slur continuations."""
+        """Translate CESN events into score fields and optional framewise F0."""
         durations: list[str] = []
         phonemes: list[str] = []
         pitches: list[str] = []
@@ -947,19 +1013,29 @@ class SoulXSinger(CeluneBackend[_SoulXRuntime]):
             note_types.append("3" if is_repeated_slur else "2")
             previous_phone_tokens = tuple(phone_tokens)
 
-        return {
+        metadata = {
             "duration": " ".join(durations),
             "phoneme": " ".join(phonemes),
             "note_pitch": " ".join(pitches),
             "note_type": " ".join(note_types),
         }
+        if high_precision:
+            metadata["f0"] = _f0_contour(
+                events,
+                durations,
+                pitches,
+                runtime.sample_rate,
+                runtime.processor.hop_size,
+            )
+        return metadata
 
     def generate_stream(
         self,
         model: _SoulXRuntime,
         **kwargs: object,
     ) -> Iterator[tuple[AudioChunk, int, Optional[JSON]]]:
-        """Generate one complete score waveform from the CECHAR singing reference."""
+        """Generate one waveform using score or framewise F0 conditioning."""
+        high_precision = getattr(self, "high_precision", False) is True
         text = kwargs.pop("text", None)
         if not isinstance(text, str) or not text.strip():
             raise ValueError("text must be a non-empty string")
@@ -980,7 +1056,11 @@ class SoulXSinger(CeluneBackend[_SoulXRuntime]):
                 loader = self._singer_loader(section.singer_path, owned_loaders)
                 score_text, reference_wav = self._validate_singing_voice(loader)
                 prompt_data = self._prompt_data(
-                    model, loader, score_text, reference_wav
+                    model,
+                    loader,
+                    score_text,
+                    reference_wav,
+                    high_precision=high_precision,
                 )
                 character_name = (
                     bundle_character_name(loader.bundle) or loader.bundle.path.stem
@@ -989,6 +1069,7 @@ class SoulXSinger(CeluneBackend[_SoulXRuntime]):
                     section.events,
                     section.bpm,
                     model,
+                    high_precision=high_precision,
                     character_name=character_name,
                     pitch_range=loader.bundle.singing_pitch_range or (0, 127),
                 )
@@ -1000,7 +1081,7 @@ class SoulXSinger(CeluneBackend[_SoulXRuntime]):
                         pitch_shift=0,
                         n_steps=model.inference_steps,
                         cfg=model.cfg,
-                        control="score",
+                        control="melody" if high_precision else "score",
                         use_fp16=True,
                     )
                 audio_sections.append(

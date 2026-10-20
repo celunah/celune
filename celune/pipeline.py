@@ -3,11 +3,9 @@
 
 from __future__ import annotations
 
-import os
 import re
 import time
 import queue
-import ctypes
 import random
 import asyncio
 import pathlib
@@ -53,6 +51,7 @@ from .playback import (
     queue_playback_done,
     download_youtube_sfx,
     playback_source_meta,
+    prioritize_playback_writer_thread,
     queue_playback_chunk,
     dequeue_playback_item,
     current_playback_status,
@@ -244,24 +243,6 @@ class _PlaybackWriteItem:
     submitted_at: float
 
 
-def _prioritize_playback_thread() -> None:
-    """Raise the output writer above normal priority on supported Windows hosts."""
-    if os.name != "nt":
-        return
-
-    try:
-        windll = getattr(ctypes, "WinDLL", None)
-        if not callable(windll):
-            return
-        windll = cast(collections.abc.Callable[..., ctypes.CDLL], windll)
-        win_dll = windll("kernel32", use_last_error=True)
-        current_thread = win_dll.GetCurrentThread()
-        if not win_dll.SetThreadPriority(current_thread, 1):
-            return
-    except (AttributeError, OSError, TypeError):
-        return
-
-
 class _PlaybackWriter:
     """Write mixed audio on one persistent thread with reserve accounting."""
 
@@ -328,7 +309,7 @@ class _PlaybackWriter:
 
     def _run(self) -> None:
         """Consume the output queue until a stop marker is received."""
-        _prioritize_playback_thread()
+        prioritize_playback_writer_thread()
         while True:
             item = self._queue.get()
             if item is None:

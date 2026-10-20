@@ -1405,7 +1405,7 @@ class TestPipelineAsync(_TestPipelineAsync):
                 side_effect=[["first", "second"], ["followup"]],
             ),
             mock.patch("celune.pipeline.is_silent_utterance", return_value=(False, 0)),
-            mock.patch("celune.pipeline.os.path.exists", return_value=True),
+            mock.patch("os.path.exists", return_value=True),
             mock.patch("celune.pipeline.write_celune_flac"),
             mock.patch(
                 "celune.captions.get_caption_aligner",
@@ -1644,7 +1644,7 @@ class TestPipelineAsync(_TestPipelineAsync):
         with (
             mock.patch("celune.pipeline.split_text", return_value=["bonjour"]),
             mock.patch("celune.pipeline.is_silent_utterance", return_value=(False, 0)),
-            mock.patch("celune.pipeline.os.path.exists", return_value=True),
+            mock.patch("os.path.exists", return_value=True),
             mock.patch("celune.pipeline.write_celune_flac"),
         ):
             await self._run_generation_worker(cast(Celune, engine))
@@ -1752,7 +1752,7 @@ class TestPipelineAsync(_TestPipelineAsync):
         with (
             mock.patch("celune.pipeline.split_text", return_value=["hello"]),
             mock.patch("celune.pipeline.is_silent_utterance", return_value=(False, 0)),
-            mock.patch("celune.pipeline.os.path.exists", return_value=True),
+            mock.patch("os.path.exists", return_value=True),
             mock.patch("celune.pipeline.write_celune_flac"),
             mock.patch(
                 "celune.playback.queue_playback_chunk",
@@ -1810,7 +1810,7 @@ class TestPipelineAsync(_TestPipelineAsync):
         with (
             mock.patch("celune.pipeline.split_text", return_value=["hello"]),
             mock.patch("celune.pipeline.is_silent_utterance", return_value=(False, 0)),
-            mock.patch("celune.pipeline.os.path.exists", return_value=True),
+            mock.patch("os.path.exists", return_value=True),
             mock.patch("celune.pipeline.write_celune_flac"),
             mock.patch(
                 "celune.playback.queue_playback_chunk",
@@ -1874,7 +1874,7 @@ class TestPipelineAsync(_TestPipelineAsync):
         with (
             mock.patch("celune.pipeline.split_text", return_value=["hello"]),
             mock.patch("celune.pipeline.is_silent_utterance", return_value=(False, 0)),
-            mock.patch("celune.pipeline.os.path.exists", return_value=True),
+            mock.patch("os.path.exists", return_value=True),
             mock.patch("celune.pipeline.write_celune_flac"),
             mock.patch(
                 "celune.playback.queue_playback_chunk",

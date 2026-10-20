@@ -36,6 +36,15 @@ from .utils import (
     available,
     format_error_message,
 )
+from .config import (
+    Config,
+    config_api_settings,
+    config_backend_options,
+    config_bool,
+    config_int as _config_int,
+    config_value,
+    normalize_log_level,
+)
 from .cevoice import (
     CEVoicePersona,
     default_loader,
@@ -124,7 +133,6 @@ from .dataclasses.events import (
     CharacterChangedEvent,
     CharacterUnloadedEvent,
 )
-from .dataclasses.pipeline import CaptionPlaybackState
 from .typing.aliases import LogLevel
 from .locks import ComponentLockLease
 from .typing.modes import BackendMode
@@ -137,16 +145,16 @@ from .typing.backends import BackendModel
 from .agent.routing import AgentInputRouter
 from .agent.needle import NeedleToolSelector
 from .agent.persona import PersonaAgentBridge
-from .paths import api_key_path, temp_data_dir
 from .extensions.events import EventDispatcher
+from .paths import api_key_path, temp_data_dir
 from .cloudflared import CloudflaredQuickTunnel
 from .typing.common import JSON, JSONSerializable
 from .typing.events import EventName, EventPayload
 from .persona.emotion import PersonaEmotionAnalyzer
+from .dataclasses.pipeline import CaptionPlaybackState
 from .backends.tts import BACKENDS, CeluneBackend, resolve_backend
 from .i18n import string, set_locale, tagged_string, get_system_locale
 from .backends.vc import VC_BACKENDS, CeluneVCBackend, resolve_vc_backend
-from .config import Config, config_bool, config_value, normalize_log_level
 
 npt = np.typing
 
@@ -199,6 +207,11 @@ def config_str(value: JSONSerializable) -> Optional[str]:
     return value if isinstance(value, str) else None
 
 
+def config_int(value: JSONSerializable, default: int) -> int:
+    """Preserve the core module's integer configuration helper surface."""
+    return _config_int(value, default)
+
+
 def _configured_locale(config: Config) -> Optional[str]:
     """Return one explicit locale override from env or config when provided."""
     env_value = config_str(os.getenv("CELUNE_LOCALE"))
@@ -211,17 +224,6 @@ def _configured_locale(config: Config) -> Optional[str]:
     if not normalized or normalized.lower() in {"auto", "system", "default"}:
         return None
     return normalized
-
-
-def config_int(value: JSONSerializable, default: int) -> int:
-    """Return a config value as an integer when it is scalar-like."""
-    if isinstance(value, bool):
-        raise TypeError("boolean is not an integer config value")
-    if isinstance(value, (int, float, str)):
-        return int(value)
-    if value is None:
-        return default
-    raise TypeError("config value cannot be converted to int")
 
 
 def tts_quantization_enabled(
@@ -709,7 +711,7 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
         if tts_backend is None:
             tts_backend = preset.default_backend
 
-        backend_kwargs: dict[str, Optional[Union[bool, str]]] = {
+        backend_kwargs: dict[str, JSONSerializable] = {
             "quantize": tts_quantization_enabled(config, tts_backend),
         }
         if isinstance(tts_backend, CeluneBackend):
@@ -759,6 +761,7 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
                 "qwen3_x_vector_only",
             )
             backend_kwargs["clone_model_id"] = preset.qwen3_clone_model_id
+        backend_kwargs.update(config_backend_options(config, backend_name))
 
         try:
             resolved_tts_backend = cast(TTSBackendSpec, tts_backend)
@@ -1702,6 +1705,7 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
                 "qwen3_x_vector_only",
             )
             backend_kwargs["clone_model_id"] = preset.qwen3_clone_model_id
+        backend_kwargs.update(config_backend_options(self.config, backend_name))
         return backend_kwargs
 
     def _capture_reload_snapshot(self) -> _ReloadSnapshot:
@@ -2456,111 +2460,7 @@ class Celune(CeluneMethodSurface, CeluneStateAccessors):
 
     def _api_settings(self) -> tuple[bool, str, int, Optional[str], int, str]:
         """Resolve API access, authentication, port, and rate-limit settings."""
-        api_config = config_value(self.config, "api", {})
-
-        if isinstance(api_config, bool):
-            enabled = api_config
-            options: Mapping[str, JSONSerializable] = {}
-        elif api_config is None:
-            enabled = False
-            options = {}
-        elif isinstance(api_config, dict):
-            enabled = bool(api_config.get("enabled", True))
-            options = api_config
-        else:
-            enabled = bool(api_config)
-            options = {}
-
-        configured_access = options.get("access")
-        if configured_access is None:
-            legacy_host = str(options.get("host", "127.0.0.1")).strip().casefold()
-            access_level = (
-                "same_machine"
-                if legacy_host in {"localhost", "127.0.0.1", "::1"}
-                else "same_network"
-            )
-        elif isinstance(configured_access, str) and configured_access in {
-            "same_machine",
-            "same_network",
-            "everyone",
-        }:
-            access_level = str(configured_access)
-        else:
-            self.log(
-                string(
-                    "celune.api_access_invalid",
-                    app_name=APP_NAME,
-                    access=configured_access,
-                ),
-                "warning",
-            )
-            access_level = "same_machine"
-
-        host = "0.0.0.0" if access_level == "same_network" else "127.0.0.1"
-        token_value = options.get("token")
-        token = str(token_value).strip() if token_value is not None else None
-        if enabled:
-            key_file = api_key_path(create_parent=True)
-            env_token = os.getenv("CELUNE_API_TOKEN", "").strip()
-            uses_generated_key = not token and not env_token
-            try:
-                from .api import get_or_create_api_key
-            except ModuleNotFoundError:
-                token = token or env_token or None
-            else:
-                token = get_or_create_api_key(token, path=key_file)
-                if uses_generated_key:
-                    self.log(
-                        string(
-                            "celune.api_key_file",
-                            app_name=APP_NAME,
-                            path=str(key_file),
-                        ),
-                        "info",
-                    )
-
-        try:
-            port = config_int(options.get("port", 2060), 2060)
-        except (TypeError, ValueError):
-            invalid_port = options.get("port", 2060)
-            self.log(
-                string("celune.api_port_invalid", app_name=APP_NAME, port=invalid_port),
-                "warning",
-            )
-            port = 2060
-
-        if not 1 <= port <= 65535:
-            self.log(
-                string("celune.api_port_out_of_range", app_name=APP_NAME, port=port),
-                "warning",
-            )
-            port = 2060
-
-        try:
-            requests_per_minute = config_int(
-                options.get("rate_limit_per_minute", 60),
-                60,
-            )
-        except (TypeError, ValueError):
-            invalid_ratelimit = options.get("rate_limit_per_minute", 60)
-            self.log(
-                string(
-                    "celune.api_rate_limit_invalid",
-                    app_name=APP_NAME,
-                    rate=invalid_ratelimit,
-                ),
-                "warning",
-            )
-            requests_per_minute = 60
-
-        return (
-            enabled,
-            host,
-            port,
-            token,
-            max(0, requests_per_minute),
-            access_level,
-        )
+        return config_api_settings(self.config, self.log, path_factory=api_key_path)
 
     api_settings = _api_settings
 

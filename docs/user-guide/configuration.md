@@ -14,6 +14,7 @@ before the interface opens. `celune config view` prints the active file and
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `backend` | `null` | TTS or VC backend name. `null` lets Celune choose its normal backend. |
+| `backend_options` | `soulxsinger.high_precision: false` | Constructor options passed only to the named backend. |
 | `commercial` | `false` | Declare commercial use. Celune then allows only models whose reviewed terms confirm commercial use. |
 | `quantize` | `true` | Try contract-approved TTS weight-only quantization: INT8 on Ampere and FP8 on sm89 or newer, with BF16 recovery. LuxTTS is excluded. |
 | `quantize_kv_cache` | `true` | Store supported Persona, Qwen3, FireRedTTS3, and VoxCPM2 cache prefixes in INT8 on Ampere or FP8 on `sm89+`; use `false` to keep their native cache dtype. |
@@ -35,6 +36,23 @@ before the interface opens. `celune config view` prints the active file and
 `backend`, `voice_bundle`, and `mode` are the three settings that most directly
 change runtime behavior. Backend-specific settings should stay in their
 documented namespace instead of being duplicated at the top level.
+
+### Backend-specific options
+
+Put backend-only constructor options under `backend_options` and the backend's
+registered name. Celune passes only the selected backend's options to its
+isolated worker. For example, SoulX-Singer uses score conditioning by default;
+set `high_precision` to `true` to select its F0 melody-conditioning mode:
+
+```yaml
+backend_options:
+  soulxsinger:
+    high_precision: true
+```
+
+In this mode, Celune expands CESN note pitches into a frame-aligned F0 contour
+for both the singer reference and requested score. The current CESN pitch syntax
+still specifies notes, so this option does not add pitch bends or cents offsets.
 
 Set `commercial: true` when Celune is used commercially. Models marked
 non-commercial or research-only, models with unknown license restrictions, and

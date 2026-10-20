@@ -35,6 +35,12 @@ quantize_kv_cache: true
 # Set this to true when stronger speaker identity matters more than expression.
 qwen3_x_vector_only: false
 
+# Options passed to the selected backend only.
+backend_options:
+  soulxsinger:
+    # Use F0 melody conditioning instead of score conditioning.
+    high_precision: false
+
 # CEVOICE voice selection
 #
 # default voices are in the "default" pack and are usable for most
