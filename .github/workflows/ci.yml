@@ -16,7 +16,7 @@ permissions:
 jobs:
   python-checks:
     name: Anti AI Slop & Vibe Coding Checks
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # A cold CUDA dependency install can take longer than the test suite itself.
     timeout-minutes: 30
 
