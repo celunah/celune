@@ -4,14 +4,18 @@
 import re
 import warnings
 import unicodedata
-from typing import Union, Optional, NamedTuple, cast
+
 from pathlib import Path
 from fractions import Fraction
 from dataclasses import field, dataclass
+from typing import Union, Optional, NamedTuple, cast
 
 from iso639 import Lang, exceptions
 
-from .xsampa import to_ipa as xsampa_to_ipa
+from .xsampa import (
+    vowel_nucleus_start,
+    to_ipa as xsampa_to_ipa,
+)
 from .exceptions import (
     CESNError,
     CEVoiceError,
@@ -158,7 +162,9 @@ def _parse_cesn(
     remain intact on each block; no spelling-based syllabification is performed.
     Rests remain in each block's event stream but consume no pronunciation.
     A lyric block ending in a period or comma gains an automatic half-note or
-    quarter-note rest unless an explicit trailing rest already follows it.
+    quarter-note rest unless an explicit trailing rest already follows it. The
+    slide shorthand creates a slurred note group with one onset and a repeated
+    vowel nucleus.
 
     Args:
         text: Complete CESN notation containing directive and note tags.
@@ -553,6 +559,76 @@ def _parse_cesn(
             active_tuplet = _parse_tuplet(argument)
             tuplet_remaining = active_tuplet.actual_count
             active_tuplet_span = (start, end)
+            continue
+
+        if directive == "slide":
+            if not separator:
+                raise CESNValidationError(
+                    "CESN slide requires an X-SAMPA syllable and note events"
+                )
+            if pending_slur is not None or pending_ipa is not None:
+                raise CESNValidationError(
+                    "CESN slide cannot be combined with separate slur or pronunciation tags"
+                )
+            pronunciation, note_separator, note_source = argument.partition(",")
+            pronunciation = pronunciation.strip()
+            note_source = note_source.strip()
+            if not note_separator or not pronunciation or not note_source:
+                raise CESNValidationError(
+                    "CESN slide requires an X-SAMPA syllable followed by note events"
+                )
+            try:
+                nucleus_offset = vowel_nucleus_start(pronunciation)
+            except ValueError as error:
+                raise CESNValidationError(
+                    f"CESN slide pronunciation is invalid: {error}"
+                ) from error
+
+            slide_events = _parse_note_events(note_source)
+            if len(slide_events) < 2 or any(
+                isinstance(event, CESNRestEvent) for event in slide_events
+            ):
+                raise CESNValidationError(
+                    "CESN slide requires at least two pitched notes and cannot include rests"
+                )
+            first_ipa = _parse_xsampa(pronunciation)
+            vowel_ipa = _parse_xsampa(pronunciation[nucleus_offset:])
+            if len(first_ipa) != 1 or len(vowel_ipa) != 1:
+                raise CESNValidationError(
+                    "CESN slide requires one X-SAMPA vowel nucleus"
+                )
+
+            argument_start = tag_content_start + tag.find(argument)
+            pronunciation_leading = len(argument.split(",", 1)[0]) - len(
+                argument.split(",", 1)[0].lstrip()
+            )
+            pronunciation_start = argument_start + pronunciation_leading
+            note_suffix = argument[argument.find(",") + 1 :]
+            note_leading = len(note_suffix) - len(note_suffix.lstrip())
+            note_source_start = argument_start + argument.find(",") + 1 + note_leading
+            pronunciation_span = (
+                pronunciation_start,
+                pronunciation_start + len(pronunciation),
+            )
+            vowel_span = (
+                pronunciation_start + nucleus_offset,
+                pronunciation_start + len(pronunciation),
+            )
+            pending_events = apply_tuplet(slide_events)
+            pending_event_spans = _note_event_source_spans(
+                note_source,
+                note_source_start,
+            )
+            pending_ipa = (first_ipa[0],) + (vowel_ipa[0],) * (len(slide_events) - 1)
+            pending_ipa_spans = (pronunciation_span,) + (vowel_span,) * (
+                len(slide_events) - 1
+            )
+            pending_slur = len(slide_events)
+            pending_note_span = (start, end)
+            pending_ipa_span = (start, end)
+            pending_slur_span = (start, end)
+            pending_lyrics = []
+            pending_state = state
             continue
 
         events = _parse_note_events(tag)

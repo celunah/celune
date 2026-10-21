@@ -22,18 +22,8 @@ from textual.widget import Widget
 from textual.widgets import TextArea
 
 from celune import runtime
-from celune.ui.app import (
-    CeluneUI,
-    VoiceButton,
-    ButtonActions,
-)
 from celune.i18n import string
 from celune.celune import Celune
-from celune.typing.locks import (
-    ComponentBusyResult,
-    ComponentLockName,
-    ComponentLockOwner,
-)
 from celune.ui import app as ui_app
 from celune.constants import APP_NAME
 from celune.agent import AgentTaskState
@@ -44,6 +34,17 @@ from celune.ui.headless import CeluneHeadlessUI
 from celune.typing.common import JSONSerializable
 from celune.ui.commands import attachment_source, process_command
 from tests.support import CeluneTestCase, FakeBackend, FakeVCBackend
+
+from celune.ui.app import (
+    CeluneUI,
+    VoiceButton,
+    ButtonActions,
+)
+from celune.typing.locks import (
+    ComponentBusyResult,
+    ComponentLockName,
+    ComponentLockOwner,
+)
 
 from .ui_startup_interactions import TestUIStartup as _TestUIStartup
 
@@ -732,6 +733,7 @@ class TestUICommand(CeluneTestCase):
         assert string("commands.help_cesn_order") in messages
         assert string("commands.help_cesn_notes") in messages
         assert string("commands.help_cesn_ipa") in messages
+        assert string("commands.help_cesn_slide") in messages
         assert string("commands.help_cesn_slur") in messages
         assert string("commands.help_cesn_singer") in messages
 

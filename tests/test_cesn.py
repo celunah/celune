@@ -1,13 +1,14 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for CESN directives, IPA alignment, sections, and rendering."""
 
-from types import SimpleNamespace
 from pathlib import Path
 from fractions import Fraction
+from types import SimpleNamespace
 
 import pytest
 
 from celune import cevoice
+from celune.singing import format_cesn_error
 from celune.cesn import (
     CESNSinger,
     CESNTuplet,
@@ -18,7 +19,6 @@ from celune.cesn import (
     render_cesn,
     resolve_singer,
 )
-from celune.singing import format_cesn_error
 from celune.exceptions import (
     CESNMatchError,
     CESNSyntaxError,
@@ -53,6 +53,44 @@ def test_parse_cesn_converts_xsampa_input_to_canonical_ipa() -> None:
         "oʊ",
     )
     assert "[ˈtʃɛl.oʊ]cello" in render_cesn(sections)
+
+
+def test_parse_cesn_expands_slide_into_one_onset_and_a_slurred_vowel() -> None:
+    """Use one consonant onset and continue its vowel across the note group."""
+    notation = "[lang:en][slide:lA,c4:1,d4:1,e4:1,f4:1]la"
+
+    sections = parse_cesn(notation)
+    pairs = sections[0].blocks[0].pairs
+
+    assert tuple(pair.ipa for pair in pairs) == ("lɑ", "ɑ", "ɑ", "ɑ")
+    assert tuple(pair.slur_from_previous for pair in pairs) == (
+        False,
+        True,
+        True,
+        True,
+    )
+    rendered = render_cesn(sections)
+    assert "[slur:4][c4:1,d4:1,e4:1,f4:1][lɑ.ɑ.ɑ.ɑ]la" in rendered
+    assert parse_cesn(rendered) == sections
+
+    vowel_only = parse_cesn("[lang:en][slide:A,c4:1,d4:1]ah")
+    assert tuple(pair.ipa for pair in vowel_only[0].blocks[0].pairs) == ("ɑ", "ɑ")
+
+
+@pytest.mark.parametrize(
+    "slide",
+    (
+        "lA,c4:1",
+        "lAk,c4:1,d4:1",
+        "lA,c4:1,r:4,d4:1",
+        "l,c4:1,d4:1",
+        "lA.A,c4:1,d4:1",
+    ),
+)
+def test_parse_cesn_rejects_invalid_slide_shorthand(slide: str) -> None:
+    """Require one final vowel nucleus and at least two pitched slide notes."""
+    with pytest.raises(CESNValidationError):
+        parse_cesn(f"[lang:en][slide:{slide}]la")
 
 
 @pytest.mark.parametrize(

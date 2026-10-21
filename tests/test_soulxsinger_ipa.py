@@ -2,10 +2,10 @@
 """Tests for explicit CESN IPA syllable alignment."""
 
 import json
-from types import SimpleNamespace
-from typing import Optional, cast
 from pathlib import Path
 from unittest import mock
+from types import SimpleNamespace
+from typing import Optional, cast
 
 import numpy as np
 import pytest
@@ -310,6 +310,32 @@ def test_slurred_repeated_phones_use_soulx_continuation_type() -> None:
     assert metadata["note_type"] == "2 3 1"
     assert metadata["note_pitch"] == "60 62 0"
     assert metadata["phoneme"] == "en_L-AA1 en_L-AA1 <SP>"
+
+
+def test_slide_shorthand_continues_vowel_after_one_consonant_onset() -> None:
+    """Continue a shared vowel after a slide's initial onset consonant."""
+    backend = object.__new__(SoulXSinger)
+    singer = CESNSinger("Test Singer", Path("singer.cevoice"))
+    notation = "[lang:en][slide:lA,c4:1,d4:1,e4:1,f4:1]la"
+    with mock.patch(
+        "celune.backends.tts.soulxsinger.resolve_active_singer",
+        return_value=singer,
+    ):
+        score_text = backend.cesn_to_model(notation)
+
+    section = decode_score(score_text)[0]
+    runtime = cast(
+        _SoulXRuntime,
+        SimpleNamespace(
+            processor=SimpleNamespace(phone2idx={"en_L": 0, "en_AA0": 1}),
+        ),
+    )
+
+    metadata = SoulXSinger._metadata(section.events, section.bpm, runtime)
+
+    assert metadata["note_type"] == "2 3 3 3"
+    assert metadata["note_pitch"] == "60 62 64 65"
+    assert metadata["phoneme"] == "en_L-AA0 en_AA0 en_AA0 en_AA0"
 
 
 @pytest.mark.parametrize(

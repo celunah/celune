@@ -11,17 +11,24 @@ import shutil
 import tempfile
 import importlib
 import unicodedata
-from types import ModuleType
-from typing import Union, Optional, Protocol, cast
+
 from pathlib import Path
+from types import ModuleType
 from dataclasses import field, dataclass
+from typing import Union, Optional, Protocol, cast
 from collections.abc import Mapping, Callable, Iterator
 
-import numpy as np
 import torch
+import numpy as np
 from huggingface_hub import snapshot_download
 
 from .base import CeluneBackend, to_numpy_audio, cached_hf_snapshot_path
+from ..environment import exclusive_lock
+from ...typing.common import JSON
+from ...typing.aliases import AudioChunk
+from ...singing import contains_cesn_note_event
+from ...registry.consent import require_model_consent
+from ...registry.other import SOULX_SINGER_RMVPE_MODEL_ID
 from ...cesn import (
     CESNSection,
     CESNNotePair,
@@ -42,7 +49,6 @@ from ...cevoice import (
     default_loader,
     bundle_character_name,
 )
-from ...singing import contains_cesn_note_event
 from ...exceptions import (
     BackendError,
     CESNIPAError,
@@ -53,7 +59,6 @@ from ...exceptions import (
     CESNBackendFormatError,
     CESNUnsupportedFeatureError,
 )
-from ..environment import exclusive_lock
 from ...registry.tts import (
     TTS_DEFAULT_VOICE,
     SOULX_SINGER_MODEL_ID,
@@ -61,10 +66,6 @@ from ...registry.tts import (
     SOULX_SINGER_CODE_REVISION,
     SOULX_SINGER_CODE_REPOSITORY,
 )
-from ...typing.common import JSON
-from ...registry.other import SOULX_SINGER_RMVPE_MODEL_ID
-from ...typing.aliases import AudioChunk
-from ...registry.consent import require_model_consent
 
 __all__ = [
     "SoulXSinger",
@@ -338,6 +339,20 @@ def _raise_unrepresentable_ipa(
             failure.source_start = event.ipa_source_start
             failure.source_end = event.ipa_source_end
     raise failure
+
+
+def _is_vowel_continuation(
+    previous_phone_tokens: Optional[tuple[str, ...]],
+    phone_tokens: tuple[str, ...],
+) -> bool:
+    """Check whether a slurred vowel continues the preceding syllable nucleus."""
+    if previous_phone_tokens is None or len(phone_tokens) != 1:
+        return False
+    current_vowel = phone_tokens[0].rstrip("012")
+    if current_vowel not in _ARPABET_VOWELS or not previous_phone_tokens:
+        return False
+    previous_vowel = previous_phone_tokens[-1].rstrip("012")
+    return previous_vowel == current_vowel
 
 
 def _score_event(
@@ -1281,12 +1296,13 @@ class SoulXSinger(CeluneBackend[_SoulXRuntime]):
             else:
                 midi_pitch = pitch_to_midi(event.pitch or "")
             pitches.append(str(midi_pitch))
-            is_repeated_slur = (
-                event.slur_from_previous
-                and tuple(phone_tokens) == previous_phone_tokens
+            current_phone_tokens = tuple(phone_tokens)
+            is_repeated_slur = event.slur_from_previous and (
+                current_phone_tokens == previous_phone_tokens
+                or _is_vowel_continuation(previous_phone_tokens, current_phone_tokens)
             )
             note_types.append("3" if is_repeated_slur else "2")
-            previous_phone_tokens = tuple(phone_tokens)
+            previous_phone_tokens = current_phone_tokens
 
         metadata = {
             "duration": " ".join(durations),

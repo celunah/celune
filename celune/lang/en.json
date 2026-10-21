@@ -475,6 +475,7 @@
     "commands.help_cesn_music": "Music: [bpm:120,key:c,scale:major] sets tempo, key, and scale.",
     "commands.help_cesn_notes": "Notes: [c4:4,d4:8] gives pitch/duration; each pitch uses one IPA syllable.",
     "commands.help_cesn_rest": "Rest: [r:1] adds a timed rest; rests consume no IPA syllable.",
+    "commands.help_cesn_slide": "Slide: [slide:lA,c4:1,d4:1] sounds l once, then continues the A vowel.",
     "commands.help_cesn_slur": "Slur: [slur:3] ties three adjacent pitched notes; rests cannot be included.",
     "commands.help_cesn_singer": "Singer: [singer:name] selects a CECHAR v5 pack with the hidden sing voice; [#text] is a comment.",
     "commands.help_cesn_tuplet": "Tuplet: [tuplet:3,2] fits the next three note/rest events into two beats.",

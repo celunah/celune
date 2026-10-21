@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Convert X-SAMPA transcription symbols to their IPA equivalents."""
 
+from typing import Optional
+
 _SYMBOLS = {
     '"': "ˈ",
     "%": "ˌ",
@@ -177,6 +179,57 @@ _SYMBOLS = {
 }
 
 _SYMBOLS_BY_LENGTH = tuple(sorted(_SYMBOLS, key=len, reverse=True))
+_IPA_VOWELS = frozenset(
+    [
+        "i",
+        "y",
+        "ɨ",
+        "ʉ",
+        "ɯ",
+        "u",
+        "ɪ",
+        "ʏ",
+        "ʊ",
+        "e",
+        "ø",
+        "ɘ",
+        "ɵ",
+        "ɤ",
+        "o",
+        "ə",
+        "ɛ",
+        "œ",
+        "ɜ",
+        "ɞ",
+        "ʌ",
+        "ɔ",
+        "æ",
+        "ɐ",
+        "a",
+        "ɶ",
+        "ɑ",
+        "ɒ",
+    ]
+)
+_VOWEL_SYMBOLS = frozenset(
+    symbol for symbol, ipa in _SYMBOLS.items() if ipa and ipa[0] in _IPA_VOWELS
+)
+_NUCLEUS_MODIFIERS = frozenset(
+    symbol
+    for symbol in _SYMBOLS
+    if symbol.startswith("_") or symbol in {"~", ":", ":\\", "::"}
+)
+
+
+def _symbol_at(value: str, offset: int) -> Optional[str]:
+    return next(
+        (
+            candidate
+            for candidate in _SYMBOLS_BY_LENGTH
+            if value.startswith(candidate, offset)
+        ),
+        None,
+    )
 
 
 def to_ipa(value: str) -> str:
@@ -201,14 +254,7 @@ def to_ipa(value: str) -> str:
             converted.append(value[offset])
             offset += 1
             continue
-        symbol = next(
-            (
-                candidate
-                for candidate in _SYMBOLS_BY_LENGTH
-                if value.startswith(candidate, offset)
-            ),
-            None,
-        )
+        symbol = _symbol_at(value, offset)
         if symbol is None:
             raise ValueError(
                 f"unsupported X-SAMPA symbol at character {offset + 1}: "
@@ -218,3 +264,52 @@ def to_ipa(value: str) -> str:
         offset += len(symbol)
 
     return "".join(converted)
+
+
+def vowel_nucleus_start(value: str) -> int:
+    """Return the X-SAMPA offset of one final vowel nucleus.
+
+    Args:
+        value: One X-SAMPA syllable with an optional consonant onset.
+
+    Returns:
+        int: Character offset where the vowel nucleus begins.
+
+    Raises:
+        ValueError: If the syllable has multiple nuclei, a coda, or invalid text.
+    """
+    if (
+        not value
+        or not value.isascii()
+        or "." in value
+        or any(ch.isspace() for ch in value)
+    ):
+        raise ValueError("slide pronunciation must be one ASCII X-SAMPA syllable")
+
+    symbols: list[tuple[str, int]] = []
+    offset = 0
+    while offset < len(value):
+        symbol = _symbol_at(value, offset)
+        if symbol is None:
+            raise ValueError(
+                f"unsupported X-SAMPA symbol at character {offset + 1}: "
+                f"{value[offset]!r}"
+            )
+        symbols.append((symbol, offset))
+        offset += len(symbol)
+
+    vowel_indices = tuple(
+        index
+        for index, (symbol, _start) in enumerate(symbols)
+        if symbol in _VOWEL_SYMBOLS
+    )
+    if len(vowel_indices) != 1:
+        raise ValueError("slide pronunciation must contain one vowel nucleus")
+
+    vowel_index = vowel_indices[0]
+    if any(
+        symbol not in _NUCLEUS_MODIFIERS
+        for symbol, _start in symbols[vowel_index + 1 :]
+    ):
+        raise ValueError("slide pronunciation must end with its vowel nucleus")
+    return symbols[vowel_index][1]

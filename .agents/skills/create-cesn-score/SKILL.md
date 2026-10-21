@@ -30,7 +30,7 @@ Verify that the target singing backend supports the selected language and the pr
 
    Use the user's stated musical preferences when provided. Supported scales include `major`, `minor`/`natural_minor`, `dorian`, `phrygian`, `lydian`, `mixolydian`, `locrian`, `harmonic-minor`, and `melodic-minor`. Keys use a note name from A through G with an optional sharp or flat.
 
-2. Write each lyric-bearing score group in this exact order: optional extra tags, one note list, one pronunciation tag, then the lyric text. Use a raw IPA tag by default, such as `[slur:2][c3:4,d3:4][ˈsɪŋ.ɪŋ] Singing.` If the user cannot type IPA, use the explicit ASCII form `[x-sampa:"sIN.IN] Singing.` A rest-only group may contain just a note list. Do not use `[pattern:...]`, `[ipa:...]`, or Syllabreak.
+2. Write each lyric-bearing score group in this exact order: optional extra tags, one note list, one pronunciation tag, then the lyric text. Use a raw IPA tag by default, such as `[slur:2][c3:4,d3:4][ˈsɪŋ.ɪŋ] Singing.` If the user cannot type IPA, use the explicit ASCII form `[x-sampa:"sIN.IN] Singing.` For a vowel slide with one initial consonant, use the combined shorthand `[slide:lA,c3:1,d3:1,e3:1]la`. CESN gives the first note `lA`, then continues only the vowel across the remaining slurred notes. The shorthand also accepts a vowel alone, such as `A`; use at least two pitched notes and no rests. A rest-only group may contain just a note list. Do not use `[pattern:...]`, `[ipa:...]`, or Syllabreak.
 
 3. Supply one dot-separated IPA or X-SAMPA syllable for each pitched note. In either form, periods mark syllable boundaries; do not split a single syllable's vowels or diphthongs with a period. X-SAMPA must follow the `[x-sampa:...]` marker, use ASCII characters, and preserve case because symbols are case-sensitive. Its `"` and `%` symbols mark primary and secondary stress. The parser converts X-SAMPA to canonical IPA before backend preprocessing. Rests remain in the note list and consume no pronunciation syllable. Keep lyric spelling and punctuation unchanged in verbatim mode. Use the pronunciation and note boundaries you intend rather than inferring them from the written spelling.
 
@@ -39,6 +39,8 @@ Verify that the target singing backend supports the selected language and the pr
 4. Use pitch names such as `c3` or `f#4`; note types are `1`, `2`, `4`, `8`, `16`, or `32`, with an optional `d` for a dotted note. Keep pitches inside the selected singer's declared range and in the selected scale unless an intentional chromatic note is musically useful. Use `r` for a timed rest.
 
 5. Use `[slur:N]` before the note list to tie `N` adjacent pitched notes. `N` must be at least two and match the number of IPA syllables in that group. A slur cannot include a rest.
+
+   Use `[slide:<X-SAMPA onset and vowel>,<notes>]` when one onset should be spoken once and the same vowel should continue over multiple pitches. For example, `[slide:lA,c4:1,d4:1,e4:1]la` expands to one `lA` onset and vowel followed by vowel-only continuation notes. Do not write a coda or multiple vowel nuclei in the slide pronunciation.
 
 6. Use `[tuplet:a,b]` before the first note list it affects. It scales the next `a` note or rest events by `b/a`, then expires. Rests count toward those events. Do not overlap tuplets or let one cross a section boundary.
 
