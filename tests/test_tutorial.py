@@ -3,25 +3,25 @@
 
 import queue
 import threading
-from types import SimpleNamespace
-from typing import Union, cast
 from unittest import mock
+from typing import Union, cast
+from types import SimpleNamespace
 from collections.abc import Callable
 
 import numpy as np
 
 from celune import pipeline
-from celune.ui import commands
 from celune.i18n import string
+from celune.ui import commands
 from celune.celune import Celune
-from celune.speech import play_tutorial_sections, prepare_tutorial_sections
 from celune.ui.app import CeluneUI
-from celune.prepared import play_prepared_speech
 from celune.dataclasses.pipeline import (
     SpeechRequest,
     PreparedSpeechAudio,
     CaptionAlignmentSection,
 )
+from celune.prepared import play_prepared_speech
+from celune.speech import play_tutorial_sections, prepare_tutorial_sections
 
 from .support import make_pipeline_engine
 
@@ -170,7 +170,7 @@ def test_english_tutorial_uses_the_current_wording() -> None:
     ] == [
         "This is my main control panel.",
         "Type. Hear. It's the loop.",
-        'That button on the right, it\'s the way you reach out for the "calm", and any other tones.',
+        "That button on the right, it's the way you reach out for the calm, and any other tones.",
         "The slash key will tell you about any additional features.",
         "It's meant to be simple, and never overwhelming.",
         "Vibe to the sound of my voice, the easy way.",
@@ -181,7 +181,7 @@ def test_english_tutorial_uses_the_current_wording() -> None:
         "You can post stuff to 127.0.0.1, port 2060, and I'll say that for you.",
         "I can also speak in your own voice.",
         f"The voice you are hearing right now is the default in {commands.APP_NAME}.",
-        'You can however load your own too. Provide your own "CE voice" pack into my voices directory,',
+        "You can however load your own too. Provide your own CE voice pack into my voices directory,",
         "and I'll be able to speak as your character, and not just myself.",
         "As of version 4.0, a new Persona system has been added, and then fixed,",
         "allowing you to properly talk to me, or anyone else running in this software.",
@@ -198,7 +198,7 @@ def test_english_tutorial_uses_the_current_wording() -> None:
         "I'll stay here until you do.",
     ]
     assert string("commands.tutorial_voice_pack_display", locale="en") == (
-        'You can however load your own too. Provide your own "CEVOICE" pack into my voices directory,'
+        "You can however load your own too. Provide your own CEVOICE pack into my voices directory,"
     )
 
 
