@@ -9,25 +9,18 @@ import asyncio
 import logging
 import tempfile
 import threading
-from types import SimpleNamespace
-from typing import Optional, cast
 from pathlib import Path
 from unittest import mock
+from types import SimpleNamespace
+from typing import Optional, cast
 from collections.abc import Callable
 
-import numpy as np
 import pytest
+import numpy as np
 from textual import events
 from textual.widget import Widget
 from textual.widgets import Label, RichLog, TextArea, ProgressBar
 
-from celune.ui import app as ui_app
-from celune.ui import resources as ui_resources
-from celune.i18n import string
-from celune.theme import colors
-from celune.utils import discard
-from celune.celune import Celune
-from celune.config import Config
 from celune.ui.app import (
     Button,
     CeluneUI,
@@ -35,10 +28,17 @@ from celune.ui.app import (
     ButtonActions,
     ProgressLabel,
 )
-from tests.support import FakeBackend
+from celune.i18n import string
+from celune.theme import colors
+from celune.utils import discard
+from celune.celune import Celune
+from celune.config import Config
+from celune.ui import app as ui_app
 from celune.ui.theme import severity_color
+from celune.ui import resources as ui_resources
 from celune.typing.common import JSONSerializable
 
+from tests.support import FakeBackend
 from .ui_startup_foundation import TestUIStartup as _TestUIStartup
 
 
@@ -1545,6 +1545,44 @@ class TestUIStartup(_TestUIStartup):
 
         ui.safe_caption_progress(250.0, 600.0, 1)
         assert cast(FakeCaption, ui.caption).rendered == "One two"
+
+    def test_singing_caption_updates_full_section_text_without_word_progress(
+        self,
+    ) -> None:
+        """Show each active singing section without speech-only reveal timing."""
+        ui = CeluneUI()
+        ui.celune = cast(
+            Celune,
+            SimpleNamespace(backend=SimpleNamespace(singing=True)),
+        )
+
+        class FakeCaption:
+            """Capture the caption text shown by the TUI."""
+
+            def __init__(self) -> None:
+                self.display = False
+                self.styles = SimpleNamespace(opacity=1.0, height=0)
+                self.rendered = ""
+
+            def update(self, value: str) -> None:
+                """Store the current caption text."""
+                self.rendered = value
+
+        caption = FakeCaption()
+        ui.caption = cast(Label, caption)
+
+        ui.tts_caption("First section.")
+        assert caption.rendered == "First section."
+        assert ui._caption_active
+
+        ui.tts_caption("Second section.")
+        assert caption.rendered == "Second section."
+        ui.safe_caption_progress(1, 1)
+        assert caption.rendered == "Second section."
+        assert ui._caption_active
+
+        ui.tts_caption(None)
+        assert not ui._caption_active
 
     def test_status_ticker_recovers_active_playback_status(self) -> None:
         """Verify the TUI ticker displays the active playback-source status."""

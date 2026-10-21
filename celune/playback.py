@@ -56,11 +56,12 @@ from .dataclasses.pipeline import (
     PlaybackSourceDone,
     CaptionPlaybackState,
     CaptionPlaybackSegment,
+    CaptionPlaybackSection,
 )
 from .utils import available, discard
 from .locks import ComponentLockManager
-from .typing.common import JSONSerializable
 from .typing.pipeline import SpeechStreamQueue
+from .typing.common import JSON, JSONSerializable
 from .dataclasses.events import StateChangedEvent
 from .typing.aliases import AudioChunk, AudioChunks
 from .constants import BASE_SR, APP_NAME, PipelineStates
@@ -87,7 +88,9 @@ __all__ = (
     "acquire_pipeline",
     "acquire_pipeline_result",
     "apply_source_gain",
+    "caption_chunk_start_frame",
     "caption_chunk_word_ranges",
+    "caption_tracking_modes",
     "clear_playback_source_status",
     "config_lines",
     "config_text",
@@ -105,6 +108,7 @@ __all__ = (
     "playback_source_statuses",
     "queue_playback_chunk",
     "queue_playback_done",
+    "record_caption_playback_audio_chunk",
     "record_caption_playback_segment",
     "register_overlay_playback",
     "register_overlay_playback_state",
@@ -469,6 +473,37 @@ def caption_chunk_word_ranges(
     return tuple(ranges)
 
 
+def caption_tracking_modes(
+    engine: Celune,
+    *,
+    tutorial_audio: bool,
+    caption_worker_available: bool,
+) -> tuple[bool, bool]:
+    """Return whether section captions or spoken word captions are enabled."""
+    if tutorial_audio or engine.config.get("captions") is not True:
+        return False, False
+    if getattr(engine.backend, "singing", False):
+        return True, False
+    return False, caption_worker_available
+
+
+def caption_chunk_start_frame(
+    engine: Celune,
+    source_id: int,
+    default_frame: int,
+    *,
+    use_queued_total: bool,
+) -> int:
+    """Resolve the starting frame for one spoken caption chunk."""
+    if not use_queued_total or source_id not in playback_caption_states(engine):
+        return default_frame
+    with engine.queue_lock:
+        source_meta = playback_source_meta(engine).get(source_id)
+        if isinstance(source_meta, dict):
+            return int(float(source_meta.get("total_frames", 0.0)))
+    return default_frame
+
+
 def register_playback_source(
     engine: Celune,
     source_id: int,
@@ -478,6 +513,7 @@ def register_playback_source(
     low_latency: bool = False,
     caption_word_total: int = 0,
     async_caption_audio: bool = False,
+    track_caption_sections: bool = False,
 ) -> None:
     """Register one playback source for status and gain management."""
     clipped = float(np.clip(base_gain, 0.0, 1.0))
@@ -492,7 +528,7 @@ def register_playback_source(
         "low_latency": low_latency,
         "async_caption_audio": "true" if async_caption_audio else "",
     }
-    if kind == "speech" and caption_word_total > 0:
+    if kind == "speech" and (caption_word_total > 0 or track_caption_sections):
         playback_caption_states(engine)[source_id] = CaptionPlaybackState(
             total_words=caption_word_total
         )
@@ -542,6 +578,68 @@ def record_caption_playback_segment(
                 word_start_frames=word_start_frames,
             )
         )
+
+
+def record_caption_playback_audio_chunk(
+    engine: Celune,
+    source_id: int,
+    audio_frames: int,
+    timing: Optional[JSON],
+) -> bool:
+    """Accumulate one sung audio chunk and record a completed section span."""
+    section_final = timing is not None and timing.get("section_final") is True
+    if audio_frames <= 0:
+        return section_final
+    state = playback_caption_states(engine).get(source_id)
+    if state is None:
+        return section_final
+
+    display_text = timing.get("section_caption") if timing is not None else None
+    with engine.queue_lock:
+        if isinstance(display_text, str) and state.pending_section_start is None:
+            state.pending_section_start = state.section_audio_frames
+            state.pending_section_text = display_text
+        state.section_audio_frames += audio_frames
+        if (
+            section_final
+            and state.pending_section_start is not None
+            and state.pending_section_text is not None
+        ):
+            _append_caption_playback_section(
+                state,
+                state.pending_section_start,
+                state.section_audio_frames,
+                state.pending_section_text,
+            )
+            state.pending_section_start = None
+            state.pending_section_text = None
+    return section_final
+
+
+def _append_caption_playback_section(
+    state: CaptionPlaybackState,
+    start_frame: int,
+    end_frame: int,
+    display_text: str,
+) -> None:
+    """Append one section span, merging adjacent sections with identical text."""
+    if end_frame <= start_frame:
+        return
+    previous = state.section_segments[-1] if state.section_segments else None
+    if (
+        previous is not None
+        and previous.end_frame == start_frame
+        and previous.display_text == display_text
+    ):
+        state.section_segments[-1] = CaptionPlaybackSection(
+            previous.start_frame,
+            end_frame,
+            display_text,
+        )
+        return
+    state.section_segments.append(
+        CaptionPlaybackSection(start_frame, end_frame, display_text)
+    )
 
 
 def set_playback_source_status(engine: Celune, source_id: int, status: str) -> None:
@@ -643,6 +741,16 @@ def notify_speech_playback_finished(engine: Celune, source_id: int) -> None:
         return
     caption_source_id = getattr(engine, "_caption_source_id", None)
     if caption_source_id is not None and caption_source_id != source_id:
+        return
+
+    caption_state = playback_caption_states(engine).get(source_id)
+    if caption_state is not None and caption_state.section_segments:
+        if caption_state.active_section_index is not None:
+            callback = getattr(engine, "caption_callback", None)
+            if callable(callback):
+                callback(None)
+        if caption_source_id == source_id:
+            engine._caption_source_id = None
         return
 
     total_frames = max(1.0, float(source_meta.get("total_frames", 0.0)))
@@ -851,10 +959,37 @@ def update_playback_progress(
         caption_segments = (
             None if caption_state is None else tuple(caption_state.segments)
         )
+        section_segments = (
+            None if caption_state is None else tuple(caption_state.section_segments)
+        )
     speech_played_frames = min(
         float(speech_meta.get("played_frames", 0.0)),
         float(speech_meta.get("total_frames", 0.0)),
     )
+    if caption_state is not None and section_segments:
+        section_index = None
+        for index, section in enumerate(section_segments):
+            if speech_played_frames < section.start_frame:
+                break
+            section_index = index
+        with engine.queue_lock:
+            current_state = playback_caption_states(engine).get(speech_source_id)
+            changed = False
+            if (
+                current_state is not None
+                and section_index is not None
+                and current_state.active_section_index != section_index
+            ):
+                current_state.active_section_index = section_index
+                changed = True
+        if changed and section_index is not None:
+            callback = getattr(engine, "caption_callback", None)
+            if callable(callback):
+                engine._caption_source_id = speech_source_id
+                caption_text = section_segments[section_index].display_text
+                callback(caption_text or None)
+        return
+
     if caption_state is not None and caption_segments:
         snapshot = CaptionPlaybackState(
             total_words=caption_state.total_words,

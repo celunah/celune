@@ -7,18 +7,19 @@ from unittest import mock
 from types import SimpleNamespace
 from typing import Optional, cast
 
-import numpy as np
 import pytest
+import numpy as np
 
-from celune.cesn import CESNSinger
-from celune.cevoice import CEVoiceLoader
-from celune.singing import format_cesn_error
 from celune.exceptions import (
     CESNIPAError,
     CESNRangeError,
     CESNValidationError,
     CESNBackendFormatError,
 )
+from celune.cesn import CESNSinger
+from celune.typing.common import JSON
+from celune.cevoice import CEVoiceLoader
+from celune.singing import format_cesn_error
 from celune.backends.tts.soulxsinger import (
     SoulXSinger,
     decode_score,
@@ -194,6 +195,82 @@ def test_generate_stream_uses_or_rejects_explicit_ipa(
             assert "f0" not in target_metadata
 
 
+def test_generate_stream_emits_one_captioned_chunk_per_cesn_section() -> None:
+    """Preserve section lyrics and audio boundaries through generation."""
+    backend = object.__new__(SoulXSinger)
+    backend.name = "soulxsinger"
+    backend.high_precision = False
+    singer = CESNSinger("Test Singer", Path("singer.cevoice"))
+    inference_model = SimpleNamespace(
+        infer=mock.Mock(
+            side_effect=(
+                np.full(96000, 0.25, dtype=np.float32),
+                np.full(96000, 0.5, dtype=np.float32),
+            )
+        )
+    )
+    processor = SimpleNamespace(
+        phone2idx={"en_AA0": 0},
+        process=mock.Mock(side_effect=lambda metadata: metadata),
+        hop_size=480,
+    )
+    runtime = SimpleNamespace(
+        model=inference_model,
+        processor=processor,
+        f0_extractor=None,
+        sample_rate=24000,
+        inference_steps=4,
+        cfg=1.5,
+    )
+    singer_loader = SimpleNamespace(
+        bundle=SimpleNamespace(
+            path=Path("singer.cevoice"),
+            singing_pitch_range=(0, 127),
+        )
+    )
+    notation = "[lang:en][c4:4][ɑ]First [bpm:90,key:c,scale:major][d4:4][ɑ]Second."
+
+    with (
+        mock.patch.object(backend, "_apply_seed"),
+        mock.patch(
+            "celune.backends.tts.soulxsinger.resolve_active_singer",
+            return_value=singer,
+        ),
+        mock.patch(
+            "celune.backends.tts.soulxsinger.bundle_character_name",
+            return_value="Test Singer",
+        ),
+        mock.patch.object(
+            SoulXSinger,
+            "_singer_loader",
+            return_value=singer_loader,
+        ),
+        mock.patch.object(
+            SoulXSinger,
+            "_validate_singing_voice",
+            return_value=("[lang:en][c4:4][ɑ]Ah", Path("sing.wav")),
+        ),
+        mock.patch.object(SoulXSinger, "_prompt_data", return_value={}),
+        mock.patch(
+            "celune.backends.tts.soulxsinger.to_numpy_audio",
+            side_effect=lambda audio: audio,
+        ),
+    ):
+        chunks = list(
+            backend.generate_stream(cast(_SoulXRuntime, runtime), text=notation)
+        )
+
+    assert len(chunks) == 2
+    timings: list[JSON] = []
+    for _audio, _sample_rate, timing in chunks:
+        assert timing is not None
+        timings.append(timing)
+    assert [timing["section_caption"] for timing in timings] == ["First", "Second."]
+    assert [timing["section_final"] for timing in timings] == [True, True]
+    assert [timing["is_final"] for timing in timings] == [False, True]
+    assert [chunk[0].shape for chunk in chunks] == [(48000,), (48000,)]
+
+
 def test_high_precision_prompt_metadata_contains_frame_aligned_f0(
     tmp_path: Path,
 ) -> None:
@@ -280,10 +357,12 @@ def test_slurred_cesn_keeps_distinct_syllables_as_note_events() -> None:
         False,
     )
     legacy_payload = json.loads(score_text)
+    legacy_payload["sections"][0].pop("display_text")
     for raw_event in legacy_payload["sections"][0]["events"]:
         raw_event.pop("slur_from_previous")
     legacy_section = decode_score(json.dumps(legacy_payload))[0]
     assert not any(event.slur_from_previous for event in legacy_section.events)
+    assert legacy_section.display_text == ""
 
 
 def test_slurred_repeated_phones_use_soulx_continuation_type() -> None:

@@ -43,6 +43,8 @@ For an X-SAMPA vowel carried across several pitches, use `[slide:<onset-and-vowe
 
 For captions and saved FLAC names, Celune removes bracketed CESN directives and uses the remaining lyrics. Spoken output uses the `<app-slug>_speech_...flac` filename pattern; sung output uses `<app-slug>_singing_...flac`. Celune still sends the complete notation to the singing backend.
 
+When captions are enabled during singing, the caption follows the currently playing CESN section and changes at its audio boundary. A section groups blocks with the same singer, language, BPM, key, and scale, so its caption may contain several lyric blocks; a score with only one section keeps the full lyric visible throughout.
+
 SoulX-Singer converts explicit IPA into its English ARPAbet phone inventory. The following table shows the supported symbol mappings. A period separates syllables and is not sent to the model. X-SAMPA conversion only changes the transcription encoding; it does not extend a backend's supported languages or sounds.
 
 | IPA | SoulX ARPAbet |

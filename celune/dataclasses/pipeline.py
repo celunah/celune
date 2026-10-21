@@ -5,8 +5,8 @@ from __future__ import annotations
 
 import time
 import queue
-from typing import Union, Optional
 from pathlib import Path
+from typing import Union, Optional
 from dataclasses import field, dataclass
 
 import numpy as np
@@ -133,12 +133,26 @@ class CaptionPlaybackSegment:
     word_start_frames: tuple[int, ...] = ()
 
 
+@dataclass(frozen=True)
+class CaptionPlaybackSection:
+    """Map one generated CESN section onto its queued playback frames."""
+
+    start_frame: int
+    end_frame: int
+    display_text: str
+
+
 @dataclass
 class CaptionPlaybackState:
-    """Track caption words across the completed chunks of one speech source."""
+    """Track spoken words or sung sections for one playback source."""
 
     total_words: int
     segments: list[CaptionPlaybackSegment] = field(default_factory=list)
+    section_segments: list[CaptionPlaybackSection] = field(default_factory=list)
+    active_section_index: Optional[int] = None
+    section_audio_frames: int = 0
+    pending_section_start: Optional[int] = None
+    pending_section_text: Optional[str] = None
 
 
 @dataclass

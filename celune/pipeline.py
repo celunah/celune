@@ -55,6 +55,7 @@ from .playback import (
     queue_playback_chunk,
     dequeue_playback_item,
     current_playback_status,
+    caption_chunk_start_frame,
     next_playback_source_id,
     playback_caption_states,
     playback_source_statuses,
@@ -68,7 +69,9 @@ from .playback import (
     clear_playback_source_status,
     flush_buffered_speech_chunks,
     notify_speech_playback_finished,
+    caption_tracking_modes,
     record_caption_playback_segment,
+    record_caption_playback_audio_chunk,
     should_apply_contention_buffering,
 )
 from .audio.dsp import (
@@ -1120,11 +1123,10 @@ def _process_generation_request(
             generated_text_parts: list[str] = []
             request_generation = item.generation
             caption_word_total = len(display_text.split())
-            caption_alignment_enabled = (
-                not capture_tutorial_audio
-                and not getattr(engine.backend, "singing", False)
-                and engine.config.get("captions") is True
-                and caption_worker is not None
+            singing_caption_enabled, caption_alignment_enabled = caption_tracking_modes(
+                engine,
+                tutorial_audio=capture_tutorial_audio,
+                caption_worker_available=caption_worker is not None,
             )
             if not capture_tutorial_audio:
                 register_playback_source(
@@ -1135,6 +1137,7 @@ def _process_generation_request(
                     caption_word_total=(
                         caption_word_total if caption_alignment_enabled else 0
                     ),
+                    track_caption_sections=singing_caption_enabled,
                 )
             caption_word_ranges = caption_chunk_word_ranges(display_text, chunks)
 
@@ -1146,20 +1149,14 @@ def _process_generation_request(
                     break
 
                 chunk_word_start, chunk_word_end = caption_word_ranges[chunk_index]
-                chunk_start_frames = (
-                    caption_audio_frames if caption_alignment_enabled else 0
+                chunk_start_frames = caption_chunk_start_frame(
+                    engine,
+                    source_id,
+                    caption_audio_frames if caption_alignment_enabled else 0,
+                    use_queued_total=(
+                        not caption_alignment_enabled and not singing_caption_enabled
+                    ),
                 )
-                if (
-                    not caption_alignment_enabled
-                    and source_id is not None
-                    and source_id in playback_caption_states(engine)
-                ):
-                    with engine.queue_lock:
-                        source_meta = playback_source_meta(engine).get(source_id)
-                        if isinstance(source_meta, dict):
-                            chunk_start_frames = int(
-                                float(source_meta.get("total_frames", 0.0))
-                            )
 
                 if item.normalize and not getattr(engine.backend, "singing", False):
                     engine.status_callback(string("status.normalizing"))
@@ -1301,6 +1298,14 @@ def _process_generation_request(
                         full_audio.append(audio_chunk)
                         if caption_alignment_enabled:
                             caption_audio_frames += len(audio_chunk)
+                        section_final = False
+                        if singing_caption_enabled:
+                            section_final = record_caption_playback_audio_chunk(
+                                engine,
+                                source_id,
+                                len(audio_chunk),
+                                timing,
+                            )
                         chunk_dur = len(audio_chunk) / BASE_SR
                         speech_len += chunk_dur
                         buffered_speech_len += chunk_dur
@@ -1321,6 +1326,7 @@ def _process_generation_request(
                             and (
                                 buffer_target_seconds <= 0.0
                                 or buffered_speech_len >= buffer_target_seconds
+                                or (singing_caption_enabled and section_final)
                             )
                         ):
                             pushed_audio = flush_buffered_speech_chunks(
@@ -1393,8 +1399,10 @@ def _process_generation_request(
                         )
                     buffered_speech_len = 0.0
                     if (
-                        not caption_alignment_enabled or caption_worker is None
-                    ) and source_id in playback_caption_states(engine):
+                        (not caption_alignment_enabled or caption_worker is None)
+                        and not singing_caption_enabled
+                        and source_id in playback_caption_states(engine)
+                    ):
                         with engine.queue_lock:
                             source_meta = playback_source_meta(engine).get(source_id)
                             chunk_end_frames = (

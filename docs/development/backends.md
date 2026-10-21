@@ -337,10 +337,14 @@ when the notation does not name one.
 
 Each `CESNSection` has one singer, language, BPM, key, and scale. A change to
 any of those values begins a new section. A singing backend must reset its
-inference state at each section boundary, process the section metadata, and
-combine the sections into the final model notation or rendered output. Parsed
-blocks retain note/IPA pairs and positioned rests; out-of-scale notes
-remain available after a `CESNNotationWarning` is displayed.
+inference state at each section boundary and process the section metadata.
+SoulX-Singer emits each generated section as a separate audio chunk and includes
+`section_caption` and `section_final` in the chunk timing metadata. The core
+uses the queued frame span to switch the caption when playback reaches that
+section. A backend that combines multiple sections into one chunk cannot provide
+section-specific captions. Parsed blocks retain note/IPA pairs and positioned
+rests; out-of-scale notes remain available after a `CESNNotationWarning` is
+displayed.
 
 `[tuplet:a,b]` scales the next `a` pitched-note or rest events by `b/a` and
 expires automatically. The parser preserves this ratio on each event and

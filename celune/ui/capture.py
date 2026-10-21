@@ -110,6 +110,12 @@ def safe_caption_progress(
     """Update the active caption from speech-only playback progress."""
     if self.cur_state == "exiting" or not self._caption_active:
         return
+    if getattr(
+        getattr(getattr(self, "celune", None), "backend", None),
+        "singing",
+        False,
+    ):
+        return
 
     def update_caption() -> None:
         if not self._caption_active or total is None or total <= 0:
@@ -321,21 +327,41 @@ def tts_caption(self, caption: Optional[str]) -> None:
     words = tuple(word for sentence in sentences for word in sentence)
     if not words:
         return
+    singing_caption = bool(
+        getattr(
+            getattr(getattr(self, "celune", None), "backend", None),
+            "singing",
+            False,
+        )
+    )
 
     def update() -> None:
+        if singing_caption and self._caption_active:
+            self._caption_text = caption
+            self._caption_words = words
+            self._caption_sentences = sentences
+            self._caption_rendered_text = caption.strip()
+            self._caption_visible_words = len(words)
+            self._caption_progress = 0.0
+            self._caption_segmented_progress = True
+            self._caption_transitioning = False
+            if self.caption is not None:
+                self.caption.update(caption.strip())
+            return
+
         self._clear_caption_timers()
         self._caption_transition_token += 1
         self._caption_text = caption
         self._caption_words = words
         self._caption_sentences = sentences
-        self._caption_rendered_text = ""
-        self._caption_visible_words = 0
+        self._caption_rendered_text = caption.strip() if singing_caption else ""
+        self._caption_visible_words = len(words) if singing_caption else 0
         self._caption_progress = 0.0
-        self._caption_segmented_progress = False
+        self._caption_segmented_progress = singing_caption
         self._caption_active = True
         self._caption_transitioning = False
         if self.caption is not None:
-            self.caption.update("")
+            self.caption.update(caption.strip() if singing_caption else "")
         self._show_caption_widgets()
 
     self._run_on_ui_thread(update)

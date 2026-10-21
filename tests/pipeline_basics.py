@@ -9,38 +9,38 @@ import queue
 import asyncio
 import tempfile
 import threading
-from types import TracebackType, SimpleNamespace
-from typing import Self, Optional, cast
 from pathlib import Path
 from unittest import mock
 from collections.abc import Iterator
+from typing import Self, Optional, cast
+from types import TracebackType, SimpleNamespace
 
-import numpy as np
 import pytest
+import numpy as np
 import numpy.typing as npt
 
-from celune import speech, pipeline
-from celune import conversation as conversation_module
-from celune.utils import discard
-from celune.celune import Celune
 from celune.cevoice import (
     CEVoicePersona,
     PersonaIdentity,
     PersonaStyleValues,
 )
-from celune.constants import PipelineStates
+from celune.utils import discard
+from celune.celune import Celune
 from celune.typing.agent import (
     AgentTask,
     AgentContext,
     AgentRequest,
 )
-from celune.typing.locks import ComponentLockName
-from celune.typing.common import JSON, JSONSerializable
-from celune.typing.aliases import AudioChunk
+from celune import speech, pipeline
 from celune.dataclasses.pipeline import (
     SpeechRequest,
     AudioInputRequest,
 )
+from celune.constants import PipelineStates
+from celune.typing.aliases import AudioChunk
+from celune.typing.locks import ComponentLockName
+from celune import conversation as conversation_module
+from celune.typing.common import JSON, JSONSerializable
 from celune.persona.capabilities import PersonaCapabilities
 
 from .support import (
@@ -416,6 +416,48 @@ class TestPipeline(CeluneTestCase):
             "Read foo_bar items and wait.",
             ["Read foo underscore bar items", "and wait."],
         ) == ((0, 3), (3, 5))
+
+    def test_singing_caption_follows_played_cesn_section_boundaries(self) -> None:
+        """Switch the displayed lyric only when playback reaches its section."""
+        engine = make_pipeline_engine()
+        celune_engine = cast(Celune, engine)
+        pipeline.register_playback_source(
+            celune_engine,
+            1,
+            kind="speech",
+            track_caption_sections=True,
+        )
+        pipeline.record_caption_playback_audio_chunk(
+            celune_engine, 1, 50, {"section_caption": "First lyric."}
+        )
+        pipeline.record_caption_playback_audio_chunk(
+            celune_engine, 1, 50, {"section_final": True}
+        )
+        pipeline.record_caption_playback_audio_chunk(
+            celune_engine,
+            1,
+            100,
+            {"section_caption": "Second lyric.", "section_final": True},
+        )
+        source_meta = pipeline.playback_source_meta(celune_engine)[1]
+        source_meta["total_frames"] = 200.0
+        source_meta["played_frames"] = 50.0
+        engine.caption_callback = mock.Mock()
+        engine.caption_progress_callback = mock.Mock()
+        engine.progress_callback = mock.Mock()
+
+        pipeline.update_playback_progress(celune_engine)
+        assert engine.caption_callback.call_args_list == [mock.call("First lyric.")]
+
+        source_meta["played_frames"] = 100.0
+        engine._playback_progress_last_emit_at = 0.0
+        pipeline.update_playback_progress(celune_engine)
+        assert engine.caption_callback.call_args_list[-1] == mock.call("Second lyric.")
+        engine.caption_progress_callback.assert_not_called()
+
+        pipeline.notify_speech_playback_finished(celune_engine, 1)
+        assert engine.caption_callback.call_args_list[-1] == mock.call(None)
+        assert engine._caption_source_id is None
 
     def test_chunk_caption_progress_uses_aligned_word_frame_boundaries(self) -> None:
         """Verify aligned word starts determine visible caption progress."""

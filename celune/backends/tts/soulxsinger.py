@@ -11,7 +11,6 @@ import shutil
 import tempfile
 import importlib
 import unicodedata
-
 from pathlib import Path
 from types import ModuleType
 from dataclasses import field, dataclass
@@ -22,13 +21,6 @@ import torch
 import numpy as np
 from huggingface_hub import snapshot_download
 
-from .base import CeluneBackend, to_numpy_audio, cached_hf_snapshot_path
-from ..environment import exclusive_lock
-from ...typing.common import JSON
-from ...typing.aliases import AudioChunk
-from ...singing import contains_cesn_note_event
-from ...registry.consent import require_model_consent
-from ...registry.other import SOULX_SINGER_RMVPE_MODEL_ID
 from ...cesn import (
     CESNSection,
     CESNNotePair,
@@ -66,6 +58,13 @@ from ...registry.tts import (
     SOULX_SINGER_CODE_REVISION,
     SOULX_SINGER_CODE_REPOSITORY,
 )
+from ...typing.common import JSON
+from ..environment import exclusive_lock
+from ...typing.aliases import AudioChunk
+from ...singing import contains_cesn_note_event
+from ...registry.consent import require_model_consent
+from ...registry.other import SOULX_SINGER_RMVPE_MODEL_ID
+from .base import CeluneBackend, to_numpy_audio, cached_hf_snapshot_path
 
 __all__ = [
     "SoulXSinger",
@@ -224,6 +223,7 @@ class _ScoreSection:
     language: str
     singer_path: str
     events: tuple[_ScoreEvent, ...]
+    display_text: str = ""
 
 
 @dataclass
@@ -433,6 +433,9 @@ def _serialize_section(section: CESNSection) -> _ScoreSection:
         language=section.language,
         singer_path=str(singer.bundle_path),
         events=events,
+        display_text=" ".join(
+            "".join(block.lyrics for block in section.blocks).split()
+        ),
     )
 
 
@@ -444,6 +447,7 @@ def _score_to_dict(section: _ScoreSection) -> dict[str, object]:
         "scale": section.scale,
         "language": section.language,
         "singer_path": section.singer_path,
+        "display_text": section.display_text,
         "events": [
             {
                 "pitch": event.pitch,
@@ -504,6 +508,7 @@ def decode_score(text: str) -> tuple[_ScoreSection, ...]:
         scale = raw_section.get("scale")
         language = raw_section.get("language")
         singer_path = raw_section.get("singer_path")
+        display_text = raw_section.get("display_text", "")
         raw_events = raw_section.get("events")
         if (
             not isinstance(bpm, int)
@@ -517,6 +522,7 @@ def decode_score(text: str) -> tuple[_ScoreSection, ...]:
             or not language
             or not isinstance(singer_path, str)
             or not singer_path
+            or not isinstance(display_text, str)
             or not isinstance(raw_events, list)
             or not raw_events
         ):
@@ -627,6 +633,7 @@ def decode_score(text: str) -> tuple[_ScoreSection, ...]:
                 language=language,
                 singer_path=singer_path,
                 events=tuple(events),
+                display_text=display_text,
             )
         )
     return tuple(sections)
@@ -1345,11 +1352,11 @@ class SoulXSinger(CeluneBackend[_SoulXRuntime]):
                 raise CESNValidationError("No CESN notation found")
             text = self.cesn_to_model(text)
         sections = decode_score(text)
-        audio_sections: list[AudioChunk] = []
+        section_count = len(sections)
         owned_loaders: dict[str, CEVoiceLoader] = {}
         self._apply_seed()
         try:
-            for section in sections:
+            for section_index, section in enumerate(sections):
                 if section.language.split("-")[0].casefold() != "en":
                     raise CESNUnsupportedFeatureError(
                         "SoulX-Singer supports English CESN only"
@@ -1447,30 +1454,21 @@ class SoulXSinger(CeluneBackend[_SoulXRuntime]):
                         "SoulX-Singer generated no audio after onset conditioning",
                         error_code="soulx_empty_audio",
                     )
-                audio_sections.append(generated_audio[onset_preroll_samples:])
+                section_audio = generated_audio[onset_preroll_samples:]
+                yield (
+                    section_audio,
+                    model.sample_rate,
+                    {
+                        "backend": self.name,
+                        "chunk_index": section_index,
+                        "chunk_steps": section_count,
+                        "total_steps_so_far": section_index + 1,
+                        "section_caption": section.display_text,
+                        "section_final": True,
+                        "first_chunk_time": time.monotonic(),
+                        "is_final": section_index + 1 == section_count,
+                    },
+                )
         finally:
             for loader in owned_loaders.values():
                 loader.close()
-
-        audio_output = (
-            np.concatenate(audio_sections)
-            if audio_sections
-            else np.array([], dtype=np.float32)
-        )
-        if audio_output.size == 0:
-            raise BackendError(
-                "SoulX-Singer generated no audio",
-                error_code="soulx_empty_audio",
-            )
-        yield (
-            audio_output,
-            model.sample_rate,
-            {
-                "backend": self.name,
-                "chunk_index": 0,
-                "chunk_steps": len(audio_sections),
-                "total_steps_so_far": len(audio_sections),
-                "first_chunk_time": time.monotonic(),
-                "is_final": True,
-            },
-        )
