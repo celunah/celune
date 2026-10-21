@@ -42,8 +42,10 @@ opens a menu containing only packs with a CECHAR v5 `sing` voice. Each pack has
 one non-searchable singing choice; selecting it reloads that character pack.
 `/help` adds a short CESN syntax glossary for notation order, language, tempo
 and scale, notes, rests, IPA pronunciation, slurs, tuplets, singer selection,
-and comments. CESN input is preserved as written through request submission so
-its directives and note tags reach the parser intact. If a request
+and comments, followed by a link to the paste-ready
+[CESN singing tutorial](../user-guide/cesn-tutorial.md). CESN input is
+preserved as written through request submission so its directives and note
+tags reach the parser intact. If a request
 is rejected before generation while the engine is idle, the error remains visible
 and the input prompt returns to the active mode. See
 [CESN format and parsing](../formats/cesn.md) for the complete notation reference.

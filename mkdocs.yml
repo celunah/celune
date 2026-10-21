@@ -51,6 +51,7 @@ nav:
       - Config: user-guide/configuration.md
       - Modes: user-guide/modes.md
       - Speech: user-guide/speech.md
+      - CESN singing tutorial: user-guide/cesn-tutorial.md
       - Persona: user-guide/persona.md
       - Agent: user-guide/agent.md
       - Voice conversion: user-guide/voice-conversion.md

@@ -354,6 +354,7 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
             ui.safe_log(string("commands.help_cesn_slur"))
             ui.safe_log(string("commands.help_cesn_tuplet"))
             ui.safe_log(string("commands.help_cesn_singer"))
+            ui.safe_log(string("commands.help_cesn_tutorial"))
 
         return
     if command == "vram":

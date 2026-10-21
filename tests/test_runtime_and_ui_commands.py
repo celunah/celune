@@ -736,6 +736,15 @@ class TestUICommand(CeluneTestCase):
         assert string("commands.help_cesn_slide") in messages
         assert string("commands.help_cesn_slur") in messages
         assert string("commands.help_cesn_singer") in messages
+        assert string("commands.help_cesn_tutorial") in messages
+
+    def test_help_omits_cesn_tutorial_without_singing_backend(self) -> None:
+        """Hide the CESN tutorial link when the active backend cannot sing."""
+        self.ui.celune.backend = SimpleNamespace(name="mini", singing=False)
+        self._process_command("help", [])
+
+        messages = [message for message, _severity in self.logs]
+        assert string("commands.help_cesn_tutorial") not in messages
 
     def _process_command(self, command: str, args: list[str]) -> None:
         """Process one command against the typed UI test double."""

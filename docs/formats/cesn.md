@@ -101,6 +101,7 @@ All CESN exception types derive from `CESNError`, a `ValueError` subtype. The le
 
 ## See also
 
+- [CESN singing tutorial](../user-guide/cesn-tutorial.md)
 - [Python API](../reference/public-api.md#cesn-parsing)
 - [CEVOICE and CECHAR formats](../CEVOICE.md)
 - [Backend integration](../development/backends.md#cesn-singing-hook)

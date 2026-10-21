@@ -479,6 +479,7 @@
     "commands.help_cesn_slur": "Slur: [slur:3] ties three adjacent pitched notes; rests cannot be included.",
     "commands.help_cesn_singer": "Singer: [singer:name] selects a CECHAR v5 pack with the hidden sing voice; [#text] is a comment.",
     "commands.help_cesn_tuplet": "Tuplet: [tuplet:3,2] fits the next three note/rest events into two beats.",
+    "commands.help_cesn_tutorial": "CESN tutorial: https://celune.readthedocs.io/en/latest/user-guide/cesn-tutorial/",
     "commands.help_cevoice": "/cevoice <name|path> - Hot-reload a CEVOICE pack.",
     "commands.help_consumebuffer": "/consumebuffer <true/false> - Read live-buffer text without CTRL+ENTER.",
     "commands.help_consumebuffer_caution": "Caution: This feature may interfere with typing '...'.",

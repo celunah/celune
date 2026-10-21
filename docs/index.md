@@ -16,6 +16,7 @@ custom CEVOICE/CECHAR voice-pack format and CEDTS isolated-worker protocol.
 | Understand the first startup | [First run](getting-started/first-run.md) |
 | Change runtime behavior | [Configuration](user-guide/configuration.md) |
 | Choose an operation mode | [Modes](user-guide/modes.md) |
+| Write a song for a singing backend | [CESN singing tutorial](user-guide/cesn-tutorial.md) |
 | Call Celune from another program | [REST API](API.md) or [Python API](reference/public-api.md) |
 | Listen to current and historical voices | [Voice samples](development/samples.md) |
 | Build a voice pack or character | [CEVOICE/CECHAR](CEVOICE.md) |

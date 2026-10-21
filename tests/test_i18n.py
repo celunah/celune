@@ -43,6 +43,7 @@ def test_product_name_uses_placeholder_in_user_facing_messages() -> None:
         "cli.apply_update_usage",
         "cli.traceback_cmd_dev_python",
         "cli.traceback_cmd_set_dev",
+        "commands.help_cesn_tutorial",
     }
 
 
