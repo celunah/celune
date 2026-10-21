@@ -9,24 +9,24 @@ import select
 import argparse
 import threading
 import subprocess
+from unittest import mock
+from pathlib import Path
+from contextlib import suppress
 from types import SimpleNamespace
 from typing import Optional, cast
-from pathlib import Path
-from unittest import mock
-from contextlib import suppress
 from collections import OrderedDict, deque
 
 import numpy as np
 
-from celune.cedts import remote, worker
-from celune.utils import format_error
 from celune.exceptions import (
+    CESNError,
+    CESNIPAError,
+    CESNRangeError,
     CEDTSError,
     BackendError,
     CESNValidationError,
     CESNBackendFormatError,
 )
-from celune.backends.tts import resolve_backend
 from celune.typing.worker import (
     WorkerValue,
     WorkerMessage,
@@ -45,16 +45,31 @@ from celune.cedts.protocol import (
 from celune.typing.backends import (
     BackendRuntime,
 )
+from celune.utils import format_error
+from celune.cedts import remote, worker
 from celune.backends.environment import (
     BACKEND_MANIFESTS,
     BackendManifest,
     BackendEnvironment,
 )
+from celune.singing import format_cesn_error
+from celune.backends.tts import resolve_backend
 from celune.dataclasses.pipeline import VoiceConversionRequest
 
 from .platform import LINUX_ONLY, WINDOWS_ONLY
 from .backend_processes import send_no_payload_packet
 from .backend_proxy_lifecycle import TestBackendEnvironment as _TestBackendEnvironment
+
+
+def _worker_error_response(error: CESNError) -> tuple[WorkerResponse, str]:
+    """Capture a raised CESN exception as a worker response and stderr text."""
+    worker_stderr = io.StringIO()
+    try:
+        raise error
+    except CESNError as caught_error:
+        with mock.patch.object(worker, "_WORKER_STDERR", worker_stderr):
+            return worker._error_response(caught_error), worker_stderr.getvalue()
+    raise AssertionError("CESN exception was not raised")
 
 
 class TestBackendEnvironment(_TestBackendEnvironment):
@@ -91,6 +106,57 @@ class TestBackendEnvironment(_TestBackendEnvironment):
         self.assertEqual(restored.source_start, 8)
         self.assertEqual(restored.source_end, 10)
         self.assertEqual(str(restored), "unsupported score value")
+
+    def test_worker_cesn_errors_use_notation_diagnostics_without_tracebacks(
+        self,
+    ) -> None:
+        """Keep range and IPA input errors on the concise CESN diagnostic path."""
+        cases = (
+            (
+                "[lang:en][f5:1][x-sampa:A] A",
+                CESNRangeError("F5", 77, "Celune", 54, 72),
+                "f5",
+            ),
+            (
+                "[lang:en][c4:1][ipa:/ʈa/] word",
+                CESNIPAError("ʈ"),
+                "ʈ",
+            ),
+        )
+        for notation, error, source_text in cases:
+            with self.subTest(error_type=type(error).__name__):
+                error.source_start = notation.index(source_text)
+                error.source_end = error.source_start + len(source_text)
+                response, worker_stderr = _worker_error_response(error)
+
+                self.assertEqual(worker_stderr, "")
+                self.assertNotIn(
+                    worker.WORKER_TRACEBACK_MARKER,
+                    response["error"],
+                )
+
+                restored = remote._worker_exception(
+                    response["error_type"],
+                    response["error"],
+                    source_start=response["source_start"],
+                    source_end=response["source_end"],
+                )
+                self.assertIsInstance(restored, CESNError)
+                diagnostic = format_cesn_error(notation, restored)
+                self.assertTrue(diagnostic.startswith("Parse error in CESN notation"))
+                self.assertIn("^", diagnostic)
+                self.assertNotIn("Traceback", diagnostic)
+
+    def test_worker_retains_tracebacks_for_internal_cesn_format_errors(self) -> None:
+        """Keep backend-format defects on the backend diagnostic path."""
+        error = CESNBackendFormatError("prepared score has an invalid pitch")
+        response, worker_stderr = _worker_error_response(error)
+
+        self.assertIn("Traceback", worker_stderr)
+        self.assertIn(
+            worker.WORKER_TRACEBACK_MARKER,
+            response["error"],
+        )
 
     def test_remote_proxy_keeps_internal_cesn_format_errors_as_backend_errors(
         self,

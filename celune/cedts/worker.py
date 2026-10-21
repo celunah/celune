@@ -9,13 +9,10 @@ import time
 import argparse
 import threading
 import traceback
-from typing import IO, Optional, cast
 from contextlib import suppress
+from typing import IO, Optional, cast
 from collections import OrderedDict, abc
 
-from ..vram import is_cuda_out_of_memory, release_cuda_after_oom
-from ..paths import configure_numba_cache
-from ..cevoice import select_voice_bundle
 from .protocol import (
     CEDTS_VERSION,
     WORKER_CAPABILITIES,
@@ -40,8 +37,9 @@ from ..exceptions import (
     CEDTSStreamError,
     CEDTSPayloadError,
     CEDTSProtocolError,
+    CESNValidationError,
+    CESNUnsupportedFeatureError,
 )
-from ..typing.common import JSONSerializable
 from ..typing.worker import (
     WorkerValue,
     WorkerMessage,
@@ -49,15 +47,19 @@ from ..typing.worker import (
     WorkerResponse,
     WorkerPayloadDescriptor,
 )
-from ..typing.aliases import LogLevel
 from ..typing.backends import (
     BackendModel,
     BackendRuntime,
     BackendArguments,
     BackendDescription,
 )
-from ..backends.environment import BackendManifest, backend_manifest
+from ..typing.aliases import LogLevel
+from ..cevoice import select_voice_bundle
+from ..paths import configure_numba_cache
+from ..typing.common import JSONSerializable
 from ..dataclasses.pipeline import VoiceConversionRequest
+from ..vram import is_cuda_out_of_memory, release_cuda_after_oom
+from ..backends.environment import BackendManifest, backend_manifest
 
 _WORKER_STDERR = sys.stderr
 _MESSAGE_ID_REPLAY_WINDOW = 4096
@@ -299,16 +301,23 @@ def _worker_log(
     print(f"{prefix} {message}", file=_WORKER_STDERR, flush=True)
 
 
+def _is_cesn_input_error(error: Exception) -> bool:
+    """Return whether a worker error belongs to a notation parse diagnostic."""
+    return isinstance(error, (CESNValidationError, CESNUnsupportedFeatureError))
+
+
 def _error_response(
     error: Exception,
     *,
     limits: CEDTSLimits = DEFAULT_CEDTS_LIMITS,
 ) -> WorkerResponse:
-    """Build a worker error response with bounded traceback details when available."""
-    traceback.print_exc(file=_WORKER_STDERR)
+    """Build an error response, retaining traces for non-input failures."""
+    is_cesn_input_error = _is_cesn_input_error(error)
+    if not is_cesn_input_error:
+        traceback.print_exc(file=_WORKER_STDERR)
     error_type = type(error)
     message = str(error)
-    if error.__traceback__ is not None:
+    if not is_cesn_input_error and error.__traceback__ is not None:
         worker_traceback = "".join(
             traceback.format_exception(type(error), error, error.__traceback__)
         )
@@ -1053,12 +1062,13 @@ def main() -> int:
                 release_cuda_after_oom()
             response = _error_response(error, limits=effective_limits)
             response_kind = "error"
-            _worker_log(
-                "[IPC] response operation="
-                f"{request.get('operation')} ok=False error={error}",
-                "error",
-                loglevel="verbose",
-            )
+            if not _is_cesn_input_error(error):
+                _worker_log(
+                    "[IPC] response operation="
+                    f"{request.get('operation')} ok=False error={error}",
+                    "error",
+                    loglevel="verbose",
+                )
         else:
             _worker_log(
                 "[IPC] response operation="
