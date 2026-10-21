@@ -9,8 +9,8 @@ import asyncio
 import logging
 import tempfile
 import threading
-from unittest import mock
 from pathlib import Path
+from unittest import mock
 from types import SimpleNamespace
 from typing import Optional, cast
 from collections.abc import Callable
@@ -30,9 +30,9 @@ from celune.ui.app import (
 )
 from celune.i18n import string
 from celune.theme import colors
+from celune.utils import discard
 from celune.celune import Celune
 from celune.config import Config
-from celune.utils import discard
 from celune.ui import app as ui_app
 from tests.support import FakeBackend
 from celune.ui.theme import severity_color
@@ -1581,7 +1581,7 @@ class TestUIStartup(_TestUIStartup):
     def test_singing_caption_updates_full_section_text_without_word_progress(
         self,
     ) -> None:
-        """Show each active singing section without speech-only reveal timing."""
+        """Fade a completed singing caption before restoring the progress bar."""
         ui = CeluneUI()
         ui.celune = cast(
             Celune,
@@ -1590,6 +1590,8 @@ class TestUIStartup(_TestUIStartup):
 
         class FakeCaption:
             """Capture the caption text shown by the TUI."""
+
+            is_attached = False
 
             def __init__(self) -> None:
                 self.display = False
@@ -1600,8 +1602,20 @@ class TestUIStartup(_TestUIStartup):
                 """Store the current caption text."""
                 self.rendered = value
 
+        class FakeProgressBar:
+            """Capture progress bar display state during caption transitions."""
+
+            is_attached = False
+
+            def __init__(self, parent: object) -> None:
+                self.display = True
+                self.styles = SimpleNamespace(opacity=1.0)
+                self.parent = parent
+
         caption = FakeCaption()
+        progress_row = SimpleNamespace(display=True)
         ui.caption = cast(Label, caption)
+        ui.progress_bar = cast(ProgressBar, FakeProgressBar(progress_row))
 
         ui.tts_caption("First section.")
         assert caption.rendered == "First section."
@@ -1613,8 +1627,33 @@ class TestUIStartup(_TestUIStartup):
         assert caption.rendered == "Second section."
         assert ui._caption_active
 
-        ui.tts_caption(None)
+        caption.is_attached = True
+        cast(FakeProgressBar, ui.progress_bar).is_attached = True
+        transition_callbacks: list[Optional[Callable[[], None]]] = []
+
+        def capture_transition(
+            _widget: Widget,
+            _opacity: float,
+            on_complete: Optional[Callable[[], None]] = None,
+            **_kwargs: object,
+        ) -> None:
+            transition_callbacks.append(on_complete)
+
+        with mock.patch.object(ui, "_animate_opacity", side_effect=capture_transition):
+            ui.tts_caption(None)
+
+        assert ui._caption_transitioning
+        assert caption.display
+        assert not progress_row.display
+        assert transition_callbacks[0] is not None
+        with mock.patch.object(ui, "_animate_opacity", side_effect=capture_transition):
+            transition_callbacks[0]()
+
+        assert not ui._caption_transitioning
         assert not ui._caption_active
+        assert not caption.display
+        assert progress_row.display
+        assert len(transition_callbacks) == 2
 
     def test_status_ticker_recovers_active_playback_status(self) -> None:
         """Verify the TUI ticker displays the active playback-source status."""

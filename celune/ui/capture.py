@@ -307,11 +307,23 @@ def _hide_caption_widgets(self) -> None:
 
 
 def tts_caption(self, caption: Optional[str]) -> None:
-    """Show a speech caption or clear it when alignment is unavailable."""
+    """Show a caption or clear it when playback finishes."""
     if self.cur_state == "exiting" or getattr(self.celune, "test_finished", False):
         return
+    singing_caption = bool(
+        getattr(
+            getattr(getattr(self, "celune", None), "backend", None),
+            "singing",
+            False,
+        )
+    )
     if caption is None:
-        self._run_on_ui_thread(self._reset_playback_widgets)
+        clear_caption = (
+            self._hide_caption_widgets
+            if singing_caption
+            else self._reset_playback_widgets
+        )
+        self._run_on_ui_thread(clear_caption)
         return
     if not caption:
         return
@@ -327,13 +339,6 @@ def tts_caption(self, caption: Optional[str]) -> None:
     words = tuple(word for sentence in sentences for word in sentence)
     if not words:
         return
-    singing_caption = bool(
-        getattr(
-            getattr(getattr(self, "celune", None), "backend", None),
-            "singing",
-            False,
-        )
-    )
 
     def update() -> None:
         if singing_caption and self._caption_active:
