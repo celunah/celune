@@ -9,8 +9,8 @@ import asyncio
 import logging
 import tempfile
 import threading
-from pathlib import Path
 from unittest import mock
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Optional, cast
 from collections.abc import Callable
@@ -30,15 +30,15 @@ from celune.ui.app import (
 )
 from celune.i18n import string
 from celune.theme import colors
-from celune.utils import discard
 from celune.celune import Celune
 from celune.config import Config
+from celune.utils import discard
 from celune.ui import app as ui_app
+from tests.support import FakeBackend
 from celune.ui.theme import severity_color
 from celune.ui import resources as ui_resources
 from celune.typing.common import JSONSerializable
 
-from tests.support import FakeBackend
 from .ui_startup_foundation import TestUIStartup as _TestUIStartup
 
 
@@ -1257,6 +1257,38 @@ class TestUIStartup(_TestUIStartup):
             (
                 "Internal runtime warning: test warning",
                 "warning",
+            )
+        ]
+
+    def test_mcp_logger_is_tagged_and_routed_at_debug_level(self) -> None:
+        """Verify MCP SDK diagnostics use the MCP tag and debug log level."""
+        ui = CeluneUI()
+        captured: list[tuple[str, str, str]] = []
+
+        def capture_log(
+            message: str,
+            severity: str = "info",
+            *,
+            loglevel: str = "info",
+        ) -> None:
+            captured.append((message, severity, loglevel))
+
+        ui.safe_log = capture_log
+        logger = logging.getLogger("mcp.server.streamable_http_manager")
+        previous_level = logger.level
+        logger.setLevel(logging.INFO)
+        self.addCleanup(logger.setLevel, previous_level)
+
+        ui.install_runtime_log_redirects()
+        self.addCleanup(ui._remove_runtime_log_redirects)
+
+        logger.info("Created new transport with session ID: test-session")
+
+        assert captured == [
+            (
+                "[MCP] Created new transport with session ID: test-session",
+                "info",
+                "debug",
             )
         ]
 

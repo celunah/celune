@@ -12,10 +12,11 @@ import readchar
 from rich.text import Text
 from rich.cells import cell_len
 from textual.dom import NoScreen
-from textual.events import Key, Click, Leave, MouseMove
 from textual.widget import Widget
 from textual.message import Message
+from textual.events import Key, Click, Leave, MouseMove
 
+from ..typing.aliases import LogCallback
 from ..terminal import infer_log_severity
 from ..typing.common import JSONSerializable
 
@@ -729,7 +730,7 @@ class UILogHandler(logging.Handler):
 
     def __init__(
         self,
-        write_callback: Callable[[str, str], None],
+        write_callback: LogCallback,
         filter_messages: Optional[Collection[str]] = None,
     ) -> None:
         super().__init__()
@@ -779,6 +780,10 @@ class UILogHandler(logging.Handler):
         else:
             severity = "info"
             prefix = "Internal runtime notice:"
+
+        if record.name == "mcp" or record.name.startswith("mcp."):
+            self.write_callback(f"[MCP] {message}", severity, loglevel="debug")
+            return
 
         self.write_callback(f"{prefix} {message}", severity)
 

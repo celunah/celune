@@ -52,6 +52,10 @@ Speech and singing tools return an MCP audio content block with MIME type `audio
 
 `change_backend` accepts the canonical installed backend names, including TTS and voice-conversion backends. A failed reload is returned as a tool error from the normal Celune control path.
 
+## Runtime logs
+
+MCP SDK log records are tagged `[MCP]` and emitted at Celune's debug log level. They appear only when `log_level: debug` or `--debug` is active. The SDK's error and warning severities remain visible in the log styling.
+
 ## Errors and compatibility
 
 `sing` checks the active backend and parses CESN before queueing. Missing notation or parse failures return a tool error; CESN parse diagnostics include the source line and column. REST clients receive `409 Conflict` when singing is unavailable or the request cannot be queued, and `422 Unprocessable Content` for invalid notation.
