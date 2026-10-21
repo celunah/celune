@@ -27,10 +27,10 @@ from celune.pipeline import (
     handle_audio_input,
     convert_audio_input,
 )
-from celune import i18n, cevoice
-from celune.celune import Celune
 from celune.config import Config
+from celune.celune import Celune
 from celune.utils import discard
+from celune import i18n, cevoice
 from celune.typing.locks import (
     ComponentLockName,
     ComponentLockOwner,
@@ -1079,7 +1079,9 @@ class TestCeluneCore(CeluneTestCase):
         config: Config = {"mode": "converse", "vram": "high", "persona": {}}
         assert persona_enabled(config)
         assert persona_talkback_enabled(config)
-        assert not persona_enabled({"mode": "speak", "vram": "high", "persona": {}})
+        assert not persona_enabled(
+            {"mode": "performance", "vram": "high", "persona": {}}
+        )
         assert not persona_talkback_enabled({"vram": "low", "persona": {}})
         with mock.patch("celune.vram.torch.cuda.is_available", return_value=False):
             assert persona_quantization({"vram": "high"}) == "4bit"
@@ -1264,9 +1266,11 @@ class TestCeluneCore(CeluneTestCase):
 
         say.assert_called_once_with("Read this aloud.")
 
-    def test_think_in_speak_mode_does_not_invoke_persona_or_agent_routing(self) -> None:
-        """Send speak-mode input directly to speech without touching Persona."""
-        celune = self._make_celune({"mode": "speak"})
+    def test_think_in_performance_mode_does_not_invoke_persona_or_agent_routing(
+        self,
+    ) -> None:
+        """Send performance-mode input directly to speech without touching Persona."""
+        celune = self._make_celune({"mode": "performance"})
         celune.vision = mock.Mock()
         with mock.patch.object(celune, "say", return_value=True) as say:
             self.assertTrue(celune.think("Speak this exactly."))

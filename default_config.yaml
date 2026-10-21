@@ -1,5 +1,5 @@
 # backend
-# you will be asked to choose, but VRAM presets may limit availibility
+# you will be asked to choose, but VRAM presets may limit availability
 # of certain backends
 #
 # qwen3 = faster, less expressive
@@ -39,13 +39,13 @@ qwen3_x_vector_only: false
 backend_options:
   soulxsinger:
     # Use F0 melody conditioning instead of score conditioning.
-    high_precision: false
+    high_precision: true
 
 # CEVOICE voice selection
 #
 # default voices are in the "default" pack and are usable for most
 # check scripts\cac.py to create your own custom voice pack by following
-# step by step instructions
+# step-by-step instructions
 voice_bundle: default
 
 # logging
@@ -130,10 +130,10 @@ captions: false
 ipa: false
 
 # Global operation mode:
-# speak    - speech-only operation without Persona or agent features
-# converse - Persona conversation without agent features
-# agent    - Persona-backed typed tools; requires the high VRAM target
-mode: converse
+# performance - manual voice operation, no Persona, agentic features, or other autonomous actions
+# converse    - Persona conversation without agentic features, singing unavailable
+# agent       - automatic Persona/agent routing, singing unavailable
+mode: performance
 
 # Agent settings
 agent:
@@ -177,7 +177,7 @@ api:
   # same_machine = localhost, same_network = all local interfaces,
   # everyone = localhost plus a temporary cloudflared public tunnel
   access: same_machine
-  # what port to bind
+  # what network port to bind
   port: 2060
   # what authentication token users must use
   # leave null to generate and store a key in Celune's app-data directory

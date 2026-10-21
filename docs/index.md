@@ -15,7 +15,7 @@ custom CEVOICE/CECHAR voice-pack format and CEDTS isolated-worker protocol.
 | Install and launch Celune | [Installation](getting-started/installation.md) |
 | Understand the first startup | [First run](getting-started/first-run.md) |
 | Change runtime behavior | [Configuration](user-guide/configuration.md) |
-| Speak, converse, or use the agent | [Modes](user-guide/modes.md) |
+| Choose an operation mode | [Modes](user-guide/modes.md) |
 | Call Celune from another program | [REST API](API.md) or [Python API](reference/public-api.md) |
 | Listen to current and historical voices | [Voice samples](development/samples.md) |
 | Build a voice pack or character | [CEVOICE/CECHAR](CEVOICE.md) |
@@ -27,7 +27,7 @@ custom CEVOICE/CECHAR voice-pack format and CEDTS isolated-worker protocol.
 ```text
 input text/audio
       │
-      ├─ speak ────────► TTS backend ─► buffered pipeline ─► DSP ─► playback
+      ├─ performance ──► TTS backend ─► buffered pipeline ─► DSP ─► playback
       ├─ converse ────► Persona ─────► speech pipeline ────────► playback
       ├─ agent ────────► planner/tools ► Persona response ──────► playback
       └─ voice input ──► VC backend ─► normalized audio ────────► playback

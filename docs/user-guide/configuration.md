@@ -14,14 +14,14 @@ before the interface opens. `celune config view` prints the active file and
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `backend` | `null` | TTS or VC backend name. `null` lets Celune choose its normal backend. |
-| `backend_options` | `soulxsinger.high_precision: false` | Constructor options passed only to the named backend. |
+| `backend_options` | `soulxsinger.high_precision: true` | Constructor options passed only to the named backend. |
 | `commercial` | `false` | Declare commercial use. Celune then allows only models whose reviewed terms confirm commercial use. |
 | `quantize` | `true` | Try contract-approved TTS weight-only quantization: INT8 on Ampere and FP8 on sm89 or newer, with BF16 recovery. LuxTTS is excluded. |
 | `quantize_kv_cache` | `true` | Store supported Persona, Qwen3, FireRedTTS3, and VoxCPM2 cache prefixes in INT8 on Ampere or FP8 on `sm89+`; use `false` to keep their native cache dtype. |
 | `voice_bundle` | `default` | CEVOICE/CECHAR name or path. |
 | `log_level` | `info` | `info`, `verbose`, or `debug`. |
 | `locale` | `null` | Locale override; `null` uses system detection. |
-| `mode` | `converse` | `speak`, `converse`, or `agent`. |
+| `mode` | `performance` | `performance`, `converse`, or `agent`. The former `speak` name remains compatible. |
 | `vram` | `medium` | Model-size and memory preset: `low`, `medium`, `high`, or `xhigh`. Persona and standard agent models need `high`; smart 8B-tier Persona models need `xhigh`. |
 | `headless` | `false` | Suppress the Textual interface. |
 | `headless_nocolor` | `false` | Suppress color in headless output. |
@@ -41,8 +41,8 @@ documented namespace instead of being duplicated at the top level.
 
 Put backend-only constructor options under `backend_options` and the backend's
 registered name. Celune passes only the selected backend's options to its
-isolated worker. For example, SoulX-Singer uses score conditioning by default;
-set `high_precision` to `true` to select its F0 melody-conditioning mode:
+isolated worker. The default enables SoulX-Singer's F0 melody-conditioning
+mode; set `high_precision` to `false` to use score conditioning instead:
 
 ```yaml
 backend_options:

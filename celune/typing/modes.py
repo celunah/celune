@@ -4,4 +4,6 @@
 from typing import Literal
 
 type BackendMode = Literal["normal", "ui_test", "agent_test"]
-type OperationMode = Literal["speak", "converse", "agent"]
+type OperationMode = Literal["performance", "converse", "agent"]
+
+OPERATION_MODES: tuple[OperationMode, ...] = ("performance", "converse", "agent")

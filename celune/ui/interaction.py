@@ -3,8 +3,8 @@
 
 from __future__ import annotations
 
-import os
 import re
+import os
 import sys
 import shlex
 import types
@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Optional, cast
 
 from . import app as _app
 from ..constants import SIGTSTP, APP_NAME
+from ..typing.modes import OPERATION_MODES
 from ..binding import install_class_functions
 
 if TYPE_CHECKING:
@@ -706,7 +707,7 @@ def _config_autocomplete(
             "seed-vc",
         ),
         ("log_level",): ("info", "verbose", "debug"),
-        ("mode",): ("speak", "converse", "agent"),
+        ("mode",): OPERATION_MODES,
         ("theme",): ("dark", "light"),
         ("vram",): ("low", "medium", "high", "xhigh"),
         ("audio_api",): (None, "wasapi", "directsound"),

@@ -1,18 +1,18 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for global operation modes and Persona capabilities."""
 
-from types import SimpleNamespace
 from typing import cast
 from unittest import mock
+from types import SimpleNamespace
 
-from celune.agent import AgentOutput, agent_mode_enabled
-from celune.modes import resolve_operation_mode
-from celune.celune import agent_task_config
-from celune.persona.impl import persona_enabled, persona_context_size
 from celune.typing.common import Config
-from celune.typing.persona import PersonaModel, PersonaProcessor, PersonaTokenizer
+from celune.celune import agent_task_config
 from celune.persona.runtime import PersonaBackend
+from celune.agent import AgentOutput, agent_mode_enabled
 from celune.persona.capabilities import PersonaCapabilities
+from celune.persona.impl import persona_enabled, persona_context_size
+from celune.modes import has_explicit_operation_mode, resolve_operation_mode
+from celune.typing.persona import PersonaModel, PersonaProcessor, PersonaTokenizer
 
 from .support import CeluneTestCase
 
@@ -22,9 +22,14 @@ class TestOperationMode(CeluneTestCase):
 
     def test_operation_modes_are_resolved_directly(self) -> None:
         """Verify the active global modes include the production agent mode."""
-        self.assertEqual(resolve_operation_mode({"mode": "speak"}), "speak")
+        self.assertEqual(resolve_operation_mode({"mode": "performance"}), "performance")
         self.assertEqual(resolve_operation_mode({"mode": "converse"}), "converse")
         self.assertEqual(resolve_operation_mode({"mode": "agent"}), "agent")
+
+    def test_legacy_speak_mode_resolves_to_performance(self) -> None:
+        """Keep existing configs using the former speak mode operational."""
+        assert resolve_operation_mode({"mode": "speak"}) == "performance"
+        assert has_explicit_operation_mode({"mode": "speak"})
 
     def test_legacy_input_mode_does_not_change_global_mode(self) -> None:
         """Verify legacy input-mode values remain compatible with the new switch."""
@@ -33,7 +38,7 @@ class TestOperationMode(CeluneTestCase):
     def test_vram_presets_gate_persona_and_agent_features(self) -> None:
         """Verify Persona and standard agent mode require the high VRAM tier."""
         speak_config: Config = {
-            "mode": "speak",
+            "mode": "performance",
             "vram": "high",
             "persona": {"enabled": True},
         }

@@ -2,7 +2,7 @@
 
 Persona is Celune's local character runtime. It turns text, speech, and vision
 inputs into a response that is spoken by the active TTS pipeline. Persona is
-available in `converse` and `agent` modes; `speak` mode deliberately bypasses
+available in `converse` and `agent` modes; `performance` mode deliberately bypasses
 it.
 
 ## Model and capabilities

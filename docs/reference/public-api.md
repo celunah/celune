@@ -32,7 +32,7 @@ common integration shape is:
 ```python
 from celune import Celune
 
-engine = Celune(config={"mode": "speak", "voice_bundle": "default"})
+engine = Celune(config={"mode": "performance", "voice_bundle": "default"})
 try:
     engine.load()
     engine.say("Hello from Python.")
