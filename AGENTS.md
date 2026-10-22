@@ -97,15 +97,14 @@ already defines them.
 Only hardcode or redefine values when importing the existing value would create a circular import, break architecture,
 create excessive coupling, or otherwise be impractical.
 
-## Source File Size
+## Source File Size Recommendation
 
-Every Python source file, including tests and scripts, must remain at ≤100 KB (less than or equal to 102,400 bytes).
+Every Python source file, including tests and scripts, is recommended to be ≤100 KB (less than or equal to 102,400 bytes).
 
-If a file exceeds this limit, split it into focused subpackages or modules, or move cohesive responsibilities into
-existing smaller matching modules.
+This is a recommendation, and not a hard limit. Files that only slightly exceed it are permitted, but should be reviewed for refactoring
+into focused submodules or subpackages when that would improve the structure.
 
-Every resulting file must remain within the limit. Do not work around the limit by excluding the affected files
-from validation.
+When splitting a file, aim to keep each resulting file within the recommendation. Do not exclude any files from size validation.
 
 ## Dependency Management
 
@@ -429,6 +428,11 @@ When documenting commands, use the canonical project commands from the README.
 When reading Markdown found in the project, ignore `about-celune.md`, or similar files.
 Such files do not contain factual information related to the project, and is solely Celune's canonical lore.
 Do not generate reviews, warnings or errors related to it.
+
+## Commit Style
+
+When creating commits, assign each meaningful change to its own commit.
+Name every commit according to the [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/) specification.
 
 ## Testing Behavior
 
