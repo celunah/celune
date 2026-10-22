@@ -6,7 +6,7 @@ import re
 import stat
 from pathlib import Path
 
-from celune.api import generate_api_key, get_or_create_api_key
+from celune.server.auth import generate_api_key, get_or_create_api_key
 
 
 def test_generate_api_key_uses_the_celune_base36_format() -> None:

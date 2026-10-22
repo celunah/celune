@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Textual theme assets."""
 
+from textual.color import Color
+
 # this CSS draws its palette from the currently loaded CEVOICE/CECHAR pack
 CELUNE_CSS = """
     Screen {
@@ -321,3 +323,16 @@ def severity_color(theme_name: str, severity: str = "info") -> str:
 
     palette = SEVERITY_COLORS.get(theme_name, SEVERITY_COLORS["celune"])
     return palette.get(severity, palette["info"])
+
+
+def with_brightness(color: Color, brightness: float) -> Color:
+    """Return ``color`` blended toward the requested brightness."""
+    brightness = max(0.0, min(1.0, brightness))
+    current = color.brightness
+    if abs(current - brightness) < 0.01:
+        return color
+
+    destination = Color(255, 255, 255) if current < brightness else Color(0, 0, 0)
+    destination_brightness = destination.brightness
+    factor = (brightness - current) / (destination_brightness - current)
+    return color.blend(destination, max(0.0, min(1.0, factor)))

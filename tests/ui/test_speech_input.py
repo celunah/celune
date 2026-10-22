@@ -10,6 +10,8 @@ import pytest
 import numpy as np
 from textual import events
 
+from celune.ui.app import CeluneUI, ButtonActions
+from celune.typing.persona import WhisperProcessor
 from celune.persona.asr import (
     PERSONA_SPEECH_NO_INPUT_TIMEOUT_SECONDS,
     WhisperTranscriber,
@@ -18,10 +20,8 @@ from celune.registry.asr import (
     DEFAULT_PERSONA_SPEECH_MODEL_ID,
     DEFAULT_PERSONA_SPEECH_MODEL_REVISION,
 )
-from celune.ui.app import CeluneUI, ButtonActions
-from celune.typing.persona import WhisperProcessor
 
-from .support import CeluneTestCase
+from ..support import CeluneTestCase
 
 
 class TestSpeechInput(CeluneTestCase):

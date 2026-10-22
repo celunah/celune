@@ -3,18 +3,20 @@
 
 import asyncio
 import threading
+from unittest import mock
 from types import SimpleNamespace
 from typing import Literal, Optional, cast
-from unittest import mock
 
 import pytest
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
 from celune import api
+from celune.server import jobs
 from celune.celune import Celune
+from celune.typing.api import TaskStatus, TaskEventName
 
-from .support import CeluneTestCase
+from ..support import CeluneTestCase
 
 
 class TestApiTaskWebSocket(CeluneTestCase):
@@ -22,19 +24,19 @@ class TestApiTaskWebSocket(CeluneTestCase):
 
     def setUp(self) -> None:
         """Reset the in-memory API task registry before each test."""
-        api.speech_jobs.clear()
-        api.active_speech_task_id = None
-        api.auth_token = None
+        api.server_session.speech_jobs.clear()
+        api.server_session.active_speech_task_id = None
+        api.server_session.auth_token = None
 
     def tearDown(self) -> None:
         """Reset the in-memory API task registry after each test."""
-        api.speech_jobs.clear()
-        api.active_speech_task_id = None
+        api.server_session.speech_jobs.clear()
+        api.server_session.active_speech_task_id = None
 
     @staticmethod
     def _job(job_id: str = "task-1") -> str:
         """Create one running speech task fixture."""
-        api.remember_speech_job(
+        jobs.remember_speech_job(
             job_id,
             api.SpeechJob(status="running", created_at=0.0),
         )
@@ -43,15 +45,15 @@ class TestApiTaskWebSocket(CeluneTestCase):
     @staticmethod
     def _publish(
         job_id: str,
-        event: api.TaskEventName,
-        status: api.TaskStatus,
+        event: TaskEventName,
+        status: TaskStatus,
         *,
         message: Optional[str] = None,
         current: Optional[float] = None,
         total: Optional[float] = None,
     ) -> None:
         """Publish one typed task event fixture."""
-        api.publish_task_event(
+        jobs.publish_task_event(
             job_id,
             api.TaskEvent(
                 task_id=job_id,
@@ -71,7 +73,7 @@ class TestApiTaskWebSocket(CeluneTestCase):
         self._publish(job_id, "started", "running")
         self._publish(job_id, "progress", "running", current=1.0, total=2.0)
         self._publish(job_id, "log", "running", message="Generating")
-        api.update_speech_job(job_id, status="completed")
+        jobs.update_speech_job(job_id, status="completed")
         self._publish(job_id, "completed", "completed")
 
         with (
@@ -144,8 +146,8 @@ class TestApiTaskWebSocket(CeluneTestCase):
             client.websocket_connect(f"/v1/ws/tasks/{job_id}") as websocket,
         ):
             assert websocket.receive_json()["event"] == "started"
-            api.update_speech_job(job_id, status="failed", error="hidden")
-            api.publish_task_event(
+            jobs.update_speech_job(job_id, status="failed", error="hidden")
+            jobs.publish_task_event(
                 job_id,
                 api.TaskEvent(
                     task_id=job_id,
@@ -170,8 +172,8 @@ class TestApiTaskWebSocket(CeluneTestCase):
         ):
             websocket.receive_json()
 
-        assert api.speech_jobs[job_id].status == "running"
-        assert api.speech_jobs[job_id].subscriptions == []
+        assert api.server_session.speech_jobs[job_id].status == "running"
+        assert api.server_session.speech_jobs[job_id].subscriptions == []
 
     def test_websocket_streams_failure_and_cancellation_terminal_events(self) -> None:
         """Verify failed and canceled tasks use typed terminal event names."""
@@ -182,7 +184,7 @@ class TestApiTaskWebSocket(CeluneTestCase):
         for index, terminal in enumerate(terminals, start=1):
             job_id = self._job(f"task-{index}")
             self._publish(job_id, "started", "running")
-            api.update_speech_job(job_id, status=terminal)
+            jobs.update_speech_job(job_id, status=terminal)
             self._publish(job_id, terminal, terminal)
 
             with (
@@ -202,8 +204,8 @@ class TestApiTaskWebSocket(CeluneTestCase):
             calls.append("stop")
             return True
 
-        previous_celune = api.bound_celune
-        api.bound_celune = cast(
+        previous_celune = api.server_session.bound_celune
+        api.server_session.bound_celune = cast(
             Celune,
             SimpleNamespace(
                 force_stop_speech_async=force_stop_speech_async,
@@ -212,9 +214,9 @@ class TestApiTaskWebSocket(CeluneTestCase):
         try:
             response = asyncio.run(api.cancel_speech_job(job_id))
         finally:
-            api.bound_celune = previous_celune
+            api.server_session.bound_celune = previous_celune
 
         assert calls == ["stop"]
         assert isinstance(response, api.TaskCancelResponse)
-        assert api.speech_jobs[job_id].status == "cancelled"
-        assert api.speech_jobs[job_id].events[-1].event == "cancelled"
+        assert api.server_session.speech_jobs[job_id].status == "cancelled"
+        assert api.server_session.speech_jobs[job_id].events[-1].event == "cancelled"

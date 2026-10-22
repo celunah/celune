@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Tests for runtime validation and lightweight UI commands."""
+"""Tests for Textual recording, interaction, and runtime state behavior."""
 
 # Import groups follow Celune's project-specific Ruff ordering.
 # pylint: disable=ungrouped-imports
@@ -21,6 +21,15 @@ from textual import events
 from textual.widget import Widget
 from textual.widgets import Label, RichLog, TextArea, ProgressBar
 
+from celune.i18n import string
+from celune.theme import colors
+from celune.celune import Celune
+from celune.config import Config
+from celune.utils import discard
+from celune.ui import app as ui_app
+from celune.ui.theme import severity_color
+from celune.ui import resources as ui_resources
+from celune.typing.common import JSONSerializable
 from celune.ui.app import (
     Button,
     CeluneUI,
@@ -28,22 +37,18 @@ from celune.ui.app import (
     ButtonActions,
     ProgressLabel,
 )
-from celune.i18n import string
-from celune.theme import colors
-from celune.utils import discard
-from celune.celune import Celune
-from celune.config import Config
-from celune.ui import app as ui_app
-from tests.support import FakeBackend
-from celune.ui.theme import severity_color
-from celune.ui import resources as ui_resources
-from celune.typing.common import JSONSerializable
 
-from .ui_startup_foundation import TestUIStartup as _TestUIStartup
+from .fixtures import reset_ui_singletons
+
+from ..support import FakeBackend, CeluneTestCase
 
 
-class TestUIStartup(_TestUIStartup):
-    """Exercise interactive startup and shutdown behavior."""
+class TestUIInteractions(CeluneTestCase):
+    """Exercise interactive startup and shutdown behavior independently."""
+
+    def tearDown(self) -> None:
+        """Reset singleton UI guards after each test."""
+        reset_ui_singletons()
 
     def test_vc_recording_vad_plays_leading_silence(self) -> None:
         """Verify live VC converts and plays silence while its VAD gate is closed."""
@@ -1266,12 +1271,12 @@ class TestUIStartup(_TestUIStartup):
         captured: list[tuple[str, str, str]] = []
 
         def capture_log(
-            message: str,
+            msg: str,
             severity: str = "info",
             *,
             loglevel: str = "info",
         ) -> None:
-            captured.append((message, severity, loglevel))
+            captured.append((msg, severity, loglevel))
 
         ui.safe_log = capture_log
         logger = logging.getLogger("mcp.server.streamable_http_manager")

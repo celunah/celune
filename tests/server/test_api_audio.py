@@ -6,22 +6,23 @@ import json
 import time
 import queue
 import asyncio
+from unittest import mock
 from types import SimpleNamespace
 from typing import Optional, cast
-from unittest import mock
 
-import numpy as np
 import pytest
+import numpy as np
 import soundfile as sf
 from fastapi import UploadFile
 from fastapi.responses import JSONResponse, StreamingResponse
 from starlette.responses import Response
 
 from celune import api
+from celune.server import jobs
 from celune.celune import Celune
-from celune.pipeline import SpeechStreamQueue
+from celune.typing.pipeline import SpeechStreamQueue
 
-from .support import CeluneTestCase
+from ..support import CeluneTestCase
 
 
 class TestApiAudio(CeluneTestCase):
@@ -77,10 +78,10 @@ class TestApiAudio(CeluneTestCase):
         chunks: SpeechStreamQueue = queue.Queue()
         chunks.put(np.zeros((2, 8), dtype=np.float32))
         chunks.put(None)
-        previous_celune = api.bound_celune
+        previous_celune = api.server_session.bound_celune
 
         try:
-            api.bound_celune = cast(
+            api.server_session.bound_celune = cast(
                 Celune, SimpleNamespace(say_stream=lambda content, save=True: chunks)
             )
             response = api.speak_async(api.SpeakRequest(content="hello"))
@@ -104,40 +105,40 @@ class TestApiAudio(CeluneTestCase):
             assert result.status_code == 200
             assert bytes(result.body)[:4] == b"fLaC"
         finally:
-            api.bound_celune = previous_celune
-            api.speech_jobs.clear()
+            api.server_session.bound_celune = previous_celune
+            api.server_session.speech_jobs.clear()
 
     def test_speech_job_lookup_expires_old_jobs(self) -> None:
         """Verify async speech jobs are removed after their in-memory TTL."""
-        previous_ttl = api.speech_job_ttl_seconds
-        api.speech_job_ttl_seconds = 10
-        api.speech_jobs.clear()
+        previous_ttl = api.server_session.speech_job_ttl_seconds
+        api.server_session.speech_job_ttl_seconds = 10
+        api.server_session.speech_jobs.clear()
         try:
-            api.speech_jobs["old"] = api.SpeechJob(
+            api.server_session.speech_jobs["old"] = api.SpeechJob(
                 status="completed",
                 created_at=time.time() - 11,
                 audio=b"old",
             )
-            api.speech_jobs["fresh"] = api.SpeechJob(
+            api.server_session.speech_jobs["fresh"] = api.SpeechJob(
                 status="completed",
                 created_at=time.time(),
                 audio=b"fresh",
             )
 
-            assert api.speech_job_snapshot("old") is None
-            assert "old" not in api.speech_jobs
-            assert api.speech_job_snapshot("fresh") is not None
+            assert jobs.speech_job_snapshot("old") is None
+            assert "old" not in api.server_session.speech_jobs
+            assert jobs.speech_job_snapshot("fresh") is not None
         finally:
-            api.speech_job_ttl_seconds = previous_ttl
-            api.speech_jobs.clear()
+            api.server_session.speech_job_ttl_seconds = previous_ttl
+            api.server_session.speech_jobs.clear()
 
     def test_convert_route_rejects_requests_outside_voice_conversion_mode(self) -> None:
         """Verify VC conversion uploads are rejected while running in TTS mode."""
-        previous_celune = api.bound_celune
+        previous_celune = api.server_session.bound_celune
         audio = np.zeros((24, 2), dtype=np.float32)
 
         try:
-            api.bound_celune = cast(
+            api.server_session.bound_celune = cast(
                 Celune,
                 SimpleNamespace(
                     input_mode="text_to_speech",
@@ -153,7 +154,7 @@ class TestApiAudio(CeluneTestCase):
                 )
             )
         finally:
-            api.bound_celune = previous_celune
+            api.server_session.bound_celune = previous_celune
 
         assert response.status_code == 409
         payload = json.loads(bytes(cast(JSONResponse, response).body))
@@ -161,12 +162,12 @@ class TestApiAudio(CeluneTestCase):
 
     def test_convert_route_returns_converted_audio(self) -> None:
         """Verify VC conversion uploads return FLAC audio in Celune's playback format."""
-        previous_celune = api.bound_celune
+        previous_celune = api.server_session.bound_celune
         source_audio = np.zeros((24, 2), dtype=np.float32)
         converted_audio = np.ones((12, 2), dtype=np.float32) * 0.25
 
         try:
-            api.bound_celune = cast(
+            api.server_session.bound_celune = cast(
                 Celune,
                 SimpleNamespace(
                     input_mode="voice_conversion",
@@ -191,7 +192,7 @@ class TestApiAudio(CeluneTestCase):
                 )
             )
         finally:
-            api.bound_celune = previous_celune
+            api.server_session.bound_celune = previous_celune
 
         assert response.status_code == 200
         assert response.headers["x-sample-rate"] == "48000"

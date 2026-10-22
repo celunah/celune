@@ -2,12 +2,17 @@
 """Frontend layer."""
 
 from __future__ import annotations
-
 import sys
 import asyncio
 import logging
 import itertools
 import threading
+import queue as queue_module
+from pathlib import Path
+from io import TextIOWrapper
+from types import ModuleType
+from dataclasses import field, dataclass
+from collections.abc import Callable, Iterator
 from typing import (
     TYPE_CHECKING,
     Never,
@@ -20,13 +25,17 @@ from typing import (
     cast,
     final,
 )
-from pathlib import Path
-import queue as queue_module
-from io import TextIOWrapper
-from types import ModuleType
-from dataclasses import field, dataclass
-from collections.abc import Callable, Iterator
 
+from rich.text import Text
+from textual import (
+    color as textual_color,
+)
+from textual import (
+    screen as textual_screen,
+)
+from textual import (
+    message as textual_message,
+)
 from textual import (
     app,
     css,
@@ -34,41 +43,34 @@ from textual import (
     theme,
     timer,
     events,
-    widget,
+    widget as textual_widget,
     binding,
     widgets,
     containers,
 )
-from textual import (
-    color as textual_color,
-)
-from textual import (
-    message as textual_message,
-)
-from textual import (
-    screen as textual_screen,
-)
-from rich.text import Text
 
+from . import capture as _capture
+from . import runtime as _runtime
+from .loading import CeluneLoadingScreen
+from . import interaction as _interaction
+from .compat import install_textual_timer_sleep
+from .terminal import SelectMenuOption, SelectMenuWidget
+from .theme import CELUNE_CSS, severity_color, with_brightness
+
+from ..i18n import string, tagged_string
+from ..typing.agent import AgentTaskState
+from ..registry.types import ModelMetadata
+from ..threads import run_in_daemon_thread
+from ..typing.common import JSONSerializable
+from ..watchdog import launcher_loss_requested
+from ..typing.config import AudioDeviceInfoValue
+from ..constants import BASE_SR, SIGTSTP, APP_NAME, ExitCodes
+from ..theme.defaults import default_theme_family, default_error_theme_family
 from ..typing.locks import (
     ComponentLockName,
     ComponentLockOwner,
     ComponentLockRequirement,
 )
-from ..i18n import string, tagged_string
-from .loading import CeluneLoadingScreen
-from ..typing.agent import AgentTaskState
-from ..registry.types import ModelMetadata
-from ..threads import run_in_daemon_thread
-from ..typing.common import JSONSerializable
-from ..typing.ui import CeluneUIMethodSurface
-from .theme import CELUNE_CSS, severity_color
-from ..watchdog import launcher_loss_requested
-from .compat import install_textual_timer_sleep
-from ..typing.config import AudioDeviceInfoValue
-from .terminal import SelectMenuOption, SelectMenuWidget
-from ..constants import BASE_SR, SIGTSTP, APP_NAME, ExitCodes
-from ..theme.defaults import default_theme_family, default_error_theme_family
 
 App = app.App
 ReturnType = app.ReturnType
@@ -80,7 +82,7 @@ Color = textual_color.Color
 Theme = theme.Theme
 Timer = timer.Timer
 ModalScreen = textual_screen.ModalScreen
-Widget = widget.Widget
+Widget = textual_widget.Widget
 BindingType = binding.BindingType
 Message = textual_message.Message
 Input = widgets.Input
@@ -106,6 +108,7 @@ if TYPE_CHECKING:
     import sounddevice as sd
 
     from .terminal import LogRedirect, UILogHandler
+
     from ..typing.agent import AgentTask
     from ..typing.aliases import LogLevel, AudioChunk, AudioChunks, VCAudioCallback
 
@@ -115,6 +118,38 @@ if TYPE_CHECKING:
     import numpy as np
     import numpy.typing as npt
 
+    from .terminal import is_celune_log_record
+    from .resources import FOOTER_ROTATE_SECONDS
+    from .commands import process_command as process_ui_command
+
+    from ..celune import Celune
+    from ..cevoice import CEVoiceLoader
+    from ..exceptions import CEDTSError
+    from ..locks import ComponentLockLease
+    from ..dataclasses.pipeline import AudioOutput
+    from ..extensions.events import EventDispatcher
+    from ..paths import config_path, main_window_log_path
+    from ..pipeline.captions import current_playback_status
+    from ..utils import discard, replace_ipa, is_april_fools
+    from ..config import format_audio_device_name, resolve_audio_device_with_info
+    from ..persona.impl import persona_config, persona_enabled, persona_talkback_enabled
+    from ..pipeline.submission import (
+        queue_streaming_sfx_audio,
+        finish_streaming_sfx_audio,
+    )
+    from ..dataclasses.events import (
+        AgentTaskFinishedEvent,
+        AgentChoiceRequestedEvent,
+        AgentTaskStateChangedEvent,
+        AgentApprovalRequestedEvent,
+    )
+    from ..persona.asr import (
+        DEFAULT_PERSONA_SPEECH_MODEL_ID,
+        PERSONA_SPEECH_END_DELAY_SECONDS,
+        PERSONA_SPEECH_NO_INPUT_TIMEOUT_SECONDS,
+        WhisperSegment,
+        WhisperTranscriber,
+    )
     from ..vc import (
         VC_PLAYBACK_GAIN,
         VCDebugCapture,
@@ -127,34 +162,6 @@ if TYPE_CHECKING:
         vc_live_chunk_overlap_frames,
         create_live_voice_activity_detector,
     )
-    from ..locks import ComponentLockLease
-    from ..paths import config_path, main_window_log_path
-    from ..utils import discard, replace_ipa, is_april_fools
-    from ..celune import Celune
-    from ..config import format_audio_device_name, resolve_audio_device_with_info
-    from ..speech import queue_streaming_sfx_audio, finish_streaming_sfx_audio
-    from ..cevoice import CEVoiceLoader
-    from .commands import process_command as process_ui_command
-    from .terminal import is_celune_log_record
-    from ..playback import current_playback_status
-    from .resources import FOOTER_ROTATE_SECONDS
-    from ..exceptions import CEDTSError
-    from ..persona.asr import (
-        DEFAULT_PERSONA_SPEECH_MODEL_ID,
-        PERSONA_SPEECH_END_DELAY_SECONDS,
-        PERSONA_SPEECH_NO_INPUT_TIMEOUT_SECONDS,
-        WhisperSegment,
-        WhisperTranscriber,
-    )
-    from ..persona.impl import persona_config, persona_enabled, persona_talkback_enabled
-    from ..extensions.events import EventDispatcher
-    from ..dataclasses.events import (
-        AgentTaskFinishedEvent,
-        AgentChoiceRequestedEvent,
-        AgentTaskStateChangedEvent,
-        AgentApprovalRequestedEvent,
-    )
-    from ..dataclasses.pipeline import AudioOutput
 
     class _UIResources(Protocol):
         """Type-checkable subset of the resource footer module."""
@@ -618,6 +625,12 @@ def set_terminal_title(
 def ensure_ui_runtime_dependencies() -> None:
     """Load optional UI integrations after the first loading frame is visible."""
     global _RUNTIME_DEPENDENCIES_LOADED
+    global colors
+    global default_loader
+    global indent
+    global set_terminal_title
+    global supports_ansi
+    global terminal_title_escape
     if _RUNTIME_DEPENDENCIES_LOADED:
         return
 
@@ -671,6 +684,54 @@ def ensure_ui_runtime_dependencies() -> None:
     from . import resources as loaded_ui_resources
 
     ui_resources = loaded_ui_resources
+    from .resources import FOOTER_ROTATE_SECONDS
+    from .commands import process_command as process_ui_command
+    from .terminal import LogRedirect, UILogHandler, is_celune_log_record
+
+    from ..exceptions import CEDTSError
+    from ..theme import colors as loaded_colors
+    from ..dataclasses.pipeline import AudioOutput
+    from ..paths import config_path, main_window_log_path
+    from ..pipeline.captions import current_playback_status
+    from ..utils import (
+        indent as loaded_indent,
+    )
+    from ..cevoice import default_loader as loaded_default_loader
+    from ..terminal import (
+        RUNTIME_LOG_FILTER_MESSAGES,
+    )
+    from ..utils import (
+        supports_ansi as loaded_supports_ansi,
+    )
+    from ..config import format_audio_device_name, resolve_audio_device_with_info
+    from ..watchdog import launcher_loss_requested as loaded_launcher_loss_requested
+    from ..terminal import (
+        set_terminal_title as loaded_set_terminal_title,
+    )
+    from ..utils import (
+        discard,
+        replace_ipa,
+        is_april_fools,
+    )
+    from ..terminal import (
+        terminal_title_escape as loaded_terminal_title_escape,
+    )
+    from ..pipeline.submission import (
+        queue_streaming_sfx_audio,
+        finish_streaming_sfx_audio,
+    )
+    from ..persona.impl import (
+        persona_config,
+        persona_enabled,
+        persona_talkback_enabled,
+    )
+    from ..persona.asr import (
+        DEFAULT_PERSONA_SPEECH_MODEL_ID,
+        PERSONA_SPEECH_END_DELAY_SECONDS,
+        PERSONA_SPEECH_NO_INPUT_TIMEOUT_SECONDS,
+        WhisperSegment,
+        WhisperTranscriber,
+    )
     from ..vc import (
         VC_PLAYBACK_GAIN,
         LiveVoiceActivityDetector,
@@ -682,64 +743,13 @@ def ensure_ui_runtime_dependencies() -> None:
         vc_live_chunk_overlap_frames,
         create_live_voice_activity_detector,
     )
-    from ..paths import config_path, main_window_log_path
-    from ..theme import colors as loaded_colors
-    from ..utils import (
-        indent as loaded_indent,
-    )
-    from ..utils import (
-        discard,
-        replace_ipa,
-        is_april_fools,
-    )
-    from ..utils import (
-        supports_ansi as loaded_supports_ansi,
-    )
-    from ..config import format_audio_device_name, resolve_audio_device_with_info
-    from ..speech import (
-        queue_streaming_sfx_audio,
-        finish_streaming_sfx_audio,
-    )
-    from ..cevoice import default_loader as loaded_default_loader
-    from .commands import process_command as process_ui_command
-    from .terminal import LogRedirect, UILogHandler, is_celune_log_record
-    from ..playback import current_playback_status
-    from ..terminal import (
-        RUNTIME_LOG_FILTER_MESSAGES,
-    )
-    from ..terminal import (
-        set_terminal_title as loaded_set_terminal_title,
-    )
-    from ..terminal import (
-        terminal_title_escape as loaded_terminal_title_escape,
-    )
-    from ..watchdog import launcher_loss_requested as loaded_launcher_loss_requested
-    from .resources import FOOTER_ROTATE_SECONDS
-    from ..exceptions import CEDTSError
-    from ..persona.asr import (
-        DEFAULT_PERSONA_SPEECH_MODEL_ID,
-        PERSONA_SPEECH_END_DELAY_SECONDS,
-        PERSONA_SPEECH_NO_INPUT_TIMEOUT_SECONDS,
-        WhisperSegment,
-        WhisperTranscriber,
-    )
-    from ..persona.impl import (
-        persona_config,
-        persona_enabled,
-        persona_talkback_enabled,
-    )
-    from ..dataclasses.pipeline import AudioOutput
 
-    globals().update(
-        {
-            "colors": loaded_colors,
-            "default_loader": loaded_default_loader,
-            "indent": loaded_indent,
-            "set_terminal_title": loaded_set_terminal_title,
-            "supports_ansi": loaded_supports_ansi,
-            "terminal_title_escape": loaded_terminal_title_escape,
-        }
-    )
+    colors = loaded_colors
+    default_loader = loaded_default_loader
+    indent = loaded_indent
+    set_terminal_title = loaded_set_terminal_title
+    supports_ansi = loaded_supports_ansi
+    terminal_title_escape = loaded_terminal_title_escape
     launcher_loss_requested = loaded_launcher_loss_requested
     _RUNTIME_LOG_REDIRECT_FILTER_MESSAGES = RUNTIME_LOG_FILTER_MESSAGES
     _RUNTIME_DEPENDENCIES_LOADED = True
@@ -1009,7 +1019,9 @@ def _forward_ui_property(container_name: str, field_name: str) -> property:
 
 
 @final
-class CeluneUI(App, CeluneUIMethodSurface):
+class CeluneUI(
+    _runtime.RuntimeHooks, _capture.CaptureHooks, _interaction.InteractionHooks, App
+):
     """Celune's main user interface."""
 
     def __init_subclass__(cls, **kwargs: Never) -> Never:
@@ -1389,7 +1401,7 @@ class CeluneUI(App, CeluneUIMethodSurface):
 
     def _advance_status_marquee(self) -> None:
         """Advance the marquee one character for long status messages."""
-        from ..playback import current_playback_status
+        from ..pipeline.captions import current_playback_status
 
         if self.status is None:
             return
@@ -1565,21 +1577,22 @@ class CeluneUI(App, CeluneUIMethodSurface):
 
         self._run_on_ui_thread(show_screen)
         browser_accepted = False
+
+        def pop_screen_if_current() -> None:
+            if self.screen is screen:
+                self.pop_screen()
+
         while not response.wait(0.2):
             if consent_status(metadata):
                 browser_accepted = True
-                self._run_on_ui_thread(
-                    lambda: self.pop_screen() if self.screen is screen else None
-                )
+                self._run_on_ui_thread(pop_screen_if_current)
                 break
             if not any(
                 pending.model_id == metadata.model_id
                 and pending.revision == metadata.revision
                 for pending in pending_model_consents()
             ):
-                self._run_on_ui_thread(
-                    lambda: self.pop_screen() if self.screen is screen else None
-                )
+                self._run_on_ui_thread(pop_screen_if_current)
                 break
             if self.cur_state == "exiting":
                 return False
@@ -1687,20 +1700,6 @@ class CeluneUI(App, CeluneUIMethodSurface):
             self.error(string("ui.app_could_not_start", app_name=APP_NAME))
             self._show_loading_error(error_message)
             self._finish_test_startup(False, error_message)
-
-    @staticmethod
-    def _with_brightness(color: Color, brightness: float) -> Color:
-        """Return ``color`` blended toward the requested brightness."""
-        brightness = max(0.0, min(1.0, brightness))
-        current = color.brightness
-
-        if abs(current - brightness) < 0.01:
-            return color
-
-        destination = Color(255, 255, 255) if current < brightness else Color(0, 0, 0)
-        destination_brightness = destination.brightness
-        factor = (brightness - current) / (destination_brightness - current)
-        return color.blend(destination, max(0.0, min(1.0, factor)))
 
     def _normal_input_placeholder(self) -> str:
         """Return the unlocked input placeholder without blocking the UI."""
@@ -1857,24 +1856,39 @@ class CeluneUI(App, CeluneUIMethodSurface):
         ):
             self._submit_text(typed, process_commands)
 
-    register_runtime_error_themes = _register_runtime_error_themes
-    wrap_runtime_fatal_glow = _wrap_runtime_fatal_glow
-    advance_status_marquee = _advance_status_marquee
-    enable_runtime_log_capture = _enable_runtime_log_capture
-    install_runtime_log_redirects = _install_runtime_log_redirects
-    disable_runtime_log_capture = _disable_runtime_log_capture
-    with_brightness = _with_brightness
-    normal_input_placeholder = _normal_input_placeholder
-    persona_loaded = _persona_loaded
+    def register_runtime_error_themes(self) -> None:
+        """Delegate to the existing Textual UI hook."""
+        return self._register_runtime_error_themes()
 
+    def wrap_runtime_fatal_glow(self) -> None:
+        """Delegate to the existing Textual UI hook."""
+        return self._wrap_runtime_fatal_glow()
 
-def _install_ui_methods() -> None:
-    """Install split UI methods after the concrete UI class exists."""
-    from . import capture, runtime, interaction
+    def advance_status_marquee(self) -> None:
+        """Delegate to the existing Textual UI hook."""
+        return self._advance_status_marquee()
 
-    runtime.install(CeluneUI)
-    capture.install(CeluneUI)
-    interaction.install(CeluneUI)
+    def enable_runtime_log_capture(self) -> None:
+        """Delegate to the existing Textual UI hook."""
+        return self._enable_runtime_log_capture()
 
+    def install_runtime_log_redirects(self) -> None:
+        """Delegate to the existing Textual UI hook."""
+        return self._install_runtime_log_redirects()
 
-_install_ui_methods()
+    def disable_runtime_log_capture(self) -> None:
+        """Delegate to the existing Textual UI hook."""
+        return self._disable_runtime_log_capture()
+
+    @staticmethod
+    def with_brightness(color: Color, brightness: float) -> Color:
+        """Return ``color`` blended toward the requested brightness."""
+        return with_brightness(color, brightness)
+
+    def normal_input_placeholder(self) -> str:
+        """Delegate to the existing Textual UI hook."""
+        return self._normal_input_placeholder()
+
+    def persona_loaded(self) -> bool:
+        """Delegate to the existing Textual UI hook."""
+        return self._persona_loaded()

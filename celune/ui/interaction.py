@@ -2,9 +2,8 @@
 """Extracted CeluneUI interaction methods."""
 
 from __future__ import annotations
-
-import re
 import os
+import re
 import sys
 import shlex
 import types
@@ -12,16 +11,16 @@ import ctypes
 import asyncio
 import threading
 import contextlib
+import queue as queue_module
 from uuid import uuid4
 from copy import deepcopy
-import queue as queue_module
 from collections.abc import Callable, Iterator
 from typing import TYPE_CHECKING, Optional, cast
 
 from . import app as _app
+
 from ..constants import SIGTSTP, APP_NAME
 from ..typing.modes import OPERATION_MODES
-from ..binding import install_class_functions
 
 if TYPE_CHECKING:
     from ..vc import VCDebugSaveResult
@@ -681,7 +680,7 @@ def iter_config_values(
     for key, value in config.items():
         path = (*prefix, key)
         if isinstance(value, dict) and value:
-            yield from _app.CeluneUI.iter_config_values(value, path)
+            yield from iter_config_values(value, path)
         else:
             yield path, value
 
@@ -798,7 +797,7 @@ def _config_explanation(path: tuple[str, ...]) -> str:
         return explanation
     return _app.string(
         "ui.settings_explanation_generic",
-        setting=_app.CeluneUI.config_label(path),
+        setting=config_label(path),
         app_name=APP_NAME,
     )
 
@@ -1839,6 +1838,247 @@ def split_command_input(text: str) -> list[str]:
     return normalized
 
 
-def install(target):
-    """Install extracted definitions in the original module."""
-    install_class_functions(target, {name: globals()[name] for name in __all__})
+class InteractionHooks:
+    """Expose explicit Textual hooks for the owning UI subsystem."""
+
+    def _close_menu(self) -> None:
+        """Delegate to the interaction implementation."""
+        return _close_menu(self)
+
+    @staticmethod
+    def _config_autocomplete(
+        path: tuple[str, ...], value: _app.JSONSerializable
+    ) -> Optional[tuple[_app.JSONSerializable, ...]]:
+        """Delegate to the interaction implementation."""
+        return _config_autocomplete(path, value)
+
+    @staticmethod
+    def _config_explanation(path: tuple[str, ...]) -> str:
+        """Delegate to the interaction implementation."""
+        return _config_explanation(path)
+
+    def _graceful_exit(self, return_code: Optional[int] = None) -> None:
+        """Delegate to the interaction implementation."""
+        return _graceful_exit(self, return_code)
+
+    def _hide_scrollbars_for_exit(self) -> None:
+        """Delegate to the interaction implementation."""
+        return _hide_scrollbars_for_exit(self)
+
+    def _install_windows_signal_handler(self) -> None:
+        """Delegate to the interaction implementation."""
+        return _install_windows_signal_handler(self)
+
+    @staticmethod
+    def _menu_footer(
+        option: _app.SelectMenuOption,
+        *,
+        option_count: int,
+        confirm_hint: str,
+        include_search: bool,
+    ) -> str:
+        """Delegate to the interaction implementation."""
+        return _menu_footer(
+            option,
+            option_count=option_count,
+            confirm_hint=confirm_hint,
+            include_search=include_search,
+        )
+
+    def _report_shutdown_error(self, exc: Exception) -> None:
+        """Delegate to the interaction implementation."""
+        return _report_shutdown_error(self, exc)
+
+    def _run_shutdown_step(self, callback: Callable[[], None]) -> None:
+        """Delegate to the interaction implementation."""
+        return _run_shutdown_step(self, callback)
+
+    def _save_settings(self, menu: _app.SelectMenuWidget) -> None:
+        """Delegate to the interaction implementation."""
+        return _save_settings(self, menu)
+
+    @staticmethod
+    def _set_config_value(
+        config: dict[str, _app.JSONSerializable],
+        path: tuple[str, ...],
+        value: _app.JSONSerializable,
+    ) -> None:
+        """Delegate to the interaction implementation."""
+        return _set_config_value(config, path, value)
+
+    def _show_menu(self, menu: _app.SelectMenuWidget, menu_kind: str) -> None:
+        """Delegate to the interaction implementation."""
+        return _show_menu(self, menu, menu_kind)
+
+    def _shutdown_from_windows_signal(self) -> None:
+        """Delegate to the interaction implementation."""
+        return _shutdown_from_windows_signal(self)
+
+    def _shutdown_live_vc_recording(self) -> None:
+        """Delegate to the interaction implementation."""
+        return _shutdown_live_vc_recording(self)
+
+    def _shutdown_runtime(self) -> None:
+        """Delegate to the interaction implementation."""
+        return _shutdown_runtime(self)
+
+    def _signal_handler(self, sig: int, frame: Optional[types.FrameType]) -> None:
+        """Delegate to the interaction implementation."""
+        return _signal_handler(self, sig, frame)
+
+    def _signal_handler_windows(self, sig: int) -> bool:
+        """Delegate to the interaction implementation."""
+        return _signal_handler_windows(self, sig)
+
+    @staticmethod
+    def _split_command_input(text: str) -> list[str]:
+        """Delegate to the interaction implementation."""
+        return _split_command_input(text)
+
+    def _start_vc_recording(self) -> bool:
+        """Delegate to the interaction implementation."""
+        return _start_vc_recording(self)
+
+    def _submit_text(self, text: str, process_commands: bool = True) -> bool:
+        """Delegate to the interaction implementation."""
+        return _submit_text(self, text, process_commands)
+
+    async def action_quit(self) -> None:
+        """Delegate to the interaction implementation."""
+        return await action_quit(self)
+
+    def begin_tutorial(self) -> None:
+        """Delegate to the interaction implementation."""
+        return begin_tutorial(self)
+
+    def cancel_tutorial(self, stop_audio: bool = True) -> bool:
+        """Delegate to the interaction implementation."""
+        return cancel_tutorial(self, stop_audio)
+
+    @staticmethod
+    def config_label(path: tuple[str, ...]) -> str:
+        """Delegate to the interaction implementation."""
+        return config_label(path)
+
+    def consume_buffer(self, text_len: int) -> None:
+        """Delegate to the interaction implementation."""
+        return consume_buffer(self, text_len)
+
+    def error(self, message: str) -> None:
+        """Delegate to the interaction implementation."""
+        return error(self, message)
+
+    def finish_tutorial(self) -> None:
+        """Delegate to the interaction implementation."""
+        return finish_tutorial(self)
+
+    def graceful_exit(self) -> None:
+        """Delegate to the interaction implementation."""
+        return graceful_exit(self)
+
+    @staticmethod
+    def iter_config_values(
+        config: dict[str, _app.JSONSerializable],
+        prefix: tuple[str, ...] = (),
+    ) -> Iterator[tuple[tuple[str, ...], _app.JSONSerializable]]:
+        """Delegate to the interaction implementation."""
+        return iter_config_values(config, prefix)
+
+    def on_button_pressed(self, event: _app.Button.Pressed) -> None:
+        """Delegate to the interaction implementation."""
+        return on_button_pressed(self, event)
+
+    def on_key(self, event: _app.events.Key) -> None:
+        """Delegate to the interaction implementation."""
+        return on_key(self, event)
+
+    def on_select_menu_widget_cancelled(
+        self, event: _app.SelectMenuWidget.Cancelled
+    ) -> None:
+        """Delegate to the interaction implementation."""
+        return on_select_menu_widget_cancelled(self, event)
+
+    def on_select_menu_widget_confirmed(
+        self, event: _app.SelectMenuWidget.Confirmed
+    ) -> None:
+        """Delegate to the interaction implementation."""
+        return on_select_menu_widget_confirmed(self, event)
+
+    def on_text_area_changed(self, event: _app.TextArea.Changed) -> None:
+        """Delegate to the interaction implementation."""
+        return on_text_area_changed(self, event)
+
+    def on_unmount(self) -> None:
+        """Delegate to the interaction implementation."""
+        return on_unmount(self)
+
+    def on_voice_button_held(self, event: _app.VoiceButton.Held) -> None:
+        """Delegate to the interaction implementation."""
+        return on_voice_button_held(self, event)
+
+    def open_settings_menu(self) -> None:
+        """Delegate to the interaction implementation."""
+        return open_settings_menu(self)
+
+    def open_voice_menu(self) -> None:
+        """Delegate to the interaction implementation."""
+        return open_voice_menu(self)
+
+    def process_command(self, command: str, args: list[str]) -> None:
+        """Delegate to the interaction implementation."""
+        return process_command(self, command, args)
+
+    def request_agent_test_response(
+        self, prompt: str, timeout_seconds: float = 120.0
+    ) -> Optional[str]:
+        """Delegate to the interaction implementation."""
+        return request_agent_test_response(self, prompt, timeout_seconds)
+
+    @staticmethod
+    def split_command_input(text: str) -> list[str]:
+        """Delegate to the interaction implementation."""
+        return split_command_input(text)
+
+    def stop_vc_debug_capture(
+        self, announce: bool = True, discard_pending: bool = False
+    ) -> bool:
+        """Delegate to the interaction implementation."""
+        return stop_vc_debug_capture(self, announce, discard_pending)
+
+    def toggle_vc_recording(self) -> bool:
+        """Delegate to the interaction implementation."""
+        return toggle_vc_recording(self)
+
+    def tts_idle(self) -> None:
+        """Delegate to the interaction implementation."""
+        return tts_idle(self)
+
+    def tts_log(
+        self,
+        msg: str,
+        severity: str = "info",
+        *,
+        loglevel: _app.LogLevel = "info",
+    ) -> None:
+        """Delegate to the interaction implementation."""
+        return tts_log(self, msg, severity, loglevel=loglevel)
+
+    def tts_queue_avail(self) -> None:
+        """Delegate to the interaction implementation."""
+        return tts_queue_avail(self)
+
+    def tts_voice_changed(self, name: str) -> None:
+        """Delegate to the interaction implementation."""
+        return tts_voice_changed(self, name)
+
+    def tutorial_active(self) -> bool:
+        """Delegate to the interaction implementation."""
+        return tutorial_active(self)
+
+    def tutorial_after(self, delay: float, callback: Callable[[], None]) -> None:
+        """Delegate to the interaction implementation."""
+        return tutorial_after(self, delay, callback)
+
+    def tutorial_token(self) -> int:
+        """Delegate to the interaction implementation."""
+        return tutorial_token(self)

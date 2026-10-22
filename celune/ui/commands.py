@@ -2,11 +2,9 @@
 """Slash command handling for the Textual UI."""
 
 from __future__ import annotations
-
 import os
 import asyncio
 import threading
-
 from pathlib import Path
 from urllib.parse import urlparse
 from collections.abc import Callable, Awaitable
@@ -17,9 +15,11 @@ import soundfile as sf
 from ..constants import APP_NAME
 from ..i18n import string, tagged_string
 from ..threads import run_in_daemon_thread
+from ..pipeline.playback import close_stream
 from ..exceptions import InvalidExtensionError
 from ..audio.server import restart_audio_server
 from ..persona.capabilities import PersonaCapabilities
+from ..core.lifecycle import active_runtime_backend_name
 from ..cevoice import active_bundle_path, resolve_bundle_path
 from ..vram import vram_report_int, format_vram_bytes, runtime_vram_report
 from ..utils import (
@@ -31,6 +31,7 @@ from ..utils import (
 
 if TYPE_CHECKING:
     from .app import CeluneUI
+
     from ..celune import Celune
 
 IMAGE_EXTENSIONS = {".jpeg", ".jpg", ".png", ".webp"}
@@ -157,10 +158,13 @@ def _run_tutorial_sequence(
     """
 
     def is_active() -> bool:
-        return token == ui.tutorial_token and ui.tutorial_active
+        return token == ui.tutorial_token() and ui.tutorial_active()
 
     try:
-        from ..speech import play_tutorial_sections, prepare_tutorial_sections
+        from ..pipeline.submission import (
+            play_tutorial_sections,
+            prepare_tutorial_sections,
+        )
 
         sections = tuple(text for text, _action, _display_text in steps)
         display_sections = tuple(
@@ -263,7 +267,7 @@ def tutorial(ui: CeluneUI) -> None:
     ui.begin_tutorial()
     threading.Thread(
         target=_run_tutorial_sequence,
-        args=(ui, ui.tutorial_token, steps),
+        args=(ui, ui.tutorial_token(), steps),
         daemon=True,
     ).start()
 
@@ -435,9 +439,8 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
                 return
 
             celune = getattr(ui, "celune", None)
-            close_stream = getattr(celune, "_close_stream", None)
-            if callable(close_stream):
-                close_stream(abort=True)
+            if celune is not None:
+                close_stream(celune, abort=True)
 
             try_play_signal = getattr(celune, "try_play_signal", None)
             if not callable(try_play_signal) or not try_play_signal("readiness"):
@@ -586,15 +589,7 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
 
         backend_name = args[0]
 
-        active_backend = getattr(ui.celune, "_active_runtime_backend_name", None)
-        if callable(active_backend):
-            active_backend_name = active_backend()
-        elif getattr(ui.celune, "input_mode", "text_to_speech") == "voice_conversion":
-            backend = getattr(ui.celune, "vc_backend", None)
-            active_backend_name = getattr(backend, "name", "")
-        else:
-            backend = getattr(ui.celune, "backend", None)
-            active_backend_name = getattr(backend, "name", "")
+        active_backend_name = active_runtime_backend_name(ui.celune)
         if backend_name == active_backend_name:
             ui.safe_log(string("commands.backend_already_loaded"), "warning")
             return

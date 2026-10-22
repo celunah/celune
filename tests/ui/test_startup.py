@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Tests for runtime validation and lightweight UI commands."""
+"""Tests for Textual startup and lightweight runtime initialization."""
 
 # Import groups follow Celune's project-specific ordering.
 # pylint: disable=ungrouped-imports
@@ -24,6 +24,17 @@ from textual.app import App
 from textual.containers import Vertical
 from textual.widgets import Label, Static, RichLog, TextArea, ProgressBar
 
+from celune.theme import colors
+from celune.celune import Celune
+from celune.utils import discard
+from celune.ui import app as ui_app
+from celune.ui import compat as ui_compat
+from celune.i18n import string, tagged_string
+from celune.ui import terminal as ui_terminal
+from celune.ui import resources as ui_resources
+from celune.ui.headless import CeluneHeadlessUI
+from celune.core import lifecycle as core_lifecycle
+from celune.constants import APP_NAME, COST_EQUIVALENTS, ExitCodes
 from celune.ui.app import (
     Button,
     CeluneUI,
@@ -33,17 +44,10 @@ from celune.ui.app import (
     ProgressLabel,
     CeluneLoadingScreen,
 )
-from celune.theme import colors
-from celune.utils import discard
-from celune.celune import Celune
-from celune.ui import app as ui_app
-from celune.ui import compat as ui_compat
-from celune.ui import terminal as ui_terminal
-from celune.i18n import string, tagged_string
-from celune.ui import resources as ui_resources
-from celune.ui.headless import CeluneHeadlessUI
-from tests.support import FakeBackend, CeluneTestCase
-from celune.constants import APP_NAME, COST_EQUIVALENTS, ExitCodes
+
+from .fixtures import reset_ui_singletons
+
+from ..support import FakeBackend, CeluneTestCase
 
 
 class TestUIStartup(CeluneTestCase):
@@ -51,8 +55,7 @@ class TestUIStartup(CeluneTestCase):
 
     def tearDown(self) -> None:
         """Reset singleton UI guards after each test."""
-        CeluneUI._instance = None
-        CeluneHeadlessUI._instance = None
+        reset_ui_singletons()
 
     def test_deferred_startup_catches_system_exit_in_the_ui_worker(self) -> None:
         """Verify startup worker exits become UI-handled errors."""
@@ -956,7 +959,7 @@ class TestUIStartup(CeluneTestCase):
 
         fake_celune = cast(
             Celune,
-            SimpleNamespace(caption_progress_callback=Celune._noop_progress),
+            SimpleNamespace(caption_progress_callback=core_lifecycle._noop_progress),
         )
         ui.celune = fake_celune
         ui._chain_runtime_callback("caption_progress_callback", caption_progress)

@@ -4,13 +4,13 @@
 import queue
 import base64
 import asyncio
-from types import SimpleNamespace
 from typing import cast
 from pathlib import Path
 from unittest import mock
+from types import SimpleNamespace
 
-import numpy as np
 import pytest
+import numpy as np
 import mcp.types as mcp_types
 import mcp.server.mcpserver.exceptions as mcp_exceptions
 from fastapi.testclient import TestClient
@@ -18,7 +18,7 @@ from fastapi.testclient import TestClient
 from celune import api, mcp
 from celune.typing.pipeline import SpeechStreamQueue
 
-from .support import CeluneTestCase
+from ..support import CeluneTestCase
 
 AudioContent = mcp_types.AudioContent
 CallToolResult = mcp_types.CallToolResult
@@ -95,8 +95,8 @@ class TestMcpServer(CeluneTestCase):
 
     def test_http_mount_runs_inside_the_api_lifespan(self) -> None:
         """Start the MCP session manager with the parent REST API lifecycle."""
-        previous_token = api.auth_token
-        api.auth_token = "test-token"
+        previous_token = api.server_session.auth_token
+        api.server_session.auth_token = "test-token"
         try:
             with TestClient(
                 api.api,
@@ -110,7 +110,7 @@ class TestMcpServer(CeluneTestCase):
                     },
                 )
         finally:
-            api.auth_token = previous_token
+            api.server_session.auth_token = previous_token
 
         assert response.status_code == 400
         assert "Missing session ID" in response.text

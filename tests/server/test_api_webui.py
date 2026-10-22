@@ -5,15 +5,15 @@ import re
 import shutil
 import asyncio
 import tempfile
-from typing import (
-    Optional,
-    cast,
-)
 from queue import Queue
 from pathlib import Path
 from unittest import mock
 from types import SimpleNamespace
 from collections import abc, deque
+from typing import (
+    Optional,
+    cast,
+)
 
 import numpy as np
 import fastapi.testclient
@@ -23,12 +23,16 @@ from starlette.types import Send, Scope, Message, Receive
 
 from celune import api
 from celune.i18n import string
+from celune.theme import colors
 from celune.celune import Celune
 from celune.webui import runtime as webui
-from celune.pipeline import SpeechStreamQueue
+from celune.server import auth as server_auth
+from celune.server.session import ServerSession
 from celune.webui import actions as webui_actions
+from celune.typing.pipeline import SpeechStreamQueue
+from celune.server import constants as server_constants
 
-from .support import CeluneTestCase
+from ..support import CeluneTestCase
 
 
 class TestApiWebUI(CeluneTestCase):
@@ -36,109 +40,121 @@ class TestApiWebUI(CeluneTestCase):
 
     def setUp(self) -> None:
         """Snapshot global WebUI state before each test."""
-        self.previous_celune = api.bound_celune
-        self.previous_status_text = api.webui_status_text
-        self.previous_status_severity = api.webui_status_severity
-        self.previous_seeded = api.webui_logs_seeded
-        self.previous_resource_page = api.webui_resource_page
-        self.previous_last_resource_advance = api.webui_last_resource_advance
-        self.previous_last_probed_state = api.webui_last_probed_state
-        self.previous_input_locked = api.webui_input_locked
-        self.previous_input_placeholder = api.webui_input_placeholder
-        self.previous_voice_locked = api.webui_voice_locked
-        self.previous_theme_style = api.webui_theme_style
-        self.previous_status_source = api.webui_status_source
-        self.previous_status_updated_at = api.webui_status_updated_at
-        self.previous_caption_text = api.webui_caption_text
-        self.previous_caption_progress = api.webui_caption_progress
-        self.previous_caption_active = api.webui_caption_active
-        self.previous_progress_current = api.webui_progress_current
-        self.previous_progress_total = api.webui_progress_total
-        self.previous_active_theme_name = api.webui_active_theme_name
-        self.previous_timed_update_sequence = api.webui_timed_update_sequence
-        self.previous_timed_update_received_at = api.webui_timed_update_received_at
-        self.previous_timed_update_source = api.webui_timed_update_source
-        self.previous_auth_token = api.auth_token
-        self.previous_webui_auth_clients = api.webui_auth_clients
+        self.previous_celune = api.server_session.bound_celune
+        self.previous_status_text = api.server_session.webui_status_text
+        self.previous_status_severity = api.server_session.webui_status_severity
+        self.previous_seeded = api.server_session.webui_logs_seeded
+        self.previous_resource_page = api.server_session.webui_resource_page
+        self.previous_last_resource_advance = (
+            api.server_session.webui_last_resource_advance
+        )
+        self.previous_last_probed_state = api.server_session.webui_last_probed_state
+        self.previous_input_locked = api.server_session.webui_input_locked
+        self.previous_input_placeholder = api.server_session.webui_input_placeholder
+        self.previous_voice_locked = api.server_session.webui_voice_locked
+        self.previous_theme_style = api.server_session.webui_theme_style
+        self.previous_status_source = api.server_session.webui_status_source
+        self.previous_status_updated_at = api.server_session.webui_status_updated_at
+        self.previous_caption_text = api.server_session.webui_caption_text
+        self.previous_caption_progress = api.server_session.webui_caption_progress
+        self.previous_caption_active = api.server_session.webui_caption_active
+        self.previous_progress_current = api.server_session.webui_progress_current
+        self.previous_progress_total = api.server_session.webui_progress_total
+        self.previous_active_theme_name = api.server_session.webui_active_theme_name
+        self.previous_timed_update_sequence = (
+            api.server_session.webui_timed_update_sequence
+        )
+        self.previous_timed_update_received_at = (
+            api.server_session.webui_timed_update_received_at
+        )
+        self.previous_timed_update_source = api.server_session.webui_timed_update_source
+        self.previous_auth_token = api.server_session.auth_token
+        self.previous_webui_auth_clients = api.server_session.webui_auth_clients
         self.webui_auth_cache_directory = Path(tempfile.mkdtemp())
         self.webui_auth_cache_path_patcher = mock.patch.object(
-            api,
+            server_auth,
             "_webui_auth_client_cache_path",
             return_value=self.webui_auth_cache_directory
-            / api.WEBUI_AUTH_CLIENTS_FILENAME,
+            / server_constants.WEBUI_AUTH_CLIENTS_FILENAME,
         )
         self.webui_auth_cache_path_patcher.start()
-        api.webui_auth_clients = None
+        api.server_session.webui_auth_clients = None
         self.previous_rate_limit_hits = {
-            key: list(hits) for key, hits in api.rate_limit_hits.items()
+            key: list(hits) for key, hits in api.server_session.rate_limit_hits.items()
         }
-        self.previous_logs = list(api.webui_log_lines)
-        api.bound_celune = None
-        api.auth_token = None
-        with api.rate_limit_lock:
-            api.rate_limit_hits.clear()
-        api.webui_log_lines.clear()
-        api.webui_logs_seeded = True
-        api.webui_resource_page = 0
-        api.webui_last_resource_advance = 0.0
-        api.webui_last_probed_state = None
-        api.webui_input_locked = True
-        api.webui_input_placeholder = "Please wait"
-        api.webui_voice_locked = True
-        api.webui_status_source = "probe"
-        api.webui_status_updated_at = 0.0
-        api.webui_caption_text = ""
-        api.webui_caption_progress = 0.0
-        api.webui_caption_active = False
-        api.webui_progress_current = None
-        api.webui_progress_total = None
-        api.webui_active_theme_name = "celune"
-        api.webui_timed_update_sequence = 0
-        api.webui_timed_update_received_at = 0.0
-        api.webui_timed_update_source = "fallback"
+        self.previous_logs = list(api.server_session.webui_log_lines)
+        api.server_session.bound_celune = None
+        api.server_session.auth_token = None
+        with api.server_session.rate_limit_lock:
+            api.server_session.rate_limit_hits.clear()
+        api.server_session.webui_log_lines.clear()
+        api.server_session.webui_logs_seeded = True
+        api.server_session.webui_resource_page = 0
+        api.server_session.webui_last_resource_advance = 0.0
+        api.server_session.webui_last_probed_state = None
+        api.server_session.webui_input_locked = True
+        api.server_session.webui_input_placeholder = "Please wait"
+        api.server_session.webui_voice_locked = True
+        api.server_session.webui_status_source = "probe"
+        api.server_session.webui_status_updated_at = 0.0
+        api.server_session.webui_caption_text = ""
+        api.server_session.webui_caption_progress = 0.0
+        api.server_session.webui_caption_active = False
+        api.server_session.webui_progress_current = None
+        api.server_session.webui_progress_total = None
+        api.server_session.webui_active_theme_name = "celune"
+        api.server_session.webui_timed_update_sequence = 0
+        api.server_session.webui_timed_update_received_at = 0.0
+        api.server_session.webui_timed_update_source = "fallback"
         api.set_webui_status("Starting up")
 
     def tearDown(self) -> None:
         """Restore global WebUI state after each test."""
         api._unsubscribe_webui_events()
-        if api.webui_timed_update_unsubscribe is not None:
-            api.webui_timed_update_unsubscribe()
-            api.webui_timed_update_unsubscribe = None
-        api.bound_celune = self.previous_celune
-        api.webui_status_text = self.previous_status_text
-        api.webui_status_severity = self.previous_status_severity
-        api.webui_logs_seeded = self.previous_seeded
-        api.webui_resource_page = self.previous_resource_page
-        api.webui_last_resource_advance = self.previous_last_resource_advance
-        api.webui_last_probed_state = self.previous_last_probed_state
-        api.webui_input_locked = self.previous_input_locked
-        api.webui_input_placeholder = self.previous_input_placeholder
-        api.webui_voice_locked = self.previous_voice_locked
-        api.webui_theme_style = self.previous_theme_style
-        api.webui_status_source = self.previous_status_source
-        api.webui_status_updated_at = self.previous_status_updated_at
-        api.webui_caption_text = self.previous_caption_text
-        api.webui_caption_progress = self.previous_caption_progress
-        api.webui_caption_active = self.previous_caption_active
-        api.webui_progress_current = self.previous_progress_current
-        api.webui_progress_total = self.previous_progress_total
-        api.webui_active_theme_name = self.previous_active_theme_name
-        api.webui_timed_update_sequence = self.previous_timed_update_sequence
-        api.webui_timed_update_received_at = self.previous_timed_update_received_at
-        api.webui_timed_update_source = self.previous_timed_update_source
-        api.auth_token = self.previous_auth_token
-        with api.webui_auth_clients_lock:
-            api.webui_auth_clients = self.previous_webui_auth_clients
-        with api.rate_limit_lock:
-            api.rate_limit_hits.clear()
-            api.rate_limit_hits.update(
+        if api.server_session.webui_timed_update_unsubscribe is not None:
+            api.server_session.webui_timed_update_unsubscribe()
+            api.server_session.webui_timed_update_unsubscribe = None
+        api.server_session.bound_celune = self.previous_celune
+        api.server_session.webui_status_text = self.previous_status_text
+        api.server_session.webui_status_severity = self.previous_status_severity
+        api.server_session.webui_logs_seeded = self.previous_seeded
+        api.server_session.webui_resource_page = self.previous_resource_page
+        api.server_session.webui_last_resource_advance = (
+            self.previous_last_resource_advance
+        )
+        api.server_session.webui_last_probed_state = self.previous_last_probed_state
+        api.server_session.webui_input_locked = self.previous_input_locked
+        api.server_session.webui_input_placeholder = self.previous_input_placeholder
+        api.server_session.webui_voice_locked = self.previous_voice_locked
+        api.server_session.webui_theme_style = self.previous_theme_style
+        api.server_session.webui_status_source = self.previous_status_source
+        api.server_session.webui_status_updated_at = self.previous_status_updated_at
+        api.server_session.webui_caption_text = self.previous_caption_text
+        api.server_session.webui_caption_progress = self.previous_caption_progress
+        api.server_session.webui_caption_active = self.previous_caption_active
+        api.server_session.webui_progress_current = self.previous_progress_current
+        api.server_session.webui_progress_total = self.previous_progress_total
+        api.server_session.webui_active_theme_name = self.previous_active_theme_name
+        api.server_session.webui_timed_update_sequence = (
+            self.previous_timed_update_sequence
+        )
+        api.server_session.webui_timed_update_received_at = (
+            self.previous_timed_update_received_at
+        )
+        api.server_session.webui_timed_update_source = self.previous_timed_update_source
+        api.server_session.auth_token = self.previous_auth_token
+        with api.server_session.webui_auth_clients_lock:
+            api.server_session.webui_auth_clients = self.previous_webui_auth_clients
+        with api.server_session.rate_limit_lock:
+            api.server_session.rate_limit_hits.clear()
+            api.server_session.rate_limit_hits.update(
                 {
                     key: deque(hits)
                     for key, hits in self.previous_rate_limit_hits.items()
                 }
             )
-        api.webui_log_lines.clear()
-        api.webui_log_lines.extend(self.previous_logs)
+        api.server_session.webui_log_lines.clear()
+        api.server_session.webui_log_lines.extend(self.previous_logs)
         self.webui_auth_cache_path_patcher.stop()
         shutil.rmtree(self.webui_auth_cache_directory)
 
@@ -187,8 +203,8 @@ class TestApiWebUI(CeluneTestCase):
         ui_request = self._request("/ui/assets/index.js")
         api_request = self._request("/v1/version")
 
-        assert api.is_browser_ui_request(ui_request)
-        assert not api.is_browser_ui_request(api_request)
+        assert server_auth.is_browser_ui_request(ui_request)
+        assert not server_auth.is_browser_ui_request(api_request)
 
     def test_browser_requests_mark_model_loads_as_api_requests_without_a_key(
         self,
@@ -212,7 +228,7 @@ class TestApiWebUI(CeluneTestCase):
 
     def test_api_security_only_leaves_the_root_and_favicon_public(self) -> None:
         """Verify status and version routes require a key with API auth enabled."""
-        api.auth_token = "secret"
+        api.server_session.auth_token = "secret"
 
         for path in ("/", "/favicon.ico"):
             response = asyncio.run(
@@ -231,7 +247,7 @@ class TestApiWebUI(CeluneTestCase):
 
     def test_unauthenticated_webui_root_redirects_to_the_key_prompt(self) -> None:
         """Verify the protected WebUI root redirects to its standalone key page."""
-        api.auth_token = "secret"
+        api.server_session.auth_token = "secret"
 
         response = asyncio.run(
             api.api_security(self._request("/ui"), self._passthrough_response)
@@ -243,7 +259,7 @@ class TestApiWebUI(CeluneTestCase):
 
     def test_key_prompt_is_served_from_the_ui_key_path(self) -> None:
         """Verify the standalone key prompt is served at the documented path."""
-        api.auth_token = "secret"
+        api.server_session.auth_token = "secret"
 
         response = asyncio.run(
             api.api_security(self._request("/ui/key"), self._passthrough_response)
@@ -277,7 +293,7 @@ class TestApiWebUI(CeluneTestCase):
 
     def test_api_security_rejects_webui_actions_without_a_session(self) -> None:
         """Verify deleting the prompt cannot authorize a WebUI action request."""
-        api.auth_token = "secret"
+        api.server_session.auth_token = "secret"
 
         response = asyncio.run(
             api.api_security(
@@ -292,8 +308,8 @@ class TestApiWebUI(CeluneTestCase):
 
     def test_api_security_accepts_a_webui_session_cookie(self) -> None:
         """Verify an authenticated browser session can use WebUI actions."""
-        api.auth_token = "secret"
-        session_id = api._new_ui_session()
+        api.server_session.auth_token = "secret"
+        session_id = server_auth._new_ui_session()
 
         response = asyncio.run(
             api.api_security(
@@ -301,7 +317,10 @@ class TestApiWebUI(CeluneTestCase):
                     "/ui/run/speak",
                     method="POST",
                     headers=(
-                        ("cookie", f"{api.WEBUI_AUTH_COOKIE}={session_id}"),
+                        (
+                            "cookie",
+                            f"{server_constants.WEBUI_AUTH_COOKIE}={session_id}",
+                        ),
                         ("origin", "http://127.0.0.1:2060"),
                     ),
                 ),
@@ -313,7 +332,7 @@ class TestApiWebUI(CeluneTestCase):
 
     def test_webui_auth_client_cache_survives_a_tunnel_hostname_change(self) -> None:
         """Verify an authenticated browser is recognized at a new tunnel host."""
-        api.auth_token = "secret"
+        api.server_session.auth_token = "secret"
         client_headers = (
             ("cf-connecting-ip", "198.51.100.24"),
             ("user-agent", "Example Browser 1.0"),
@@ -332,13 +351,13 @@ class TestApiWebUI(CeluneTestCase):
         )
         assert login_response.status_code == 200
 
-        cache_path = api._webui_auth_client_cache_path()
+        cache_path = server_auth._webui_auth_client_cache_path()
         cache_content = cache_path.read_text(encoding="utf-8")
         assert "198.51.100.24" not in cache_content
         assert "Example Browser" not in cache_content
         assert "secret" not in cache_content
 
-        api.webui_auth_clients = None
+        api.server_session.webui_auth_clients = None
         next_host_headers = tuple(
             (name, "second-tunnel.trycloudflare.com" if name == "host" else value)
             for name, value in client_headers
@@ -350,7 +369,10 @@ class TestApiWebUI(CeluneTestCase):
             )
         )
         assert resumed_response.status_code == 200
-        assert f"{api.WEBUI_AUTH_COOKIE}=" in resumed_response.headers["set-cookie"]
+        assert (
+            f"{server_constants.WEBUI_AUTH_COOKIE}="
+            in resumed_response.headers["set-cookie"]
+        )
 
         other_client_headers = tuple(
             (name, "198.51.100.25" if name == "cf-connecting-ip" else value)
@@ -369,10 +391,10 @@ class TestApiWebUI(CeluneTestCase):
         self,
     ) -> None:
         """Verify automatic Gradio callbacks do not consume the generation quota."""
-        api.auth_token = "secret"
-        session_id = api._new_ui_session()
+        api.server_session.auth_token = "secret"
+        session_id = server_auth._new_ui_session()
         browser_headers = (
-            ("cookie", f"{api.WEBUI_AUTH_COOKIE}={session_id}"),
+            ("cookie", f"{server_constants.WEBUI_AUTH_COOKIE}={session_id}"),
             ("origin", "http://127.0.0.1:2060"),
         )
 
@@ -380,19 +402,22 @@ class TestApiWebUI(CeluneTestCase):
         generation_indices = {
             dependency["api_name"]: dependency["id"]
             for dependency in dependencies
-            if dependency.get("api_name") in api.WEBUI_GENERATION_API_NAMES
+            if dependency.get("api_name") in server_constants.WEBUI_GENERATION_API_NAMES
         }
         automatic_fn_index = next(
             dependency["id"]
             for dependency in dependencies
-            if dependency.get("api_name") in api.WEBUI_RATE_LIMIT_EXEMPT_API_NAMES
+            if dependency.get("api_name")
+            in server_constants.WEBUI_RATE_LIMIT_EXEMPT_API_NAMES
         )
 
-        with mock.patch.object(api, "rate_limit_per_minute", 3):
-            with api.rate_limit_lock:
-                api.rate_limit_hits["webui:127.0.0.1"].append(api.time.monotonic())
+        with mock.patch.object(api.server_session, "rate_limit_per_minute", 3):
+            with api.server_session.rate_limit_lock:
+                api.server_session.rate_limit_hits["webui:127.0.0.1"].append(
+                    api.time.monotonic()
+                )
 
-            for api_name in api.WEBUI_POLL_API_NAMES:
+            for api_name in server_constants.WEBUI_POLL_API_NAMES:
                 for route in ("run", "api", "call"):
                     poll_response = asyncio.run(
                         api.api_security(
@@ -433,7 +458,7 @@ class TestApiWebUI(CeluneTestCase):
             generation_response = asyncio.run(
                 api.api_security(
                     self._request(
-                        f"/ui/gradio_api/run/{api.WEBUI_SPEAK_INPUT_API_NAME}",
+                        f"/ui/gradio_api/run/{server_constants.WEBUI_SPEAK_INPUT_API_NAME}",
                         method="POST",
                         headers=browser_headers,
                     ),
@@ -449,7 +474,7 @@ class TestApiWebUI(CeluneTestCase):
                         headers=browser_headers,
                         body=(
                             f'{{"fn_index":'
-                            f"{generation_indices[api.WEBUI_SPEAK_INPUT_API_NAME]}"
+                            f"{generation_indices[server_constants.WEBUI_SPEAK_INPUT_API_NAME]}"
                             "}"
                         ).encode(),
                     ),
@@ -464,7 +489,7 @@ class TestApiWebUI(CeluneTestCase):
                         headers=browser_headers,
                         body=(
                             f'{{"fn_index":'
-                            f"{generation_indices[api.WEBUI_SPEAK_BUTTON_API_NAME]}"
+                            f"{generation_indices[server_constants.WEBUI_SPEAK_BUTTON_API_NAME]}"
                             "}"
                         ).encode(),
                     ),
@@ -478,8 +503,8 @@ class TestApiWebUI(CeluneTestCase):
 
     def test_webui_websocket_limit_does_not_block_actions(self) -> None:
         """Verify WebSocket reconnects cannot consume the WebUI action budget."""
-        api.auth_token = "secret"
-        session_id = api._new_ui_session()
+        api.server_session.auth_token = "secret"
+        session_id = server_auth._new_ui_session()
         reached_gradio = False
 
         async def downstream(
@@ -502,7 +527,7 @@ class TestApiWebUI(CeluneTestCase):
             "headers": [
                 (
                     b"cookie",
-                    f"{api.WEBUI_AUTH_COOKIE}={session_id}".encode(),
+                    f"{server_constants.WEBUI_AUTH_COOKIE}={session_id}".encode(),
                 ),
                 (b"origin", b"http://127.0.0.1:2060"),
             ],
@@ -514,11 +539,11 @@ class TestApiWebUI(CeluneTestCase):
         }
         middleware = api.WebUiWebSocketSecurityMiddleware(downstream)
         browser_headers = (
-            ("cookie", f"{api.WEBUI_AUTH_COOKIE}={session_id}"),
+            ("cookie", f"{server_constants.WEBUI_AUTH_COOKIE}={session_id}"),
             ("origin", "http://127.0.0.1:2060"),
         )
 
-        with mock.patch.object(api, "rate_limit_per_minute", 1):
+        with mock.patch.object(api.server_session, "rate_limit_per_minute", 1):
             asyncio.run(middleware(scope, receive, send))
             first_action = asyncio.run(
                 api.api_security(
@@ -545,45 +570,52 @@ class TestApiWebUI(CeluneTestCase):
             client=("192.0.2.10", 3000),
         )
 
-        assert api._client_address(tunnel_request) == "198.51.100.24"
-        assert api._client_address(direct_request) == "192.0.2.10"
+        assert server_auth._client_address(tunnel_request) == "198.51.100.24"
+        assert server_auth._client_address(direct_request) == "192.0.2.10"
 
     def test_webui_session_survives_restart_but_is_bound_to_the_api_key(self) -> None:
         """Verify signed browser sessions persist until the application key changes."""
-        api.auth_token = "secret"
-        session_id = api._new_ui_session()
+        api.server_session.auth_token = "secret"
+        session_id = server_auth._new_ui_session()
 
         api.configure_api_security(token="secret")
-        assert api._ui_session_valid(session_id)
+        assert server_auth._ui_session_valid(session_id)
 
         payload, encoded_signature = session_id.split(".", 1)
         replacement = "A" if encoded_signature[0] != "A" else "B"
         changed_signature = replacement + encoded_signature[1:]
-        assert not api._ui_session_valid(f"{payload}.{changed_signature}")
+        assert not server_auth._ui_session_valid(f"{payload}.{changed_signature}")
 
         api.configure_api_security(token="rotated")
-        assert not api._ui_session_valid(session_id)
+        assert not server_auth._ui_session_valid(session_id)
 
     def test_webui_session_expires(self) -> None:
         """Verify an expired signed browser session cannot authorize a client."""
-        api.auth_token = "secret"
-        session_id = api._encode_ui_session("c" * 32, expires_at=99)
+        api.server_session.auth_token = "secret"
+        session_id = server_auth._encode_ui_session("c" * 32, expires_at=99)
 
-        with mock.patch("celune.api.time.time", return_value=100):
-            assert not api._ui_session_valid(session_id)
+        with mock.patch("celune.server.auth.time.time", return_value=100):
+            assert not server_auth._ui_session_valid(session_id)
 
     def test_webui_session_refresh_keeps_the_same_browser_client(self) -> None:
         """Verify active browser sessions refresh before expiry for that client."""
-        api.auth_token = "secret"
+        api.server_session.auth_token = "secret"
         client_id = "c" * 32
-        expires_at = int(api.time.time()) + api.WEBUI_AUTH_SESSION_SECONDS // 4
-        session_id = api._encode_ui_session(client_id, expires_at)
+        expires_at = (
+            int(api.time.time()) + server_constants.WEBUI_AUTH_SESSION_SECONDS // 4
+        )
+        session_id = server_auth._encode_ui_session(client_id, expires_at)
 
         response = asyncio.run(
             api.api_security(
                 self._request(
                     "/ui",
-                    headers=(("cookie", f"{api.WEBUI_AUTH_COOKIE}={session_id}"),),
+                    headers=(
+                        (
+                            "cookie",
+                            f"{server_constants.WEBUI_AUTH_COOKIE}={session_id}",
+                        ),
+                    ),
                 ),
                 self._passthrough_response,
             )
@@ -591,15 +623,15 @@ class TestApiWebUI(CeluneTestCase):
 
         refreshed_cookie = response.headers["set-cookie"].split(";", 1)[0]
         refreshed_session = refreshed_cookie.split("=", 1)[1]
-        refreshed_details = api._ui_session_details(refreshed_session)
+        refreshed_details = server_auth._ui_session_details(refreshed_session)
         assert refreshed_details is not None
         assert refreshed_details[0] == client_id
         assert refreshed_details[1] > expires_at
 
     def test_api_security_rejects_cross_origin_webui_actions(self) -> None:
         """Verify browser sessions cannot authorize cross-origin actions."""
-        api.auth_token = "secret"
-        session_id = api._new_ui_session()
+        api.server_session.auth_token = "secret"
+        session_id = server_auth._new_ui_session()
 
         response = asyncio.run(
             api.api_security(
@@ -607,7 +639,10 @@ class TestApiWebUI(CeluneTestCase):
                     "/ui/run/speak",
                     method="POST",
                     headers=(
-                        ("cookie", f"{api.WEBUI_AUTH_COOKIE}={session_id}"),
+                        (
+                            "cookie",
+                            f"{server_constants.WEBUI_AUTH_COOKIE}={session_id}",
+                        ),
                         ("origin", "http://attacker.example"),
                     ),
                 ),
@@ -619,7 +654,7 @@ class TestApiWebUI(CeluneTestCase):
 
     def test_webui_authentication_exchanges_key_for_http_only_cookie(self) -> None:
         """Verify the configured key creates an opaque, scoped browser cookie."""
-        api.auth_token = "secret"
+        api.server_session.auth_token = "secret"
         response = asyncio.run(
             api.authenticate_webui(
                 api.WebUiAuthRequest(api_key="secret"),
@@ -629,7 +664,7 @@ class TestApiWebUI(CeluneTestCase):
 
         assert response.status_code == 200
         cookie = response.headers["set-cookie"]
-        assert f"{api.WEBUI_AUTH_COOKIE}=" in cookie
+        assert f"{server_constants.WEBUI_AUTH_COOKIE}=" in cookie
         assert "secret" not in cookie
         assert "HttpOnly" in cookie
         assert "Path=/ui" in cookie
@@ -637,7 +672,7 @@ class TestApiWebUI(CeluneTestCase):
 
     def test_webui_authentication_rejects_an_invalid_key(self) -> None:
         """Verify an incorrect application key does not create a session."""
-        api.auth_token = "secret"
+        api.server_session.auth_token = "secret"
         response = asyncio.run(
             api.authenticate_webui(
                 api.WebUiAuthRequest(api_key="incorrect"),
@@ -651,7 +686,7 @@ class TestApiWebUI(CeluneTestCase):
 
     def test_webui_websocket_rejects_missing_authentication(self) -> None:
         """Verify unauthenticated WebUI WebSockets never reach Gradio."""
-        api.auth_token = "secret"
+        api.server_session.auth_token = "secret"
         reached_gradio = False
         sent_messages: list[Message] = []
 
@@ -685,11 +720,11 @@ class TestApiWebUI(CeluneTestCase):
         assert not reached_gradio
         assert sent_messages == [{"type": "websocket.close", "code": 4401}]
 
-        session_id = api._new_ui_session()
+        session_id = server_auth._new_ui_session()
         scope["headers"] = [
             (
                 b"cookie",
-                f"{api.WEBUI_AUTH_COOKIE}={session_id}".encode(),
+                f"{server_constants.WEBUI_AUTH_COOKIE}={session_id}".encode(),
             ),
             (b"origin", b"http://attacker.example"),
         ]
@@ -708,7 +743,7 @@ class TestApiWebUI(CeluneTestCase):
 
     def test_api_security_requires_token_for_generating_routes(self) -> None:
         """Verify protected API routes still reject unauthenticated requests."""
-        api.auth_token = "secret"
+        api.server_session.auth_token = "secret"
 
         response = asyncio.run(
             api.api_security(
@@ -722,7 +757,7 @@ class TestApiWebUI(CeluneTestCase):
 
     def test_webui_snapshot_uses_bound_celune_state(self) -> None:
         """Verify the browser snapshot mirrors current logs, status, and voice state."""
-        api.bound_celune = cast(
+        api.server_session.bound_celune = cast(
             Celune,
             SimpleNamespace(
                 current_voice="balanced",
@@ -732,11 +767,11 @@ class TestApiWebUI(CeluneTestCase):
                 cur_state="idle",
             ),
         )
-        api.webui_log_lines.append(("Ready to speak.", "info"))
+        api.server_session.webui_log_lines.append(("Ready to speak.", "info"))
         api.set_webui_status("Idle")
 
         with mock.patch(
-            "celune.api.ui_resources.resource_pages",
+            "celune.webui.runtime.ui_resources.resource_pages",
             return_value=("VRAM: 10.66/11.94 GB available",),
         ):
             (
@@ -749,7 +784,7 @@ class TestApiWebUI(CeluneTestCase):
             ) = webui.webui_snapshot()
 
         assert "Ready to speak." in logs_html
-        assert "--celune-ui-accent:" in api.webui_theme_style
+        assert "--celune-ui-accent:" in api.server_session.webui_theme_style
         assert "style=" in logs_html
         assert "Idle" in status_html
         assert "10.66/11.94" in resources_html
@@ -780,7 +815,7 @@ class TestApiWebUI(CeluneTestCase):
         celune.change_input_state_callback(True)
         celune.change_voice_lock_state_callback(True)
         with mock.patch(
-            "celune.api.ui_resources.resource_pages",
+            "celune.webui.runtime.ui_resources.resource_pages",
             return_value=("VRAM: 10.66/11.94 GB available",),
         ):
             _logs, _status, _resources, voice_update, send_update, input_update = (
@@ -794,7 +829,7 @@ class TestApiWebUI(CeluneTestCase):
         celune.change_input_state_callback(False)
         celune.change_voice_lock_state_callback(False)
         with mock.patch(
-            "celune.api.ui_resources.resource_pages",
+            "celune.webui.runtime.ui_resources.resource_pages",
             return_value=("VRAM: 10.66/11.94 GB available",),
         ):
             (
@@ -844,6 +879,38 @@ class TestApiWebUI(CeluneTestCase):
         assert log_calls == [("legacy log", "warning")]
         assert status_calls == [("legacy status", "info")]
 
+    def test_webui_callbacks_write_to_the_supplied_server_session(self) -> None:
+        """Verify callback wrappers keep state in their bound server session."""
+        session = ServerSession()
+        celune = cast(
+            Celune,
+            SimpleNamespace(
+                current_voice="balanced",
+                voices=("balanced",),
+                log_level="info",
+                log_callback=lambda *_args, **_kwargs: None,
+                status_callback=lambda *_args, **_kwargs: None,
+                error_callback=lambda _message: None,
+                progress_callback=lambda *_args: None,
+                idle_callback=lambda: None,
+                queue_avail_callback=lambda: None,
+                caption_progress_callback=lambda *_args: None,
+                caption_callback=lambda _caption: None,
+                voice_changed_callback=lambda _name: None,
+                change_input_state_callback=lambda _locked: None,
+                change_voice_lock_state_callback=lambda _locked: None,
+            ),
+        )
+
+        webui.wrap_celune_callbacks(celune, session)
+        celune.log_callback("session-specific log", "warning")
+
+        assert list(session.webui_log_lines) == [("session-specific log", "warning")]
+        assert not any(
+            message == "session-specific log"
+            for message, _severity in api.server_session.webui_log_lines
+        )
+
     def test_webui_wrapped_callbacks_mirror_generation_lifecycle(self) -> None:
         """Verify idle, queue, caption, progress, and error callbacks reach WebUI state."""
         celune = cast(
@@ -874,13 +941,13 @@ class TestApiWebUI(CeluneTestCase):
             api.bind_celune(celune)
 
         celune.queue_avail_callback()
-        assert not api.webui_input_locked
-        assert api.webui_status_text == string("status.speaking")
+        assert not api.server_session.webui_input_locked
+        assert api.server_session.webui_status_text == string("status.speaking")
 
         celune.caption_callback("Hello there")
         celune.caption_progress_callback(1.0, 2.0)
-        api.webui_progress_current = 1.0
-        api.webui_progress_total = 1.0
+        api.server_session.webui_progress_current = 1.0
+        api.server_session.webui_progress_total = 1.0
         _status = api.webui_status_html()
         assert string("status.speaking") in _status
         assert "Hello there" not in _status
@@ -891,12 +958,12 @@ class TestApiWebUI(CeluneTestCase):
         assert "backend failed" in api.webui_status_html()
         assert any(
             message == "backend failed" and severity == "error"
-            for message, severity in api.webui_log_lines
+            for message, severity in api.server_session.webui_log_lines
         )
 
         celune.idle_callback()
-        assert api.webui_caption_text == ""
-        assert api.webui_progress_total is None
+        assert api.server_session.webui_caption_text == ""
+        assert api.server_session.webui_progress_total is None
 
     def test_webui_persona_input_uses_think_path(self) -> None:
         """Verify browser input follows the Persona path when talkback is enabled."""
@@ -917,13 +984,13 @@ class TestApiWebUI(CeluneTestCase):
                 say_stream=say_stream,
             ),
         )
-        api.bound_celune = celune
+        api.server_session.bound_celune = celune
         with (
             mock.patch(
                 "celune.webui.actions.persona_talkback_enabled", return_value=True
             ),
             mock.patch(
-                "celune.api.ui_resources.resource_pages",
+                "celune.webui.runtime.ui_resources.resource_pages",
                 return_value=("VRAM: first",),
             ),
         ):
@@ -935,7 +1002,7 @@ class TestApiWebUI(CeluneTestCase):
     def test_webui_slash_command_uses_shared_handler_without_tui(self) -> None:
         """Verify slash commands do not require a mounted Textual singleton."""
         celune = cast(Celune, SimpleNamespace())
-        api.bound_celune = celune
+        api.server_session.bound_celune = celune
         with (
             mock.patch("celune.api.CeluneUI._instance", None),
             mock.patch("celune.ui.commands.process_command") as process_command,
@@ -957,7 +1024,7 @@ class TestApiWebUI(CeluneTestCase):
                 cur_state="idle",
             ),
         )
-        api.bound_celune = celune
+        api.server_session.bound_celune = celune
         update = api.UiTimedUpdate(
             runtime_id=str(id(celune)),
             sequence=4,
@@ -969,11 +1036,11 @@ class TestApiWebUI(CeluneTestCase):
             status_marquee_offset=2,
         )
         webui.receive_webui_timed_update(update)
-        assert api.webui_resource_page == 3
-        assert api.webui_active_theme_name == "celune_light"
-        assert api.webui_timed_update_sequence == 4
-        assert api.webui_status_text == "Status from TUI"
-        assert api.webui_timed_update_source == "cedts"
+        assert api.server_session.webui_resource_page == 3
+        assert api.server_session.webui_active_theme_name == "celune_light"
+        assert api.server_session.webui_timed_update_sequence == 4
+        assert api.server_session.webui_status_text == "Status from TUI"
+        assert api.server_session.webui_timed_update_source == "cedts"
 
     def test_webui_seeded_multiline_log_retains_record_severity(self, tmp_path) -> None:
         """Verify continuation lines inherit the persisted record severity."""
@@ -983,20 +1050,20 @@ class TestApiWebUI(CeluneTestCase):
             "[2026-08-25T12:00:01] [INFO] next line\n",
             encoding="utf-8",
         )
-        api.webui_logs_seeded = False
+        api.server_session.webui_logs_seeded = False
         with mock.patch(
             "celune.webui.runtime.main_window_log_path", return_value=log_path
         ):
             api.seed_webui_logs()
 
-        assert list(api.webui_log_lines) == [
+        assert list(api.server_session.webui_log_lines) == [
             ("first line\nsecond line", "warning"),
             ("next line", "info"),
         ]
 
     def test_webui_snapshot_shows_tutorial_placeholder(self) -> None:
         """Verify tutorial state uses the tutorial placeholder in the browser UI."""
-        api.bound_celune = cast(
+        api.server_session.bound_celune = cast(
             Celune,
             SimpleNamespace(
                 current_voice="balanced",
@@ -1006,12 +1073,12 @@ class TestApiWebUI(CeluneTestCase):
                 cur_state="idle",
             ),
         )
-        api.webui_input_locked = True
-        api.webui_input_placeholder = string("ui.tutorial_placeholder")
-        api.webui_voice_locked = True
+        api.server_session.webui_input_locked = True
+        api.server_session.webui_input_placeholder = string("ui.tutorial_placeholder")
+        api.server_session.webui_voice_locked = True
 
         with mock.patch(
-            "celune.api.ui_resources.resource_pages",
+            "celune.webui.runtime.ui_resources.resource_pages",
             return_value=("VRAM: 10.66/11.94 GB available",),
         ):
             _logs, _status, _resources, voice_update, send_update, input_update = (
@@ -1024,7 +1091,7 @@ class TestApiWebUI(CeluneTestCase):
 
     def test_webui_snapshot_uses_voice_changer_placeholder_in_vc_mode(self) -> None:
         """Verify VC mode uses the same voice-changer placeholder as the TUI."""
-        api.bound_celune = cast(
+        api.server_session.bound_celune = cast(
             Celune,
             SimpleNamespace(
                 current_voice="balanced",
@@ -1035,10 +1102,10 @@ class TestApiWebUI(CeluneTestCase):
                 cur_state="idle",
             ),
         )
-        api.webui_input_locked = False
+        api.server_session.webui_input_locked = False
 
         with mock.patch(
-            "celune.api.ui_resources.resource_pages",
+            "celune.webui.runtime.ui_resources.resource_pages",
             return_value=("VRAM: 10.66/11.94 GB available",),
         ):
             _logs, _status, _resources, _voice, _send, input_update = (
@@ -1049,7 +1116,7 @@ class TestApiWebUI(CeluneTestCase):
 
     def test_webui_vc_controls_disable_outside_voice_conversion_mode(self) -> None:
         """Verify VC controls are disabled while Celune is in the normal TTS mode."""
-        api.bound_celune = cast(
+        api.server_session.bound_celune = cast(
             Celune,
             SimpleNamespace(
                 input_mode="text_to_speech",
@@ -1064,7 +1131,7 @@ class TestApiWebUI(CeluneTestCase):
 
     def test_webui_vc_controls_enable_in_voice_conversion_mode(self) -> None:
         """Verify VC controls become interactive when the engine is in VC mode."""
-        api.bound_celune = cast(
+        api.server_session.bound_celune = cast(
             Celune,
             SimpleNamespace(
                 input_mode="voice_conversion",
@@ -1079,7 +1146,7 @@ class TestApiWebUI(CeluneTestCase):
 
     def test_webui_snapshot_keeps_failed_no_voice_runtime_locked(self) -> None:
         """Verify a failed no-voice runtime stays in an error/locked browser state."""
-        api.bound_celune = cast(
+        api.server_session.bound_celune = cast(
             Celune,
             SimpleNamespace(
                 current_voice=None,
@@ -1089,12 +1156,12 @@ class TestApiWebUI(CeluneTestCase):
                 cur_state="idle",
             ),
         )
-        api.webui_input_locked = False
-        api.webui_input_placeholder = string("ui.input_placeholder")
-        api.webui_voice_locked = False
+        api.server_session.webui_input_locked = False
+        api.server_session.webui_input_placeholder = string("ui.input_placeholder")
+        api.server_session.webui_voice_locked = False
 
         with mock.patch(
-            "celune.api.ui_resources.resource_pages",
+            "celune.webui.runtime.ui_resources.resource_pages",
             return_value=("VRAM: 10.66/11.94 GB available",),
         ):
             _logs, status_html, _resources, voice_update, send_update, input_update = (
@@ -1121,8 +1188,8 @@ class TestApiWebUI(CeluneTestCase):
                 cur_state="idle",
             ),
         )
-        api.bound_celune = celune
-        api.webui_input_locked = False
+        api.server_session.bound_celune = celune
+        api.server_session.webui_input_locked = False
 
         input_update = webui.input_update()
         send_update = webui.send_button_update()
@@ -1151,15 +1218,15 @@ class TestApiWebUI(CeluneTestCase):
             )
         )
 
-        with mock.patch("celune.api.default_loader", return_value=loader):
+        with mock.patch("celune.webui.runtime.default_loader", return_value=loader):
             api.configure_webui_theme()
 
-        assert "--celune-background: #112233;" in api.webui_theme_style
-        assert "--celune-sleeping: #556677;" in api.webui_theme_style
-        assert "--celune-primary:" in api.webui_theme_style
-        assert "--celune-error:" in api.webui_theme_style
-        assert "--celune-ui-accent:" in api.webui_theme_style
-        assert "--celune-ui-bg:" in api.webui_theme_style
+        assert "--celune-background: #112233;" in api.server_session.webui_theme_style
+        assert "--celune-sleeping: #556677;" in api.server_session.webui_theme_style
+        assert "--celune-primary:" in api.server_session.webui_theme_style
+        assert "--celune-error:" in api.server_session.webui_theme_style
+        assert "--celune-ui-accent:" in api.server_session.webui_theme_style
+        assert "--celune-ui-bg:" in api.server_session.webui_theme_style
         assert 'rel="icon"' in api.WEBUI_HEAD
 
     def test_webui_css_keeps_log_panel_flexible(self) -> None:
@@ -1251,10 +1318,9 @@ class TestApiWebUI(CeluneTestCase):
         options = api.webui_audio_waveform_options()
 
         assert (
-            options.waveform_progress_color
-            == api.colors.SEVERITY_COLORS["celune"]["info"]
+            options.waveform_progress_color == colors.SEVERITY_COLORS["celune"]["info"]
         )
-        assert options.trim_region_color == api.colors.SEVERITY_COLORS["celune"]["info"]
+        assert options.trim_region_color == colors.SEVERITY_COLORS["celune"]["info"]
 
     def test_webui_head_installs_log_autoscroll(self) -> None:
         """Verify the WebUI head installs auto-scroll behavior for the log pane."""
@@ -1270,7 +1336,7 @@ class TestApiWebUI(CeluneTestCase):
         api.append_webui_log("same line", "warning")
         api.append_webui_log("same line", "warning")
 
-        assert list(api.webui_log_lines) == [("same line", "warning")]
+        assert list(api.server_session.webui_log_lines) == [("same line", "warning")]
 
     def test_webui_persona_placeholder_matches_tui_logic(self) -> None:
         """Verify Persona talkback uses the main TUI's input placeholder."""
@@ -1335,7 +1401,7 @@ class TestApiWebUI(CeluneTestCase):
     def test_voice_api_rejects_voice_selection_for_singing_backend(self) -> None:
         """Return a conflict when an API client requests a speaking voice."""
         set_voice_async = mock.AsyncMock(return_value=True)
-        api.bound_celune = cast(
+        api.server_session.bound_celune = cast(
             Celune,
             SimpleNamespace(
                 backend=SimpleNamespace(singing=True),
@@ -1356,7 +1422,7 @@ class TestApiWebUI(CeluneTestCase):
 
     def test_webui_recording_hint_uses_the_existing_resource_snapshot(self) -> None:
         """Verify the ALT+R hint is rendered with the timed footer update."""
-        api.bound_celune = cast(
+        api.server_session.bound_celune = cast(
             Celune,
             SimpleNamespace(
                 current_voice="balanced",
@@ -1368,7 +1434,7 @@ class TestApiWebUI(CeluneTestCase):
                 config={},
             ),
         )
-        api.webui_input_locked = False
+        api.server_session.webui_input_locked = False
 
         with (
             mock.patch.object(api.CeluneUI, "_instance", object()),
@@ -1377,7 +1443,7 @@ class TestApiWebUI(CeluneTestCase):
                 "celune.webui.runtime.persona_talkback_enabled", return_value=True
             ),
             mock.patch(
-                "celune.api.ui_resources.resource_pages",
+                "celune.webui.runtime.ui_resources.resource_pages",
                 return_value=("VRAM: available",),
             ),
         ):
@@ -1387,7 +1453,7 @@ class TestApiWebUI(CeluneTestCase):
 
     def test_webui_probe_logs_sleep_transition(self) -> None:
         """Verify the browser log mirrors the sleep transition message."""
-        api.bound_celune = cast(
+        api.server_session.bound_celune = cast(
             Celune,
             SimpleNamespace(
                 current_voice="balanced",
@@ -1400,7 +1466,7 @@ class TestApiWebUI(CeluneTestCase):
         )
 
         with mock.patch(
-            "celune.api.ui_resources.resource_pages",
+            "celune.webui.runtime.ui_resources.resource_pages",
             return_value=("VRAM: 10.66/11.94 GB available",),
         ):
             logs_html, status_html, _resources, _voice, _send, _input = (
@@ -1412,7 +1478,7 @@ class TestApiWebUI(CeluneTestCase):
 
     def test_webui_probe_does_not_immediately_override_callback_status(self) -> None:
         """Verify fast callback statuses remain visible through the next probe."""
-        api.bound_celune = cast(
+        api.server_session.bound_celune = cast(
             Celune,
             SimpleNamespace(
                 current_voice="balanced",
@@ -1422,7 +1488,7 @@ class TestApiWebUI(CeluneTestCase):
                 cur_state="speaking",
             ),
         )
-        api.webui_last_probed_state = "idle"
+        api.server_session.webui_last_probed_state = "idle"
         api.set_webui_status(
             "Normalizing",
             source="callback",
@@ -1431,10 +1497,10 @@ class TestApiWebUI(CeluneTestCase):
 
         with (
             mock.patch(
-                "celune.api.ui_resources.resource_pages",
+                "celune.webui.runtime.ui_resources.resource_pages",
                 return_value=("VRAM: 10.66/11.94 GB available",),
             ),
-            mock.patch("celune.api.time.monotonic", return_value=10.1),
+            mock.patch("celune.webui.runtime.time.monotonic", return_value=10.1),
         ):
             _logs, status_html, _resources, _voice, _send, _input = (
                 webui.webui_snapshot()
@@ -1444,7 +1510,7 @@ class TestApiWebUI(CeluneTestCase):
 
     def test_webui_probe_prefers_active_playback_status(self) -> None:
         """Verify active playback status remains visible over generic speaking state."""
-        api.bound_celune = cast(
+        api.server_session.bound_celune = cast(
             Celune,
             SimpleNamespace(
                 current_voice="balanced",
@@ -1455,15 +1521,15 @@ class TestApiWebUI(CeluneTestCase):
                 playback_source_statuses={1: "Playing fixture.wav"},
             ),
         )
-        api.webui_last_probed_state = "idle"
+        api.server_session.webui_last_probed_state = "idle"
         api.set_webui_status("Speaking", source="callback", updated_at=10.0)
 
         with (
             mock.patch(
-                "celune.api.ui_resources.resource_pages",
+                "celune.webui.runtime.ui_resources.resource_pages",
                 return_value=("VRAM: 10.66/11.94 GB available",),
             ),
-            mock.patch("celune.api.time.monotonic", return_value=10.1),
+            mock.patch("celune.webui.runtime.time.monotonic", return_value=10.1),
         ):
             _logs, status_html, _resources, _voice, _send, _input = (
                 webui.webui_snapshot()
@@ -1473,7 +1539,7 @@ class TestApiWebUI(CeluneTestCase):
 
     def test_webui_probe_reconciles_stale_speaking_status_after_sleep(self) -> None:
         """Verify sleeping runtime state overrides a late speaking callback."""
-        api.bound_celune = cast(
+        api.server_session.bound_celune = cast(
             Celune,
             SimpleNamespace(
                 current_voice="balanced",
@@ -1484,11 +1550,11 @@ class TestApiWebUI(CeluneTestCase):
                 sleeping=True,
             ),
         )
-        api.webui_last_probed_state = "sleeping"
+        api.server_session.webui_last_probed_state = "sleeping"
         api.set_webui_status("Speaking", source="callback")
 
         with mock.patch(
-            "celune.api.ui_resources.resource_pages",
+            "celune.webui.runtime.ui_resources.resource_pages",
             return_value=("VRAM: 10.66/11.94 GB available",),
         ):
             logs_html, status_html, _resources, _voice, _send, _input = (
@@ -1530,7 +1596,7 @@ class TestApiWebUI(CeluneTestCase):
             _ = save
             return chunks
 
-        api.bound_celune = cast(
+        api.server_session.bound_celune = cast(
             Celune,
             SimpleNamespace(
                 say_stream=say_stream,
@@ -1544,7 +1610,7 @@ class TestApiWebUI(CeluneTestCase):
         )
 
         with mock.patch(
-            "celune.api.ui_resources.resource_pages",
+            "celune.webui.runtime.ui_resources.resource_pages",
             return_value=("VRAM: 10.66/11.94 GB available",),
         ):
             updates = list(webui_actions.webui_speak("hello"))
@@ -1592,10 +1658,10 @@ class TestApiWebUI(CeluneTestCase):
 
         celune.wake_from_sleep_async = wake_from_sleep_async
         celune.say_stream = say_stream
-        api.bound_celune = cast(Celune, celune)
+        api.server_session.bound_celune = cast(Celune, celune)
 
         with mock.patch(
-            "celune.api.ui_resources.resource_pages",
+            "celune.webui.runtime.ui_resources.resource_pages",
             return_value=("VRAM: 10.66/11.94 GB available",),
         ):
             updates = list(webui_actions.webui_speak("wake me"))
@@ -1617,7 +1683,7 @@ class TestApiWebUI(CeluneTestCase):
             calls.append(name)
             return True
 
-        api.bound_celune = cast(
+        api.server_session.bound_celune = cast(
             Celune,
             SimpleNamespace(
                 current_voice="balanced",
@@ -1630,7 +1696,7 @@ class TestApiWebUI(CeluneTestCase):
         )
 
         with mock.patch(
-            "celune.api.ui_resources.resource_pages",
+            "celune.webui.runtime.ui_resources.resource_pages",
             return_value=("VRAM: 10.66/11.94 GB available",),
         ):
             _snapshot = webui_actions.webui_cycle_voice()
@@ -1640,7 +1706,7 @@ class TestApiWebUI(CeluneTestCase):
     def test_webui_convert_audio_returns_browser_audio_after_conversion(self) -> None:
         """Verify browser audio conversion returns one playable Celune-format payload."""
         converted_audio = np.ones((10, 2), dtype=np.float32) * 0.5
-        api.bound_celune = cast(
+        api.server_session.bound_celune = cast(
             Celune,
             SimpleNamespace(
                 input_mode="voice_conversion",
@@ -1661,7 +1727,7 @@ class TestApiWebUI(CeluneTestCase):
         )
 
         with mock.patch(
-            "celune.api.ui_resources.resource_pages",
+            "celune.webui.runtime.ui_resources.resource_pages",
             return_value=("VRAM: 10.66/11.94 GB available",),
         ):
             source_value, browser_audio, *_rest = webui_actions.webui_convert_audio(
@@ -1677,7 +1743,9 @@ class TestApiWebUI(CeluneTestCase):
         assert array.dtype == np.int16
         assert np.max(np.abs(array)) == 32767
         assert browser_audio[0] == 48000
-        celune_convert_audio = cast(mock.Mock, api.bound_celune.convert_audio)
+        celune_convert_audio = cast(
+            mock.Mock, api.server_session.bound_celune.convert_audio
+        )
         celune_convert_audio.assert_called_once_with(
             mock.ANY,
             44100,
@@ -1688,7 +1756,7 @@ class TestApiWebUI(CeluneTestCase):
     def test_webui_convert_audio_normalizes_integer_browser_audio(self) -> None:
         """Verify browser-side PCM arrays are normalized before VC conversion."""
         captured_audio: dict[str, np.ndarray] = {}
-        api.bound_celune = cast(
+        api.server_session.bound_celune = cast(
             Celune,
             SimpleNamespace(
                 input_mode="voice_conversion",
@@ -1717,7 +1785,7 @@ class TestApiWebUI(CeluneTestCase):
         )
 
         with mock.patch(
-            "celune.api.ui_resources.resource_pages",
+            "celune.webui.runtime.ui_resources.resource_pages",
             return_value=("VRAM: 10.66/11.94 GB available",),
         ):
             _source_value, browser_audio, *_rest = webui_actions.webui_convert_audio(
@@ -1733,7 +1801,7 @@ class TestApiWebUI(CeluneTestCase):
 
     def test_webui_convert_audio_rejects_text_to_speech_mode(self) -> None:
         """Verify browser audio conversion is unavailable outside VC mode."""
-        api.bound_celune = cast(
+        api.server_session.bound_celune = cast(
             Celune,
             SimpleNamespace(
                 input_mode="text_to_speech",
@@ -1747,7 +1815,7 @@ class TestApiWebUI(CeluneTestCase):
         )
 
         with mock.patch(
-            "celune.api.ui_resources.resource_pages",
+            "celune.webui.runtime.ui_resources.resource_pages",
             return_value=("VRAM: 10.66/11.94 GB available",),
         ):
             source_value, browser_audio, logs_html, *_rest = (
@@ -1766,12 +1834,14 @@ class TestApiWebUI(CeluneTestCase):
         demo = api.build_webui()
         config = demo.config
         assert all(
-            api.webui_theme_style not in str(component)
+            api.server_session.webui_theme_style not in str(component)
             for component in config.get("components", [])
         )
         theme_stylesheet = api._webui_asset_response("theme.css")
         assert theme_stylesheet is not None
-        assert theme_stylesheet.body == api.webui_theme_style.encode("utf-8")
+        assert theme_stylesheet.body == api.server_session.webui_theme_style.encode(
+            "utf-8"
+        )
         assert theme_stylesheet.headers["content-type"].startswith("text/css")
         tab_labels = [
             component.get("label") or component.get("props", {}).get("label")
@@ -1800,9 +1870,13 @@ class TestApiWebUI(CeluneTestCase):
         exempt_dependencies = {
             dependency.get("api_name"): dependency
             for dependency in config.get("dependencies", [])
-            if dependency.get("api_name") in api.WEBUI_RATE_LIMIT_EXEMPT_API_NAMES
+            if dependency.get("api_name")
+            in server_constants.WEBUI_RATE_LIMIT_EXEMPT_API_NAMES
         }
-        assert set(exempt_dependencies) == api.WEBUI_RATE_LIMIT_EXEMPT_API_NAMES
+        assert (
+            set(exempt_dependencies)
+            == server_constants.WEBUI_RATE_LIMIT_EXEMPT_API_NAMES
+        )
         assert all(
             dependency.get("queue") is False
             for dependency in exempt_dependencies.values()
@@ -1810,9 +1884,11 @@ class TestApiWebUI(CeluneTestCase):
         generation_dependencies = {
             dependency.get("api_name"): dependency
             for dependency in config.get("dependencies", [])
-            if dependency.get("api_name") in api.WEBUI_GENERATION_API_NAMES
+            if dependency.get("api_name") in server_constants.WEBUI_GENERATION_API_NAMES
         }
-        assert set(generation_dependencies) == api.WEBUI_GENERATION_API_NAMES
+        assert (
+            set(generation_dependencies) == server_constants.WEBUI_GENERATION_API_NAMES
+        )
         assert all(
             dependency.get("queue") is not False
             for dependency in generation_dependencies.values()
@@ -1822,11 +1898,11 @@ class TestApiWebUI(CeluneTestCase):
             for dependency in config.get("dependencies", [])
             if dependency.get("queue") is not False
         }
-        assert queued_dependencies == api.WEBUI_GENERATION_API_NAMES
+        assert queued_dependencies == server_constants.WEBUI_GENERATION_API_NAMES
 
     def test_webui_snapshot_probes_runtime_status_and_rotates_resources(self) -> None:
         """Verify footer polling refreshes status and rotates the resource page."""
-        api.bound_celune = cast(
+        api.server_session.bound_celune = cast(
             Celune,
             SimpleNamespace(
                 current_voice="bold",
@@ -1839,10 +1915,10 @@ class TestApiWebUI(CeluneTestCase):
 
         with (
             mock.patch(
-                "celune.api.ui_resources.resource_pages",
+                "celune.webui.runtime.ui_resources.resource_pages",
                 return_value=("VRAM: first", "Friday, June 11, 2026"),
             ),
-            mock.patch("celune.api.time.monotonic", side_effect=[10.0, 12.2]),
+            mock.patch("celune.webui.runtime.time.monotonic", side_effect=[10.0, 12.2]),
         ):
             _logs1, status1, resources1, _voice1, _send1, _input1 = (
                 webui.webui_snapshot()
@@ -1861,24 +1937,20 @@ class TestApiWebUI(CeluneTestCase):
         api.set_webui_status("I can't speak right now.", "error")
 
         api.configure_webui_theme()
-        theme_css = api.webui_theme_style
+        theme_css = api.server_session.webui_theme_style
 
-        assert (
-            api.colors.THEME.background or api.colors.DEFAULT_BACKGROUND
-        ) in theme_css
-        assert api.colors.ERROR_BACKGROUND not in theme_css
+        assert (colors.THEME.background or colors.DEFAULT_BACKGROUND) in theme_css
+        assert colors.ERROR_BACKGROUND not in theme_css
 
     def test_webui_nonfatal_error_status_keeps_normal_theme(self) -> None:
         """Verify non-fatal browser errors do not switch the UI into the fatal palette."""
         api.set_webui_status("I can't change my voice right now.", "error")
 
         api.configure_webui_theme()
-        theme_css = api.webui_theme_style
+        theme_css = api.server_session.webui_theme_style
 
-        assert (
-            api.colors.THEME.background or api.colors.DEFAULT_BACKGROUND
-        ) in theme_css
-        assert api.colors.ERROR_BACKGROUND not in theme_css
+        assert (colors.THEME.background or colors.DEFAULT_BACKGROUND) in theme_css
+        assert colors.ERROR_BACKGROUND not in theme_css
 
     def test_webui_wrapped_fatal_glow_requests_api_shutdown(self) -> None:
         """Verify fatal glow stops the API/WebUI surface instead of tinting it red."""
@@ -1898,8 +1970,8 @@ class TestApiWebUI(CeluneTestCase):
                 glow=SimpleNamespace(fatal=mock.Mock()),
             ),
         )
-        api.bound_celune = celune
-        api.current_api_server = cast(
+        api.server_session.bound_celune = celune
+        api.server_session.current_api_server = cast(
             api.StartedServer,
             SimpleNamespace(should_exit=False, force_exit=False),
         )
@@ -1907,9 +1979,9 @@ class TestApiWebUI(CeluneTestCase):
         api.wrap_celune_callbacks(celune)
         celune.glow.fatal()
 
-        assert api.bound_celune is None
-        assert api.current_api_server.should_exit
-        assert api.current_api_server.force_exit
+        assert api.server_session.bound_celune is None
+        assert api.server_session.current_api_server.should_exit
+        assert api.server_session.current_api_server.force_exit
 
     @staticmethod
     def test_start_api_reports_when_port_is_already_in_use() -> None:

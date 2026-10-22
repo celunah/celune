@@ -2,18 +2,17 @@
 """WebUI lifecycle helpers."""
 
 from __future__ import annotations
-
 import io
 import re
 import time
-import asyncio
 import datetime
 import contextlib
 from html import escape
 from pathlib import Path
+from functools import partial
 from importlib.resources import files
-from typing import Union, Optional, cast
-from collections.abc import Callable, Iterator
+from typing import TYPE_CHECKING, Union, Optional, cast
+from collections.abc import Mapping, Callable, Iterator, Sequence
 
 import numpy as np
 import gradio as gr
@@ -21,42 +20,58 @@ import soundfile as sf
 from fastapi import HTTPException
 
 from ..i18n import string
-from .. import api as _api
 from ..theme import colors
 from ..ui.app import CeluneUI
-from ..dataclasses.events import (
-    AgentTaskFinishedEvent,
-    AgentChoiceRequestedEvent,
-    AgentTaskStateChangedEvent,
-    AgentApprovalRequestedEvent,
-)
+from ..cevoice import default_loader
+from ..typing.api import WebUiUpdate
 from ..constants import BASE_SR, APP_NAME
 from ..ui import resources as ui_resources
-from ..binding import install_module_functions
-from ..playback import current_playback_status
 from ..extensions.events import EventDispatcher
 from ..typing.pipeline import SpeechStreamQueue
-from ..typing.api import TaskStatus, WebUiUpdate
 from ..typing.aliases import LogLevel, AudioChunks
 from ..typing.api import WebUiUnset as _WebUiUnset
 from ..utils import available, format_error_message
 from ..typing.api import WEBUI_UNSET as _WEBUI_UNSET
 from ..typing.events import EventName, EventCallback
 from ..paths import project_root, main_window_log_path
+from ..pipeline.captions import current_playback_status
+from ..server.session import ServerSession, server_session
 from ..cedts.ui import UiTimedUpdate, ui_timed_update_channel
 from ..persona.impl import persona_enabled, persona_talkback_enabled
+from ..server.runtime import invoke_message_callback, shutdown_api_for_fatal_error
+from ..dataclasses.events import (
+    AgentTaskFinishedEvent,
+    AgentChoiceRequestedEvent,
+    AgentTaskStateChangedEvent,
+    AgentApprovalRequestedEvent,
+)
+from ..server.constants import (
+    WEBUI_GENERATION_API_NAMES,
+    WEBUI_RESOURCE_ROTATE_SECONDS,
+    WEBUI_TIMED_UPDATE_STALE_SECONDS,
+    WEBUI_STATUS_PROBE_DEBOUNCE_SECONDS,
+)
+from ..server.jobs import (
+    TaskEvent,
+    task_status,
+    update_speech_job,
+    publish_task_event,
+    publish_task_progress,
+    set_active_speech_task,
+    publish_active_task_log,
+    publish_active_task_progress,
+)
 
 npt = np.typing
 
+if TYPE_CHECKING:
+    from ..celune import Celune
+
 __all__ = (
-    "_delete_expired_speech_jobs",
     "_probe_webui_runtime",
     "_probed_status_text",
-    "_publish_active_task_progress",
-    "_publish_task_progress",
     "_publish_webui_agent_status",
     "_sync_webui_runtime_locks",
-    "_task_event_status",
     "_voice_button_update",
     "_webui_agent_approval_requested",
     "_webui_agent_choice_requested",
@@ -73,29 +88,21 @@ __all__ = (
     "append_webui_log",
     "audio_bytes",
     "collect_speech_job",
+    "configure_webui_generation_fn_indices",
+    "configure_webui_theme",
     "flac_bytes",
-    "forget_speech_job",
     "get_webui_input_placeholder",
     "input_update",
     "normalized_audio",
-    "publish_active_task_log",
-    "publish_task_event",
     "receive_webui_timed_update",
-    "remember_speech_job",
     "require_celune",
     "seed_webui_logs",
     "send_button_update",
-    "set_active_speech_task",
     "set_webui_status",
-    "speech_job_snapshot",
     "stream_headers",
     "strip_webui_log_prefix",
-    "subscribe_to_speech_job",
     "subscribe_webui_events",
     "subscribe_webui_timed_updates",
-    "task_status",
-    "unsubscribe_from_speech_job",
-    "update_speech_job",
     "webui_audio_waveform_options",
     "webui_logs_html",
     "webui_resources_html",
@@ -108,57 +115,138 @@ __all__ = (
 )
 
 
-def subscribe_webui_events(celune: _api.Celune) -> None:
+def configure_webui_theme(session: ServerSession = server_session) -> None:
+    """Sync the browser palette with the active CEVOICE-derived theme."""
+    colors.configure_theme()
+    loader = default_loader()
+    if loader is not None:
+        theme = loader.bundle.metadata.get("theme")
+        if isinstance(theme, dict):
+            background = theme.get("background")
+            accent = theme.get("accent")
+            faded_accent = theme.get("faded_accent")
+            if faded_accent is None:
+                faded_accent = theme.get("sleeping_color")
+            if (
+                isinstance(background, str)
+                and isinstance(accent, str)
+                and (faded_accent is None or isinstance(faded_accent, str))
+            ):
+                colors.configure_theme(background, accent, faded_accent)
+
+    background = colors.THEME.background or "#1d1826"
+    palette = colors.SEVERITY_COLORS["celune"]
+    primary = palette["info"]
+    error = palette["error"]
+    foreground = colors.THEME.foreground or "#ffffff"
+    secondary = colors.THEME.secondary or primary
+    accent = colors.THEME.accent or primary
+    sleeping = palette["sleeping"]
+    button_bg = colors.blend(primary, background, 0.72)
+    button_hover = colors.blend(primary, background, 0.6)
+    input_bg = colors.blend(primary, background, 0.78)
+    theme_css = read_webui_asset("theme.css")
+    theme_values = {
+        "BACKGROUND": background,
+        "PRIMARY": primary,
+        "ERROR": error,
+        "FOREGROUND": foreground,
+        "SECONDARY": secondary,
+        "ACCENT": accent,
+        "INPUT_BG": input_bg,
+        "SLEEPING": sleeping,
+        "BUTTON_BG": button_bg,
+        "BUTTON_HOVER": button_hover,
+    }
+    for key, value in theme_values.items():
+        theme_css = theme_css.replace(f"__{key}__", value)
+    session.webui_theme_style = theme_css
+
+
+def configure_webui_generation_fn_indices(
+    dependencies: Sequence[Mapping[str, object]],
+    session: ServerSession = server_session,
+) -> None:
+    """Store Gradio action IDs used by the API generation-rate limiter."""
+    session.webui_generation_fn_indices = frozenset(
+        dependency_id
+        for dependency in dependencies
+        if isinstance(dependency.get("api_name"), str)
+        and dependency.get("api_name") in WEBUI_GENERATION_API_NAMES
+        and isinstance((dependency_id := dependency.get("id")), int)
+    )
+
+
+def subscribe_webui_events(
+    celune: Celune,
+    session: ServerSession = server_session,
+) -> None:
     """Subscribe the browser UI to the shared typed agent lifecycle events."""
     dispatcher = getattr(celune, "_event_dispatcher", None)
     if not isinstance(dispatcher, EventDispatcher):
         return
 
     callbacks: tuple[tuple[EventName, EventCallback], ...] = (
-        ("agent_task_state_changed", _webui_agent_task_state_changed),
-        ("agent_approval_requested", _webui_agent_approval_requested),
-        ("agent_choice_requested", _webui_agent_choice_requested),
-        ("agent_task_finished", _webui_agent_task_finished),
+        (
+            "agent_task_state_changed",
+            partial(_webui_agent_task_state_changed, session=session),
+        ),
+        (
+            "agent_approval_requested",
+            partial(_webui_agent_approval_requested, session=session),
+        ),
+        (
+            "agent_choice_requested",
+            partial(_webui_agent_choice_requested, session=session),
+        ),
+        (
+            "agent_task_finished",
+            partial(_webui_agent_task_finished, session=session),
+        ),
     )
     for event_name, callback in callbacks:
         dispatcher.subscribe(event_name, callback, "WebUI")
-    _api.webui_event_dispatcher = dispatcher
-    _api.webui_event_callbacks = callbacks
+    session.webui_event_dispatcher = dispatcher
+    session.webui_event_callbacks = callbacks
 
 
-def subscribe_webui_timed_updates() -> None:
+def subscribe_webui_timed_updates(session: ServerSession = server_session) -> None:
     """Subscribe the browser UI to the shared CEDTS timed-update channel."""
-    if _api.webui_timed_update_unsubscribe is not None:
-        _api.webui_timed_update_unsubscribe()
-    _api.webui_timed_update_unsubscribe = ui_timed_update_channel.subscribe(
-        receive_webui_timed_update
+    if session.webui_timed_update_unsubscribe is not None:
+        session.webui_timed_update_unsubscribe()
+    session.webui_timed_update_unsubscribe = ui_timed_update_channel.subscribe(
+        partial(receive_webui_timed_update, session=session)
     )
 
 
-def receive_webui_timed_update(update: UiTimedUpdate) -> None:
+def receive_webui_timed_update(
+    update: UiTimedUpdate,
+    session: ServerSession = server_session,
+) -> None:
     """Apply one newer TUI timed update to browser-owned state."""
-    celune = _api.bound_celune
+    celune = session.bound_celune
     if celune is None or update.runtime_id != str(id(celune)):
         return
-    if update.sequence <= _api.webui_timed_update_sequence:
+    if update.sequence <= session.webui_timed_update_sequence:
         return
-    _api.webui_timed_update_sequence = update.sequence
-    _api.webui_resource_page = update.resource_page
-    _api.webui_active_theme_name = update.theme_name
-    _api.webui_timed_update_received_at = time.monotonic()
-    _api.webui_timed_update_source = "cedts"
+    session.webui_timed_update_sequence = update.sequence
+    session.webui_resource_page = update.resource_page
+    session.webui_active_theme_name = update.theme_name
+    session.webui_timed_update_received_at = time.monotonic()
+    session.webui_timed_update_source = "cedts"
     if update.status_text:
-        _api.webui_status_text = update.status_text
-        _api.webui_status_severity = update.status_severity
+        session.webui_status_text = update.status_text
+        session.webui_status_severity = update.status_severity
 
 
 def _webui_agent_status_message(
     task_id: str,
     fallback_state: str,
     fallback_key: Optional[str] = None,
+    session: ServerSession = server_session,
 ) -> Optional[str]:
     """Resolve the same compact agent status text used by the TUI."""
-    celune = _api.bound_celune
+    celune = session.bound_celune
     if celune is None:
         return None
     runtime = getattr(celune, "agent_runtime", None)
@@ -194,56 +282,83 @@ def _publish_webui_agent_status(
     task_id: str,
     fallback_state: str,
     fallback_key: Optional[str] = None,
+    session: ServerSession = server_session,
 ) -> None:
     """Mirror one typed agent event into the browser status line."""
-    message = _webui_agent_status_message(task_id, fallback_state, fallback_key)
+    message = _webui_agent_status_message(
+        task_id,
+        fallback_state,
+        fallback_key,
+        session,
+    )
     if message is not None:
         severity = "warning" if "awaiting" in message.casefold() else "info"
-        set_webui_status(message, severity, source="agent")
+        set_webui_status(message, severity, source="agent", session=session)
 
 
-def _webui_agent_task_state_changed(event: AgentTaskStateChangedEvent) -> None:
+def _webui_agent_task_state_changed(
+    event: AgentTaskStateChangedEvent,
+    session: ServerSession = server_session,
+) -> None:
     """Mirror agent task state changes into the browser UI."""
     state = getattr(event.new_state, "value", str(event.new_state))
-    _publish_webui_agent_status(event.task_id, state)
+    _publish_webui_agent_status(event.task_id, state, session=session)
 
 
-def _webui_agent_approval_requested(event: AgentApprovalRequestedEvent) -> None:
+def _webui_agent_approval_requested(
+    event: AgentApprovalRequestedEvent,
+    session: ServerSession = server_session,
+) -> None:
     """Mirror agent approval pauses into the browser UI."""
     _publish_webui_agent_status(
         event.task_id,
         "awaiting_approval",
         "agent.status.awaiting_approval",
+        session,
     )
 
 
-def _webui_agent_choice_requested(event: AgentChoiceRequestedEvent) -> None:
+def _webui_agent_choice_requested(
+    event: AgentChoiceRequestedEvent,
+    session: ServerSession = server_session,
+) -> None:
     """Mirror agent choice pauses into the browser UI."""
     _publish_webui_agent_status(
         event.task_id,
         "awaiting_choice",
         "agent.status.awaiting_choice",
+        session,
     )
 
 
-def _webui_agent_task_finished(event: AgentTaskFinishedEvent) -> None:
+def _webui_agent_task_finished(
+    event: AgentTaskFinishedEvent,
+    session: ServerSession = server_session,
+) -> None:
     """Mirror terminal agent task states into the browser UI."""
     state = getattr(event.state, "value", str(event.state))
-    _publish_webui_agent_status(event.task_id, state)
+    _publish_webui_agent_status(event.task_id, state, session=session)
 
 
-def _webui_status_color(severity: str) -> str:
+def _webui_status_color(
+    severity: str,
+    session: ServerSession = server_session,
+) -> str:
     """Return the browser UI color for a given severity."""
     palette = colors.SEVERITY_COLORS.get(
-        _api.webui_active_theme_name,
+        session.webui_active_theme_name,
         colors.SEVERITY_COLORS["celune"],
     )
     return palette.get(severity, palette["info"])
 
 
-def _webui_log_line_html(message: str, severity: str = "info") -> str:
+def _webui_log_line_html(
+    message: str,
+    severity: str = "info",
+    session: ServerSession = server_session,
+) -> str:
     """Render one browser log line with severity-aware coloring."""
-    color = _webui_status_color(severity)
+    color = _webui_status_color(severity, session)
     return f'<span style="color: {color};">{escape(message)}</span>'
 
 
@@ -268,12 +383,12 @@ def strip_webui_log_prefix(line: str) -> str:
     return stripped
 
 
-def seed_webui_logs() -> None:
+def seed_webui_logs(session: ServerSession = server_session) -> None:
     """Populate the browser log view from the persisted desktop log when available."""
-    if _api.webui_logs_seeded:
+    if session.webui_logs_seeded:
         return
 
-    _api.webui_logs_seeded = True
+    session.webui_logs_seeded = True
     path = main_window_log_path()
     if not path.exists():
         return
@@ -291,7 +406,7 @@ def seed_webui_logs() -> None:
 
     def append_record() -> None:
         if record:
-            append_webui_log("\n".join(record), record_severity)
+            append_webui_log("\n".join(record), record_severity, session)
 
     for line in lines:
         match = record_pattern.match(line)
@@ -312,21 +427,26 @@ def seed_webui_logs() -> None:
     append_record()
 
 
-def append_webui_log(msg: str, severity: str = "info") -> None:
+def append_webui_log(
+    msg: str,
+    severity: str = "info",
+    session: ServerSession = server_session,
+) -> None:
     """Store one browser log line."""
-    if _api.webui_log_lines and _api.webui_log_lines[-1] == (msg, severity):
+    if session.webui_log_lines and session.webui_log_lines[-1] == (msg, severity):
         return
-    _api.webui_log_lines.append((msg, severity))
+    session.webui_log_lines.append((msg, severity))
 
 
 def append_webui_error(
     message: str,
     error: BaseException,
     severity: str = "error",
-    celune: Optional[_api.Celune] = None,
+    celune: Optional[Celune] = None,
+    session: ServerSession = server_session,
 ) -> None:
     """Store a WebUI error with detail selected by the active log level."""
-    runtime = celune or _api.bound_celune
+    runtime = celune or session.bound_celune
     append_webui_log(
         format_error_message(
             message,
@@ -334,6 +454,7 @@ def append_webui_error(
             getattr(runtime, "log_level", "info"),
         ),
         severity,
+        session,
     )
 
 
@@ -343,17 +464,18 @@ def set_webui_status(
     *,
     source: str = "callback",
     updated_at: Optional[float] = None,
+    session: ServerSession = server_session,
 ) -> None:
     """Update the browser UI status line."""
-    _api.webui_status_text = msg
-    _api.webui_status_severity = severity
-    _api.webui_status_source = source
-    _api.webui_status_updated_at = (
+    session.webui_status_text = msg
+    session.webui_status_severity = severity
+    session.webui_status_source = source
+    session.webui_status_updated_at = (
         time.monotonic() if updated_at is None else updated_at
     )
 
 
-def _probed_status_text(celune: _api.Celune) -> tuple[str, str]:
+def _probed_status_text(celune: Celune) -> tuple[str, str]:
     """Return the best-effort footer status derived from Celune's live state."""
     if not celune.current_voice and not celune.voices:
         return string("status.could_not_start", app_name=APP_NAME), "error"
@@ -375,10 +497,10 @@ def _probed_status_text(celune: _api.Celune) -> tuple[str, str]:
     )
 
 
-def _probe_webui_runtime() -> None:
+def _probe_webui_runtime(session: ServerSession = server_session) -> None:
     """Poll the live runtime so the WebUI footer updates even without new log lines."""
 
-    celune = _api.bound_celune
+    celune = session.bound_celune
     if celune is None:
         return
 
@@ -387,40 +509,42 @@ def _probe_webui_runtime() -> None:
     playback_status = current_playback_status(celune)
     if playback_status is not None:
         if (
-            _api.webui_status_text != playback_status
-            or _api.webui_status_source != "playback"
+            session.webui_status_text != playback_status
+            or session.webui_status_source != "playback"
         ):
             set_webui_status(
                 playback_status,
                 "info",
                 source="playback",
                 updated_at=now,
+                session=session,
             )
-        _api.webui_last_probed_state = current_state
+        session.webui_last_probed_state = current_state
     elif current_state == "sleeping":
         sleeping_log = string("webui.sleeping_log", app_name=APP_NAME)
-        if not any(message == sleeping_log for message, _ in _api.webui_log_lines):
-            append_webui_log(sleeping_log, "sleeping")
+        if not any(message == sleeping_log for message, _ in session.webui_log_lines):
+            append_webui_log(sleeping_log, "sleeping", session)
         sleeping_status, sleeping_severity = _probed_status_text(celune)
         if (
-            _api.webui_status_text != sleeping_status
-            or _api.webui_status_severity != sleeping_severity
-            or _api.webui_status_source in {"callback", "agent", "cedts"}
+            session.webui_status_text != sleeping_status
+            or session.webui_status_severity != sleeping_severity
+            or session.webui_status_source in {"callback", "agent", "cedts"}
         ):
             set_webui_status(
                 sleeping_status,
                 sleeping_severity,
                 source="probe",
                 updated_at=now,
+                session=session,
             )
-    if playback_status is None and current_state != _api.webui_last_probed_state:
+    if playback_status is None and current_state != session.webui_last_probed_state:
         status_text, severity = _probed_status_text(celune)
         should_override_status = (
-            _api.webui_last_probed_state is None
-            or _api.webui_status_text == string("status.api_starting")
-            or _api.webui_status_source not in {"callback", "agent", "cedts"}
-            or now - _api.webui_status_updated_at
-            >= _api.WEBUI_STATUS_PROBE_DEBOUNCE_SECONDS
+            session.webui_last_probed_state is None
+            or session.webui_status_text == string("status.api_starting")
+            or session.webui_status_source not in {"callback", "agent", "cedts"}
+            or now - session.webui_status_updated_at
+            >= WEBUI_STATUS_PROBE_DEBOUNCE_SECONDS
             or current_state in {"idle", "sleeping", "error"}
         )
         if should_override_status:
@@ -429,31 +553,35 @@ def _probe_webui_runtime() -> None:
                 severity,
                 source="probe",
                 updated_at=now,
+                session=session,
             )
-        _api.webui_last_probed_state = current_state
+        session.webui_last_probed_state = current_state
 
-    pages = ui_resources.resource_pages(celune, _api.webui_active_theme_name)
+    pages = ui_resources.resource_pages(celune, session.webui_active_theme_name)
     if not pages:
         return
 
-    if _api.webui_last_resource_advance <= 0:
-        _api.webui_last_resource_advance = now
+    if session.webui_last_resource_advance <= 0:
+        session.webui_last_resource_advance = now
         return
 
     timed_update_is_fresh = (
-        _api.webui_timed_update_source == "cedts"
-        and now - _api.webui_timed_update_received_at
-        < _api.WEBUI_TIMED_UPDATE_STALE_SECONDS
+        session.webui_timed_update_source == "cedts"
+        and now - session.webui_timed_update_received_at
+        < WEBUI_TIMED_UPDATE_STALE_SECONDS
     )
     if (
         not timed_update_is_fresh
-        and now - _api.webui_last_resource_advance >= _api.WEBUI_RESOURCE_ROTATE_SECONDS
+        and now - session.webui_last_resource_advance >= WEBUI_RESOURCE_ROTATE_SECONDS
     ):
-        _api.webui_resource_page = (_api.webui_resource_page + 1) % len(pages)
-        _api.webui_last_resource_advance = now
+        session.webui_resource_page = (session.webui_resource_page + 1) % len(pages)
+        session.webui_last_resource_advance = now
 
 
-def wrap_celune_callbacks(celune: _api.Celune) -> None:
+def wrap_celune_callbacks(
+    celune: Celune,
+    session: ServerSession = server_session,
+) -> None:
     """Mirror Celune callbacks into browser UI state without replacing existing handlers."""
     if getattr(celune, "_webui_callbacks_wrapped", False):
         return
@@ -492,9 +620,9 @@ def wrap_celune_callbacks(celune: _api.Celune) -> None:
         *,
         loglevel: LogLevel = "info",
     ) -> None:
-        publish_active_task_log(msg, severity)
-        append_webui_log(msg, severity)
-        _api.invoke_message_callback(original_log, msg, severity, loglevel)
+        publish_active_task_log(msg, severity, session)
+        append_webui_log(msg, severity, session)
+        invoke_message_callback(original_log, msg, severity, loglevel)
 
     def wrapped_status(
         msg: str,
@@ -502,46 +630,60 @@ def wrap_celune_callbacks(celune: _api.Celune) -> None:
         *,
         loglevel: LogLevel = "info",
     ) -> None:
-        publish_active_task_log(msg, severity)
-        set_webui_status(msg, severity, source="callback")
-        _api.invoke_message_callback(original_status, msg, severity, loglevel)
+        publish_active_task_log(msg, severity, session)
+        set_webui_status(msg, severity, source="callback", session=session)
+        invoke_message_callback(original_status, msg, severity, loglevel)
 
     def wrapped_error(msg: str) -> None:
         publish_active_task_log(
             string("status.could_not_continue", app_name=APP_NAME),
             "error",
+            session,
         )
-        append_webui_log(msg, "error")
-        set_webui_status(msg, "error", source="callback")
+        append_webui_log(msg, "error", session)
+        set_webui_status(msg, "error", source="callback", session=session)
         original_error(msg)
 
     def wrapped_progress(
         progress: Optional[float],
         total: Optional[float],
     ) -> None:
-        _api.webui_progress_current = progress
-        _api.webui_progress_total = total
-        _publish_active_task_progress(progress, total)
+        session.webui_progress_current = progress
+        session.webui_progress_total = total
+        publish_active_task_progress(progress, total, session)
         original_progress(progress, total)
 
     def wrapped_idle() -> None:
         original_idle()
-        _api.webui_caption_active = False
-        _api.webui_caption_text = ""
-        _api.webui_caption_progress = 0.0
-        _api.webui_progress_current = None
-        _api.webui_progress_total = None
-        _sync_webui_runtime_locks(celune, locked=getattr(celune, "locked", False))
+        session.webui_caption_active = False
+        session.webui_caption_text = ""
+        session.webui_caption_progress = 0.0
+        session.webui_progress_current = None
+        session.webui_progress_total = None
+        _sync_webui_runtime_locks(
+            celune,
+            locked=getattr(celune, "locked", False),
+            session=session,
+        )
         if getattr(celune, "sleeping", False):
-            set_webui_status(string("status.sleeping"), "sleeping", source="callback")
+            set_webui_status(
+                string("status.sleeping"),
+                "sleeping",
+                source="callback",
+                session=session,
+            )
         elif getattr(celune, "cur_state", "") not in {"reloading", "waking"}:
-            set_webui_status(string("status.idle"), source="callback")
+            set_webui_status(string("status.idle"), source="callback", session=session)
 
     def wrapped_queue_available() -> None:
         original_queue_available()
         locked = bool(getattr(celune, "is_in_tutorial", False))
-        _sync_webui_runtime_locks(celune, locked=locked)
-        set_webui_status(string("status.speaking"), source="callback")
+        _sync_webui_runtime_locks(celune, locked=locked, session=session)
+        set_webui_status(
+            string("status.speaking"),
+            source="callback",
+            session=session,
+        )
 
     def wrapped_caption_progress(
         progress: Optional[float],
@@ -549,43 +691,45 @@ def wrap_celune_callbacks(celune: _api.Celune) -> None:
         visible_words: Optional[int] = None,
     ) -> None:
         if visible_words is not None:
-            total_words = len(_api.webui_caption_text.split())
+            total_words = len(session.webui_caption_text.split())
             if total_words > 0:
-                _api.webui_caption_progress = max(
+                session.webui_caption_progress = max(
                     0.0,
                     min(1.0, visible_words / total_words),
                 )
         elif total is not None and total > 0:
-            _api.webui_caption_progress = max(0.0, min(1.0, (progress or 0.0) / total))
+            session.webui_caption_progress = max(
+                0.0, min(1.0, (progress or 0.0) / total)
+            )
         original_caption_progress(progress, total)
 
     def wrapped_caption(caption: Optional[str]) -> None:
         if caption:
-            _api.webui_caption_active = True
-            _api.webui_caption_text = caption
-            _api.webui_caption_progress = 0.0
+            session.webui_caption_active = True
+            session.webui_caption_text = caption
+            session.webui_caption_progress = 0.0
         else:
-            _api.webui_caption_active = False
-            _api.webui_caption_text = ""
-            _api.webui_caption_progress = 0.0
+            session.webui_caption_active = False
+            session.webui_caption_text = ""
+            session.webui_caption_progress = 0.0
         original_caption(caption)
 
     def wrapped_voice_changed(name: str) -> None:
-        append_webui_log(string("webui.voice_changed", voice=name))
+        append_webui_log(string("webui.voice_changed", voice=name), session=session)
         original_voice_changed(name)
 
     def wrapped_input_state(locked: bool) -> None:
         has_voice = bool(celune.current_voice) or bool(celune.voices)
-        _api.webui_input_locked = locked or not has_voice
-        _api.webui_input_placeholder = get_webui_input_placeholder(
+        session.webui_input_locked = locked or not has_voice
+        session.webui_input_placeholder = get_webui_input_placeholder(
             celune,
-            _api.webui_input_locked,
+            session.webui_input_locked,
             has_voice,
         )
         original_input_state(locked)
 
     def wrapped_voice_lock_state(locked: bool) -> None:
-        _api.webui_voice_locked = (
+        session.webui_voice_locked = (
             locked
             or len(celune.voices) < 2
             or not bool(celune.current_voice or celune.voices)
@@ -599,7 +743,7 @@ def wrap_celune_callbacks(celune: _api.Celune) -> None:
 
         def wrapped_fatal() -> None:
             original_fatal()
-            _api.shutdown_api_for_fatal_error()
+            shutdown_api_for_fatal_error(session)
 
         glow.fatal = wrapped_fatal
 
@@ -617,16 +761,21 @@ def wrap_celune_callbacks(celune: _api.Celune) -> None:
     celune._webui_callbacks_wrapped = True
 
 
-def _sync_webui_runtime_locks(celune: _api.Celune, *, locked: bool) -> None:
+def _sync_webui_runtime_locks(
+    celune: Celune,
+    *,
+    locked: bool,
+    session: ServerSession = server_session,
+) -> None:
     """Synchronize browser input controls from one runtime transition."""
     has_voice = bool(celune.current_voice) or bool(celune.voices)
-    _api.webui_input_locked = locked or not has_voice
-    _api.webui_input_placeholder = get_webui_input_placeholder(
+    session.webui_input_locked = locked or not has_voice
+    session.webui_input_placeholder = get_webui_input_placeholder(
         celune,
-        _api.webui_input_locked,
+        session.webui_input_locked,
         has_voice,
     )
-    _api.webui_voice_locked = (
+    session.webui_voice_locked = (
         locked
         or len(celune.voices) < 2
         or celune.is_in_tutorial
@@ -635,7 +784,7 @@ def _sync_webui_runtime_locks(celune: _api.Celune, *, locked: bool) -> None:
     )
 
 
-def require_celune() -> _api.Celune:
+def require_celune(session: ServerSession = server_session) -> Celune:
     """Return the bound Celune instance or fail the request.
 
     Returns:
@@ -644,15 +793,20 @@ def require_celune() -> _api.Celune:
     Raises:
         HTTPException: The user has requested an API route that required Celune, but Celune wasn't available.
     """
-    if _api.bound_celune is None:
+    if session.bound_celune is None:
         raise HTTPException(
             status_code=503,
             detail=string("webui.not_available"),
         )
-    return _api.bound_celune
+    return session.bound_celune
 
 
-def api_log(action: str, content: str, suffix: str = "") -> None:
+def api_log(
+    action: str,
+    content: str,
+    suffix: str = "",
+    session: ServerSession = server_session,
+) -> None:
     """Print the API control log line.
 
     Args:
@@ -666,7 +820,7 @@ def api_log(action: str, content: str, suffix: str = "") -> None:
         preview += "..."
     ui = CeluneUI.get_instance()
     if ui is None or not getattr(ui, "_runtime_log_capture_enabled", False):
-        append_webui_log(f"{action} {preview!r}{suffix}")
+        append_webui_log(f"{action} {preview!r}{suffix}", session=session)
     try:
         print(f"[{timestamp}] {action} {preview!r}{suffix}", flush=True)
     except ValueError:
@@ -748,203 +902,26 @@ def stream_headers(sample_rate: int = BASE_SR) -> dict[str, str]:
     }
 
 
-def remember_speech_job(job_id: str, job: _api.SpeechJob) -> None:
-    """Store one speech job and remove expired entries."""
-    with _api.speech_jobs_lock:
-        _delete_expired_speech_jobs(time.time())
-        _api.speech_jobs[job_id] = job
-
-
-def forget_speech_job(job_id: str) -> None:
-    """Remove one speech job that was rejected before it could be observed."""
-    with _api.speech_jobs_lock:
-        job = _api.speech_jobs.pop(job_id, None)
-        if job is not None:
-            for subscription in job.subscriptions:
-                subscription.close()
-            job.subscriptions.clear()
-
-
-def _delete_expired_speech_jobs(now: float) -> None:
-    """Remove jobs older than the in-memory job TTL."""
-    expired_ids = [
-        job_id
-        for job_id, job in _api.speech_jobs.items()
-        if now - job.created_at > _api.speech_job_ttl_seconds
-    ]
-    for job_id in expired_ids:
-        _api.speech_jobs.pop(job_id, None)
-
-
-def update_speech_job(
+def collect_speech_job(
     job_id: str,
-    *,
-    status: TaskStatus,
-    audio: Optional[bytes] = None,
-    error: Optional[str] = None,
+    chunks: SpeechStreamQueue,
+    session: ServerSession = server_session,
 ) -> None:
-    """Update one speech job if it still exists."""
-    with _api.speech_jobs_lock:
-        job = _api.speech_jobs.get(job_id)
-        if job is None:
-            return
-        job.status = status
-        job.audio = audio
-        job.error = error
-
-
-def publish_task_event(job_id: str, event: _api.TaskEvent) -> None:
-    """Append one task event and fan it out to current subscriptions."""
-    with _api.speech_jobs_lock:
-        job = _api.speech_jobs.get(job_id)
-        if job is None:
-            return
-        job.events.append(event)
-        subscriptions = tuple(job.subscriptions)
-
-    for subscription in subscriptions:
-        subscription.put(event)
-
-
-def task_status(job_id: str) -> Optional[TaskStatus]:
-    """Return the current task status for API event association."""
-    with _api.speech_jobs_lock:
-        job = _api.speech_jobs.get(job_id)
-        return None if job is None else job.status
-
-
-def _task_event_status(job_id: str) -> Optional[TaskStatus]:
-    """Return a non-terminal task status suitable for callback events."""
-    status = task_status(job_id)
-    if status in {"completed", "failed", "cancelled"}:
-        return None
-    return status
-
-
-def _publish_task_progress(
-    job_id: str,
-    *,
-    current: Optional[float] = None,
-    total: Optional[float] = None,
-    message: Optional[str] = None,
-) -> None:
-    """Publish a safe progress or status update for one task."""
-    status = _task_event_status(job_id)
-    if status is None:
-        return
-    publish_task_event(
-        job_id,
-        _api.TaskEvent(
-            task_id=job_id,
-            event="progress",
-            status=status,
-            current=current,
-            total=total,
-            message=message,
-        ),
-    )
-
-
-def publish_active_task_log(message: str, severity: str = "info") -> None:
-    """Mirror one safe Core status callback into the active speech task."""
-    task_id = _api.active_speech_task_id
-    if task_id is None:
-        return
-    if severity != "error" and message.startswith("["):
-        return
-    status = _task_event_status(task_id)
-    if status is None:
-        return
-    safe_message = (
-        string("status.could_not_continue", app_name=APP_NAME)
-        if severity == "error"
-        else message
-    )
-    publish_task_event(
-        task_id,
-        _api.TaskEvent(
-            task_id=task_id,
-            event="log",
-            status=status,
-            message=safe_message,
-            severity=severity,
-        ),
-    )
-
-
-def _publish_active_task_progress(
-    current: Optional[float],
-    total: Optional[float],
-) -> None:
-    """Mirror one Core progress callback into the active speech task."""
-    task_id = _api.active_speech_task_id
-    if task_id is not None:
-        _publish_task_progress(task_id, current=current, total=total)
-
-
-def set_active_speech_task(task_id: Optional[str]) -> None:
-    """Set the API task receiving Core speech callbacks."""
-    _api.active_speech_task_id = task_id
-
-
-def subscribe_to_speech_job(job_id: str) -> Optional[_api.TaskSubscription]:
-    """Subscribe to one speech job and replay its retained event history."""
-    subscription = _api.TaskSubscription(loop=asyncio.get_running_loop())
-    with _api.speech_jobs_lock:
-        job = _api.speech_jobs.get(job_id)
-        if job is None:
-            return None
-        for event in job.events:
-            subscription.put(event)
-        job.subscriptions.append(subscription)
-    return subscription
-
-
-def unsubscribe_from_speech_job(
-    job_id: str,
-    subscription: _api.TaskSubscription,
-) -> None:
-    """Detach one WebSocket subscription without changing task execution."""
-    with _api.speech_jobs_lock:
-        job = _api.speech_jobs.get(job_id)
-        if job is not None:
-            try:
-                job.subscriptions.remove(subscription)
-            except ValueError:
-                pass
-    subscription.close()
-
-
-def speech_job_snapshot(job_id: str) -> Optional[_api.SpeechJob]:
-    """Return a copy of one speech job for response handling."""
-    with _api.speech_jobs_lock:
-        _delete_expired_speech_jobs(time.time())
-        job = _api.speech_jobs.get(job_id)
-        if job is None:
-            return None
-        return _api.SpeechJob(
-            status=job.status,
-            created_at=job.created_at,
-            audio=job.audio,
-            error=job.error,
-        )
-
-
-def collect_speech_job(job_id: str, chunks: SpeechStreamQueue) -> None:
     """Consume a speech stream queue and store its final FLAC payload."""
     try:
         audio = b"".join(
             audio_bytes(
                 chunks,
-                on_chunk=lambda count: _publish_task_progress(
+                on_chunk=lambda count: publish_task_progress(
                     job_id,
                     current=float(count),
+                    session=session,
                 ),
             )
         )
     except Exception as e:
-        if task_status(job_id) == "cancelled":
-            set_active_speech_task(None)
+        if task_status(job_id, session) == "cancelled":
+            set_active_speech_task(None, session)
             return
         update_speech_job(
             job_id,
@@ -952,68 +929,71 @@ def collect_speech_job(job_id: str, chunks: SpeechStreamQueue) -> None:
             error=format_error_message(
                 string("pipeline.gen_error"),
                 e,
-                getattr(_api.bound_celune, "log_level", "info"),
+                getattr(session.bound_celune, "log_level", "info"),
             ),
+            session=session,
         )
         publish_task_event(
             job_id,
-            _api.TaskEvent(
+            TaskEvent(
                 task_id=job_id,
                 event="failed",
                 status="failed",
                 error="generation_failed",
             ),
+            session,
         )
-        set_active_speech_task(None)
+        set_active_speech_task(None, session)
         return
 
-    if task_status(job_id) == "cancelled":
-        set_active_speech_task(None)
+    if task_status(job_id, session) == "cancelled":
+        set_active_speech_task(None, session)
         return
 
-    update_speech_job(job_id, status="completed", audio=audio)
+    update_speech_job(job_id, status="completed", audio=audio, session=session)
     publish_task_event(
         job_id,
-        _api.TaskEvent(
+        TaskEvent(
             task_id=job_id,
             event="completed",
             status="completed",
             location=f"/v1/speak/jobs/{job_id}",
         ),
+        session,
     )
-    set_active_speech_task(None)
+    set_active_speech_task(None, session)
 
 
-def webui_logs_html() -> str:
+def webui_logs_html(session: ServerSession = server_session) -> str:
     """Render the mirrored log buffer as terminal-like HTML."""
-    if not _api.webui_log_lines:
-        content = _webui_log_line_html("Waiting for response...")
+    if not session.webui_log_lines:
+        content = _webui_log_line_html("Waiting for response...", session=session)
     else:
         content = "\n".join(
-            _webui_log_line_html(line, severity)
-            for line, severity in _api.webui_log_lines
+            _webui_log_line_html(line, severity, session)
+            for line, severity in session.webui_log_lines
         )
     return f'<div id="celune-log-panel"><pre>{content}</pre></div>'
 
 
-def webui_status_html() -> str:
+def webui_status_html(session: ServerSession = server_session) -> str:
     """Render the footer status cell."""
-    color = _webui_status_color(_api.webui_status_severity)
+    color = _webui_status_color(session.webui_status_severity, session)
     return (
         '<div class="footer-block" '
-        f'style="color: {color};">{escape(_api.webui_status_text)}</div>'
+        f'style="color: {color};">{escape(session.webui_status_text)}</div>'
     )
 
 
-def webui_resources_html() -> str:
+def webui_resources_html(session: ServerSession = server_session) -> str:
     """Render the footer resource cell."""
-    celune = _api.bound_celune
+    celune = session.bound_celune
     resource = ""
     if celune is not None:
-        pages = ui_resources.resource_pages(celune, _api.webui_active_theme_name)
+        pages = ui_resources.resource_pages(celune, session.webui_active_theme_name)
         if pages:
-            resource = pages[_api.webui_resource_page % len(pages)]
-    recording_hint = _webui_recording_hint(celune)
+            resource = pages[session.webui_resource_page % len(pages)]
+    recording_hint = _webui_recording_hint(celune, session)
     hint_html = (
         f'<div class="webui-recording-hint">{escape(recording_hint)}</div>'
         if recording_hint
@@ -1030,9 +1010,9 @@ def webui_resources_html() -> str:
     return f'<div class="footer-block">{hint_html}{escape(resource)}</div>'
 
 
-def _voice_button_update() -> WebUiUpdate:
+def _voice_button_update(session: ServerSession = server_session) -> WebUiUpdate:
     """Return the current browser voice-button state."""
-    celune = _api.bound_celune
+    celune = session.bound_celune
     if celune is None:
         return gr.update(value="Loading", interactive=False)
 
@@ -1041,7 +1021,7 @@ def _voice_button_update() -> WebUiUpdate:
         celune.voices[0] if celune.voices else "No Voice Set"
     )
     interactive = (
-        not _api.webui_voice_locked
+        not session.webui_voice_locked
         and len(celune.voices) >= 2
         and has_voice
         and not getattr(getattr(celune, "backend", None), "singing", False)
@@ -1056,7 +1036,7 @@ def _voice_button_update() -> WebUiUpdate:
     )
 
 
-def webui_vc_mode_active(celune: Optional[_api.Celune]) -> bool:
+def webui_vc_mode_active(celune: Optional[Celune]) -> bool:
     """Return whether the browser UI should expose active VC controls."""
     if celune is None:
         return False
@@ -1069,7 +1049,7 @@ def webui_vc_mode_active(celune: Optional[_api.Celune]) -> bool:
     )
 
 
-def _webui_persona_loaded(celune: _api.Celune) -> bool:
+def _webui_persona_loaded(celune: Celune) -> bool:
     """Return whether the attached runtime has loaded Persona."""
     persona_ready = getattr(celune, "persona_ready", None)
     if persona_ready is None:
@@ -1077,7 +1057,7 @@ def _webui_persona_loaded(celune: _api.Celune) -> bool:
     return bool(persona_ready)
 
 
-def _webui_persona_input_available(celune: _api.Celune) -> bool:
+def _webui_persona_input_available(celune: Celune) -> bool:
     """Return whether browser text input can use Persona talkback."""
     config = getattr(celune, "config", {})
     return (
@@ -1088,12 +1068,15 @@ def _webui_persona_input_available(celune: _api.Celune) -> bool:
     )
 
 
-def _webui_recording_hint(celune: Optional[_api.Celune]) -> str:
+def _webui_recording_hint(
+    celune: Optional[Celune],
+    session: ServerSession = server_session,
+) -> str:
     """Return the live-recording shortcut shown in the browser footer."""
     if (
         celune is None
         or CeluneUI.get_instance() is None
-        or _api.webui_input_locked
+        or session.webui_input_locked
         or getattr(celune, "is_in_tutorial", False)
     ):
         return ""
@@ -1105,7 +1088,7 @@ def _webui_recording_hint(celune: Optional[_api.Celune]) -> str:
 
 
 def get_webui_input_placeholder(
-    celune: _api.Celune,
+    celune: Celune,
     locked: bool,
     has_voice: bool,
 ) -> str:
@@ -1125,10 +1108,11 @@ def get_webui_input_placeholder(
 
 def input_update(
     value: Union[Optional[str], _WebUiUnset] = _WEBUI_UNSET,
+    session: ServerSession = server_session,
 ) -> WebUiUpdate:
     """Return the current browser input state."""
     has_value = value is not _WEBUI_UNSET
-    celune = _api.bound_celune
+    celune = session.bound_celune
     if celune is None:
         if has_value:
             return gr.update(
@@ -1154,9 +1138,9 @@ def input_update(
     has_voice = bool(celune.current_voice) or bool(celune.voices)
     vc_mode = webui_vc_mode_active(celune)
     if getattr(celune, "_webui_callbacks_wrapped", False):
-        interactive = not _api.webui_input_locked and has_voice and not vc_mode
+        interactive = not session.webui_input_locked and has_voice and not vc_mode
         placeholder = get_webui_input_placeholder(
-            celune, _api.webui_input_locked, has_voice
+            celune, session.webui_input_locked, has_voice
         )
     else:
         interactive = not celune.locked and has_voice and not vc_mode
@@ -1173,15 +1157,15 @@ def input_update(
     )
 
 
-def send_button_update() -> WebUiUpdate:
+def send_button_update(session: ServerSession = server_session) -> WebUiUpdate:
     """Return the current browser send-button state."""
-    celune = _api.bound_celune
+    celune = session.bound_celune
     if celune is None:
         return gr.update(interactive=False)
     has_voice = bool(celune.current_voice) or bool(celune.voices)
     vc_mode = webui_vc_mode_active(celune)
     interactive = (
-        not _api.webui_input_locked and has_voice and not vc_mode
+        not session.webui_input_locked and has_voice and not vc_mode
         if getattr(celune, "_webui_callbacks_wrapped", False)
         else not celune.is_in_tutorial
         and not celune.locked
@@ -1191,13 +1175,15 @@ def send_button_update() -> WebUiUpdate:
     return gr.update(interactive=interactive)
 
 
-def webui_vc_controls_update() -> tuple[
+def webui_vc_controls_update(
+    session: ServerSession = server_session,
+) -> tuple[
     WebUiUpdate,
     WebUiUpdate,
     WebUiUpdate,
 ]:
     """Return the current browser VC control state."""
-    celune = _api.bound_celune
+    celune = session.bound_celune
     vc_enabled = webui_vc_mode_active(celune)
     control_interactive = celune is not None and vc_enabled
     return (
@@ -1207,7 +1193,9 @@ def webui_vc_controls_update() -> tuple[
     )
 
 
-def webui_snapshot() -> tuple[
+def webui_snapshot(
+    session: ServerSession = server_session,
+) -> tuple[
     str,
     str,
     str,
@@ -1216,20 +1204,21 @@ def webui_snapshot() -> tuple[
     WebUiUpdate,
 ]:
     """Return the current browser UI snapshot."""
-    seed_webui_logs()
-    _probe_webui_runtime()
+    seed_webui_logs(session)
+    _probe_webui_runtime(session)
     return (
-        webui_logs_html(),
-        webui_status_html(),
-        webui_resources_html(),
-        _voice_button_update(),
-        send_button_update(),
-        input_update(),
+        webui_logs_html(session),
+        webui_status_html(session),
+        webui_resources_html(session),
+        _voice_button_update(session),
+        send_button_update(session),
+        input_update(session=session),
     )
 
 
 def webui_submit_snapshot(
     input_value: Optional[str],
+    session: ServerSession = server_session,
 ) -> tuple[
     WebUiUpdate,
     str,
@@ -1246,9 +1235,9 @@ def webui_submit_snapshot(
         voice_update,
         send_update,
         _input,
-    ) = webui_snapshot()
+    ) = webui_snapshot(session)
     return (
-        input_update(input_value),
+        input_update(input_value, session),
         logs_html,
         status_html,
         resources_html,
@@ -1295,8 +1284,3 @@ def webui_asset_response_data(name: str) -> Optional[tuple[bytes, str]]:
         return font_path.read_bytes(), "font/ttf"
     except OSError:
         return None
-
-
-def install(target):
-    """Install extracted definitions in the original module."""
-    install_module_functions(target, {name: globals()[name] for name in __all__})

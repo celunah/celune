@@ -2,21 +2,20 @@
 """Extracted CeluneUI capture methods."""
 
 from __future__ import annotations
-
 import re
 import time
 import threading
 import contextlib
-from uuid import uuid4
 import queue as queue_module
+from uuid import uuid4
 from collections.abc import Callable
 from typing import Union, Optional, cast
 
 from textual.color import Color
 
 from . import app as _app
+from .theme import with_brightness
 from .constants import CAPTION_FADE_SECONDS
-from ..binding import install_class_functions
 
 __all__ = (
     "_acquire_recording_component_lease",
@@ -375,7 +374,7 @@ def tts_caption(self, caption: Optional[str]) -> None:
 def _with_darkened_brightness(color: Color) -> Color:
     """Return ``color`` with a visibly darker brightness."""
     target_brightness = max(0.0, color.brightness * 0.6)
-    return _app.CeluneUI.with_brightness(color, target_brightness)
+    return with_brightness(color, target_brightness)
 
 
 def pulse_border(self, target: Union[str, _app.Widget]) -> None:
@@ -1677,6 +1676,353 @@ def _stop_vc_recording_for_feedback(self) -> None:
     self.update_resources()
 
 
-def install(target):
-    """Install extracted definitions in the original module."""
-    install_class_functions(target, {name: globals()[name] for name in __all__})
+class CaptureHooks:
+    """Expose explicit Textual hooks for the owning UI subsystem."""
+
+    def _acquire_recording_component_lease(
+        self, operation_id: str, components: tuple[_app.ComponentLockName, ...]
+    ) -> tuple[bool, Optional[_app.ComponentLockLease]]:
+        """Delegate to the recording and presentation implementation."""
+        return _acquire_recording_component_lease(self, operation_id, components)
+
+    def _animate_opacity(
+        self,
+        widget: _app.Widget,
+        opacity: float,
+        on_complete: Optional[Callable[[], None]] = None,
+        token: Optional[int] = None,
+        duration: float = CAPTION_FADE_SECONDS,
+    ) -> None:
+        """Delegate to the recording and presentation implementation."""
+        return _animate_opacity(self, widget, opacity, on_complete, token, duration)
+
+    def _append_vc_preroll_audio_locked(
+        self,
+        audio: _app.npt.NDArray[_app.np.float32],
+        max_frames: int,
+    ) -> None:
+        """Delegate to the recording and presentation implementation."""
+        return _append_vc_preroll_audio_locked(self, audio, max_frames)
+
+    def _cancel_vc_recording(self, announce: bool = True) -> bool:
+        """Delegate to the recording and presentation implementation."""
+        return _cancel_vc_recording(self, announce)
+
+    def _clear_caption_state(self) -> None:
+        """Delegate to the recording and presentation implementation."""
+        return _clear_caption_state(self)
+
+    def _clear_caption_timers(self) -> None:
+        """Delegate to the recording and presentation implementation."""
+        return _clear_caption_timers(self)
+
+    def _clear_vc_preroll_locked(self) -> None:
+        """Delegate to the recording and presentation implementation."""
+        return _clear_vc_preroll_locked(self)
+
+    def _clear_vc_recording_state(self) -> None:
+        """Delegate to the recording and presentation implementation."""
+        return _clear_vc_recording_state(self)
+
+    @staticmethod
+    def _close_live_vad(vad: Optional[_app.LiveVoiceActivityDetector]) -> None:
+        """Delegate to the recording and presentation implementation."""
+        return _close_live_vad(vad)
+
+    def _complete_persona_transcription(
+        self,
+        transcript: str,
+        prefix: str,
+        error: Optional[Exception] = None,
+        error_already_reported: bool = False,
+    ) -> None:
+        """Delegate to the recording and presentation implementation."""
+        return _complete_persona_transcription(
+            self, transcript, prefix, error, error_already_reported
+        )
+
+    def _crossfade_vc_overlap(
+        self,
+        previous_tail: _app.npt.NDArray[_app.np.float32],
+        current_head: _app.npt.NDArray[_app.np.float32],
+    ) -> _app.npt.NDArray[_app.np.float32]:
+        """Delegate to the recording and presentation implementation."""
+        return _crossfade_vc_overlap(self, previous_tail, current_head)
+
+    @staticmethod
+    def _enqueue_vc_submission_chunk(
+        submission_queue: queue_module.Queue[
+            Optional[tuple[_app.AudioChunk, int, str, bool]]
+        ],
+        item: tuple[_app.AudioChunk, int, str, bool],
+    ) -> None:
+        """Delegate to the recording and presentation implementation."""
+        return _enqueue_vc_submission_chunk(submission_queue, item)
+
+    @staticmethod
+    def _finish_vc_submission_queue(
+        submission_queue: Optional[
+            queue_module.Queue[Optional[tuple[_app.AudioChunk, int, str, bool]]]
+        ],
+        final_item: Optional[tuple[_app.AudioChunk, int, str, bool]] = None,
+    ) -> None:
+        """Delegate to the recording and presentation implementation."""
+        return _finish_vc_submission_queue(submission_queue, final_item)
+
+    def _flush_vc_recording_buffer_locked(self) -> Optional[_app.AudioChunk]:
+        """Delegate to the recording and presentation implementation."""
+        return _flush_vc_recording_buffer_locked(self)
+
+    def _flush_vc_recording_chunk_locked(
+        self, keep_tail_frames: int = 0
+    ) -> Optional[_app.AudioChunk]:
+        """Delegate to the recording and presentation implementation."""
+        return _flush_vc_recording_chunk_locked(self, keep_tail_frames)
+
+    def _get_persona_speech_transcriber(self) -> _app.WhisperTranscriber:
+        """Delegate to the recording and presentation implementation."""
+        return _get_persona_speech_transcriber(self)
+
+    def _hide_caption_widgets(self) -> None:
+        """Delegate to the recording and presentation implementation."""
+        return _hide_caption_widgets(self)
+
+    @staticmethod
+    def _join_vc_recording_threads(
+        stop_thread: Optional[threading.Thread],
+        worker: Optional[threading.Thread],
+        timeout: float = 2.0,
+    ) -> None:
+        """Delegate to the recording and presentation implementation."""
+        return _join_vc_recording_threads(stop_thread, worker, timeout)
+
+    @staticmethod
+    def _normalize_vc_overlap_audio(
+        audio: _app.npt.NDArray[_app.np.float32],
+    ) -> _app.npt.NDArray[_app.np.float32]:
+        """Delegate to the recording and presentation implementation."""
+        return _normalize_vc_overlap_audio(audio)
+
+    def _persona_recording_audio_locked(
+        self,
+    ) -> _app.npt.NDArray[_app.np.float32]:
+        """Delegate to the recording and presentation implementation."""
+        return _persona_recording_audio_locked(self)
+
+    def _persona_speech_end_delay_seconds(self) -> float:
+        """Delegate to the recording and presentation implementation."""
+        return _persona_speech_end_delay_seconds(self)
+
+    def _persona_speech_language(self) -> Optional[str]:
+        """Delegate to the recording and presentation implementation."""
+        return _persona_speech_language(self)
+
+    def _persona_speech_model_id(self) -> str:
+        """Delegate to the recording and presentation implementation."""
+        return _persona_speech_model_id(self)
+
+    def _persona_transcription_worker(
+        self,
+        recording_queue: queue_module.Queue[tuple[_app.AudioChunk, bool]],
+        transcriber: _app.WhisperTranscriber,
+        sample_rate: int,
+        prefix: str,
+    ) -> None:
+        """Delegate to the recording and presentation implementation."""
+        return _persona_transcription_worker(
+            self, recording_queue, transcriber, sample_rate, prefix
+        )
+
+    def _prepend_vc_preroll_locked(self) -> None:
+        """Delegate to the recording and presentation implementation."""
+        return _prepend_vc_preroll_locked(self)
+
+    def _queue_persona_recording_item_locked(self, final_value: bool) -> None:
+        """Delegate to the recording and presentation implementation."""
+        return _queue_persona_recording_item_locked(self, final_value)
+
+    def _refresh_persona_availability(self) -> None:
+        """Delegate to the recording and presentation implementation."""
+        return _refresh_persona_availability(self)
+
+    def _request_persona_recording_stop(self) -> bool:
+        """Delegate to the recording and presentation implementation."""
+        return _request_persona_recording_stop(self)
+
+    def _request_vc_recording_feedback_stop(self) -> None:
+        """Delegate to the recording and presentation implementation."""
+        return _request_vc_recording_feedback_stop(self)
+
+    def _reset_playback_widgets(self) -> None:
+        """Delegate to the recording and presentation implementation."""
+        return _reset_playback_widgets(self)
+
+    def _set_persona_recording_text(self, transcript: str) -> None:
+        """Delegate to the recording and presentation implementation."""
+        return _set_persona_recording_text(self, transcript)
+
+    def _set_vc_controls_visibility(self, visible: bool) -> None:
+        """Delegate to the recording and presentation implementation."""
+        return _set_vc_controls_visibility(self, visible)
+
+    def _show_caption_widgets(self) -> None:
+        """Delegate to the recording and presentation implementation."""
+        return _show_caption_widgets(self)
+
+    def _shutdown_persona_recording(self) -> None:
+        """Delegate to the recording and presentation implementation."""
+        return _shutdown_persona_recording(self)
+
+    @staticmethod
+    def _shutdown_vc_stream(stream: Optional[_app.sd.InputStream]) -> None:
+        """Delegate to the recording and presentation implementation."""
+        return _shutdown_vc_stream(stream)
+
+    def _start_persona_recording(self) -> bool:
+        """Delegate to the recording and presentation implementation."""
+        return _start_persona_recording(self)
+
+    def _stop_live_vc_backend(self) -> None:
+        """Delegate to the recording and presentation implementation."""
+        return _stop_live_vc_backend(self)
+
+    def _stop_vc_recording_for_feedback(self) -> None:
+        """Delegate to the recording and presentation implementation."""
+        return _stop_vc_recording_for_feedback(self)
+
+    def _stop_vc_recording_stream(
+        self,
+    ) -> tuple[
+        Optional[_app.sd.InputStream],
+        Optional[_app.AudioChunk],
+        int,
+        str,
+        Optional[queue_module.Queue[Optional[tuple[_app.AudioChunk, int, str, bool]]]],
+        int,
+        Optional[threading.Thread],
+        Optional[threading.Thread],
+    ]:
+        """Delegate to the recording and presentation implementation."""
+        return _stop_vc_recording_stream(self)
+
+    @staticmethod
+    def _vc_feedback_min_capture_frames(sample_rate: int) -> int:
+        """Delegate to the recording and presentation implementation."""
+        return _vc_feedback_min_capture_frames(sample_rate)
+
+    @staticmethod
+    def _vc_feedback_rise_detected(previous_rms: float, current_rms: float) -> bool:
+        """Delegate to the recording and presentation implementation."""
+        return _vc_feedback_rise_detected(previous_rms, current_rms)
+
+    @staticmethod
+    def _vc_input_has_voice(
+        audio: _app.npt.NDArray[_app.np.float32],
+    ) -> bool:
+        """Delegate to the recording and presentation implementation."""
+        return _vc_input_has_voice(audio)
+
+    @staticmethod
+    def _vc_input_rms(
+        audio: _app.npt.NDArray[_app.np.float32],
+    ) -> float:
+        """Delegate to the recording and presentation implementation."""
+        return _vc_input_rms(audio)
+
+    @staticmethod
+    def _vc_live_chunk_frames(sample_rate: int) -> int:
+        """Delegate to the recording and presentation implementation."""
+        return _vc_live_chunk_frames(sample_rate)
+
+    @staticmethod
+    def _vc_live_chunk_overlap_frames(sample_rate: int) -> int:
+        """Delegate to the recording and presentation implementation."""
+        return _vc_live_chunk_overlap_frames(sample_rate)
+
+    @staticmethod
+    def _vc_vad_hangover_frames(sample_rate: int) -> int:
+        """Delegate to the recording and presentation implementation."""
+        return _vc_vad_hangover_frames(sample_rate)
+
+    @staticmethod
+    def _vc_vad_preroll_frames(sample_rate: int) -> int:
+        """Delegate to the recording and presentation implementation."""
+        return _vc_vad_preroll_frames(sample_rate)
+
+    @staticmethod
+    def _with_darkened_brightness(color: Color) -> Color:
+        """Delegate to the recording and presentation implementation."""
+        return _with_darkened_brightness(color)
+
+    def change_input_state(self, locked: bool) -> None:
+        """Delegate to the recording and presentation implementation."""
+        return change_input_state(self, locked)
+
+    def change_voice_lock_state(
+        self, locked: bool, *, can_open_menu: Optional[bool] = None
+    ) -> None:
+        """Delegate to the recording and presentation implementation."""
+        return change_voice_lock_state(self, locked, can_open_menu=can_open_menu)
+
+    def is_voice_conversion_mode(self) -> bool:
+        """Delegate to the recording and presentation implementation."""
+        return is_voice_conversion_mode(self)
+
+    def on_uilog_message(self, message: _app.UILogMessage) -> None:
+        """Delegate to the recording and presentation implementation."""
+        return on_uilog_message(self, message)
+
+    def persona_recording_active(self) -> bool:
+        """Delegate to the recording and presentation implementation."""
+        return persona_recording_active(self)
+
+    def pulse_border(self, target: Union[str, _app.Widget]) -> None:
+        """Delegate to the recording and presentation implementation."""
+        return pulse_border(self, target)
+
+    def refresh_vc_controls(self) -> None:
+        """Delegate to the recording and presentation implementation."""
+        return refresh_vc_controls(self)
+
+    def safe_caption_progress(
+        self,
+        progress: Optional[float],
+        total: Optional[float] = None,
+        visible_words: Optional[int] = None,
+    ) -> None:
+        """Delegate to the recording and presentation implementation."""
+        return safe_caption_progress(self, progress, total, visible_words)
+
+    def safe_log(
+        self,
+        msg: str,
+        severity: str = "info",
+        *,
+        loglevel: _app.LogLevel = "info",
+    ) -> None:
+        """Delegate to the recording and presentation implementation."""
+        return safe_log(self, msg, severity, loglevel=loglevel)
+
+    def safe_log_dev(self, msg: str, severity: str = "info") -> None:
+        """Delegate to the recording and presentation implementation."""
+        return safe_log_dev(self, msg, severity)
+
+    def safe_status(self, msg: str, severity: str = "info") -> None:
+        """Delegate to the recording and presentation implementation."""
+        return safe_status(self, msg, severity)
+
+    def set_vc_f0_condition(self, enabled: bool, announce: bool = True) -> None:
+        """Delegate to the recording and presentation implementation."""
+        return set_vc_f0_condition(self, enabled, announce)
+
+    def toggle_persona_recording(self) -> bool:
+        """Delegate to the recording and presentation implementation."""
+        return toggle_persona_recording(self)
+
+    def tts_caption(self, caption: Optional[str]) -> None:
+        """Delegate to the recording and presentation implementation."""
+        return tts_caption(self, caption)
+
+    def vc_recording_active(self) -> bool:
+        """Delegate to the recording and presentation implementation."""
+        return vc_recording_active(self)
