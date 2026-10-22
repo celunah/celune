@@ -2,12 +2,16 @@
 """Lightweight test fakes for Celune's unit test suite."""
 
 from __future__ import annotations
-
 import sys
 import queue
 import importlib
 import threading
 import contextlib
+from re import Pattern
+from pathlib import Path
+from unittest import TestCase, mock
+from collections.abc import Callable, Iterable, Iterator, Container
+from types import ModuleType, TracebackType, SimpleNamespace, MappingProxyType
 from typing import (
     TYPE_CHECKING,
     Self,
@@ -16,13 +20,9 @@ from typing import (
     Optional,
     Protocol,
     TypedDict,
+    Any,
     cast,
 )
-from re import Pattern
-from pathlib import Path
-from unittest import TestCase, mock
-from collections.abc import Callable, Iterable, Iterator, Container
-from types import ModuleType, TracebackType, SimpleNamespace, MappingProxyType
 
 import numpy as np
 import numpy.typing as npt
@@ -245,6 +245,18 @@ class CeluneTestCase:
     ) -> None:
         """Register a callback to run after the current test."""
         self._cleanups.append((function, args, kwargs))
+
+    def patch_owner(
+        self,
+        module: ModuleType,
+        name: str,
+        **kwargs: Any,
+    ) -> mock.Mock:
+        """Patch one subsystem-owned function for the current test."""
+        patcher = mock.patch.object(module, name, **kwargs)
+        replacement = patcher.start()
+        self.addCleanup(patcher.stop)
+        return cast(mock.Mock, replacement)
 
 
 class CeluneAsyncTestCase(CeluneTestCase):
@@ -499,6 +511,8 @@ def make_pipeline_engine() -> SimpleNamespace:
     engine.use_normalization = False
     engine.normalize = mock.Mock(return_value=None)
     engine.is_in_tutorial = False
+    engine.test_finished = False
+    engine.backend_mode = "standard"
     engine.model_ready = threading.Event()
     engine.model_ready.set()
     engine.loaded = True

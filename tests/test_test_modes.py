@@ -2,14 +2,13 @@
 """Focused coverage for the explicit Celune test-mode command hierarchy."""
 
 from __future__ import annotations
-
 import io
 import warnings
 import threading
 import contextlib
+from unittest import mock
 from types import SimpleNamespace
 from typing import ClassVar, Optional, cast
-from unittest import mock
 from collections.abc import Mapping, Callable, Sequence
 
 import pytest
@@ -17,12 +16,14 @@ from textual.widgets import TextArea
 
 from celune import entrypoint
 from celune.i18n import string
-from celune.test import run_agent_test, agent_test_succeeded
 from celune.celune import Celune
-from celune.config import config_log_level
 from celune.ui.app import CeluneUI
-from celune.agent.needle import NeedleHandler, NeedleToolSelector
+from celune.typing.common import JSON
+from celune.config import config_log_level
 from celune.persona.impl import PersonaClient
+from celune.typing.persona import PersonaClientResponse
+from celune.test import run_agent_test, agent_test_succeeded
+from celune.agent.needle import NeedleHandler, NeedleToolSelector
 from celune.typing.agent import (
     AgentTool,
     AgentRoute,
@@ -34,8 +35,6 @@ from celune.typing.agent import (
     AgentClassificationFailure,
     AgentClassificationFailureKind,
 )
-from celune.typing.common import JSON
-from celune.typing.persona import PersonaClientResponse
 
 from .support import FakeGlow, FakeBackend, CeluneTestCase
 
@@ -254,9 +253,11 @@ class TestFinishedLifecycleTests(CeluneTestCase):
     def _make_core(self) -> Celune:
         """Create a lightweight core for test-mode lifecycle coverage."""
         with (
-            mock.patch("celune.celune.AudioRGBGlow", FakeGlow),
-            mock.patch("celune.celune.default_loader", return_value=None),
-            mock.patch("celune.celune.persona_is_available", return_value=False),
+            mock.patch("celune.core.lifecycle.AudioRGBGlow", FakeGlow),
+            mock.patch("celune.core.lifecycle.default_loader", return_value=None),
+            mock.patch(
+                "celune.core.lifecycle.persona_is_available", return_value=False
+            ),
         ):
             core = Celune(
                 config={"mode": "agent"},
@@ -498,7 +499,7 @@ class TestFinishedLifecycleTests(CeluneTestCase):
         ui.safe_status = mock.Mock()
         ready = threading.Event()
 
-        def change_input_state(*, locked: bool) -> None:
+        def change_input_state(locked: bool) -> None:
             if not locked:
                 ready.set()
 

@@ -2,27 +2,25 @@
 """Shared runtime helpers for Celune voice conversion."""
 
 from __future__ import annotations
-
 import math
-import queue as queue_module
 import shutil
 import tempfile
 import importlib
 import threading
 import contextlib
-from typing import TYPE_CHECKING, Literal, Optional, cast
+import queue as queue_module
 from pathlib import Path
 from dataclasses import dataclass
 from collections.abc import Callable
+from typing import TYPE_CHECKING, Literal, Optional, cast
 
-import numpy as np
 import torch
+import numpy as np
 import soundfile as sf
 from scipy import signal
 
 from .i18n import string
 from .paths import app_data_dir
-from .binding import install_class_functions
 from .typing.aliases import AudioChunk
 from .typing.backends import StreamingSpeechModel
 from .dataclasses.pipeline import AudioOutput, AudioInputRequest
@@ -106,7 +104,7 @@ def convert_audio(
         engine.progress_callback(0, 1)
         return None
 
-    from .speech import convert_audio_input
+    from .pipeline.submission import convert_audio_input
 
     return convert_audio_input(
         engine,
@@ -135,7 +133,7 @@ def convert_live_audio(
             f0_condition=f0_condition,
         )
 
-    from .speech import convert_audio_input
+    from .pipeline.submission import convert_audio_input
 
     return convert_audio_input(
         engine,
@@ -146,14 +144,6 @@ def convert_live_audio(
             f0_condition=f0_condition,
         ),
         live=True,
-    )
-
-
-def install(target):
-    """Install public VC entrypoints on ``Celune``."""
-    install_class_functions(
-        target,
-        {name: globals()[name] for name in ("convert_audio", "convert_live_audio")},
     )
 
 

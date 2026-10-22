@@ -247,9 +247,11 @@ class TestEngineEventIntegration(CeluneTestCase):
     def _make_celune(self) -> Celune:
         """Create a lightweight Celune instance for event tests."""
         with (
-            mock.patch("celune.celune.AudioRGBGlow", FakeGlow),
-            mock.patch("celune.celune.default_loader", return_value=None),
-            mock.patch("celune.celune.persona_is_available", return_value=False),
+            mock.patch("celune.core.lifecycle.AudioRGBGlow", FakeGlow),
+            mock.patch("celune.core.lifecycle.default_loader", return_value=None),
+            mock.patch(
+                "celune.core.lifecycle.persona_is_available", return_value=False
+            ),
         ):
             celune = Celune(config={}, tts_backend=FakeBackend)
             self.addCleanup(self._close_celune, celune)
@@ -283,7 +285,7 @@ class TestEngineEventIntegration(CeluneTestCase):
         events: list[VoiceChangedEvent] = []
         celune._event_dispatcher.subscribe("voice_changed", events.append)
 
-        with mock.patch("celune.voice.play_signal", return_value=False):
+        with mock.patch("celune.core.voice.play_signal", return_value=False):
             celune.change_voice("bold")
 
         assert len(events) == 1
@@ -314,9 +316,9 @@ class TestEngineEventIntegration(CeluneTestCase):
         second_loader = mock.Mock(bundle=second_bundle)
 
         with (
-            mock.patch("celune.voice.select_voice_bundle"),
+            mock.patch("celune.core.voice.select_voice_bundle"),
             mock.patch(
-                "celune.voice.default_loader",
+                "celune.core.voice.default_loader",
                 side_effect=[
                     None,
                     first_loader,

@@ -2,15 +2,14 @@
 """Adapters between the existing Persona boundary and AgentRuntime."""
 
 from __future__ import annotations
-
 from uuid import uuid4
 from dataclasses import replace
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, cast
 
 from ..typing.persona import PersonaClientResponse
-from ..conversation import extract_persona_text, build_persona_request
 from ..persona.impl import compact_persona_history, persona_history_messages
+from ..persona.conversation import extract_persona_text, build_persona_request
 from ..typing.agent import (
     ToolResult,
     AgentOutput,

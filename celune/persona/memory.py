@@ -2,7 +2,6 @@
 """Persistent long-term memory helpers for the Persona system."""
 
 from __future__ import annotations
-
 import re
 import json
 import uuid
@@ -21,13 +20,25 @@ from transformers import (
     PreTrainedTokenizerBase,
 )
 
-from ..paths import persona_data_dir
 from .paths import persona_character_slug
+
+from ..paths import persona_data_dir
 from ..typing.common import JSON, JSONSerializable
 from ..registry.consent import require_model_consent
 from ..registry.other import PERSONA_MEMORY_EMBEDDING_MODEL
 from ..typing.aliases import EmbeddingVector, EmbeddingBackend
 from ..exceptions import ModelConsentDeclined, ModelConsentRequired
+
+MEMORY_CLASSIFIER_SYSTEM_PROMPT = """You classify durable user facts for long-term memory.
+Return JSON only in this exact shape:
+{"memories":[{"content":"...","importance":1,"confidence":0.0}]}
+
+Only include stable facts about the user that would help in a future conversation:
+preferences, identity, recurring constraints, projects, goals, and important life context.
+Do not include assistant statements, temporary requests, jokes, guesses, passwords, secrets,
+tokens, financial details, medical details, or unrelated conversation. If there is no durable
+fact, return {"memories":[]}.
+"""
 
 _WORD_RE = re.compile(r"[a-z0-9']+")
 _STOPWORDS = {
