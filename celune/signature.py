@@ -22,7 +22,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
     Ed25519PublicKey,
 )
 
-from .release_keys import RELEASE_KEYRING_ROOT_PUBLIC_KEY_HEX
+from .constants import RELEASE_KEYRING_ROOT_PUBLIC_KEY_HEX
 
 SIGNATURE_NAME = "celune-update.sig"
 SIGNATURE_FORMAT = 1
