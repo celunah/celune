@@ -5,7 +5,7 @@ import io
 import threading
 from unittest import mock
 
-from celune.cloudflared import CloudflaredQuickTunnel
+from celune.api import CloudflaredQuickTunnel
 
 
 def test_quick_tunnel_uses_the_local_api_and_closes_its_process() -> None:
@@ -27,10 +27,8 @@ def test_quick_tunnel_uses_the_local_api_and_closes_its_process() -> None:
     tunnel = CloudflaredQuickTunnel(log)
 
     with (
-        mock.patch("celune.cloudflared.shutil.which", return_value="cloudflared"),
-        mock.patch(
-            "celune.cloudflared.subprocess.Popen", return_value=process
-        ) as popen,
+        mock.patch("celune.api.shutil.which", return_value="cloudflared"),
+        mock.patch("celune.api.subprocess.Popen", return_value=process) as popen,
     ):
         assert tunnel.start(2060)
         assert startup_reported.wait(timeout=1.0)
@@ -63,8 +61,8 @@ def test_quick_tunnel_falls_back_to_the_local_api_url() -> None:
     tunnel = CloudflaredQuickTunnel(log)
 
     with (
-        mock.patch("celune.cloudflared.shutil.which", return_value="cloudflared"),
-        mock.patch("celune.cloudflared.subprocess.Popen", return_value=process),
+        mock.patch("celune.api.shutil.which", return_value="cloudflared"),
+        mock.patch("celune.api.subprocess.Popen", return_value=process),
     ):
         assert tunnel.start(2060)
         assert startup_reported.wait(timeout=1.0)
@@ -80,7 +78,7 @@ def test_quick_tunnel_reports_missing_cloudflared() -> None:
         lambda message, severity: messages.append((message, severity))
     )
 
-    with mock.patch("celune.cloudflared.shutil.which", return_value=None):
+    with mock.patch("celune.api.shutil.which", return_value=None):
         assert not tunnel.start(2060)
 
     assert len(messages) == 1

@@ -30,7 +30,7 @@ import numpy.typing as npt
 from celune.utils import discard
 from celune.constants import PipelineStates
 from celune.typing.aliases import AudioChunk
-from celune.locks import ComponentLockManager
+from celune.core.concurrency import ComponentLockManager
 from celune.typing.common import JSONSerializable
 from celune.backends.tts.base import CeluneBackend
 from celune.backends.vc.base import CeluneVCBackend

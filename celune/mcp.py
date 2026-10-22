@@ -19,8 +19,8 @@ from starlette.responses import Response
 
 from .i18n import string
 from .cevoice import CEVoice, bundled_voices_dir
-from .singing import validate_singing_notation
-from .threads import run_in_daemon_thread
+from .cesn import validate_singing_notation
+from .core.concurrency import run_in_daemon_thread
 from .exceptions import CEVoiceError
 from .backends.vc import VC_BACKENDS
 from .backends.tts import BACKENDS

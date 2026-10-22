@@ -19,8 +19,8 @@ from ..cevoice import default_loader
 from ..i18n import string, tagged_string
 from ..constants import BASE_SR, APP_NAME
 from ..exceptions import NotAvailableError
-from ..threads import run_in_daemon_thread
-from ..singing import contains_cesn_note_event
+from ..core.concurrency import run_in_daemon_thread
+from ..cesn import contains_cesn_note_event
 from ..typing.pipeline import SpeechStreamQueue
 from ..typing.aliases import AudioChunk, AudioChunks
 from ..vc import VC_PLAYBACK_GAIN, normalize_vc_audio

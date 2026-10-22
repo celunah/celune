@@ -1,17 +1,20 @@
 # SPDX-License-Identifier: Apache-2.0
 """API layer."""
 
+import os
+import re
 import html
 import json
 import time
 import uuid
 import errno
+import atexit
+import shutil
 import socket
 import asyncio
 import threading
 import contextlib
-from collections import abc
-from pathlib import Path
+import subprocess
 from hmac import compare_digest
 from typing import (
     Union,
@@ -19,81 +22,43 @@ from typing import (
     Optional,
     Annotated,
 )
+from pathlib import Path
+from collections import abc
 
-import fastapi
-import uvicorn
 import numpy as np
 import gradio as gr
+import fastapi
+import uvicorn
 from pydantic import Field, BaseModel
 from starlette import types, concurrency, datastructures
 from starlette.middleware import base as middleware_base
 
-from .i18n import string
 from . import __version__
-from .celune import Celune
-from .paths import project_root
-from .webui import runtime as webui
-from .audio.dsp import resample_audio
-from .server import jobs as server_jobs
-from .utils import format_error_message
-from .constants import BASE_SR, APP_NAME
-from .webui import actions as webactions
-from .registry.types import ModelMetadata
 from .ui import resources as ui_resources
-from .singing import validate_singing_notation
-from .typing.api import (
-    TaskCommandName,
-)
-from .server.constants import (
-    WEBUI_AUTH_PATH,
-)
-from .server import auth as server_auth
-from .pipeline.submission import prepare_playback_audio
-from .server.session import ServerSession, server_session
-from .typing.pipeline import SpeechStreamQueue
-from .server.jobs import SpeechJob, TaskEvent, TaskSubscription
 from .mcp import (
     mcp_app,
     mcp_lifespan,
     configure_mcp_host_allowlist,
 )
-from .webui.actions import (
-    build_webui,
-    decode_uploaded_audio,
-    voice_conversion_unavailable_response,
-)
+from .cesn import validate_singing_notation
+from .i18n import string
+from .paths import project_root
+from .utils import format_error_message
+from .webui import actions as webactions
+from .webui import runtime as webui
+from .celune import Celune
+from .server import auth as server_auth
+from .server import jobs as server_jobs
+from .audio.dsp import resample_audio
+from .constants import BASE_SR, APP_NAME
 from .exceptions import (
     ModelConsentDeclined,
     ModelConsentRequired,
     TaskSubscriptionClosed,
     ModelCommercialUseRestricted,
 )
-from .registry.consent import (
-    consent_status,
-    consent_details,
-    registered_models,
-    consent_prompt_text,
-    record_model_consent,
-    exit_api_model_request,
-    pending_model_consents,
-    commercial_mode_enabled,
-    enter_api_model_request,
-    model_metadata_for_revision,
-)
-from .webui.runtime import (
-    api_log,
-    flac_bytes,
-    require_celune,
-    seed_webui_logs,
-    append_webui_log,
-    set_webui_status,
-    collect_speech_job,
-    webui_vc_mode_active,
-    configure_webui_theme,
-    wrap_celune_callbacks,
-    subscribe_webui_events,
-    get_webui_input_placeholder,
-    subscribe_webui_timed_updates,
+from .typing.api import (
+    TaskCommandName,
 )
 from .server.auth import (
     _clean_token,
@@ -112,6 +77,46 @@ from .server.auth import (
     _remember_webui_auth_client,
     _is_webui_generation_request,
 )
+from .server.jobs import SpeechJob, TaskEvent, TaskSubscription
+from .webui.actions import (
+    build_webui,
+    decode_uploaded_audio,
+    voice_conversion_unavailable_response,
+)
+from .webui.runtime import (
+    api_log,
+    flac_bytes,
+    require_celune,
+    seed_webui_logs,
+    append_webui_log,
+    set_webui_status,
+    collect_speech_job,
+    webui_vc_mode_active,
+    configure_webui_theme,
+    wrap_celune_callbacks,
+    subscribe_webui_events,
+    get_webui_input_placeholder,
+    subscribe_webui_timed_updates,
+)
+from .registry.types import ModelMetadata
+from .server.session import ServerSession, server_session
+from .typing.pipeline import SpeechStreamQueue
+from .registry.consent import (
+    consent_status,
+    consent_details,
+    registered_models,
+    consent_prompt_text,
+    record_model_consent,
+    exit_api_model_request,
+    pending_model_consents,
+    commercial_mode_enabled,
+    enter_api_model_request,
+    model_metadata_for_revision,
+)
+from .server.constants import (
+    WEBUI_AUTH_PATH,
+)
+from .pipeline.submission import prepare_playback_audio
 
 Callable = abc.Callable
 Iterator = abc.Iterator
@@ -1339,6 +1344,173 @@ api = gr.mount_gradio_app(
     head=WEBUI_HEAD,
 )
 api.mount("/", app=mcp_app)
+
+
+_TUNNEL_URL = re.compile(r"https://[a-z0-9-]+\.trycloudflare\.com\b", re.IGNORECASE)
+_STARTUP_ANNOUNCEMENT_TIMEOUT = 10.0
+
+
+class CloudflaredQuickTunnel:
+    """Own one cloudflared quick-tunnel process for Celune's lifetime."""
+
+    def __init__(self, log: Callable[[str, str], None]) -> None:
+        """Create a tunnel manager.
+
+        Args:
+            log: Callback used to report tunnel status and its public URL.
+        """
+        self._log = log
+        self._process: Optional[subprocess.Popen[str]] = None
+        self._reader: Optional[threading.Thread] = None
+        self._stopping = threading.Event()
+        self._closed = False
+        self._lock = threading.Lock()
+        self._port: Optional[int] = None
+        self._startup_announced = False
+        self._startup_timer: Optional[threading.Timer] = None
+
+    def start(self, port: int) -> bool:
+        """Start the public quick tunnel and watch for its endpoint URL.
+
+        Args:
+            port: Local API port to expose through Cloudflare.
+
+        Returns:
+            bool: ``True`` when cloudflared started, otherwise ``False``.
+        """
+        with self._lock:
+            if self._closed:
+                return False
+            if self._process is not None and self._process.poll() is None:
+                return True
+
+            executable = shutil.which("cloudflared")
+            if executable is None:
+                self._log(
+                    string("celune.cloudflared_missing", app_name=APP_NAME),
+                    "warning",
+                )
+                return False
+
+            creationflags = (
+                getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
+            )
+            try:
+                process = subprocess.Popen(  # pylint: disable=R1732
+                    [executable, "tunnel", "--url", f"http://127.0.0.1:{port}"],
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    creationflags=creationflags,
+                )
+            except OSError:
+                self._log(
+                    string("celune.cloudflared_failed", app_name=APP_NAME),
+                    "warning",
+                )
+                return False
+
+            self._stopping.clear()
+            self._process = process
+            self._port = port
+            self._startup_announced = False
+            atexit.register(self.stop)
+            self._startup_timer = threading.Timer(
+                _STARTUP_ANNOUNCEMENT_TIMEOUT,
+                self._announce_local_start,
+            )
+            self._startup_timer.daemon = True
+            self._startup_timer.start()
+            self._reader = threading.Thread(
+                target=self._read_output,
+                args=(process,),
+                daemon=True,
+                name=f"{APP_NAME}Cloudflared",
+            )
+            self._reader.start()
+        return True
+
+    def _read_output(self, process: subprocess.Popen[str]) -> None:
+        """Read cloudflared output without blocking Celune's API thread."""
+        output = process.stdout
+        if output is not None:
+            for line in output:
+                match = _TUNNEL_URL.search(line)
+                if match is not None:
+                    url = match.group(0)
+                    if not self._announce_startup(url):
+                        self._log(
+                            string(
+                                "celune.public_api_endpoint",
+                                app_name=APP_NAME,
+                                url=url,
+                            ),
+                            "info",
+                        )
+
+        return_code = process.wait()
+        if not self._stopping.is_set():
+            self._announce_local_start()
+        if return_code != 0 and not self._stopping.is_set():
+            self._log(string("celune.cloudflared_failed", app_name=APP_NAME), "warning")
+
+    def _announce_local_start(self) -> None:
+        """Report the local API URL when the tunnel URL is not ready in time."""
+        with self._lock:
+            port = self._port
+        if port is not None:
+            self._announce_startup(f"http://127.0.0.1:{port}")
+
+    def _announce_startup(self, url: str) -> bool:
+        """Log the first usable API URL, returning whether this call announced it."""
+        with self._lock:
+            if self._startup_announced or self._stopping.is_set():
+                return False
+            self._startup_announced = True
+            timer = self._startup_timer
+            self._startup_timer = None
+
+        if timer is not None and timer is not threading.current_thread():
+            timer.cancel()
+        self._log(
+            string("celune.api_started", app_name=APP_NAME, url=url),
+            "info",
+        )
+        return True
+
+    def stop(self) -> None:
+        """Terminate the quick tunnel and wait for its process to exit."""
+        with self._lock:
+            self._closed = True
+            process = self._process
+            timer = self._startup_timer
+            self._startup_timer = None
+            if timer is not None:
+                timer.cancel()
+            if process is None:
+                return
+
+            atexit.unregister(self.stop)
+            self._stopping.set()
+            if process.poll() is None:
+                with contextlib.suppress(OSError):
+                    process.terminate()
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    with contextlib.suppress(OSError):
+                        process.kill()
+                    with contextlib.suppress(subprocess.TimeoutExpired):
+                        process.wait(timeout=2)
+
+            reader = self._reader
+            if reader is not None and reader is not threading.current_thread():
+                reader.join(timeout=1)
+            self._process = None
+            self._reader = None
 
 
 def run_api(

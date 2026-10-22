@@ -23,7 +23,7 @@ from .callbacks import _buffer_startup_log
 from ..chroma import AudioRGBGlow
 from ..exceptions import BackendError
 from ..typing.aliases import LogLevel
-from ..locks import ComponentLockLease
+from .concurrency import ComponentLockLease
 from ..typing.modes import BackendMode
 from ..agent.runtime import AgentRuntime
 from ..agent.routing import AgentInputRouter

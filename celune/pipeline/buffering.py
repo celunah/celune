@@ -45,7 +45,7 @@ from .timing import (
 
 from ..i18n import string
 from ..utils import discard
-from ..locks import ComponentLockManager
+from ..core.concurrency import ComponentLockManager
 from ..typing.common import JSONSerializable
 from ..typing.pipeline import SpeechStreamQueue
 from ..dataclasses.events import StateChangedEvent

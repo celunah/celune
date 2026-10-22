@@ -18,7 +18,7 @@ import numpy.typing as npt
 from celune.celune import Celune
 from celune.typing.aliases import AudioChunk
 from celune.utils import discard, clear_queue
-from celune.threads import run_in_daemon_thread
+from celune.core.concurrency import run_in_daemon_thread
 from celune.agent import routing as agent_routing
 from celune.typing.locks import ComponentLockName
 from celune.constants import BASE_SR, PipelineStates

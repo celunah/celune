@@ -14,7 +14,7 @@ import soundfile as sf
 
 from ..constants import APP_NAME
 from ..i18n import string, tagged_string
-from ..threads import run_in_daemon_thread
+from ..core.concurrency import run_in_daemon_thread
 from ..pipeline.playback import close_stream
 from ..exceptions import InvalidExtensionError
 from ..audio.server import restart_audio_server

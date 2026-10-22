@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 
 from ..i18n import string
 from ..utils import format_error_message
-from ..threads import run_in_daemon_thread
+from .concurrency import run_in_daemon_thread
 from ..pipeline.submission import say, queue_speech
 from ..pipeline.buffering import notify_component_busy
 from ..persona.impl import persona_enabled, compact_persona_history

@@ -13,7 +13,7 @@ import pytest
 import numpy as np
 import soundfile as sf
 
-from celune import singing
+from celune import cesn
 from celune.celune import Celune
 from celune.constants import APP_SLUG
 from celune import metadata as celune_metadata
@@ -90,14 +90,13 @@ class TestPipelineAsync(CeluneAsyncTestCase):
             return_value=converted,
         ) as convert:
             assert (
-                singing._prepare_synthesis_text(cast(Celune, engine), notation)
-                == notation
+                cesn._prepare_synthesis_text(cast(Celune, engine), notation) == notation
             )
             convert.assert_not_called()
 
             engine.backend.singing = True
             assert (
-                singing._prepare_synthesis_text(cast(Celune, engine), notation)
+                cesn._prepare_synthesis_text(cast(Celune, engine), notation)
                 == converted
             )
 
@@ -111,13 +110,13 @@ class TestPipelineAsync(CeluneAsyncTestCase):
 
         with (
             mock.patch.object(
-                singing,
+                cesn,
                 "_prepare_synthesis_text",
                 return_value=payload,
             ),
             mock.patch.object(submission, "split_text") as split,
         ):
-            assert singing.prepare_synthesis_chunks(
+            assert cesn.prepare_synthesis_chunks(
                 cast(Celune, engine), "score", submission.split_text
             ) == [payload]
 
@@ -125,13 +124,11 @@ class TestPipelineAsync(CeluneAsyncTestCase):
 
     def test_singing_input_detection_requires_a_note_event(self) -> None:
         """Recognize CESN events while ignoring prose and comment-only input."""
-        assert not singing.contains_cesn_note_event("plain lyrics")
-        assert not singing.contains_cesn_note_event("[#only a comment]")
-        assert not singing.contains_cesn_note_event(
-            "[lang:en][bpm:120,key:c,scale:major]"
-        )
-        assert singing.contains_cesn_note_event("[a4:4] Ah")
-        assert singing.contains_cesn_note_event("[r:1]")
+        assert not cesn.contains_cesn_note_event("plain lyrics")
+        assert not cesn.contains_cesn_note_event("[#only a comment]")
+        assert not cesn.contains_cesn_note_event("[lang:en][bpm:120,key:c,scale:major]")
+        assert cesn.contains_cesn_note_event("[a4:4] Ah")
+        assert cesn.contains_cesn_note_event("[r:1]")
 
     def test_singing_output_filename_uses_plain_cesn_lyrics(self) -> None:
         """Use lyric words instead of CESN tags in the output filename."""
@@ -155,7 +152,7 @@ class TestPipelineAsync(CeluneAsyncTestCase):
         engine = make_pipeline_engine()
         engine.backend.singing = True
         engine.backend.cesn_to_model = mock.Mock(side_effect=lambda text: text)
-        singing._prepare_synthesis_text(
+        cesn._prepare_synthesis_text(
             cast(
                 Celune,
                 engine,

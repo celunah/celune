@@ -20,7 +20,7 @@ import numpy as np
 
 from celune.utils import format_error
 from celune.cedts import remote, worker
-from celune.singing import format_cesn_error
+from celune.cesn import format_cesn_error
 from celune.backends.tts import resolve_backend
 from celune.typing.backends import (
     BackendRuntime,

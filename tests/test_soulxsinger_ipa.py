@@ -16,10 +16,9 @@ from celune.exceptions import (
     CESNValidationError,
     CESNBackendFormatError,
 )
-from celune.cesn import CESNSinger
+from celune.cesn import CESNSinger, format_cesn_error
 from celune.typing.common import JSON
 from celune.cevoice import CEVoiceLoader
-from celune.singing import format_cesn_error
 from celune.backends.tts.soulxsinger import (
     SoulXSinger,
     decode_score,

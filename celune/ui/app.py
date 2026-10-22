@@ -60,7 +60,7 @@ from .theme import CELUNE_CSS, severity_color, with_brightness
 from ..i18n import string, tagged_string
 from ..typing.agent import AgentTaskState
 from ..registry.types import ModelMetadata
-from ..threads import run_in_daemon_thread
+from ..core.concurrency import run_in_daemon_thread
 from ..typing.common import JSONSerializable
 from ..watchdog import launcher_loss_requested
 from ..typing.config import AudioDeviceInfoValue
@@ -125,7 +125,7 @@ if TYPE_CHECKING:
     from ..celune import Celune
     from ..cevoice import CEVoiceLoader
     from ..exceptions import CEDTSError
-    from ..locks import ComponentLockLease
+    from ..core.concurrency import ComponentLockLease
     from ..dataclasses.pipeline import AudioOutput
     from ..extensions.events import EventDispatcher
     from ..paths import config_path, main_window_log_path

@@ -74,7 +74,7 @@ from ..dataclasses.events import (
 from ..persona.capabilities import PersonaCapabilities
 
 if TYPE_CHECKING:
-    from ..locks import ComponentLockLease, ComponentLockManager
+    from ..core.concurrency import ComponentLockLease, ComponentLockManager
     from ..celune import Celune
 
 

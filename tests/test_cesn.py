@@ -8,13 +8,13 @@ from types import SimpleNamespace
 import pytest
 
 from celune import cevoice
-from celune.singing import format_cesn_error
 from celune.cesn import (
     CESNSinger,
     CESNTuplet,
     CESNNotePair,
     CESNNoteEvent,
     CESNRestEvent,
+    format_cesn_error,
     parse_cesn,
     render_cesn,
     resolve_singer,

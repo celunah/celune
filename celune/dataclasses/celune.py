@@ -10,7 +10,7 @@ import sounddevice as sd
 from transformers.modeling_utils import PreTrainedModel
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 
-from ..locks import ComponentLockManager
+from ..core.concurrency import ComponentLockManager
 from ..chroma import AudioRGBGlow
 from ..config import Config
 from ..cevoice import CEVoicePersona

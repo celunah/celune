@@ -18,7 +18,7 @@ from ..paths import project_root
 from ..config import config_value
 from ..i18n import string, tagged_string
 from ..utils import format_error_message
-from ..threads import run_in_daemon_thread
+from .concurrency import run_in_daemon_thread
 from ..extensions.base import CeluneContext
 from ..pipeline.playback import play_signal
 from ..registry.tts import QWEN3_06B_MODEL_ID

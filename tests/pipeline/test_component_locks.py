@@ -8,7 +8,7 @@ import pytest
 
 from celune.celune import Celune
 from celune.pipeline import buffering
-from celune.locks import ComponentLockManager
+from celune.core.concurrency import ComponentLockManager
 from celune.agent import AgentRequest, AgentRuntime, AgentSession, AgentTaskState
 from celune.typing.locks import (
     ComponentLockName,

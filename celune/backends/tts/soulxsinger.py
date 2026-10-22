@@ -22,11 +22,12 @@ import numpy as np
 from huggingface_hub import snapshot_download
 
 from ...cesn import (
+    parse_cesn,
     CESNSection,
     CESNNotePair,
     CESNRestEvent,
-    parse_cesn,
     resolve_active_singer,
+    contains_cesn_note_event,
 )
 from ...paths import (
     huggingface_progress,
@@ -61,7 +62,6 @@ from ...registry.tts import (
 from ...typing.common import JSON
 from ..environment import exclusive_lock
 from ...typing.aliases import AudioChunk
-from ...singing import contains_cesn_note_event
 from ...registry.consent import require_model_consent
 from ...registry.other import SOULX_SINGER_RMVPE_MODEL_ID
 from .base import CeluneBackend, to_numpy_audio, cached_hf_snapshot_path

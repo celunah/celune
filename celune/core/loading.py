@@ -2,41 +2,22 @@
 """Celune core loading methods."""
 
 from __future__ import annotations
+
 import gc
 import os
 import time
 import threading
 import contextlib
-from functools import partial
 from typing import Optional, cast
+from functools import partial
 
 import torch
 from transformers.modeling_utils import PreTrainedModel
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 
 from . import lifecycle
-
-from ..constants import APP_NAME
-from ..backends.tts import CeluneBackend
 from ..i18n import string, tagged_string
-from ..persona.impl import persona_enabled
-from ..threads import run_in_daemon_thread
-from ..dataclasses.events import ReadyEvent
-from ..registry.other import NORMALIZER_MODEL_ID
-from ..pipeline.output import saved_output_speech_seconds
-from ..runtime import validate_runtime, log_runtime_banner
-from ..typing.celune import Generative, NormalizerTokenizer
-from ..modeling import normalizer_device, load_normalizer_components
-from ..pipeline.playback import force_stop_speech as force_stop_pipeline
 from ..vram import vram_profile_fits, resolve_vram_preset, validate_vram_preset
-from ..cevoice import default_loader, bundle_display_name, announce_default_bundle
-from ..exceptions import (
-    WarmupError,
-    BackendError,
-    NotAvailableError,
-    RuntimeCheckError,
-    ModelConsentRequired,
-)
 from ..utils import (
     discard,
     format_error,
@@ -45,6 +26,25 @@ from ..utils import (
     is_port_usable,
     format_error_message,
 )
+from ..cevoice import default_loader, bundle_display_name, announce_default_bundle
+from ..runtime import validate_runtime, log_runtime_banner
+from ..modeling import normalizer_device, load_normalizer_components
+from ..constants import APP_NAME
+from ..exceptions import (
+    WarmupError,
+    BackendError,
+    NotAvailableError,
+    RuntimeCheckError,
+    ModelConsentRequired,
+)
+from .concurrency import run_in_daemon_thread
+from ..backends.tts import CeluneBackend
+from ..persona.impl import persona_enabled
+from ..typing.celune import Generative, NormalizerTokenizer
+from ..registry.other import NORMALIZER_MODEL_ID
+from ..pipeline.output import saved_output_speech_seconds
+from ..pipeline.playback import force_stop_speech as force_stop_pipeline
+from ..dataclasses.events import ReadyEvent
 
 
 async def force_stop_speech_async(self) -> bool:
@@ -313,7 +313,7 @@ def _start_configured_api(self) -> None:
 
     on_started = None
     if access_level == "everyone":
-        from ..cloudflared import CloudflaredQuickTunnel
+        from ..api import CloudflaredQuickTunnel
 
         def start_public_tunnel(api_host: str, api_port: int) -> None:
             """Start the public tunnel after the local API socket is ready."""

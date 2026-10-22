@@ -21,7 +21,7 @@ from ..i18n import string, tagged_string
 from ..paths import (
     outputs_dir,
 )
-from ..threads import run_in_daemon_thread
+from ..core.concurrency import run_in_daemon_thread
 from ..typing.common import JSONSerializable
 from ..typing.aliases import AudioChunk, AudioChunks
 from ..constants import (
@@ -48,7 +48,7 @@ from ..metadata import (
     write_celune_flac,
     celune_metadata_payload,
 )
-from ..singing import format_cesn_error, prepare_synthesis_chunks
+from ..cesn import format_cesn_error, prepare_synthesis_chunks
 from .submission import (
     split_text,
     play_prepared_speech,

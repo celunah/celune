@@ -4,18 +4,15 @@
 import re
 import warnings
 import unicodedata
-
 from pathlib import Path
 from fractions import Fraction
+from collections.abc import Callable
 from dataclasses import field, dataclass
-from typing import Union, Optional, NamedTuple, cast
+from typing import TYPE_CHECKING, Union, Optional, NamedTuple, cast
 
 from iso639 import Lang, exceptions
 
-from .xsampa import (
-    vowel_nucleus_start,
-    to_ipa as xsampa_to_ipa,
-)
+from .i18n import string
 from .exceptions import (
     CESNError,
     CEVoiceError,
@@ -26,6 +23,9 @@ from .exceptions import (
     InvalidCharacterError,
     CESNUnsupportedFeatureError,
 )
+
+if TYPE_CHECKING:
+    from .celune import Celune
 
 
 class CESNTuplet(NamedTuple):
@@ -1132,3 +1132,403 @@ def _pitch_class(letter: str, accidental: Optional[str]) -> int:
     elif accidental == "b":
         value -= 1
     return value % 12
+
+
+_XSAMPA_SYMBOLS = {
+    '"': "ˈ",
+    "%": "ˌ",
+    "!": "ꜜ",
+    "^": "ꜛ",
+    "&": "ɶ",
+    "1": "ɨ",
+    "2": "ø",
+    "3": "ɜ",
+    "3\\": "ɞ",
+    "4": "ɾ",
+    "5": "ɫ",
+    "6": "ɐ",
+    "7": "ɤ",
+    "8": "ɵ",
+    "9": "œ",
+    "@": "ə",
+    "@\\": "ɘ",
+    "A": "ɑ",
+    "B": "β",
+    "B\\": "ʙ",
+    "C": "ç",
+    "D": "ð",
+    "E": "ɛ",
+    "F": "ɱ",
+    "G": "ɣ",
+    "G\\": "ɢ",
+    "H": "ɥ",
+    "I": "ɪ",
+    "J": "ɲ",
+    "J\\": "ɟ",
+    "K": "ɬ",
+    "K\\": "ɮ",
+    "L": "ʎ",
+    "L\\": "ʟ",
+    "M": "ɯ",
+    "M\\": "ɰ",
+    "N": "ŋ",
+    "N\\": "ɴ",
+    "O": "ɔ",
+    "O\\": "ʘ",
+    "P": "ʋ",
+    "Q": "ɒ",
+    "R": "ʁ",
+    "R\\": "ʀ",
+    "S": "ʃ",
+    "T": "θ",
+    "U": "ʊ",
+    "V": "ʌ",
+    "W": "ʍ",
+    "X": "χ",
+    "X\\": "ħ",
+    "Y": "ʏ",
+    "Z": "ʒ",
+    "?": "ʔ",
+    "?\\": "ʕ",
+    "||\\": "ǁ",
+    "!\\": "ǃ",
+    "=\\": "ǂ",
+    "|\\": "ǀ",
+    "<\\": "ʢ",
+    "H\\": "ʜ",
+    ">\\": "ʡ",
+    "{": "æ",
+    "|": "|",
+    "||": "‖",
+    "}": "ʉ",
+    "~": "̃",
+    ":": "ː",
+    ":\\": "ˑ",
+    "::": "ːː",
+    ".": ".",
+    "-": " ",
+    "_": "͡",
+    "_+": "̟",
+    "_-": "̠",
+    '_"': "̈",
+    "_0": "̥",
+    "_A": "̘",
+    "_B": "˩",
+    "_F": "˥˩",
+    "_G": "ˠ",
+    "_H": "˦",
+    "_L": "˨",
+    "_M": "˧",
+    "_O": "̹",
+    "_R": "˩˥",
+    "_T": "˥",
+    "_a": "̺",
+    "_c": "̜",
+    "_d": "̪",
+    "_e": "ˠ",
+    "_h": "ʰ",
+    "_j": "ʲ",
+    "_k": "̰",
+    "_l": "ˡ",
+    "_m": "̻",
+    "_n": "ⁿ",
+    "_o": "̞",
+    "_q": "̙",
+    "_r": "̝",
+    "_t": "̤",
+    "_v": "̬",
+    "_w": "ʷ",
+    "_^": "̯",
+    "_~": "̃",
+    "_}": "̚",
+    "_>": "ʼ",
+    "_`": "˞",
+    "_\\": "ˤ",
+    "_X": "̆",
+    "_=": "̩",
+    "_?\\": "ˤ",
+    "_R_F": "˧˦˧",
+    "-\\": "‿",
+    "<R>": "↗",
+    "<F>": "↘",
+    "a": "a",
+    "b": "b",
+    "c": "c",
+    "d": "d",
+    "e": "e",
+    "f": "f",
+    "g": "ɡ",
+    "h": "h",
+    "i": "i",
+    "j": "j",
+    "k": "k",
+    "l": "l",
+    "m": "m",
+    "n": "n",
+    "o": "o",
+    "p": "p",
+    "q": "q",
+    "r": "r",
+    "s": "s",
+    "t": "t",
+    "u": "u",
+    "v": "v",
+    "w": "w",
+    "x": "x",
+    "y": "y",
+    "z": "z",
+    "'": "ʲ",
+    "aI": "aɪ",
+    "aU": "aʊ",
+    "eI": "eɪ",
+    "oU": "oʊ",
+    "OI": "ɔɪ",
+    "@U": "əʊ",
+    "tS": "tʃ",
+    "dZ": "dʒ",
+    "n`": "ɳ",
+    "t`": "ʈ",
+    "d`": "ɖ",
+    "r`": "ɽ",
+    "s`": "ʂ",
+    "z`": "ʐ",
+    "l`": "ɭ",
+    "r\\`": "ɻ",
+    "r\\": "ɹ",
+    "s\\": "ɕ",
+    "z\\": "ʑ",
+    "j\\": "ʝ",
+    "p\\": "ɸ",
+    "h\\": "ɦ",
+    "v\\": "ʋ",
+    "l\\": "ɺ",
+    "d_<": "ɗ",
+    "b_<": "ɓ",
+    "J\\_<": "ʄ",
+    "G\\_<": "ʛ",
+    "g_<": "ɠ",
+}
+
+_XSAMPA_SYMBOLS_BY_LENGTH = tuple(sorted(_XSAMPA_SYMBOLS, key=len, reverse=True))
+_XSAMPA_IPA_VOWELS = frozenset(
+    [
+        "i",
+        "y",
+        "ɨ",
+        "ʉ",
+        "ɯ",
+        "u",
+        "ɪ",
+        "ʏ",
+        "ʊ",
+        "e",
+        "ø",
+        "ɘ",
+        "ɵ",
+        "ɤ",
+        "o",
+        "ə",
+        "ɛ",
+        "œ",
+        "ɜ",
+        "ɞ",
+        "ʌ",
+        "ɔ",
+        "æ",
+        "ɐ",
+        "a",
+        "ɶ",
+        "ɑ",
+        "ɒ",
+    ]
+)
+_XSAMPA_VOWEL_SYMBOLS = frozenset(
+    symbol
+    for symbol, ipa in _XSAMPA_SYMBOLS.items()
+    if ipa and ipa[0] in _XSAMPA_IPA_VOWELS
+)
+_XSAMPA_NUCLEUS_MODIFIERS = frozenset(
+    symbol
+    for symbol in _XSAMPA_SYMBOLS
+    if symbol.startswith("_") or symbol in {"~", ":", ":\\", "::"}
+)
+
+
+def _symbol_at(value: str, offset: int) -> Optional[str]:
+    return next(
+        (
+            candidate
+            for candidate in _XSAMPA_SYMBOLS_BY_LENGTH
+            if value.startswith(candidate, offset)
+        ),
+        None,
+    )
+
+
+def xsampa_to_ipa(value: str) -> str:
+    """Convert standard X-SAMPA symbols to Unicode IPA.
+
+    Args:
+        value: ASCII X-SAMPA transcription.
+
+    Returns:
+        str: IPA transcription with syllable separators preserved.
+
+    Raises:
+        ValueError: If the input is not ASCII or contains an unknown symbol.
+    """
+    if not value.isascii():
+        raise ValueError("X-SAMPA transcription must contain ASCII characters only")
+
+    converted: list[str] = []
+    offset = 0
+    while offset < len(value):
+        if value[offset].isspace():
+            converted.append(value[offset])
+            offset += 1
+            continue
+        symbol = _symbol_at(value, offset)
+        if symbol is None:
+            raise ValueError(
+                f"unsupported X-SAMPA symbol at character {offset + 1}: "
+                f"{value[offset]!r}"
+            )
+        converted.append(_XSAMPA_SYMBOLS[symbol])
+        offset += len(symbol)
+
+    return "".join(converted)
+
+
+def vowel_nucleus_start(value: str) -> int:
+    """Return the X-SAMPA offset of one final vowel nucleus.
+
+    Args:
+        value: One X-SAMPA syllable with an optional consonant onset.
+
+    Returns:
+        int: Character offset where the vowel nucleus begins.
+
+    Raises:
+        ValueError: If the syllable has multiple nuclei, a coda, or invalid text.
+    """
+    if (
+        not value
+        or not value.isascii()
+        or "." in value
+        or any(ch.isspace() for ch in value)
+    ):
+        raise ValueError("slide pronunciation must be one ASCII X-SAMPA syllable")
+
+    symbols: list[tuple[str, int]] = []
+    offset = 0
+    while offset < len(value):
+        symbol = _symbol_at(value, offset)
+        if symbol is None:
+            raise ValueError(
+                f"unsupported X-SAMPA symbol at character {offset + 1}: "
+                f"{value[offset]!r}"
+            )
+        symbols.append((symbol, offset))
+        offset += len(symbol)
+
+    vowel_indices = tuple(
+        index
+        for index, (symbol, _start) in enumerate(symbols)
+        if symbol in _XSAMPA_VOWEL_SYMBOLS
+    )
+    if len(vowel_indices) != 1:
+        raise ValueError("slide pronunciation must contain one vowel nucleus")
+
+    vowel_index = vowel_indices[0]
+    if any(
+        symbol not in _XSAMPA_NUCLEUS_MODIFIERS
+        for symbol, _start in symbols[vowel_index + 1 :]
+    ):
+        raise ValueError("slide pronunciation must end with its vowel nucleus")
+    return symbols[vowel_index][1]
+
+
+def contains_cesn_note_event(text: str) -> bool:
+    """Return whether CESN tags contain at least one valid note or rest event."""
+    for is_tag, value in tokens(text):
+        if not is_tag or value.strip().startswith("#"):
+            continue
+        if any(
+            NOTE_EVENT_PATTERN.fullmatch(event.strip()) for event in value.split(",")
+        ):
+            return True
+    return False
+
+
+def format_cesn_error(text: str, error: CESNError) -> str:
+    """Format a CESN failure with its source line and one-based location."""
+    offset = error.source_start
+    if offset is None:
+        return str(error)
+    offset = min(max(offset, 0), len(text))
+    line_start = text.rfind("\n", 0, offset) + 1
+    line_end = text.find("\n", offset)
+    if line_end < 0:
+        line_end = len(text)
+    line = text[line_start:line_end].removesuffix("\r")
+    line_number = text.count("\n", 0, line_start) + 1
+    column_number = offset - line_start + 1
+    caret_prefix = " " * len(text[line_start:offset].expandtabs())
+    span_end = error.source_end if error.source_end is not None else offset + 1
+    span_end = min(max(span_end, offset + 1), line_start + len(line))
+    marker_width = max(
+        1,
+        len(text[line_start:span_end].expandtabs()) - len(caret_prefix),
+    )
+    header = string(
+        "cesn.parse_error_location",
+        line=line_number,
+        column=column_number,
+    )
+    marker = f"{caret_prefix}^{'~' * (marker_width - 1)}"
+    return f"{header}\n\n{line}\n{marker} {error}"
+
+
+def validate_singing_notation(engine: "Celune", text: str) -> Optional[str]:
+    """Return a user-readable error when input is not valid CESN notation."""
+    if not contains_cesn_note_event(text):
+        return string("cesn.no_notation_found")
+
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", CESNNotationWarning)
+            parse_cesn(
+                text,
+                supported_languages=tuple(engine.backend.supported_languages),
+            )
+    except CESNError as error:
+        return format_cesn_error(text, error)
+    return None
+
+
+def _prepare_synthesis_text(engine: "Celune", text: str) -> str:
+    """Convert CESN before Celune splits long requests into chunks."""
+    if not getattr(engine.backend, "singing", False):
+        return text
+    if "[" in text:
+        with warnings.catch_warnings(record=True) as notation_warnings:
+            warnings.simplefilter("always", CESNNotationWarning)
+            parse_cesn(
+                text,
+                supported_languages=tuple(engine.backend.supported_languages),
+            )
+        for notation_warning in notation_warnings:
+            engine.log(str(notation_warning.message), "warning")
+    return engine.backend.cesn_to_model(text)
+
+
+def prepare_synthesis_chunks(
+    engine: "Celune",
+    text: str,
+    splitter: Callable[["Celune", str], list[str]],
+) -> list[str]:
+    """Convert CESN once and preserve complete scores as a single request."""
+    prepared_text = _prepare_synthesis_text(engine, text)
+    if getattr(engine.backend, "singing", False):
+        return [prepared_text]
+    return splitter(engine, prepared_text)

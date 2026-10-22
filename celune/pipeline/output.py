@@ -24,7 +24,7 @@ from ..i18n import string
 from ..constants import (
     APP_SLUG,
 )
-from ..singing import (
+from ..cesn import (
     contains_cesn_note_event,
 )
 from ..utils import (

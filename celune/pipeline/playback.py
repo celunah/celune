@@ -33,7 +33,7 @@ from ..typing.aliases import AudioChunk
 from ..config import resolve_audio_device
 from ..constants import BASE_SR, APP_NAME
 from ..exceptions import NotAvailableError
-from ..threads import run_in_daemon_thread
+from ..core.concurrency import run_in_daemon_thread
 from ..analysis import schedule_voice_analysis
 from ..utils import discard, clear_queue, format_number, format_error_message
 from ..dataclasses.pipeline import SpeechTiming, PlaybackChunk, PlaybackSourceDone
