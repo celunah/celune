@@ -2,26 +2,26 @@
 """CEVOICE and backend handler methods."""
 
 from __future__ import annotations
+
 import time
 import asyncio
 import threading
 from pathlib import Path
 from typing import Union, Optional
 
-from .lifecycle import config_str
-from . import reload as core_reload
-from . import lifecycle as core_lifecycle
-
 from .. import __version__
 from ..constants import APP_NAME
 from ..paths import project_root
 from ..config import config_value
+from .lifecycle import config_str
+from . import reload as core_reload
 from ..i18n import string, tagged_string
 from ..utils import format_error_message
-from .concurrency import run_in_daemon_thread
+from . import lifecycle as core_lifecycle
 from ..extensions.base import CeluneContext
 from ..pipeline.playback import play_signal
 from ..registry.tts import QWEN3_06B_MODEL_ID
+from .concurrency import run_in_daemon_thread
 from ..backends.tts import BACKENDS, CeluneBackend
 from ..dataclasses.events import VoiceChangedEvent
 from ..backends.vc import VC_BACKENDS, CeluneVCBackend
@@ -737,12 +737,16 @@ def change_voice(self, voice: str) -> None:
                 if new_model_name != self.model_name:
                     if not try_play_signal(self, "working"):
                         self.log(
-                            "Could not play the working signal.",
+                            string("celune.working_signal_failed"),
                             "warning",
                             loglevel="verbose",
                         )
                     self.log(
-                        f"[RELOAD] Unloading model: {self.model_name}",
+                        tagged_string(
+                            "celune.model_unloading",
+                            "RELOAD",
+                            model=self.model_name,
+                        ),
                         loglevel="verbose",
                     )
                     core_lifecycle.unload_runtime_state(
@@ -750,7 +754,11 @@ def change_voice(self, voice: str) -> None:
                         include_normalizer=False,
                     )
                     self.log(
-                        f"[RELOAD] Loading model: {new_model_name}",
+                        tagged_string(
+                            "celune.model_loading",
+                            "RELOAD",
+                            model=new_model_name,
+                        ),
                         loglevel="verbose",
                     )
                     self.model = self.backend.load_model(new_model_name)
@@ -767,13 +775,13 @@ def change_voice(self, voice: str) -> None:
 
                     if not try_play_signal(self, "readiness"):
                         self.log(
-                            "Could not play the readiness signal.",
+                            string("celune.readiness_signal_failed"),
                             "warning",
                             loglevel="verbose",
                         )
 
                 self.log(
-                    "[RELOAD] The target model is the same as the model currently in use.",
+                    tagged_string("celune.model_same", "RELOAD"),
                     loglevel="verbose",
                 )
 

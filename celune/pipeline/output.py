@@ -2,6 +2,7 @@
 """Speech output naming, saving, and SFX downloads."""
 
 from __future__ import annotations
+
 import os
 import re
 import sys
@@ -15,17 +16,16 @@ from typing import TYPE_CHECKING, Optional
 
 import soundfile as sf
 
-from .buffering import config_value_lines
-from .timing import (
-    MAX_YOUTUBE_DOWNLOAD_RETRIES,
-)
-
 from ..i18n import string
+from .buffering import config_value_lines
 from ..constants import (
     APP_SLUG,
 )
 from ..cesn import (
     contains_cesn_note_event,
+)
+from .timing import (
+    MAX_YOUTUBE_DOWNLOAD_RETRIES,
 )
 from ..utils import (
     discard,
@@ -160,7 +160,7 @@ def download_youtube_sfx(
     title = youtube_sfx_title(url)
     out_tmpl = str(output_path.with_suffix(".%(ext)s"))
     engine.status_callback(string("status.downloading_audio"))
-    engine.log(f"[SFX] Downloading audio from {url}...")
+    engine.log(f"[SFX] {string('pipeline.sfx_download_start', url=url)}")
     python_executable = sys.executable
     if running_compiled():
         if os.name == "nt":

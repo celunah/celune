@@ -8,16 +8,35 @@ import os
 import time
 import threading
 import contextlib
-from typing import Optional, cast
 from functools import partial
+from typing import Optional, cast
 
 import torch
 from transformers.modeling_utils import PreTrainedModel
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 
 from . import lifecycle
+from ..constants import APP_NAME
+from ..backends.tts import CeluneBackend
 from ..i18n import string, tagged_string
+from ..persona.impl import persona_enabled
+from ..dataclasses.events import ReadyEvent
+from .concurrency import run_in_daemon_thread
+from ..registry.other import NORMALIZER_MODEL_ID
+from ..pipeline.output import saved_output_speech_seconds
+from ..runtime import validate_runtime, log_runtime_banner
+from ..typing.celune import Generative, NormalizerTokenizer
+from ..modeling import normalizer_device, load_normalizer_components
+from ..pipeline.playback import force_stop_speech as force_stop_pipeline
 from ..vram import vram_profile_fits, resolve_vram_preset, validate_vram_preset
+from ..cevoice import default_loader, bundle_display_name, announce_default_bundle
+from ..exceptions import (
+    WarmupError,
+    BackendError,
+    NotAvailableError,
+    RuntimeCheckError,
+    ModelConsentRequired,
+)
 from ..utils import (
     discard,
     format_error,
@@ -26,25 +45,6 @@ from ..utils import (
     is_port_usable,
     format_error_message,
 )
-from ..cevoice import default_loader, bundle_display_name, announce_default_bundle
-from ..runtime import validate_runtime, log_runtime_banner
-from ..modeling import normalizer_device, load_normalizer_components
-from ..constants import APP_NAME
-from ..exceptions import (
-    WarmupError,
-    BackendError,
-    NotAvailableError,
-    RuntimeCheckError,
-    ModelConsentRequired,
-)
-from .concurrency import run_in_daemon_thread
-from ..backends.tts import CeluneBackend
-from ..persona.impl import persona_enabled
-from ..typing.celune import Generative, NormalizerTokenizer
-from ..registry.other import NORMALIZER_MODEL_ID
-from ..pipeline.output import saved_output_speech_seconds
-from ..pipeline.playback import force_stop_speech as force_stop_pipeline
-from ..dataclasses.events import ReadyEvent
 
 
 async def force_stop_speech_async(self) -> bool:
@@ -264,7 +264,7 @@ def load(self, raise_on_error: bool = False, skip_runtime_check: bool = False) -
 
     if self.backend_mode == "normal" and not try_play_signal(self, "readiness"):
         self.log(
-            "Could not play the readiness signal.",
+            string("celune.readiness_signal_failed"),
             "warning",
             loglevel="verbose",
         )
@@ -283,7 +283,7 @@ def _start_configured_api(self) -> None:
         return
 
     if not is_port_usable(port):
-        self.log(f"API port {port} is already in use.", "warning")
+        self.log(string("celune.api_port_in_use", port=port), "warning")
         self.log(string("celune.api_unavailable", app_name=APP_NAME), "warning")
         return
 
@@ -413,8 +413,11 @@ def load_normalizer(self) -> None:
     thread = threading.Thread(target=_worker, daemon=True)
     thread.start()
     self.log(
-        f"Loading normalizer {NORMALIZER_MODEL_ID} "
-        f"on {normalizer_device(self.config)}..."
+        string(
+            "celune.normalizer_loading",
+            model_id=NORMALIZER_MODEL_ID,
+            device=normalizer_device(self.config),
+        )
     )
 
 

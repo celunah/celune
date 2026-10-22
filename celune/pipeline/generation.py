@@ -2,6 +2,7 @@
 """Speech generation workers and request processing."""
 
 from __future__ import annotations
+
 import queue
 import pathlib
 import datetime
@@ -13,24 +14,24 @@ import torch
 import numpy as np
 import pyrubberband as rb
 
-from .timing import (
-    monotonic_time,
-)
-
 from ..i18n import string, tagged_string
+from ..typing.common import JSONSerializable
+from ..core.concurrency import run_in_daemon_thread
+from ..typing.aliases import AudioChunk, AudioChunks
+from ..persona.conversation import effective_voice_prompt
+from ..cesn import format_cesn_error, prepare_synthesis_chunks
+from ..vram import is_cuda_out_of_memory, release_cuda_after_oom
+from ..exceptions import CESNError, BackendError, NotAvailableError
 from ..paths import (
     outputs_dir,
 )
-from ..core.concurrency import run_in_daemon_thread
-from ..typing.common import JSONSerializable
-from ..typing.aliases import AudioChunk, AudioChunks
+from .timing import (
+    monotonic_time,
+)
 from ..constants import (
     BASE_SR,
     APP_NAME,
 )
-from ..persona.conversation import effective_voice_prompt
-from ..vram import is_cuda_out_of_memory, release_cuda_after_oom
-from ..exceptions import CESNError, BackendError, NotAvailableError
 from ..utils import (
     format_number,
     format_error_message,
@@ -39,16 +40,15 @@ from ..dataclasses.pipeline import (
     SpeechTiming,
     SpeechRequest,
 )
+from ..metadata import (
+    write_celune_flac,
+    celune_metadata_payload,
+)
 from ..audio.dsp import (
     soften,
     to_48khz,
     is_silent_utterance,
 )
-from ..metadata import (
-    write_celune_flac,
-    celune_metadata_payload,
-)
-from ..cesn import format_cesn_error, prepare_synthesis_chunks
 from .submission import (
     split_text,
     play_prepared_speech,
@@ -81,9 +81,8 @@ from .captions import (
 )
 
 if TYPE_CHECKING:
-    from .captions import CaptionAlignmentWorker
-
     from ..celune import Celune
+    from .captions import CaptionAlignmentWorker
 
 _SHORT_INPUT_VOCODER_ERROR = (
     "Calculated padded input size per channel: (6). Kernel size: (7)."
@@ -311,7 +310,7 @@ def _process_generation_request(
                     if normalized is not None:
                         if normalized == chunk_text:
                             engine.log(
-                                "This input is already normalized.",
+                                string("pipeline.input_already_normalized"),
                                 "warning",
                                 loglevel="verbose",
                             )

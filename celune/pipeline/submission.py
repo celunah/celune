@@ -2,6 +2,7 @@
 """Speech request submission and text preparation."""
 
 from __future__ import annotations
+
 import os
 import re
 import time
@@ -19,12 +20,17 @@ from ..cevoice import default_loader
 from ..i18n import string, tagged_string
 from ..constants import BASE_SR, APP_NAME
 from ..exceptions import NotAvailableError
-from ..core.concurrency import run_in_daemon_thread
 from ..cesn import contains_cesn_note_event
 from ..typing.pipeline import SpeechStreamQueue
+from ..core.concurrency import run_in_daemon_thread
 from ..typing.aliases import AudioChunk, AudioChunks
 from ..vc import VC_PLAYBACK_GAIN, normalize_vc_audio
 from ..audio.dsp import split, resample_audio, is_silent_utterance
+from .output import (
+    is_youtube_sfx_url,
+    download_youtube_sfx,
+    format_stat_duration,
+)
 from ..utils import (
     rng_replace,
     cesn_to_text,
@@ -32,21 +38,6 @@ from ..utils import (
     detect_language,
     format_error_message,
     normalize_special_characters,
-)
-from ..dataclasses.pipeline import (
-    AudioOutput,
-    SpeechTiming,
-    SpeechRequest,
-    AudioInputRequest,
-    PreparedSpeechAudio,
-    VoiceConversionRequest,
-    CaptionAlignmentSection,
-)
-
-from .output import (
-    is_youtube_sfx_url,
-    download_youtube_sfx,
-    format_stat_duration,
 )
 from .buffering import (
     acquire_pipeline,
@@ -64,11 +55,19 @@ from .captions import (
     clear_playback_source_status,
     register_overlay_playback_state,
 )
+from ..dataclasses.pipeline import (
+    AudioOutput,
+    SpeechTiming,
+    SpeechRequest,
+    AudioInputRequest,
+    PreparedSpeechAudio,
+    VoiceConversionRequest,
+    CaptionAlignmentSection,
+)
 
 if TYPE_CHECKING:
-    from .captions import CaptionAlignmentWorker
-
     from ..celune import Celune
+    from .captions import CaptionAlignmentWorker
 
 
 def say(
@@ -432,7 +431,7 @@ def handle_audio_input(engine: Celune, request: AudioInputRequest) -> bool:
         )
 
     engine.log(
-        "Audio input was accepted but ignored in text-to-speech-only mode "
+        f"{string('pipeline.audio_ignored_tts_only')} "
         f"(label={request.label!r}, sample_rate={request.sample_rate}, "
         f"shape={audio.shape!r})",
         loglevel="verbose",

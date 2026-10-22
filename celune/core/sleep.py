@@ -2,20 +2,20 @@
 """Celune core sleep mode handler methods."""
 
 from __future__ import annotations
+
 import gc
 import threading
 import contextlib
 
 import torch
 
+from ..constants import APP_NAME
 from . import voice as core_voice
 from . import reload as core_reload
 from .reload import dispose_backend
-from . import lifecycle as core_lifecycle
-
-from ..constants import APP_NAME
 from ..i18n import string, tagged_string
 from ..utils import format_error_message
+from . import lifecycle as core_lifecycle
 from ..exceptions import NotAvailableError
 from ..persona.impl import persona_enabled
 from ..config import config_int, config_value
@@ -142,7 +142,7 @@ def enter_sleep_mode(self) -> bool:
 
     if not core_voice.try_play_signal(self, "sleeping"):
         self.log(
-            "Could not play the sleeping signal.",
+            string("celune.sleeping_signal_failed"),
             "warning",
             loglevel="verbose",
         )
@@ -227,7 +227,11 @@ def wake_from_sleep(self) -> bool:
                             )
                         model_id = self.backend.model_id_for_voice(active_voice)
                         self.log(
-                            f"[SLEEP] Loading model: {model_id}",
+                            tagged_string(
+                                "celune.model_loading",
+                                "SLEEP",
+                                model=model_id,
+                            ),
                             loglevel="verbose",
                         )
                         self.model = self.backend.load_model(model_id)

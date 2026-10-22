@@ -3,6 +3,7 @@
 """Celune model and character reload transactions."""
 
 from __future__ import annotations
+
 import time
 import contextlib
 from pathlib import Path
@@ -12,25 +13,24 @@ from typing import TYPE_CHECKING, Union, Optional, cast
 from transformers.modeling_utils import PreTrainedModel
 
 from . import lifecycle
-from .lifecycle import (
-    TTS_KV_CACHE_BACKENDS,
-    _core_backend_target,
-    tts_quantization_enabled,
-)
-
 from ..constants import APP_NAME
 from ..i18n import string, tagged_string
 from ..typing.backends import BackendModel
 from ..typing.common import JSONSerializable
-from ..backends.vc import (
-    CeluneVCBackend,
-)
 from ..utils import available, format_error_message
 from ..backends.tts import CeluneBackend, resolve_backend
 from ..exceptions import WarmupError, BackendError, NotAvailableError
 from ..config import config_bool, config_value, config_backend_options
 from ..backends.vc import (
+    CeluneVCBackend,
+)
+from ..backends.vc import (
     resolve_vc_backend as create_vc_backend,
+)
+from .lifecycle import (
+    TTS_KV_CACHE_BACKENDS,
+    _core_backend_target,
+    tts_quantization_enabled,
 )
 from ..vram import (
     VramPreset,
@@ -38,18 +38,18 @@ from ..vram import (
     is_cuda_out_of_memory,
     release_cuda_after_oom,
 )
+from ..dataclasses.events import (
+    VoiceChangedEvent,
+    CharacterLoadedEvent,
+    CharacterChangedEvent,
+    CharacterUnloadedEvent,
+)
 from ..typing.celune import (
     VCBackendSpec,
     TTSBackendSpec,
     CoreBackendSpec,
     MessageCallback,
     ReleasableObject,
-)
-from ..dataclasses.events import (
-    VoiceChangedEvent,
-    CharacterLoadedEvent,
-    CharacterChangedEvent,
-    CharacterUnloadedEvent,
 )
 from ..cevoice import (
     CEVoicePersona,
@@ -1129,7 +1129,12 @@ def reload_model_for_language(
 
     model_id = backend.model_id_for_voice(active_voice)
     engine.log(
-        f"[RELOAD] Loading {model_id} for language: {target_language}",
+        tagged_string(
+            "celune.model_language_loading",
+            "RELOAD",
+            model=model_id,
+            language=target_language,
+        ),
         loglevel="verbose",
     )
     engine.model = None

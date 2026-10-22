@@ -18,14 +18,14 @@ from collections.abc import Mapping, Callable, Generator
 
 import torch
 
-from .callbacks import _buffer_startup_log
-
 from ..chroma import AudioRGBGlow
 from ..exceptions import BackendError
 from ..typing.aliases import LogLevel
-from .concurrency import ComponentLockLease
 from ..typing.modes import BackendMode
 from ..agent.runtime import AgentRuntime
+from ..modes import resolve_operation_mode
+from .callbacks import _buffer_startup_log
+from .concurrency import ComponentLockLease
 from ..agent.routing import AgentInputRouter
 from ..agent.needle import NeedleToolSelector
 from ..agent.persona import PersonaAgentBridge
@@ -36,15 +36,14 @@ from ..backends.tts import BACKENDS, CeluneBackend
 from ..typing.common import JSON, JSONSerializable
 from ..persona.emotion import PersonaEmotionAnalyzer
 from ..backends.vc import VC_BACKENDS, CeluneVCBackend
-from ..config import (
-    config_int as _config_int,
-)
 from ..i18n import string, set_locale, get_system_locale
-from ..modes import resolve_operation_mode
 from ..utils import discard, available, clear_queue, format_error_message
 from ..vram import backend_allowed, resolve_vram_preset, resolve_backend_name
 from ..typing.agent import AgentTaskConfig, AgentToolSelector, AgentCancellationReason
 from ..constants import APP_NAME, AGENT_MAX_LOOPS, AGENT_COMPACT_AT, AGENT_CONTEXT_SPACE
+from ..config import (
+    config_int as _config_int,
+)
 from ..typing.locks import (
     ComponentLockName,
     ComponentLockOwner,
@@ -294,9 +293,11 @@ def initialize(
         tts_backend = resolve_backend_name(config, tts_backend)
         if tts_backend != requested_backend.strip().lower():
             self.log(
-                (
-                    f"Backend '{requested_backend}' is not available for VRAM tier "
-                    f"'{preset.tier}', using '{tts_backend}' instead."
+                string(
+                    "celune.backend_vram_fallback",
+                    backend=requested_backend,
+                    tier=preset.tier,
+                    fallback=tts_backend,
                 ),
                 "warning",
             )
@@ -1309,7 +1310,6 @@ def _shutdown_runtime_lock(self) -> Generator[None, None, None]:
 async def _pipeline_jobs(self) -> None:
     """Run Celune's speech pipeline workers as async jobs."""
     from .reload import reload_model_for_language
-
     from ..pipeline.playback import playback_worker_job
     from ..pipeline.generation import generation_worker_job
 
