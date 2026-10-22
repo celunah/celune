@@ -8,7 +8,7 @@ import pytest
 
 import main
 from celune import cevoice
-from celune.tar import handle_ls_command, handle_tar_command
+from celune.entrypoint import handle_ls_command, handle_tar_command
 
 entrypoint = main.load_entrypoint_module()
 
