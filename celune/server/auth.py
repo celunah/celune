@@ -2,6 +2,7 @@
 """API authentication, session cookies, and per-client rate limits."""
 
 from __future__ import annotations
+
 import os
 import json
 import time
@@ -22,7 +23,6 @@ from fastapi import Request, WebSocket
 from starlette.datastructures import Headers
 from starlette.responses import Response, JSONResponse
 
-from .session import server_session
 from .constants import (
     WEBUI_AUTH_COOKIE,
     WEBUI_AUTH_CLIENT_LIMIT,
@@ -30,6 +30,7 @@ from .constants import (
     WEBUI_GENERATION_API_NAMES,
     WEBUI_AUTH_CLIENTS_FILENAME,
 )
+from .session import server_session
 
 from ..i18n import string
 from ..paths import api_key_path, app_data_dir

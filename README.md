@@ -124,7 +124,7 @@ Samples were captured directly from Celune's output directory. No extra post-pro
 For details on voice production, check [VOICES.md](./docs/VOICES.md).
 
 > [!NOTE]
-> AI-generated voices may occasionally mispronounce words. 
+> AI-generated voices may occasionally mispronounce words.
 > Minor pronunciation errors are expected, and do not necessarily indicate a software defect.
 >
 > If a word is mispronounced, try spelling it phonetically to guide the voice.
@@ -175,7 +175,7 @@ Celune leaves a 2 GB leeway in the host's memory to protect the system and other
 
 Use of Persona and related features (such as the agent mode) requires the `high` preset, or above.
 
-Large Persona models (~8B parameters) will only run on `xhigh`. 
+Large Persona models (~8B parameters) will only run on `xhigh`.
 Persona context is variable depending on Celune's operation mode: 2,048 tokens in basic conversation
 mode (`mode: converse`), and 8,192 tokens in agent mode (`mode: agent`).
 
