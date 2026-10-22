@@ -19,12 +19,14 @@ own. It is the index to use when a feature needs a precise code entrypoint.
 | `celune/core/conversation.py` | Persona request orchestration, response delivery, and the conversation worker. |
 | `celune/core/agent.py` | Engine-specific agent coordination and result delivery. |
 | `celune/core/callbacks.py` | State, callback, status, and event publication helpers. |
-| `celune/entrypoint.py` | CLI dispatch, startup, doctor, config commands, updates, and headless/interactive handoff. |
+| `celune/core/concurrency.py` | Shared component ownership locks and daemon-thread async bridging. |
+| `celune/entrypoint.py` | CLI dispatch, CEVOICE pack commands, startup, doctor, config commands, updates, and headless/interactive handoff. |
 | `celune/updater.py` | Signed compiled updates, Git updates, and launcher handoff. |
 | `celune/signature.py` | Ed25519 manifest verification and appended keyring handling. |
 | `main.py` | Lightweight interpreter-safe launcher. |
 | `celune/config.py` | Config coercion, merge/default behavior, logging, device, and environment lookup. |
-| `celune/constants.py` | Names, sample-rate/VRAM/context constants, model registry, and exit codes. |
+| `celune/constants.py` | Names, sample-rate/VRAM/context constants, release-keyring trust anchor, and exit codes. |
+| `celune/terminal.py` | TTY capability, terminal title, and runtime log handling. |
 | `celune/modes.py` | Operation-mode resolution and mode capability predicates. |
 | `celune/paths.py` | User data, cache, runtime, pack, output, config, and migration paths. |
 | `celune/runtime.py` | Lazy runtime imports and shared test/headless runtime assembly. |
@@ -35,7 +37,7 @@ own. It is the index to use when a feature needs a precise code entrypoint.
 | --- | --- |
 | `celune/pipeline/submission.py` | Speech/audio request submission, prepared audio, singing setup, and SFX requests. |
 | `celune/pipeline/generation.py` | Generation worker, segmentation, synthesis, and generated chunk handling. |
-| `celune/pipeline/buffering.py` | Pipeline locks, bounded buffering, contention policy, and release coordination. |
+| `celune/pipeline/buffering.py` | Bounded buffering, contention policy, and release coordination. |
 | `celune/pipeline/playback.py` | Playback workers, stream lifecycle, cancellation, and signal playback. |
 | `celune/pipeline/captions.py` | Caption alignment, playback-source tracking, and completion state. |
 | `celune/pipeline/output.py` | Saved speech/SFX output and output metadata helpers. |
@@ -76,6 +78,7 @@ own. It is the index to use when a feature needs a precise code entrypoint.
 | Path | Responsibility |
 | --- | --- |
 | `celune/cevoice.py` | CEVOICE/CECHAR readers, writers, validation, lazy asset materialization, and pack selection. |
+| `celune/cesn.py` | CESN parsing, X-SAMPA conversion, singing validation/preparation, and canonical rendering. |
 | `celune/persona/runtime.py` | Model loading, quantization, generation, and context capacity. |
 | `celune/persona/cache.py` | Device-aware INT8/FP8 Persona KV-cache storage and dynamic-cache fallback boundary. |
 | `celune/persona/impl.py` | Configured Persona client and engine integration. |
@@ -105,7 +108,7 @@ own. It is the index to use when a feature needs a precise code entrypoint.
 | `celune/extensions/manager.py` | Discovery, registration, invocation, and teardown. |
 | `celune/extensions/events.py` | Event names, subscription, and dispatch. |
 | `celune/dataclasses/events.py` | Event payload dataclasses. |
-| `celune/api.py` | Documented API entrypoints, FastAPI application wiring, endpoints, and WebUI mount. |
+| `celune/api.py` | Documented API entrypoints, FastAPI application wiring, endpoints, WebUI mount, and public-tunnel lifecycle. |
 | `celune/server/session.py` | Shared typed API/WebUI session state. |
 | `celune/server/auth.py` | API authentication and rate limiting. |
 | `celune/server/jobs.py` | Speech jobs, task subscriptions, and transport audio helpers. |
@@ -129,7 +132,7 @@ own. It is the index to use when a feature needs a precise code entrypoint.
 | `scripts/ci_warnings.py` | CI warning annotations. |
 | `scripts/write_update_manifest.py` | Release update metadata. |
 | `celune/release_keyring.json` | Public manifest-signing key catalog embedded in signed launcher trailers. |
-| `celune/release_keys.py` / `launcher/release_keys.h` | Pinned keyring root trust anchors for Python and C. |
+| `launcher/release_keys.h` | Pinned keyring root trust anchor for the C launcher. |
 | `celune/lang/` | Localized runtime strings. |
 | `voices/` | Bundled CEVOICE packs. |
 

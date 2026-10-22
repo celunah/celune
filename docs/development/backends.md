@@ -330,10 +330,10 @@ log before calling `cesn_to_model(text)`. It passes the user's original source
 so backend validation can report exact line and character locations. The hook
 is called once before generation chunking.
 
-`celune/cesn.py` owns parsing, syllabification, and canonical rendering.
-`celune/singing.py` validates backend language support and calls the backend hook
-before the pipeline chunks the request. A backend resolves its active singer
-when the notation does not name one.
+`celune/cesn.py` owns X-SAMPA conversion, parsing, singing validation,
+syllabification, synthesis preparation, and canonical rendering. It calls the
+backend hook before the pipeline chunks the request. A backend resolves its
+active singer when the notation does not name one.
 
 Each `CESNSection` has one singer, language, BPM, key, and scale. A change to
 any of those values begins a new section. A singing backend must reset its

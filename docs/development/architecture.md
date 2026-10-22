@@ -45,13 +45,14 @@ callbacks carry engine operations such as language reload across that boundary.
 `celune.core.speech` owns the engine-level speech entry points and delegates
 request preparation and playback work to `celune.pipeline`.
 
-`celune.api` owns documented API entrypoints and FastAPI wiring. Shared
-transport state, authentication, jobs, subscriptions, and transport audio
-helpers belong to `celune.server`. Textual and Gradio presentation stay in
-`celune.ui` and `celune.webui`; WebUI builders receive the shared server session
-instead of importing API globals. `CeluneUI` composes typed hooks from its
-runtime, recording, and interaction modules. Frontend startup remains lazy so
-theme registration and the loading screen precede core and feature imports.
+`celune.api` owns documented API entrypoints, FastAPI wiring, and the public
+Cloudflared tunnel lifecycle. Shared transport state, authentication, jobs,
+subscriptions, and transport audio helpers belong to `celune.server`. Textual
+and Gradio presentation stay in `celune.ui` and `celune.webui`; WebUI builders
+receive the shared server session instead of importing API globals. `CeluneUI`
+composes typed hooks from its runtime, recording, and interaction modules.
+Frontend startup remains lazy so theme registration and the loading screen
+precede core and feature imports.
 
 The 100 KB Python source recommendation is a review signal. Group modules by
 cohesive subsystem ownership; retain a substantial standalone module or a
@@ -155,6 +156,8 @@ than `asyncio`'s default executor. Cancelling an async wrapper cannot safely
 kill arbitrary Python code already executing in a thread, so shutdown first
 signals the owning backend or process through its cancellation hook and then
 allows the daemon worker to be abandoned without delaying process exit.
+`celune.core.concurrency` owns those wrappers and the shared component-lock
+manager used by engine, pipeline, and frontend operations.
 
 ## Component locks
 
