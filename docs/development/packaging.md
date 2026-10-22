@@ -173,7 +173,8 @@ verifiers. The root private key is required to create the trailer. Previously
 published launchers keep their original key lists; releases that must remain
 verifiable by those launchers must use a key they already trust.
 
-Create a release-signing key from the checkout that will build the release:
+Prepare the signing keys and configure the signed build from the checkout that
+will build the release:
 
 ```powershell
 uv run python scripts\make_signing_key.py
@@ -183,43 +184,57 @@ uv run python scripts\make_signing_key.py
 uv run python scripts/make_signing_key.py
 ```
 
-The script creates an unencrypted Ed25519 PEM key at
+The script creates an unencrypted Ed25519 release-key PEM at
 `%LOCALAPPDATA%\Celune\keys\release-ed25519-private.pem` on Windows and
-`~/.celune/release-signing-key.pem` on Linux. It refuses to overwrite an
-existing file, restricts file access to the current account, rejects
-destinations inside the checkout, and does not print private-key contents. It
-also adds the public key to `celune/release_keyring.json`, preserving previously
-catalogued keys. Include the updated catalog in the source used to build the
-signed package. The root private key signs the catalog trailer, so a launcher
-can authenticate newly catalogued release keys without embedding each key in
-its source.
-
-The generated release key signs manifests. It is separate from the root key,
-which must match the public key pinned in the C and Python verifier sources.
-Provision that root private key securely; `make_signing_key.py` does not create
-it. The signed preset looks for it at
+`~/.celune/release-signing-key.pem` on Linux. A valid existing release key is
+reused; a missing one is generated. The script also prepares the separate root
+key at
 `%LOCALAPPDATA%\Celune\keys\release-keyring-root.pem` on Windows or
-`~/.celune/release-keyring-root.pem` on Linux. Signed builds fail when this
-separate root key is unavailable. The root and release key paths must resolve
-to different files. `CELUNE_RELEASE_ROOT_KEY_FILE` selects the root key path,
-while `CELUNE_RELEASE_SIGNING_KEY_FILE` selects the generated release key.
-`CELUNE_REQUIRE_RELEASE_SIGNATURE=1` also requires signing with the
-unsigned preset. These CMake cache variables and their environment variables
-provide equivalent configuration options:
+`~/.celune/release-keyring-root.pem` on Linux. If the root key is missing, the
+script generates it and updates the public root pin in `celune/constants.py`
+and `launcher/release_keys.h`, along with the root entry in
+`celune/release_keyring.json`. Existing root keys that match both verifier pins
+are reused. If an existing key does not match, the script stops unless
+`--trust-existing-root` is supplied; that option updates the checkout's trust
+pins to the existing key. A root-key change means launchers compiled with the
+previous pin will reject catalogs signed by the new root, so review and commit
+the updated public files with the release.
+
+The script restricts generated key-file access to the current account, rejects
+destinations inside the checkout, never overwrites an existing file, and does
+not print private-key contents. It adds both public keys to
+`celune/release_keyring.json`, preserving other catalogued release keys. It then
+configures the signed CMake preset with both private-key paths. `--no-configure`
+prepares the keys and trust data without running CMake. A cached root path left
+over from older configurations is reset to the separate default path when it
+matches the release-key path. The release key signs manifests, while the pinned
+root signs the public-key catalog trailer.
+
+`--output` selects the release key path and `--root-key` selects the root key
+path. Use `--trust-existing-root` only when intentionally changing which root
+key the checkout trusts. `CELUNE_REQUIRE_RELEASE_SIGNATURE=1` also requires
+signing with the unsigned preset. The CMake cache variables and matching
+environment variables select key paths when configuring outside this script.
+For example, with keys created using `--no-configure`:
 
 ```powershell
-uv run python scripts\make_signing_key.py --output "C:\path\to\release-ed25519-private.pem"
-$env:CELUNE_RELEASE_SIGNING_KEY_FILE = "C:\path\to\release-ed25519-private.pem"
-$env:CELUNE_RELEASE_ROOT_KEY_FILE = "C:\secure\release-keyring-root.pem"
-cmake --preset signed
+cmake --preset signed `
+  -DCELUNE_RELEASE_SIGNING_KEY_FILE="C:\path\to\release-ed25519-private.pem" `
+  -DCELUNE_RELEASE_ROOT_KEY_FILE="C:\secure\release-keyring-root.pem"
+cmake --build --preset signed
+```
+
+When using an existing root key at a custom path:
+
+```powershell
+uv run python scripts\make_signing_key.py `
+  --output "C:\path\to\release-ed25519-private.pem" `
+  --root-key "C:\secure\release-keyring-root.pem"
 cmake --build --preset signed
 ```
 
 ```bash
 uv run python scripts/make_signing_key.py --output "$HOME/keys/release-ed25519-private.pem"
-export CELUNE_RELEASE_SIGNING_KEY_FILE="$HOME/keys/release-ed25519-private.pem"
-export CELUNE_RELEASE_ROOT_KEY_FILE="$HOME/secure/release-keyring-root.pem"
-cmake --preset signed
 cmake --build --preset signed
 ```
 

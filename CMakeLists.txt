@@ -43,12 +43,19 @@ if(CELUNE_REQUIRE_RELEASE_SIGNATURE AND NOT CELUNE_RELEASE_SIGNING_KEY_FILE)
     endif()
     set(CELUNE_RELEASE_SIGNING_KEY_FILE "${_default_signing_key}" CACHE FILEPATH "Release manifest signing key" FORCE)
 endif()
-if(NOT CELUNE_RELEASE_ROOT_KEY_FILE)
-    if(WIN32 AND DEFINED ENV{LOCALAPPDATA})
-        set(_default_root_key "$ENV{LOCALAPPDATA}/Celune/keys/release-keyring-root.pem")
-    else()
-        set(_default_root_key "$ENV{HOME}/.celune/release-keyring-root.pem")
-    endif()
+if(WIN32 AND DEFINED ENV{LOCALAPPDATA})
+    set(_default_root_key "$ENV{LOCALAPPDATA}/Celune/keys/release-keyring-root.pem")
+else()
+    set(_default_root_key "$ENV{HOME}/.celune/release-keyring-root.pem")
+endif()
+if(
+    NOT CELUNE_RELEASE_ROOT_KEY_FILE
+    OR (
+        NOT "$ENV{CELUNE_RELEASE_ROOT_KEY_FILE}"
+        AND CELUNE_RELEASE_SIGNING_KEY_FILE
+        AND "${CELUNE_RELEASE_ROOT_KEY_FILE}" STREQUAL "${CELUNE_RELEASE_SIGNING_KEY_FILE}"
+    )
+)
     set(CELUNE_RELEASE_ROOT_KEY_FILE "${_default_root_key}" CACHE FILEPATH "Release keyring root key" FORCE)
 endif()
 if(CELUNE_RELEASE_SIGNING_KEY_FILE AND NOT EXISTS "${CELUNE_RELEASE_SIGNING_KEY_FILE}")

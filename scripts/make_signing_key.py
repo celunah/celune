@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
-"""Create a private release key and add its public key to the signed catalog."""
+"""Prepare release signing keys and configure the signed release build."""
 
 from __future__ import annotations
 
 import os
+import re
 import sys
 import json
 import stat
@@ -32,6 +33,14 @@ def default_output_path() -> Path:
     return Path.home() / ".celune" / "release-signing-key.pem"
 
 
+def default_root_key_path() -> Path:
+    """Return the platform's default protected keyring-root destination."""
+    local_app_data = os.environ.get("LOCALAPPDATA")
+    if os.name == "nt" and local_app_data:
+        return Path(local_app_data) / "Celune" / "keys" / "release-keyring-root.pem"
+    return Path.home() / ".celune" / "release-keyring-root.pem"
+
+
 def _localized_string(key: str, **values: str) -> str:
     """Resolve a signing-tool message from Celune's English localization file."""
     translations = cast(
@@ -48,6 +57,101 @@ def _localized_string(key: str, **values: str) -> str:
 def _key_id(public_key: bytes) -> str:
     """Return the stable identifier used by the manifest signature envelope."""
     return f"ed25519-{hashlib.sha256(public_key).hexdigest()[:16]}"
+
+
+def _private_key_for_path(path: Path) -> Ed25519PrivateKey:
+    """Load an unencrypted Ed25519 private key from a PEM file."""
+    private_key = serialization.load_pem_private_key(
+        path.read_bytes(),
+        password=None,
+    )
+    if not isinstance(private_key, Ed25519PrivateKey):
+        raise TypeError(f"the private key is not Ed25519: {path}")
+    return private_key
+
+
+def _public_key_bytes(private_key: Ed25519PrivateKey) -> bytes:
+    """Return the raw Ed25519 public key matching a private key."""
+    return private_key.public_key().public_bytes(
+        serialization.Encoding.Raw,
+        serialization.PublicFormat.Raw,
+    )
+
+
+def _load_root_pin_sources(
+    repository: Path,
+) -> tuple[Path, Path, str, str, bytes]:
+    """Read and compare the Python and launcher root-key trust anchors."""
+    python_path = repository / "celune" / "constants.py"
+    header_path = repository / "launcher" / "release_keys.h"
+    python_source = python_path.read_text(encoding="utf-8")
+    header_source = header_path.read_text(encoding="utf-8")
+    python_match = re.search(
+        r"(?m)^RELEASE_KEYRING_ROOT_PUBLIC_KEY_HEX = \(\r?\n"
+        r'    "([0-9a-fA-F]{64})"\r?\n\)',
+        python_source,
+    )
+    header_match = re.search(
+        r"(?ms)^static const unsigned char launcher_release_keyring_root\[32\] = \{\n"
+        r"(.*?)\n\};",
+        header_source,
+    )
+    if python_match is None or header_match is None:
+        raise ValueError("the release keyring root pin could not be read")
+
+    python_public_key = bytes.fromhex(python_match.group(1))
+    header_values = re.findall(r"0x([0-9a-fA-F]{2})", header_match.group(1))
+    if len(header_values) != 32:
+        raise ValueError("the launcher release keyring root pin is invalid")
+    header_public_key = bytes.fromhex("".join(header_values))
+    if python_public_key != header_public_key:
+        raise ValueError("the Python and launcher release root pins differ")
+    return (
+        python_path,
+        header_path,
+        python_source,
+        header_source,
+        python_public_key,
+    )
+
+
+def _render_root_pin_sources(
+    python_source: str,
+    header_source: str,
+    public_key: bytes,
+) -> tuple[str, str]:
+    """Update both verifier source files to trust the same root public key."""
+    public_key_hex = public_key.hex()
+    python_source, python_count = re.subn(
+        r"(?m)^RELEASE_KEYRING_ROOT_PUBLIC_KEY_HEX = \(\r?\n"
+        r'    "[0-9a-fA-F]{64}"\r?\n\)',
+        f'RELEASE_KEYRING_ROOT_PUBLIC_KEY_HEX = (\n    "{public_key_hex}"\n)',
+        python_source,
+        count=1,
+    )
+    if python_count != 1:
+        raise ValueError("the Python release root pin could not be updated")
+
+    formatted_bytes = (
+        ",\n".join(
+            "    "
+            + ", ".join(f"0x{value:02x}" for value in public_key[offset : offset + 8])
+            for offset in range(0, len(public_key), 8)
+        )
+        + ","
+    )
+    header_source, header_count = re.subn(
+        r"(?ms)^static const unsigned char launcher_release_keyring_root\[32\] = \{\n"
+        r".*?\n\};",
+        "static const unsigned char launcher_release_keyring_root[32] = {\n"
+        + formatted_bytes
+        + "\n};",
+        header_source,
+        count=1,
+    )
+    if header_count != 1:
+        raise ValueError("the launcher release root pin could not be updated")
+    return python_source, header_source
 
 
 def _load_trusted_keys(path: Path) -> dict[str, str]:
@@ -151,66 +255,159 @@ def _write_private_key(path: Path, private_key_pem: bytes) -> None:
         raise
 
 
-def make_signing_key(
-    output_path: Path,
-    project_root: Optional[Path] = None,
-) -> str:
-    """Create a protected Ed25519 key and add its public key to the catalog.
-
-    Args:
-        output_path: Destination for the private PEM file; existing files are never replaced.
-        project_root: Checkout whose Python and native trust registries are updated.
-
-    Returns:
-        str: Stable identifier for the new public key.
-
-    Raises:
-        FileExistsError: if the private-key destination already exists.
-        OSError: if a key or trust registry cannot be written.
-        ValueError: if the catalog is invalid or the key directory is unsafe.
-    """
-    repository = project_root or _repository_root()
-    key_catalog = repository / "celune" / "release_keyring.json"
-    requested_destination = output_path.expanduser().absolute()
+def _validated_destination(path: Path, repository: Path, role: str) -> Path:
+    """Resolve a private-key destination and keep it outside the checkout."""
+    requested_destination = path.expanduser().absolute()
     if requested_destination.is_symlink():
-        raise ValueError("the signing key destination cannot be a symbolic link")
+        raise ValueError(f"the {role} destination cannot be a symbolic link")
     destination = requested_destination.resolve(strict=False)
     try:
         destination.relative_to(repository.resolve())
     except ValueError:
-        pass
+        return destination
+    raise ValueError(f"the {role} must be stored outside the repository")
+
+
+def make_signing_key(
+    output_path: Path,
+    project_root: Optional[Path] = None,
+    root_key_path: Optional[Path] = None,
+    trust_existing_root: bool = False,
+) -> str:
+    """Prepare protected release and root keys and synchronize their trust data.
+
+    Args:
+        output_path: Release private-key path; an existing Ed25519 key is reused.
+        project_root: Checkout whose release catalog and verifier pins are updated.
+        root_key_path: Root private-key path; a missing root is generated.
+        trust_existing_root: Update verifier pins to trust an existing root key.
+
+    Returns:
+        str: Stable identifier for the release public key.
+
+    Raises:
+        OSError: if a key or trust registry cannot be read or written.
+        TypeError: if an existing private key is not Ed25519.
+        ValueError: if key paths, trust pins, or the key catalog are invalid.
+    """
+    repository = project_root or _repository_root()
+    key_catalog = repository / "celune" / "release_keyring.json"
+    release_destination = _validated_destination(
+        output_path,
+        repository,
+        "release signing key",
+    )
+    root_destination = _validated_destination(
+        root_key_path or default_root_key_path(),
+        repository,
+        "keyring root key",
+    )
+    if release_destination == root_destination:
+        raise ValueError(
+            "the release signing key and keyring root must be separate files"
+        )
+    if trust_existing_root and not root_destination.exists():
+        raise FileNotFoundError(root_destination)
+
+    (
+        python_pin_path,
+        header_pin_path,
+        python_pin_source,
+        header_pin_source,
+        pinned_root_public_key,
+    ) = _load_root_pin_sources(repository)
+    root_is_new = not root_destination.exists()
+    if root_is_new:
+        root_private_key = Ed25519PrivateKey.generate()
     else:
-        raise ValueError("the signing key must be stored outside the repository")
-    if destination.exists():
-        raise FileExistsError(destination)
+        root_private_key = _private_key_for_path(root_destination)
+    root_public_key = _public_key_bytes(root_private_key)
+    if root_public_key != pinned_root_public_key and not (
+        root_is_new or trust_existing_root
+    ):
+        raise ValueError(
+            "the existing root key differs from the pinned verifier key; "
+            "use --trust-existing-root to update the trust anchor"
+        )
+    release_is_new = not release_destination.exists()
+    if release_is_new:
+        release_private_key = Ed25519PrivateKey.generate()
+    else:
+        release_private_key = _private_key_for_path(release_destination)
+    release_public_key = _public_key_bytes(release_private_key)
+    if root_public_key == release_public_key:
+        raise ValueError(
+            "the release signing key and keyring root must be different keys"
+        )
 
     trusted_keys = _load_trusted_keys(key_catalog)
-    original_key_catalog = key_catalog.read_bytes()
+    root_key_id = _key_id(root_public_key)
+    release_key_id = _key_id(release_public_key)
+    trusted_keys[root_key_id] = root_public_key.hex()
+    trusted_keys[release_key_id] = release_public_key.hex()
+    if root_key_id == release_key_id and root_public_key != release_public_key:
+        raise ValueError("the release catalog key identifier is ambiguous")
+    if len(trusted_keys) > 128:
+        raise ValueError("the trusted release key catalog contains too many keys")
 
-    private_key = Ed25519PrivateKey.generate()
-    public_key = private_key.public_key().public_bytes(
-        serialization.Encoding.Raw,
-        serialization.PublicFormat.Raw,
+    python_pin_source, header_pin_source = _render_root_pin_sources(
+        python_pin_source,
+        header_pin_source,
+        root_public_key,
     )
-    identifier = _key_id(public_key)
-    if identifier in trusted_keys:
-        raise ValueError("the generated key identifier is already trusted")
-
-    trusted_keys[identifier] = public_key.hex()
-    private_key_pem = private_key.private_bytes(
-        serialization.Encoding.PEM,
-        serialization.PrivateFormat.PKCS8,
-        serialization.NoEncryption(),
-    )
-
-    _write_private_key(destination, private_key_pem)
+    original_sources = {
+        python_pin_path: python_pin_path.read_bytes(),
+        header_pin_path: header_pin_path.read_bytes(),
+        key_catalog: key_catalog.read_bytes(),
+    }
+    created_keys: list[Path] = []
     try:
+        if root_is_new:
+            root_private_pem = root_private_key.private_bytes(
+                serialization.Encoding.PEM,
+                serialization.PrivateFormat.PKCS8,
+                serialization.NoEncryption(),
+            )
+            _write_private_key(root_destination, root_private_pem)
+            created_keys.append(root_destination)
+        if release_is_new:
+            release_private_pem = release_private_key.private_bytes(
+                serialization.Encoding.PEM,
+                serialization.PrivateFormat.PKCS8,
+                serialization.NoEncryption(),
+            )
+            _write_private_key(release_destination, release_private_pem)
+            created_keys.append(release_destination)
+
+        _write_source_atomically(python_pin_path, python_pin_source)
+        _write_source_atomically(header_pin_path, header_pin_source)
         _write_source_atomically(key_catalog, _render_key_catalog(trusted_keys))
     except Exception:
-        _write_bytes_atomically(key_catalog, original_key_catalog)
-        destination.unlink(missing_ok=True)
+        for path, contents in original_sources.items():
+            _write_bytes_atomically(path, contents)
+        for path in created_keys:
+            path.unlink(missing_ok=True)
         raise
-    return identifier
+    return release_key_id
+
+
+def configure_signed_build(
+    project_root: Path,
+    signing_key_path: Path,
+    root_key_path: Path,
+) -> None:
+    """Configure the signed CMake preset with the prepared private keys."""
+    subprocess.run(
+        [
+            "cmake",
+            "--preset",
+            "signed",
+            f"-DCELUNE_RELEASE_SIGNING_KEY_FILE={signing_key_path.resolve()}",
+            f"-DCELUNE_RELEASE_ROOT_KEY_FILE={root_key_path.resolve()}",
+        ],
+        cwd=project_root,
+        check=True,
+    )
 
 
 def parse_args() -> argparse.Namespace:
@@ -224,14 +421,38 @@ def parse_args() -> argparse.Namespace:
         default=default_output_path(),
         help=_localized_string("release.signing_key_output_help"),
     )
+    parser.add_argument(
+        "--root-key",
+        type=Path,
+        default=default_root_key_path(),
+        help=_localized_string("release.signing_key_root_help"),
+    )
+    parser.add_argument(
+        "--trust-existing-root",
+        action="store_true",
+        help=_localized_string("release.signing_key_trust_root_help"),
+    )
+    parser.add_argument(
+        "--no-configure",
+        action="store_true",
+        help=_localized_string("release.signing_key_no_configure_help"),
+    )
     return parser.parse_args()
 
 
 def main() -> int:
-    """Create a signing key, register its public key, and report its location."""
+    """Prepare release keys, update trust data, and configure the signed preset."""
     arguments = parse_args()
+    repository = _repository_root()
+    signing_path = arguments.output.expanduser().absolute()
+    root_path = arguments.root_key.expanduser().absolute()
     try:
-        identifier = make_signing_key(arguments.output)
+        identifier = make_signing_key(
+            arguments.output,
+            repository,
+            arguments.root_key,
+            arguments.trust_existing_root,
+        )
     except (OSError, TypeError, ValueError, subprocess.SubprocessError) as error:
         print(
             _localized_string("release.signing_key_failed"),
@@ -240,14 +461,35 @@ def main() -> int:
         print(str(error), file=sys.stderr)
         return 1
 
+    signing_path = signing_path.resolve(strict=False)
+    root_path = root_path.resolve(strict=False)
     print(
         _localized_string(
-            "release.signing_key_created",
+            "release.signing_key_ready",
             key_id=identifier,
-            path=str(arguments.output.expanduser()),
+            path=str(signing_path),
         )
     )
-    print(_localized_string("release.signing_key_registered"))
+    print(
+        _localized_string(
+            "release.root_key_ready",
+            path=str(root_path),
+        )
+    )
+    if arguments.no_configure:
+        return 0
+
+    try:
+        configure_signed_build(repository, signing_path, root_path)
+    except (OSError, subprocess.SubprocessError) as error:
+        print(
+            _localized_string("release.signed_preset_failed"),
+            file=sys.stderr,
+        )
+        print(str(error), file=sys.stderr)
+        return 1
+
+    print(_localized_string("release.signed_preset_configured"))
     return 0
 
 
