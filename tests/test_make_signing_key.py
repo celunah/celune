@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 from cryptography.hazmat.primitives import serialization
 
+from scripts.append_release_keyring import _default_root_key_path
 from scripts.make_signing_key import default_output_path, make_signing_key
 
 
@@ -60,6 +61,11 @@ def test_default_key_path_uses_the_existing_celune_key_store(
     assert default_output_path() == (
         tmp_path / "Celune" / "keys" / "release-ed25519-private.pem"
     )
+
+
+def test_release_signing_and_keyring_root_defaults_are_separate() -> None:
+    """Keep the generated manifest key separate from the pinned keyring root."""
+    assert _default_root_key_path() != default_output_path()
 
 
 def test_key_creation_never_overwrites_an_existing_private_key(

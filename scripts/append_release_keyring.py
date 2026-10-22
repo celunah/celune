@@ -15,8 +15,8 @@ def _default_root_key_path() -> Path:
     """Return the protected path used for Celune's pinned keyring root."""
     local_app_data = os.environ.get("LOCALAPPDATA")
     if os.name == "nt" and local_app_data:
-        return Path(local_app_data) / "Celune" / "keys" / "release-ed25519-private.pem"
-    return Path.home() / ".celune" / "release-signing-key.pem"
+        return Path(local_app_data) / "Celune" / "keys" / "release-keyring-root.pem"
+    return Path.home() / ".celune" / "release-keyring-root.pem"
 
 
 def main() -> int:

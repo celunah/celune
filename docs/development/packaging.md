@@ -173,7 +173,7 @@ verifiers. The root private key is required to create the trailer. Previously
 published launchers keep their original key lists; releases that must remain
 verifiable by those launchers must use a key they already trust.
 
-Create a release key once from the checkout that will build the release:
+Create a release-signing key from the checkout that will build the release:
 
 ```powershell
 uv run python scripts\make_signing_key.py
@@ -194,19 +194,23 @@ signed package. The root private key signs the catalog trailer, so a launcher
 can authenticate newly catalogued release keys without embedding each key in
 its source.
 
-The signed preset uses the platform's default private-key path. On Windows,
-that is the `%LOCALAPPDATA%` path above. For another key location, pass it to
-`--output` and set `CELUNE_RELEASE_SIGNING_KEY_FILE` to the same path before
-configuring. `CELUNE_REQUIRE_RELEASE_SIGNATURE=1` also requires signing when
-using the unsigned preset. CMake cache variables
-`CELUNE_RELEASE_SIGNING_KEY_FILE`, `CELUNE_RELEASE_ROOT_KEY_FILE`, and
-`CELUNE_REQUIRE_RELEASE_SIGNATURE` provide equivalent configuration options.
-`CELUNE_RELEASE_ROOT_KEY_FILE` can select a separately stored root key; by
-default it uses the platform's standard key path above:
+The generated release key signs manifests. It is separate from the root key,
+which must match the public key pinned in the C and Python verifier sources.
+Provision that root private key securely; `make_signing_key.py` does not create
+it. The signed preset looks for it at
+`%LOCALAPPDATA%\Celune\keys\release-keyring-root.pem` on Windows or
+`~/.celune/release-keyring-root.pem` on Linux. Signed builds fail when this
+separate root key is unavailable. The root and release key paths must resolve
+to different files. `CELUNE_RELEASE_ROOT_KEY_FILE` selects the root key path,
+while `CELUNE_RELEASE_SIGNING_KEY_FILE` selects the generated release key.
+`CELUNE_REQUIRE_RELEASE_SIGNATURE=1` also requires signing with the
+unsigned preset. These CMake cache variables and their environment variables
+provide equivalent configuration options:
 
 ```powershell
 uv run python scripts\make_signing_key.py --output "C:\path\to\release-ed25519-private.pem"
 $env:CELUNE_RELEASE_SIGNING_KEY_FILE = "C:\path\to\release-ed25519-private.pem"
+$env:CELUNE_RELEASE_ROOT_KEY_FILE = "C:\secure\release-keyring-root.pem"
 cmake --preset signed
 cmake --build --preset signed
 ```
@@ -214,6 +218,7 @@ cmake --build --preset signed
 ```bash
 uv run python scripts/make_signing_key.py --output "$HOME/keys/release-ed25519-private.pem"
 export CELUNE_RELEASE_SIGNING_KEY_FILE="$HOME/keys/release-ed25519-private.pem"
+export CELUNE_RELEASE_ROOT_KEY_FILE="$HOME/secure/release-keyring-root.pem"
 cmake --preset signed
 cmake --build --preset signed
 ```
