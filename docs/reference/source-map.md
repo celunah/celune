@@ -9,7 +9,16 @@ own. It is the index to use when a feature needs a precise code entrypoint.
 | --- | --- |
 | `celune/__init__.py` | Lazy package exports and build metadata. |
 | `celune/exceptions.py` | Canonical Celune-owned exception hierarchy and structured failure metadata. |
-| `celune/celune.py` | Singleton engine, lifecycle, backend/voice switching, Persona, agent, and public calls. |
+| `celune/celune.py` | Concrete singleton façade, state properties, constructor, and declared public calls. |
+| `celune/core/lifecycle.py` | Engine construction, shutdown, cleanup, worker startup, Persona lifecycle, and callbacks. |
+| `celune/core/loading.py` | Runtime loading, warmup, normalizer loading, and normalization. |
+| `celune/core/reload.py` | Backend/character reload transactions, rollback, and language reload coordination. |
+| `celune/core/voice.py` | Voice, backend, and CEVOICE changes plus extension setup. |
+| `celune/core/sleep.py` | Sleep/wake orchestration and runtime restoration. |
+| `celune/core/speech.py` | Engine-level speech, audio submission, and SFX entry points coordinated with the pipeline. |
+| `celune/core/conversation.py` | Persona request orchestration, response delivery, and the conversation worker. |
+| `celune/core/agent.py` | Engine-specific agent coordination and result delivery. |
+| `celune/core/callbacks.py` | State, callback, status, and event publication helpers. |
 | `celune/entrypoint.py` | CLI dispatch, startup, doctor, config commands, updates, and headless/interactive handoff. |
 | `celune/updater.py` | Signed compiled updates, Git updates, and launcher handoff. |
 | `celune/signature.py` | Ed25519 manifest verification and appended keyring handling. |
@@ -24,11 +33,17 @@ own. It is the index to use when a feature needs a precise code entrypoint.
 
 | Path | Responsibility |
 | --- | --- |
-| `celune/pipeline.py` | Text segmentation, generation queue, smart buffer, playback worker, SFX, cancellation, and audio input routing. |
+| `celune/pipeline/submission.py` | Speech/audio request submission, prepared audio, singing setup, and SFX requests. |
+| `celune/pipeline/generation.py` | Generation worker, segmentation, synthesis, and generated chunk handling. |
+| `celune/pipeline/buffering.py` | Pipeline locks, bounded buffering, contention policy, and release coordination. |
+| `celune/pipeline/playback.py` | Playback workers, stream lifecycle, cancellation, and signal playback. |
+| `celune/pipeline/captions.py` | Caption alignment, playback-source tracking, and completion state. |
+| `celune/pipeline/output.py` | Saved speech/SFX output and output metadata helpers. |
+| `celune/pipeline/timing.py` | Shared speech-pipeline timing constants. |
 | `celune/audio/server.py` | Host audio-server recovery. |
 | `celune/audio/resampling.py` | Sample-rate conversion at boundaries. |
 | `celune/audio/dsp.py` | Pitch/speed support, readiness signals, silence detection, and streaming reverb. |
-| `celune/vc.py` | VC normalization, RMS/VAD, live conversion, and diagnostic capture. |
+| `celune/vc.py` | Stable VC helper entrypoints for normalization, RMS/VAD, live conversion, and diagnostic capture. |
 | `celune/modeling.py` | CeluneNorm loading and quantized autoregressive cache helpers. |
 | `celune/chroma.py` | OpenRGB connection, audio reactivity, sleep/wake, and fatal glow state. |
 | `celune/theme/colors.py` | Built-in themes and pack color integration. |
@@ -64,6 +79,7 @@ own. It is the index to use when a feature needs a precise code entrypoint.
 | `celune/persona/runtime.py` | Model loading, quantization, generation, and context capacity. |
 | `celune/persona/cache.py` | Device-aware INT8/FP8 Persona KV-cache storage and dynamic-cache fallback boundary. |
 | `celune/persona/impl.py` | Configured Persona client and engine integration. |
+| `celune/persona/conversation.py` | Persona prompt construction, context, history, memory extraction, and request helpers. |
 | `celune/persona/asr.py` | Whisper transcription, timestamps, and speech-input lifecycle. |
 | `celune/persona/capabilities.py` | Text/vision/upload/emotion capability detection. |
 | `celune/persona/memory.py` | Character-scoped JSON memory, semantic retrieval, fallback matching, and filtering. |
@@ -77,6 +93,7 @@ own. It is the index to use when a feature needs a precise code entrypoint.
 | --- | --- |
 | `celune/agent/runtime.py` | Task state, iteration accounting, approvals, choices, cancellation, and execution. |
 | `celune/agent/routing.py` | Input/approval/choice/cancellation routing. |
+| `celune/core/agent.py` | Core-owned coordination between routed requests, engine state, tools, and speech delivery. |
 | `celune/agent/tools.py` | Typed built-in and optional local-management tool catalog. |
 | `celune/agent/needle/__init__.py` | Public Needle model, checkpoint, and tool-selection package surface. |
 | `celune/agent/needle/impl.py` | Registered-tool selection and schema validation. |
@@ -88,9 +105,14 @@ own. It is the index to use when a feature needs a precise code entrypoint.
 | `celune/extensions/manager.py` | Discovery, registration, invocation, and teardown. |
 | `celune/extensions/events.py` | Event names, subscription, and dispatch. |
 | `celune/dataclasses/events.py` | Event payload dataclasses. |
-| `celune/api.py` | FastAPI models, endpoints, WebSocket tasks, and WebUI mount. |
+| `celune/api.py` | Documented API entrypoints, FastAPI application wiring, endpoints, and WebUI mount. |
+| `celune/server/session.py` | Shared typed API/WebUI session state. |
+| `celune/server/auth.py` | API authentication and rate limiting. |
+| `celune/server/jobs.py` | Speech jobs, task subscriptions, and transport audio helpers. |
+| `celune/webui/` | Gradio presentation, actions, and command handlers. |
 | `celune/ui/commands.py` | Slash-command parser and command behavior. |
-| `celune/ui/app.py` | Textual UI, loading, captions, recording, themes, and shutdown. |
+| `celune/ui/app.py` | Textual application composition and presentation hooks. |
+| `celune/ui/capture.py`, `runtime.py`, `interaction.py`, `theme.py` | Textual recording, startup/runtime, interaction, and theme workflows. |
 | `celune/ui/headless.py` | Non-interactive log/status surface. |
 
 ## Scripts and bundled data
@@ -111,6 +133,7 @@ own. It is the index to use when a feature needs a precise code entrypoint.
 | `celune/lang/` | Localized runtime strings. |
 | `voices/` | Bundled CEVOICE packs. |
 
-The tests mirror these boundaries. `tests/test_cedts_*`, `tests/test_cevoice_*`,
-`tests/test_agent_*`, `tests/test_persona_*`, API tests, UI-command tests, and
-pipeline tests are useful starting points when changing one subsystem.
+The tests mirror these boundaries: `tests/core/`, `tests/pipeline/`,
+`tests/persona/`, `tests/agent/`, `tests/agent/needle/`, `tests/backends/`,
+`tests/server/`, and `tests/ui/`. Standalone CEVOICE and CESN tests remain under
+`tests/` because those packages are cohesive modules with their own contracts.

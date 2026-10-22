@@ -25,6 +25,38 @@ events, model readiness, and shutdown. Persona and agent requests enter the
 same speech pipeline used by direct TTS. Voice conversion enters the same
 playback path through an audio-input request.
 
+## Ownership and dependency direction
+
+`celune.celune.Celune` is the concrete public façade. It owns singleton
+identity, construction, state properties, and explicitly declared public
+methods. Those methods delegate to `celune.core`, which coordinates startup,
+shutdown, loading, reload transactions, voice changes, sleep and wake,
+callbacks, speech requests, Persona conversation, and engine-specific agent
+workflows. Core modules keep their private helpers with the workflow that owns
+them instead of installing them onto `Celune` dynamically.
+
+Feature packages own their implementations. `celune.pipeline` owns request
+submission, generation, buffering, playback, caption tracking, and output;
+`celune.persona` owns prompt construction, inference, history, memory, and
+emotion; `celune.agent` owns routing, tools, permissions, Needle, and task
+runtime. Core coordinates those packages without making them import the
+concrete façade at runtime. Narrow contracts in `celune.typing` and explicit
+callbacks carry engine operations such as language reload across that boundary.
+`celune.core.speech` owns the engine-level speech entry points and delegates
+request preparation and playback work to `celune.pipeline`.
+
+`celune.api` owns documented API entrypoints and FastAPI wiring. Shared
+transport state, authentication, jobs, subscriptions, and transport audio
+helpers belong to `celune.server`. Textual and Gradio presentation stay in
+`celune.ui` and `celune.webui`; WebUI builders receive the shared server session
+instead of importing API globals. `CeluneUI` composes typed hooks from its
+runtime, recording, and interaction modules. Frontend startup remains lazy so
+theme registration and the loading screen precede core and feature imports.
+
+The 100 KB Python source recommendation is a review signal. Group modules by
+cohesive subsystem ownership; retain a substantial standalone module or a
+larger cohesive file when splitting it would create artificial boundaries.
+
 ## Startup and lazy imports
 
 `celune.__init__` configures cache defaults and exposes lazy root symbols. A
@@ -83,6 +115,10 @@ status and diagnostic text stays in the loading screen or main log.
    reserve in audio frames, so a drained output queue reaches an exact zero for
    completion and idle transitions.
 8. The final 48 kHz stereo FLAC is saved when requested.
+
+Submission and prepared-audio requests share the same generation, buffering,
+playback, caption, and output owners. Contention policy stays with buffering,
+and timing constants stay inside the pipeline package.
 
 Cancellation travels through the same queue and worker boundary. It does not
 create a second “stop” path that could leave a backend generation alive.
