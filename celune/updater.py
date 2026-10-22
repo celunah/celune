@@ -12,30 +12,30 @@ import time
 import ctypes
 import locale
 import shutil
-import subprocess
-import tempfile
 import hashlib
 import zipfile
+import tempfile
+import subprocess
 import urllib.request
 from dataclasses import dataclass
-from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Optional, Union
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 from git.exc import GitError
 
-from . import __version__
-from .i18n import string
-from .exceptions import UpdateError
-from .paths import project_root, running_compiled
-from .constants import APP_NAME, CELUNE_UA
-from .typing.common import JSONSerializable
-from .signature import SIGNATURE_NAME, load_signature, verify_manifest_signature
 from .vcs import (
     UPSTREAM_REPOSITORY_URL,
     is_git_checkout,
     open_repository,
     git_checkout_hint,
 )
+from .i18n import string
+from . import __version__
+from .exceptions import UpdateError
+from .constants import APP_NAME, CELUNE_UA
+from .typing.common import JSONSerializable
+from .paths import project_root, running_compiled
+from .signature import SIGNATURE_NAME, load_signature, verify_manifest_signature
 
 REMOTE_URL = f"{UPSTREAM_REPOSITORY_URL}.git"
 RELEASES_API_URL = "https://api.github.com/repos/celunah/celune/releases?per_page=100"
@@ -707,6 +707,71 @@ def _extract_artifact_root(zip_path: Path, destination: Path) -> Path:
     raise UpdateError(string("cli.update_missing_metadata"))
 
 
+def _validate_extracted_update(
+    extraction_root: Path,
+    root: Path,
+    manifest: BundleManifest,
+) -> None:
+    """Verify extracted files match the authenticated update manifest."""
+    extraction_root = extraction_root.resolve()
+    root = root.resolve()
+    manifest_path = root / UPDATE_MANIFEST_NAME
+    signature_path = root / SIGNATURE_NAME
+    if (
+        manifest_path.is_symlink()
+        or signature_path.is_symlink()
+        or not manifest_path.is_file()
+        or not signature_path.is_file()
+    ):
+        raise UpdateError(string("cli.update_invalid_release"))
+
+    extracted_manifest = _parse_bundle_manifest_data(
+        manifest_path.read_bytes(),
+        signature_path.read_bytes(),
+        require_signature=True,
+    )
+    if extracted_manifest != manifest:
+        raise UpdateError(string("cli.update_invalid_release"))
+
+    for path in extraction_root.rglob("*"):
+        if path.is_symlink():
+            raise UpdateError(string("cli.update_invalid_release"))
+        if path.is_dir():
+            if path.resolve() != root and path.resolve() not in root.parents:
+                raise UpdateError(string("cli.update_invalid_release"))
+        elif path.is_file():
+            if path.parent.resolve() != root:
+                raise UpdateError(string("cli.update_invalid_release"))
+        else:
+            raise UpdateError(string("cli.update_invalid_release"))
+
+    reserved_names = {UPDATE_MANIFEST_NAME, SIGNATURE_NAME}
+    expected_names = set(manifest.files)
+    for filename, digest in manifest.files.items():
+        if (
+            not filename
+            or PurePosixPath(filename).name != filename
+            or PureWindowsPath(filename).name != filename
+            or filename in reserved_names
+            or re.fullmatch(r"[0-9a-f]{64}", digest) is None
+        ):
+            raise UpdateError(string("cli.update_invalid_release"))
+
+    actual_names: set[str] = set()
+    for path in root.iterdir():
+        if path.is_symlink() or not path.is_file():
+            raise UpdateError(string("cli.update_invalid_release"))
+        actual_names.add(path.name)
+
+    if actual_names != expected_names | reserved_names:
+        raise UpdateError(string("cli.update_invalid_release"))
+    if any(
+        _sha256_file(root / filename) != digest
+        for filename, digest in manifest.files.items()
+    ):
+        raise UpdateError(string("cli.update_invalid_release"))
+
+
 def _validate_zip_member(member: zipfile.ZipInfo, destination: Path) -> None:
     """Reject ZIP members that could escape the extraction destination."""
     member_name = member.filename
@@ -780,6 +845,15 @@ def _apply_compiled_update(install_dir: Optional[Path] = None) -> None:
             extracted_root = _extract_artifact_root(zip_path, temp_root / "artifact")
         except (OSError, zipfile.BadZipFile, UpdateError) as exc:
             raise UpdateError(string("cli.update_unpack_failed")) from exc
+
+        try:
+            _validate_extracted_update(
+                temp_root / "artifact",
+                extracted_root,
+                release_manifest,
+            )
+        except (OSError, UpdateError) as exc:
+            raise UpdateError(string("cli.update_invalid_release")) from exc
 
         for source in extracted_root.iterdir():
             _replace_path(source, bundle_dir / source.name)

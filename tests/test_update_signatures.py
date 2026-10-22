@@ -3,8 +3,9 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
+import hashlib
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -141,6 +142,124 @@ def test_manifest_parser_requires_valid_signature(
         )
         is None
     )
+
+
+@pytest.mark.parametrize(
+    ("payload_files", "manifest_files"),
+    [
+        (
+            {"celune-bin": b"modified runtime"},
+            {"celune-bin": hashlib.sha256(b"expected runtime").hexdigest()},
+        ),
+        (
+            {"celune-bin": b"expected runtime"},
+            {
+                "celune-bin": hashlib.sha256(b"expected runtime").hexdigest(),
+                "celune": hashlib.sha256(b"missing launcher").hexdigest(),
+            },
+        ),
+        (
+            {
+                "celune-bin": b"expected runtime",
+                "unlisted.bin": b"unlisted payload",
+            },
+            {"celune-bin": hashlib.sha256(b"expected runtime").hexdigest()},
+        ),
+    ],
+)
+def test_compiled_update_rejects_unverified_archive_without_replacing_install(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    payload_files: dict[str, bytes],
+    manifest_files: dict[str, str],
+) -> None:
+    """Reject changed, missing, or unlisted ZIP payloads before installation."""
+    private_key = _trusted_test_key(monkeypatch)
+    manifest_data = _manifest_data(manifest_files)
+    archive_path = tmp_path / "release.zip"
+    with zipfile.ZipFile(archive_path, "w") as archive:
+        archive.writestr(updater.UPDATE_MANIFEST_NAME, manifest_data)
+        archive.writestr(
+            signature.SIGNATURE_NAME,
+            _signature_data(manifest_data, private_key),
+        )
+        for filename, contents in payload_files.items():
+            archive.writestr(filename, contents)
+
+    install_dir = tmp_path / "install"
+    install_dir.mkdir()
+    for filename in ("celune", "celune-bin", "existing.data"):
+        (install_dir / filename).write_bytes(f"installed {filename}".encode())
+    before = {path.name: path.read_bytes() for path in install_dir.iterdir()}
+
+    release = updater.ReleaseInfo(
+        tag="v5.1.0",
+        version="5.1.0",
+        revision="0123456789abcdef",
+        asset_url="https://example.invalid/release.zip",
+    )
+    monkeypatch.setattr(updater, "_get_latest_release", lambda: release)
+    monkeypatch.setattr(
+        updater,
+        "_download_release_zip",
+        lambda _release, destination: destination.write_bytes(
+            archive_path.read_bytes()
+        ),
+    )
+
+    with pytest.raises(UpdateError):
+        updater._apply_compiled_update(install_dir)
+
+    assert {path.name: path.read_bytes() for path in install_dir.iterdir()} == before
+
+
+def test_compiled_update_installs_matching_signed_archive(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Install a signed archive only when every payload digest matches."""
+    private_key = _trusted_test_key(monkeypatch)
+    payload_files = {
+        "celune": b"launcher payload",
+        "celune-bin": b"runtime payload",
+    }
+    manifest_files = {
+        filename: hashlib.sha256(contents).hexdigest()
+        for filename, contents in payload_files.items()
+    }
+    manifest_data = _manifest_data(manifest_files)
+    archive_path = tmp_path / "release.zip"
+    with zipfile.ZipFile(archive_path, "w") as archive:
+        archive.writestr(updater.UPDATE_MANIFEST_NAME, manifest_data)
+        archive.writestr(
+            signature.SIGNATURE_NAME,
+            _signature_data(manifest_data, private_key),
+        )
+        for filename, contents in payload_files.items():
+            archive.writestr(filename, contents)
+
+    install_dir = tmp_path / "install"
+    install_dir.mkdir()
+    release = updater.ReleaseInfo(
+        tag="v5.1.0",
+        version="5.1.0",
+        revision="0123456789abcdef",
+        asset_url="https://example.invalid/release.zip",
+    )
+    monkeypatch.setattr(updater, "_get_latest_release", lambda: release)
+    monkeypatch.setattr(
+        updater,
+        "_download_release_zip",
+        lambda _release, destination: destination.write_bytes(
+            archive_path.read_bytes()
+        ),
+    )
+
+    updater._apply_compiled_update(install_dir)
+
+    assert {
+        filename: (install_dir / filename).read_bytes() for filename in payload_files
+    } == payload_files
 
 
 def test_local_bundle_verification_detects_changed_files(
