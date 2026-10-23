@@ -88,3 +88,32 @@ def test_natural_f0_contour_applies_delayed_quantized_vibrato_to_one_note() -> N
     assert contour[50] == pytest.approx(note_frequency * 2 ** (20 / 1200))
     assert contour[100] == pytest.approx(note_frequency * 2 ** (-20 / 1200))
     assert contour[150:] == pytest.approx(np.full(150, note_frequency))
+
+
+def test_natural_f0_contour_applies_zero_delay_vibrato_from_note_onset() -> None:
+    """Start vibrato at the first pitched frame when its delay is zero."""
+    events = (
+        _ScoreEvent("c4", 3, 2, False, vibrato=CESNVibrato(0, 1.0, 20)),
+        _ScoreEvent("c4", 3, 2, False),
+    )
+    note_frequency = 440.0 * 2 ** ((60 - 69) / 12)
+    extracted_f0 = np.full(300, note_frequency, dtype=np.float32)
+
+    contour = np.array(
+        [
+            float(value)
+            for value in _natural_f0_contour(
+                events,
+                ["1.5", "1.5"],
+                ["60", "60"],
+                extracted_f0,
+                sample_rate=100,
+                hop_size=1,
+                bpm=120,
+            ).split()
+        ]
+    )
+
+    assert contour[0] == pytest.approx(note_frequency)
+    assert contour[25] == pytest.approx(note_frequency * 2 ** (20 / 1200))
+    assert contour[150:] == pytest.approx(np.full(150, note_frequency))

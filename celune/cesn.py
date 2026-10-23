@@ -45,7 +45,9 @@ class CESNVibrato(NamedTuple):
 
     @property
     def delay_beats(self) -> Fraction:
-        """Return the vibrato delay as quarter-note beats."""
+        """Return the vibrato delay as beats, with zero starting immediately."""
+        if self.delay_note_type == 0:
+            return Fraction(0)
         return Fraction(4, self.delay_note_type)
 
 
@@ -1133,7 +1135,7 @@ def _parse_vibrato(value: str) -> CESNVibrato:
     if len(parts) != 3:
         raise CESNValidationError("CESN vibrato requires delay, speed, and cents")
     delay_text, speed_text, cents_text = parts
-    if delay_text not in {"1", "2", "4", "8", "16", "32"}:
+    if delay_text not in {"0", "1", "2", "4", "8", "16", "32"}:
         raise CESNValidationError("CESN vibrato delay must be a supported note value")
     try:
         speed_hz = float(speed_text)

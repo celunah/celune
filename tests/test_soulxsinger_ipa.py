@@ -371,7 +371,7 @@ def test_vibrato_survives_backend_score_serialization() -> None:
     """Preserve parsed vibrato settings in the prepared SoulX score payload."""
     backend = object.__new__(SoulXSinger)
     singer = CESNSinger("Test Singer", Path("singer.cevoice"))
-    notation = "[lang:en][v:8,5,60][c4:2][ɑ]Ah"
+    notation = "[lang:en][v:0,5,60][c4:2][ɑ]Ah"
 
     with mock.patch(
         "celune.backends.tts.soulxsinger.resolve_active_singer",
@@ -382,9 +382,9 @@ def test_vibrato_survives_backend_score_serialization() -> None:
     section = decode_score(score_text)[0]
     raw_event = json.loads(score_text)["sections"][0]["events"][0]
 
-    assert section.events[0].vibrato == CESNVibrato(8, 5.0, 60)
+    assert section.events[0].vibrato == CESNVibrato(0, 5.0, 60)
     assert raw_event["vibrato"] == {
-        "delay_note_type": 8,
+        "delay_note_type": 0,
         "speed_hz": 5.0,
         "cents": 60,
     }

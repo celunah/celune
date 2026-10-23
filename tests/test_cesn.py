@@ -62,6 +62,17 @@ def test_vibrato_targets_only_the_next_note_and_renders_round_trip() -> None:
     assert parse_cesn(rendered) == sections
 
 
+def test_zero_delay_vibrato_starts_immediately_and_renders_round_trip() -> None:
+    """Preserve zero as an immediate vibrato delay through parsing and rendering."""
+    sections = parse_cesn("[lang:en][v:0,5,40][c4:1][ɑ]Ah")
+    vibrato = sections[0].blocks[0].pairs[0].event.vibrato
+
+    assert vibrato == CESNVibrato(0, 5.0, 40)
+    assert vibrato is not None
+    assert vibrato.delay_beats == 0
+    assert parse_cesn(render_cesn(sections)) == sections
+
+
 def test_vibrato_tag_between_note_groups_targets_the_next_note() -> None:
     """Keep a vibrato tag after one note queued for the next pitched event."""
     sections = parse_cesn(
@@ -82,7 +93,6 @@ def test_vibrato_tag_between_note_groups_targets_the_next_note() -> None:
     "tag",
     (
         "[v:3,5,20]",
-        "[v:4,0,20]",
         "[v:4,-5,20]",
         "[v:4,nan,20]",
         "[v:4,5,10]",

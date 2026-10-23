@@ -568,7 +568,7 @@ def decode_score(text: str) -> tuple[_ScoreSection, ...]:
                     set(raw_vibrato) != {"delay_note_type", "speed_hz", "cents"}
                     or not isinstance(delay_note_type, int)
                     or isinstance(delay_note_type, bool)
-                    or delay_note_type not in {1, 2, 4, 8, 16, 32}
+                    or delay_note_type not in {0, 1, 2, 4, 8, 16, 32}
                     or not isinstance(speed_hz, (int, float))
                     or isinstance(speed_hz, bool)
                     or not math.isfinite(speed_hz)

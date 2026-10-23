@@ -111,8 +111,9 @@ by a sustained vowel.
 
 Use `[v:<delay-note-type>,<speed-hz>,<cents>]` before a pitched note to add a
 sine-wave vibrato to that note only. The delay uses a CESN note value, speed is
-in hertz, and depth is 20, 40, 60, or 80 cents. The tag always looks forward to
-the next pitched event, so a tag before a note list applies to its first note.
+in hertz, and depth is 20, 40, 60, or 80 cents. Use `0` for vibrato from the
+note onset. The tag always looks forward to the next pitched event, so a tag
+before a note list applies to its first note.
 
 ```text
 [bpm:120,key:c,scale:major][lang:en]
