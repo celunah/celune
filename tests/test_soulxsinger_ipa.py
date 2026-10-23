@@ -16,7 +16,6 @@ from celune.exceptions import (
     CESNValidationError,
     CESNBackendFormatError,
 )
-from celune.cesn import CESNSinger, format_cesn_error
 from celune.typing.common import JSON
 from celune.cevoice import CEVoiceLoader
 from celune.backends.tts.soulxsinger import (
@@ -25,6 +24,7 @@ from celune.backends.tts.soulxsinger import (
     _SoulXRuntime,
     pitch_to_midi,
 )
+from celune.cesn import CESNSinger, CESNVibrato, format_cesn_error
 
 
 @pytest.mark.parametrize(
@@ -107,7 +107,7 @@ def test_generate_stream_uses_or_rejects_explicit_ipa(
     singer_loader = SimpleNamespace(bundle=singer_bundle)
     with mock.patch.object(backend, "load_model", return_value=runtime):
         loaded_runtime = backend.load_model("soulxsinger")
-    notation = f"[lang:en][g3:4,a3:4][{ipa}]Quiet."
+    notation = f"[lang:en][v:16,5,20][g3:4,a3:4][{ipa}]Quiet."
 
     with (
         mock.patch(
@@ -189,6 +189,9 @@ def test_generate_stream_uses_or_rejects_explicit_ipa(
             assert target_f0[:100] == [0.0] * 100
             assert target_f0[100] == pytest.approx(196.0, abs=0.003)
             assert any(value == pytest.approx(220.0) for value in target_f0)
+            first_note_f0 = target_f0[100:125]
+            assert any(value > 196.0 for value in first_note_f0)
+            assert any(value < 196.0 for value in first_note_f0)
             assert target_f0[-1] == 0.0
         else:
             assert "f0" not in target_metadata
@@ -362,6 +365,29 @@ def test_slurred_cesn_keeps_distinct_syllables_as_note_events() -> None:
     legacy_section = decode_score(json.dumps(legacy_payload))[0]
     assert not any(event.slur_from_previous for event in legacy_section.events)
     assert legacy_section.display_text == ""
+
+
+def test_vibrato_survives_backend_score_serialization() -> None:
+    """Preserve parsed vibrato settings in the prepared SoulX score payload."""
+    backend = object.__new__(SoulXSinger)
+    singer = CESNSinger("Test Singer", Path("singer.cevoice"))
+    notation = "[lang:en][v:8,5,60][c4:2][ɑ]Ah"
+
+    with mock.patch(
+        "celune.backends.tts.soulxsinger.resolve_active_singer",
+        return_value=singer,
+    ):
+        score_text = backend.cesn_to_model(notation)
+
+    section = decode_score(score_text)[0]
+    raw_event = json.loads(score_text)["sections"][0]["events"][0]
+
+    assert section.events[0].vibrato == CESNVibrato(8, 5.0, 60)
+    assert raw_event["vibrato"] == {
+        "delay_note_type": 8,
+        "speed_hz": 5.0,
+        "cents": 60,
+    }
 
 
 def test_slurred_repeated_phones_use_soulx_continuation_type() -> None:

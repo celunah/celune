@@ -2,12 +2,13 @@
 """Parse and render section-based Celune Singing Notation."""
 
 import re
+import math
 import warnings
 import unicodedata
 from pathlib import Path
 from fractions import Fraction
 from collections.abc import Callable
-from dataclasses import field, dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Union, Optional, NamedTuple, cast
 
 from iso639 import Lang, exceptions
@@ -35,6 +36,19 @@ class CESNTuplet(NamedTuple):
     normal_count: int
 
 
+class CESNVibrato(NamedTuple):
+    """One note-local vibrato depth, speed, and note-value delay."""
+
+    delay_note_type: int
+    speed_hz: float
+    cents: int
+
+    @property
+    def delay_beats(self) -> Fraction:
+        """Return the vibrato delay as quarter-note beats."""
+        return Fraction(4, self.delay_note_type)
+
+
 class CESNNoteEvent(NamedTuple):
     """A pitched note, duration, and optional tuplet timing."""
 
@@ -43,6 +57,7 @@ class CESNNoteEvent(NamedTuple):
     dotted: bool
     tuplet: Optional[CESNTuplet] = None
     tuplet_start: bool = False
+    vibrato: Optional[CESNVibrato] = None
 
     @property
     def duration_beats(self) -> Fraction:
@@ -192,6 +207,8 @@ def _parse_cesn(
     pending_note_span = (0, 1)
     pending_ipa_span: Optional[tuple[int, int]] = None
     pending_slur_span: Optional[tuple[int, int]] = None
+    pending_vibrato: Optional[CESNVibrato] = None
+    pending_vibrato_span: Optional[tuple[int, int]] = None
     active_tuplet_span: Optional[tuple[int, int]] = None
     pending_state: Optional[_CESNState] = None
     section_state: Optional[_CESNState] = None
@@ -450,7 +467,7 @@ def _parse_cesn(
             pending_has_no_lyrics
             and pending_has_pitched_notes
             and not separator
-            and directive not in {"slur", "tuplet"}
+            and directive not in {"slur", "tuplet", "v"}
         )
         is_xsampa_syllable_list = (
             pending_has_no_lyrics
@@ -461,7 +478,34 @@ def _parse_cesn(
         is_pronunciation_syllable_list = (
             is_raw_ipa_syllable_list or is_xsampa_syllable_list
         )
-        if not is_pronunciation_syllable_list:
+        is_note_event_tag = False
+        if separator and directive not in {
+            "bpm",
+            "lang",
+            "singer",
+            "slur",
+            "tuplet",
+            "slide",
+            "v",
+            "x-sampa",
+        }:
+            try:
+                _parse_note_events(tag)
+            except CESNValidationError:
+                pass
+            else:
+                is_note_event_tag = True
+        continues_note_group = (
+            is_note_event_tag
+            and pending_events is not None
+            and not "".join(pending_lyrics).strip()
+            and pending_ipa is None
+        )
+        if (
+            not is_pronunciation_syllable_list
+            and directive != "v"
+            and not continues_note_group
+        ):
             finish_pending_at(start, end, following_tag=tag)
 
         if separator and directive == "bpm":
@@ -551,6 +595,19 @@ def _parse_cesn(
             pending_slur_span = (start, end)
             continue
 
+        if directive == "v":
+            if not separator:
+                raise CESNValidationError(
+                    "CESN vibrato requires delay, speed, and cents"
+                )
+            if pending_vibrato is not None:
+                raise CESNValidationError(
+                    "CESN vibrato must target a different following note"
+                )
+            pending_vibrato = _parse_vibrato(argument)
+            pending_vibrato_span = (start, end)
+            continue
+
         if directive == "tuplet":
             if not separator:
                 raise CESNValidationError("CESN tuplet requires an actual,normal ratio")
@@ -614,11 +671,24 @@ def _parse_cesn(
                 pronunciation_start + nucleus_offset,
                 pronunciation_start + len(pronunciation),
             )
-            pending_events = apply_tuplet(slide_events)
-            pending_event_spans = _note_event_source_spans(
+            slide_events = apply_tuplet(slide_events)
+            slide_spans = _note_event_source_spans(
                 note_source,
                 note_source_start,
             )
+            first_slide_event = slide_events[0]
+            if pending_vibrato is not None and isinstance(
+                first_slide_event,
+                CESNNoteEvent,
+            ):
+                slide_events = (
+                    first_slide_event._replace(vibrato=pending_vibrato),
+                    *slide_events[1:],
+                )
+                pending_vibrato = None
+                pending_vibrato_span = None
+            pending_events = slide_events
+            pending_event_spans = slide_spans
             pending_ipa = (first_ipa[0],) + (vowel_ipa[0],) * (len(slide_events) - 1)
             pending_ipa_spans = (pronunciation_span,) + (vowel_span,) * (
                 len(slide_events) - 1
@@ -634,12 +704,27 @@ def _parse_cesn(
         events = _parse_note_events(tag)
         if not events:
             raise CESNValidationError("CESN note list cannot be empty")
-        pending_event_spans = _note_event_source_spans(tag, tag_content_start)
         events = apply_tuplet(events)
-        pending_events = events
-        pending_lyrics = []
-        pending_state = state
-        pending_note_span = (start, end)
+        event_spans = _note_event_source_spans(tag, tag_content_start)
+        if pending_vibrato is not None:
+            for vibrato_index, event in enumerate(events):
+                if not isinstance(event, CESNNoteEvent):
+                    continue
+                event_list = list(events)
+                event_list[vibrato_index] = event._replace(vibrato=pending_vibrato)
+                events = tuple(event_list)
+                pending_vibrato = None
+                pending_vibrato_span = None
+                break
+        if pending_events is None:
+            pending_events = events
+            pending_event_spans = event_spans
+            pending_lyrics = []
+            pending_state = state
+            pending_note_span = (start, end)
+        else:
+            pending_events = pending_events + events
+            pending_event_spans = pending_event_spans + event_spans
 
     finish_pending_at(location[0], location[1])
     if pending_ipa is not None:
@@ -651,6 +736,9 @@ def _parse_cesn(
     if active_tuplet is not None:
         location[:] = active_tuplet_span or location
         raise CESNValidationError(f"CESN tuplet is missing {tuplet_remaining} event(s)")
+    if pending_vibrato is not None:
+        location[:] = pending_vibrato_span or location
+        raise CESNValidationError("CESN vibrato tag must precede a pitched note")
     close_section()
     if not sections:
         raise CESNValidationError("CESN notation must contain at least one note list")
@@ -749,7 +837,25 @@ def render_cesn(sections: tuple[CESNSection, ...]) -> str:
             event_text = ",".join(
                 _format_event_contents(event) for event in note_events
             )
-            rendered.append(f"[{event_text}]")
+            vibrato_index = next(
+                (
+                    index
+                    for index, event in enumerate(note_events)
+                    if isinstance(event, CESNNoteEvent) and event.vibrato is not None
+                ),
+                None,
+            )
+            if vibrato_index is None:
+                rendered.append(f"[{event_text}]")
+            else:
+                for index, event in enumerate(note_events):
+                    if event.tuplet_start and index:
+                        raise CESNValidationError(
+                            "CESN tuplet must begin at the start of a note list"
+                        )
+                    if isinstance(event, CESNNoteEvent) and event.vibrato is not None:
+                        rendered.append(_format_vibrato_tag(event.vibrato))
+                    rendered.append(f"[{_format_event_contents(event)}]")
             if pairs:
                 if any(not pair.ipa for pair in pairs):
                     raise CESNValidationError(
@@ -1021,6 +1127,27 @@ def _parse_slur_count(value: str) -> int:
     return count
 
 
+def _parse_vibrato(value: str) -> CESNVibrato:
+    """Validate a vibrato's delay note value, frequency, and depth."""
+    parts = tuple(part.strip() for part in value.split(","))
+    if len(parts) != 3:
+        raise CESNValidationError("CESN vibrato requires delay, speed, and cents")
+    delay_text, speed_text, cents_text = parts
+    if delay_text not in {"1", "2", "4", "8", "16", "32"}:
+        raise CESNValidationError("CESN vibrato delay must be a supported note value")
+    try:
+        speed_hz = float(speed_text)
+    except ValueError as error:
+        raise CESNValidationError(
+            "CESN vibrato speed must be a positive frequency"
+        ) from error
+    if not math.isfinite(speed_hz) or speed_hz <= 0:
+        raise CESNValidationError("CESN vibrato speed must be a positive frequency")
+    if not cents_text.isdecimal() or int(cents_text) not in {20, 40, 60, 80}:
+        raise CESNValidationError("CESN vibrato depth must be 20, 40, 60, or 80 cents")
+    return CESNVibrato(int(delay_text), speed_hz, int(cents_text))
+
+
 def _parse_note_events(source: str) -> tuple[_CESNEvent, ...]:
     """Validate and parse a comma-separated list of notes and rests."""
     if not source.strip():
@@ -1089,6 +1216,12 @@ def _format_note_event(event: CESNNoteEvent) -> str:
     """Return the canonical textual representation of one pitched event."""
     dotted = "d" if event.dotted else ""
     return f"{event.pitch}:{event.note_type}{dotted}"
+
+
+def _format_vibrato_tag(vibrato: CESNVibrato) -> str:
+    """Render one canonical note-local vibrato directive."""
+    speed = repr(vibrato.speed_hz).removesuffix(".0")
+    return f"[v:{vibrato.delay_note_type},{speed},{vibrato.cents}]"
 
 
 def _format_rest_event(event: CESNRestEvent) -> str:

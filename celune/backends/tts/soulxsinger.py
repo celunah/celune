@@ -6,6 +6,7 @@ from __future__ import annotations
 import re
 import sys
 import json
+import math
 import time
 import shutil
 import tempfile
@@ -13,7 +14,7 @@ import importlib
 import unicodedata
 from pathlib import Path
 from types import ModuleType
-from dataclasses import field, dataclass
+from dataclasses import dataclass, field
 from typing import Union, Optional, Protocol, cast
 from collections.abc import Mapping, Callable, Iterator
 
@@ -22,6 +23,7 @@ import numpy as np
 from huggingface_hub import snapshot_download
 
 from ...cesn import (
+    CESNVibrato,
     parse_cesn,
     CESNSection,
     CESNNotePair,
@@ -207,6 +209,7 @@ class _ScoreEvent:
     rest: bool
     ipa: Optional[str] = None
     slur_from_previous: bool = False
+    vibrato: Optional[CESNVibrato] = None
     note_source_start: Optional[int] = None
     note_source_end: Optional[int] = None
     ipa_source_start: Optional[int] = None
@@ -379,6 +382,7 @@ def _score_event(
             rest=False,
             ipa=event.ipa,
             slur_from_previous=event.slur_from_previous,
+            vibrato=event.event.vibrato,
             note_source_start=(note_source_span[0] if note_source_span else None),
             note_source_end=(note_source_span[1] if note_source_span else None),
             ipa_source_start=(ipa_source_span[0] if ipa_source_span else None),
@@ -460,6 +464,17 @@ def _score_to_dict(section: _ScoreSection) -> dict[str, object]:
                 "slur_from_previous": event.slur_from_previous,
                 **(
                     {
+                        "vibrato": {
+                            "delay_note_type": event.vibrato.delay_note_type,
+                            "speed_hz": event.vibrato.speed_hz,
+                            "cents": event.vibrato.cents,
+                        }
+                    }
+                    if event.vibrato is not None
+                    else {}
+                ),
+                **(
+                    {
                         "note_source_start": event.note_source_start,
                         "note_source_end": event.note_source_end,
                         "ipa_source_start": event.ipa_source_start,
@@ -539,6 +554,33 @@ def decode_score(text: str) -> tuple[_ScoreSection, ...]:
             rest = raw_event.get("rest")
             ipa = raw_event.get("ipa")
             slur_from_previous = raw_event.get("slur_from_previous", False)
+            raw_vibrato = raw_event.get("vibrato")
+            vibrato: Optional[CESNVibrato] = None
+            if raw_vibrato is not None:
+                if not isinstance(raw_vibrato, dict):
+                    raise CESNBackendFormatError(
+                        "prepared CESN event has invalid vibrato settings"
+                    )
+                delay_note_type = raw_vibrato.get("delay_note_type")
+                speed_hz = raw_vibrato.get("speed_hz")
+                cents = raw_vibrato.get("cents")
+                if (
+                    set(raw_vibrato) != {"delay_note_type", "speed_hz", "cents"}
+                    or not isinstance(delay_note_type, int)
+                    or isinstance(delay_note_type, bool)
+                    or delay_note_type not in {1, 2, 4, 8, 16, 32}
+                    or not isinstance(speed_hz, (int, float))
+                    or isinstance(speed_hz, bool)
+                    or not math.isfinite(speed_hz)
+                    or speed_hz <= 0
+                    or not isinstance(cents, int)
+                    or isinstance(cents, bool)
+                    or cents not in {20, 40, 60, 80}
+                ):
+                    raise CESNBackendFormatError(
+                        "prepared CESN event has invalid vibrato settings"
+                    )
+                vibrato = CESNVibrato(delay_note_type, float(speed_hz), cents)
             note_source_start = raw_event.get("note_source_start")
             note_source_end = raw_event.get("note_source_end")
             ipa_source_start = raw_event.get("ipa_source_start")
@@ -589,7 +631,12 @@ def decode_score(text: str) -> tuple[_ScoreSection, ...]:
                 or (ipa is not None and (not isinstance(ipa, str) or not ipa.strip()))
                 or (
                     rest
-                    and (pitch is not None or ipa is not None or slur_from_previous)
+                    and (
+                        pitch is not None
+                        or ipa is not None
+                        or slur_from_previous
+                        or vibrato is not None
+                    )
                 )
                 or (
                     not rest
@@ -611,6 +658,7 @@ def decode_score(text: str) -> tuple[_ScoreSection, ...]:
                     rest=rest,
                     ipa=cast(Optional[str], ipa),
                     slur_from_previous=slur_from_previous,
+                    vibrato=vibrato,
                     note_source_start=(
                         cast(int, note_source_start) if has_source_spans else None
                     ),
@@ -682,6 +730,7 @@ def _natural_f0_contour(
     extracted_f0: np.ndarray,
     sample_rate: int,
     hop_size: int,
+    bpm: int = 120,
 ) -> str:
     """Recenter a score-guided performance contour on each written note.
 
@@ -692,6 +741,7 @@ def _natural_f0_contour(
         extracted_f0: Framewise F0 extracted from a score-conditioned teacher pass.
         sample_rate: Sample rate used by the model processor.
         hop_size: Number of samples between model frames.
+        bpm: Tempo used to convert a vibrato delay note value to seconds.
 
     Returns:
         str: Space-separated F0 values in Hz, with zero for rests and unvoiced frames.
@@ -722,15 +772,34 @@ def _natural_f0_contour(
             target_frequency = 440.0 * 2.0 ** ((midi_pitch - 69) / 12.0)
             event_f0 = source_f0[frame_cursor:frame_end]
             voiced = event_f0 > 0
+            event_contour = contour[frame_cursor:frame_end]
             if np.any(voiced):
                 cents = 1200.0 * np.log2(event_f0[voiced] / target_frequency)
                 centered_cents = cents - np.median(cents)
-                event_contour = contour[frame_cursor:frame_end]
                 event_contour[voiced] = target_frequency * np.exp2(
                     centered_cents / 1200.0
                 )
             else:
-                contour[frame_cursor:frame_end] = target_frequency
+                event_contour[:] = target_frequency
+            if event.vibrato is not None:
+                delay_seconds = float(event.vibrato.delay_beats) * 60.0 / bpm
+                frame_times = (
+                    np.arange(len(event_contour), dtype=np.float64) / frame_rate
+                )
+                vibrato_mask = (frame_times >= delay_seconds) & (event_contour > 0)
+                if np.any(vibrato_mask):
+                    vibrato_seconds = frame_times[vibrato_mask] - delay_seconds
+                    cents_offset = (
+                        np.rint(
+                            np.sin(
+                                2.0 * np.pi * event.vibrato.speed_hz * vibrato_seconds
+                            )
+                            * event.vibrato.cents
+                            / 20.0
+                        )
+                        * 20.0
+                    )
+                    event_contour[vibrato_mask] *= np.exp2(cents_offset / 1200.0)
         frame_cursor = frame_end
 
     return " ".join(f"{frequency:.10g}" for frequency in contour)
@@ -1420,6 +1489,7 @@ class SoulXSinger(CeluneBackend[_SoulXRuntime]):
                             extracted_f0,
                             model.sample_rate,
                             model.processor.hop_size,
+                            section.bpm,
                         )
                         model_metadata["f0"] = " ".join(
                             ["0"] * onset_preroll_frames + target_f0.split()

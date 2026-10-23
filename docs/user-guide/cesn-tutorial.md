@@ -107,6 +107,23 @@ The slide form needs at least two pitched notes, one vowel nucleus, and no
 rests. Use a slur for multiple syllables; use a slide for one onset followed
 by a sustained vowel.
 
+## Add vibrato to one note
+
+Use `[v:<delay-note-type>,<speed-hz>,<cents>]` before a pitched note to add a
+sine-wave vibrato to that note only. The delay uses a CESN note value, speed is
+in hertz, and depth is 20, 40, 60, or 80 cents. The tag always looks forward to
+the next pitched event, so a tag before a note list applies to its first note.
+
+```text
+[bpm:120,key:c,scale:major][lang:en]
+[v:8,5,20][c4:2,d4:2][ˈkɑː.lm]calm
+```
+
+Here the first half note starts vibrating after an eighth-note delay; the
+second half note is unchanged. Vibrato is applied to the existing framewise F0
+track only in SoulX-Singer's high-precision mode. Standard score mode does not
+apply it. A delay as long as the target note leaves no time for vibrato.
+
 ## Use rests, tuplets, and sections
 
 Write an explicit rest as `r:<note-type>`, such as `[r:4]`, or include it in a

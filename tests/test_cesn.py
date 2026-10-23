@@ -13,6 +13,7 @@ from celune.cesn import (
     CESNTuplet,
     CESNNotePair,
     CESNNoteEvent,
+    CESNVibrato,
     CESNRestEvent,
     format_cesn_error,
     parse_cesn,
@@ -41,6 +42,65 @@ def test_parse_cesn_returns_typed_note_ipa_pairs() -> None:
         CESNNotePair(CESNNoteEvent("e3", 16, False), "sɪŋ"),
     )
     assert result[0].blocks[0].lyrics == "Text to sing."
+
+
+def test_vibrato_targets_only_the_next_note_and_renders_round_trip() -> None:
+    """Attach each vibrato tag to one following note in a grouped melody."""
+    notation = "[lang:en][v:4,5,20] [c4:4,d4:4,e4:4,f4:4][ˈsɛl.oʊ.ɪŋ.ɪŋ] singing"
+
+    sections = parse_cesn(notation)
+    pairs = sections[0].blocks[0].pairs
+
+    assert tuple(pair.event.vibrato for pair in pairs) == (
+        CESNVibrato(4, 5.0, 20),
+        None,
+        None,
+        None,
+    )
+    rendered = render_cesn(sections)
+    assert "[v:4,5,20][c4:4][d4:4][e4:4][f4:4]" in rendered
+    assert parse_cesn(rendered) == sections
+
+
+def test_vibrato_tag_between_note_groups_targets_the_next_note() -> None:
+    """Keep a vibrato tag after one note queued for the next pitched event."""
+    sections = parse_cesn(
+        "[lang:en][c4:4][d4:4][v:8,5.5,40][e4:4,f4:4][ˈsɛl.oʊ.ɪŋ.ɪŋ] singing"
+    )
+    pairs = sections[0].blocks[0].pairs
+
+    assert tuple(pair.event.vibrato for pair in pairs) == (
+        None,
+        None,
+        CESNVibrato(8, 5.5, 40),
+        None,
+    )
+    assert parse_cesn(render_cesn(sections)) == sections
+
+
+@pytest.mark.parametrize(
+    "tag",
+    (
+        "[v:3,5,20]",
+        "[v:4,0,20]",
+        "[v:4,-5,20]",
+        "[v:4,nan,20]",
+        "[v:4,5,10]",
+        "[v:4,5,100]",
+        "[v:4,5]",
+        "[v:4,5,20,40]",
+    ),
+)
+def test_parse_cesn_rejects_invalid_vibrato_tags(tag: str) -> None:
+    """Require a supported delay note value, positive speed, and depth."""
+    with pytest.raises(CESNValidationError):
+        parse_cesn(f"[lang:en]{tag}[c4:1][ɑ]Ah")
+
+
+def test_parse_cesn_rejects_vibrato_without_a_following_pitched_note() -> None:
+    """Report a vibrato directive that reaches the end without a target note."""
+    with pytest.raises(CESNValidationError, match="must precede a pitched note"):
+        parse_cesn("[lang:en][c4:1][ɑ]Ah[v:4,5,20]")
 
 
 def test_parse_cesn_converts_xsampa_input_to_canonical_ipa() -> None:

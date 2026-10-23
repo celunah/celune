@@ -4,6 +4,7 @@
 import pytest
 import numpy as np
 
+from celune.cesn import CESNVibrato
 from celune.backends.tts.soulxsinger import _ScoreEvent, _natural_f0_contour
 
 
@@ -57,3 +58,33 @@ def test_natural_f0_contour_falls_back_for_unvoiced_notes() -> None:
     assert [float(value) for value in contour.split()] == pytest.approx(
         [expected_frequency] * 4
     )
+
+
+def test_natural_f0_contour_applies_delayed_quantized_vibrato_to_one_note() -> None:
+    """Apply the vibrato only after its delay and only within its target event."""
+    events = (
+        _ScoreEvent("c4", 3, 2, False, vibrato=CESNVibrato(8, 1.0, 20)),
+        _ScoreEvent("c4", 3, 2, False),
+    )
+    note_frequency = 440.0 * 2 ** ((60 - 69) / 12)
+    extracted_f0 = np.full(300, note_frequency, dtype=np.float32)
+
+    contour = np.array(
+        [
+            float(value)
+            for value in _natural_f0_contour(
+                events,
+                ["1.5", "1.5"],
+                ["60", "60"],
+                extracted_f0,
+                sample_rate=100,
+                hop_size=1,
+                bpm=120,
+            ).split()
+        ]
+    )
+
+    assert contour[:25] == pytest.approx(np.full(25, note_frequency))
+    assert contour[50] == pytest.approx(note_frequency * 2 ** (20 / 1200))
+    assert contour[100] == pytest.approx(note_frequency * 2 ** (-20 / 1200))
+    assert contour[150:] == pytest.approx(np.full(150, note_frequency))
