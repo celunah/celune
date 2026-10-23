@@ -77,7 +77,12 @@ own. It is the index to use when a feature needs a precise code entrypoint.
 
 | Path | Responsibility |
 | --- | --- |
-| `celune/cevoice.py` | CEVOICE/CECHAR readers, writers, validation, lazy asset materialization, and pack selection. |
+| `celune/cevoice/base.py` | Shared CEVOICE/CECHAR API, bundle model, mutations, Persona metadata, lazy assets, and pack selection. |
+| `celune/cevoice/v1.py` | CEVOICE v1 compatibility rules. |
+| `celune/cevoice/v2.py` | CECHAR v2 compatibility rules. |
+| `celune/cevoice/v3.py` | CECHAR v3 writer and compatibility rules. |
+| `celune/cevoice/v4.py` | Indexed CECHAR container, compression, parsing, and v4 validation. |
+| `celune/cevoice/v5.py` | CECHAR v5 singing-role schema and writer. |
 | `celune/cesn.py` | CESN parsing, X-SAMPA conversion, singing validation/preparation, and canonical rendering. |
 | `celune/persona/runtime.py` | Model loading, quantization, generation, and context capacity. |
 | `celune/persona/cache.py` | Device-aware INT8/FP8 Persona KV-cache storage and dynamic-cache fallback boundary. |

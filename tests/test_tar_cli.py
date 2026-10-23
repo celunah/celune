@@ -8,6 +8,7 @@ import pytest
 
 import main
 from celune import cevoice
+from celune.cevoice import base as cevoice_base
 from celune.entrypoint import handle_ls_command, handle_tar_command
 
 entrypoint = main.load_entrypoint_module()
@@ -126,7 +127,7 @@ def test_indexed_pack_mutations_preserve_generation_compression_and_order(tmp_pa
 def test_legacy_edits_preserve_pack_generation(tmp_path, magic, version):
     """Legacy mutations retain the original magic and version."""
     path = tmp_path / "legacy.cevoice"
-    cevoice._write_legacy_cevoice(
+    cevoice_base._write_legacy_cevoice(
         path,
         {"alpha": {"wav": b"alpha"}},
         {"name": "Legacy fixture"},

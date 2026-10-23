@@ -385,7 +385,7 @@ class TestRuntimePath(CeluneTestCase):
             mock.patch.dict(sys.modules, {"__main__": fake_main}),
             mock.patch.object(sys, "argv", [str(executable)]),
             mock.patch(
-                "celune.cevoice.voices_data_dir",
+                "celune.cevoice.base.voices_data_dir",
                 return_value=Path("C:/runtime-data/voices"),
             ),
         ):
@@ -434,7 +434,7 @@ class TestRuntimePath(CeluneTestCase):
             mock.patch.object(sys, "argv", [str(executable)]),
             mock.patch.object(Path, "exists", fake_exists),
             mock.patch(
-                "celune.cevoice.voices_data_dir",
+                "celune.cevoice.base.voices_data_dir",
                 return_value=Path("C:/runtime-data/voices"),
             ),
         ):

@@ -18,7 +18,8 @@ Celune currently accepts two asset kinds:
 - `wav`: reference audio used by the voice-cloning backends
 - `pt`: optional PyTorch embedding data used by Celune's analysis tools
 
-The canonical implementation lives in `celune/cevoice.py`.
+The implementation lives in `celune/cevoice/`: shared bundle behavior is in
+`base.py`, while the version modules own their format rules.
 
 ## File layout
 

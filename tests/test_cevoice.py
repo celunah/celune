@@ -15,6 +15,8 @@ from unittest import mock
 import pytest
 
 from celune import cevoice
+from celune.cevoice import v4 as cevoice_v4
+from celune.cevoice import base as cevoice_base
 from celune.exceptions import CEVoiceError
 
 from .support import CeluneTestCase
@@ -47,16 +49,16 @@ class TestCEVoice(CeluneTestCase):
 
     def tearDown(self) -> None:
         """Reset shared CEVOICE loader globals after one test."""
-        loader = cevoice._DEFAULT_LOADER
+        loader = cevoice_base._DEFAULT_LOADER
         if loader is not None:
             loader.close()
-        cevoice._DEFAULT_LOADER = None
-        cevoice._DEFAULT_LOADER_INITIALIZED = False
-        cevoice._DEFAULT_LOADER_ANNOUNCED = False
-        cevoice._DEFAULT_LOADER_FAILED = False
-        cevoice._SELECTED_BUNDLE = None
-        cevoice._SELECTED_BUNDLE_IS_NAMED = False
-        cevoice._DEFAULT_LOADER_FELL_BACK_FROM = None
+        cevoice_base._DEFAULT_LOADER = None
+        cevoice_base._DEFAULT_LOADER_INITIALIZED = False
+        cevoice_base._DEFAULT_LOADER_ANNOUNCED = False
+        cevoice_base._DEFAULT_LOADER_FAILED = False
+        cevoice_base._SELECTED_BUNDLE = None
+        cevoice_base._SELECTED_BUNDLE_IS_NAMED = False
+        cevoice_base._DEFAULT_LOADER_FELL_BACK_FROM = None
 
     def _write_bundle(self) -> cevoice.CEVoice:
         """Write and reopen one tiny valid CEVOICE fixture."""
@@ -157,7 +159,9 @@ class TestCEVoice(CeluneTestCase):
         assert path.read_bytes() == b"wav"
         assert loader.materialize("balanced", "wav") == path
         with mock.patch.object(
-            cevoice, "bundle_matches_default_pack_checksum", return_value=True
+            cevoice_base,
+            "bundle_matches_default_pack_checksum",
+            return_value=True,
         ):
             assert cevoice.bundle_display_name(bundle) == "Fixture (sample)"
 
@@ -214,10 +218,10 @@ class TestCEVoice(CeluneTestCase):
     def test_v4_decompression_rejects_payloads_over_the_logical_limit(self) -> None:
         """Verify compressed CECHAR v4 payloads are bounded before parsing."""
         with (
-            mock.patch.object(cevoice, "V4_MAX_DECOMPRESSED_BYTES", 3),
+            mock.patch.object(cevoice_v4, "V4_MAX_DECOMPRESSED_BYTES", 3),
             self.assertRaisesRegex(CEVoiceError, "too large"),
         ):
-            cevoice._decompress_v4_payload(
+            cevoice_v4._decompress_v4_payload(
                 gzip.compress(b"four"),
                 cevoice.V4_COMPRESSION_GZIP,
             )
@@ -600,7 +604,7 @@ class TestCEVoice(CeluneTestCase):
         cevoice.select_voice_bundle("missing")
 
         with mock.patch(
-            "celune.cevoice.default_bundle_path", return_value=default_path
+            "celune.cevoice.base.default_bundle_path", return_value=default_path
         ):
             loader = cevoice.default_loader()
             logs: list[tuple[str, str]] = []
@@ -629,7 +633,9 @@ class TestCEVoice(CeluneTestCase):
             AssertionError: Bundle path resolution changes unexpectedly.
         """
         expected = self.temp_dir / "voices" / "fixture.cevoice"
-        with mock.patch("celune.cevoice.voices_data_dir", return_value=expected.parent):
+        with mock.patch(
+            "celune.cevoice.base.voices_data_dir", return_value=expected.parent
+        ):
             assert cevoice.resolve_bundle_path("fixture") == expected
             assert cevoice.resolve_bundle_path("fixture.cevoice") == expected
 
@@ -643,11 +649,11 @@ class TestCEVoice(CeluneTestCase):
 
         with (
             mock.patch(
-                "celune.cevoice.project_root",
+                "celune.cevoice.base.project_root",
                 return_value=repository_root,
             ),
             mock.patch(
-                "celune.cevoice.voices_data_dir",
+                "celune.cevoice.base.voices_data_dir",
                 return_value=user_dir,
             ),
         ):
@@ -667,11 +673,11 @@ class TestCEVoice(CeluneTestCase):
 
         with (
             mock.patch(
-                "celune.cevoice.project_root",
+                "celune.cevoice.base.project_root",
                 return_value=repository_root,
             ),
             mock.patch(
-                "celune.cevoice.voices_data_dir",
+                "celune.cevoice.base.voices_data_dir",
                 return_value=user_dir,
             ),
         ):
@@ -693,11 +699,11 @@ class TestCEVoice(CeluneTestCase):
 
         with (
             mock.patch(
-                "celune.cevoice.project_root",
+                "celune.cevoice.base.project_root",
                 return_value=repository_root,
             ),
             mock.patch(
-                "celune.cevoice.voices_data_dir",
+                "celune.cevoice.base.voices_data_dir",
                 return_value=user_dir,
             ),
         ):
@@ -719,7 +725,7 @@ class TestCEVoice(CeluneTestCase):
         logs: list[tuple[str, str]] = []
 
         with mock.patch(
-            "celune.cevoice.default_bundle_path",
+            "celune.cevoice.base.default_bundle_path",
             return_value=missing_default,
         ):
             assert cevoice.default_loader() is None
