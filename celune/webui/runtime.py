@@ -2,6 +2,7 @@
 """WebUI lifecycle helpers."""
 
 from __future__ import annotations
+
 import io
 import re
 import time
@@ -12,16 +13,21 @@ from html import escape
 from pathlib import Path
 from functools import partial
 from importlib.resources import files
-from typing import TYPE_CHECKING, Union, Optional, cast
+from typing import TYPE_CHECKING, Optional, Union, cast
 from collections.abc import Mapping, Callable, Iterator, Sequence
 
-import gradio as gr
 import numpy as np
+import gradio as gr
 import soundfile as sf
 from fastapi import HTTPException
 
 from ..i18n import string
 from ..theme import colors
+from ..typing.api import (
+    WebUiUpdate,
+    WebUiUnset as _WebUiUnset,
+    WEBUI_UNSET as _WEBUI_UNSET,
+)
 from ..server.jobs import (
     TaskEvent,
     task_status,
@@ -46,15 +52,12 @@ from ..dataclasses.events import (
     AgentApprovalRequestedEvent,
 )
 from ..cevoice import default_loader
-from ..typing.api import WebUiUpdate
 from ..constants import BASE_SR, APP_NAME
 from ..ui import resources as ui_resources
 from ..extensions.events import EventDispatcher
 from ..typing.pipeline import SpeechStreamQueue
 from ..typing.aliases import LogLevel, AudioChunks
-from ..typing.api import WebUiUnset as _WebUiUnset
 from ..utils import available, format_error_message
-from ..typing.api import WEBUI_UNSET as _WEBUI_UNSET
 from ..typing.events import EventName, EventCallback
 from ..paths import project_root, main_window_log_path
 from ..pipeline.captions import current_playback_status
@@ -735,10 +738,10 @@ def wrap_celune_callbacks(
                     0.0,
                     min(1.0, visible_words / total_words),
                 )
-        elif total is not None and total > 0:
-            session.webui_caption_progress = max(
-                0.0, min(1.0, (progress or 0.0) / total)
-            )
+        elif not getattr(getattr(celune, "backend", None), "singing", False):
+            session.webui_caption_active = False
+            session.webui_caption_text = ""
+            session.webui_caption_progress = 0.0
         _invoke_caption_progress_callback(
             original_caption_progress,
             progress,

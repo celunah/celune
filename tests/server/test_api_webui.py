@@ -2,13 +2,13 @@
 """Tests for Celune's browser-facing API UI."""
 
 import re
-import shutil
-import asyncio
-import tempfile
 from typing import (
     Optional,
     cast,
 )
+import shutil
+import asyncio
+import tempfile
 from queue import Queue
 from pathlib import Path
 from unittest import mock
@@ -25,13 +25,11 @@ from celune import api
 from celune.i18n import string
 from celune.theme import colors
 from celune.celune import Celune
-from celune.webui import runtime as webui
-from celune.server import auth as server_auth
 from celune.server.session import ServerSession
-from celune.webui import actions as webui_actions
 from celune.typing.pipeline import SpeechStreamQueue
-from celune.server import constants as server_constants
 from celune.typing.celune import ChunkCaptionProgressCallback
+from celune.webui import actions as webui_actions, runtime as webui
+from celune.server import auth as server_auth, constants as server_constants
 
 from ..support import CeluneTestCase
 
@@ -915,11 +913,13 @@ class TestApiWebUI(CeluneTestCase):
     def test_webui_wrapped_callbacks_mirror_generation_lifecycle(self) -> None:
         """Verify idle, queue, caption, progress, and error callbacks reach WebUI state."""
         original_caption_progress = mock.Mock()
+        backend = SimpleNamespace(singing=False)
         celune = cast(
             Celune,
             SimpleNamespace(
                 current_voice="balanced",
                 voices=("balanced", "calm"),
+                backend=backend,
                 is_in_tutorial=False,
                 locked=True,
                 cur_state="speaking",
@@ -954,6 +954,18 @@ class TestApiWebUI(CeluneTestCase):
         caption_progress(1.0, 2.0, 1)
         original_caption_progress.assert_called_once_with(1.0, 2.0, 1)
         assert api.server_session.webui_caption_progress == 0.5
+        caption_progress(1.5, 2.0)
+        assert not api.server_session.webui_caption_active
+        assert api.server_session.webui_caption_text == ""
+        assert api.server_session.webui_caption_progress == 0.0
+
+        backend.singing = True
+        celune.caption_callback("Singing section")
+        caption_progress(1.75, 2.0)
+        assert api.server_session.webui_caption_active
+        assert api.server_session.webui_caption_text == "Singing section"
+        assert api.server_session.webui_caption_progress == 0.0
+
         api.server_session.webui_progress_current = 1.0
         api.server_session.webui_progress_total = 1.0
         _status = api.webui_status_html()

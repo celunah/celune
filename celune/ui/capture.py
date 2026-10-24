@@ -2,14 +2,15 @@
 """Extracted CeluneUI capture methods."""
 
 from __future__ import annotations
+
 import re
 import time
 import threading
 import contextlib
-import queue as queue_module
 from uuid import uuid4
+import queue as queue_module
 from collections.abc import Callable
-from typing import Union, Optional, cast
+from typing import Optional, Union, cast
 
 from textual.color import Color
 
@@ -116,23 +117,24 @@ def safe_caption_progress(
     ):
         return
 
+    # Keep the callback contract; aligned word counts now drive caption timing.
+    del progress
+    if visible_words is None:
+        self._run_on_ui_thread(self._hide_caption_widgets)
+        return
+
     def update_caption() -> None:
         if not self._caption_active or total is None or total <= 0:
             return
-        caption_visible_words = visible_words
-        if caption_visible_words is None:
-            current = 0.0 if progress is None else progress
-            fraction = max(0.0, min(1.0, current / total))
-        else:
-            self._caption_segmented_progress = True
-            caption_visible_words = min(
-                max(0, len(self._caption_words) - 1),
-                caption_visible_words,
-            )
-            fraction = max(
-                0.0,
-                min(1.0, caption_visible_words / max(len(self._caption_words), 1)),
-            )
+        self._caption_segmented_progress = True
+        caption_visible_words = min(
+            max(0, len(self._caption_words) - 1),
+            visible_words,
+        )
+        fraction = max(
+            0.0,
+            min(1.0, caption_visible_words / max(len(self._caption_words), 1)),
+        )
         if fraction < self._caption_progress:
             return
         caption_finished = fraction >= 1.0

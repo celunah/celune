@@ -107,13 +107,14 @@ CPU graph-optimization warnings while preserving actual runtime errors.
 
 The `espeak-ng` executable must also be on `PATH`. If eSpeak NG or ONNX Runtime
 is missing, Celune logs a yellow warning and hides captions for the utterance;
-speech playback continues. With captions disabled, Celune does not load or
-download the alignment model. A background worker aligns one combined waveform
-and queues it with the word timings. Captioned playback waits for synthesis and
-alignment to finish; disabling captions retains normal streaming playback.
-Another speech request can generate while alignment is pending. Celune hides
-captions for the utterance if alignment is unavailable or fails; speech
-playback continues.
+speech playback continues. For speech, Celune hides captions when aligned word
+timings are unavailable instead of advancing them at a uniform pace. With
+captions disabled, Celune does not load or download the alignment model. A
+background worker aligns one combined waveform and queues it with the word
+timings.
+Captioned playback waits for synthesis and alignment to finish; disabling
+captions retains normal streaming playback. Another speech request can generate
+while alignment is pending. Speech playback continues if alignment fails.
 For a caller that needs every chunk, use `say_stream()` and drain the returned
 queue until its terminal sentinel/condition; do not read the internal playback
 queue directly.

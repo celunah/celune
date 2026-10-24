@@ -1,9 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for Textual recording, interaction, and runtime state behavior."""
 
-# Import groups follow Celune's project-specific Ruff ordering.
-# pylint: disable=ungrouped-imports
-
 import time
 import asyncio
 import logging
@@ -11,8 +8,8 @@ import tempfile
 import threading
 from pathlib import Path
 from unittest import mock
-from types import SimpleNamespace
 from typing import Optional, cast
+from types import SimpleNamespace
 from collections.abc import Callable
 
 import pytest
@@ -35,8 +32,8 @@ from celune.config import Config
 from celune.utils import discard
 from celune.ui import app as ui_app
 from celune.ui.theme import severity_color
-from celune.typing.common import JSONSerializable
 from celune.ui import resources as ui_resources
+from celune.typing.common import JSONSerializable
 
 from .fixtures import reset_ui_singletons
 from ..support import FakeBackend, CeluneTestCase
@@ -1537,19 +1534,23 @@ class TestUIInteractions(CeluneTestCase):
         ui.progress_label = ProgressLabel()
         ui.progress_bar = cast(ProgressBar, FakeProgressBar(progress_row))
 
+        ui.tts_caption("No word timings")
+        ui.safe_caption_progress(1, 3)
+        assert not caption.display
+        assert caption.rendered == ""
+
         ui.tts_caption("One two three")
         assert not progress_row.display
         assert caption.display
         assert not ui.progress_label.display
-        ui.safe_caption_progress(1, 3)
+        ui.safe_caption_progress(1, 3, 1)
         assert caption.rendered == "One"
-        ui.safe_caption_progress(2, 3)
+        ui.safe_caption_progress(2, 3, 2)
         assert caption.rendered == "One two"
-        ui.safe_caption_progress(1, 3)
+        ui.safe_caption_progress(1, 3, 1)
         assert caption.rendered == "One two"
         assert ui._caption_progress == 2 / 3
         ui.safe_caption_progress(3, 3)
-        assert caption.rendered == "One two three"
         assert not ui._caption_active
 
         ui.tts_idle()
