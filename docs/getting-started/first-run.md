@@ -80,3 +80,17 @@ Then inspect the application log and traceback path reported by the runtime.
 Do not delete a backend environment while it is running. If an environment is
 corrupt, use `celune doctor --fix` where the doctor offers a repair, or remove
 only the named backend environment after Celune has fully exited.
+
+### Recover a corrupted Windows runtime
+
+If the Windows launcher reports `Celune is corrupted.`, it received Windows
+error `1392` (`ERROR_FILE_CORRUPT`) while starting the compiled runtime.
+Rebuild the binaries from a source checkout using the [CMake release
+build](../development/packaging.md#cmake-release-builds), or download and
+extract Celune's latest release again. Then launch Celune from the repaired
+build or release folder.
+
+## See also
+
+- [Installation](installation.md)
+- [CMake release builds](../development/packaging.md#cmake-release-builds)

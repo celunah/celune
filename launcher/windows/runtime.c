@@ -1365,10 +1365,22 @@ int launcher_run(int argc, char **argv) {
     );
 
     if (!ok) {
+        DWORD launch_error = GetLastError();
         CancelIoEx(launcher_pipe, &pipe_connect);
         CloseHandle(pipe_connect_event);
         CloseHandle(launcher_pipe);
-        printfe("Celune could not launch her compiled runtime.\nExit code: %lu\n", GetLastError());
+        if (launch_error == ERROR_FILE_CORRUPT) {
+            printfe(
+                "Celune is corrupted.\n"
+                "Rebuild her binaries or redownload her latest release.\n"
+            );
+        } else {
+            printfe(
+                "Celune could not launch her compiled runtime.\n"
+                "Exit code: %lu\n",
+                (unsigned long)launch_error
+            );
+        }
         return 1;
     }
 

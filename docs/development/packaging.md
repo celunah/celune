@@ -114,6 +114,9 @@ lightweight, so exiting before runtime initialization cannot enter an undefined
 or heavy runtime-import path. Ctrl+C stops an active runtime search, and the
 launcher failure screen handles errors from the default, `start`, and `run`
 operations; other CLI commands return their own exit status directly.
+On Windows, a `CreateProcessA` failure with `ERROR_FILE_CORRUPT` (1392) while
+starting the compiled runtime displays the recovery guidance in
+[First run](../getting-started/first-run.md#recover-a-corrupted-windows-runtime).
 When the automatic lookup should be bypassed, the compiled launchers accept
 `CELUNE_ROOT=/path/to/celune`, `--root /path/to/celune`, or
 `--root=/path/to/celune`. The selected path must identify a valid Celune root;
