@@ -127,17 +127,13 @@ def safe_caption_progress(
         if not self._caption_active or total is None or total <= 0:
             return
         self._caption_segmented_progress = True
-        caption_visible_words = min(
-            max(0, len(self._caption_words) - 1),
-            visible_words,
-        )
+        caption_visible_words = min(len(self._caption_words), max(0, visible_words))
         fraction = max(
             0.0,
             min(1.0, caption_visible_words / max(len(self._caption_words), 1)),
         )
         if fraction < self._caption_progress:
             return
-        caption_finished = fraction >= 1.0
         self._caption_progress = fraction
         visible_sentence, caption_visible_words = self._caption_words_for_progress(
             self._caption_progress,
@@ -148,15 +144,11 @@ def safe_caption_progress(
             caption_visible_words == self._caption_visible_words
             and rendered_text == self._caption_rendered_text
         ):
-            if caption_finished:
-                self._hide_caption_widgets()
             return
         self._caption_visible_words = caption_visible_words
         self._caption_rendered_text = rendered_text
         if self.caption is not None:
             self.caption.update(rendered_text)
-        if caption_finished:
-            self._hide_caption_widgets()
 
     self._run_on_ui_thread(update_caption)
 

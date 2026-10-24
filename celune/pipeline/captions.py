@@ -1586,7 +1586,6 @@ def update_playback_progress(
             snapshot,
             speech_played_frames,
         )
-        visible_words = min(visible_words, max(0, caption_state.total_words - 1))
         _notify_caption_progress(
             engine,
             speech_played_frames,

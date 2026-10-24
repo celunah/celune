@@ -427,6 +427,14 @@ class TestPipeline(CeluneTestCase):
             250.0, 600.0, 3
         )
 
+        source_meta["total_frames"] = 400.0
+        source_meta["played_frames"] = 400.0
+        engine._playback_progress_last_emit_at = 0.0
+        captions.update_playback_progress(cast(Celune, engine))
+        assert engine.caption_progress_callback.call_args_list[-1] == mock.call(
+            400.0, 400.0, 4
+        )
+
     def test_stale_speech_completion_cannot_finish_new_caption(self) -> None:
         """Verify completion from an older source cannot close the active caption."""
         engine = make_pipeline_engine()

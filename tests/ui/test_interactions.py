@@ -1550,6 +1550,9 @@ class TestUIInteractions(CeluneTestCase):
         ui.safe_caption_progress(1, 3, 1)
         assert caption.rendered == "One two"
         assert ui._caption_progress == 2 / 3
+        ui.safe_caption_progress(3, 3, 3)
+        assert caption.rendered == "One two three"
+        assert ui._caption_active
         ui.safe_caption_progress(3, 3)
         assert not ui._caption_active
 
