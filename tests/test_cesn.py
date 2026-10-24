@@ -46,12 +46,13 @@ def test_parse_cesn_returns_typed_note_ipa_pairs() -> None:
 
 def test_joined_notes_require_equal_pitch_and_render_round_trip() -> None:
     """Retain same-pitch ties and locate invalid joins at their marker."""
-    notation = "[lang:en][c4:1,j,c4:1][ɑ.ɑ]Ah"
+    notation = "[lang:en][c4:1,j,c4:1][ɑ]Ah"
 
     sections = parse_cesn(notation)
     pairs = sections[0].blocks[0].pairs
 
     assert tuple(pair.event.tie_from_previous for pair in pairs) == (False, True)
+    assert tuple(pair.ipa for pair in pairs) == ("ɑ", "ɑ")
     rendered = render_cesn(sections)
     assert "[c4:1,j,c4:1]" in rendered
     assert parse_cesn(rendered) == sections
@@ -67,6 +68,32 @@ def test_joined_notes_require_equal_pitch_and_render_round_trip() -> None:
     assert format_cesn_error(invalid_notation, caught.value).endswith(
         "can't join different pitches together"
     )
+
+
+@pytest.mark.parametrize(
+    ("note_events", "note_count"),
+    (
+        ("c4:1,j,c4:1", 2),
+        ("c4:1,j,c4:1,j,c4:1,j,c4:1", 4),
+    ),
+)
+def test_tied_note_chains_align_one_xsampa_syllable(
+    note_events: str, note_count: int
+) -> None:
+    """Align one X-SAMPA syllable to every note in a same-pitch tie chain."""
+    notation = f"[lang:en][v:4,5,60][{note_events}][x-sampa:A] Ah"
+
+    section = parse_cesn(notation)[0]
+    pairs = section.blocks[0].pairs
+
+    assert len(pairs) == note_count
+    assert all(pair.ipa == pairs[0].ipa for pair in pairs)
+    assert tuple(pair.event.tie_from_previous for pair in pairs) == (
+        False,
+        *(True for _ in range(note_count - 1)),
+    )
+    rendered = render_cesn((section,))
+    assert parse_cesn(rendered) == (section,)
 
 
 @pytest.mark.parametrize(

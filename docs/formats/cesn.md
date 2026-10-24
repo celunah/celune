@@ -33,8 +33,9 @@ Each note event contains a pitch or rest, a colon, a note type, and an optional 
 | Tie marker | `j` between same-pitched notes | `c4:1,j,c4:1` |
 
 `j` ties the preceding note to the following note. Both events must be pitched
-notes with the same pitch; a tie marker adds no duration and consumes no IPA
-syllable. For example, `[c4:1,j,c4:1]` sustains C4 across both note values.
+notes with the same pitch; a tie marker and each continued note add no IPA
+syllable. One IPA syllable is shared across the entire tied chain. For example,
+`[c4:1,j,c4:1]` sustains C4 across both note values while using one syllable.
 Different pitches or a rest on either side raise `CESNValidationError` with
 `can't join different pitches together`.
 
@@ -44,7 +45,7 @@ The defaults are 120 BPM, C major, and the currently active singer. A language t
 
 `[#Comment]` is ignored. Other settings and feature tags, including `[lang:...]`, `[singer:...]`, `[slur:...]`, `[tuplet:...]`, and `[v:...]`, precede the note list. The `[slide:...]` shorthand is a combined pronunciation and note tag described below. A raw bracket after the note list contains Unicode IPA, without an `ipa:` label or slash delimiters. Alternatively, `[x-sampa:...]` marks an ASCII X-SAMPA pronunciation. For example, `[x-sampa:"tSEl.oU]` is converted to IPA `ˈtʃɛl.oʊ`. X-SAMPA symbols are case-sensitive; a period separates syllables, `"` marks primary stress, and `%` marks secondary stress. CESN converts X-SAMPA to canonical Unicode IPA during parsing, so `CESNNotePair.ipa` and rendered notation contain IPA regardless of the input form. Unknown symbols and non-ASCII characters in the X-SAMPA value are rejected rather than guessed. A rest does not consume a syllable.
 
-`[slur:N]` marks all `N` pitched notes in the following group as one slur, where `N` must be at least two and match the IPA syllable count. Put it before the note list. Slurred notes must be adjacent and cannot include a rest. CESN retains each note's pitch, IPA, and duration. SoulX-Singer uses its continuation note type when a slurred note repeats the preceding ARPAbet phones or continues the same final vowel after an onset. Other different phone sequences remain normal note events, preserving their pitch and timing without dropping their new sounds.
+`[slur:N]` marks all `N` pitched notes in the following group as one slur, where `N` must be at least two and match the pitched note count. Put it before the note list. Slurred notes must be adjacent and cannot include a rest. Tied notes in a slur still share one IPA syllable. CESN retains each note's pitch, IPA, and duration. SoulX-Singer uses its continuation note type when a slurred note repeats the preceding ARPAbet phones or continues the same final vowel after an onset. Other different phone sequences remain normal note events, preserving their pitch and timing without dropping their new sounds.
 
 For an X-SAMPA vowel carried across several pitches, use `[slide:<onset-and-vowel>,<notes>]`. The pronunciation must contain one final vowel nucleus, with an optional consonant onset and no coda; the note list must contain at least two pitched notes and no rests. CESN expands the first note to the supplied onset and vowel, then assigns only the vowel nucleus to each remaining note; it marks the group as a slur. For example, `[slide:lA,c4:1,d4:1,e4:1,f4:1]la` is equivalent to `[slur:4][c4:1,d4:1,e4:1,f4:1][lɑ.ɑ.ɑ.ɑ]la`. SoulX-Singer uses its continuation type for the transition from `lɑ` to the matching vowel, so the `l` onset is articulated once while the vowel continues across the pitches. A vowel-only input such as `[slide:A,c4:1,d4:1]ah` works without an onset.
 

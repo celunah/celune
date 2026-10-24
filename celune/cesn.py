@@ -341,21 +341,33 @@ def _parse_cesn(
             raise CESNValidationError("CESN note list cannot be empty")
 
         ipa_syllables = pending_ipa or ()
-        if len(note_events) > len(ipa_syllables):
-            index = len(ipa_syllables)
+        note_group_count = sum(not event.tie_from_previous for event in note_events)
+        if note_group_count > len(ipa_syllables):
+            unmatched_note_index = 0
+            unmatched_note_event = note_events[0]
+            note_group_index = 0
+            for note_index, event in enumerate(note_events):
+                if event.tie_from_previous:
+                    continue
+                if note_group_index == len(ipa_syllables):
+                    unmatched_note_index = note_index
+                    unmatched_note_event = event
+                    break
+                note_group_index += 1
             raise CESNMatchError(
-                index,
-                _format_note_event(note_events[index]),
+                unmatched_note_index,
+                _format_note_event(unmatched_note_event),
                 len(ipa_syllables),
             )
-        if len(note_events) < len(ipa_syllables):
+        if note_group_count < len(ipa_syllables):
             location[:] = pending_ipa_span or location
-            raise CESNAlignmentError(len(note_events), len(ipa_syllables))
+            raise CESNAlignmentError(note_group_count, len(ipa_syllables))
 
         event_items: list[Union[CESNNotePair, CESNRestEvent]] = []
         source_note_spans: list[Optional[tuple[int, int]]] = []
         source_ipa_spans: list[Optional[tuple[int, int]]] = []
-        note_index = 0
+        note_group_index = 0
+        pitched_note_index = 0
         event_index = 0
         for event in note_events_with_joins:
             if isinstance(event, CESNRestEvent):
@@ -364,17 +376,22 @@ def _parse_cesn(
                 source_ipa_spans.append(None)
                 event_index += 1
                 continue
+            if not event.tie_from_previous:
+                ipa_index = note_group_index
+                note_group_index += 1
+            else:
+                ipa_index = note_group_index - 1
             pair = CESNNotePair(
                 event,
-                ipa_syllables[note_index],
+                ipa_syllables[ipa_index],
                 slur_from_previous=(
-                    pending_slur is not None and 0 < note_index < pending_slur
+                    pending_slur is not None and 0 < pitched_note_index < pending_slur
                 ),
             )
             event_items.append(pair)
             source_note_spans.append(note_event_spans[event_index])
-            source_ipa_spans.append(pending_ipa_spans[note_index])
-            note_index += 1
+            source_ipa_spans.append(pending_ipa_spans[ipa_index])
+            pitched_note_index += 1
             event_index += 1
             if not _note_is_in_scale(
                 event.pitch,
@@ -886,7 +903,10 @@ def render_cesn(sections: tuple[CESNSection, ...]) -> str:
                     raise CESNValidationError(
                         "CESN pitched notes require explicit IPA syllables"
                     )
-                rendered.append(f"[{'.'.join(pair.ipa for pair in pairs)}]")
+                rendered_ipa = ".".join(
+                    pair.ipa for pair in pairs if not pair.event.tie_from_previous
+                )
+                rendered.append(f"[{rendered_ipa}]")
             rendered.append(block.lyrics)
     return "".join(rendered)
 

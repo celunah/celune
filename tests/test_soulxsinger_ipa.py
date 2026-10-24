@@ -420,7 +420,7 @@ def test_tied_notes_use_soulx_continuation_type() -> None:
     """Preserve same-pitch ties in the backend score and sustain note type."""
     backend = object.__new__(SoulXSinger)
     singer = CESNSinger("Test Singer", Path("singer.cevoice"))
-    notation = "[lang:en][c4:4,j,c4:4][ɑ.ɑ]Ah"
+    notation = "[lang:en][c4:4,j,c4:4][ɑ]Ah"
     with mock.patch(
         "celune.backends.tts.soulxsinger.resolve_active_singer",
         return_value=singer,
