@@ -10,7 +10,7 @@ from unittest import mock
 import numpy as np
 import pytest
 
-from celune.cesn import CESNSinger, CESNVibrato, format_cesn_error
+from celune.cesn import CESNSinger, CESNVibrato, format_cesn_error, parse_cesn
 from celune.cevoice import CEVoiceLoader
 from celune.exceptions import (
     CESNIPAError,
@@ -23,6 +23,8 @@ from celune.backends.tts.soulxsinger import (
     SoulXSinger,
     decode_score,
     _SoulXRuntime,
+    _score_event,
+    _natural_f0_contour,
     pitch_to_midi,
 )
 
@@ -388,6 +390,38 @@ def test_vibrato_survives_backend_score_serialization() -> None:
         "speed_hz": 5.0,
         "cents": 60,
     }
+
+
+def test_vibrato_continues_through_tied_note_chain() -> None:
+    """Apply one vibrato contour across every continuation in a tied note."""
+    section = parse_cesn(
+        "[lang:en][v:4,5,60][c4:1,j,c4:1,j,c4:1,j,c4:1][x-sampa:A] Ah"
+    )[0]
+    events = tuple(
+        _score_event(event) for block in section.blocks for event in block.events
+    )
+    durations = [
+        str(event.duration_numerator / event.duration_denominator * 60 / section.bpm)
+        for event in events
+    ]
+    pitches = [str(pitch_to_midi(event.pitch or "")) for event in events]
+    target_frequency = 440.0 * 2.0 ** ((int(pitches[0]) - 69) / 12.0)
+
+    contour = np.fromstring(
+        _natural_f0_contour(
+            events,
+            durations,
+            pitches,
+            np.full(800, target_frequency, dtype=np.float64),
+            sample_rate=100,
+            hop_size=1,
+            bpm=section.bpm,
+        ),
+        sep=" ",
+    )
+
+    assert contour[225] < target_frequency
+    assert contour[625] < target_frequency
 
 
 def test_slurred_repeated_phones_use_soulx_continuation_type() -> None:

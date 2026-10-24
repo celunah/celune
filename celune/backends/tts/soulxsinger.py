@@ -771,8 +771,10 @@ def _natural_f0_contour(
     contour = np.zeros(total_frames, dtype=np.float64)
     elapsed = 0.0
     frame_cursor = 0
+    frame_ranges: list[tuple[int, int]] = []
 
     for index, event in enumerate(events):
+        frame_start = frame_cursor
         elapsed += float(durations[index])
         if index == len(events) - 1:
             frame_end = total_frames
@@ -794,26 +796,43 @@ def _natural_f0_contour(
                 )
             else:
                 event_contour[:] = target_frequency
-            if event.vibrato is not None:
-                delay_seconds = float(event.vibrato.delay_beats) * 60.0 / bpm
-                frame_times = (
-                    np.arange(len(event_contour), dtype=np.float64) / frame_rate
-                )
-                vibrato_mask = (frame_times >= delay_seconds) & (event_contour > 0)
-                if np.any(vibrato_mask):
-                    vibrato_seconds = frame_times[vibrato_mask] - delay_seconds
-                    cents_offset = (
-                        np.rint(
-                            np.sin(
-                                2.0 * np.pi * event.vibrato.speed_hz * vibrato_seconds
-                            )
-                            * event.vibrato.cents
-                            / 20.0
-                        )
-                        * 20.0
-                    )
-                    event_contour[vibrato_mask] *= np.exp2(cents_offset / 1200.0)
+        frame_ranges.append((frame_start, frame_end))
         frame_cursor = frame_end
+
+    for index, event in enumerate(events):
+        if event.rest or event.tie_from_previous:
+            continue
+        group_end = index + 1
+        while group_end < len(events) and events[group_end].tie_from_previous:
+            group_end += 1
+        vibrato = next(
+            (
+                tied_event.vibrato
+                for tied_event in events[index:group_end]
+                if tied_event.vibrato is not None
+            ),
+            None,
+        )
+        if vibrato is None:
+            continue
+
+        start_frame = frame_ranges[index][0]
+        end_frame = frame_ranges[group_end - 1][1]
+        event_contour = contour[start_frame:end_frame]
+        delay_seconds = float(vibrato.delay_beats) * 60.0 / bpm
+        frame_times = np.arange(len(event_contour), dtype=np.float64) / frame_rate
+        vibrato_mask = (frame_times >= delay_seconds) & (event_contour > 0)
+        if np.any(vibrato_mask):
+            vibrato_seconds = frame_times[vibrato_mask] - delay_seconds
+            cents_offset = (
+                np.rint(
+                    np.sin(2.0 * np.pi * vibrato.speed_hz * vibrato_seconds)
+                    * vibrato.cents
+                    / 20.0
+                )
+                * 20.0
+            )
+            event_contour[vibrato_mask] *= np.exp2(cents_offset / 1200.0)
 
     return " ".join(f"{frequency:.10g}" for frequency in contour)
 
