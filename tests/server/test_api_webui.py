@@ -5,15 +5,15 @@ import re
 import shutil
 import asyncio
 import tempfile
+from typing import (
+    Optional,
+    cast,
+)
 from queue import Queue
 from pathlib import Path
 from unittest import mock
 from types import SimpleNamespace
 from collections import abc, deque
-from typing import (
-    Optional,
-    cast,
-)
 
 import numpy as np
 import fastapi.testclient
@@ -31,6 +31,7 @@ from celune.server.session import ServerSession
 from celune.webui import actions as webui_actions
 from celune.typing.pipeline import SpeechStreamQueue
 from celune.server import constants as server_constants
+from celune.typing.celune import ChunkCaptionProgressCallback
 
 from ..support import CeluneTestCase
 
@@ -913,6 +914,7 @@ class TestApiWebUI(CeluneTestCase):
 
     def test_webui_wrapped_callbacks_mirror_generation_lifecycle(self) -> None:
         """Verify idle, queue, caption, progress, and error callbacks reach WebUI state."""
+        original_caption_progress = mock.Mock()
         celune = cast(
             Celune,
             SimpleNamespace(
@@ -927,7 +929,7 @@ class TestApiWebUI(CeluneTestCase):
                 idle_callback=lambda: None,
                 queue_avail_callback=lambda: None,
                 progress_callback=lambda *_args: None,
-                caption_progress_callback=lambda *_args: None,
+                caption_progress_callback=original_caption_progress,
                 caption_callback=lambda _caption: None,
                 voice_changed_callback=lambda _name: None,
                 change_input_state_callback=lambda _locked: None,
@@ -945,7 +947,13 @@ class TestApiWebUI(CeluneTestCase):
         assert api.server_session.webui_status_text == string("status.speaking")
 
         celune.caption_callback("Hello there")
-        celune.caption_progress_callback(1.0, 2.0)
+        caption_progress = cast(
+            ChunkCaptionProgressCallback,
+            celune.caption_progress_callback,
+        )
+        caption_progress(1.0, 2.0, 1)
+        original_caption_progress.assert_called_once_with(1.0, 2.0, 1)
+        assert api.server_session.webui_caption_progress == 0.5
         api.server_session.webui_progress_current = 1.0
         api.server_session.webui_progress_total = 1.0
         _status = api.webui_status_html()
@@ -964,6 +972,25 @@ class TestApiWebUI(CeluneTestCase):
         celune.idle_callback()
         assert api.server_session.webui_caption_text == ""
         assert api.server_session.webui_progress_total is None
+
+    def test_webui_caption_progress_preserves_legacy_callback_signature(self) -> None:
+        """Forward aligned progress without breaking two-argument callbacks."""
+        received: list[tuple[Optional[float], Optional[float]]] = []
+
+        def legacy_callback(
+            progress: Optional[float],
+            total: Optional[float],
+        ) -> None:
+            received.append((progress, total))
+
+        webui._invoke_caption_progress_callback(
+            legacy_callback,
+            1.0,
+            2.0,
+            1,
+        )
+
+        assert received == [(1.0, 2.0)]
 
     def test_webui_persona_input_uses_think_path(self) -> None:
         """Verify browser input follows the Persona path when talkback is enabled."""

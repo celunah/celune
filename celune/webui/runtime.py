@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import re
 import time
+import inspect
 import datetime
 import contextlib
 from html import escape
@@ -14,14 +15,36 @@ from importlib.resources import files
 from typing import TYPE_CHECKING, Union, Optional, cast
 from collections.abc import Mapping, Callable, Iterator, Sequence
 
-import numpy as np
 import gradio as gr
+import numpy as np
 import soundfile as sf
 from fastapi import HTTPException
 
 from ..i18n import string
 from ..theme import colors
+from ..server.jobs import (
+    TaskEvent,
+    task_status,
+    update_speech_job,
+    publish_task_event,
+    publish_task_progress,
+    set_active_speech_task,
+    publish_active_task_log,
+    publish_active_task_progress,
+)
 from ..ui.app import CeluneUI
+from ..server.constants import (
+    WEBUI_GENERATION_API_NAMES,
+    WEBUI_RESOURCE_ROTATE_SECONDS,
+    WEBUI_TIMED_UPDATE_STALE_SECONDS,
+    WEBUI_STATUS_PROBE_DEBOUNCE_SECONDS,
+)
+from ..dataclasses.events import (
+    AgentTaskFinishedEvent,
+    AgentChoiceRequestedEvent,
+    AgentTaskStateChangedEvent,
+    AgentApprovalRequestedEvent,
+)
 from ..cevoice import default_loader
 from ..typing.api import WebUiUpdate
 from ..constants import BASE_SR, APP_NAME
@@ -39,28 +62,6 @@ from ..server.session import ServerSession, server_session
 from ..cedts.ui import UiTimedUpdate, ui_timed_update_channel
 from ..persona.impl import persona_enabled, persona_talkback_enabled
 from ..server.runtime import invoke_message_callback, shutdown_api_for_fatal_error
-from ..dataclasses.events import (
-    AgentTaskFinishedEvent,
-    AgentChoiceRequestedEvent,
-    AgentTaskStateChangedEvent,
-    AgentApprovalRequestedEvent,
-)
-from ..server.constants import (
-    WEBUI_GENERATION_API_NAMES,
-    WEBUI_RESOURCE_ROTATE_SECONDS,
-    WEBUI_TIMED_UPDATE_STALE_SECONDS,
-    WEBUI_STATUS_PROBE_DEBOUNCE_SECONDS,
-)
-from ..server.jobs import (
-    TaskEvent,
-    task_status,
-    update_speech_job,
-    publish_task_event,
-    publish_task_progress,
-    set_active_speech_task,
-    publish_active_task_log,
-    publish_active_task_progress,
-)
 
 npt = np.typing
 
@@ -578,6 +579,43 @@ def _probe_webui_runtime(session: ServerSession = server_session) -> None:
         session.webui_last_resource_advance = now
 
 
+def _invoke_caption_progress_callback(
+    callback: Callable[..., None],
+    progress: Optional[float],
+    total: Optional[float],
+    visible_words: Optional[int],
+) -> None:
+    """Forward aligned caption progress to callbacks that support word counts.
+
+    Args:
+        callback: Existing callback to preserve when WebUI wraps Celune.
+        progress: Played speech frames.
+        total: Total speech frames, when known.
+        visible_words: Number of caption words aligned to played audio.
+    """
+    if visible_words is None:
+        callback(progress, total)
+        return
+
+    try:
+        signature = inspect.signature(callback)
+    except (TypeError, ValueError):
+        callback(progress, total)
+        return
+
+    try:
+        signature.bind(progress, total, visible_words)
+    except TypeError:
+        try:
+            signature.bind(progress, total, visible_words=visible_words)
+        except TypeError:
+            callback(progress, total)
+        else:
+            callback(progress, total, visible_words=visible_words)
+    else:
+        callback(progress, total, visible_words)
+
+
 def wrap_celune_callbacks(
     celune: Celune,
     session: ServerSession = server_session,
@@ -603,7 +641,7 @@ def wrap_celune_callbacks(
         Callable[[], None], getattr(celune, "queue_avail_callback", lambda: None)
     )
     original_caption_progress = cast(
-        Callable[[Optional[float], Optional[float]], None],
+        Callable[..., None],
         getattr(celune, "caption_progress_callback", lambda _progress, _total: None),
     )
     original_caption = cast(
@@ -701,7 +739,12 @@ def wrap_celune_callbacks(
             session.webui_caption_progress = max(
                 0.0, min(1.0, (progress or 0.0) / total)
             )
-        original_caption_progress(progress, total)
+        _invoke_caption_progress_callback(
+            original_caption_progress,
+            progress,
+            total,
+            visible_words,
+        )
 
     def wrapped_caption(caption: Optional[str]) -> None:
         if caption:
