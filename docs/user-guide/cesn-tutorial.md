@@ -93,6 +93,17 @@ the connection between their sounds.
 [slur:2][c4:4,d4:4][ˈtʃɛl.oʊ]cello
 ```
 
+Use `j` between two notes of the same pitch to tie their durations into one
+sustained note. It does not consume an IPA syllable. Different pitches or a
+rest beside the marker produce `can't join different pitches together`.
+
+```text
+[bpm:104,key:c,scale:major][lang:en]
+[c4:4,j,c4:4][ɑ.ɑ]Ah
+```
+
+This holds C4 across two quarter-note values without retriggering the note.
+
 Use `[slide:<onset-and-vowel>,<notes>]` when a consonant should be articulated
 once and one vowel should continue over several notes. In X-SAMPA, `lA` means
 an `l` onset followed by the `A` vowel. This three-note example expands to

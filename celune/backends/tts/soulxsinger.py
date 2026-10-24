@@ -12,22 +12,23 @@ import shutil
 import tempfile
 import importlib
 import unicodedata
-from pathlib import Path
 from types import ModuleType
-from dataclasses import dataclass, field
 from typing import Union, Optional, Protocol, cast
+from pathlib import Path
+from dataclasses import field, dataclass
 from collections.abc import Mapping, Callable, Iterator
 
-import torch
 import numpy as np
+import torch
 from huggingface_hub import snapshot_download
 
+from .base import CeluneBackend, to_numpy_audio, cached_hf_snapshot_path
 from ...cesn import (
-    CESNVibrato,
-    parse_cesn,
     CESNSection,
+    CESNVibrato,
     CESNNotePair,
     CESNRestEvent,
+    parse_cesn,
     resolve_active_singer,
     contains_cesn_note_event,
 )
@@ -54,6 +55,7 @@ from ...exceptions import (
     CESNBackendFormatError,
     CESNUnsupportedFeatureError,
 )
+from ..environment import exclusive_lock
 from ...registry.tts import (
     TTS_DEFAULT_VOICE,
     SOULX_SINGER_MODEL_ID,
@@ -62,11 +64,9 @@ from ...registry.tts import (
     SOULX_SINGER_CODE_REPOSITORY,
 )
 from ...typing.common import JSON
-from ..environment import exclusive_lock
+from ...registry.other import SOULX_SINGER_RMVPE_MODEL_ID
 from ...typing.aliases import AudioChunk
 from ...registry.consent import require_model_consent
-from ...registry.other import SOULX_SINGER_RMVPE_MODEL_ID
-from .base import CeluneBackend, to_numpy_audio, cached_hf_snapshot_path
 
 __all__ = [
     "SoulXSinger",
@@ -209,6 +209,7 @@ class _ScoreEvent:
     rest: bool
     ipa: Optional[str] = None
     slur_from_previous: bool = False
+    tie_from_previous: bool = False
     vibrato: Optional[CESNVibrato] = None
     note_source_start: Optional[int] = None
     note_source_end: Optional[int] = None
@@ -382,6 +383,7 @@ def _score_event(
             rest=False,
             ipa=event.ipa,
             slur_from_previous=event.slur_from_previous,
+            tie_from_previous=event.event.tie_from_previous,
             vibrato=event.event.vibrato,
             note_source_start=(note_source_span[0] if note_source_span else None),
             note_source_end=(note_source_span[1] if note_source_span else None),
@@ -462,6 +464,7 @@ def _score_to_dict(section: _ScoreSection) -> dict[str, object]:
                 "rest": event.rest,
                 **({"ipa": event.ipa} if event.ipa is not None else {}),
                 "slur_from_previous": event.slur_from_previous,
+                "tie_from_previous": event.tie_from_previous,
                 **(
                     {
                         "vibrato": {
@@ -554,6 +557,7 @@ def decode_score(text: str) -> tuple[_ScoreSection, ...]:
             rest = raw_event.get("rest")
             ipa = raw_event.get("ipa")
             slur_from_previous = raw_event.get("slur_from_previous", False)
+            tie_from_previous = raw_event.get("tie_from_previous", False)
             raw_vibrato = raw_event.get("vibrato")
             vibrato: Optional[CESNVibrato] = None
             if raw_vibrato is not None:
@@ -614,6 +618,7 @@ def decode_score(text: str) -> tuple[_ScoreSection, ...]:
                 or duration[1] <= 0
                 or not isinstance(rest, bool)
                 or not isinstance(slur_from_previous, bool)
+                or not isinstance(tie_from_previous, bool)
                 or not (has_source_spans or missing_source_spans)
                 or (
                     has_source_spans
@@ -635,6 +640,7 @@ def decode_score(text: str) -> tuple[_ScoreSection, ...]:
                         pitch is not None
                         or ipa is not None
                         or slur_from_previous
+                        or tie_from_previous
                         or vibrato is not None
                     )
                 )
@@ -650,6 +656,12 @@ def decode_score(text: str) -> tuple[_ScoreSection, ...]:
                 raise CESNBackendFormatError(
                     "prepared CESN event has invalid or missing fields"
                 )
+            if tie_from_previous and (
+                not events or events[-1].rest or events[-1].pitch != pitch
+            ):
+                raise CESNBackendFormatError(
+                    "prepared CESN note has an invalid tie relation"
+                )
             events.append(
                 _ScoreEvent(
                     pitch=cast(Optional[str], pitch),
@@ -658,6 +670,7 @@ def decode_score(text: str) -> tuple[_ScoreSection, ...]:
                     rest=rest,
                     ipa=cast(Optional[str], ipa),
                     slur_from_previous=slur_from_previous,
+                    tie_from_previous=tie_from_previous,
                     vibrato=vibrato,
                     note_source_start=(
                         cast(int, note_source_start) if has_source_spans else None
@@ -1377,7 +1390,9 @@ class SoulXSinger(CeluneBackend[_SoulXRuntime]):
                 current_phone_tokens == previous_phone_tokens
                 or _is_vowel_continuation(previous_phone_tokens, current_phone_tokens)
             )
-            note_types.append("3" if is_repeated_slur else "2")
+            note_types.append(
+                "3" if event.tie_from_previous or is_repeated_slur else "2"
+            )
             previous_phone_tokens = current_phone_tokens
 
         metadata = {

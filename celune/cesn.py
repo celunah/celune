@@ -5,11 +5,11 @@ import re
 import math
 import warnings
 import unicodedata
+from typing import TYPE_CHECKING, Union, Optional, NamedTuple, cast
 from pathlib import Path
 from fractions import Fraction
+from dataclasses import field, dataclass
 from collections.abc import Callable
-from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Union, Optional, NamedTuple, cast
 
 from iso639 import Lang, exceptions
 
@@ -60,6 +60,7 @@ class CESNNoteEvent(NamedTuple):
     tuplet: Optional[CESNTuplet] = None
     tuplet_start: bool = False
     vibrato: Optional[CESNVibrato] = None
+    tie_from_previous: bool = False
 
     @property
     def duration_beats(self) -> Fraction:
@@ -128,7 +129,11 @@ class CESNSection:
     blocks: tuple[CESNBlock, ...]
 
 
-_CESNEvent = Union[CESNNoteEvent, CESNRestEvent]
+class _CESNJoinMarker(NamedTuple):
+    """An internal marker tying the next note to the previous one."""
+
+
+_CESNEvent = Union[CESNNoteEvent, CESNRestEvent, _CESNJoinMarker]
 
 NOTE_EVENT_PATTERN = re.compile(
     r"(?:(?P<pitch>[a-g](?:[#b])?-?\d+)|(?P<rest>r))\s*:\s*"
@@ -250,6 +255,9 @@ def _parse_cesn(
         nonlocal active_tuplet, tuplet_remaining
         annotated: list[_CESNEvent] = []
         for event in events:
+            if isinstance(event, _CESNJoinMarker):
+                annotated.append(event)
+                continue
             if active_tuplet is None:
                 annotated.append(event)
                 continue
@@ -284,12 +292,22 @@ def _parse_cesn(
         if pending_state is None:
             raise CESNValidationError("CESN note list has no musical state")
 
+        note_events_with_joins, note_event_spans = _resolve_note_joins(
+            pending_events,
+            pending_event_spans,
+            location,
+        )
+
         lyrics = "".join(pending_lyrics).lstrip()
         note_events = tuple(
-            event for event in pending_events if isinstance(event, CESNNoteEvent)
+            event
+            for event in note_events_with_joins
+            if isinstance(event, CESNNoteEvent)
         )
         rests = tuple(
-            event for event in pending_events if isinstance(event, CESNRestEvent)
+            event
+            for event in note_events_with_joins
+            if isinstance(event, CESNRestEvent)
         )
 
         if pending_state.language is None:
@@ -309,7 +327,7 @@ def _parse_cesn(
                 )
             if any(
                 isinstance(event, CESNRestEvent)
-                for event in pending_events[:pending_slur]
+                for event in note_events_with_joins[:pending_slur]
             ):
                 raise CESNValidationError("CESN slur cannot include a rest")
         if supported_languages is not None and not _model_supports_language(
@@ -339,7 +357,7 @@ def _parse_cesn(
         source_ipa_spans: list[Optional[tuple[int, int]]] = []
         note_index = 0
         event_index = 0
-        for event in pending_events:
+        for event in note_events_with_joins:
             if isinstance(event, CESNRestEvent):
                 event_items.append(event)
                 source_note_spans.append(None)
@@ -354,7 +372,7 @@ def _parse_cesn(
                 ),
             )
             event_items.append(pair)
-            source_note_spans.append(pending_event_spans[event_index])
+            source_note_spans.append(note_event_spans[event_index])
             source_ipa_spans.append(pending_ipa_spans[note_index])
             note_index += 1
             event_index += 1
@@ -644,19 +662,6 @@ def _parse_cesn(
                 ) from error
 
             slide_events = _parse_note_events(note_source)
-            if len(slide_events) < 2 or any(
-                isinstance(event, CESNRestEvent) for event in slide_events
-            ):
-                raise CESNValidationError(
-                    "CESN slide requires at least two pitched notes and cannot include rests"
-                )
-            first_ipa = _parse_xsampa(pronunciation)
-            vowel_ipa = _parse_xsampa(pronunciation[nucleus_offset:])
-            if len(first_ipa) != 1 or len(vowel_ipa) != 1:
-                raise CESNValidationError(
-                    "CESN slide requires one X-SAMPA vowel nucleus"
-                )
-
             argument_start = tag_content_start + tag.find(argument)
             pronunciation_leading = len(argument.split(",", 1)[0]) - len(
                 argument.split(",", 1)[0].lstrip()
@@ -678,6 +683,23 @@ def _parse_cesn(
                 note_source,
                 note_source_start,
             )
+            slide_events, slide_spans = _resolve_note_joins(
+                slide_events,
+                slide_spans,
+                location,
+            )
+            if len(slide_events) < 2 or any(
+                isinstance(event, CESNRestEvent) for event in slide_events
+            ):
+                raise CESNValidationError(
+                    "CESN slide requires at least two pitched notes and cannot include rests"
+                )
+            first_ipa = _parse_xsampa(pronunciation)
+            vowel_ipa = _parse_xsampa(pronunciation[nucleus_offset:])
+            if len(first_ipa) != 1 or len(vowel_ipa) != 1:
+                raise CESNValidationError(
+                    "CESN slide requires one X-SAMPA vowel nucleus"
+                )
             first_slide_event = slide_events[0]
             if pending_vibrato is not None and isinstance(
                 first_slide_event,
@@ -836,9 +858,7 @@ def render_cesn(sections: tuple[CESNSection, ...]) -> str:
                     raise CESNValidationError("CESN slur cannot include a rest")
                 rendered.append(f"[slur:{len(pairs)}]")
 
-            event_text = ",".join(
-                _format_event_contents(event) for event in note_events
-            )
+            event_text = _format_event_list(note_events)
             vibrato_index = next(
                 (
                     index
@@ -857,7 +877,10 @@ def render_cesn(sections: tuple[CESNSection, ...]) -> str:
                         )
                     if isinstance(event, CESNNoteEvent) and event.vibrato is not None:
                         rendered.append(_format_vibrato_tag(event.vibrato))
-                    rendered.append(f"[{_format_event_contents(event)}]")
+                    event_contents = _format_event_contents(event)
+                    if isinstance(event, CESNNoteEvent) and event.tie_from_previous:
+                        event_contents = f"j,{event_contents}"
+                    rendered.append(f"[{event_contents}]")
             if pairs:
                 if any(not pair.ipa for pair in pairs):
                     raise CESNValidationError(
@@ -1159,6 +1182,10 @@ def _parse_note_events(source: str) -> tuple[_CESNEvent, ...]:
     offset = 0
     for raw_event in source.split(","):
         candidate = raw_event.strip()
+        if candidate.casefold() == "j":
+            events.append(_CESNJoinMarker())
+            offset += len(raw_event) + 1
+            continue
         match = NOTE_EVENT_PATTERN.fullmatch(candidate)
         if match is None:
             raise CESNValidationError(f"malformed CESN note event at offset {offset}")
@@ -1177,6 +1204,49 @@ def _parse_note_events(source: str) -> tuple[_CESNEvent, ...]:
     return tuple(events)
 
 
+def _resolve_note_joins(
+    events: tuple[_CESNEvent, ...],
+    spans: tuple[Optional[tuple[int, int]], ...],
+    location: list[int],
+) -> tuple[
+    tuple[Union[CESNNoteEvent, CESNRestEvent], ...],
+    tuple[Optional[tuple[int, int]], ...],
+]:
+    """Convert each valid join marker into a same-pitch continuation flag."""
+    resolved_events: list[Union[CESNNoteEvent, CESNRestEvent]] = []
+    resolved_spans: list[Optional[tuple[int, int]]] = []
+    join_span: Optional[tuple[int, int]] = None
+
+    for event, span in zip(events, spans, strict=True):
+        if isinstance(event, _CESNJoinMarker):
+            if join_span is not None or not resolved_events:
+                if span is not None:
+                    location[:] = span
+                raise CESNValidationError("can't join different pitches together")
+            join_span = span
+            continue
+
+        if join_span is not None:
+            previous = resolved_events[-1]
+            if (
+                not isinstance(previous, CESNNoteEvent)
+                or not isinstance(event, CESNNoteEvent)
+                or previous.pitch != event.pitch
+            ):
+                location[:] = join_span or location
+                raise CESNValidationError("can't join different pitches together")
+            event = event._replace(tie_from_previous=True)
+            join_span = None
+
+        resolved_events.append(event)
+        resolved_spans.append(span)
+
+    if join_span is not None:
+        location[:] = join_span
+        raise CESNValidationError("can't join different pitches together")
+    return tuple(resolved_events), tuple(resolved_spans)
+
+
 def _note_event_source_spans(
     source: str,
     source_start: int,
@@ -1186,6 +1256,13 @@ def _note_event_source_spans(
     offset = 0
     for raw_event in source.split(","):
         candidate = raw_event.strip()
+        candidate_start = (
+            source_start + offset + len(raw_event) - len(raw_event.lstrip())
+        )
+        if candidate.casefold() == "j":
+            spans.append((candidate_start, candidate_start + len(candidate)))
+            offset += len(raw_event) + 1
+            continue
         match = NOTE_EVENT_PATTERN.fullmatch(candidate)
         if match is None:
             raise CESNValidationError(f"malformed CESN note event at offset {offset}")
@@ -1193,9 +1270,6 @@ def _note_event_source_spans(
         if pitch is None:
             spans.append(None)
         else:
-            candidate_start = (
-                source_start + offset + len(raw_event) - len(raw_event.lstrip())
-            )
             start = candidate_start + match.start("pitch")
             spans.append((start, start + len(pitch)))
         offset += len(raw_event) + 1
@@ -1234,9 +1308,21 @@ def _format_rest_event(event: CESNRestEvent) -> str:
 
 def _format_event_contents(event: _CESNEvent) -> str:
     """Return one note-list event without its surrounding brackets."""
+    if isinstance(event, _CESNJoinMarker):
+        return "j"
     if isinstance(event, CESNRestEvent):
         return _format_rest_event(event)
     return _format_note_event(event)
+
+
+def _format_event_list(events: tuple[_CESNEvent, ...]) -> str:
+    """Render note events with explicit join markers between tied pitches."""
+    contents: list[str] = []
+    for event in events:
+        if isinstance(event, CESNNoteEvent) and event.tie_from_previous:
+            contents.append("j")
+        contents.append(_format_event_contents(event))
+    return ",".join(contents)
 
 
 def _format_tuplet_start(event: Union[CESNNoteEvent, CESNRestEvent]) -> str:

@@ -2,14 +2,16 @@
 """Tests for explicit CESN IPA syllable alignment."""
 
 import json
-from pathlib import Path
-from unittest import mock
 from types import SimpleNamespace
 from typing import Optional, cast
+from pathlib import Path
+from unittest import mock
 
-import pytest
 import numpy as np
+import pytest
 
+from celune.cesn import CESNSinger, CESNVibrato, format_cesn_error
+from celune.cevoice import CEVoiceLoader
 from celune.exceptions import (
     CESNIPAError,
     CESNRangeError,
@@ -17,14 +19,12 @@ from celune.exceptions import (
     CESNBackendFormatError,
 )
 from celune.typing.common import JSON
-from celune.cevoice import CEVoiceLoader
 from celune.backends.tts.soulxsinger import (
     SoulXSinger,
     decode_score,
     _SoulXRuntime,
     pitch_to_midi,
 )
-from celune.cesn import CESNSinger, CESNVibrato, format_cesn_error
 
 
 @pytest.mark.parametrize(
@@ -414,6 +414,36 @@ def test_slurred_repeated_phones_use_soulx_continuation_type() -> None:
     assert metadata["note_type"] == "2 3 1"
     assert metadata["note_pitch"] == "60 62 0"
     assert metadata["phoneme"] == "en_L-AA1 en_L-AA1 <SP>"
+
+
+def test_tied_notes_use_soulx_continuation_type() -> None:
+    """Preserve same-pitch ties in the backend score and sustain note type."""
+    backend = object.__new__(SoulXSinger)
+    singer = CESNSinger("Test Singer", Path("singer.cevoice"))
+    notation = "[lang:en][c4:4,j,c4:4][ɑ.ɑ]Ah"
+    with mock.patch(
+        "celune.backends.tts.soulxsinger.resolve_active_singer",
+        return_value=singer,
+    ):
+        score_text = backend.cesn_to_model(notation)
+
+    section = decode_score(score_text)[0]
+    runtime = cast(
+        _SoulXRuntime,
+        SimpleNamespace(processor=SimpleNamespace(phone2idx={"en_AA0": 0})),
+    )
+    metadata = SoulXSinger._metadata(section.events, section.bpm, runtime)
+    payload = json.loads(score_text)
+    raw_events = payload["sections"][0]["events"]
+
+    assert tuple(event.tie_from_previous for event in section.events) == (False, True)
+    assert raw_events[1]["tie_from_previous"]
+    assert metadata["note_type"] == "2 3"
+    assert metadata["note_pitch"] == "60 60"
+
+    raw_events[1]["pitch"] = "d4"
+    with pytest.raises(CESNBackendFormatError, match="invalid tie relation"):
+        decode_score(json.dumps(payload))
 
 
 def test_slide_shorthand_continues_vowel_after_one_consonant_onset() -> None:

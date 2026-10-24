@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for CESN directives, IPA alignment, sections, and rendering."""
 
+from types import SimpleNamespace
 from pathlib import Path
 from fractions import Fraction
-from types import SimpleNamespace
 
 import pytest
 
@@ -11,14 +11,14 @@ from celune import cevoice
 from celune.cesn import (
     CESNSinger,
     CESNTuplet,
+    CESNVibrato,
     CESNNotePair,
     CESNNoteEvent,
-    CESNVibrato,
     CESNRestEvent,
-    format_cesn_error,
     parse_cesn,
     render_cesn,
     resolve_singer,
+    format_cesn_error,
 )
 from celune.exceptions import (
     CESNMatchError,
@@ -42,6 +42,48 @@ def test_parse_cesn_returns_typed_note_ipa_pairs() -> None:
         CESNNotePair(CESNNoteEvent("e3", 16, False), "sɪŋ"),
     )
     assert result[0].blocks[0].lyrics == "Text to sing."
+
+
+def test_joined_notes_require_equal_pitch_and_render_round_trip() -> None:
+    """Retain same-pitch ties and locate invalid joins at their marker."""
+    notation = "[lang:en][c4:1,j,c4:1][ɑ.ɑ]Ah"
+
+    sections = parse_cesn(notation)
+    pairs = sections[0].blocks[0].pairs
+
+    assert tuple(pair.event.tie_from_previous for pair in pairs) == (False, True)
+    rendered = render_cesn(sections)
+    assert "[c4:1,j,c4:1]" in rendered
+    assert parse_cesn(rendered) == sections
+
+    invalid_notation = "[lang:en][c4:1,j,d4:1][ɑ.ɑ]Ah"
+    with pytest.raises(
+        CESNValidationError,
+        match="can't join different pitches together",
+    ) as caught:
+        parse_cesn(invalid_notation)
+
+    assert caught.value.source_start == invalid_notation.index("j")
+    assert format_cesn_error(invalid_notation, caught.value).endswith(
+        "can't join different pitches together"
+    )
+
+
+@pytest.mark.parametrize(
+    "events",
+    (
+        "j,c4:1",
+        "c4:1,j",
+        "c4:1,j,r:1",
+    ),
+)
+def test_join_marker_requires_pitched_notes_on_both_sides(events: str) -> None:
+    """Reject leading, trailing, and rest-connected join markers."""
+    with pytest.raises(
+        CESNValidationError,
+        match="can't join different pitches together",
+    ):
+        parse_cesn(f"[lang:en][{events}][ɑ]Ah")
 
 
 def test_vibrato_targets_only_the_next_note_and_renders_round_trip() -> None:

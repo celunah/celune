@@ -30,6 +30,13 @@ Each note event contains a pitch or rest, a colon, a note type, and an optional 
 | Rest | `r` instead of a pitch | `r:1` |
 | Note type | `1`, `2`, `4`, `8`, `16`, or `32` | `8` |
 | Dotted marker | Optional `d` after the note type | `4d` |
+| Tie marker | `j` between same-pitched notes | `c4:1,j,c4:1` |
+
+`j` ties the preceding note to the following note. Both events must be pitched
+notes with the same pitch; a tie marker adds no duration and consumes no IPA
+syllable. For example, `[c4:1,j,c4:1]` sustains C4 across both note values.
+Different pitches or a rest on either side raise `CESNValidationError` with
+`can't join different pitches together`.
 
 The defaults are 120 BPM, C major, and the currently active singer. A language tag is required before the note list; CESN never detects language automatically. The tag accepts an ISO language identifier such as `en`, `eng`, or `srp-latn`. Each selected singing backend may support a different set of languages and IPA sounds.
 
@@ -59,13 +66,13 @@ SoulX-Singer converts explicit IPA into its English ARPAbet phone inventory. The
 
 Stress marks `ˈ` and `ˌ` set the following vowel's stress to 1 or 2. Vowels without an explicit stress mark use 0, except `ɝ` (1) and `ɚ` (0). Length marks `ː` and `ˑ` and aspiration `ʰ` are ignored. IPA sounds without a matching model phone raise `CESNIPAError`; the diagnostic identifies the unsupported IPA character when it can be isolated. For example, `Quiet` can use `[g3:4,a3:4][ˈkwaɪ.ət]Quiet.` to force `K W AY1` followed by `AH0 T` while retaining the original spelling. `[singer:Celune]` selects a matching character pack, which must be a CECHAR v5 pack containing the reserved `sing` voice.
 
-`[tuplet:a,b]` scales the next `a` note or rest events by `b/a`, then expires. For example, `[tuplet:3,2]` makes three following quarter notes fit into the time of two quarter notes. Rests count toward the `a` events. A tuplet can span successive note/lyric groups, but it must finish before another tuplet, a musical section change, or the end of the notation. Tuplets cannot overlap. The parsed event retains its tuplet ratio and exposes its exact effective duration as `duration_beats`, a `fractions.Fraction` measured in quarter-note beats. Dotted notes apply their 3/2 multiplier before the tuplet ratio.
+`[tuplet:a,b]` scales the next `a` note or rest events by `b/a`, then expires. For example, `[tuplet:3,2]` makes three following quarter notes fit into the time of two quarter notes. Rests count toward the `a` events; tie markers do not. A tuplet can span successive note/lyric groups, but it must finish before another tuplet, a musical section change, or the end of the notation. Tuplets cannot overlap. The parsed event retains its tuplet ratio and exposes its exact effective duration as `duration_beats`, a `fractions.Fraction` measured in quarter-note beats. Dotted notes apply their 3/2 multiplier before the tuplet ratio.
 
 ## Parse and render
 
 `parse_cesn(text: str, *, supported_languages: Optional[tuple[str, ...]] = None) -> tuple[CESNSection, ...]` parses the notation and returns ordered sections. A section groups note blocks with the same singer, language, BPM, key, and scale. Any change to those settings begins a new section, which is the singing backend's boundary for resetting its current inference state. Raised `CESNError` instances include zero-based `source_start` and `source_end` offsets for the source span the parser identified; Celune displays the start as a one-based line and column.
 
-Each `CESNBlock` contains the original lyric text and an ordered `events` sequence. Pitched entries are `CESNNotePair(event, ipa, slur_from_previous=False)` values; `ipa` contains the canonical Unicode IPA syllable, converted from X-SAMPA when that input form was used. `slur_from_previous` marks a note that continues a slur from the previous note. `CESNNoteEvent.vibrato` is either `None` or a `CESNVibrato` with `delay_note_type`, `speed_hz`, and `cents`; rendering places its tag immediately before its target event. The slide shorthand is rendered canonically as a slurred note group with one IPA syllable per note. Rests are `CESNRestEvent` values. A rest keeps its timing and position but does not consume a pronunciation syllable. `block.pairs` returns only the pitched note/IPA pairs. Note and rest events expose an exact `duration_beats` value and their optional `CESNTuplet`; `tuplet_start` marks the event where rendering re-emits the tuplet directive.
+Each `CESNBlock` contains the original lyric text and an ordered `events` sequence. Pitched entries are `CESNNotePair(event, ipa, slur_from_previous=False)` values; `ipa` contains the canonical Unicode IPA syllable, converted from X-SAMPA when that input form was used. `slur_from_previous` marks a note that continues a slur from the previous note. `CESNNoteEvent.tie_from_previous` marks a same-pitch tie from the preceding note. `CESNNoteEvent.vibrato` is either `None` or a `CESNVibrato` with `delay_note_type`, `speed_hz`, and `cents`; rendering places its tag immediately before its target event. The slide shorthand is rendered canonically as a slurred note group with one IPA syllable per note. Rests are `CESNRestEvent` values. A rest keeps its timing and position but does not consume a pronunciation syllable. `block.pairs` returns only the pitched note/IPA pairs. Note and rest events expose an exact `duration_beats` value and their optional `CESNTuplet`; `tuplet_start` marks the event where rendering re-emits the tuplet directive.
 
 ```python
 from celune.cesn import parse_cesn, render_cesn
