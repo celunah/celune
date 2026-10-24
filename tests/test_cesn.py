@@ -97,18 +97,21 @@ def test_tied_note_chains_align_one_xsampa_syllable(
 
 
 @pytest.mark.parametrize(
-    "events",
+    ("events", "message"),
     (
-        "j,c4:1",
-        "c4:1,j",
-        "c4:1,j,r:1",
+        ("j,c4:1", "can't join different pitches together"),
+        ("c4:1,j", "can't join different pitches together"),
+        ("c4:1,j,r:1", "can't join notes to rests"),
+        ("r:1,j,c4:1", "can't join notes to rests"),
     ),
 )
-def test_join_marker_requires_pitched_notes_on_both_sides(events: str) -> None:
+def test_join_marker_requires_pitched_notes_on_both_sides(
+    events: str, message: str
+) -> None:
     """Reject leading, trailing, and rest-connected join markers."""
     with pytest.raises(
         CESNValidationError,
-        match="can't join different pitches together",
+        match=message,
     ):
         parse_cesn(f"[lang:en][{events}][ɑ]Ah")
 

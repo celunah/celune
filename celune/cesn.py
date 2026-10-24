@@ -1248,6 +1248,9 @@ def _resolve_note_joins(
 
         if join_span is not None:
             previous = resolved_events[-1]
+            if isinstance(previous, CESNRestEvent) or isinstance(event, CESNRestEvent):
+                location[:] = join_span
+                raise CESNValidationError("can't join notes to rests")
             if (
                 not isinstance(previous, CESNNoteEvent)
                 or not isinstance(event, CESNNoteEvent)

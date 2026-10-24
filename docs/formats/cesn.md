@@ -36,8 +36,9 @@ Each note event contains a pitch or rest, a colon, a note type, and an optional 
 notes with the same pitch; a tie marker and each continued note add no IPA
 syllable. One IPA syllable is shared across the entire tied chain. For example,
 `[c4:1,j,c4:1]` sustains C4 across both note values while using one syllable.
-Different pitches or a rest on either side raise `CESNValidationError` with
-`can't join different pitches together`.
+Different pitches raise `CESNValidationError` with
+`can't join different pitches together`. A rest on either side raises
+`can't join notes to rests`.
 
 The defaults are 120 BPM, C major, and the currently active singer. A language tag is required before the note list; CESN never detects language automatically. The tag accepts an ISO language identifier such as `en`, `eng`, or `srp-latn`. Each selected singing backend may support a different set of languages and IPA sounds.
 
