@@ -8,7 +8,6 @@ from typing import Literal, Optional
 from dataclasses import replace, dataclass
 from collections.abc import Mapping, Callable, Collection
 
-import readchar
 from rich.text import Text
 from rich.cells import cell_len
 from textual.dom import NoScreen
@@ -64,6 +63,8 @@ class SelectMenu:
         Returns:
             str: The chosen option.
         """
+        import readchar
+
         sys.stdout.write("\033[?25l")
         sys.stdout.write(self.prompt)
         sys.stdout.write("\n\n")

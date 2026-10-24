@@ -21,8 +21,6 @@ from dataclasses import dataclass
 from typing import Optional, Union
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
-from git.exc import GitError
-
 from .vcs import (
     UPSTREAM_REPOSITORY_URL,
     is_git_checkout,
@@ -317,6 +315,8 @@ def _current_branch() -> str:
 
 def _local_tag() -> str:
     """Get current local tag."""
+    from git.exc import GitError
+
     try:
         with open_repository(_repo_root()) as repository:
             tag = repository.git.describe(
@@ -648,6 +648,12 @@ def check_for_update() -> Optional[UpdateInfo]:
         Optional[UpdateInfo]: Metadata describing the available update, or ``None`` when no safe update path is
         currently available.
     """
+    try:
+        from git.exc import GitError
+    except ModuleNotFoundError as module:
+        print(f"warning: can't check for updates: {module}")
+        return None
+
     if FORCE_DISABLE_UPDATES:
         return None
 
@@ -868,6 +874,8 @@ def update_to_latest(install_dir: Optional[Path] = None) -> None:
     Raises:
         UpdateError: if the repository or packaged install cannot be updated safely
     """
+    from git.exc import GitError
+
     if running_compiled() or install_dir is not None:
         _apply_compiled_update(install_dir=install_dir)
         return

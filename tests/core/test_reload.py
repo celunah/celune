@@ -260,7 +260,7 @@ class TestCeluneReload(CeluneCoreTestSupport):
 
             switched_vc_backend = cast(CountingVCBackend, celune.vc_backend)
             assert initial_backend.unload_calls == 1
-            assert switched_vc_backend.preload_calls == 1
+            assert switched_vc_backend.preload_calls == 1  # pylint: disable=E1101
             assert celune.input_mode == "voice_conversion"
             assert core_lifecycle.active_runtime_backend_name(celune) == "counting-vc"
             assert celune.model is None
@@ -268,7 +268,7 @@ class TestCeluneReload(CeluneCoreTestSupport):
 
             assert celune.set_backend_and_wait(FakeBackend)
 
-            assert switched_vc_backend.unload_calls == 1
+            assert switched_vc_backend.unload_calls == 1  # pylint: disable=E1101
             assert celune.input_mode == "text_to_speech"
             assert celune.vc_backend is None
             assert core_lifecycle.active_runtime_backend_name(celune) == "fake"
@@ -323,7 +323,7 @@ class TestCeluneReload(CeluneCoreTestSupport):
 
             assert not celune.set_backend_and_wait(FailingBackend)
 
-            assert previous_vc_backend.unload_calls == 1
+            assert previous_vc_backend.unload_calls == 1  # pylint: disable=E1101
             assert celune.input_mode == "voice_conversion"
             assert celune.vc_backend is not None
             assert isinstance(celune.vc_backend, CountingVCBackend)
@@ -1056,7 +1056,7 @@ class TestCeluneReload(CeluneCoreTestSupport):
         with mock.patch("celune.core.voice.play_signal", return_value=False):
             assert celune.enter_sleep_mode()
 
-        assert original_vc_backend.unload_calls == 1
+        assert original_vc_backend.unload_calls == 1  # pylint: disable=E1101
         celune.backend.unload_model.assert_not_called()
 
         with mock.patch("celune.core.voice.play_signal", return_value=False):
@@ -1064,7 +1064,7 @@ class TestCeluneReload(CeluneCoreTestSupport):
 
         restored_vc_backend = cast(CountingVCBackend, celune.vc_backend)
         assert restored_vc_backend is not original_vc_backend
-        assert restored_vc_backend.preload_calls == 1
+        assert restored_vc_backend.preload_calls == 1  # pylint: disable=E1101
 
     def test_sleep_tts_unload_can_keep_vc_loaded_when_explicitly_disabled(
         self,
@@ -1117,7 +1117,7 @@ class TestCeluneReload(CeluneCoreTestSupport):
             assert celune.enter_sleep_mode()
 
         assert celune.vc_backend is vc_backend
-        assert vc_backend.unload_calls == 0
+        assert vc_backend.unload_calls == 0  # pylint: disable=E1101
 
     def test_sleep_mode_closes_persona_even_if_close_raises(self) -> None:
         """Verify sleep still clears Persona references when client shutdown fails."""

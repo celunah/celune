@@ -18,10 +18,17 @@ from collections.abc import Callable, Iterator, Container
 from typing import Any, Union, TextIO, Literal, Optional, overload
 
 import psutil
-from lingua import (  # pylint: disable=E0611
-    Language,
-    LanguageDetectorBuilder,
-)
+
+try:
+    from lingua import (  # pylint: disable=E0611
+        Language,
+        LanguageDetectorBuilder,
+    )
+
+    _LANGUAGE_DETECTOR = LanguageDetectorBuilder.from_all_spoken_languages().build()
+except ModuleNotFoundError as module:
+    print(f"warning: language detection is disabled: {module}")
+    _LANGUAGE_DETECTOR = None
 
 from .paths import traceback_path
 from .typing.aliases import LogLevel
@@ -29,8 +36,6 @@ from .constants import REFERENCE_NEW_MOON
 from .typing.utils import CallerInfo, LanguageResult
 from .vcs import get_revision as _get_repository_revision
 from .terminal import supports_ansi as terminal_supports_ansi
-
-_LANGUAGE_DETECTOR = LanguageDetectorBuilder.from_all_spoken_languages().build()
 
 
 def clear_queue(q: queue.Queue) -> None:
@@ -607,6 +612,15 @@ def detect_language(text: str, supported: list[str]) -> LanguageResult:
     Returns:
         LanguageResult: The language detection result metadata object.
     """
+
+    if not _LANGUAGE_DETECTOR:
+        fallback = _backend_language_code("en", supported)
+        return {
+            "language": fallback,
+            "languages": [fallback],
+            "supported": fallback in supported,
+            "probabilities": {fallback: 1.0},
+        }
 
     detected_language = _LANGUAGE_DETECTOR.detect_language_of(text)
     if detected_language is None:
