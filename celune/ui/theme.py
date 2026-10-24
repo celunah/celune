@@ -111,6 +111,16 @@ CELUNE_CSS = """
         margin-top: 2;
     }
 
+    #loading-help {
+        width: 1fr;
+        max-width: 80;
+        height: auto;
+        color: $foreground;
+        text-align: center;
+        margin-top: 1;
+        display: none;
+    }
+
     #loading-footer {
         dock: bottom;
         width: auto;

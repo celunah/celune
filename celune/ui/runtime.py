@@ -2,6 +2,7 @@
 """Extracted CeluneUI methods group 1."""
 
 from __future__ import annotations
+
 import os
 import sys
 import math
@@ -1112,6 +1113,7 @@ def _handle_deferred_runtime_error(self, error: BaseException) -> None:
         message,
         status_message=_app.string("status.early_initialization_failed"),
         footer_message=failure_status,
+        help_message=(self._startup_dependency_help if missing_dependency else None),
     )
 
 
@@ -1631,6 +1633,7 @@ def _show_loading_error(
     *,
     status_message: Optional[str] = None,
     footer_message: Optional[str] = None,
+    help_message: Optional[str] = None,
 ) -> None:
     """Keep the loading screen visible while showing an initialization error.
 
@@ -1638,6 +1641,7 @@ def _show_loading_error(
         message: Initialization error to display.
         status_message: Optional replacement for the failure heading.
         footer_message: Optional status to show in the lower-left footer.
+        help_message: Optional recovery steps to show below the failure message.
     """
 
     def update() -> None:
@@ -1650,6 +1654,7 @@ def _show_loading_error(
                 _app.concise_error_message(message),
                 status_message=status_message,
                 footer_message=footer_message,
+                help_message=help_message,
             )
 
     self._run_on_ui_thread(update)
@@ -2062,10 +2067,15 @@ class RuntimeHooks:
         *,
         status_message: Optional[str] = None,
         footer_message: Optional[str] = None,
+        help_message: Optional[str] = None,
     ) -> None:
         """Delegate to the runtime implementation."""
         return _show_loading_error(
-            self, message, status_message=status_message, footer_message=footer_message
+            self,
+            message,
+            status_message=status_message,
+            footer_message=footer_message,
+            help_message=help_message,
         )
 
     def _show_loading_screen(self) -> None:

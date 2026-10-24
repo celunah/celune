@@ -44,6 +44,8 @@ def test_product_name_uses_placeholder_in_user_facing_messages() -> None:
         "cli.traceback_cmd_dev_python",
         "cli.traceback_cmd_set_dev",
         "commands.help_cesn_tutorial",
+        "ui.missing_dependency_launcher_linux",
+        "ui.missing_dependency_launcher_windows",
     }
 
 

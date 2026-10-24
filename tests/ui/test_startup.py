@@ -11,30 +11,28 @@ import asyncio
 import tempfile
 import warnings
 import threading
-from pathlib import Path
-from unittest import mock
 from types import SimpleNamespace
 from typing import Optional, cast
+from pathlib import Path
+from unittest import mock
 from collections.abc import Callable
 
-import pytest
 import numpy as np
+import pytest
 from textual import events
 from textual.app import App
-from textual.containers import Vertical
 from textual.widgets import Label, Static, RichLog, TextArea, ProgressBar
+from textual.containers import Vertical
 
-from celune.theme import colors
-from celune.celune import Celune
-from celune.utils import discard
 from celune.ui import app as ui_app
 from celune.ui import compat as ui_compat
-from celune.i18n import string, tagged_string
 from celune.ui import terminal as ui_terminal
 from celune.ui import resources as ui_resources
-from celune.ui.headless import CeluneHeadlessUI
 from celune.core import lifecycle as core_lifecycle
-from celune.constants import APP_NAME, COST_EQUIVALENTS, ExitCodes
+from celune.i18n import string, tagged_string
+from celune.theme import colors
+from celune.utils import discard
+from celune.celune import Celune
 from celune.ui.app import (
     Button,
     CeluneUI,
@@ -44,10 +42,11 @@ from celune.ui.app import (
     ProgressLabel,
     CeluneLoadingScreen,
 )
-
-from .fixtures import reset_ui_singletons
+from celune.constants import APP_NAME, COST_EQUIVALENTS, ExitCodes
+from celune.ui.headless import CeluneHeadlessUI
 
 from ..support import FakeBackend, CeluneTestCase
+from .fixtures import reset_ui_singletons
 
 
 class TestUIStartup(CeluneTestCase):
@@ -163,7 +162,7 @@ class TestUIStartup(CeluneTestCase):
 
     def test_missing_dependency_startup_waits_for_ctrl_q(self) -> None:
         """Verify missing dependencies remain visible until the user quits."""
-        ui = CeluneUI()
+        ui = CeluneUI(startup_dependency_help="Run configure.py")
         ui.refresh_css = mock.Mock()
         ui._show_loading_error = mock.Mock()
         ui._write_terminal_title = mock.Mock()
@@ -186,6 +185,7 @@ class TestUIStartup(CeluneTestCase):
             tagged_string("ui.init_error", "INIT ERROR"),
             status_message=string("status.early_initialization_failed"),
             footer_message=string("status.missing_dependency"),
+            help_message="Run configure.py",
         )
 
         ui._shutdown_runtime = mock.Mock()
@@ -195,6 +195,42 @@ class TestUIStartup(CeluneTestCase):
         ui.exit.assert_called_once_with(
             return_code=ExitCodes.EXIT_MISSING_DEPENDENCIES.value
         )
+
+    def test_deferred_missing_dependency_updates_the_error_overlay(self) -> None:
+        """Verify a deferred import failure replaces the visible loading labels."""
+        missing = ModuleNotFoundError("No module named 'dateutil'")
+        missing.name = "dateutil"
+        help_message = string(
+            "ui.missing_dependency_setup_venv",
+            app_name=APP_NAME,
+        )
+        ui = CeluneUI(
+            startup_loader=lambda: (_ for _ in ()).throw(missing),
+            startup_dependency_help=help_message,
+        )
+
+        async def run() -> None:
+            async with ui.run_test(size=(110, 32)) as pilot:
+                for _ in range(40):
+                    await pilot.pause(0.05)
+                    if ui.cur_state == "error":
+                        break
+
+                await pilot.pause()
+                screen = ui.query_one("#loading-overlay", CeluneLoadingScreen)
+                assert ui.cur_state == "error"
+                assert str(
+                    screen.query_one("#loading-state-label", Static).render()
+                ) == (string("status.early_initialization_failed"))
+                assert str(screen.query_one("#loading-log-message", Static).render())
+                assert str(screen.query_one("#loading-wait", Static).render()) == (
+                    string("ui.loading_cannot_continue", app_name=APP_NAME)
+                )
+                help_widget = screen.query_one("#loading-help", Static)
+                assert str(help_widget.render()) == help_message
+                assert help_widget.display
+
+        asyncio.run(run())
 
     def test_loading_screen_stores_latest_log_before_mount(self) -> None:
         """Verify startup log text can arrive before loading widgets mount."""
@@ -442,7 +478,8 @@ class TestUIStartup(CeluneTestCase):
                 assert quit_hint.region.right <= 78
                 assert str(quit_hint.render()) == "CTRL+Q to quit"
 
-                screen.show_error("Backend failed")
+                screen.show_error("Backend failed", help_message="Run configure.py")
+                await pilot.pause()
                 assert str(
                     screen.query_one("#loading-state-label", Static).render()
                 ) == string("status.failed_to_start")
@@ -453,6 +490,13 @@ class TestUIStartup(CeluneTestCase):
                 assert not screen.query_one("#loading-spinner", Static).display
                 assert str(screen.query_one("#loading-wait", Static).render()) == (
                     string("ui.loading_cannot_continue", app_name=APP_NAME)
+                )
+                help_widget = screen.query_one("#loading-help", Static)
+                assert str(help_widget.render()) == "Run configure.py"
+                assert help_widget.display
+                assert (
+                    help_widget.region.y
+                    > screen.query_one("#loading-wait", Static).region.y
                 )
                 assert str(
                     screen.query_one("#loading-footer-starting", Static).render()

@@ -200,11 +200,15 @@ the stream's default severity.
 If initialization fails before the core is attached, the loading overlay remains
 visible as an error report. Its heading reads `Early initialization failed`, the
 initialization error remains in the diagnostic area, the spinner is removed, and
-the overlay says `Celune can't continue.` The lower-left status identifies the cause, such
-as `Missing dependency: dateutil`; no further startup progress is pending. The
-UI switches to the red error theme and catches early startup exceptions,
-including missing dependencies, without leaving a worker traceback on the
-terminal. The terminal title changes to an error state with a concise cause.
+the overlay says `Celune can't continue.` A compact instruction appears directly
+below it for missing dependencies: use the project `.venv` with `uv run`, run
+`python configure.py` when the environment is missing or incomplete, or start
+the user-facing launcher when a compiled entrypoint was opened directly. The
+lower-left status identifies the cause, such as `Missing dependency: dateutil`;
+no further startup progress is pending. The UI switches to the red error theme
+and catches early startup exceptions, including missing dependencies, without
+leaving a worker traceback on the terminal. The terminal title changes to an
+error state with a concise cause.
 Press `CTRL+Q` on this screen to close the application; a missing-dependency
 failure then returns exit code `4` to the launcher, while other early startup
 failures return the general failure code. After core attachment, press `ESC` to

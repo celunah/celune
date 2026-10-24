@@ -38,6 +38,7 @@ class CeluneLoadingScreen(Widget):
         self._status_message = string("status.initializing")
         self._latest_log_message = string("ui.loading_waiting_for_log")
         self._wait_message = string("ui.loading_wait")
+        self._help_message = ""
         self._footer_message = string("ui.loading_starting", app_name=APP_NAME)
         self._reveal_available = False
         self._spinner_timer: Optional[Timer] = None
@@ -86,6 +87,11 @@ class CeluneLoadingScreen(Widget):
                 id="loading-wait",
                 markup=False,
             )
+            yield Static(
+                self._help_message,
+                id="loading-help",
+                markup=False,
+            )
         with Horizontal(id="loading-footer"):
             yield Static(
                 self._footer_message,
@@ -120,6 +126,7 @@ class CeluneLoadingScreen(Widget):
         """Start the loading spinner after the overlay is mounted."""
         if self._failed:
             self.query_one("#loading-spinner", Static).display = False
+            self.query_one("#loading-help", Static).display = bool(self._help_message)
             return
         self._spinner_timer = self.set_interval(0.26, self._advance_spinner)
 
@@ -195,6 +202,7 @@ class CeluneLoadingScreen(Widget):
         *,
         status_message: Optional[str] = None,
         footer_message: Optional[str] = None,
+        help_message: Optional[str] = None,
     ) -> None:
         """Switch the overlay from startup progress to its failure state.
 
@@ -202,10 +210,12 @@ class CeluneLoadingScreen(Widget):
             message: Initialization failure to show to the user.
             status_message: Optional replacement for the failure heading.
             footer_message: Optional status to show in the lower-left footer.
+        help_message: Optional recovery steps to show below the failure message.
         """
         self._failed = True
         self._status_message = status_message or string("status.failed_to_start")
         self._latest_log_message = message
+        self._help_message = help_message or ""
         self._wait_message = string(
             "ui.loading_cannot_continue",
             app_name=APP_NAME,
@@ -220,6 +230,9 @@ class CeluneLoadingScreen(Widget):
             self.query_one("#loading-state-label", Static).update(self._status_message)
             self.query_one("#loading-log-message", Static).update(message)
             self.query_one("#loading-wait", Static).update(self._wait_message)
+            help_widget = self.query_one("#loading-help", Static)
+            help_widget.update(self._help_message)
+            help_widget.display = bool(self._help_message)
             self.query_one("#loading-spinner", Static).display = False
             self.query_one("#loading-footer-starting", Static).update(
                 self._footer_message

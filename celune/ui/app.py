@@ -2,17 +2,15 @@
 """Frontend layer."""
 
 from __future__ import annotations
+
 import sys
+import queue as queue_module
 import asyncio
 import logging
 import itertools
 import threading
-import queue as queue_module
-from pathlib import Path
 from io import TextIOWrapper
 from types import ModuleType
-from dataclasses import field, dataclass
-from collections.abc import Callable, Iterator
 from typing import (
     TYPE_CHECKING,
     Never,
@@ -25,17 +23,10 @@ from typing import (
     cast,
     final,
 )
+from pathlib import Path
+from dataclasses import field, dataclass
+from collections.abc import Callable, Iterator
 
-from rich.text import Text
-from textual import (
-    color as textual_color,
-)
-from textual import (
-    screen as textual_screen,
-)
-from textual import (
-    message as textual_message,
-)
 from textual import (
     app,
     css,
@@ -43,34 +34,45 @@ from textual import (
     theme,
     timer,
     events,
-    widget as textual_widget,
     binding,
     widgets,
     containers,
 )
+from textual import (
+    color as textual_color,
+)
+from textual import (
+    screen as textual_screen,
+)
+from textual import (
+    widget as textual_widget,
+)
+from textual import (
+    message as textual_message,
+)
+from rich.text import Text
 
 from . import capture as _capture
 from . import runtime as _runtime
-from .loading import CeluneLoadingScreen
 from . import interaction as _interaction
-from .compat import install_textual_timer_sleep
-from .terminal import SelectMenuOption, SelectMenuWidget
-from .theme import CELUNE_CSS, severity_color, with_brightness
-
 from ..i18n import string, tagged_string
-from ..typing.agent import AgentTaskState
-from ..registry.types import ModelMetadata
-from ..core.concurrency import run_in_daemon_thread
-from ..typing.common import JSONSerializable
+from .theme import CELUNE_CSS, severity_color, with_brightness
+from .compat import install_textual_timer_sleep
+from .loading import CeluneLoadingScreen
+from .terminal import SelectMenuOption, SelectMenuWidget
 from ..watchdog import launcher_loss_requested
-from ..typing.config import AudioDeviceInfoValue
 from ..constants import BASE_SR, SIGTSTP, APP_NAME, ExitCodes
-from ..theme.defaults import default_theme_family, default_error_theme_family
+from ..typing.agent import AgentTaskState
 from ..typing.locks import (
     ComponentLockName,
     ComponentLockOwner,
     ComponentLockRequirement,
 )
+from ..typing.common import JSONSerializable
+from ..typing.config import AudioDeviceInfoValue
+from ..registry.types import ModelMetadata
+from ..theme.defaults import default_theme_family, default_error_theme_family
+from ..core.concurrency import run_in_daemon_thread
 
 App = app.App
 ReturnType = app.ReturnType
@@ -108,7 +110,6 @@ if TYPE_CHECKING:
     import sounddevice as sd
 
     from .terminal import LogRedirect, UILogHandler
-
     from ..typing.agent import AgentTask
     from ..typing.aliases import LogLevel, AudioChunk, AudioChunks, VCAudioCallback
 
@@ -118,38 +119,6 @@ if TYPE_CHECKING:
     import numpy as np
     import numpy.typing as npt
 
-    from .terminal import is_celune_log_record
-    from .resources import FOOTER_ROTATE_SECONDS
-    from .commands import process_command as process_ui_command
-
-    from ..celune import Celune
-    from ..cevoice import CEVoiceLoader
-    from ..exceptions import CEDTSError
-    from ..core.concurrency import ComponentLockLease
-    from ..dataclasses.pipeline import AudioOutput
-    from ..extensions.events import EventDispatcher
-    from ..paths import config_path, main_window_log_path
-    from ..pipeline.captions import current_playback_status
-    from ..utils import discard, replace_ipa, is_april_fools
-    from ..config import format_audio_device_name, resolve_audio_device_with_info
-    from ..persona.impl import persona_config, persona_enabled, persona_talkback_enabled
-    from ..pipeline.submission import (
-        queue_streaming_sfx_audio,
-        finish_streaming_sfx_audio,
-    )
-    from ..dataclasses.events import (
-        AgentTaskFinishedEvent,
-        AgentChoiceRequestedEvent,
-        AgentTaskStateChangedEvent,
-        AgentApprovalRequestedEvent,
-    )
-    from ..persona.asr import (
-        DEFAULT_PERSONA_SPEECH_MODEL_ID,
-        PERSONA_SPEECH_END_DELAY_SECONDS,
-        PERSONA_SPEECH_NO_INPUT_TIMEOUT_SECONDS,
-        WhisperSegment,
-        WhisperTranscriber,
-    )
     from ..vc import (
         VC_PLAYBACK_GAIN,
         VCDebugCapture,
@@ -162,6 +131,37 @@ if TYPE_CHECKING:
         vc_live_chunk_overlap_frames,
         create_live_voice_activity_detector,
     )
+    from ..paths import config_path, main_window_log_path
+    from ..utils import discard, replace_ipa, is_april_fools
+    from ..celune import Celune
+    from ..config import format_audio_device_name, resolve_audio_device_with_info
+    from ..cevoice import CEVoiceLoader
+    from .commands import process_command as process_ui_command
+    from .terminal import is_celune_log_record
+    from .resources import FOOTER_ROTATE_SECONDS
+    from ..exceptions import CEDTSError
+    from ..persona.asr import (
+        DEFAULT_PERSONA_SPEECH_MODEL_ID,
+        PERSONA_SPEECH_END_DELAY_SECONDS,
+        PERSONA_SPEECH_NO_INPUT_TIMEOUT_SECONDS,
+        WhisperSegment,
+        WhisperTranscriber,
+    )
+    from ..persona.impl import persona_config, persona_enabled, persona_talkback_enabled
+    from ..core.concurrency import ComponentLockLease
+    from ..extensions.events import EventDispatcher
+    from ..pipeline.captions import current_playback_status
+    from ..dataclasses.events import (
+        AgentTaskFinishedEvent,
+        AgentChoiceRequestedEvent,
+        AgentTaskStateChangedEvent,
+        AgentApprovalRequestedEvent,
+    )
+    from ..pipeline.submission import (
+        queue_streaming_sfx_audio,
+        finish_streaming_sfx_audio,
+    )
+    from ..dataclasses.pipeline import AudioOutput
 
     class _UIResources(Protocol):
         """Type-checkable subset of the resource footer module."""
@@ -684,54 +684,6 @@ def ensure_ui_runtime_dependencies() -> None:
     from . import resources as loaded_ui_resources
 
     ui_resources = loaded_ui_resources
-    from .resources import FOOTER_ROTATE_SECONDS
-    from .commands import process_command as process_ui_command
-    from .terminal import LogRedirect, UILogHandler, is_celune_log_record
-
-    from ..exceptions import CEDTSError
-    from ..theme import colors as loaded_colors
-    from ..dataclasses.pipeline import AudioOutput
-    from ..paths import config_path, main_window_log_path
-    from ..pipeline.captions import current_playback_status
-    from ..utils import (
-        indent as loaded_indent,
-    )
-    from ..cevoice import default_loader as loaded_default_loader
-    from ..terminal import (
-        RUNTIME_LOG_FILTER_MESSAGES,
-    )
-    from ..utils import (
-        supports_ansi as loaded_supports_ansi,
-    )
-    from ..config import format_audio_device_name, resolve_audio_device_with_info
-    from ..watchdog import launcher_loss_requested as loaded_launcher_loss_requested
-    from ..terminal import (
-        set_terminal_title as loaded_set_terminal_title,
-    )
-    from ..utils import (
-        discard,
-        replace_ipa,
-        is_april_fools,
-    )
-    from ..terminal import (
-        terminal_title_escape as loaded_terminal_title_escape,
-    )
-    from ..pipeline.submission import (
-        queue_streaming_sfx_audio,
-        finish_streaming_sfx_audio,
-    )
-    from ..persona.impl import (
-        persona_config,
-        persona_enabled,
-        persona_talkback_enabled,
-    )
-    from ..persona.asr import (
-        DEFAULT_PERSONA_SPEECH_MODEL_ID,
-        PERSONA_SPEECH_END_DELAY_SECONDS,
-        PERSONA_SPEECH_NO_INPUT_TIMEOUT_SECONDS,
-        WhisperSegment,
-        WhisperTranscriber,
-    )
     from ..vc import (
         VC_PLAYBACK_GAIN,
         LiveVoiceActivityDetector,
@@ -743,6 +695,53 @@ def ensure_ui_runtime_dependencies() -> None:
         vc_live_chunk_overlap_frames,
         create_live_voice_activity_detector,
     )
+    from ..paths import config_path, main_window_log_path
+    from ..theme import colors as loaded_colors
+    from ..utils import (
+        indent as loaded_indent,
+    )
+    from ..utils import (
+        discard,
+        replace_ipa,
+        is_april_fools,
+    )
+    from ..utils import (
+        supports_ansi as loaded_supports_ansi,
+    )
+    from ..config import format_audio_device_name, resolve_audio_device_with_info
+    from ..cevoice import default_loader as loaded_default_loader
+    from .commands import process_command as process_ui_command
+    from .terminal import LogRedirect, UILogHandler, is_celune_log_record
+    from ..terminal import (
+        RUNTIME_LOG_FILTER_MESSAGES,
+    )
+    from ..terminal import (
+        set_terminal_title as loaded_set_terminal_title,
+    )
+    from ..terminal import (
+        terminal_title_escape as loaded_terminal_title_escape,
+    )
+    from ..watchdog import launcher_loss_requested as loaded_launcher_loss_requested
+    from .resources import FOOTER_ROTATE_SECONDS
+    from ..exceptions import CEDTSError
+    from ..persona.asr import (
+        DEFAULT_PERSONA_SPEECH_MODEL_ID,
+        PERSONA_SPEECH_END_DELAY_SECONDS,
+        PERSONA_SPEECH_NO_INPUT_TIMEOUT_SECONDS,
+        WhisperSegment,
+        WhisperTranscriber,
+    )
+    from ..persona.impl import (
+        persona_config,
+        persona_enabled,
+        persona_talkback_enabled,
+    )
+    from ..pipeline.captions import current_playback_status
+    from ..pipeline.submission import (
+        queue_streaming_sfx_audio,
+        finish_streaming_sfx_audio,
+    )
+    from ..dataclasses.pipeline import AudioOutput
 
     colors = loaded_colors
     default_loader = loaded_default_loader
@@ -1049,6 +1048,7 @@ class CeluneUI(
         test_completion_callback: Optional[
             Callable[[Celune, bool, Optional[str]], None]
         ] = None,
+        startup_dependency_help: Optional[str] = None,
     ) -> None:
         super().__init__()
 
@@ -1079,6 +1079,7 @@ class CeluneUI(
         self._startup_messages = list(startup_messages or [])
         self._startup_log_level = startup_log_level
         self._test_completion_callback = test_completion_callback
+        self._startup_dependency_help = startup_dependency_help
         self._runtime_intervals_started = False
         self._windows_signal_handler: Optional[Callable[[int], bool]] = None
         self._active_menu: Optional[SelectMenuWidget] = None

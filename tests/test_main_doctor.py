@@ -5,10 +5,10 @@ import io
 import sys
 import contextlib
 import subprocess
-from unittest import mock
-from typing import Optional
 from types import SimpleNamespace
+from typing import Optional
 from pathlib import Path, PureWindowsPath
+from unittest import mock
 
 import pytest
 
@@ -22,6 +22,55 @@ entrypoint = main.load_entrypoint_module()
 
 class TestDoctorCommand(CeluneTestCase):
     """Verify `celune doctor` works without booting the full app."""
+
+    def test_missing_dependency_help_identifies_launch_environment(self) -> None:
+        """Verify recovery steps match the active interpreter and launcher."""
+        with (
+            mock.patch.object(entrypoint, "running_compiled", return_value=True),
+            mock.patch.object(entrypoint, "LAUNCHED_VIA_LAUNCHER", False),
+        ):
+            assert entrypoint._missing_dependency_startup_help() == entrypoint.string(
+                "ui.missing_dependency_launcher_windows"
+                if entrypoint.os.name == "nt"
+                else "ui.missing_dependency_launcher_linux",
+                app_name=entrypoint.APP_NAME,
+            )
+
+        with (
+            mock.patch.object(entrypoint, "running_compiled", return_value=False),
+            mock.patch.object(
+                entrypoint, "_doctor_venv_is_present", return_value=False
+            ),
+        ):
+            assert entrypoint._missing_dependency_startup_help() == entrypoint.string(
+                "ui.missing_dependency_setup_venv"
+            )
+
+        with (
+            mock.patch.object(entrypoint, "running_compiled", return_value=False),
+            mock.patch.object(entrypoint, "_doctor_venv_is_present", return_value=True),
+            mock.patch.object(
+                entrypoint, "_doctor_running_python", return_value=Path("C:/Python.exe")
+            ),
+            mock.patch.object(
+                entrypoint,
+                "_doctor_venv_python",
+                return_value=Path("C:/repo/.venv/Scripts/python.exe"),
+            ),
+            mock.patch.object(entrypoint, "_doctor_same_path", return_value=False),
+        ):
+            assert entrypoint._missing_dependency_startup_help() == entrypoint.string(
+                "ui.missing_dependency_use_venv", app_name=entrypoint.APP_NAME
+            )
+
+        with (
+            mock.patch.object(entrypoint, "running_compiled", return_value=False),
+            mock.patch.object(entrypoint, "_doctor_venv_is_present", return_value=True),
+            mock.patch.object(entrypoint, "_doctor_same_path", return_value=True),
+        ):
+            assert entrypoint._missing_dependency_startup_help() == entrypoint.string(
+                "ui.missing_dependency_repair_venv", app_name=entrypoint.APP_NAME
+            )
 
     def test_non_core_commands_work_without_installed_runtime_packages(self) -> None:
         """Verify lightweight commands do not import Celune's core contract."""

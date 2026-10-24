@@ -12,19 +12,24 @@ import platform
 import warnings
 import contextlib
 import subprocess
-from pathlib import Path, PurePosixPath, PureWindowsPath
-from dataclasses import dataclass
-from collections.abc import Callable
-from importlib import util, import_module
 from types import ModuleType, SimpleNamespace
 from typing import TYPE_CHECKING, NoReturn, Optional
+from pathlib import Path, PurePosixPath, PureWindowsPath
+from importlib import util, import_module
+from dataclasses import dataclass
+from collections.abc import Callable
 
+from celune import REVISION, __tagline__, __version__
+from celune.vcs import is_git_checkout, git_checkout_hint
+from celune.i18n import string
 from celune.paths import (
     project_root,
     running_compiled,
     migrate_legacy_app_data,
     configure_huggingface_runtime,
 )
+from celune.config import config_log_level, normalize_log_level
+from celune.terminal import set_terminal_title
 from celune.constants import (
     APP_NAME,
     APP_SLUG,
@@ -32,16 +37,11 @@ from celune.constants import (
     SUPPORTED_CUDA_VERSIONS,
     ExitCodes,
 )
-from celune.i18n import string
 from celune.typing.common import Config
-from celune.terminal import set_terminal_title
-from celune import REVISION, __tagline__, __version__
-from celune.vcs import is_git_checkout, git_checkout_hint
-from celune.config import config_log_level, normalize_log_level
 
 if TYPE_CHECKING:
-    from celune.cevoice import CEVoice
     from celune.celune import Celune
+    from celune.cevoice import CEVoice
 
 
 def _env_flag(name: str) -> bool:
@@ -511,6 +511,33 @@ def _doctor_same_path(left: Path, right: Path) -> bool:
     return os.path.normcase(str(left.resolve())) == os.path.normcase(
         str(right.resolve())
     )
+
+
+def _doctor_venv_is_present() -> bool:
+    """Return whether the project virtual environment has its launch files."""
+    venv_root = PROJECT_ROOT / ".venv"
+    return _doctor_venv_python().is_file() and (venv_root / "pyvenv.cfg").is_file()
+
+
+def _missing_dependency_startup_help() -> str:
+    """Return localized recovery steps for the current launch environment."""
+    if running_compiled() and not LAUNCHED_VIA_LAUNCHER:
+        key = (
+            "ui.missing_dependency_launcher_windows"
+            if os.name == "nt"
+            else "ui.missing_dependency_launcher_linux"
+        )
+        return string(key, app_name=APP_NAME)
+
+    if not _doctor_venv_is_present():
+        return string("ui.missing_dependency_setup_venv")
+
+    if not running_compiled() and not _doctor_same_path(
+        _doctor_running_python(), _doctor_venv_python()
+    ):
+        return string("ui.missing_dependency_use_venv", app_name=APP_NAME)
+
+    return string("ui.missing_dependency_repair_venv", app_name=APP_NAME)
 
 
 def _doctor_config_path() -> Optional[Path]:
@@ -1622,6 +1649,7 @@ def start(
                 startup_loader=prepare_interactive_runtime,
                 startup_messages=_STARTUP_DIAGNOSTICS,
                 startup_log_level=active_log_level,
+                startup_dependency_help=_missing_dependency_startup_help(),
             )
             _STARTUP_DIAGNOSTIC_SINK = ui.receive_startup_diagnostic
             try:
