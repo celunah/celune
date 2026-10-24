@@ -498,6 +498,10 @@ class TestUIStartup(CeluneTestCase):
                     help_widget.region.y
                     > screen.query_one("#loading-wait", Static).region.y
                 )
+                wait_widget = screen.query_one("#loading-wait", Static)
+                assert help_widget.region.x == wait_widget.region.x
+                assert help_widget.region.width == wait_widget.region.width
+                assert help_widget.styles.color == wait_widget.styles.color
                 assert str(
                     screen.query_one("#loading-footer-starting", Static).render()
                 ) == string("ui.app_could_not_start", app_name=APP_NAME)

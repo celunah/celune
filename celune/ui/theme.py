@@ -113,9 +113,8 @@ CELUNE_CSS = """
 
     #loading-help {
         width: 1fr;
-        max-width: 80;
         height: auto;
-        color: $foreground;
+        color: $secondary;
         text-align: center;
         margin-top: 1;
         display: none;
