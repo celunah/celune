@@ -173,6 +173,8 @@
     "mcp.request_rejected": "The request could not be accepted right now.",
     "mcp.persona_accepted": "Persona accepted the request.",
     "mcp.change_voice_target_required": "Provide exactly one of voice_name or pack_name.",
+    "mcp.connection_lost": "Connection lost",
+    "mcp.session_terminated": "Session {session_id} was terminated",
     "mcp.voice_pack_not_found": "No installed voice pack named {pack}.",
     "mcp.voice_pack_invalid": "The selected voice pack is invalid.",
     "mcp.voice_pack_singing_required": "The selected voice pack has no singing entry.",

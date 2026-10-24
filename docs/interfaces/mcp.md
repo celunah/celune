@@ -54,7 +54,7 @@ Speech and singing tools return an MCP audio content block with MIME type `audio
 
 ## Runtime logs
 
-MCP SDK log records are tagged `[MCP]` and emitted at Celune's debug log level. They appear only when `log_level: debug` or `--debug` is active. The SDK's error and warning severities remain visible in the log styling.
+MCP SDK log records are tagged `[MCP]` and emitted at Celune's debug log level. They appear only when `log_level: debug` or `--debug` is active. The SDK's `Terminating session` record remains unchanged. A matching Windows Proactor pipe teardown is reported once as `[MCP] Session <ID> was terminated` at info severity; an uncorrelated teardown callback is shown as `[MCP] Connection lost` at warning severity. Other asyncio errors keep their error severity.
 
 ## Errors and compatibility
 

@@ -21,15 +21,6 @@ from textual import events
 from textual.widget import Widget
 from textual.widgets import Label, RichLog, TextArea, ProgressBar
 
-from celune.i18n import string
-from celune.theme import colors
-from celune.celune import Celune
-from celune.config import Config
-from celune.utils import discard
-from celune.ui import app as ui_app
-from celune.ui.theme import severity_color
-from celune.ui import resources as ui_resources
-from celune.typing.common import JSONSerializable
 from celune.ui.app import (
     Button,
     CeluneUI,
@@ -37,9 +28,17 @@ from celune.ui.app import (
     ButtonActions,
     ProgressLabel,
 )
+from celune.i18n import string
+from celune.theme import colors
+from celune.celune import Celune
+from celune.config import Config
+from celune.utils import discard
+from celune.ui import app as ui_app
+from celune.ui.theme import severity_color
+from celune.typing.common import JSONSerializable
+from celune.ui import resources as ui_resources
 
 from .fixtures import reset_ui_singletons
-
 from ..support import FakeBackend, CeluneTestCase
 
 
@@ -1279,7 +1278,7 @@ class TestUIInteractions(CeluneTestCase):
             captured.append((msg, severity, loglevel))
 
         ui.safe_log = capture_log
-        logger = logging.getLogger("mcp.server.streamable_http_manager")
+        logger = logging.getLogger("mcp.server.streamable_http")
         previous_level = logger.level
         logger.setLevel(logging.INFO)
         self.addCleanup(logger.setLevel, previous_level)
@@ -1295,6 +1294,85 @@ class TestUIInteractions(CeluneTestCase):
                 "info",
                 "debug",
             )
+        ]
+
+    def test_mcp_session_disconnect_callback_is_logged_as_info(self) -> None:
+        """Map a teardown callback to its terminated session without changing SDK logs."""
+        ui = CeluneUI()
+        captured: list[tuple[str, str, str]] = []
+
+        def capture_log(
+            msg: str,
+            severity: str = "info",
+            *,
+            loglevel: str = "info",
+        ) -> None:
+            captured.append((msg, severity, loglevel))
+
+        ui.safe_log = capture_log
+        logger = logging.getLogger("mcp.server.streamable_http")
+        previous_level = logger.level
+        logger.setLevel(logging.INFO)
+        self.addCleanup(logger.setLevel, previous_level)
+
+        ui.install_runtime_log_redirects()
+        self.addCleanup(ui._remove_runtime_log_redirects)
+
+        logger.info("Terminating session: test-session")
+        asyncio_logger = logging.getLogger("asyncio")
+        previous_asyncio_level = asyncio_logger.level
+        asyncio_logger.setLevel(logging.ERROR)
+        self.addCleanup(asyncio_logger.setLevel, previous_asyncio_level)
+        callback_message = (
+            "Exception in callback "
+            "_ProactorBasePipeTransport._call_connection_lost()\n"
+            "handle: <Handle _ProactorBasePipeTransport._call_connection_lost()>"
+        )
+        asyncio_logger.error(callback_message)
+        asyncio_logger.error(callback_message)
+
+        assert captured == [
+            ("[MCP] Terminating session: test-session", "info", "debug"),
+            ("[MCP] Session test-session was terminated", "info", "info"),
+        ]
+
+    def test_forced_mcp_disconnect_is_a_warning(self) -> None:
+        """Show an uncorrelated Proactor disconnect as an MCP warning."""
+        ui = CeluneUI()
+        captured: list[tuple[str, str, str]] = []
+
+        def capture_log(
+            msg: str,
+            severity: str = "info",
+            *,
+            loglevel: str = "info",
+        ) -> None:
+            captured.append((msg, severity, loglevel))
+
+        ui.safe_log = capture_log
+
+        logger = logging.getLogger("asyncio")
+        previous_level = logger.level
+        logger.setLevel(logging.ERROR)
+        self.addCleanup(logger.setLevel, previous_level)
+
+        ui.install_runtime_log_redirects()
+        self.addCleanup(ui._remove_runtime_log_redirects)
+
+        logger.error(
+            "Exception in callback "
+            "_ProactorBasePipeTransport._call_connection_lost()\n"
+            "handle: <Handle _ProactorBasePipeTransport._call_connection_lost()>"
+        )
+        logger.error("RuntimeError: unrelated callback failure")
+
+        assert captured == [
+            ("[MCP] Connection lost", "warning", "info"),
+            (
+                "Internal runtime error: RuntimeError: unrelated callback failure",
+                "error",
+                "info",
+            ),
         ]
 
     def test_runtime_huggingface_logger_error_is_routed_into_ui_logs(self) -> None:

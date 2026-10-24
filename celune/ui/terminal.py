@@ -3,21 +3,27 @@
 
 import re
 import sys
+import time
 import logging
+import threading
+from collections import deque
+from collections.abc import Mapping, Callable, Collection
 from typing import Literal, Optional
 from dataclasses import replace, dataclass
-from collections.abc import Mapping, Callable, Collection
 
 from rich.text import Text
 from rich.cells import cell_len
 from textual.dom import NoScreen
+from textual.events import Key, Click, Leave, MouseMove
 from textual.widget import Widget
 from textual.message import Message
-from textual.events import Key, Click, Leave, MouseMove
 
+from ..i18n import string
 from ..typing.aliases import LogCallback
 from ..terminal import infer_log_severity
 from ..typing.common import JSONSerializable
+
+_MCP_DISCONNECT_CORRELATION_SECONDS = 5.0
 
 
 class SelectMenu:
@@ -737,6 +743,9 @@ class UILogHandler(logging.Handler):
         super().__init__()
         self.write_callback = write_callback
         self.filter_messages = filter_messages
+        self._recent_mcp_terminations: deque[tuple[float, int, str, bool]] = deque(
+            maxlen=32
+        )
 
     def _is_filtered_message(self, message: str) -> bool:
         """Return whether one logging message should be suppressed."""
@@ -746,6 +755,42 @@ class UILogHandler(logging.Handler):
         return any(
             filtered_message in message for filtered_message in self.filter_messages
         )
+
+    def _remember_mcp_termination(self, session_id: str) -> None:
+        """Remember a session being closed for its ensuing asyncio callback."""
+        self._recent_mcp_terminations.append(
+            (time.monotonic(), threading.get_ident(), session_id, False)
+        )
+
+    def _expected_mcp_termination(self) -> Optional[tuple[str, bool]]:
+        """Match a recent termination from this thread and mark its first callback."""
+        now = time.monotonic()
+        current_thread = threading.get_ident()
+        while (
+            self._recent_mcp_terminations
+            and now - self._recent_mcp_terminations[0][0]
+            > _MCP_DISCONNECT_CORRELATION_SECONDS
+        ):
+            self._recent_mcp_terminations.popleft()
+
+        for index in range(len(self._recent_mcp_terminations) - 1, -1, -1):
+            started, thread_id, session_id, reported = self._recent_mcp_terminations[
+                index
+            ]
+            if (
+                thread_id == current_thread
+                and now - started <= _MCP_DISCONNECT_CORRELATION_SECONDS
+            ):
+                if reported:
+                    return session_id, False
+                self._recent_mcp_terminations[index] = (
+                    started,
+                    thread_id,
+                    session_id,
+                    True,
+                )
+                return session_id, True
+        return None
 
     def emit(self, record: logging.LogRecord) -> None:
         """Forward one Python logging record into the UI log stream.
@@ -772,6 +817,31 @@ class UILogHandler(logging.Handler):
         if self._is_filtered_message(message):
             return
 
+        is_mcp_logger = record.name == "mcp" or record.name.startswith("mcp.")
+        termination_prefix = "Terminating session: "
+        if is_mcp_logger and message.startswith(termination_prefix):
+            session_id = message[len(termination_prefix) :].strip()
+            if session_id and session_id != "None":
+                self._remember_mcp_termination(session_id)
+
+        if (
+            record.name == "asyncio"
+            and "_ProactorBasePipeTransport._call_connection_lost" in message
+        ):
+            expected_termination = self._expected_mcp_termination()
+            if expected_termination is None:
+                self.write_callback(
+                    f"[MCP] {string('mcp.connection_lost')}",
+                    "warning",
+                )
+            elif expected_termination[1]:
+                self.write_callback(
+                    f"[MCP] "
+                    f"{string('mcp.session_terminated', session_id=expected_termination[0])}",
+                    "info",
+                )
+            return
+
         if record.levelno >= logging.ERROR:
             severity = "error"
             prefix = "Internal runtime error:"
@@ -782,7 +852,7 @@ class UILogHandler(logging.Handler):
             severity = "info"
             prefix = "Internal runtime notice:"
 
-        if record.name == "mcp" or record.name.startswith("mcp."):
+        if is_mcp_logger:
             self.write_callback(f"[MCP] {message}", severity, loglevel="debug")
             return
 
