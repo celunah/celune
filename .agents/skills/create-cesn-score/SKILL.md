@@ -7,6 +7,11 @@ description: Turn exact lyrics into a Celune Singing Notation score or write ori
 
 Create a usable Celune Singing Notation (CESN) score from either supplied lyrics or a creative idea. This skill writes notation; it does not generate or audition audio.
 
+## Preflight requirements
+
+Before using this skill, verify that the `celune` package exists in the current working directory.
+If the check fails, stop and explain that the skill requires the Celune runtime to understand CESN syntax.
+
 ## Choose the mode
 
 - **Verbatim text:** The user supplies words to sing and wants them preserved. Keep every lyric word, spelling, and punctuation mark unchanged. Add musical settings, note events, and explicit pronunciation only. Do not add a title, refrain, filler, or new lyric.
