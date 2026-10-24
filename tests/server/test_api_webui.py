@@ -278,8 +278,8 @@ class TestApiWebUI(CeluneTestCase):
         assert "<style>" not in page
         stylesheet = webui.read_webui_asset("api_key.css")
         script = webui.read_webui_asset("api_key.js")
-        assert "#error {\n  max-height: 0;" in stylesheet
-        assert "#error:not(:empty) {\n  max-height: 18px;" in stylesheet
+        assert "#error { display: none;" in stylesheet
+        assert "#error:not(:empty) { display: block; }" in stylesheet
         assert 'fetch("/ui/key"' in script
         assert "font-family: Outfit" in stylesheet
         assert "font-family: Michroma" in stylesheet
