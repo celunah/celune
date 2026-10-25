@@ -17,6 +17,9 @@ LEGACY_DEFAULT_CEVOICE_PACK_SHA256: Final[str] = (
 CLASSIC_CEVOICE_PACK_SHA256: Final[str] = (
     "646d68a70d4402cc5a9f8fdc96c171607d896dfe5424b27748193e3504530023"
 )
+NATURAL_CEVOICE_PACK_SHA256: Final[str] = (
+    "248cdf3d86a6f814dee1486408d70eef134688f0bc5cd30fe96df977b291b81b"
+)
 NOL_CEVOICE_PACK_SHA256: Final[str] = (
     "10b83afbd20b29e1a5cd3bd7abd3632fb4758faf8f3d66c7da2b60e9af5a0100"
 )
@@ -30,6 +33,7 @@ KNOWN_DEFAULT_CEVOICE_PACKS: Final[Mapping[str, frozenset[str]]] = MappingProxyT
                 LEGACY_DEFAULT_CEVOICE_PACK_SHA256,
             }
         ),
+        "default_sep19.cevoice": frozenset({NATURAL_CEVOICE_PACK_SHA256}),
         "classic.cevoice": frozenset({CLASSIC_CEVOICE_PACK_SHA256}),
         "nol.cevoice": frozenset({NOL_CEVOICE_PACK_SHA256}),
     }

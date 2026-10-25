@@ -314,6 +314,7 @@ class TestCEVoice(CeluneTestCase):
         """Keep every repository-bundled character pack in the default registry."""
         assert set(cevoice.KNOWN_DEFAULT_CEVOICE_PACKS) == {
             "default.cevoice",
+            "default_sep19.cevoice",
             "classic.cevoice",
             "nol.cevoice",
         }
@@ -321,6 +322,8 @@ class TestCEVoice(CeluneTestCase):
             bundle = cevoice.CEVoice.open(Path("voices") / filename)
             assert cevoice.bundle_sha256(bundle.path) in checksums
             assert cevoice.bundle_matches_default_pack_checksum(bundle.path)
+            if filename == "default_sep19.cevoice":
+                assert bundle.metadata["version"] == cevoice.VERSION
             assert cevoice.bundle_display_name(bundle) == (
                 f"{cevoice.bundle_character_name(bundle)} ({Path(filename).stem})"
             )

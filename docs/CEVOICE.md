@@ -2,9 +2,10 @@
 
 `CEVOICE` is Celune's voice-pack container format. Repository-bundled character
 packs are listed in the known default-pack registry and display their registered
-variant label. The registry contains `default.cevoice`, `classic.cevoice`, and
-`nol.cevoice`; earlier default-pack checksums remain associated with
-`default.cevoice`. The default pack uses `CECHAR` v5 and includes the hidden
+variant label. The registry contains `default.cevoice`, `default_sep19.cevoice`,
+`classic.cevoice`, and `nol.cevoice`; earlier default-pack checksums remain
+associated with `default.cevoice`. The Natural `default_sep19.cevoice` pack uses
+CECHAR v3. The `default.cevoice` pack uses `CECHAR` v5 and includes the hidden
 `sing` reference; the classic pack remains on CECHAR v4. CECHAR v5 keeps the
 indexed archive layout and reserves an optional hidden `sing` voice for singing
 backends. Older `CECHAR` v2/v3 and
@@ -305,12 +306,12 @@ At startup, Celune resolves `voice_bundle` from config:
 - a bare name such as `my_pack` becomes `voices/my_pack.cevoice`
 - an explicit path is used as-is
 
-The official `default` and `classic` packs are both recognized by their
-content checksums, so both retain Celune's built-in Persona identity behavior.
-When shown in character or voice-pack selectors, they are labeled `Celune
-(default)` and `Celune (classic)` respectively. The variant label is display
-metadata only; both packs still provide the character identity `Celune` to
-Persona and extensions.
+The official `default`, `default_sep19`, and `classic` packs are recognized by
+their content checksums, so they retain Celune's built-in Persona identity
+behavior. When shown in character or voice-pack selectors, they are labeled
+`Celune (default)`, `Celune (default_sep19)`, and `Celune (classic)` respectively.
+The variant label is display metadata only; these packs still provide the
+character identity `Celune` to Persona and extensions.
 
 `celune.cevoice.KNOWN_DEFAULT_CEVOICE_PACKS` maps each repository pack filename
 to its accepted SHA-256 checksums. Add a filename and the built pack's checksum
