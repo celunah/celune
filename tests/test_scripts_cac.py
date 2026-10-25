@@ -12,6 +12,11 @@ from unittest import mock
 from types import ModuleType
 from tempfile import TemporaryDirectory
 
+import numpy as np
+import soundfile as sf
+
+from celune.cevoice import CEVoice, write_cechar_v4, write_cechar_v5
+
 from .support import CeluneTestCase
 
 
@@ -34,6 +39,9 @@ def _load_cac_module():
     fake_scipy_signal = ModuleType("scipy.signal")
     setattr(fake_scipy_signal, "resample_poly", mock.Mock())  # noqa: B010
     setattr(fake_cevoice, "write_cevoice", mock.Mock())  # noqa: B010
+    setattr(fake_cevoice, "write_cechar_v4", mock.Mock())  # noqa: B010
+    setattr(fake_cevoice, "write_cechar_v5", mock.Mock())  # noqa: B010
+    setattr(fake_cevoice, "SINGING_VOICE_NAME", "sing")  # noqa: B010
 
     with mock.patch.dict(
         sys.modules,
@@ -182,3 +190,85 @@ class TestCACScript(CeluneTestCase):
 
         assert exit_code == 0
         wizard.assert_called_once_with()
+
+    def test_simple_mode_selects_indexed_writer(self) -> None:
+        """Pass the requested v4 or v5 generation through the public CLI."""
+        with TemporaryDirectory() as temp_dir:
+            wav_path = Path(temp_dir) / "voice.wav"
+            wav_path.write_bytes(b"RIFFfakeWAVE")
+            for version in (4, 5):
+                with (
+                    self.subTest(version=version),
+                    mock.patch.object(cac, f"write_cechar_v{version}") as writer,
+                    mock.patch.object(
+                        cac, "normalize_reference_wav_asset", return_value=b"wav"
+                    ),
+                    contextlib.redirect_stdout(io.StringIO()),
+                ):
+                    assert (
+                        cac.main(
+                            [
+                                "Nova",
+                                str(wav_path),
+                                "Hello.",
+                                "--format-version",
+                                str(version),
+                            ]
+                        )
+                        == 0
+                    )
+                    assert (
+                        writer.call_args.args[3]["Standard"]["reference_text"]
+                        == "Hello."
+                    )
+
+    def test_v5_wizard_collects_singing_reference(self) -> None:
+        """Collect singing metadata without speaking-only overrides or embeddings."""
+        with (
+            mock.patch.object(
+                cac,
+                "ask_required_text",
+                side_effect=["sing", "Singing.", "[c4:4]Singing."],
+            ),
+            mock.patch.object(cac, "ask_existing_file", return_value=Path("sing.wav")),
+            mock.patch.object(cac, "ask", side_effect=["-1", "60", "59", "72"]),
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            name, assets, metadata = cac.collect_voice_assets(1, 5)
+        assert (name, assets) == ("sing", {"wav": Path("sing.wav")})
+        assert metadata == {
+            "reference_text": "Singing.",
+            "cesn": "[c4:4]Singing.",
+            "range": {"min": 60, "max": 72},
+        }
+
+    def test_version_option_selects_wizard(self) -> None:
+        """Allow format selection when no simple-mode arguments are supplied."""
+        with mock.patch.object(cac, "wizard") as wizard:
+            assert cac.main(["--format-version", "5"]) == 0
+        wizard.assert_called_once_with(5)
+
+    def test_indexed_packs_reencode_non_pcm16_references(self) -> None:
+        """Canonicalize an already mono 24 kHz float WAV before indexed writing."""
+        with TemporaryDirectory() as directory:
+            source = Path(directory) / "reference.wav"
+            sf.write(source, np.zeros(240, dtype=np.float32), 24000, subtype="FLOAT")
+            for version, writer in ((4, write_cechar_v4), (5, write_cechar_v5)):
+                with (
+                    self.subTest(version=version),
+                    mock.patch.object(cac, "np", np),
+                    mock.patch.object(cac, "sf", sf),
+                    mock.patch.object(cac, f"write_cechar_v{version}", writer),
+                    contextlib.redirect_stdout(io.StringIO()),
+                ):
+                    data = cac.build_simple_character_data("Nova", source, "Hello.")
+                    data["output_path"] = Path(directory) / f"v{version}.cevoice"
+                    bundle = CEVoice.open(cac.create_cevoice(data, version))
+                    assert bundle.metadata["version"] == version
+                    assert bundle.voice_order == ("Standard",)
+                    assert (
+                        sf.info(
+                            io.BytesIO(bundle.read_asset("Standard", "wav"))
+                        ).subtype
+                        == "PCM_16"
+                    )

@@ -280,6 +280,9 @@ Validation rules enforced by Celune:
 
 ## How Celune uses a bundle
 
+To build a pack with CAC's interactive wizard or select CECHAR v3, v4, or v5,
+see [Create a character pack](user-guide/creating-characters.md).
+
 At startup, Celune resolves `voice_bundle` from config:
 
 - `default` becomes `voices/default.cevoice`

@@ -53,6 +53,7 @@ nav:
       - Speech: user-guide/speech.md
       - CESN singing tutorial: user-guide/cesn-tutorial.md
       - Persona: user-guide/persona.md
+      - Create a character pack: user-guide/creating-characters.md
       - Agent: user-guide/agent.md
       - Voice conversion: user-guide/voice-conversion.md
       - Troubleshooting: troubleshooting.md

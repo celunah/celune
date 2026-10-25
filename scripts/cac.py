@@ -18,12 +18,24 @@ if TYPE_CHECKING:
 
 try:
     from celune.i18n import string
-    from celune.cevoice import write_cevoice
+    from celune.exceptions import CEVoiceError
+    from celune.cevoice import (
+        write_cevoice,
+        write_cechar_v4,
+        write_cechar_v5,
+        SINGING_VOICE_NAME,
+    )
 except ModuleNotFoundError:
     PROJECT_ROOT = Path(__file__).resolve().parent.parent
     sys.path.insert(0, str(PROJECT_ROOT))
     from celune.i18n import string
-    from celune.cevoice import write_cevoice
+    from celune.exceptions import CEVoiceError
+    from celune.cevoice import (
+        write_cevoice,
+        write_cechar_v4,
+        write_cechar_v5,
+        SINGING_VOICE_NAME,
+    )
 
 
 class ThemeMetadata(TypedDict, total=False):
@@ -73,6 +85,8 @@ class VoiceEntryMetadata(TypedDict, total=False):
     cfg_scale: float
     reference_text: str
     persona: PersonaMetadata
+    cesn: str
+    range: dict[str, int]
 
 
 class BundleMetadata(TypedDict, total=False):
@@ -144,10 +158,10 @@ def ask_positive_int(prompt: str) -> int:
         try:
             value = int(raw_value)
         except ValueError:
-            print("Please enter a whole number.")
+            print(string("cac.integer_required"))
             continue
         if value <= 0:
-            print("Please enter a number greater than zero.")
+            print(string("cac.positive_required"))
             continue
         return value
 
@@ -161,10 +175,10 @@ def ask_optional_float(prompt: str) -> Optional[float]:
         try:
             value = float(raw_value)
         except ValueError:
-            print("Please enter a number or leave it empty.")
+            print(string("cac.number_optional"))
             continue
         if value <= 0:
-            print("Please enter a positive number or leave it empty.")
+            print(string("cac.positive_optional"))
             continue
         return value
 
@@ -178,7 +192,7 @@ def ask_existing_file(prompt: str, missing_error: str) -> Path:
             continue
         path = Path(raw_value).expanduser()
         if not path.is_file():
-            print(f"File not found: {path}")
+            print(string("cac.file_missing", path=path))
             continue
         return path
 
@@ -191,7 +205,7 @@ def ask_optional_existing_file(prompt: str) -> Optional[Path]:
             return None
         path = Path(raw_value).expanduser()
         if not path.is_file():
-            print(f"File not found: {path}")
+            print(string("cac.file_missing", path=path))
             continue
         return path
 
@@ -201,8 +215,18 @@ def build_output_path(bundle_name: str) -> Path:
     return Path(f"{bundle_name}.cevoice")
 
 
-def normalize_reference_wav_asset(source_path: Path) -> Union[Path, bytes]:
-    """Return a CEVOICE-ready WAV asset, resampling to 24 kHz mono when required."""
+def normalize_reference_wav_asset(
+    source_path: Path, canonical: bool = False
+) -> Union[Path, bytes]:
+    """Return 24 kHz mono PCM16 audio, rewriting headers for indexed packs.
+
+    Args:
+        source_path: The reference WAV to read.
+        canonical: Always re-encode as canonical PCM WAV for CECHAR v4/v5.
+
+    Returns:
+        Union[Path, bytes]: The original compatible legacy reference or encoded WAV bytes.
+    """
     audio, sample_rate = sf.read(source_path, dtype="float32")
     source_info = sf.info(source_path)
 
@@ -213,7 +237,7 @@ def normalize_reference_wav_asset(source_path: Path) -> Union[Path, bytes]:
     needs_resample = sample_rate != REFERENCE_SAMPLE_RATE
     needs_remix = source_info.channels != 1
 
-    if not needs_resample and not needs_remix:
+    if not needs_resample and not needs_remix and not canonical:
         return source_path
 
     if needs_resample:
@@ -237,7 +261,7 @@ def normalize_reference_wav_asset(source_path: Path) -> Union[Path, bytes]:
     )
     normalized_bytes = output_buffer.getvalue()
 
-    print(f"Normalized reference WAV to 24 kHz mono: {source_path}")
+    print(string("cac.normalized", path=source_path))
     return normalized_bytes
 
 
@@ -249,14 +273,14 @@ def build_simple_character_data(
     """Build a minimal single-voice CEVOICE payload from one name, WAV path, and transcript."""
     normalized_name = bundle_name.strip()
     if not normalized_name:
-        raise ValueError("A character or voice-pack name is required.")
+        raise ValueError(string("cac.name_required"))
 
     resolved_wav = Path(wav_path).expanduser()
     if not resolved_wav.is_file():
-        raise ValueError(f"File not found: {resolved_wav}")
+        raise ValueError(string("cac.file_missing", path=resolved_wav))
     normalized_reference_text = reference_text.strip()
     if not normalized_reference_text:
-        raise ValueError("A reference transcript is required.")
+        raise ValueError(string("cac.transcript_required"))
 
     return {
         "output_path": build_output_path(normalized_name),
@@ -278,10 +302,10 @@ def collect_theme_metadata() -> Optional[ThemeMetadata]:
     """Collect optional CEVOICE theme metadata."""
     theme: ThemeMetadata = {}
     for key, prompt in (
-        ("background", "Theme background hex color (#RRGGBB), leave empty to skip"),
-        ("accent", "Theme accent hex color (#RRGGBB), leave empty to skip"),
-        ("glow_color", "Theme glow color (#RRGGBB), leave empty to skip"),
-        ("faded_accent", "Theme faded accent color (#RRGGBB), leave empty to skip"),
+        ("background", string("cac.theme_background")),
+        ("accent", string("cac.theme_accent")),
+        ("glow_color", string("cac.theme_glow")),
+        ("faded_accent", string("cac.theme_faded")),
     ):
         value = ask_optional_text(prompt)
         if value is not None:
@@ -295,10 +319,10 @@ def collect_persona_metadata() -> Optional[PersonaMetadata]:
 
     identity: PersonaIdentityMetadata = {}
     for key, prompt in (
-        ("name", "Persona identity name, leave empty to skip"),
-        ("age", "Persona identity age, leave empty to skip"),
-        ("gender", "Persona identity gender, leave empty to skip"),
-        ("profile", "Persona identity profile, leave empty to skip"),
+        ("name", string("cac.identity_name")),
+        ("age", string("cac.identity_age")),
+        ("gender", string("cac.identity_gender")),
+        ("profile", string("cac.identity_profile")),
     ):
         value = ask_optional_text(prompt)
         if value is not None:
@@ -307,8 +331,8 @@ def collect_persona_metadata() -> Optional[PersonaMetadata]:
         persona["identity"] = identity
 
     for key, prompt in (
-        ("profile", "Persona profile text, leave empty to skip"),
-        ("speaking_style", "Persona speaking style, leave empty to skip"),
+        ("profile", string("cac.persona_profile")),
+        ("speaking_style", string("cac.speaking_style")),
     ):
         value = ask_optional_text(prompt)
         if value is not None:
@@ -317,15 +341,15 @@ def collect_persona_metadata() -> Optional[PersonaMetadata]:
     for key, prompt in (
         (
             "boundaries",
-            "Persona boundaries, separate multiple entries with | and leave empty to skip",
+            string("cac.boundaries"),
         ),
         (
             "prompt_rules",
-            "Persona prompt rules, separate multiple entries with | and leave empty to skip",
+            string("cac.prompt_rules"),
         ),
         (
             "example_dialogue",
-            "Persona example dialogue, separate multiple entries with | and leave empty to skip",
+            string("cac.examples"),
         ),
     ):
         value = ask_optional_text_list(prompt)
@@ -341,7 +365,7 @@ def collect_persona_metadata() -> Optional[PersonaMetadata]:
         "formality",
         "enthusiasm",
     ):
-        value = ask_optional_text(f"Persona style {key}, leave empty to skip")
+        value = ask_optional_text(string("cac.persona_style", style=key))
         if value is not None:
             style[key] = value
     if style:
@@ -379,25 +403,44 @@ def collect_voice_persona_metadata(voice_name: str) -> Optional[PersonaMetadata]
     return persona or None
 
 
-def collect_voice_assets(index: int) -> tuple[str, VoiceAssets, VoiceEntryMetadata]:
+def collect_voice_assets(
+    index: int, version: int = 3
+) -> tuple[str, VoiceAssets, VoiceEntryMetadata]:
     """Collect one voice entry and its optional per-voice metadata."""
     voice_name = ask_required_text(
-        f"Enter voice name for entry #{index}",
-        "Voice name is required.",
+        string("cac.voice_name", index=index),
+        string("cac.voice_name_required"),
     )
     wav_path = ask_existing_file(
-        f"Enter WAV path for entry #{index}",
-        "A WAV path is required.",
+        string("cac.wav_path", index=index),
+        string("cac.wav_required"),
     )
-    pt_path = ask_optional_existing_file(
-        f"Enter embedding file (.pt) for entry #{index}, leave empty to skip"
-    )
-    cfg_scale = ask_optional_float(
-        f"Enter cfg_scale for entry #{index}, leave empty to skip"
-    )
-    reference_text = ask_optional_text(
-        f"Enter reference_text for entry #{index}, leave empty to skip"
-    )
+    if version == 5 and voice_name == SINGING_VOICE_NAME:
+        reference_text = ask_required_text(
+            string("cac.sing_transcript"), string("cac.transcript_required")
+        )
+        cesn = ask_required_text(string("cac.sing_cesn"), string("cac.cesn_required"))
+        pitches = {}
+        for bound in ("min", "max"):
+            while True:
+                raw = ask(string("cac.sing_pitch", bound=bound))
+                try:
+                    pitch = int(raw)
+                except ValueError:
+                    print(string("cac.invalid_pitch"))
+                    continue
+                if 0 <= pitch <= 127 and (bound == "min" or pitch >= pitches["min"]):
+                    pitches[bound] = pitch
+                    break
+                print(string("cac.invalid_pitch"))
+        return (
+            voice_name,
+            {"wav": wav_path},
+            {"reference_text": reference_text, "cesn": cesn, "range": pitches},
+        )
+    pt_path = ask_optional_existing_file(string("cac.embedding", index=index))
+    cfg_scale = ask_optional_float(string("cac.cfg_scale", index=index))
+    reference_text = ask_optional_text(string("cac.reference_text", index=index))
     persona = collect_voice_persona_metadata(voice_name)
 
     assets: VoiceAssets = {"wav": wav_path}
@@ -417,59 +460,61 @@ def collect_voice_assets(index: int) -> tuple[str, VoiceAssets, VoiceEntryMetada
 
 def collect_voice_order(voice_names: list[str]) -> Optional[list[str]]:
     """Collect an optional explicit voice order."""
-    order_text = ask_optional_text(
-        "Preferred voice order as comma-separated names, leave empty to keep entry order"
-    )
+    order_text = ask_optional_text(string("cac.voice_order"))
     if order_text is None:
         return None
 
     requested = [item.strip() for item in order_text.split(",") if item.strip()]
     if not requested:
-        print("Voice order was empty after parsing, using entry order instead.")
+        print(string("cac.empty_order"))
         return None
     duplicates = {name for name in requested if requested.count(name) > 1}
     if duplicates:
         raise ValueError(
-            f"Voice order contains duplicates: {', '.join(sorted(duplicates))}"
+            string("cac.duplicate_order", names=", ".join(sorted(duplicates)))
         )
     unknown = [name for name in requested if name not in voice_names]
     if unknown:
-        raise ValueError(f"Voice order names unknown voices: {', '.join(unknown)}")
+        raise ValueError(string("cac.unknown_order", names=", ".join(unknown)))
     return requested
 
 
 def collect_default_voice(voice_names: list[str]) -> Optional[str]:
     """Collect an optional default voice and validate that it exists."""
-    default_voice = ask_optional_text("Default voice name, leave empty to skip")
+    default_voice = ask_optional_text(string("cac.default_voice"))
     if default_voice is None:
         return None
     if default_voice not in voice_names:
         raise ValueError(
-            f"Default voice '{default_voice}' is not one of: {', '.join(voice_names)}"
+            string(
+                "cac.unknown_default", voice=default_voice, names=", ".join(voice_names)
+            )
         )
     return default_voice
 
 
-def collect_character_data() -> CharacterData:
+def collect_character_data(version: int = 3) -> CharacterData:
     """Run the CEVOICE wizard and collect validated bundle data."""
     bundle_name = ask_required_text(
-        "What name is your character or voice pack?",
-        "A character or voice-pack name is required.",
+        string("cac.name_prompt"),
+        string("cac.name_required"),
     )
-    description = ask_optional_text("Bundle description, leave empty to skip")
-    voice_count = ask_positive_int("How many voice tones do they have?")
+    description = ask_optional_text(string("cac.description_prompt"))
+    voice_count = ask_positive_int(string("cac.voice_count"))
 
     voices: dict[str, VoiceAssets] = {}
     voice_metadata: dict[str, VoiceEntryMetadata] = {}
     for index in range(1, voice_count + 1):
-        voice_name, assets, entry_metadata = collect_voice_assets(index)
+        voice_name, assets, entry_metadata = collect_voice_assets(index, version)
         if voice_name in voices:
-            raise ValueError(f"Duplicate voice name: {voice_name}")
+            raise ValueError(string("cac.duplicate_voice", voice_name=voice_name))
         voices[voice_name] = assets
         if entry_metadata:
             voice_metadata[voice_name] = entry_metadata
 
-    voice_names = list(voices)
+    voice_names = [
+        name for name in voices if version != 5 or name != SINGING_VOICE_NAME
+    ]
     default_voice = collect_default_voice(voice_names)
     voice_order = collect_voice_order(voice_names)
     theme = collect_theme_metadata()
@@ -495,8 +540,23 @@ def collect_character_data() -> CharacterData:
     }
 
 
-def create_cevoice(data: CharacterData) -> Path:
-    """Create a CEVOICE bundle with the collected wizard data."""
+def create_cevoice(data: CharacterData, version: int = 3) -> Path:
+    """Normalize reference audio and write the requested CECHAR generation.
+
+    Args:
+        data: Wizard output containing the destination, assets, and Persona metadata.
+        version: CECHAR generation, either 3, 4, or 5; defaults to legacy v3.
+
+    Returns:
+        Path: The created pack path.
+
+    Raises:
+        ValueError: The requested generation is unsupported.
+        CEVoiceError: The selected format rejects the supplied bundle data.
+    """
+    writers = {3: write_cevoice, 4: write_cechar_v4, 5: write_cechar_v5}
+    if version not in writers:
+        raise ValueError(f"unsupported CECHAR version {version}")
     normalized_voices: dict[str, dict[str, Union[bytes, str, Path]]] = {}
     for voice_name, assets in data["voices"].items():
         normalized_assets = cast(
@@ -505,7 +565,11 @@ def create_cevoice(data: CharacterData) -> Path:
         )
         wav_asset = normalized_assets.get("wav")
         if isinstance(wav_asset, Path):
-            normalized_assets["wav"] = normalize_reference_wav_asset(wav_asset)
+            normalized_assets["wav"] = (
+                normalize_reference_wav_asset(wav_asset, canonical=True)
+                if version >= 4
+                else normalize_reference_wav_asset(wav_asset)
+            )
         normalized_voices[voice_name] = normalized_assets
 
     voices = cast(
@@ -517,7 +581,7 @@ def create_cevoice(data: CharacterData) -> Path:
         "Mapping[str, Mapping[str, ManifestValue]]",
         data["voice_metadata"],
     )
-    return write_cevoice(
+    return writers[version](
         data["output_path"],
         voices,
         metadata,
@@ -525,35 +589,35 @@ def create_cevoice(data: CharacterData) -> Path:
     )
 
 
-def wizard() -> None:
+def wizard(version: int = 3) -> None:
     """Run the CEVOICE creation wizard."""
     try:
-        char_data = collect_character_data()
-        print("Saving package...")
-        output_path = create_cevoice(char_data)
-    except ValueError as error:
-        print(f"Error: {error}")
+        char_data = collect_character_data(version)
+        print(string("cac.saving"))
+        output_path = create_cevoice(char_data, version)
+    except (ValueError, CEVoiceError) as error:
+        print(f"{string('cac.error')} {error}")
         raise SystemExit(1) from error
 
-    print(f"Saved voice pack to {output_path}")
+    print(string("cac.saved", path=output_path))
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
     """Build the CLI parser for the CEVOICE creator script."""
-    parser = argparse.ArgumentParser(
-        description=(
-            "Create a CEVOICE pack. Run without arguments for the interactive wizard, "
-            "or provide NAME and WAV for simple mode."
-        )
-    )
-    parser.add_argument("bundle_name", nargs="?", help="Character or voice-pack name")
-    parser.add_argument(
-        "wav_path", nargs="?", help="Reference WAV file for simple mode"
-    )
+    parser = argparse.ArgumentParser(description=string("cac.description"))
+    parser.add_argument("bundle_name", nargs="?", help=string("cac.name_help"))
+    parser.add_argument("wav_path", nargs="?", help=string("cac.wav_help"))
     parser.add_argument(
         "reference_text",
         nargs="?",
-        help="Reference transcript for the WAV file in simple mode",
+        help=string("cac.transcript_help"),
+    )
+    parser.add_argument(
+        "--format-version",
+        type=int,
+        choices=(3, 4, 5),
+        default=3,
+        help=string("cac.format_version_help"),
     )
     return parser
 
@@ -564,31 +628,34 @@ def main(argv: Optional[list[str]] = None) -> int:
     args = parser.parse_args(argv)
 
     if args.bundle_name is None and args.wav_path is None:
-        wizard()
+        if args.format_version == 3:
+            wizard()
+        else:
+            wizard(args.format_version)
         return 0
 
     if args.bundle_name is None or args.wav_path is None:
-        parser.error("simple mode requires both NAME and WAV path")
+        parser.error(string("cac.simple_arguments"))
 
     try:
         reference_text = args.reference_text
         if reference_text is None:
             reference_text = ask_required_text(
-                "Enter reference transcript for the WAV file",
-                "A reference transcript is required.",
+                string("cac.transcript_prompt"),
+                string("cac.transcript_required"),
             )
         char_data = build_simple_character_data(
             args.bundle_name,
             args.wav_path,
             reference_text,
         )
-        print("Saving package...")
-        output_path = create_cevoice(char_data)
-    except ValueError as error:
-        print(f"Error: {error}")
+        print(string("cac.saving"))
+        output_path = create_cevoice(char_data, args.format_version)
+    except (ValueError, CEVoiceError) as error:
+        print(f"{string('cac.error')} {error}")
         return 1
 
-    print(f"Saved voice pack to {output_path}")
+    print(string("cac.saved", path=output_path))
     return 0
 
 
