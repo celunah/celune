@@ -50,7 +50,7 @@ Persona state, events, and audio lifecycle until `close()`.
 | --- | --- |
 | `load() -> bool` | Load the configured character, backend, model, and audio runtime. |
 | `close() -> None` | Stop work, release backend/model/audio state, and make shutdown idempotent. |
-| `fatal() -> None` | Enter the fatal runtime path and notify listeners. |
+| `fatal(*, semi_fatal=False) -> None` | Enter the fatal runtime path and notify listeners; configuration failures can preserve settings access. |
 | `wait_until_idle_async(timeout=None) -> bool` | Await the shared playback/generation idle condition. |
 | `sleep_enabled` | Whether configured sleep is active. |
 | `sleep_timeout_seconds` | Resolved idle timeout. |
@@ -71,6 +71,33 @@ Persona state, events, and audio lifecycle until `close()`.
 
 `load()` may download models and create isolated environments. Callers that run
 inside an event loop should prefer the async reload methods below.
+
+`operation_state` is independent of `cur_state` and normal actions such as
+speaking, sleeping, or reloading. It starts as `OperationState.NORMAL`, becomes
+`OperationState.STOPPED` after engine shutdown or test completion, and records
+fatal failures as `OperationState.FATAL`. Set `semi_fatal=True` when calling
+`fatal()` for a configuration failure that leaves the settings manager useful;
+this records `OperationState.SEMI_FATAL`. The `/settings` command is accepted in
+`NORMAL` and `SEMI_FATAL`; during `SEMI_FATAL`, other commands and speech input
+are unavailable. Fatal and stopped states reject input and commands. Import the
+enum from `celune.typing.modes`.
+
+```python
+from celune import Celune
+from celune.typing.modes import OperationState
+
+engine = Celune(config={})
+if engine.operation_state is OperationState.NORMAL:
+    engine.load()
+```
+
+When a configuration failure prevents normal operation but settings can fix
+it, integrations can mark that failure explicitly:
+
+```python
+engine.fatal(semi_fatal=True)
+assert engine.operation_state is OperationState.SEMI_FATAL
+```
 
 ## Runtime coordination
 

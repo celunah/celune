@@ -13,7 +13,7 @@ import torch
 from transformers.modeling_utils import PreTrainedModel
 from transformers.tokenization_utils_base import BatchEncoding, PreTrainedTokenizerBase
 
-from .modes import BackendMode, OperationMode
+from .modes import BackendMode, OperationMode, OperationState
 from .common import JSON, Config, JSONSerializable
 from .aliases import LogLevel
 
@@ -268,6 +268,7 @@ class CeluneStateAccessors:
     _agent_needle_error: Optional[str]
     _event_dispatcher: EventDispatcher
     _runtime_state: CeluneRuntimeState
+    operation_state: OperationState
     _api_tunnel: Optional[CloudflaredQuickTunnel]
     _reload_backend: Optional[Union[CeluneBackend, CeluneVCBackend]]
     _async_runtime_lock: threading.Lock

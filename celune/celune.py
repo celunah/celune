@@ -1,42 +1,24 @@
 # SPDX-License-Identifier: Apache-2.0
 """Celune's public engine facade."""
 
+from typing import Never, Union, ClassVar, Optional, final
 from pathlib import Path
 from collections.abc import Mapping, Callable
-from typing import Never, Union, ClassVar, Optional, final
 
 import numpy as np
 
 from . import vc as core_vc
-from .config import (
-    Config,
-)
-from .typing.aliases import LogLevel
 from .core import agent as core_agent
 from .core import sleep as core_sleep
 from .core import voice as core_voice
-from .typing.modes import BackendMode
 from .core import reload as core_reload
 from .core import speech as core_speech
 from .core import loading as core_loading
-from .agent.routing import AgentInputRouter
 from .core import callbacks as core_callbacks
 from .core import lifecycle as core_lifecycle
-from .typing.pipeline import SpeechStreamQueue
-from .typing.common import JSON, JSONSerializable
-from .typing.events import EventName, EventPayload
 from .core import conversation as core_conversation
-from .dataclasses.events import (
-    StateChangedEvent,
-)
-from .dataclasses.pipeline import AudioOutput, CaptionPlaybackState
-from .dataclasses.celune import (
-    CELUNE_CONSTANT_PROPERTIES,
-    CELUNE_FORWARDED_PROPERTIES,
-)
-from .dataclasses.properties import (
-    bind_constant_properties,
-    bind_forwarded_properties,
+from .config import (
+    Config,
 )
 from .typing.agent import (
     AgentTool,
@@ -45,6 +27,8 @@ from .typing.agent import (
     AgentToolSelector,
     AgentClassificationResult,
 )
+from .typing.modes import BackendMode
+from .agent.routing import AgentInputRouter
 from .typing.celune import (
     CaptionCallback,
     CoreBackendSpec,
@@ -54,6 +38,22 @@ from .typing.celune import (
     CeluneStateAccessors,
     VoiceLockStateCallback,
     CaptionProgressCallback,
+)
+from .typing.common import JSON, JSONSerializable
+from .typing.events import EventName, EventPayload
+from .typing.aliases import LogLevel
+from .typing.pipeline import SpeechStreamQueue
+from .dataclasses.celune import (
+    CELUNE_CONSTANT_PROPERTIES,
+    CELUNE_FORWARDED_PROPERTIES,
+)
+from .dataclasses.events import (
+    StateChangedEvent,
+)
+from .dataclasses.pipeline import AudioOutput, CaptionPlaybackState
+from .dataclasses.properties import (
+    bind_constant_properties,
+    bind_forwarded_properties,
 )
 
 npt = np.typing
@@ -475,9 +475,14 @@ class Celune(CeluneStateAccessors):
         """Shut off Celune and release loaded runtime state."""
         return core_lifecycle.close(self)
 
-    def fatal(self) -> None:
-        """Mark Celune state as fatal and prevent further operations."""
-        return core_lifecycle.fatal(self)
+    def fatal(self, *, semi_fatal: bool = False) -> None:
+        """Mark Celune state as fatal and prevent further operations.
+
+        Args:
+            semi_fatal: Whether the failure came from configuration and permits
+                opening the settings manager.
+        """
+        return core_lifecycle.fatal(self, semi_fatal=semi_fatal)
 
     def run_pipeline_jobs(self) -> None:
         """

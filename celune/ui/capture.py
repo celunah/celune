@@ -5,18 +5,19 @@ from __future__ import annotations
 
 import re
 import time
+import queue as queue_module
 import threading
 import contextlib
 from uuid import uuid4
-import queue as queue_module
+from typing import Union, Optional, cast
 from collections.abc import Callable
-from typing import Optional, Union, cast
 
 from textual.color import Color
 
 from . import app as _app
 from .theme import with_brightness
 from .constants import CAPTION_FADE_SECONDS
+from ..typing.modes import OperationState
 
 __all__ = (
     "_acquire_recording_component_lease",
@@ -548,7 +549,13 @@ def change_input_state(self, locked: bool) -> None:
         locked: Whether user input should be disabled.
     """
 
-    if not locked and not self._is_agent_test_mode():
+    operation_state = getattr(
+        self.celune,
+        "operation_state",
+        OperationState.NORMAL,
+    )
+    can_operate = operation_state is OperationState.NORMAL
+    if not locked and can_operate and not self._is_agent_test_mode():
         self._schedule_sleep_timer()
 
     def update() -> None:
@@ -569,15 +576,16 @@ def change_input_state(self, locked: bool) -> None:
             if self._agent_test_response_queue is not None
             else self._normal_input_placeholder()
         )
+        controls_enabled = not locked and can_operate
         self.style_button.actions = _app.ButtonActions(
-            press=not locked,
-            hold=not locked,
+            press=controls_enabled,
+            hold=controls_enabled,
         )
         self.refresh_vc_controls()
         self.update_resources()
 
     self._run_on_ui_thread(update)
-    if not locked:
+    if not locked and can_operate:
         self._refresh_persona_availability()
 
 
@@ -722,7 +730,12 @@ def refresh_vc_controls(self) -> None:
     self.vc_mode_button.label = _app.string(
         "ui.vc_mode_sing" if f0_condition else "ui.vc_mode_talk"
     )
-    controls_available = is_vc_mode and not self._input_locked
+    controls_available = (
+        is_vc_mode
+        and not self._input_locked
+        and getattr(self.celune, "operation_state", OperationState.NORMAL)
+        is OperationState.NORMAL
+    )
     self.vc_mode_button.actions = _app.ButtonActions(press=controls_available)
 
 

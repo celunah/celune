@@ -35,6 +35,7 @@ from celune.typing.locks import (
     ComponentLockOwner,
     ComponentLockRequirement,
 )
+from celune.typing.modes import OperationState
 from celune.typing.common import JSONSerializable
 from celune.persona.emotion import PersonaEmotionAnalyzer
 from celune.pipeline.playback import play_signal
@@ -75,7 +76,9 @@ class TestCeluneRuntime(CeluneCoreTestSupport):
         resolve.assert_called_once()
         assert resolve.call_args.args[0] == "mini"
         assert "clone_model_id" not in resolve.call_args.kwargs
+        assert celune.operation_state is OperationState.NORMAL
         celune.close()
+        self.assertEqual(celune.operation_state, OperationState.STOPPED)
 
         celune = self._make_celune({})
         self.assertEqual(celune.chunk_size, 8)
@@ -95,6 +98,17 @@ class TestCeluneRuntime(CeluneCoreTestSupport):
                 tts_backend=FakeBackend,
                 target_chunk_length=0.65,
             )
+
+    def test_fatal_operation_state_distinguishes_configuration_failures(self) -> None:
+        """Retain settings access only for failures attributed to configuration."""
+        celune = self._make_celune({})
+
+        with mock.patch("celune.core.voice.try_play_signal", return_value=False):
+            celune.fatal(semi_fatal=True)
+            self.assertEqual(celune.operation_state, OperationState.SEMI_FATAL)
+
+            celune.fatal()
+            self.assertEqual(celune.operation_state, OperationState.FATAL)
 
     def test_callback_registration_rejects_the_same_callback_twice(self) -> None:
         """Verify Celune rejects duplicate callback registration attempts."""

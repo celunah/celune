@@ -44,6 +44,7 @@ from celune.ui.app import (
 )
 from celune.constants import APP_NAME, COST_EQUIVALENTS, ExitCodes
 from celune.ui.headless import CeluneHeadlessUI
+from celune.typing.modes import OperationState
 
 from ..support import FakeBackend, CeluneTestCase
 from .fixtures import reset_ui_singletons
@@ -1514,6 +1515,84 @@ class TestUIStartup(CeluneTestCase):
         assert ui.input_box.placeholder == "Please wait"
         assert ui.style_button.actions == ButtonActions(press=False, hold=False)
         assert not ui._fatal_error_active
+
+    def test_load_tts_keeps_settings_input_available_for_configuration_failures(
+        self,
+    ) -> None:
+        """Unlock text entry after a configuration failure without enabling controls."""
+        ui = CeluneUI()
+        ui.input_box = TextArea()
+        ui.style_button = VoiceButton(
+            "No Voice Set",
+            actions=ButtonActions(press=False, hold=False),
+        )
+        ui.resources = cast(Label, None)
+        ui._normal_input_placeholder = mock.Mock(return_value="Type a command")
+        ui.refresh_vc_controls = mock.Mock()
+        ui.update_resources = mock.Mock()
+        ui.change_voice_lock_state = mock.Mock()
+        ui._show_loading_error = mock.Mock()
+        ui.celune = cast(
+            Celune,
+            SimpleNamespace(
+                load=lambda: False,
+                operation_state=OperationState.SEMI_FATAL,
+                dev=False,
+                glow=SimpleNamespace(fatal=lambda: None),
+            ),
+        )
+        ui.error = mock.Mock()
+
+        ui._load_tts()
+
+        assert not ui._input_locked
+        assert ui.style_button.actions == ButtonActions(press=False, hold=False)
+        ui.change_voice_lock_state.assert_called_once_with(locked=True)
+
+    def test_semi_fatal_input_allows_only_settings(self) -> None:
+        """Route only /settings while configuration recovery is available."""
+        ui = CeluneUI()
+        ui.input_box = TextArea()
+        ui.safe_log = mock.Mock()
+        ui.process_command = mock.Mock()
+        ui.celune = cast(
+            Celune,
+            SimpleNamespace(
+                operation_state=OperationState.SEMI_FATAL,
+                cur_state="error",
+                sleeping=False,
+                say=mock.Mock(),
+            ),
+        )
+
+        assert ui._submit_text("speech input")
+        ui.celune.say.assert_not_called()
+        ui.safe_log.assert_called_once_with(
+            string("operation_state.recovery_settings_only"),
+            "warning",
+        )
+
+        assert ui._submit_text("/settings")
+        ui.process_command.assert_called_once_with("settings", [])
+
+        ui.input_box.load_text("/settings")
+        event = SimpleNamespace(
+            key="ctrl+j",
+            prevent_default=mock.Mock(),
+            stop=mock.Mock(),
+        )
+        ui.on_key(cast(events.Key, event))
+        assert ui.process_command.call_count == 2
+        event.prevent_default.assert_called_once_with()
+        event.stop.assert_called_once_with()
+
+        ui.celune.operation_state = OperationState.FATAL
+        assert ui._submit_text("/settings")
+        assert ui.process_command.call_count == 2
+        assert ui.safe_log.call_args.args == (
+            string("operation_state.unavailable"),
+            "warning",
+        )
 
     def test_load_tts_enters_ui_test_mode_without_error_for_fake_backend(self) -> None:
         """Verify fake-backend UI test mode does not present as a startup failure."""

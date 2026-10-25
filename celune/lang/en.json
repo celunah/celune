@@ -514,6 +514,8 @@
     "mcp.voice_pack_changed": "Switched to voice pack {pack}.",
     "mcp.wake_description": "Wake the runtime from sleep and wait for reload before taking more actions.",
     "modeling.normalizer_cached": "Normalizer is already available in cache",
+    "operation_state.recovery_settings_only": "Only /settings is available while recovering from a configuration failure.",
+    "operation_state.unavailable": "The engine cannot accept input in this state.",
     "osc.action_checking_dependencies": "Check",
     "osc.action_downloading": "Download",
     "osc.action_early_initialization_failed": "Init failed",

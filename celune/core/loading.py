@@ -121,7 +121,7 @@ def load(self, raise_on_error: bool = False, skip_runtime_check: bool = False) -
     from .voice import _reject_singing_backend
 
     if _reject_singing_backend(self, self.backend):
-        self.fatal()
+        self.fatal(semi_fatal=True)
         self.error_callback(string("celune.singing_capable_pack_required"))
         self.progress_callback(0, 1)
         if raise_on_error:
@@ -141,7 +141,7 @@ def load(self, raise_on_error: bool = False, skip_runtime_check: bool = False) -
                 "warning",
             )
             self.log(string("celune.singing_capable_pack_required"), "warning")
-            self.fatal()
+            self.fatal(semi_fatal=True)
             self.error_callback(string("celune.singing_capable_pack_required"))
             self.progress_callback(0, 1)
             if raise_on_error:
@@ -151,7 +151,7 @@ def load(self, raise_on_error: bool = False, skip_runtime_check: bool = False) -
             return False
 
     if not self.load_available_voices():
-        self.fatal()
+        self.fatal(semi_fatal=True)
         self.log(string("celune.no_voices_loaded"), "error")
         self.error_callback(string("celune.no_voices_loaded_short"))
         self.progress_callback(0, 1)
@@ -178,7 +178,7 @@ def load(self, raise_on_error: bool = False, skip_runtime_check: bool = False) -
 
     if vram_profile_fits(self.config) is False:
         message = string("vram.profile_exceeds_budget", app_name=APP_NAME)
-        self.fatal()
+        self.fatal(semi_fatal=True)
         self.log(message, "error")
         self.error_callback(message)
         self.progress_callback(0, 1)
@@ -199,7 +199,7 @@ def load(self, raise_on_error: bool = False, skip_runtime_check: bool = False) -
     self.progress_callback(None, None)
     if self.is_voice_conversion_mode():
         if self.vc_backend is None:
-            self.fatal()
+            self.fatal(semi_fatal=True)
             self.log(string("celune.no_vc_backend"), "error")
             self.error_callback(string("celune.no_valid_vc_backend"))
             self.progress_callback(0, 1)

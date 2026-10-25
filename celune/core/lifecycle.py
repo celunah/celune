@@ -11,56 +11,19 @@ import shutil
 import asyncio
 import threading
 import contextlib
+from typing import Union, Optional, cast
 from pathlib import Path
 from functools import partial
-from typing import Union, Optional, cast
 from collections.abc import Mapping, Callable, Generator
 
 import torch
 
-from ..chroma import AudioRGBGlow
-from ..exceptions import BackendError
-from ..typing.aliases import LogLevel
-from ..typing.modes import BackendMode
-from ..agent.runtime import AgentRuntime
-from ..modes import resolve_operation_mode
-from .callbacks import _buffer_startup_log
-from .concurrency import ComponentLockLease
-from ..agent.routing import AgentInputRouter
-from ..agent.needle import NeedleToolSelector
-from ..agent.persona import PersonaAgentBridge
-from ..dataclasses.events import ShutdownEvent
-from ..extensions.events import EventDispatcher
-from ..paths import api_key_path, temp_data_dir
-from ..backends.tts import BACKENDS, CeluneBackend
-from ..typing.common import JSON, JSONSerializable
-from ..persona.emotion import PersonaEmotionAnalyzer
-from ..backends.vc import VC_BACKENDS, CeluneVCBackend
 from ..i18n import string, set_locale, get_system_locale
-from ..utils import discard, available, clear_queue, format_error_message
 from ..vram import backend_allowed, resolve_vram_preset, resolve_backend_name
-from ..typing.agent import AgentTaskConfig, AgentToolSelector, AgentCancellationReason
-from ..constants import APP_NAME, AGENT_MAX_LOOPS, AGENT_COMPACT_AT, AGENT_CONTEXT_SPACE
-from ..config import (
-    config_int as _config_int,
-)
-from ..typing.locks import (
-    ComponentLockName,
-    ComponentLockOwner,
-    ComponentLockRequirement,
-)
-from ..cevoice import (
-    default_loader,
-    select_voice_bundle,
-    close_default_loader,
-    is_protected_temp_path,
-)
-from ..agent.tools import (
-    agent_test_tools,
-    production_agent_tools,
-    agent_test_tool_schemas,
-    production_agent_tool_schemas,
-)
+from ..modes import resolve_operation_mode
+from ..paths import api_key_path, temp_data_dir
+from ..utils import discard, available, clear_queue, format_error_message
+from ..chroma import AudioRGBGlow
 from ..config import (
     Config,
     config_bool,
@@ -69,6 +32,28 @@ from ..config import (
     normalize_log_level,
     config_backend_options,
 )
+from ..config import (
+    config_int as _config_int,
+)
+from ..cevoice import (
+    default_loader,
+    select_voice_bundle,
+    close_default_loader,
+    is_protected_temp_path,
+)
+from .callbacks import _buffer_startup_log
+from ..constants import APP_NAME, AGENT_MAX_LOOPS, AGENT_COMPACT_AT, AGENT_CONTEXT_SPACE
+from ..exceptions import BackendError
+from .concurrency import ComponentLockLease
+from ..agent.tools import (
+    agent_test_tools,
+    production_agent_tools,
+    agent_test_tool_schemas,
+    production_agent_tool_schemas,
+)
+from ..backends.vc import VC_BACKENDS, CeluneVCBackend
+from ..agent.needle import NeedleToolSelector
+from ..backends.tts import BACKENDS, CeluneBackend
 from ..persona.impl import (
     PersonaClient,
     persona_enabled,
@@ -77,15 +62,16 @@ from ..persona.impl import (
     persona_quantization,
     create_persona_client,
 )
-from ..dataclasses.celune import (
-    CeluneAudioState,
-    CeluneModelState,
-    CeluneVoiceState,
-    CeluneBackendState,
-    CeluneRuntimeState,
-    CeluneCallbackState,
-    CelunePipelineState,
+from ..typing.agent import AgentTaskConfig, AgentToolSelector, AgentCancellationReason
+from ..typing.locks import (
+    ComponentLockName,
+    ComponentLockOwner,
+    ComponentLockRequirement,
 )
+from ..typing.modes import BackendMode, OperationState
+from ..agent.persona import PersonaAgentBridge
+from ..agent.routing import AgentInputRouter
+from ..agent.runtime import AgentRuntime
 from ..typing.celune import (
     VCBackendSpec,
     TTSBackendSpec,
@@ -97,6 +83,20 @@ from ..typing.celune import (
     VoiceLockStateCallback,
     CaptionProgressCallback,
 )
+from ..typing.common import JSON, JSONSerializable
+from ..typing.aliases import LogLevel
+from ..persona.emotion import PersonaEmotionAnalyzer
+from ..extensions.events import EventDispatcher
+from ..dataclasses.celune import (
+    CeluneAudioState,
+    CeluneModelState,
+    CeluneVoiceState,
+    CeluneBackendState,
+    CeluneRuntimeState,
+    CeluneCallbackState,
+    CelunePipelineState,
+)
+from ..dataclasses.events import ShutdownEvent
 
 TTS_KV_CACHE_BACKENDS = frozenset({"qwen3", "fireredtts3", "voxcpm2"})
 
@@ -502,6 +502,7 @@ def finish_test_mode(
         return self.test_result
 
     self._runtime_state.test_finished = True
+    self.operation_state = OperationState.STOPPED
     self.locked = True
     cleanup_errors: list[str] = []
     for callback in (
@@ -753,6 +754,8 @@ def _cleanup_residual_temp_data(self, temp_dir: Path) -> None:
 
 def _enter_fatal_error_state(self) -> None:
     """Mark the runtime as unrecoverably failed before fatal handlers run."""
+    if self.operation_state is OperationState.NORMAL:
+        self.operation_state = OperationState.FATAL
     self.cur_state = "error"
     self.loaded = False
     self.locked = True
@@ -1193,6 +1196,7 @@ def close(self) -> None:
         if self._closed:
             return
         self._closed = True
+        self.operation_state = OperationState.STOPPED
 
     if self._api_tunnel is not None:
         self._api_tunnel.stop()
@@ -1340,8 +1344,17 @@ def _abort_backend_operations(self) -> None:
                 abort()
 
 
-def fatal(self) -> None:
-    """Mark Celune state as fatal and prevent further operations."""
+def fatal(self, *, semi_fatal: bool = False) -> None:
+    """Mark an unrecoverable runtime failure and trigger fatal handlers.
+
+    Args:
+        semi_fatal: Whether the failure came from configuration and permits
+            opening the settings manager.
+    """
+    if self.operation_state is not OperationState.STOPPED:
+        self.operation_state = (
+            OperationState.SEMI_FATAL if semi_fatal else OperationState.FATAL
+        )
     self.loaded = False
     self.cur_state = "error"
     self.glow.fatal()

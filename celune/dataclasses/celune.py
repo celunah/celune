@@ -10,7 +10,6 @@ import sounddevice as sd
 from transformers.modeling_utils import PreTrainedModel
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 
-from ..core.concurrency import ComponentLockManager
 from ..chroma import AudioRGBGlow
 from ..config import Config
 from ..cevoice import CEVoicePersona
@@ -22,7 +21,7 @@ from ..backends.vc import CeluneVCBackend
 from ..backends.tts import CeluneBackend
 from ..persona.impl import PersonaClient
 from ..typing.locks import ComponentLockOwner, ComponentBusyResult
-from ..typing.modes import BackendMode
+from ..typing.modes import BackendMode, OperationState
 from ..typing.celune import (
     IdleCallback,
     ErrorCallback,
@@ -40,6 +39,7 @@ from ..typing.celune import (
 from ..typing.common import JSON, JSONSerializable
 from ..typing.aliases import LogLevel, AudioChunks
 from ..typing.backends import BackendModel
+from ..core.concurrency import ComponentLockManager
 from ..extensions.manager import CeluneExtensionManager
 
 
@@ -180,6 +180,7 @@ class CeluneAudioState:
 class CeluneRuntimeState:
     """Top-level lifecycle and runtime integration state."""
 
+    operation_state: OperationState = OperationState.NORMAL
     closed: bool = False
     backend_mode: BackendMode = "normal"
     regenerate: bool = False
@@ -467,6 +468,7 @@ CELUNE_FORWARDED_PROPERTIES = (
     ForwardedPropertySpec("kept_sfx_audio", "_audio_state", "kept_sfx_audio"),
     ForwardedPropertySpec("regenerate", "_runtime_state", "regenerate"),
     ForwardedPropertySpec("backend_mode", "_runtime_state", "backend_mode"),
+    ForwardedPropertySpec("operation_state", "_runtime_state", "operation_state"),
     ForwardedPropertySpec("locked", "_runtime_state", "locked"),
     ForwardedPropertySpec("loaded", "_runtime_state", "loaded"),
     ForwardedPropertySpec("sleeping", "_runtime_state", "sleeping"),

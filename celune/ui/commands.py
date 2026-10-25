@@ -2,25 +2,18 @@
 """Slash command handling for the Textual UI."""
 
 from __future__ import annotations
+
 import os
 import asyncio
 import threading
+from typing import TYPE_CHECKING, Optional, cast
 from pathlib import Path
 from urllib.parse import urlparse
 from collections.abc import Callable, Awaitable
-from typing import TYPE_CHECKING, Optional, cast
 
 import soundfile as sf
 
-from ..constants import APP_NAME
 from ..i18n import string, tagged_string
-from ..core.concurrency import run_in_daemon_thread
-from ..pipeline.playback import close_stream
-from ..exceptions import InvalidExtensionError
-from ..audio.server import restart_audio_server
-from ..persona.capabilities import PersonaCapabilities
-from ..core.lifecycle import active_runtime_backend_name
-from ..cevoice import active_bundle_path, resolve_bundle_path
 from ..vram import vram_report_int, format_vram_bytes, runtime_vram_report
 from ..utils import (
     available,
@@ -28,10 +21,18 @@ from ..utils import (
     format_number,
     format_error_message,
 )
+from ..cevoice import active_bundle_path, resolve_bundle_path
+from ..constants import APP_NAME
+from ..exceptions import InvalidExtensionError
+from ..audio.server import restart_audio_server
+from ..typing.modes import OperationState
+from ..core.lifecycle import active_runtime_backend_name
+from ..core.concurrency import run_in_daemon_thread
+from ..pipeline.playback import close_stream
+from ..persona.capabilities import PersonaCapabilities
 
 if TYPE_CHECKING:
     from .app import CeluneUI
-
     from ..celune import Celune
 
 IMAGE_EXTENSIONS = {".jpeg", ".jpg", ".png", ".webp"}
@@ -282,6 +283,13 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
     """
 
     ui.input_box.load_text("")
+    operation_state = getattr(ui.celune, "operation_state", OperationState.NORMAL)
+    if operation_state is OperationState.SEMI_FATAL and command != "settings":
+        ui.safe_log(string("operation_state.recovery_settings_only"), "warning")
+        return
+    if operation_state in {OperationState.FATAL, OperationState.STOPPED}:
+        ui.safe_log(string("operation_state.unavailable"), "warning")
+        return
 
     def refresh_vc_controls() -> None:
         refresh = getattr(ui, "refresh_vc_controls", None)

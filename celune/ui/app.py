@@ -68,6 +68,7 @@ from ..typing.locks import (
     ComponentLockOwner,
     ComponentLockRequirement,
 )
+from ..typing.modes import OperationState
 from ..typing.common import JSONSerializable
 from ..typing.config import AudioDeviceInfoValue
 from ..registry.types import ModelMetadata
@@ -1665,7 +1666,16 @@ class CeluneUI(
                 self._dismiss_loading_screen()
             else:
                 self.cur_state = "error"
-                self.change_input_state(locked=True)
+                self.change_input_state(
+                    locked=(
+                        getattr(
+                            self.celune,
+                            "operation_state",
+                            OperationState.NORMAL,
+                        )
+                        is not OperationState.SEMI_FATAL
+                    )
+                )
                 self.change_voice_lock_state(locked=True)
                 failure_message = self._latest_startup_error or string(
                     "ui.app_could_not_start",

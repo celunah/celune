@@ -20,7 +20,7 @@ from collections.abc import Callable, Iterator
 
 from . import app as _app
 from ..constants import SIGTSTP, APP_NAME
-from ..typing.modes import OPERATION_MODES
+from ..typing.modes import OPERATION_MODES, OperationState
 
 if TYPE_CHECKING:
     from ..vc import VCDebugSaveResult
@@ -1126,6 +1126,28 @@ def _submit_text(self, text: str, process_commands: bool = True) -> bool:
         self.safe_status(_app.string("ui.agent_test_mode_active"))
         return True
 
+    operation_state = getattr(
+        celune,
+        "operation_state",
+        OperationState.NORMAL,
+    )
+    if operation_state in {OperationState.FATAL, OperationState.STOPPED} or (
+        operation_state is OperationState.SEMI_FATAL
+        and (not process_commands or not text.startswith("/"))
+    ):
+        message_key = (
+            "operation_state.recovery_settings_only"
+            if operation_state is OperationState.SEMI_FATAL
+            else "operation_state.unavailable"
+        )
+        self._suppress_input_change = True
+        try:
+            self.input_box.load_text("")
+        finally:
+            self._suppress_input_change = False
+        self.safe_log(_app.string(message_key), "warning")
+        return True
+
     if celune.cur_state == "waking":
         self._cancel_sleep_timer()
         self.safe_status(_app.string("status.waking_up"))
@@ -1357,6 +1379,28 @@ def on_key(self, event: _app.events.Key) -> None:
             event.stop()
             return
 
+        operation_state = getattr(
+            self.celune,
+            "operation_state",
+            OperationState.NORMAL,
+        )
+        if operation_state in {OperationState.FATAL, OperationState.STOPPED}:
+            event.prevent_default()
+            event.stop()
+            return
+        if operation_state is OperationState.SEMI_FATAL:
+            if self._active_menu is not None:
+                return
+            if event.key in {"ctrl+j", "ctrl+enter"}:
+                event.prevent_default()
+                event.stop()
+                self._submit_text(self.input_box.text)
+                return
+            if event.key.startswith("ctrl+"):
+                event.prevent_default()
+                event.stop()
+            return
+
         if event.key in {"ctrl+j", "ctrl+enter"} and self.cancel_tutorial():
             event.prevent_default()
             event.stop()
@@ -1425,6 +1469,16 @@ def on_button_pressed(self, event: _app.Button.Pressed) -> None:
 
     celune = self.celune
     if celune is None or getattr(celune, "test_finished", False):
+        return
+
+    operation_state = getattr(
+        celune,
+        "operation_state",
+        OperationState.NORMAL,
+    )
+    if operation_state is not OperationState.NORMAL and not (
+        operation_state is OperationState.SEMI_FATAL and self._active_menu is not None
+    ):
         return
 
     if self._is_agent_test_mode():

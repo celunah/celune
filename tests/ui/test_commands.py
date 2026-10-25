@@ -5,32 +5,33 @@
 # pylint: disable=ungrouped-imports
 
 import tempfile
-from pathlib import Path
-from unittest import mock
 from types import SimpleNamespace
 from typing import Optional, cast
+from pathlib import Path
+from unittest import mock
 
 import numpy as np
 from textual import events
 from textual.widgets import TextArea
 
 from celune.i18n import string
-from celune.celune import Celune
 from celune.agent import AgentTaskState
-from celune.ui.commands import process_command, attachment_source
+from celune.celune import Celune
 from celune.ui.app import (
     CeluneUI,
     VoiceButton,
     ButtonActions,
 )
+from celune.ui.commands import process_command, attachment_source
 from celune.typing.locks import (
     ComponentLockName,
     ComponentLockOwner,
     ComponentBusyResult,
 )
+from celune.typing.modes import OperationState
 
-from ..platform import WINDOWS_ONLY
 from ..support import FakeBackend, FakeVCBackend, CeluneTestCase
+from ..platform import WINDOWS_ONLY
 
 
 class TestUICommand(CeluneTestCase):
@@ -129,6 +130,33 @@ class TestUICommand(CeluneTestCase):
         assert self.logs[-1] == (
             "Host audio server restarted.",
             "info",
+        )
+
+    def test_settings_command_is_available_only_in_operable_states(self) -> None:
+        """Allow settings in normal and configuration-recovery states."""
+        open_settings = mock.Mock()
+        self.ui.open_settings_menu = open_settings
+
+        self.ui.celune.operation_state = OperationState.NORMAL
+        self._process_command("settings", [])
+        open_settings.assert_called_once_with()
+
+        self.ui.celune.operation_state = OperationState.SEMI_FATAL
+        self._process_command("help", [])
+        assert self.logs[-1] == (
+            string("operation_state.recovery_settings_only"),
+            "warning",
+        )
+
+        self._process_command("settings", [])
+        assert open_settings.call_count == 2
+
+        self.ui.celune.operation_state = OperationState.FATAL
+        self._process_command("settings", [])
+        assert open_settings.call_count == 2
+        assert self.logs[-1] == (
+            string("operation_state.unavailable"),
+            "warning",
         )
 
     def test_vram_command_reports_process_and_component_usage(self) -> None:
