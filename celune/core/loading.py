@@ -8,35 +8,16 @@ import os
 import time
 import threading
 import contextlib
-from functools import partial
 from typing import Optional, cast
+from functools import partial
 
 import torch
 from transformers.modeling_utils import PreTrainedModel
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 
 from . import lifecycle
-from ..constants import APP_NAME
-from ..backends.tts import CeluneBackend
 from ..i18n import string, tagged_string
-from ..persona.impl import persona_enabled
-from ..dataclasses.events import ReadyEvent
-from .concurrency import run_in_daemon_thread
-from ..registry.other import NORMALIZER_MODEL_ID
-from ..pipeline.output import saved_output_speech_seconds
-from ..runtime import validate_runtime, log_runtime_banner
-from ..typing.celune import Generative, NormalizerTokenizer
-from ..modeling import normalizer_device, load_normalizer_components
-from ..pipeline.playback import force_stop_speech as force_stop_pipeline
 from ..vram import vram_profile_fits, resolve_vram_preset, validate_vram_preset
-from ..cevoice import default_loader, bundle_display_name, announce_default_bundle
-from ..exceptions import (
-    WarmupError,
-    BackendError,
-    NotAvailableError,
-    RuntimeCheckError,
-    ModelConsentRequired,
-)
 from ..utils import (
     discard,
     format_error,
@@ -45,6 +26,26 @@ from ..utils import (
     is_port_usable,
     format_error_message,
 )
+from ..cevoice import default_loader, bundle_display_name, announce_default_bundle
+from ..runtime import validate_runtime, log_runtime_banner
+from ..modeling import normalizer_device, load_normalizer_components
+from ..constants import APP_NAME
+from ..exceptions import (
+    WarmupError,
+    BackendError,
+    NotAvailableError,
+    RuntimeCheckError,
+    ModelConsentRequired,
+    InvalidCharacterError,
+)
+from .concurrency import run_in_daemon_thread
+from ..backends.tts import CeluneBackend
+from ..persona.impl import persona_enabled
+from ..typing.celune import Generative, NormalizerTokenizer
+from ..registry.other import NORMALIZER_MODEL_ID
+from ..pipeline.output import saved_output_speech_seconds
+from ..pipeline.playback import force_stop_speech as force_stop_pipeline
+from ..dataclasses.events import ReadyEvent
 
 
 async def force_stop_speech_async(self) -> bool:
@@ -116,6 +117,38 @@ def load(self, raise_on_error: bool = False, skip_runtime_check: bool = False) -
     if self.backend_mode == "ui_test" and self.backend.is_fake:
         self.log(string("celune.test_mode_active", app_name=APP_NAME))
         return True
+
+    from .voice import _reject_singing_backend
+
+    if _reject_singing_backend(self, self.backend):
+        self.fatal()
+        self.error_callback(string("celune.singing_capable_pack_required"))
+        self.progress_callback(0, 1)
+        if raise_on_error:
+            raise BackendError("the active character has no singing voice")
+        return False
+
+    if self.backend.singing:
+        try:
+            self.backend.validate_refs()
+        except InvalidCharacterError as error:
+            self.log(string("celune.cannot_sing_with_character"), "warning")
+            self.log(
+                string(
+                    "celune.character_has_no_usable_singing_voice",
+                    character=error.character_name,
+                ),
+                "warning",
+            )
+            self.log(string("celune.singing_capable_pack_required"), "warning")
+            self.fatal()
+            self.error_callback(string("celune.singing_capable_pack_required"))
+            self.progress_callback(0, 1)
+            if raise_on_error:
+                raise BackendError(
+                    "the active character has no usable singing voice"
+                ) from error
+            return False
 
     if not self.load_available_voices():
         self.fatal()

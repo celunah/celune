@@ -8,29 +8,17 @@ import re
 import time
 import queue
 import pathlib
-from collections.abc import Callable
 from typing import TYPE_CHECKING, Union, Optional, cast
+from collections.abc import Callable
 
 import numpy as np
 import soundfile as sf
 from iso639 import Lang
 from iso639.exceptions import InvalidLanguageValue, DeprecatedLanguageValue
 
-from ..cevoice import default_loader
-from ..i18n import string, tagged_string
-from ..constants import BASE_SR, APP_NAME
-from ..exceptions import NotAvailableError
-from ..cesn import contains_cesn_note_event
-from ..typing.pipeline import SpeechStreamQueue
-from ..core.concurrency import run_in_daemon_thread
-from ..typing.aliases import AudioChunk, AudioChunks
 from ..vc import VC_PLAYBACK_GAIN, normalize_vc_audio
-from ..audio.dsp import split, resample_audio, is_silent_utterance
-from .output import (
-    is_youtube_sfx_url,
-    download_youtube_sfx,
-    format_stat_duration,
-)
+from ..cesn import contains_cesn_note_event
+from ..i18n import string, tagged_string
 from ..utils import (
     rng_replace,
     cesn_to_text,
@@ -38,6 +26,20 @@ from ..utils import (
     detect_language,
     format_error_message,
     normalize_special_characters,
+)
+from .output import (
+    is_youtube_sfx_url,
+    download_youtube_sfx,
+    format_stat_duration,
+)
+from ..cevoice import default_loader
+from .captions import (
+    playback_source_meta,
+    next_playback_source_id,
+    register_playback_source,
+    set_playback_source_status,
+    clear_playback_source_status,
+    register_overlay_playback_state,
 )
 from .buffering import (
     acquire_pipeline,
@@ -47,14 +49,12 @@ from .buffering import (
     acquire_pipeline_result,
     flush_buffered_speech_chunks,
 )
-from .captions import (
-    playback_source_meta,
-    next_playback_source_id,
-    register_playback_source,
-    set_playback_source_status,
-    clear_playback_source_status,
-    register_overlay_playback_state,
-)
+from ..audio.dsp import split, resample_audio, is_silent_utterance
+from ..constants import BASE_SR, APP_NAME
+from ..exceptions import NotAvailableError
+from ..typing.aliases import AudioChunk, AudioChunks
+from ..typing.pipeline import SpeechStreamQueue
+from ..core.concurrency import run_in_daemon_thread
 from ..dataclasses.pipeline import (
     AudioOutput,
     SpeechTiming,
@@ -575,6 +575,10 @@ def _queue_speech_request(
     Returns:
         bool: ``True`` when the request was queued successfully.
     """
+    if getattr(engine.backend, "singing", False) and not contains_cesn_note_event(text):
+        engine.log(string("celune.singing_backend_requires_cesn"), "warning")
+        return False
+
     if engine.exit_requested or not _prepare_speech_readiness(
         engine,
         allow_tutorial=allow_tutorial,

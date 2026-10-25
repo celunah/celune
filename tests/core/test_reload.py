@@ -138,6 +138,94 @@ class TestCeluneReload(CeluneCoreTestSupport):
         assert celune.cur_state == "idle"
         assert celune._model_ready.is_set()
 
+    def test_with_backend_rejects_non_singing_character_before_reload(self) -> None:
+        """Apply the singing-pack preflight to temporary backend overrides."""
+        celune = self._make_celune({"cache": {"enabled": False}})
+        celune.cur_state = "idle"
+        celune.loaded = True
+        celune.current_character = "Nol"
+        celune.locked = False
+        celune._model_ready.set()
+        celune._playback_done.set()
+        celune.log_callback = mock.Mock()
+        loader = SimpleNamespace(bundle=SimpleNamespace(singing_voice=None))
+
+        with (
+            mock.patch.object(core_voice, "default_loader", return_value=loader),
+            pytest.raises(BackendError),
+            celune.with_backend("soulxsinger"),
+        ):
+            pytest.fail("the non-singing character must reject the override")
+
+        assert celune.backend.name == "fake"
+        assert celune.log_callback.call_args_list == [
+            mock.call("Cannot sing with this character.", "warning"),
+            mock.call("Nol is not a singer.", "warning"),
+            mock.call(
+                "Please switch to a singing-capable pack, then try again.",
+                "warning",
+            ),
+        ]
+
+    def test_load_voice_bundle_rejects_non_singer_under_singing_backend(self) -> None:
+        """Keep direct voice-bundle selection from invalidating SoulX-Singer."""
+        celune = self._make_celune({"cache": {"enabled": False}})
+        celune.backend.singing = True
+        celune.log_callback = mock.Mock()
+        candidate = SimpleNamespace(
+            singing_voice=None,
+            path=Path("Nol.cevoice"),
+        )
+
+        with (
+            mock.patch.object(
+                core_voice, "resolve_bundle_path", return_value=Path("Nol.cevoice")
+            ),
+            mock.patch.object(core_voice.CEVoice, "open", return_value=candidate),
+            mock.patch.object(core_voice, "bundle_character_name", return_value="Nol"),
+            mock.patch.object(core_voice, "select_voice_bundle") as select_bundle,
+        ):
+            assert not celune.load_voice_bundle("Nol")
+
+        select_bundle.assert_not_called()
+        assert celune.log_callback.call_args_list == [
+            mock.call("Cannot sing with this character.", "warning"),
+            mock.call("Nol is not a singer.", "warning"),
+            mock.call(
+                "Please switch to a singing-capable pack, then try again.",
+                "warning",
+            ),
+        ]
+
+    def test_startup_rejects_singing_backend_without_compatible_pack(self) -> None:
+        """Reject an incompatible configured pack before backend model loading."""
+        celune = self._make_celune({"cache": {"enabled": False}})
+        celune.backend.singing = True
+        celune.current_character = "Nol"
+        celune.log_callback = mock.Mock()
+        loader = SimpleNamespace(bundle=SimpleNamespace(singing_voice=None))
+
+        with (
+            mock.patch.object(core_voice, "default_loader", return_value=loader),
+            mock.patch.object(core_loading, "log_runtime_banner"),
+            mock.patch.object(
+                core_loading, "saved_output_speech_seconds", return_value=0.0
+            ),
+            mock.patch("celune.core.callbacks._flush_startup_logs"),
+            mock.patch.object(celune, "load_available_voices") as load_voices,
+        ):
+            assert not core_loading.load(celune)
+
+        load_voices.assert_not_called()
+        assert celune.log_callback.call_args_list[:3] == [
+            mock.call("Cannot sing with this character.", "warning"),
+            mock.call("Nol is not a singer.", "warning"),
+            mock.call(
+                "Please switch to a singing-capable pack, then try again.",
+                "warning",
+            ),
+        ]
+
     def test_set_backend_and_wait_failure_keeps_previous_runtime_loaded(self) -> None:
         """Verify failed backend switches preserve the previously loaded backend runtime."""
 

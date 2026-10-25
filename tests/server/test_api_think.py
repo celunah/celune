@@ -2,8 +2,9 @@
 """Tests for Persona think API control routes."""
 
 import json
-from typing import cast
 from types import SimpleNamespace
+from typing import cast
+from unittest import mock
 
 import pytest
 from fastapi import HTTPException
@@ -47,6 +48,25 @@ class TestApiThink(CeluneTestCase):
 
             assert response.status_code == 409
             assert payload["error"] == "not_ready"
+        finally:
+            api.server_session.bound_celune = previous_celune
+
+    def test_think_rejects_singing_backend_without_starting_persona(self) -> None:
+        """Reject ordinary Persona replies while a singing backend is active."""
+        previous_celune = api.server_session.bound_celune
+        engine = SimpleNamespace(
+            backend=SimpleNamespace(singing=True),
+            think=mock.Mock(),
+            dev=False,
+        )
+        try:
+            api.server_session.bound_celune = cast(Celune, engine)
+            response = api.think(api.ThinkRequest(content="hello"))
+            payload = json.loads(bytes(response.body))
+
+            assert response.status_code == 409
+            assert payload["error"] == "unsupported_operation"
+            engine.think.assert_not_called()
         finally:
             api.server_session.bound_celune = previous_celune
 

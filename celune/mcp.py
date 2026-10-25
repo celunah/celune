@@ -17,14 +17,14 @@ import mcp.server.mcpserver.exceptions as mcp_exceptions
 from starlette.types import Send, Scope, ASGIApp, Receive
 from starlette.responses import Response
 
+from .cesn import validate_singing_notation
 from .i18n import string
 from .cevoice import CEVoice, bundled_voices_dir
-from .cesn import validate_singing_notation
-from .core.concurrency import run_in_daemon_thread
 from .exceptions import CEVoiceError
 from .backends.vc import VC_BACKENDS
 from .backends.tts import BACKENDS
 from .typing.pipeline import SpeechStreamQueue
+from .core.concurrency import run_in_daemon_thread
 
 if TYPE_CHECKING:
     from .celune import Celune
@@ -202,6 +202,8 @@ async def sing(content: str, save: bool = True) -> Audio:
 async def run_persona(content: str) -> str:
     """Submit text to Persona and report whether Celune accepted it."""
     engine = _require_celune()
+    if getattr(getattr(engine, "backend", None), "singing", False):
+        raise ToolError(string("celune.persona_unavailable_singing"))
     if not await engine.think_async(content):
         raise ToolError("The request could not be accepted right now.")
     return string("mcp.persona_accepted")

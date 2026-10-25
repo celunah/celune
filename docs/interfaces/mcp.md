@@ -52,6 +52,10 @@ Speech and singing tools return an MCP audio content block with MIME type `audio
 
 `change_backend` accepts the canonical installed backend names, including TTS and voice-conversion backends. A failed reload is returned as a tool error from the normal Celune control path.
 
+With a singing backend active, `speak` and `run_persona` return tool errors;
+use `sing` with CESN notation for generated audio. `change_backend` rejects a
+singing backend before reload when the active pack has no singing voice.
+
 ## Runtime logs
 
 MCP SDK log records are tagged `[MCP]` and emitted at Celune's debug log level. They appear only when `log_level: debug` or `--debug` is active. The SDK's `Terminating session` record remains unchanged. A matching Windows Proactor pipe teardown is reported once as `[MCP] Session <ID> was terminated` at info severity; an uncorrelated teardown callback is shown as `[MCP] Connection lost` at warning severity. Other asyncio errors keep their error severity.

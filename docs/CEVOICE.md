@@ -329,9 +329,9 @@ The loader parses and validates the bundle, then lazily materializes assets into
 - `default_voice` controls the initial selected voice.
 - `voice_order` controls the user-facing order.
 - In v5, `sing` is reserved for a singing backend and is hidden from TTS voice selection.
-- SoulXSinger switching is rejected before reload when the active pack has no
-  singing voice. Celune logs a yellow warning naming the character and asks for
-  a singing-capable pack.
+- SoulXSinger startup, backend overrides, and pack selection require a usable
+  CECHAR v5 singing voice. Celune rejects an incompatible pack before loading
+  the singing model and logs a yellow warning naming the character.
 - `theme.accent` or `theme.glow_color` can affect Celune's UI glow color.
 - `persona.identity.name`, when present, becomes the bundle's character name ahead of top-level `name`.
 

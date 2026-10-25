@@ -6,20 +6,20 @@ import json
 import time
 import queue
 import asyncio
-from unittest import mock
 from types import SimpleNamespace
 from typing import Optional, cast
+from unittest import mock
 
-import pytest
 import numpy as np
+import pytest
 import soundfile as sf
 from fastapi import UploadFile
 from fastapi.responses import JSONResponse, StreamingResponse
 from starlette.responses import Response
 
 from celune import api
-from celune.server import jobs
 from celune.celune import Celune
+from celune.server import jobs
 from celune.typing.pipeline import SpeechStreamQueue
 
 from ..support import CeluneTestCase
@@ -107,6 +107,35 @@ class TestApiAudio(CeluneTestCase):
         finally:
             api.server_session.bound_celune = previous_celune
             api.server_session.speech_jobs.clear()
+
+    def test_speech_routes_reject_active_singing_backend_without_queueing(self) -> None:
+        """Require CESN requests to use the dedicated singing endpoint."""
+        previous_celune = api.server_session.bound_celune
+        engine = SimpleNamespace(
+            backend=SimpleNamespace(singing=True),
+            say_stream=mock.Mock(),
+            dev=False,
+        )
+        api.server_session.bound_celune = cast(Celune, engine)
+        try:
+            with mock.patch.object(api.server_jobs, "remember_speech_job") as remember:
+                responses = (
+                    api.speak(api.SpeakRequest(content="hello")),
+                    api.speak_async(api.SpeakRequest(content="hello")),
+                )
+
+            for response in responses:
+                payload = json.loads(bytes(response.body))
+                assert response.status_code == 409
+                assert payload["error"] == "unsupported_operation"
+                assert payload["message"] == (
+                    "Use /v1/sing with CESN while a singing backend is active."
+                )
+            remember.assert_not_called()
+        finally:
+            api.server_session.bound_celune = previous_celune
+
+        engine.say_stream.assert_not_called()
 
     def test_speech_job_lookup_expires_old_jobs(self) -> None:
         """Verify async speech jobs are removed after their in-memory TTL."""

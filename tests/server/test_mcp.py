@@ -4,13 +4,13 @@
 import queue
 import base64
 import asyncio
+from types import SimpleNamespace
 from typing import cast
 from pathlib import Path
 from unittest import mock
-from types import SimpleNamespace
 
-import pytest
 import numpy as np
+import pytest
 import mcp.types as mcp_types
 import mcp.server.mcpserver.exceptions as mcp_exceptions
 from fastapi.testclient import TestClient
@@ -242,6 +242,20 @@ class TestMcpServer(CeluneTestCase):
 
         assert result
         engine.think_async.assert_awaited_once_with("say hello")
+
+    def test_run_persona_rejects_singing_backend(self) -> None:
+        """Do not submit spoken Persona text to the singing pipeline."""
+        engine = SimpleNamespace(
+            backend=SimpleNamespace(singing=True),
+            think_async=mock.AsyncMock(return_value=True),
+        )
+        with (
+            mock.patch.object(mcp, "_require_celune", return_value=engine),
+            pytest.raises(ToolError, match="Persona replies are unavailable"),
+        ):
+            asyncio.run(mcp.run_persona("say hello"))
+
+        engine.think_async.assert_not_awaited()
 
     def test_change_backend_uses_a_registered_backend_name(self) -> None:
         """Switch backends only through Celune's installed backend registry."""

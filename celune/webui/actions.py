@@ -15,6 +15,7 @@ import gradio as gr
 import soundfile as sf
 from fastapi.responses import JSONResponse
 
+from ..cesn import contains_cesn_note_event
 from ..i18n import string, tagged_string
 from ..ui.app import CeluneUI
 from .runtime import (
@@ -253,10 +254,19 @@ def webui_speak(
             yield snapshot[0], None, *snapshot[1:]
             return
 
-    if persona_talkback_enabled(getattr(celune, "config", {})):
+    singing_backend = bool(getattr(getattr(celune, "backend", None), "singing", False))
+    if persona_talkback_enabled(getattr(celune, "config", {})) and not singing_backend:
         if not celune.think(text):
             append_webui_log(string("webui.busy_try_again"), "warning", session)
         snapshot = webui_submit_snapshot("", session)
+        yield snapshot[0], None, *snapshot[1:]
+        return
+
+    if singing_backend and not contains_cesn_note_event(text):
+        append_webui_log(
+            string("celune.singing_backend_requires_cesn"), "warning", session
+        )
+        snapshot = webui_submit_snapshot(text, session)
         yield snapshot[0], None, *snapshot[1:]
         return
 

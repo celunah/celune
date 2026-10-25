@@ -115,6 +115,11 @@ It requires a singing-capable backend and valid CESN notation. It returns
 Content` with a line and column for malformed notation. The optional MCP server
 is available at `/mcp`; see [MCP server](interfaces/mcp.md).
 
+When a singing backend is active, `/v1/speak` and `/v1/speak/async` return
+`409 Conflict` with instructions to submit CESN to `/v1/sing`; the async route
+does not create a job. `/v1/think` also returns `409 Conflict` because Persona
+replies are spoken prose, not CESN scores.
+
 `/v1` and `/v1/version` are authenticated JSON endpoints. The root redirect is
 useful when a browser opens the API port; programmatic clients should call the
 `/v1` paths directly. `/ui` is the Gradio WebUI mounted by the optional API

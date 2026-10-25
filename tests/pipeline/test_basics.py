@@ -6,41 +6,25 @@ import queue
 import asyncio
 import tempfile
 import threading
+from types import TracebackType, SimpleNamespace
+from typing import Self, Optional, cast
 from pathlib import Path
 from unittest import mock
-from typing import Self, Optional, cast
-from types import TracebackType, SimpleNamespace
 
-import pytest
 import numpy as np
 import numpy.typing as npt
+import pytest
 
-from celune.celune import Celune
-from celune.typing.aliases import AudioChunk
-from celune.utils import discard, clear_queue
-from celune.core.concurrency import run_in_daemon_thread
-from celune.agent import routing as agent_routing
-from celune.typing.locks import ComponentLockName
-from celune.constants import BASE_SR, PipelineStates
-from celune.typing.common import JSON, JSONSerializable
 from celune.core import conversation as core_conversation
-from celune.dataclasses import pipeline as pipeline_types
-from celune.persona.capabilities import PersonaCapabilities
-from celune.persona import conversation as persona_conversation
-from celune.dataclasses.pipeline import (
-    SpeechRequest,
-    AudioInputRequest,
-)
-from celune.typing.agent import (
-    AgentTask,
-    AgentContext,
-    AgentRequest,
-)
+from celune.agent import routing as agent_routing
+from celune.utils import discard, clear_queue
+from celune.celune import Celune
 from celune.cevoice import (
     CEVoicePersona,
     PersonaIdentity,
     PersonaStyleValues,
 )
+from celune.persona import conversation as persona_conversation
 from celune.pipeline import (
     output,
     captions,
@@ -49,6 +33,22 @@ from celune.pipeline import (
     generation,
     submission,
 )
+from celune.constants import BASE_SR, PipelineStates
+from celune.dataclasses import pipeline as pipeline_types
+from celune.typing.agent import (
+    AgentTask,
+    AgentContext,
+    AgentRequest,
+)
+from celune.typing.locks import ComponentLockName
+from celune.typing.common import JSON, JSONSerializable
+from celune.typing.aliases import AudioChunk
+from celune.core.concurrency import run_in_daemon_thread
+from celune.dataclasses.pipeline import (
+    SpeechRequest,
+    AudioInputRequest,
+)
+from celune.persona.capabilities import PersonaCapabilities
 
 from .helpers import (
     reload_callback,
@@ -56,8 +56,6 @@ from .helpers import (
     wait_for_persona_worker,
     prepare_persona_conversation_engine,
 )
-
-from ..platform import LINUX_ONLY, WINDOWS_ONLY
 from ..support import (
     FakeStream,
     FakeVCBackend,
@@ -66,10 +64,43 @@ from ..support import (
     make_voice_loader,
     make_pipeline_engine,
 )
+from ..platform import LINUX_ONLY, WINDOWS_ONLY
 
 
 class TestPipeline(CeluneTestCase):
     """Tests for lightweight pipeline behavior."""
+
+    def test_singing_backend_rejects_plain_speech_before_queueing(self) -> None:
+        """Require CESN notation at the shared speech submission boundary."""
+        engine = make_pipeline_engine()
+        engine.backend.singing = True
+        engine.log = mock.Mock()
+
+        assert not submission.queue_speech(
+            cast(Celune, engine),
+            "plain speech",
+        )
+
+        engine.log.assert_called_once_with(
+            "The active singing backend requires CESN notation.",
+            "warning",
+        )
+        assert engine.text_queue.empty()
+
+    def test_persona_input_rejects_singing_backend_before_queueing(self) -> None:
+        """Do not spend Persona work on spoken replies a singer cannot perform."""
+        engine = make_pipeline_engine()
+        engine.backend.singing = True
+        engine.log = mock.Mock()
+
+        with mock.patch.object(core_conversation, "persona_enabled", return_value=True):
+            assert not core_conversation.think(cast(Celune, engine), "hello")
+
+        engine.log.assert_called_once_with(
+            "Persona replies are unavailable while the singing backend is active.",
+            "warning",
+        )
+        assert engine.persona_queue.empty()
 
     def test_cuda_oom_during_generation_returns_engine_to_idle(self) -> None:
         """Verify a synthesis OOM is reported recoverably without a BF16 retry."""

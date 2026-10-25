@@ -6,51 +6,22 @@ from __future__ import annotations
 
 import time
 import contextlib
+from typing import TYPE_CHECKING, Union, Optional, cast
 from pathlib import Path
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Union, Optional, cast
 
 from transformers.modeling_utils import PreTrainedModel
 
 from . import lifecycle
-from ..constants import APP_NAME
 from ..i18n import string, tagged_string
-from ..typing.backends import BackendModel
-from ..typing.common import JSONSerializable
-from ..utils import available, format_error_message
-from ..backends.tts import CeluneBackend, resolve_backend
-from ..exceptions import WarmupError, BackendError, NotAvailableError
-from ..config import config_bool, config_value, config_backend_options
-from ..backends.vc import (
-    CeluneVCBackend,
-)
-from ..backends.vc import (
-    resolve_vc_backend as create_vc_backend,
-)
-from .lifecycle import (
-    TTS_KV_CACHE_BACKENDS,
-    _core_backend_target,
-    tts_quantization_enabled,
-)
 from ..vram import (
     VramPreset,
     resolve_vram_preset,
     is_cuda_out_of_memory,
     release_cuda_after_oom,
 )
-from ..dataclasses.events import (
-    VoiceChangedEvent,
-    CharacterLoadedEvent,
-    CharacterChangedEvent,
-    CharacterUnloadedEvent,
-)
-from ..typing.celune import (
-    VCBackendSpec,
-    TTSBackendSpec,
-    CoreBackendSpec,
-    MessageCallback,
-    ReleasableObject,
-)
+from ..utils import available, format_error_message
+from ..config import config_bool, config_value, config_backend_options
 from ..cevoice import (
     CEVoicePersona,
     default_loader,
@@ -59,6 +30,35 @@ from ..cevoice import (
     bundle_character_name,
     persona_metadata_from_manifest,
     bundle_matches_default_pack_checksum,
+)
+from .lifecycle import (
+    TTS_KV_CACHE_BACKENDS,
+    _core_backend_target,
+    tts_quantization_enabled,
+)
+from ..constants import APP_NAME
+from ..exceptions import WarmupError, BackendError, NotAvailableError
+from ..backends.vc import (
+    CeluneVCBackend,
+)
+from ..backends.vc import (
+    resolve_vc_backend as create_vc_backend,
+)
+from ..backends.tts import CeluneBackend, resolve_backend
+from ..typing.celune import (
+    VCBackendSpec,
+    TTSBackendSpec,
+    CoreBackendSpec,
+    MessageCallback,
+    ReleasableObject,
+)
+from ..typing.common import JSONSerializable
+from ..typing.backends import BackendModel
+from ..dataclasses.events import (
+    VoiceChangedEvent,
+    CharacterLoadedEvent,
+    CharacterChangedEvent,
+    CharacterUnloadedEvent,
 )
 
 
@@ -524,6 +524,11 @@ def reload_backend(
     preferred_voice: Optional[str] = None,
 ) -> bool:
     """Switch backend while reserving the shared model lifecycle resource."""
+    from .voice import _reject_singing_backend
+
+    if _reject_singing_backend(self, backend_spec):
+        return False
+
     acquired, component_lease = lifecycle.acquire_model_loading_lease(
         self, f"backend-reload:{time.monotonic_ns()}"
     )

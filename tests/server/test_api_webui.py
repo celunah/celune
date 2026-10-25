@@ -6,30 +6,32 @@ import shutil
 import asyncio
 import tempfile
 from queue import Queue
-from pathlib import Path
-from unittest import mock
 from types import SimpleNamespace
-from collections import abc, deque
 from typing import (
     Optional,
     cast,
 )
+from pathlib import Path
+from unittest import mock
+from collections import abc, deque
 
 import numpy as np
 import fastapi.testclient
+from starlette.types import Send, Scope, Message, Receive
 from starlette.requests import Request
 from starlette.responses import Response
-from starlette.types import Send, Scope, Message, Receive
 
 from celune import api
 from celune.i18n import string
 from celune.theme import colors
+from celune.webui import actions as webui_actions
+from celune.webui import runtime as webui
 from celune.celune import Celune
+from celune.server import auth as server_auth
+from celune.server import constants as server_constants
+from celune.typing.celune import ChunkCaptionProgressCallback
 from celune.server.session import ServerSession
 from celune.typing.pipeline import SpeechStreamQueue
-from celune.typing.celune import ChunkCaptionProgressCallback
-from celune.webui import actions as webui_actions, runtime as webui
-from celune.server import auth as server_auth, constants as server_constants
 
 from ..support import CeluneTestCase
 
@@ -1039,6 +1041,44 @@ class TestApiWebUI(CeluneTestCase):
 
         think.assert_called_once_with("hello")
         say_stream.assert_not_called()
+
+    def test_webui_sings_cesn_instead_of_sending_it_to_persona(self) -> None:
+        """Keep CESN submissions on the singing path when Persona talkback is set."""
+        chunks = Queue()
+        chunks.put(None)
+        notation = "[bpm:120,key:c,scale:major][lang:en][c4:4][a] Ah"
+        think = mock.Mock(return_value=True)
+        say_stream = mock.Mock(return_value=chunks)
+        celune = cast(
+            Celune,
+            SimpleNamespace(
+                backend=SimpleNamespace(singing=True),
+                config={},
+                current_voice="balanced",
+                voices=("balanced",),
+                is_in_tutorial=False,
+                locked=False,
+                cur_state="idle",
+                sleeping=False,
+                think=think,
+                say_stream=say_stream,
+            ),
+        )
+        api.server_session.bound_celune = celune
+
+        with (
+            mock.patch(
+                "celune.webui.actions.persona_talkback_enabled", return_value=True
+            ),
+            mock.patch(
+                "celune.webui.runtime.ui_resources.resource_pages",
+                return_value=("VRAM: first",),
+            ),
+        ):
+            list(webui_actions.webui_speak(notation))
+
+        think.assert_not_called()
+        say_stream.assert_called_once_with(notation, save=True)
 
     def test_webui_slash_command_uses_shared_handler_without_tui(self) -> None:
         """Verify slash commands do not require a mounted Textual singleton."""

@@ -2,6 +2,7 @@
 """Engine orchestration for Persona conversation and speech delivery."""
 
 from __future__ import annotations
+
 import queue
 import threading
 from uuid import uuid4
@@ -10,8 +11,6 @@ from typing import TYPE_CHECKING
 from ..i18n import string
 from ..utils import format_error_message
 from .concurrency import run_in_daemon_thread
-from ..pipeline.submission import say, queue_speech
-from ..pipeline.buffering import notify_component_busy
 from ..persona.impl import persona_enabled, compact_persona_history
 from ..typing.agent import AgentRoute, AgentClassificationFailureKind
 from ..typing.locks import (
@@ -19,6 +18,8 @@ from ..typing.locks import (
     ComponentLockOwner,
     ComponentLockRequirement,
 )
+from ..pipeline.buffering import notify_component_busy
+from ..pipeline.submission import say, queue_speech
 from ..persona.conversation import (
     extract_persona_text,
     build_persona_request,
@@ -36,6 +37,9 @@ def think(engine: Celune, text: str) -> bool:
         return False
     if not persona_enabled(engine.config):
         return say(engine, text)
+    if getattr(engine.backend, "singing", False):
+        engine.log(string("celune.persona_unavailable_singing"), "warning")
+        return False
     if engine.input_mode != "text_to_speech":
         engine.log(string("celune.text_input_unavailable_vc"), "warning")
         engine.error_callback(string("celune.not_possible"))
@@ -70,6 +74,10 @@ async def think_async(engine: Celune, text: str) -> bool:
 
 def deliver_persona_response(engine: Celune, request: str, response: str) -> bool:
     """Record and queue one response generated through the agent Persona bridge."""
+    if getattr(engine.backend, "singing", False):
+        engine.log(string("celune.persona_unavailable_singing"), "warning")
+        return False
+
     spoken_text = response.strip()
     if not spoken_text:
         return False
@@ -98,6 +106,10 @@ def deliver_persona_response(engine: Celune, request: str, response: str) -> boo
 
 def think_persona(engine: Celune, request: str) -> bool:
     """Generate, record, and speak one ordinary Persona response."""
+    if getattr(engine.backend, "singing", False):
+        engine.log(string("celune.persona_unavailable_singing"), "warning")
+        return False
+
     store_persona_memories(engine, request)
     payload = build_persona_request(engine, request)
     attachments = getattr(engine, "persona_attachments", None)

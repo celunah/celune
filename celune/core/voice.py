@@ -17,6 +17,7 @@ from ..paths import project_root
 from ..utils import format_error_message
 from ..config import config_value
 from ..cevoice import (
+    CEVoice,
     default_loader,
     active_bundle_path,
     resolve_bundle_path,
@@ -69,6 +70,15 @@ def load_voice_bundle(self, bundle: Optional[Union[str, Path]] = None) -> bool:
     Returns:
         bool: ``True`` when a CEVOICE bundle was loaded, otherwise ``False``.
     """
+    if getattr(self.backend, "singing", False):
+        candidate_bundle = CEVoice.open(resolve_bundle_path(bundle))
+        if candidate_bundle.singing_voice is None:
+            character_name = (
+                bundle_character_name(candidate_bundle) or candidate_bundle.path.stem
+            )
+            _log_singing_backend_pack_issue(self, character_name)
+            return False
+
     previous_loader = default_loader()
     previous_bundle_path = (
         _bundle_path_string(previous_loader.bundle)
@@ -322,6 +332,58 @@ def _backend_spec_requires_singing(backend_spec: CoreBackendSpec) -> bool:
     return False
 
 
+def _singing_backend_pack_issue(
+    self,
+    backend_spec: CoreBackendSpec,
+) -> tuple[bool, Optional[str]]:
+    """Return whether a singing backend lacks an active singing pack."""
+    if not _backend_spec_requires_singing(backend_spec):
+        return False, None
+
+    loader = default_loader()
+    if loader is None:
+        return True, None
+    if loader.bundle.singing_voice is not None:
+        return False, None
+
+    return (
+        True,
+        self.current_character
+        or bundle_character_name(loader.bundle)
+        or loader.bundle.path.stem,
+    )
+
+
+def _log_singing_backend_pack_issue(
+    self,
+    character_name: Optional[str],
+) -> None:
+    """Explain why the active pack cannot be used for singing."""
+    self.log(string("celune.cannot_sing_with_character"), "warning")
+    if character_name is None:
+        self.log(string("celune.no_singing_pack_selected"), "warning")
+    else:
+        self.log(
+            string(
+                "celune.character_not_a_singer",
+                character=character_name,
+            ),
+            "warning",
+        )
+    self.log(string("celune.singing_capable_pack_required"), "warning")
+
+
+def _reject_singing_backend(
+    self,
+    backend_spec: CoreBackendSpec,
+) -> bool:
+    """Log and reject a singing backend when no compatible pack is active."""
+    blocked, character_name = _singing_backend_pack_issue(self, backend_spec)
+    if blocked:
+        _log_singing_backend_pack_issue(self, character_name)
+    return blocked
+
+
 def _prepare_backend_reload(
     self,
     backend_spec: CoreBackendSpec,
@@ -351,34 +413,22 @@ def _prepare_backend_reload(
             )
             return False
 
+    singing_pack_blocked = False
     missing_singer_character: Optional[str] = None
     with self.say_lock:
         if self._closed or self.exit_requested:
             return False
         reload_already_pending = self._reload_pending or self.cur_state == "reloading"
         if not reload_already_pending:
-            if _backend_spec_requires_singing(backend_spec):
-                loader = default_loader()
-                if loader is not None and loader.bundle.singing_voice is None:
-                    missing_singer_character = (
-                        self.current_character
-                        or bundle_character_name(loader.bundle)
-                        or loader.bundle.path.stem
-                    )
-            if missing_singer_character is None:
+            singing_pack_blocked, missing_singer_character = (
+                _singing_backend_pack_issue(self, backend_spec)
+            )
+            if not singing_pack_blocked:
                 self._reload_pending = True
                 self._model_ready.clear()
 
-    if missing_singer_character is not None:
-        self.log(string("celune.cannot_sing_with_character"), "warning")
-        self.log(
-            string(
-                "celune.character_not_a_singer",
-                character=missing_singer_character,
-            ),
-            "warning",
-        )
-        self.log(string("celune.singing_capable_pack_required"), "warning")
+    if singing_pack_blocked:
+        _log_singing_backend_pack_issue(self, missing_singer_character)
         return False
 
     if reload_already_pending:

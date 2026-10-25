@@ -15,8 +15,6 @@ import asyncio
 import threading
 import contextlib
 import subprocess
-from pathlib import Path
-from collections import abc
 from hmac import compare_digest
 from typing import (
     Union,
@@ -24,81 +22,43 @@ from typing import (
     Optional,
     Annotated,
 )
+from pathlib import Path
+from collections import abc
 
-import fastapi
-import uvicorn
 import numpy as np
 import gradio as gr
+import fastapi
+import uvicorn
 from pydantic import Field, BaseModel
 from starlette import types, concurrency, datastructures
 from starlette.middleware import base as middleware_base
 
-from .i18n import string
 from . import __version__
-from .celune import Celune
-from .paths import project_root
-from .webui import runtime as webui
-from .audio.dsp import resample_audio
-from .server import auth as server_auth
-from .server import jobs as server_jobs
-from .utils import format_error_message
-from .constants import BASE_SR, APP_NAME
-from .webui import actions as webactions
-from .registry.types import ModelMetadata
 from .ui import resources as ui_resources
-from .cesn import validate_singing_notation
-from .typing.pipeline import SpeechStreamQueue
-from .pipeline.submission import prepare_playback_audio
-from .server.session import ServerSession, server_session
-from .server.jobs import SpeechJob, TaskEvent, TaskSubscription
-from .typing.api import (
-    TaskCommandName,
-)
-from .server.constants import (
-    WEBUI_AUTH_PATH,
-)
 from .mcp import (
     mcp_app,
     mcp_lifespan,
     configure_mcp_host_allowlist,
 )
-from .webui.actions import (
-    build_webui,
-    decode_uploaded_audio,
-    voice_conversion_unavailable_response,
-)
+from .cesn import validate_singing_notation
+from .i18n import string
+from .paths import project_root
+from .utils import format_error_message
+from .webui import actions as webactions
+from .webui import runtime as webui
+from .celune import Celune
+from .server import auth as server_auth
+from .server import jobs as server_jobs
+from .audio.dsp import resample_audio
+from .constants import BASE_SR, APP_NAME
 from .exceptions import (
     ModelConsentDeclined,
     ModelConsentRequired,
     TaskSubscriptionClosed,
     ModelCommercialUseRestricted,
 )
-from .registry.consent import (
-    consent_status,
-    consent_details,
-    registered_models,
-    consent_prompt_text,
-    record_model_consent,
-    exit_api_model_request,
-    pending_model_consents,
-    commercial_mode_enabled,
-    enter_api_model_request,
-    model_metadata_for_revision,
-)
-from .webui.runtime import (
-    api_log,
-    flac_bytes,
-    require_celune,
-    seed_webui_logs,
-    append_webui_log,
-    set_webui_status,
-    collect_speech_job,
-    webui_vc_mode_active,
-    configure_webui_theme,
-    wrap_celune_callbacks,
-    subscribe_webui_events,
-    get_webui_input_placeholder,
-    subscribe_webui_timed_updates,
+from .typing.api import (
+    TaskCommandName,
 )
 from .server.auth import (
     _clean_token,
@@ -117,6 +77,46 @@ from .server.auth import (
     _remember_webui_auth_client,
     _is_webui_generation_request,
 )
+from .server.jobs import SpeechJob, TaskEvent, TaskSubscription
+from .webui.actions import (
+    build_webui,
+    decode_uploaded_audio,
+    voice_conversion_unavailable_response,
+)
+from .webui.runtime import (
+    api_log,
+    flac_bytes,
+    require_celune,
+    seed_webui_logs,
+    append_webui_log,
+    set_webui_status,
+    collect_speech_job,
+    webui_vc_mode_active,
+    configure_webui_theme,
+    wrap_celune_callbacks,
+    subscribe_webui_events,
+    get_webui_input_placeholder,
+    subscribe_webui_timed_updates,
+)
+from .registry.types import ModelMetadata
+from .server.session import ServerSession, server_session
+from .typing.pipeline import SpeechStreamQueue
+from .registry.consent import (
+    consent_status,
+    consent_details,
+    registered_models,
+    consent_prompt_text,
+    record_model_consent,
+    exit_api_model_request,
+    pending_model_consents,
+    commercial_mode_enabled,
+    enter_api_model_request,
+    model_metadata_for_revision,
+)
+from .server.constants import (
+    WEBUI_AUTH_PATH,
+)
+from .pipeline.submission import prepare_playback_audio
 
 Callable = abc.Callable
 Iterator = abc.Iterator
@@ -902,6 +902,15 @@ def speak(body: SpeakRequest) -> Union[StreamingResponse, JSONResponse]:
         failed.
     """
     celune = require_celune()
+    if getattr(getattr(celune, "backend", None), "singing", False):
+        return JSONResponse(
+            status_code=409,
+            content={
+                "error": "unsupported_operation",
+                "message": string("api.singing_backend_use_sing_endpoint"),
+            },
+        )
+
     api_log("SPEAK(SYNC)", body.content)
     chunks = celune.say_stream(body.content, save=body.save)
     if chunks is None:
@@ -972,6 +981,15 @@ def speak_async(body: SpeakRequest) -> JSONResponse:
         Exception: If speech-job setup or queueing fails unexpectedly.
     """
     celune = require_celune()
+    if getattr(getattr(celune, "backend", None), "singing", False):
+        return JSONResponse(
+            status_code=409,
+            content={
+                "error": "unsupported_operation",
+                "message": string("api.singing_backend_use_sing_endpoint"),
+            },
+        )
+
     api_log("SPEAK(ASYNC)", body.content)
     job_id = uuid.uuid4().hex
     location = f"/v1/speak/jobs/{job_id}"
@@ -1032,6 +1050,15 @@ def think(body: ThinkRequest) -> JSONResponse:
         think right now.
     """
     celune = require_celune()
+    if getattr(getattr(celune, "backend", None), "singing", False):
+        return JSONResponse(
+            status_code=409,
+            content={
+                "error": "unsupported_operation",
+                "message": string("celune.persona_unavailable_singing"),
+            },
+        )
+
     api_log(
         "THINK",
         body.content

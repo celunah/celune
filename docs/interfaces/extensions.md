@@ -40,6 +40,12 @@ extension name/version, a shared mapping, and the active log level. Its
 `expose(name, value)` and `get(name, default)` methods are intended for
 cooperating extensions without reaching into Celune internals.
 
+`with_backend("soulxsinger")` requires the active pack to provide a usable
+CECHAR v5 singing voice. If it does not, Celune logs the singing-capability
+warning and raises `BackendError` without switching backends. While a singing
+backend is active, `say` requires CESN notation and `think` cannot start Persona
+prose replies.
+
 The root package exports `subscribe`:
 
 ```python
