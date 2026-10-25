@@ -192,13 +192,12 @@ class TestAnalysis(CeluneTestCase):
         with pytest.raises(FileNotFoundError, match="no compatible CEVOICE/CECHAR"):
             analysis.load_reference_embedding("balanced")
 
-    def test_reference_failures_use_active_locale(self) -> None:
-        """Verify reference embedding failures and metrics use localized messages."""
+    def test_reference_failures_keep_raw_exceptions_and_localized_metrics(self) -> None:
+        """Keep technical exceptions raw while localizing surrounding metrics."""
         original_strings = dict(i18n.STRINGS)
         original_locale = i18n.get_locale()
         try:
             i18n.STRINGS["zz"] = {
-                "analysis.reference_embedding_bundle_missing": "localized bundle missing",
                 "analysis.reference_similarity_error": "localized similarity: {reason}",
             }
             i18n.set_locale("zz")
@@ -207,7 +206,7 @@ class TestAnalysis(CeluneTestCase):
                 mock.patch("celune.analysis.default_loader", return_value=None),
                 self.assertRaisesRegex(
                     FileNotFoundError,
-                    "localized bundle missing",
+                    "no compatible CEVOICE/CECHAR package with reference embeddings is loaded",
                 ),
             ):
                 analysis.load_reference_embedding("balanced")

@@ -587,13 +587,9 @@ def resolve_audio_device_with_info(
         raise ValueError(
             "\n".join(
                 (
-                    string(
-                        "config.audio_device_multiple",
-                        device_kind=string(f"config.audio_device_kind_{query_kind}"),
-                        device_name=configured_name,
-                    ),
+                    f"the specified {query_kind} device name has multiple matches for '{configured_name}':",
                     matches_text,
-                    string("config.audio_device_select", app_name=APP_NAME),
+                    f"please specify one of the above devices, then restart {APP_NAME}",
                 )
             )
         )

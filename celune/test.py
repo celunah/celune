@@ -119,11 +119,11 @@ def _speak_agent_test_message(
 ) -> None:
     """Speak one test message and wait until its playback completes."""
     if not engine.playback_done.wait(timeout=timeout_seconds):
-        raise TimeoutError(string("test.agent_previous_speech_timeout"))
+        raise TimeoutError("Previous speech did not finish before timeout.")
     if not engine.say(message, save=False):
-        raise RuntimeError(string("test.agent_speech_not_queued"))
+        raise RuntimeError("The diagnostic message could not be queued for speech.")
     if not engine.playback_done.wait(timeout=timeout_seconds):
-        raise TimeoutError(string("test.agent_speech_timeout"))
+        raise TimeoutError("Diagnostic speech did not finish before timeout.")
 
 
 def _announce_tool_result(

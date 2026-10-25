@@ -192,32 +192,21 @@ class TestUpdater(CeluneTestCase):
             finally:
                 repository.close()
 
-    def test_missing_update_metadata_uses_active_locale(self) -> None:
-        """Verify missing update metadata is reported through the locale table."""
-        original_strings = dict(i18n.STRINGS)
-        original_locale = i18n.get_locale()
-        try:
-            i18n.STRINGS["zz"] = {
-                "cli.update_missing_metadata": "localized metadata missing",
-            }
-            i18n.set_locale("zz")
-            with tempfile.TemporaryDirectory() as temp_dir:
-                root = Path(temp_dir)
-                zip_path = root / "artifact.zip"
-                destination = root / "destination"
-                destination.mkdir()
-                with zipfile.ZipFile(zip_path, "w"):
-                    pass
+    def test_missing_update_metadata_uses_raw_exception_message(self) -> None:
+        """Keep missing update metadata exception details independent of locale."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            zip_path = root / "artifact.zip"
+            destination = root / "destination"
+            destination.mkdir()
+            with zipfile.ZipFile(zip_path, "w"):
+                pass
 
-                with self.assertRaisesRegex(
-                    updater.UpdateError,
-                    "localized metadata missing",
-                ):
-                    updater._extract_artifact_root(zip_path, destination)
-        finally:
-            i18n.set_locale(original_locale)
-            i18n.STRINGS.clear()
-            i18n.STRINGS.update(original_strings)
+            with self.assertRaisesRegex(
+                updater.UpdateError,
+                "downloaded artifact is missing update metadata",
+            ):
+                updater._extract_artifact_root(zip_path, destination)
 
     def test_extract_artifact_rejects_unsafe_zip_members(self) -> None:
         """Reject traversal, absolute, and symbolic-link ZIP members before extraction."""
@@ -279,35 +268,26 @@ class TestUpdater(CeluneTestCase):
             self.assertFalse((outside / "escaped.txt").exists())
 
     @LINUX_ONLY
-    def test_zip_safety_errors_use_localized_messages(self) -> None:
-        """Verify ZIP safety failures resolve their user-facing messages through i18n."""
+    def test_zip_safety_errors_keep_raw_exception_messages(self) -> None:
+        """Verify ZIP safety failures report raw technical exception messages."""
         symlink = zipfile.ZipInfo("release/link")
         symlink.create_system = 3
         symlink.external_attr = (stat.S_IFLNK | 0o777) << 16
         cases = (
             (
                 zipfile.ZipInfo("../escape.txt"),
-                "cli.update_unsafe_zip_member_path",
+                "unsafe ZIP member path",
             ),
-            (symlink, "cli.update_unsafe_zip_symbolic_link"),
+            (symlink, "unsafe ZIP symbolic link"),
         )
 
-        for member, key in cases:
-            with self.subTest(key=key):
-                with (
-                    mock.patch.object(
-                        updater, "string", wraps=i18n.string
-                    ) as localized_string,
-                    self.assertRaises(updater.UpdateError) as raised,
-                ):
+        for member, message in cases:
+            with self.subTest(message=message):
+                with self.assertRaises(updater.UpdateError) as raised:
                     updater._validate_zip_member(member, Path("destination"))
 
                 self.assertEqual(
-                    str(raised.exception),
-                    i18n.string(key, member=repr(member.filename)),
-                )
-                localized_string.assert_called_once_with(
-                    key, member=repr(member.filename)
+                    str(raised.exception), f"{message}: {member.filename!r}"
                 )
 
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -319,22 +299,12 @@ class TestUpdater(CeluneTestCase):
             (destination / "release").symlink_to(outside, target_is_directory=True)
 
             member = zipfile.ZipInfo("release/file.txt")
-            with (
-                mock.patch.object(
-                    updater, "string", wraps=i18n.string
-                ) as localized_string,
-                self.assertRaises(updater.UpdateError) as raised,
-            ):
+            with self.assertRaises(updater.UpdateError) as raised:
                 updater._validate_zip_member(member, destination)
 
             self.assertEqual(
                 str(raised.exception),
-                i18n.string(
-                    "cli.update_zip_member_escape", member=repr(member.filename)
-                ),
-            )
-            localized_string.assert_called_once_with(
-                "cli.update_zip_member_escape", member=repr(member.filename)
+                f"ZIP member escapes extraction directory: {member.filename!r}",
             )
 
     def test_extract_artifact_preserves_valid_nested_archives(self) -> None:
@@ -663,7 +633,10 @@ class TestUpdater(CeluneTestCase):
             pytest.raises(updater.UpdateError) as error,
         ):
             updater.update_to_latest()
-        assert i18n.string("git.checkout_required") in str(error.value)
+        assert (
+            "This action requires Git and a checkout with a commit; install Git if needed."
+            in str(error.value)
+        )
         assert updater.git_checkout_hint() in str(error.value)
 
         with (

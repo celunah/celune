@@ -3,6 +3,7 @@
 
 import os
 import re
+import sys
 import math
 import time
 import queue
@@ -27,7 +28,12 @@ try:
 
     _LANGUAGE_DETECTOR = LanguageDetectorBuilder.from_all_spoken_languages().build()
 except ModuleNotFoundError as module:
-    print(f"warning: language detection is disabled: {module}")
+    from .i18n import string
+
+    print(
+        f"{string('celune.no_language_detector')}: {module}",
+        file=sys.stderr,
+    )
     _LANGUAGE_DETECTOR = None
 
 from .paths import traceback_path

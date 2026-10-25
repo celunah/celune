@@ -150,7 +150,9 @@ def load(self, raise_on_error: bool = False, skip_runtime_check: bool = False) -
         self.error_callback(message)
         self.progress_callback(0, 1)
         if raise_on_error:
-            raise BackendError(message)
+            raise BackendError(
+                f"The measured VRAM peak exceeds {APP_NAME}'s preset budget or current GPU headroom."
+            )
         return False
 
     effective_vram_preset = resolve_vram_preset(self.config)

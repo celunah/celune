@@ -5,7 +5,6 @@ from typing import Union, Optional
 from collections.abc import Callable
 from importlib.metadata import PackageNotFoundError, version
 
-from ...i18n import string
 from .base import CeluneBackend
 from ...typing.backends import BackendModel
 from ..environment import BACKEND_MANIFESTS, BackendManifest, backend_manifest
@@ -86,19 +85,15 @@ def resolve_backend(
 
         if key not in BACKENDS:
             raise ValueError(
-                string(
-                    "celune.unknown_backend",
-                    backend=backend_name,
-                    available=", ".join(BACKENDS.keys()),
+                "unknown backend: {backend} (available: {available})".format(
+                    backend=backend_name, available=", ".join(BACKENDS.keys())
                 )
             )
 
         if key not in BACKEND_MANIFESTS:
             raise ValueError(
-                string(
-                    "celune.unknown_backend",
-                    backend=backend_name,
-                    available=", ".join(BACKENDS.keys()),
+                "unknown backend: {backend} (available: {available})".format(
+                    backend=backend_name, available=", ".join(BACKENDS.keys())
                 )
             )
 
@@ -111,4 +106,6 @@ def resolve_backend(
             **backend_kwargs,
         )
 
-    raise TypeError(string("celune.invalid_backend_type"))
+    raise TypeError(
+        "'backend_name' must be a backend instance, backend type, or backend name string"
+    )

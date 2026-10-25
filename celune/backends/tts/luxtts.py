@@ -524,7 +524,7 @@ class LuxTTS(CeluneBackend[LuxTTSModel]):
         """Generate one normalized, complete LuxTTS waveform for Celune."""
         text = kwargs.pop("text", None)
         if not isinstance(text, str) or not text.strip():
-            raise ValueError(string("tts.text_required"))
+            raise ValueError("expected text to say")
 
         voice = kwargs.pop("voice", self.default_voice)
         for name in (

@@ -42,6 +42,11 @@ SHORT_HASH_LENGTH = 7
 UPDATE_BRANCHES = {"main", "master"}
 DOWNLOAD_TIMEOUT = 30
 FORCE_DISABLE_UPDATES = False
+_UPDATE_INVALID_RELEASE_MESSAGE = "the release ZIP has invalid update metadata"
+_UPDATE_NO_PLATFORM_ZIP_MESSAGE = "the latest SemVer release has no platform ZIP"
+_GIT_CHECKOUT_REQUIRED_MESSAGE = (
+    "This action requires Git and a checkout with a commit; install Git if needed."
+)
 SEMVER_PATTERN = re.compile(
     r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)"
     r"(?:-((?:0|[1-9]\d*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)"
@@ -484,7 +489,7 @@ def _download_to_file(url: str, destination: Path) -> None:
 def _download_release_zip(release: ReleaseInfo, destination: Path) -> None:
     """Download the current-platform ZIP attached to one GitHub release."""
     if not release.asset_url:
-        raise UpdateError(string("cli.update_no_platform_zip"))
+        raise UpdateError(_UPDATE_NO_PLATFORM_ZIP_MESSAGE)
     _download_to_file(release.asset_url, destination)
 
 
@@ -561,7 +566,7 @@ def verify_local_bundle(bundle_dir: Optional[Path] = None) -> None:
         manifest_data = manifest_path.read_bytes()
         signature_data = signature_path.read_bytes()
     except OSError as exc:
-        raise UpdateError(string("cli.update_invalid_release")) from exc
+        raise UpdateError(_UPDATE_INVALID_RELEASE_MESSAGE) from exc
 
     manifest = _parse_bundle_manifest_data(
         manifest_data,
@@ -572,7 +577,7 @@ def verify_local_bundle(bundle_dir: Optional[Path] = None) -> None:
         resolved_bundle,
         manifest,
     ):
-        raise UpdateError(string("cli.update_invalid_release"))
+        raise UpdateError(_UPDATE_INVALID_RELEASE_MESSAGE)
 
 
 def _release_manifest_matches(
@@ -651,7 +656,10 @@ def check_for_update() -> Optional[UpdateInfo]:
     try:
         from git.exc import GitError
     except ModuleNotFoundError as module:
-        print(f"warning: can't check for updates: {module}")
+        print(
+            f"{string('celune.cannot_check_updates')}: {module}",
+            file=sys.stderr,
+        )
         return None
 
     if FORCE_DISABLE_UPDATES:
@@ -710,7 +718,7 @@ def _extract_artifact_root(zip_path: Path, destination: Path) -> Path:
     for manifest in destination.rglob(UPDATE_MANIFEST_NAME):
         return manifest.parent
 
-    raise UpdateError(string("cli.update_missing_metadata"))
+    raise UpdateError("downloaded artifact is missing update metadata")
 
 
 def _validate_extracted_update(
@@ -729,7 +737,7 @@ def _validate_extracted_update(
         or not manifest_path.is_file()
         or not signature_path.is_file()
     ):
-        raise UpdateError(string("cli.update_invalid_release"))
+        raise UpdateError(_UPDATE_INVALID_RELEASE_MESSAGE)
 
     extracted_manifest = _parse_bundle_manifest_data(
         manifest_path.read_bytes(),
@@ -737,19 +745,19 @@ def _validate_extracted_update(
         require_signature=True,
     )
     if extracted_manifest != manifest:
-        raise UpdateError(string("cli.update_invalid_release"))
+        raise UpdateError(_UPDATE_INVALID_RELEASE_MESSAGE)
 
     for path in extraction_root.rglob("*"):
         if path.is_symlink():
-            raise UpdateError(string("cli.update_invalid_release"))
+            raise UpdateError(_UPDATE_INVALID_RELEASE_MESSAGE)
         if path.is_dir():
             if path.resolve() != root and path.resolve() not in root.parents:
-                raise UpdateError(string("cli.update_invalid_release"))
+                raise UpdateError(_UPDATE_INVALID_RELEASE_MESSAGE)
         elif path.is_file():
             if path.parent.resolve() != root:
-                raise UpdateError(string("cli.update_invalid_release"))
+                raise UpdateError(_UPDATE_INVALID_RELEASE_MESSAGE)
         else:
-            raise UpdateError(string("cli.update_invalid_release"))
+            raise UpdateError(_UPDATE_INVALID_RELEASE_MESSAGE)
 
     reserved_names = {UPDATE_MANIFEST_NAME, SIGNATURE_NAME}
     expected_names = set(manifest.files)
@@ -761,21 +769,21 @@ def _validate_extracted_update(
             or filename in reserved_names
             or re.fullmatch(r"[0-9a-f]{64}", digest) is None
         ):
-            raise UpdateError(string("cli.update_invalid_release"))
+            raise UpdateError(_UPDATE_INVALID_RELEASE_MESSAGE)
 
     actual_names: set[str] = set()
     for path in root.iterdir():
         if path.is_symlink() or not path.is_file():
-            raise UpdateError(string("cli.update_invalid_release"))
+            raise UpdateError(_UPDATE_INVALID_RELEASE_MESSAGE)
         actual_names.add(path.name)
 
     if actual_names != expected_names | reserved_names:
-        raise UpdateError(string("cli.update_invalid_release"))
+        raise UpdateError(_UPDATE_INVALID_RELEASE_MESSAGE)
     if any(
         _sha256_file(root / filename) != digest
         for filename, digest in manifest.files.items()
     ):
-        raise UpdateError(string("cli.update_invalid_release"))
+        raise UpdateError(_UPDATE_INVALID_RELEASE_MESSAGE)
 
 
 def _validate_zip_member(member: zipfile.ZipInfo, destination: Path) -> None:
@@ -792,21 +800,17 @@ def _validate_zip_member(member: zipfile.ZipInfo, destination: Path) -> None:
         or windows_path.drive
         or any(part == ".." for part in member_path.parts)
     ):
-        raise UpdateError(
-            string("cli.update_unsafe_zip_member_path", member=repr(member_name))
-        )
+        raise UpdateError(f"unsafe ZIP member path: {member_name!r}")
 
     if stat.S_ISLNK(member.external_attr >> 16):
-        raise UpdateError(
-            string("cli.update_unsafe_zip_symbolic_link", member=repr(member_name))
-        )
+        raise UpdateError(f"unsafe ZIP symbolic link: {member_name!r}")
 
     candidate = (destination / Path(*member_path.parts)).resolve()
     try:
         candidate.relative_to(destination)
     except ValueError as exc:
         raise UpdateError(
-            string("cli.update_zip_member_escape", member=repr(member_name))
+            f"ZIP member escapes extraction directory: {member_name!r}"
         ) from exc
 
 
@@ -831,7 +835,7 @@ def _apply_compiled_update(install_dir: Optional[Path] = None) -> None:
     artifact = _platform_artifact_name()
     release = _get_latest_release()
     if release is None or not release.asset_url:
-        raise UpdateError(string("cli.update_no_platform_zip"))
+        raise UpdateError(_UPDATE_NO_PLATFORM_ZIP_MESSAGE)
 
     with tempfile.TemporaryDirectory(prefix="celune-update-") as temp_dir:
         temp_root = Path(temp_dir)
@@ -839,18 +843,18 @@ def _apply_compiled_update(install_dir: Optional[Path] = None) -> None:
         try:
             _download_release_zip(release, zip_path)
         except OSError as exc:
-            raise UpdateError(string("cli.update_download_failed")) from exc
+            raise UpdateError("Could not download the release ZIP.") from exc
 
         release_manifest = _manifest_from_zip(zip_path, require_signature=True)
         if release_manifest is None or not _release_manifest_matches(
             release, release_manifest
         ):
-            raise UpdateError(string("cli.update_invalid_release"))
+            raise UpdateError(_UPDATE_INVALID_RELEASE_MESSAGE)
 
         try:
             extracted_root = _extract_artifact_root(zip_path, temp_root / "artifact")
         except (OSError, zipfile.BadZipFile, UpdateError) as exc:
-            raise UpdateError(string("cli.update_unpack_failed")) from exc
+            raise UpdateError("Could not unpack the release ZIP.") from exc
 
         try:
             _validate_extracted_update(
@@ -859,7 +863,7 @@ def _apply_compiled_update(install_dir: Optional[Path] = None) -> None:
                 release_manifest,
             )
         except (OSError, UpdateError) as exc:
-            raise UpdateError(string("cli.update_invalid_release")) from exc
+            raise UpdateError(_UPDATE_INVALID_RELEASE_MESSAGE) from exc
 
         for source in extracted_root.iterdir():
             _replace_path(source, bundle_dir / source.name)
@@ -881,7 +885,7 @@ def update_to_latest(install_dir: Optional[Path] = None) -> None:
         return
 
     if not _is_git_checkout():
-        raise UpdateError(f"{string('git.checkout_required')}\n{git_checkout_hint()}")
+        raise UpdateError(f"{_GIT_CHECKOUT_REQUIRED_MESSAGE}\n{git_checkout_hint()}")
 
     if _has_local_changes():
         raise UpdateError("repository not committed")
@@ -900,7 +904,7 @@ def update_to_latest(install_dir: Optional[Path] = None) -> None:
         or not release.asset_url
         or not _is_newer_version_tag(release.version, _base_version(__version__))
     ):
-        raise UpdateError(string("cli.update_no_newer_release"))
+        raise UpdateError("no newer SemVer release ZIP is available")
 
     fetch_ref = f"refs/tags/{release.tag}"
 
@@ -914,7 +918,7 @@ def update_to_latest(install_dir: Optional[Path] = None) -> None:
         ) from exc
     except FileNotFoundError as exc:
         raise UpdateError(
-            f"{string('git.checkout_required')}\n{git_checkout_hint()}"
+            f"{_GIT_CHECKOUT_REQUIRED_MESSAGE}\n{git_checkout_hint()}"
         ) from exc
 
     try:
@@ -933,7 +937,7 @@ def update_to_latest(install_dir: Optional[Path] = None) -> None:
         raise UpdateError(f"timed out merging after {exc.timeout} seconds") from exc
     except FileNotFoundError as exc:
         raise UpdateError(
-            f"{string('git.checkout_required')}\n{git_checkout_hint()}"
+            f"{_GIT_CHECKOUT_REQUIRED_MESSAGE}\n{git_checkout_hint()}"
         ) from exc
 
 

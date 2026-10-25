@@ -10,13 +10,12 @@ import hashlib
 import platform
 import importlib
 import subprocess
-from typing import Optional
 from pathlib import Path
-from contextlib import suppress, contextmanager
-from dataclasses import asdict, dataclass
+from typing import Optional
 from collections.abc import Generator
+from dataclasses import asdict, dataclass
+from contextlib import suppress, contextmanager
 
-from ..i18n import string
 from ..paths import backend_environments_dir
 from ..exceptions import BackendEnvironmentError as _BackendEnvironmentError
 
@@ -367,7 +366,9 @@ class BackendEnvironmentManager:
             return environment
 
         if self.uv_executable is None:
-            raise _BackendEnvironmentError(string("backends.uv_required"))
+            raise _BackendEnvironmentError(
+                "uv is required to install isolated backend environments"
+            )
 
         lock_path = self.root / manifest.backend_id / ".install.lock"
         with exclusive_lock(lock_path, self.lock_timeout):
@@ -481,7 +482,7 @@ class BackendEnvironmentManager:
                 output = (error.stderr or error.stdout or "").strip()
             elif isinstance(error, subprocess.TimeoutExpired):
                 output = f"uv operation timed out after {self.uv_timeout:.1f} seconds"
-            message = string("backends.dependencies_install_failed")
+            message = "Could not install backend dependencies."
             if output:
                 message = f"{message}: {output}"
             raise _BackendEnvironmentError(message) from error

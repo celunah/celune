@@ -204,7 +204,9 @@ class CeluneSeedVCBackend(CeluneVCBackend):
             wrapper_module = importlib.import_module("seed_vc.seed_vc_wrapper")
         except ImportError as e:
             raise ImportError(
-                string("seedvc.package_required", package="seed_vc")
+                "seed-vc backend requires the '{package}' package to be installed".format(
+                    package="seed_vc"
+                )
             ) from e
 
         cls._configure_seedvc_downloads(hf_utils_module, wrapper_module)
@@ -288,12 +290,16 @@ class CeluneSeedVCBackend(CeluneVCBackend):
                     with cls._suppress_native_stdout():
                         imported = __import__(module_name, fromlist=["*"])
                     return cast(SeedVCRealtimeModule, imported)
-            raise ImportError(string("seedvc.live_path_required"))
+            raise ImportError(
+                "This Seed-VC package does not include its native live path"
+            )
 
         module_name = "celune_seedvc_realtime"
         spec = importlib.util.spec_from_file_location(module_name, script_path)
         if spec is None or spec.loader is None:
-            raise ImportError(string("seedvc.live_path_required"))
+            raise ImportError(
+                "This Seed-VC package does not include its native live path"
+            )
         module = importlib.util.module_from_spec(spec)
         sys.modules[module_name] = module
         source_root = str(script_path.parent)
@@ -349,10 +355,10 @@ class CeluneSeedVCBackend(CeluneVCBackend):
     ) -> int:
         """Return the sample rate declared by Seed-VC's live model set."""
         if len(model_set) < 6 or not isinstance(model_set[-1], dict):
-            raise RuntimeError(string("seedvc.live_model_invalid"))
+            raise RuntimeError("Seed-VC live model metadata is invalid")
         sample_rate = model_set[-1].get("sampling_rate")
         if not isinstance(sample_rate, int) or sample_rate <= 0:
-            raise RuntimeError(string("seedvc.live_model_invalid"))
+            raise RuntimeError("Seed-VC live model metadata is invalid")
         return sample_rate
 
     @staticmethod
@@ -369,7 +375,9 @@ class CeluneSeedVCBackend(CeluneVCBackend):
         if reference.ndim == 2:
             reference = np.mean(reference, axis=1, dtype=np.float32)
         if reference.ndim != 1:
-            raise ValueError(string("seedvc.reference_audio_invalid"))
+            raise ValueError(
+                "Seed-VC reference audio must be mono or stereo waveform data"
+            )
         if sample_rate != target_sample_rate:
             waveform = torch.from_numpy(reference).unsqueeze(0)
             reference = np.asarray(
@@ -511,7 +519,7 @@ class CeluneSeedVCBackend(CeluneVCBackend):
     def _append_live_model_audio(self, audio: AudioChunk) -> None:
         """Append one model-rate block to Seed-VC's rolling live buffer."""
         if self._live_input_wav is None:
-            raise RuntimeError(string("seedvc.live_model_invalid"))
+            raise RuntimeError("Seed-VC live model metadata is invalid")
         tensor = torch.from_numpy(audio).to(
             device=self._live_input_wav.device,
             dtype=self._live_input_wav.dtype,
@@ -528,7 +536,7 @@ class CeluneSeedVCBackend(CeluneVCBackend):
             or self._live_fade_in_window is None
             or self._live_fade_out_window is None
         ):
-            raise RuntimeError(string("seedvc.live_model_invalid"))
+            raise RuntimeError("Seed-VC live model metadata is invalid")
         output = generated.reshape(-1).to(
             device=self._live_sola_buffer.device,
             dtype=self._live_sola_buffer.dtype,
@@ -581,10 +589,10 @@ class CeluneSeedVCBackend(CeluneVCBackend):
     ) -> AudioChunk:
         """Run one fixed-size block through Seed-VC's native live function."""
         if self._live_module is None or self._live_model_set is None:
-            raise RuntimeError(string("seedvc.live_model_invalid"))
+            raise RuntimeError("Seed-VC live model metadata is invalid")
         self._append_live_model_audio(model_audio)
         if self._live_input_wav is None or self._live_reference_path is None:
-            raise RuntimeError(string("seedvc.live_model_invalid"))
+            raise RuntimeError("Seed-VC live model metadata is invalid")
         input_wav_res = torchaudio.functional.resample(
             self._live_input_wav.unsqueeze(0),
             self._live_model_sample_rate,
@@ -733,7 +741,9 @@ class CeluneSeedVCBackend(CeluneVCBackend):
         """Convert one live block through Seed-VC's native real-time path."""
         if self._resolve_f0_condition(request, self.f0_condition):
             if not request.target_references:
-                raise ValueError(string("seedvc.target_reference_required"))
+                raise ValueError(
+                    "seed-vc requires at least one target reference WAV for conversion"
+                )
 
             reference_path = request.target_references[0]
             session_key = (reference_path, request.sample_rate)
@@ -775,7 +785,9 @@ class CeluneSeedVCBackend(CeluneVCBackend):
                 label=output.label,
             )
         if not request.target_references:
-            raise ValueError(string("seedvc.target_reference_required"))
+            raise ValueError(
+                "seed-vc requires at least one target reference WAV for conversion"
+            )
 
         reference_path = request.target_references[0]
         realtime_module, model_set = self._get_live_runtime()
@@ -814,7 +826,9 @@ class CeluneSeedVCBackend(CeluneVCBackend):
                 model is unavailable, active, or cannot honor this request.
         """
         if not request.target_references:
-            raise ValueError(string("seedvc.target_reference_required"))
+            raise ValueError(
+                "seed-vc requires at least one target reference WAV for conversion"
+            )
         if self.length_adjust != 1.0:
             return None
 
@@ -882,7 +896,9 @@ class CeluneSeedVCBackend(CeluneVCBackend):
             ValueError: The request does not include a target reference WAV.
         """
         if not request.target_references:
-            raise ValueError(string("seedvc.target_reference_required"))
+            raise ValueError(
+                "seed-vc requires at least one target reference WAV for conversion"
+            )
 
         f0_condition = self._resolve_f0_condition(request, self.f0_condition)
         if not f0_condition:

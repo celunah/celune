@@ -842,7 +842,7 @@ def require_celune(session: ServerSession = server_session) -> Celune:
     if session.bound_celune is None:
         raise HTTPException(
             status_code=503,
-            detail=string("webui.not_available"),
+            detail="i'm not currently available",
         )
     return session.bound_celune
 

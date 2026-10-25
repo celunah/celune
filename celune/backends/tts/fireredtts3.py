@@ -747,7 +747,7 @@ class FireRedTTS3(CeluneBackend[FireRedModel]):
             return self.default_model_id
         _, voice_names = compatible_bundle
         if voice not in voice_names:
-            raise ValueError(string("celune.unknown_voice", voice=voice))
+            raise ValueError(f"unknown voice: {voice}")
         return self.default_model_id
 
     def resolve_generation_language(self, lang: Optional[str]) -> Optional[str]:
@@ -819,7 +819,7 @@ class FireRedTTS3(CeluneBackend[FireRedModel]):
                                 and extraction_root_resolved not in member_path.parents
                             ):
                                 raise RuntimeError(
-                                    string("fireredtts3.source_archive_invalid")
+                                    "Downloaded FireRedTTS3 source archive is invalid."
                                 )
                         archive.extractall(extraction_root)
 
@@ -832,7 +832,9 @@ class FireRedTTS3(CeluneBackend[FireRedModel]):
                         None,
                     )
                     if source_root is None:
-                        raise RuntimeError(string("fireredtts3.source_archive_invalid"))
+                        raise RuntimeError(
+                            "Downloaded FireRedTTS3 source archive is invalid."
+                        )
                     shutil.copytree(source_root, partial)
 
                 if destination.exists():
@@ -841,13 +843,13 @@ class FireRedTTS3(CeluneBackend[FireRedModel]):
             except Exception as error:
                 with contextlib.suppress(OSError):
                     shutil.rmtree(partial)
-                if isinstance(error, RuntimeError) and str(error) == string(
-                    "fireredtts3.source_archive_invalid"
+                if (
+                    isinstance(error, RuntimeError)
+                    and str(error)
+                    == "Downloaded FireRedTTS3 source archive is invalid."
                 ):
                     raise
-                raise RuntimeError(
-                    string("fireredtts3.source_download_failed")
-                ) from error
+                raise RuntimeError("Could not download FireRedTTS3 source.") from error
 
         return destination
 
@@ -1033,17 +1035,17 @@ class FireRedTTS3(CeluneBackend[FireRedModel]):
         """Generate progressive Celune-compatible audio chunks with FireRedTTS3."""
         text = kwargs.pop("text", None)
         if not isinstance(text, str) or not text.strip():
-            raise ValueError(string("tts.text_required"))
+            raise ValueError("expected text to say")
 
         voice = kwargs.pop("voice", self.default_voice)
         if not isinstance(voice, str):
-            raise TypeError(string("celune.unknown_voice", voice=voice))
+            raise TypeError(f"unknown voice: {voice}")
         compatible_bundle = self._require_compatible_bundle()
         if compatible_bundle is None:
             return
         loader, voice_names = compatible_bundle
         if voice not in voice_names:
-            raise ValueError(string("celune.unknown_voice", voice=voice))
+            raise ValueError(f"unknown voice: {voice}")
 
         # FireRed consumes the prompt transcript together with the complete
         # reference waveform. Truncating only the waveform leaves part of the
@@ -1052,7 +1054,7 @@ class FireRedTTS3(CeluneBackend[FireRedModel]):
         reference_wav = loader.materialize(voice, "wav")
         reference_text = loader.bundle.voices[voice].get("reference_text")
         if not isinstance(reference_text, str) or not reference_text.strip():
-            raise ValueError(string("celune.unknown_voice", voice=voice))
+            raise ValueError(f"unknown voice: {voice}")
         prompt_audio, prompt_audio_sr = torchaudio.load(str(reference_wav))
 
         language = self.resolve_generation_language(kwargs.pop("language", None))

@@ -360,7 +360,7 @@ def initialize(
     except Exception as e:
         raise BackendError(
             format_error_message(
-                string("celune.internal_backend_error"),
+                "Internal backend error.",
                 e,
                 log_level,
             )
@@ -407,7 +407,7 @@ def initialize(
     except Exception as e:
         raise BackendError(
             format_error_message(
-                string("celune.internal_vc_backend_error"),
+                "Internal voice-conversion backend error.",
                 e,
                 log_level,
             )
