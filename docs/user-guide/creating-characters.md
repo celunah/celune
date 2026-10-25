@@ -72,6 +72,19 @@ The creator is owned by `scripts/cac.py`; regression tests live in
 `tests/test_scripts_cac.py`. Validate code changes with
 `python scripts/run_ci.py`.
 
+## Nol
+
+`voices/nol.cevoice` is a speech-only CECHAR v5 pack with **Balanced** as its
+default, followed by **Calm** and **Spirited**. It is marked non-sing-compliant
+in its description and contains no `sing` entry.
+
+Nol is a Black American man from New York City, Celune's partner, and a fully
+human observer and support character on the Moon. His Persona preserves his
+open, conversational, creative, expressive temperament, polished American
+English with subtle NYC/Bronx cadence, and faint yellow lunar-protection field.
+The supplied laughter cue in Spirited identifies a nonverbal part of the audio;
+its reference transcript contains only the spoken words.
+
 ## See also
 
 - [CEVOICE and CECHAR formats](../CEVOICE.md)
