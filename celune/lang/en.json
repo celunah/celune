@@ -938,6 +938,7 @@
     "cac.embedding": "Enter embedding file (.pt) for entry #{index}, leave empty to skip",
     "cac.cfg_scale": "Enter cfg_scale for entry #{index}, leave empty to skip",
     "cac.reference_text": "Enter reference_text for entry #{index}, leave empty to skip",
+    "cac.display_name": "Display name for '{voice_name}', leave empty for automatic capitalization",
     "cac.persona_style": "Persona style {style}, leave empty to skip",
     "cac.file_missing": "File not found: {path}",
     "cac.normalized": "Normalized reference WAV to 24 kHz mono: {path}",

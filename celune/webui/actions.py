@@ -2,11 +2,12 @@
 """WebUI action helpers."""
 
 from __future__ import annotations
+
 import io
 import json
 import textwrap
-from functools import partial
 from typing import TYPE_CHECKING, Optional, cast
+from functools import partial
 from collections.abc import Callable, Iterator, Awaitable
 
 import numpy as np
@@ -14,7 +15,8 @@ import gradio as gr
 import soundfile as sf
 from fastapi.responses import JSONResponse
 
-from .commands import WebUiCommandHost
+from ..i18n import string, tagged_string
+from ..ui.app import CeluneUI
 from .runtime import (
     api_log,
     require_celune,
@@ -33,15 +35,13 @@ from .runtime import (
     webui_audio_waveform_options,
     configure_webui_generation_fn_indices,
 )
-
-from ..ui.app import CeluneUI
-from ..i18n import string, tagged_string
+from .commands import WebUiCommandHost
 from ..constants import BASE_SR, APP_NAME
+from ..typing.api import WebUiUpdate, WebUiAudioValue, WebUiInputAudioValue
 from ..persona.impl import persona_talkback_enabled
 from ..server.runtime import run_async_runtime_call
-from ..typing.aliases import AudioChunk, AudioChunks
 from ..server.session import ServerSession, server_session
-from ..typing.api import WebUiUpdate, WebUiAudioValue, WebUiInputAudioValue
+from ..typing.aliases import AudioChunk, AudioChunks
 from ..server.constants import (
     WEBUI_CONVERT_API_NAME,
     WEBUI_LOAD_VC_API_NAME,
@@ -503,7 +503,9 @@ def _webui_voice_catalog(celune: Celune) -> tuple[tuple[str, str], ...]:
                 ensure_ascii=False,
                 separators=(",", ":"),
             )
-            choices.append((f"{pack_name}: {voice_entry}", value))
+            choices.append(
+                (f"{pack_name}: {bundle.voice_display_name(voice_entry)}", value)
+            )
 
     if choices:
         return tuple(choices)

@@ -5,9 +5,9 @@ import io
 import sys
 import argparse
 from math import gcd
+from typing import TYPE_CHECKING, Union, Optional, TypedDict, cast
 from pathlib import Path
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Union, Optional, TypedDict, cast
 
 import numpy as np
 import soundfile as sf
@@ -18,24 +18,24 @@ if TYPE_CHECKING:
 
 try:
     from celune.i18n import string
-    from celune.exceptions import CEVoiceError
     from celune.cevoice import (
+        SINGING_VOICE_NAME,
         write_cevoice,
         write_cechar_v4,
         write_cechar_v5,
-        SINGING_VOICE_NAME,
     )
+    from celune.exceptions import CEVoiceError
 except ModuleNotFoundError:
     PROJECT_ROOT = Path(__file__).resolve().parent.parent
     sys.path.insert(0, str(PROJECT_ROOT))
     from celune.i18n import string
-    from celune.exceptions import CEVoiceError
     from celune.cevoice import (
+        SINGING_VOICE_NAME,
         write_cevoice,
         write_cechar_v4,
         write_cechar_v5,
-        SINGING_VOICE_NAME,
     )
+    from celune.exceptions import CEVoiceError
 
 
 class ThemeMetadata(TypedDict, total=False):
@@ -84,6 +84,7 @@ class VoiceEntryMetadata(TypedDict, total=False):
 
     cfg_scale: float
     reference_text: str
+    display_name: str
     persona: PersonaMetadata
     cesn: str
     range: dict[str, int]
@@ -441,6 +442,7 @@ def collect_voice_assets(
     pt_path = ask_optional_existing_file(string("cac.embedding", index=index))
     cfg_scale = ask_optional_float(string("cac.cfg_scale", index=index))
     reference_text = ask_optional_text(string("cac.reference_text", index=index))
+    display_name = ask_optional_text(string("cac.display_name", voice_name=voice_name))
     persona = collect_voice_persona_metadata(voice_name)
 
     assets: VoiceAssets = {"wav": wav_path}
@@ -452,6 +454,8 @@ def collect_voice_assets(
         metadata["cfg_scale"] = cfg_scale
     if reference_text is not None:
         metadata["reference_text"] = reference_text
+    if display_name is not None:
+        metadata["display_name"] = display_name
     if persona is not None:
         metadata["persona"] = persona
 

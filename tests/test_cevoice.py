@@ -286,6 +286,30 @@ class TestCEVoice(CeluneTestCase):
         assert cevoice.bundle_matches_default_pack_checksum(default.path)
         assert classic.metadata["version"] == cevoice.V4_VERSION
 
+    def test_voice_display_names_do_not_change_backend_identifiers(self) -> None:
+        """Keep lowercase selection keys separate from title-case UI labels."""
+        cevoice.write_cechar_v5(
+            self.path,
+            {
+                "balanced": {"wav": self._minimal_wav()},
+                "spirited": {"wav": self._minimal_wav()},
+            },
+            {"name": "Nol", "default_voice": "balanced"},
+            {
+                "balanced": {
+                    "reference_text": "Hello.",
+                    "display_name": "Balanced",
+                },
+                "spirited": {"reference_text": "Ha!"},
+            },
+        )
+
+        bundle = cevoice.CEVoice.open(self.path)
+
+        assert bundle.voice_order == ("balanced", "spirited")
+        assert bundle.voice_display_name("balanced") == "Balanced"
+        assert bundle.voice_display_name("spirited") == "Spirited"
+
     def test_repository_packs_are_registered_as_official_defaults(self) -> None:
         """Keep every repository-bundled character pack in the default registry."""
         assert set(cevoice.KNOWN_DEFAULT_CEVOICE_PACKS) == {

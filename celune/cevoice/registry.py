@@ -18,7 +18,7 @@ CLASSIC_CEVOICE_PACK_SHA256: Final[str] = (
     "646d68a70d4402cc5a9f8fdc96c171607d896dfe5424b27748193e3504530023"
 )
 NOL_CEVOICE_PACK_SHA256: Final[str] = (
-    "c52612b94ddae2d14569e0497d6e518a9dcde19f4f6d1076cd54574f0a87844b"
+    "10b83afbd20b29e1a5cd3bd7abd3632fb4758faf8f3d66c7da2b60e9af5a0100"
 )
 
 KNOWN_DEFAULT_CEVOICE_PACKS: Final[Mapping[str, frozenset[str]]] = MappingProxyType(

@@ -2,23 +2,23 @@
 """Extracted CeluneUI interaction methods."""
 
 from __future__ import annotations
+
 import os
 import re
 import sys
+import queue as queue_module
 import shlex
 import types
 import ctypes
 import asyncio
 import threading
 import contextlib
-import queue as queue_module
-from uuid import uuid4
 from copy import deepcopy
-from collections.abc import Callable, Iterator
+from uuid import uuid4
 from typing import TYPE_CHECKING, Optional, cast
+from collections.abc import Callable, Iterator
 
 from . import app as _app
-
 from ..constants import SIGTSTP, APP_NAME
 from ..typing.modes import OPERATION_MODES
 
@@ -586,6 +586,11 @@ def tts_voice_changed(self, name: str) -> None:
         self.style_index = self.celune_styles.index(name)
 
     label = name.capitalize()
+    from ..cevoice import default_loader
+
+    loader = default_loader()
+    if loader is not None and name in loader.bundle.voices:
+        label = loader.bundle.voice_display_name(name)
 
     if threading.current_thread() is threading.main_thread():
         self.style_button.label = label
@@ -897,6 +902,11 @@ def open_voice_menu(self) -> None:
                 value=selected_voice,
                 editable=len(voices) > 1,
                 autocomplete_values=voices if len(voices) > 1 else None,
+                autocomplete_labels=(
+                    tuple(bundle.voice_display_name(voice) for voice in voices)
+                    if len(voices) > 1
+                    else None
+                ),
                 confirm_value=voices[0] if len(voices) == 1 else None,
             )
         )

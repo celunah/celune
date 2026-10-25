@@ -629,6 +629,13 @@ def _validate_v4_semantic_metadata(
             raise CEVoiceError(
                 f"voice '{voice}' reference_text must be a non-empty string"
             )
+        display_name = voice_data.get("display_name")
+        if display_name is not None and (
+            not isinstance(display_name, str) or not display_name.strip()
+        ):
+            raise CEVoiceError(
+                f"voice '{voice}' display_name must be a non-empty string"
+            )
         voice_persona = voice_data.get("persona")
         if voice_persona is not None:
             _validate_persona_metadata(voice_persona)

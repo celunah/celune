@@ -24,8 +24,9 @@ does not determine the CECHAR generation. See the canonical
 1. Prepare a WAV for each voice and its exact spoken transcript.
 2. Start the wizard with `uv run python scripts/cac.py --format-version 5`.
 3. Enter the pack name, description, voice count, and each voice's name and WAV.
-   Embeddings and `cfg_scale` are optional. Enter each reference transcript and
-   any voice-specific Persona style overrides.
+   Embeddings, `cfg_scale`, and display names are optional. Enter each reference
+   transcript and any voice-specific Persona style overrides. Voice keys remain
+   backend identifiers; display names control selector labels.
 4. Choose a speaking default and voice order, optional theme colors, and the
    shared identity, speaking style, boundaries, prompt rules, and examples.
 5. Inspect the saved pack before copying it into `voices/`. Avoid overwriting

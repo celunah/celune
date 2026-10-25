@@ -149,9 +149,22 @@ Each voice entry may also include:
 | --- | --- |
 | `cfg_scale` | Optional positive VoxCPM2 classifier-free guidance scale for that voice |
 | `reference_text` | Optional non-empty transcript for the voice's reference audio |
+| `display_name` | Optional selector label; voice keys remain the backend identifiers |
 | `persona` | Optional style/rule additions layered on the shared Persona metadata |
 | `cesn` | In CECHAR v5, required for `sing` and `null` for speaking voices |
 | `range` | For CECHAR v5 `sing`, inclusive `min` and `max` MIDI pitches from 0 to 127 |
+
+Use `CEVoice.voice_display_name(voice: str) -> str` to read an optional label
+without changing the key that backends and APIs use to select the voice. It
+returns the exact non-empty `display_name`, or capitalizes the key when that
+metadata is absent. An unknown key raises `KeyError`.
+
+```python
+from celune.cevoice import CEVoice
+
+bundle = CEVoice.open("voices/nol.cevoice")
+bundle.voice_display_name("balanced")
+```
 
 Supported `persona` fields are:
 

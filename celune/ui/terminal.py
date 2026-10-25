@@ -6,9 +6,9 @@ import sys
 import time
 import logging
 import threading
-from collections import deque
-from collections.abc import Mapping, Callable, Collection
 from typing import Literal, Optional
+from collections import deque
+from collections.abc import Mapping, Callable, Sequence, Collection
 from dataclasses import replace, dataclass
 
 from rich.text import Text
@@ -19,9 +19,9 @@ from textual.widget import Widget
 from textual.message import Message
 
 from ..i18n import string
-from ..typing.aliases import LogCallback
 from ..terminal import infer_log_severity
 from ..typing.common import JSONSerializable
+from ..typing.aliases import LogCallback
 
 _MCP_DISCONNECT_CORRELATION_SECONDS = 5.0
 
@@ -118,6 +118,7 @@ class SelectMenuOption:
     show_value: bool = True
     confirm_value: Optional[JSONSerializable] = None
     explanation: Optional[str] = None
+    autocomplete_labels: Optional[Sequence[str]] = None
 
 
 class SelectMenuWidget(Widget):
@@ -234,7 +235,7 @@ class SelectMenuWidget(Widget):
                 display_value = (
                     option.display_value
                     if option.display_value is not None
-                    else self._value_text(option.value)
+                    else self._option_value_text(option, option.value)
                 )
                 if content_width > 0:
                     display_value = self._truncate_cells(
@@ -475,7 +476,9 @@ class SelectMenuWidget(Widget):
 
         if self._edit_buffer is None:
             self._edit_buffer = (
-                "" if character is not None else self._value_text(option.value)
+                ""
+                if character is not None
+                else self._option_value_text(option, option.value)
             )
         if character is not None:
             self._edit_buffer += character
@@ -518,10 +521,17 @@ class SelectMenuWidget(Widget):
                 .casefold()
                 .startswith(normalized_query)
             )
+        labels = option.autocomplete_labels or ()
         return tuple(
             value
-            for value in option.autocomplete_values
-            if normalized_query in SelectMenuWidget._value_text(value).casefold()
+            for index, value in enumerate(option.autocomplete_values)
+            if normalized_query
+            in (
+                labels[index]
+                if index < len(labels)
+                else SelectMenuWidget._value_text(value)
+            ).casefold()
+            or normalized_query in SelectMenuWidget._value_text(value).casefold()
         )
 
     @staticmethod
@@ -594,6 +604,18 @@ class SelectMenuWidget(Widget):
         return option.show_value and (
             self.value_display == "all" or index == self.selected_index
         )
+
+    @staticmethod
+    def _option_value_text(option: SelectMenuOption, value: JSONSerializable) -> str:
+        """Return a configured autocomplete label or the value's text."""
+        if option.autocomplete_values and option.autocomplete_labels:
+            try:
+                index = tuple(option.autocomplete_values).index(value)
+            except ValueError:
+                return SelectMenuWidget._value_text(value)
+            if index < len(option.autocomplete_labels):
+                return option.autocomplete_labels[index]
+        return SelectMenuWidget._value_text(value)
 
     @staticmethod
     def _value_text(value: JSONSerializable) -> str:

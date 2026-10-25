@@ -7,10 +7,10 @@ import io
 import sys
 import contextlib
 import importlib.util
-from pathlib import Path
-from unittest import mock
 from types import ModuleType
+from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest import mock
 
 import numpy as np
 import soundfile as sf
@@ -241,6 +241,23 @@ class TestCACScript(CeluneTestCase):
             "cesn": "[c4:4]Singing.",
             "range": {"min": 60, "max": 72},
         }
+
+    def test_collect_voice_assets_accepts_a_separate_display_name(self) -> None:
+        """Retain the backend identifier while collecting a readable label."""
+        with (
+            mock.patch.object(cac, "ask_required_text", return_value="balanced"),
+            mock.patch.object(cac, "ask_existing_file", return_value=Path("voice.wav")),
+            mock.patch.object(cac, "ask_optional_existing_file", return_value=None),
+            mock.patch.object(cac, "ask_optional_float", return_value=None),
+            mock.patch.object(
+                cac, "ask_optional_text", side_effect=["Hello.", "Balanced"]
+            ),
+            mock.patch.object(cac, "collect_voice_persona_metadata", return_value=None),
+        ):
+            name, _assets, metadata = cac.collect_voice_assets(1, 5)
+
+        assert name == "balanced"
+        assert metadata == {"reference_text": "Hello.", "display_name": "Balanced"}
 
     def test_version_option_selects_wizard(self) -> None:
         """Allow format selection when no simple-mode arguments are supplied."""

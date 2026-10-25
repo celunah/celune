@@ -20,9 +20,9 @@ from collections.abc import Mapping, Callable, Sequence
 
 from ..i18n import string
 from ..paths import project_root, temp_data_dir, voices_data_dir
+from .registry import KNOWN_DEFAULT_CEVOICE_PACKS, OFFICIAL_CEVOICE_PACK_SHA256S
 from ..exceptions import CEVoiceError
 from ..typing.cevoice import Manifest, ManifestValue, VoiceManifest
-from .registry import KNOWN_DEFAULT_CEVOICE_PACKS, OFFICIAL_CEVOICE_PACK_SHA256S
 
 HEADER = struct.Struct("<8sHI")
 ALLOWED_ASSET_KINDS = {"wav", "pt"}
@@ -184,6 +184,24 @@ class CEVoice:
         else:
             voices = list(self.voices)
         return tuple(voices)
+
+    def voice_display_name(self, voice: str) -> str:
+        """Return a voice's user-facing label while preserving its identifier.
+
+        Args:
+            voice: Exact backend voice identifier.
+
+        Returns:
+            str: The configured display name, or a capitalized identifier.
+
+        Raises:
+            KeyError: The voice identifier is not present in this pack.
+        """
+        voice_entry = self.voices[voice]
+        display_name = voice_entry.get("display_name")
+        if isinstance(display_name, str) and display_name.strip():
+            return display_name.strip()
+        return voice.capitalize()
 
     @property
     def singing_voice(self) -> Optional[str]:
@@ -1015,6 +1033,13 @@ def _validate_metadata(
         ):
             raise CEVoiceError(
                 f"voice '{voice}' reference_text must be a non-empty string"
+            )
+        display_name = voice_data.get("display_name")
+        if display_name is not None and (
+            not isinstance(display_name, str) or not display_name.strip()
+        ):
+            raise CEVoiceError(
+                f"voice '{voice}' display_name must be a non-empty string"
             )
         voice_persona = voice_data.get("persona")
         if voice_persona is not None:

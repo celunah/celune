@@ -10,23 +10,34 @@ import inspect
 import datetime
 import contextlib
 from html import escape
+from typing import TYPE_CHECKING, Union, Optional, cast
 from pathlib import Path
 from functools import partial
-from importlib.resources import files
-from typing import TYPE_CHECKING, Optional, Union, cast
 from collections.abc import Mapping, Callable, Iterator, Sequence
+from importlib.resources import files
 
 import numpy as np
 import gradio as gr
 import soundfile as sf
 from fastapi import HTTPException
 
+from ..ui import resources as ui_resources
 from ..i18n import string
+from ..paths import project_root, main_window_log_path
 from ..theme import colors
+from ..utils import available, format_error_message
+from ..ui.app import CeluneUI
+from ..cevoice import default_loader
+from ..cedts.ui import UiTimedUpdate, ui_timed_update_channel
+from ..constants import BASE_SR, APP_NAME
+from ..typing.api import (
+    WEBUI_UNSET as _WEBUI_UNSET,
+)
+from ..typing.api import (
+    WebUiUnset as _WebUiUnset,
+)
 from ..typing.api import (
     WebUiUpdate,
-    WebUiUnset as _WebUiUnset,
-    WEBUI_UNSET as _WEBUI_UNSET,
 )
 from ..server.jobs import (
     TaskEvent,
@@ -38,33 +49,26 @@ from ..server.jobs import (
     publish_active_task_log,
     publish_active_task_progress,
 )
-from ..ui.app import CeluneUI
+from ..persona.impl import persona_enabled, persona_talkback_enabled
+from ..typing.events import EventName, EventCallback
+from ..server.runtime import invoke_message_callback, shutdown_api_for_fatal_error
+from ..server.session import ServerSession, server_session
+from ..typing.aliases import LogLevel, AudioChunks
+from ..typing.pipeline import SpeechStreamQueue
 from ..server.constants import (
     WEBUI_GENERATION_API_NAMES,
     WEBUI_RESOURCE_ROTATE_SECONDS,
     WEBUI_TIMED_UPDATE_STALE_SECONDS,
     WEBUI_STATUS_PROBE_DEBOUNCE_SECONDS,
 )
+from ..extensions.events import EventDispatcher
+from ..pipeline.captions import current_playback_status
 from ..dataclasses.events import (
     AgentTaskFinishedEvent,
     AgentChoiceRequestedEvent,
     AgentTaskStateChangedEvent,
     AgentApprovalRequestedEvent,
 )
-from ..cevoice import default_loader
-from ..constants import BASE_SR, APP_NAME
-from ..ui import resources as ui_resources
-from ..extensions.events import EventDispatcher
-from ..typing.pipeline import SpeechStreamQueue
-from ..typing.aliases import LogLevel, AudioChunks
-from ..utils import available, format_error_message
-from ..typing.events import EventName, EventCallback
-from ..paths import project_root, main_window_log_path
-from ..pipeline.captions import current_playback_status
-from ..server.session import ServerSession, server_session
-from ..cedts.ui import UiTimedUpdate, ui_timed_update_channel
-from ..persona.impl import persona_enabled, persona_talkback_enabled
-from ..server.runtime import invoke_message_callback, shutdown_api_for_fatal_error
 
 npt = np.typing
 
@@ -1076,8 +1080,14 @@ def _voice_button_update(session: ServerSession = server_session) -> WebUiUpdate
         and not celune.is_in_tutorial
         and not getattr(getattr(celune, "backend", None), "singing", False)
     )
+    loader = default_loader()
+    display_name = (
+        loader.bundle.voice_display_name(voice_name)
+        if loader is not None and voice_name in loader.bundle.voices
+        else voice_name.capitalize()
+    )
     return gr.update(
-        value=voice_name.capitalize(),
+        value=display_name,
         interactive=interactive,
     )
 

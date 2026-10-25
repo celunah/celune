@@ -3,12 +3,12 @@
 
 import pytest
 from textual.app import App
-from textual.message import Message
 from textual.events import Key, MouseMove
+from textual.message import Message
 from textual.widgets import Button, Static
 
-from celune.ui.theme import CELUNE_CSS
 from celune.ui.app import CeluneUI, SelectMenuOverlay
+from celune.ui.theme import CELUNE_CSS
 from celune.ui.terminal import SelectMenuOption, SelectMenuWidget
 
 
@@ -146,6 +146,23 @@ def test_select_menu_widget_keybinds_and_editable_values() -> None:
     assert menu.selected_value == "soft"
     with pytest.raises(ValueError, match="non-editable"):
         menu.set_value(2, "changed")
+
+
+def test_autocomplete_display_labels_keep_original_identifiers() -> None:
+    """Search and render labels while selection returns the stable voice ID."""
+    option = SelectMenuOption(
+        "Voice",
+        "balanced",
+        autocomplete_values=("balanced", "spirited"),
+        autocomplete_labels=("Balanced", "Spirited"),
+    )
+    menu = SelectMenuWidget("Voice list", [option])
+
+    assert menu._matching_values(option, "Spirit") == ("spirited",)
+    assert menu._option_value_text(option, "balanced") == "Balanced"
+
+    menu.on_key(Key("right", None))
+    assert menu.selected_value == "spirited"
 
 
 def test_select_menu_widget_cycles_and_searches_autocomplete_values() -> None:
