@@ -1366,7 +1366,15 @@ def start(
     global _FORCE_STARTUP_DIAGNOSTICS
     global _STARTUP_DIAGNOSTIC_SINK
 
+    from rich.console import Console
     from celune.watchdog import start_watchdog, launcher_loss_requested
+
+    csystem = Console(stderr=True).color_system
+    if csystem != "truecolor":
+        print(
+            string("celune.no_truecolor", color_system=csystem),
+            file=sys.stderr,
+        )
 
     start_watchdog()
     _FORCE_STARTUP_DIAGNOSTICS = log_level not in {None, "info"}
