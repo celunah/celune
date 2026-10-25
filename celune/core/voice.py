@@ -6,28 +6,16 @@ from __future__ import annotations
 import time
 import asyncio
 import threading
-from pathlib import Path
 from typing import Union, Optional
+from pathlib import Path
 
-from .. import __version__
-from ..constants import APP_NAME
-from ..paths import project_root
-from ..config import config_value
-from .lifecycle import config_str
 from . import reload as core_reload
-from ..i18n import string, tagged_string
-from ..utils import format_error_message
 from . import lifecycle as core_lifecycle
-from ..extensions.base import CeluneContext
-from ..pipeline.playback import play_signal
-from ..registry.tts import QWEN3_06B_MODEL_ID
-from .concurrency import run_in_daemon_thread
-from ..backends.tts import BACKENDS, CeluneBackend
-from ..dataclasses.events import VoiceChangedEvent
-from ..backends.vc import VC_BACKENDS, CeluneVCBackend
-from ..extensions.manager import CeluneExtensionManager
-from ..typing.celune import BundleWithPath, CoreBackendSpec
-from ..pipeline.playback import force_stop_speech as force_stop_pipeline
+from .. import __version__
+from ..i18n import string, tagged_string
+from ..paths import project_root
+from ..utils import format_error_message
+from ..config import config_value
 from ..cevoice import (
     default_loader,
     active_bundle_path,
@@ -37,6 +25,18 @@ from ..cevoice import (
     persona_metadata_from_manifest,
     bundle_matches_default_pack_checksum,
 )
+from .lifecycle import config_str
+from ..constants import APP_NAME
+from .concurrency import run_in_daemon_thread
+from ..backends.vc import VC_BACKENDS, CeluneVCBackend
+from ..backends.tts import BACKENDS, CeluneBackend
+from ..registry.tts import QWEN3_06B_MODEL_ID
+from ..typing.celune import BundleWithPath, CoreBackendSpec
+from ..extensions.base import CeluneContext
+from ..pipeline.playback import play_signal
+from ..pipeline.playback import force_stop_speech as force_stop_pipeline
+from ..dataclasses.events import VoiceChangedEvent
+from ..extensions.manager import CeluneExtensionManager
 
 
 def set_voices(self, voices: tuple[str, ...]) -> None:
@@ -309,6 +309,19 @@ def set_backend(
     return True
 
 
+def _backend_spec_requires_singing(backend_spec: CoreBackendSpec) -> bool:
+    """Return whether one backend specification requires a singing-capable pack."""
+    if isinstance(backend_spec, str):
+        return backend_spec.strip().lower() == "soulxsinger"
+    if isinstance(backend_spec, CeluneBackend):
+        return backend_spec.singing or backend_spec.name.lower() == "soulxsinger"
+    if isinstance(backend_spec, type) and issubclass(backend_spec, CeluneBackend):
+        return bool(getattr(backend_spec, "singing", False)) or (
+            backend_spec.name.lower() == "soulxsinger"
+        )
+    return False
+
+
 def _prepare_backend_reload(
     self,
     backend_spec: CoreBackendSpec,
@@ -338,13 +351,35 @@ def _prepare_backend_reload(
             )
             return False
 
+    missing_singer_character: Optional[str] = None
     with self.say_lock:
         if self._closed or self.exit_requested:
             return False
         reload_already_pending = self._reload_pending or self.cur_state == "reloading"
         if not reload_already_pending:
-            self._reload_pending = True
-            self._model_ready.clear()
+            if _backend_spec_requires_singing(backend_spec):
+                loader = default_loader()
+                if loader is not None and loader.bundle.singing_voice is None:
+                    missing_singer_character = (
+                        self.current_character
+                        or bundle_character_name(loader.bundle)
+                        or loader.bundle.path.stem
+                    )
+            if missing_singer_character is None:
+                self._reload_pending = True
+                self._model_ready.clear()
+
+    if missing_singer_character is not None:
+        self.log(string("celune.cannot_sing_with_character"), "warning")
+        self.log(
+            string(
+                "celune.character_not_a_singer",
+                character=missing_singer_character,
+            ),
+            "warning",
+        )
+        self.log(string("celune.singing_capable_pack_required"), "warning")
+        return False
 
     if reload_already_pending:
         self.log(string("celune.reload_already_in_progress"), "warning")

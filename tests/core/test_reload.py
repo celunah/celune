@@ -4,28 +4,27 @@
 import weakref
 import threading
 import contextlib
+from types import SimpleNamespace, MappingProxyType
+from typing import Optional, cast
 from pathlib import Path
 from unittest import mock
-from typing import Optional, cast
-from types import SimpleNamespace, MappingProxyType
 
 import pytest
 from transformers.modeling_utils import PreTrainedModel
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 
-from celune.celune import Celune
-from celune.utils import discard
+from celune.core import sleep as core_sleep
 from celune.core import voice as core_voice
 from celune.core import reload as core_reload
 from celune.core import loading as core_loading
-from celune.core import sleep as core_sleep
-from celune.typing.common import JSONSerializable
 from celune.core import lifecycle as core_lifecycle
+from celune.utils import discard
+from celune.celune import Celune
 from celune.exceptions import WarmupError, BackendError
-
-from .fixtures import CeluneCoreTestSupport
+from celune.typing.common import JSONSerializable
 
 from ..support import FakeGlow, FakeBackend, FakeVCBackend
+from .fixtures import CeluneCoreTestSupport
 
 
 class TestCeluneReload(CeluneCoreTestSupport):
@@ -101,6 +100,43 @@ class TestCeluneReload(CeluneCoreTestSupport):
         assert celune._reload_pending
         assert not celune._model_ready.is_set()
         thread_cls.return_value.start.assert_called_once_with()
+
+    def test_set_backend_rejects_non_singing_character_before_reload(self) -> None:
+        """Warn in yellow and leave the active backend untouched without a singer."""
+        celune = self._make_celune({})
+        celune.cur_state = "idle"
+        celune.loaded = True
+        celune.current_character = "Nol"
+        celune.log_callback = mock.Mock()
+        celune.change_input_state_callback = mock.Mock()
+        celune.change_voice_lock_state_callback = mock.Mock()
+        celune.force_stop_speech = mock.Mock()
+        loader = SimpleNamespace(bundle=SimpleNamespace(singing_voice=None))
+
+        with (
+            mock.patch.object(core_voice, "default_loader", return_value=loader),
+            mock.patch("celune.core.voice.threading.Thread") as thread_cls,
+            mock.patch.object(core_voice, "try_play_signal") as play_signal,
+        ):
+            assert not celune.set_backend("soulxsinger")
+
+        assert celune.log_callback.call_args_list == [
+            mock.call("Cannot sing with this character.", "warning"),
+            mock.call("Nol is not a singer.", "warning"),
+            mock.call(
+                "Please switch to a singing-capable pack, then try again.",
+                "warning",
+            ),
+        ]
+        thread_cls.assert_not_called()
+        celune.change_input_state_callback.assert_not_called()
+        celune.change_voice_lock_state_callback.assert_not_called()
+        celune.force_stop_speech.assert_not_called()
+        play_signal.assert_not_called()
+        assert not celune._reload_pending
+        assert celune.loaded
+        assert celune.cur_state == "idle"
+        assert celune._model_ready.is_set()
 
     def test_set_backend_and_wait_failure_keeps_previous_runtime_loaded(self) -> None:
         """Verify failed backend switches preserve the previously loaded backend runtime."""
