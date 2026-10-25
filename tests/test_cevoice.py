@@ -286,6 +286,21 @@ class TestCEVoice(CeluneTestCase):
         assert cevoice.bundle_matches_default_pack_checksum(default.path)
         assert classic.metadata["version"] == cevoice.V4_VERSION
 
+    def test_repository_packs_are_registered_as_official_defaults(self) -> None:
+        """Keep every repository-bundled character pack in the default registry."""
+        assert set(cevoice.KNOWN_DEFAULT_CEVOICE_PACKS) == {
+            "default.cevoice",
+            "classic.cevoice",
+            "nol.cevoice",
+        }
+        for filename, checksums in cevoice.KNOWN_DEFAULT_CEVOICE_PACKS.items():
+            bundle = cevoice.CEVoice.open(Path("voices") / filename)
+            assert cevoice.bundle_sha256(bundle.path) in checksums
+            assert cevoice.bundle_matches_default_pack_checksum(bundle.path)
+            assert cevoice.bundle_display_name(bundle) == (
+                f"{cevoice.bundle_character_name(bundle)} ({Path(filename).stem})"
+            )
+
     def test_cechar_v5_requires_singing_cesn_and_null_tts_cesn(self) -> None:
         """Require a score for the singing role and null for speaking roles."""
         sample = self._minimal_wav()

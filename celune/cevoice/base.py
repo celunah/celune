@@ -22,6 +22,7 @@ from ..i18n import string
 from ..paths import project_root, temp_data_dir, voices_data_dir
 from ..exceptions import CEVoiceError
 from ..typing.cevoice import Manifest, ManifestValue, VoiceManifest
+from .registry import KNOWN_DEFAULT_CEVOICE_PACKS, OFFICIAL_CEVOICE_PACK_SHA256S
 
 HEADER = struct.Struct("<8sHI")
 ALLOWED_ASSET_KINDS = {"wav", "pt"}
@@ -33,30 +34,6 @@ SUPPORTED_PERSONA_FILENAMES: Final[tuple[str, ...]] = (
     "speech_style.md",
     "boundaries.md",
     "examples.md",
-)
-
-# Celune now provides two unique identities as of her 6-month anniversary
-DEFAULT_CEVOICE_PACK_SHA256: Final[str] = (
-    "6aa4f7928e9333c89f9836635beae159b53a861bcb207f9e5a34b81ed717426a"
-)
-PREVIOUS_DEFAULT_CEVOICE_PACK_SHA256: Final[str] = (
-    "8422d3f0a455fd5fd89bc4a687a8fb9e7a56a1746d89e4fe3404e29a7004bc5e"
-)
-LEGACY_DEFAULT_CEVOICE_PACK_SHA256: Final[str] = (
-    "35db55adca450062806e20d6c8ae1fc0c0ad5de569cb422321981de80e567851"
-)
-CLASSIC_CEVOICE_PACK_SHA256: Final[str] = (
-    "646d68a70d4402cc5a9f8fdc96c171607d896dfe5424b27748193e3504530023"
-)
-OFFICIAL_CEVOICE_PACK_SHA256S: Final[frozenset[str]] = frozenset(
-    {
-        # natural pack
-        DEFAULT_CEVOICE_PACK_SHA256,
-        PREVIOUS_DEFAULT_CEVOICE_PACK_SHA256,
-        LEGACY_DEFAULT_CEVOICE_PACK_SHA256,
-        # OG pack
-        CLASSIC_CEVOICE_PACK_SHA256,
-    }
 )
 
 
@@ -1421,10 +1398,19 @@ def bundle_display_name(bundle: CEVoice) -> str:
     """
     name = bundle_character_name(bundle) or bundle.path.stem
     if bundle_matches_default_pack_checksum(bundle.path):
+        checksum = bundle_sha256(bundle.path)
+        variant = next(
+            (
+                Path(filename).stem
+                for filename, checksums in KNOWN_DEFAULT_CEVOICE_PACKS.items()
+                if checksum in checksums
+            ),
+            bundle.path.stem,
+        )
         return string(
             "cevoice.official_bundle_label",
             character=name,
-            variant=bundle.path.stem,
+            variant=variant,
         )
     return name
 
@@ -1522,10 +1508,10 @@ def bundle_matches_default_pack_checksum(path: Union[str, Path]) -> bool:
     """Return whether one bundle matches an official Celune pack's bytes.
 
     Args:
-        path: The bundle file to compare against Celune's bundled default pack checksum.
+        path: The bundle file to compare against known pack checksums.
 
     Returns:
-        bool: ``True`` when the file checksum matches an official CEVOICE pack.
+        bool: ``True`` when the file checksum matches a registered default pack.
     """
     try:
         return bundle_sha256(path) in OFFICIAL_CEVOICE_PACK_SHA256S

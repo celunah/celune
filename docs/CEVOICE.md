@@ -1,10 +1,13 @@
 # CEVOICE
 
-`CEVOICE` is Celune's voice-pack container format. The bundled `default.cevoice`
-and `classic.cevoice` packs are the two official Celune variants. The default
-pack uses `CECHAR` v5 and includes the hidden `sing` reference; the classic pack
-remains on CECHAR v4. CECHAR v5 keeps the indexed archive layout and reserves
-an optional hidden `sing` voice for singing backends. Older `CECHAR` v2/v3 and
+`CEVOICE` is Celune's voice-pack container format. Repository-bundled character
+packs are listed in the known default-pack registry and display their registered
+variant label. The registry contains `default.cevoice`, `classic.cevoice`, and
+`nol.cevoice`; earlier default-pack checksums remain associated with
+`default.cevoice`. The default pack uses `CECHAR` v5 and includes the hidden
+`sing` reference; the classic pack remains on CECHAR v4. CECHAR v5 keeps the
+indexed archive layout and reserves an optional hidden `sing` voice for singing
+backends. Older `CECHAR` v2/v3 and
 legacy `CEVOICE` v1 bundles remain readable. `write_cevoice()` writes the
 legacy-compatible layout, `write_cechar_v4()` writes v4, and
 `write_cechar_v5()` writes v5. A `.cevoice` file stores:
@@ -295,6 +298,12 @@ When shown in character or voice-pack selectors, they are labeled `Celune
 (default)` and `Celune (classic)` respectively. The variant label is display
 metadata only; both packs still provide the character identity `Celune` to
 Persona and extensions.
+
+`celune.cevoice.KNOWN_DEFAULT_CEVOICE_PACKS` maps each repository pack filename
+to its accepted SHA-256 checksums. Add a filename and the built pack's checksum
+when a new default character pack becomes part of the repository. Recognition
+uses the checksum, so another file with the same contents receives the same
+registered variant label.
 
 The loader parses and validates the bundle, then lazily materializes assets into a temporary directory only when a backend needs a filesystem path.
 
