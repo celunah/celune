@@ -478,7 +478,8 @@ The browser submits this body to `POST /ui/key`:
 `401`, a cross-origin request returns `403`, and an attempt over the configured
 request limit returns `429`. The prompt shows “Invalid API key” for `401`
 responses; other HTTP or network errors show “An error occurred while
-authenticating.”
+authenticating.” The error message expands into view with a `max-height`
+transition when present and collapses to zero height when cleared.
 
 The WebUI exposes the active voice as a compact button beside the text input;
 clicking it cycles through the available voices using the same Core switching

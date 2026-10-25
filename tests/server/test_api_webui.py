@@ -2,10 +2,6 @@
 """Tests for Celune's browser-facing API UI."""
 
 import re
-from typing import (
-    Optional,
-    cast,
-)
 import shutil
 import asyncio
 import tempfile
@@ -14,6 +10,10 @@ from pathlib import Path
 from unittest import mock
 from types import SimpleNamespace
 from collections import abc, deque
+from typing import (
+    Optional,
+    cast,
+)
 
 import numpy as np
 import fastapi.testclient
@@ -278,8 +278,10 @@ class TestApiWebUI(CeluneTestCase):
         assert "<style>" not in page
         stylesheet = webui.read_webui_asset("api_key.css")
         script = webui.read_webui_asset("api_key.js")
-        assert "#error { display: none;" in stylesheet
-        assert "#error:not(:empty) { display: block; }" in stylesheet
+        assert re.search(r"#error\s*\{[^}]*max-height:\s*0;", stylesheet)
+        assert re.search(
+            r"#error:not\(:empty\)\s*\{[^}]*max-height:\s*18px;", stylesheet
+        )
         assert 'fetch("/ui/key"' in script
         assert "font-family: Outfit" in stylesheet
         assert "font-family: Michroma" in stylesheet
