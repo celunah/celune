@@ -15,8 +15,8 @@ import datetime
 import threading
 import contextlib
 from io import TextIOWrapper
-from typing import Optional, cast
 from collections.abc import Callable
+from typing import Optional, Union, cast
 
 from . import app as _app
 
@@ -51,6 +51,7 @@ __all__ = (
     "_on_agent_choice_requested",
     "_on_agent_task_finished",
     "_on_agent_task_state_changed",
+    "_on_character_bundle_changed",
     "_persist_log_entry",
     "_prepare_loading_theme",
     "_prepare_terminal_output_stream",
@@ -58,6 +59,7 @@ __all__ = (
     "_redirect_dunder_stdio",
     "_refresh_agent_status",
     "_refresh_logs",
+    "_refresh_pack_theme",
     "_refresh_status",
     "_refresh_theme_text",
     "_remove_low_level_stderr_capture",
@@ -123,12 +125,9 @@ def _runtime_theme_name(self) -> str:
 
 def _ensure_themes_registered(self) -> None:
     """Register Celune's built-in themes when the app is not fully mounted yet."""
-    if _app.colors.THEME.name not in self.available_themes:
-        self.register_theme(_app.colors.THEME)
-    if _app.colors.THEME_LIGHT.name not in self.available_themes:
-        self.register_theme(_app.colors.THEME_LIGHT)
-    if _app.colors.THEME_APRIL_FOOLS.name not in self.available_themes:
-        self.register_theme(_app.colors.THEME_APRIL_FOOLS)
+    self.register_theme(_app.colors.THEME)
+    self.register_theme(_app.colors.THEME_LIGHT)
+    self.register_theme(_app.colors.THEME_APRIL_FOOLS)
     self._register_runtime_error_themes()
 
 
@@ -153,6 +152,7 @@ def _apply_theme(self, theme_name: str) -> None:
     self._clear_border_pulses()
     self.active_theme_name = theme_name
     self.theme = self._runtime_theme_name()
+    self.refresh_css(animate=False)
     self._refresh_status()
     self._refresh_theme_text()
     self._refresh_logs(recolor=True)
@@ -163,9 +163,8 @@ def _has_celune(self) -> bool:
     return self.celune is not None
 
 
-def prepare_theme(self) -> None:
-    """Prepare the selected Celune theme before the first rendered frame."""
-    _app.ensure_ui_runtime_dependencies()
+def _configure_active_pack_theme(self) -> None:
+    """Rebuild the shared palette from the currently selected voice pack."""
     _app.colors.configure_theme()
 
     if self._has_celune():
@@ -194,6 +193,13 @@ def prepare_theme(self) -> None:
                     )
 
     self._ensure_themes_registered()
+
+
+def prepare_theme(self) -> None:
+    """Prepare the selected Celune theme before the first rendered frame."""
+    _app.ensure_ui_runtime_dependencies()
+    _configure_active_pack_theme(self)
+
     if _app.is_april_fools() and os.getenv("CELUNE_DISABLE_APRIL_FOOLS") not in {
         "1",
         "true",
@@ -438,7 +444,7 @@ def _publish_webui_timed_update(self) -> None:
 
 
 def _bind_agent_events(self) -> None:
-    """Subscribe the UI to the existing typed agent lifecycle events."""
+    """Subscribe the UI to typed agent and character lifecycle events."""
     self._unbind_agent_events()
     if self.celune is None:
         return
@@ -466,6 +472,21 @@ def _bind_agent_events(self) -> None:
         self._on_agent_task_finished,
         "CeluneUI",
     )
+    dispatcher.subscribe(
+        "character_changed",
+        self._on_character_bundle_changed,
+        "CeluneUI",
+    )
+    dispatcher.subscribe(
+        "character_loaded",
+        self._on_character_bundle_changed,
+        "CeluneUI",
+    )
+    dispatcher.subscribe(
+        "character_unloaded",
+        self._on_character_bundle_changed,
+        "CeluneUI",
+    )
     self._agent_event_dispatcher = dispatcher
 
 
@@ -483,7 +504,28 @@ def _unbind_agent_events(self) -> None:
     )
     dispatcher.unsubscribe("agent_choice_requested", self._on_agent_choice_requested)
     dispatcher.unsubscribe("agent_task_finished", self._on_agent_task_finished)
+    dispatcher.unsubscribe("character_changed", self._on_character_bundle_changed)
+    dispatcher.unsubscribe("character_loaded", self._on_character_bundle_changed)
+    dispatcher.unsubscribe("character_unloaded", self._on_character_bundle_changed)
     self._agent_event_dispatcher = None
+
+
+def _on_character_bundle_changed(
+    self,
+    _event: Union[
+        _app.CharacterChangedEvent,
+        _app.CharacterLoadedEvent,
+        _app.CharacterUnloadedEvent,
+    ],
+) -> None:
+    """Refresh the active TUI palette after a voice-pack transition."""
+    self._run_on_ui_thread(self._refresh_pack_theme)
+
+
+def _refresh_pack_theme(self) -> None:
+    """Apply the selected pack palette without changing the user's theme mode."""
+    _configure_active_pack_theme(self)
+    self._apply_theme(self.active_theme_name)
 
 
 def _on_agent_task_state_changed(
@@ -1957,6 +1999,17 @@ class RuntimeHooks:
         """Delegate to the runtime implementation."""
         return _load_deferred_runtime(self)
 
+    def _on_character_bundle_changed(
+        self,
+        event: Union[
+            _app.CharacterChangedEvent,
+            _app.CharacterLoadedEvent,
+            _app.CharacterUnloadedEvent,
+        ],
+    ) -> None:
+        """Delegate to the runtime implementation."""
+        return _on_character_bundle_changed(self, event)
+
     def _on_agent_approval_requested(
         self, event: _app.AgentApprovalRequestedEvent
     ) -> None:
@@ -2004,6 +2057,10 @@ class RuntimeHooks:
     def _refresh_logs(self, *, recolor: bool = False) -> None:
         """Delegate to the runtime implementation."""
         return _refresh_logs(self, recolor=recolor)
+
+    def _refresh_pack_theme(self) -> None:
+        """Delegate to the runtime implementation."""
+        return _refresh_pack_theme(self)
 
     def _refresh_status(self) -> None:
         """Delegate to the runtime implementation."""

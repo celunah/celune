@@ -11,28 +11,19 @@ import asyncio
 import tempfile
 import warnings
 import threading
-from types import SimpleNamespace
-from typing import Optional, cast
 from pathlib import Path
 from unittest import mock
+from types import SimpleNamespace
+from typing import Optional, cast
 from collections.abc import Callable
 
-import numpy as np
 import pytest
+import numpy as np
 from textual import events
 from textual.app import App
-from textual.widgets import Label, Static, RichLog, TextArea, ProgressBar
 from textual.containers import Vertical
+from textual.widgets import Label, Static, RichLog, TextArea, ProgressBar
 
-from celune.ui import app as ui_app
-from celune.ui import compat as ui_compat
-from celune.ui import terminal as ui_terminal
-from celune.ui import resources as ui_resources
-from celune.core import lifecycle as core_lifecycle
-from celune.i18n import string, tagged_string
-from celune.theme import colors
-from celune.utils import discard
-from celune.celune import Celune
 from celune.ui.app import (
     Button,
     CeluneUI,
@@ -42,12 +33,22 @@ from celune.ui.app import (
     ProgressLabel,
     CeluneLoadingScreen,
 )
-from celune.constants import APP_NAME, COST_EQUIVALENTS, ExitCodes
+from celune.theme import colors
+from celune.celune import Celune
+from celune.utils import discard
+from celune.ui import app as ui_app
+from celune.ui import compat as ui_compat
+from celune.i18n import string, tagged_string
+from celune.ui import terminal as ui_terminal
 from celune.ui.headless import CeluneHeadlessUI
+from celune.ui import resources as ui_resources
 from celune.typing.modes import OperationState
-
-from ..support import FakeBackend, CeluneTestCase
+from celune.core import lifecycle as core_lifecycle
+from celune.extensions.events import EventDispatcher
+from celune.dataclasses.events import CharacterChangedEvent
+from celune.constants import APP_NAME, COST_EQUIVALENTS, ExitCodes
 from .fixtures import reset_ui_singletons
+from ..support import FakeBackend, CeluneTestCase
 
 
 class TestUIStartup(CeluneTestCase):
@@ -288,6 +289,55 @@ class TestUIStartup(CeluneTestCase):
 
         self.assertEqual(ui.theme, "celune_light")
         self.assertEqual(ui.current_theme.name, "celune_light")
+
+    def test_character_change_applies_the_active_pack_palette(self) -> None:
+        """Verify a selected pack replaces and reapplies the current TUI theme."""
+        colors.configure_theme()
+        ui = CeluneUI()
+        dispatcher = EventDispatcher(log_warning=mock.Mock())
+        celune = cast(
+            Celune,
+            SimpleNamespace(
+                config={"theme": "dark"},
+                _event_dispatcher=dispatcher,
+            ),
+        )
+        ui.celune = celune
+        ui.active_theme_name = "celune"
+        ui._ensure_themes_registered()
+        ui.theme = "celune"
+        ui._bind_agent_events()
+        self.addCleanup(ui._unbind_agent_events)
+        self.addCleanup(ui._ensure_themes_registered)
+        self.addCleanup(colors.configure_theme)
+
+        loader = SimpleNamespace(
+            bundle=SimpleNamespace(
+                metadata={
+                    "theme": {
+                        "background": "#21170f",
+                        "accent": "#e6c206",
+                        "faded_accent": "#b88f08",
+                        "glow_color": "#d8751c",
+                    }
+                }
+            )
+        )
+        event = CharacterChangedEvent(
+            celune=celune,
+            old_character="Celune",
+            new_character="Nol",
+            old_bundle_path="default.cevoice",
+            new_bundle_path="nol.cevoice",
+            new_is_default=True,
+        )
+
+        with mock.patch("celune.ui.app.default_loader", return_value=loader):
+            dispatcher.emit("character_changed", event)
+
+        self.assertEqual(ui.theme, "celune")
+        self.assertEqual(ui.current_theme.background, "#21170f")
+        self.assertEqual(colors.THEME.primary, "#e6c206")
 
     def test_settings_menu_flattens_nested_configuration_values(self) -> None:
         """Verify the configuration manager exposes nested YAML leaf values."""

@@ -157,6 +157,9 @@ if TYPE_CHECKING:
         AgentChoiceRequestedEvent,
         AgentTaskStateChangedEvent,
         AgentApprovalRequestedEvent,
+        CharacterChangedEvent,
+        CharacterLoadedEvent,
+        CharacterUnloadedEvent,
     )
     from ..pipeline.submission import (
         queue_streaming_sfx_audio,
@@ -226,6 +229,9 @@ if TYPE_CHECKING:
         AgentChoiceRequestedEvent,
         AgentTaskFinishedEvent,
         AgentTaskStateChangedEvent,
+        CharacterChangedEvent,
+        CharacterLoadedEvent,
+        CharacterUnloadedEvent,
         format_audio_device_name,
         resolve_audio_device_with_info,
         AudioOutput,
@@ -1374,10 +1380,8 @@ class CeluneUI(
             error=colors.THEME_LIGHT.error,
             dark=False,
         )
-        if dark_theme.name not in self.available_themes:
-            self.register_theme(dark_theme)
-        if light_theme.name not in self.available_themes:
-            self.register_theme(light_theme)
+        self.register_theme(dark_theme)
+        self.register_theme(light_theme)
 
     def _wrap_runtime_fatal_glow(self) -> None:
         """Mirror runtime fatal glow events into the UI fatal theme flag."""

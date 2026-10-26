@@ -333,6 +333,8 @@ The loader parses and validates the bundle, then lazily materializes assets into
   CECHAR v5 singing voice. Celune rejects an incompatible pack before loading
   the singing model and logs a yellow warning naming the character.
 - `theme.accent` or `theme.glow_color` can affect Celune's UI glow color.
+- Selecting or reloading a pack applies its TUI palette immediately; a pack without
+  theme colors restores Celune's default palette.
 - `persona.identity.name`, when present, becomes the bundle's character name ahead of top-level `name`.
 
 ## Persona debug overrides
