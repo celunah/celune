@@ -1,7 +1,7 @@
 # Persona Markdown
 
-CECHAR v4 can carry inert Markdown prompt assets shared by the character and
-selected by Persona. These files are data, not executable extensions. The
+CECHAR v4 and v5 can carry inert Markdown prompt assets shared by the character
+and selected by Persona. These files are data, not executable extensions. The
 loader validates their names, encoding, and contents before exposing them to a
 model.
 
@@ -18,7 +18,7 @@ Only these top-level files are recognized:
 | `boundaries.md` | Safety, role, and character boundaries. |
 | `examples.md` | Example dialogue and response patterns. |
 
-An empty optional file can be omitted. The v4 manifest stores only safe file
+An empty optional file can be omitted. The v4/v5 manifest stores only safe file
 names; byte offsets and lengths live in the binary jump table.
 
 ## Content rules

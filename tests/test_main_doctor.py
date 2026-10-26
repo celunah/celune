@@ -2,8 +2,11 @@
 """Tests for the lightweight `celune doctor` CLI path."""
 
 import io
+import sys
 import contextlib
+import subprocess
 from types import SimpleNamespace
+from typing import Optional
 from pathlib import Path, PureWindowsPath
 from unittest import mock
 
@@ -19,6 +22,93 @@ entrypoint = main.load_entrypoint_module()
 
 class TestDoctorCommand(CeluneTestCase):
     """Verify `celune doctor` works without booting the full app."""
+
+    def test_missing_dependency_help_identifies_launch_environment(self) -> None:
+        """Verify recovery steps match the active interpreter and launcher."""
+        with (
+            mock.patch.object(entrypoint, "running_compiled", return_value=True),
+            mock.patch.object(entrypoint, "LAUNCHED_VIA_LAUNCHER", False),
+        ):
+            assert entrypoint._missing_dependency_startup_help() == entrypoint.string(
+                "ui.missing_dependency_launcher_windows"
+                if entrypoint.os.name == "nt"
+                else "ui.missing_dependency_launcher_linux",
+                app_name=entrypoint.APP_NAME,
+            )
+
+        with (
+            mock.patch.object(entrypoint, "running_compiled", return_value=False),
+            mock.patch.object(
+                entrypoint, "_doctor_venv_is_present", return_value=False
+            ),
+        ):
+            assert entrypoint._missing_dependency_startup_help() == entrypoint.string(
+                "ui.missing_dependency_setup_venv"
+            )
+
+        with (
+            mock.patch.object(entrypoint, "running_compiled", return_value=False),
+            mock.patch.object(entrypoint, "_doctor_venv_is_present", return_value=True),
+            mock.patch.object(
+                entrypoint, "_doctor_running_python", return_value=Path("C:/Python.exe")
+            ),
+            mock.patch.object(
+                entrypoint,
+                "_doctor_venv_python",
+                return_value=Path("C:/repo/.venv/Scripts/python.exe"),
+            ),
+            mock.patch.object(entrypoint, "_doctor_same_path", return_value=False),
+        ):
+            assert entrypoint._missing_dependency_startup_help() == entrypoint.string(
+                "ui.missing_dependency_use_venv", app_name=entrypoint.APP_NAME
+            )
+
+        with (
+            mock.patch.object(entrypoint, "running_compiled", return_value=False),
+            mock.patch.object(entrypoint, "_doctor_venv_is_present", return_value=True),
+            mock.patch.object(entrypoint, "_doctor_same_path", return_value=True),
+        ):
+            assert entrypoint._missing_dependency_startup_help() == entrypoint.string(
+                "ui.missing_dependency_repair_venv", app_name=entrypoint.APP_NAME
+            )
+
+    def test_non_core_commands_work_without_installed_runtime_packages(self) -> None:
+        """Verify lightweight commands do not import Celune's core contract."""
+        project_root = Path(__file__).resolve().parents[1]
+        commands = (
+            (["--version"], 0),
+            (["help"], 0),
+            (["test"], 0),
+        )
+
+        for arguments, expected_code in commands:
+            check = subprocess.run(
+                [sys.executable, "-S", "main.py", *arguments],
+                cwd=project_root,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            assert check.returncode == expected_code, check.stderr
+            assert check.stderr == ""
+            if arguments == ["--version"]:
+                assert entrypoint.git_checkout_hint() not in check.stdout
+
+    def test_config_reports_its_single_missing_path_dependency(self) -> None:
+        """Verify config commands do not require the full runtime dependency set."""
+        project_root = Path(__file__).resolve().parents[1]
+        check = subprocess.run(
+            [sys.executable, "-S", "main.py", "config", "view"],
+            cwd=project_root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        assert check.returncode == entrypoint.EXIT_CODES.EXIT_MISSING_DEPENDENCIES.value
+        assert "platformdirs" in check.stdout
+        assert check.stderr == ""
 
     @WINDOWS_ONLY
     def test_auto_headless_mode_on_windows(self) -> None:
@@ -148,7 +238,7 @@ class TestDoctorCommand(CeluneTestCase):
         fake_support = mock.Mock(FakeBackend=SimpleNamespace())
 
         with mock.patch.object(
-            entrypoint.importlib,
+            entrypoint,
             "import_module",
             return_value=fake_support,
         ) as import_module:
@@ -284,7 +374,7 @@ class TestDoctorCommand(CeluneTestCase):
         assert exit_code == 0
         output = stdout.getvalue()
         assert "[WARN] Accelerator backend" in output
-        assert "performance may be impacted" in output
+        assert "slower or unavailable" in output
 
     @WINDOWS_ONLY
     def test_doctor_checks_warn_when_running_outside_project_venv(self) -> None:
@@ -307,6 +397,7 @@ class TestDoctorCommand(CeluneTestCase):
                 return_value=Path("C:/runtime/config.yaml"),
             ),
             mock.patch.object(entrypoint, "_doctor_torch_details", return_value=[]),
+            mock.patch.object(entrypoint, "is_git_checkout", return_value=False),
             mock.patch.object(entrypoint.shutil, "which", return_value="C:/bin/uv.exe"),
             mock.patch.object(
                 entrypoint,
@@ -328,6 +419,59 @@ class TestDoctorCommand(CeluneTestCase):
         assert not python_env.ok
         assert python_env.severity == "warning"
         assert "system interpreter" in python_env.detail
+        git_checkout = next(
+            check
+            for check in checks
+            if check.label == entrypoint.string("cli.doctor_git_checkout")
+        )
+        assert not git_checkout.ok
+        assert git_checkout.severity == "warning"
+        assert git_checkout.hint == entrypoint.git_checkout_hint()
+
+    def test_doctor_keeps_backend_packages_isolated_and_espeak_optional(self) -> None:
+        """Verify worker dependencies stay isolated and eSpeak only warns."""
+        checked_imports: list[str] = []
+        backend_packages = {
+            "faster_qwen3_tts",
+            "pocket_tts",
+            "dots_tts",
+            "voxcpm",
+        }
+
+        def binary_path(binary_name: str) -> Optional[Path]:
+            if binary_name == "espeak-ng":
+                return None
+            return Path("C:/bin/sox.exe")
+
+        with (
+            mock.patch.object(
+                entrypoint,
+                "_doctor_import",
+                side_effect=lambda name: checked_imports.append(name) or False,
+            ),
+            mock.patch.object(
+                entrypoint, "_doctor_binary_path", side_effect=binary_path
+            ),
+            mock.patch.object(
+                entrypoint,
+                "_doctor_config_path",
+                return_value=Path("C:/runtime/config.yaml"),
+            ),
+            mock.patch.object(entrypoint, "_doctor_torch_details", return_value=[]),
+            mock.patch.object(entrypoint, "is_git_checkout", return_value=True),
+            mock.patch.object(entrypoint.shutil, "which", return_value="C:/bin/uv.exe"),
+            mock.patch.object(entrypoint.Path, "exists", return_value=True),
+        ):
+            checks = entrypoint.doctor_checks()
+
+        assert backend_packages.isdisjoint(checked_imports)
+        espeak_check = next(
+            check
+            for check in checks
+            if check.label == entrypoint.string("cli.doctor_espeak_label")
+        )
+        assert not espeak_check.ok
+        assert espeak_check.severity == "warning"
 
     def test_doctor_torch_details_detects_zluda_and_runs_compute_test(self) -> None:
         """Verify doctor mirrors the app's ZLUDA warning and CUDA compute smoke test."""
@@ -343,9 +487,7 @@ class TestDoctorCommand(CeluneTestCase):
 
         with (
             mock.patch.object(entrypoint, "_doctor_import", return_value=True),
-            mock.patch.object(
-                entrypoint.importlib, "import_module", return_value=fake_torch
-            ),
+            mock.patch.object(entrypoint, "import_module", return_value=fake_torch),
             mock.patch.object(
                 entrypoint, "_doctor_run_compute_test", return_value="cuda:0"
             ),
@@ -357,3 +499,31 @@ class TestDoctorCommand(CeluneTestCase):
         assert "ZLUDA" in by_label["Accelerator backend"].detail
         assert by_label["CUDA compute test"].ok
         assert by_label["CUDA compute test"].detail == "Succeeded on cuda:0"
+
+    @pytest.mark.parametrize(
+        ("cuda_version", "expected_ok"),
+        (("12.8", True), ("13.0", True), ("12.9", False)),
+    )
+    def test_doctor_accepts_runtime_supported_cuda_versions(
+        self, cuda_version: str, expected_ok: bool
+    ) -> None:
+        """Verify doctor uses the versions supported by the core runtime."""
+        fake_torch = mock.Mock()
+        fake_torch.__version__ = "2.13.0+cu130"
+        fake_torch.version = mock.Mock(cuda=cuda_version, hip=None)
+        fake_torch.cuda.is_available.return_value = True
+        fake_torch.cuda.device_count.return_value = 0
+        fake_torch.backends = mock.Mock()
+
+        with (
+            mock.patch.object(entrypoint, "_doctor_import", return_value=True),
+            mock.patch.object(entrypoint, "import_module", return_value=fake_torch),
+            mock.patch.object(
+                entrypoint, "_doctor_detect_backend", return_value=("CUDA", True)
+            ),
+        ):
+            checks = entrypoint.doctor_torch_details()
+
+        by_label = {check.label: check for check in checks}
+        assert by_label["CUDA runtime"].ok is expected_ok
+        assert "12.8 or 13.0" in (by_label["CUDA runtime"].hint or "")

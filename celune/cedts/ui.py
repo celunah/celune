@@ -4,12 +4,12 @@
 from __future__ import annotations
 
 import threading
+from typing import cast
 from dataclasses import dataclass
 from collections.abc import Callable
-from typing import cast
 
-from .protocol import build_packet, decode_message, encode_message
 from ..typing.worker import WorkerValue
+from .protocol import build_packet, decode_message, encode_message
 
 UiTimedUpdateCallback = Callable[["UiTimedUpdate"], None]
 

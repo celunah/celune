@@ -3,7 +3,10 @@
 
 ---
 
-![Python](https://img.shields.io/badge/Python-3.12–3.14-cebaff) ![License](https://img.shields.io/badge/License-Apache%202.0-cebaff) ![Platform](https://img.shields.io/badge/Platform-Windows%2FLinux-cebaff) ![VRAM](https://img.shields.io/badge/VRAM-6%20GB–16%20GB+-cebaff)
+![Python](https://img.shields.io/badge/Python-3.12–3.14-cebaff)
+![License](https://img.shields.io/badge/License-Apache%202.0-cebaff)
+![Platform](https://img.shields.io/badge/Platform-Windows%2FLinux-cebaff)
+![VRAM](https://img.shields.io/badge/VRAM-6%20GB–16%20GB+-cebaff)
 
 Celune is a conversational character engine with agentic features.
 
@@ -37,15 +40,18 @@ Set the following value in Celune's configuration to change the operation mode:
 mode: converse  # speak|converse|agent
 ```
 
-- `speak` uses only Celune's speech features. It is best suited for performance use. It does not use any extra features.
+- `speak` uses only Celune's speech features. It is best suited for performance use.
+  It does not use any extra features.
 - `converse` uses Persona, allowing you to talk with any characters you've set up with Celune.
-- `agent` turns Celune into a conversational local agent, allowing her to perform actions on your computer while speaking as needed.
+- `agent` turns Celune into a conversational local agent, allowing her to perform actions
+  on your computer while speaking as needed.
 
 ## Note on development
 
 Celune is against the stance of "vibe coding" used in development.
 
-None of the 100,000+ lines of code in Celune were created solely using AI. AI tools (e.g. Codex) were only used to assist in faster development, iteration and solving issues.
+None of the 100,000+ lines of code in Celune were created solely using AI. AI tools (e.g. Codex)
+were only used to assist in faster development, iteration and solving issues.
 
 All decisions and implementations were reviewed, validated, and approved by human developers.
 
@@ -57,15 +63,22 @@ Visit <https://celune.readthedocs.io/en/latest> to view Celune documentation. Th
 
 ## License note
 
-Celune is licensed under the Apache 2.0 License, but the software may download certain models from [Hugging Face](https://huggingface.co) that are of varying licenses, such as [Apache 2.0](https://www.apache.org/licenses/LICENSE-2.0) (Qwen, etc.), [CC-BY-4.0](https://creativecommons.org/licenses/by/4.0/deed.en) (Pocket TTS), [GPL-3.0](https://opensource.org/license/gpl-3.0) (SeedVC), and MIT (Whisper, Silero VAD, etc.). Users of Celune are expected to read and comply with any applicable license terms for the models they intend to use.
+Celune is licensed under the Apache 2.0 License, but the software may download certain models
+from [Hugging Face](https://huggingface.co) that are of varying licenses,
+such as [Apache 2.0](https://www.apache.org/licenses/LICENSE-2.0) (Qwen, etc.), [CC-BY-4.0](https://creativecommons.org/licenses/by/4.0/deed.en) (Pocket TTS),
+[GPL-3.0](https://opensource.org/license/gpl-3.0) (SeedVC),
+and MIT (Whisper, Silero VAD, etc.). Users of Celune are expected to read and comply with any applicable
+license terms for the models they intend to use.
 
 Please note that Celune 4.3.2 and older are still licensed under the MIT license.
 
 ## Voices and samples
 
-Listen to the complete [voice sample gallery](https://celune.readthedocs.io/en/latest/development/samples/), with native audio players for the current and historical recordings. The page also documents the sample text, generation metadata, and model settings.
+This section was moved to Celune's documentation page.
 
-The current FLAC recordings use the Classic Remastered voice pack. Historical WAV recordings remain available for comparison with earlier voices and backend revisions.
+Current voice samples are available in the [voice sample gallery](https://celune.readthedocs.io/en/latest/development/samples/), including both new and old recordings of her voice, and details on how it was created.
+
+The current examples are recorded with Celune's Classic Remastered voice pack, with old recordings still available for reference.
 
 ## Voice packs
 
@@ -88,7 +101,7 @@ Browse the `demos` directory for demonstration content from the current version 
 > They may be interpreted as control sequences and cause unexpected vocalizations.
 > Refer to the model's known tags before including them.
 >
-> Do not mix multiple languages in one sentence.  
+> Do not mix multiple languages in one sentence.
 > Keep language boundaries clear and explicit.
 >
 > Some models may tolerate badly formatted inputs differently, but it is advised to correctly format your text inputs.
@@ -110,6 +123,12 @@ Samples were captured directly from Celune's output directory. No extra post-pro
 
 For details on voice production, check [VOICES.md](./docs/VOICES.md).
 
+> [!NOTE]
+> AI-generated voices may occasionally mispronounce words.
+> Minor pronunciation errors are expected, and do not necessarily indicate a software defect.
+>
+> If a word is mispronounced, try spelling it phonetically to guide the voice.
+
 ## System Requirements
 
 Celune requires [Python](https://python.org) 3.12, 3.13 or 3.14.
@@ -122,6 +141,7 @@ Celune also depends on external system dependencies that are not available in `p
 - **OpenRGB** - required to glow compatible devices
 - **Symbolic link support** - recommended on Windows for optimal operation
 - **C/C++ compiler** - to compile required dependencies for VoxCPM2
+- **eSpeak-NG** - for IPA-based forced alignment of captions
 
 Celune requires an RTX 30 series GPU or newer to use most features.
 
@@ -139,44 +159,28 @@ If Celune looks incorrect while your terminal supports True Color on Linux, run 
 COLORTERM=truecolor celune
 ```
 
-If Rubber Band is not installed or fails to run, Celune will speak at normal speed, and speed controls will be unavailable.
+If Rubber Band is not installed or fails to run, Celune will speak at normal speed, and speed controls
+will be unavailable.
 
 ## VRAM presets & requirements
 
-Celune has several VRAM presets available. Here are their baseline requirements:
+Celune leaves a 2 GB leeway in the host's memory to protect the system and other applications from memory exhaustion. Please note that this may affect her capabilities.
 
-> Low (6GB VRAM recommended)
->
-> This preset supports:
->
-> - Qwen3-TTS 0.6B / Celune Mini / LuxTTS
-> - SeedVC voice changer mode
-> - Normalization on CPU
->
-> Medium (8GB VRAM required)
->
-> This preset supports:
->
-> - All of the above, and:
-> - Qwen3-TTS 1.7B
->
-> High (12GB VRAM required)
->
-> This preset supports:
->
-> - All of the above, and:
-> - High-end TTS backends, such as VoxCPM2 or dots.tts MF
-> - Persona (4-bit) (not all models may fit, use Pocket TTS if uncertain)
->
-> Extra High (16GB VRAM and beyond)
->
-> This preset supports:
->
-> - All of the above, and:
-> - Persona (8-bit)
-> - Agentic features
-> - Normalization on GPU
-> - Upcoming advanced features
+| Preset   | Total VRAM    | Allocated budget |
+| -------- | ------------: | ---------------: |
+| `low`    | 6 GB          | 4 GiB            |
+| `medium` | 8 GB          | 6 GiB            |
+| `high`   | 12 GB         | 10 GiB           |
+| `xhigh`  | 16 GB or more | 14 GiB or more   |
+
+Use of Persona and related features (such as the agent mode) requires the `high` preset, or above.
+
+Large Persona models (~8B parameters) will only run on `xhigh`.
+Persona context is variable depending on Celune's operation mode: 2,048 tokens in basic conversation
+mode (`mode: converse`), and 8,192 tokens in agent mode (`mode: agent`).
+
+Combinations of presets and model selections were validated where possible, unchecked configurations
+display clear warnings and may fail with OOM errors, use them with caution.
 
 The desired preset may be set in Celune's configuration file. Refer to `default_config.yaml` for details.
 
@@ -187,9 +191,12 @@ Tested on: RTX 5070 (12 GB VRAM)
 
 ## Installation
 
-Download and extract the [latest SemVer binary release](https://github.com/celunah/celune/releases/latest) prior to running the below commands in an already cloned copy of Celune.
+Download and extract the [latest SemVer binary release](https://github.com/celunah/celune/releases/latest) prior to running the below commands in an already
+cloned copy of Celune.
 
-Alternatively, run `scripts/build_nuitka.ps1` or `scripts/build_nuitka.sh` to build Celune binaries by yourself, depending on your platform.
+Copies obtained via `Download ZIP` will not work.
+
+To manually compile Celune, configure and build the CMake `unsigned` or `signed` preset. The release target builds static libsodium, verifies the native launcher, compiles the Python core with Nuitka, then packages the artifacts.
 
 Don't have a copy yet? Run the following commands:
 
@@ -219,11 +226,12 @@ uv --version
 
 # Manual environment setup
 # Linux: uv sync --dev --all-extras
-# Windows: uv sync --dev --extra api
+# Windows: uv sync --dev --extra api --extra captions
 # The selected backend is installed automatically into Celune's AppData
 # environment the first time it is used.
 
 # Run
+# It is recommended to double check the environment with `celune doctor`.
 # Command Prompt users
 bin\celune
 
@@ -238,7 +246,8 @@ Don't run `celune-bin` manually. The `celune` binary is Celune's main entrypoint
 
 Both binaries are required for correct operation, `celune-bin` contains core code, while `celune` is the outer launcher.
 
-Celune can also run from other working directories, provided the main binary is installed correctly. The binary must always be located as part of the cloned repository, as it depends on files contained within it.
+Celune can also run from other working directories, provided the main binary is installed correctly. The binary must
+always be located as part of the cloned repository, as it depends on files contained within it.
 
 ### SoX & Rubber Band installation
 
@@ -285,11 +294,21 @@ rubberband --version
 
 ### OpenRGB installation
 
-To install OpenRGB, go to <https://openrgb.org/>, download and install a package appropriate for your platform. This will allow Celune to glow up your PC as she speaks.
+To install OpenRGB, go to <https://openrgb.org/>, download and install a package appropriate for your platform.
+
+This will allow Celune to glow up your PC as she speaks.
+
+### eSpeak-NG installation
+
+Install a [Windows version](https://github.com/espeak-ng/espeak-ng/releases/download/1.52.0/espeak-ng.msi) on your machine,
+or use your package manager to get an appropriate Linux version for your distribution.
+
+This will enable captioning and caption display.
 
 ### C/C++ compiler setup
 
-Celune's VoxCPM2 backend may require a C/C++ compiler to compile dependencies. To install a suitable compiler, run one of the following commands:
+Celune's VoxCPM2 backend may require a C/C++ compiler to compile dependencies. To install a suitable compiler,
+run one of the following commands:
 
 This is not required to use other backends, but you may need to install dependencies manually.
 
@@ -334,7 +353,7 @@ Symbolic links are recommended for best performance and compatibility.
 
 To enable them:
 
-- Enable **Developer Mode** in Windows settings  
+- Enable **Developer Mode** in Windows settings
   (Settings → Privacy & Security → For Developers)
 
 Without this, Celune may require elevated permissions or fall back to slower behavior.
@@ -367,13 +386,17 @@ Celune exposes the following core events to extensions:
 - `character_loaded`
 - `character_unloaded`
 
-For example extension usage, check the [example extension](./extensions/test.py).
+For an example, see the [Lua extension](./extensions/test.lua) or the
+[Python extension](./extensions/test.py).
 
 The aforementioned extension defines a basic usage case for Celune extensions.
 
+Celune extensions can be made in either Python or Lua. Lua extensions use Celune's singleton objects and do not require additional imports to run. They inherit the same feature set from Python extensions.
+
 ## Web UI
 
-Celune exposes a web interface for remote access to Celune. It reuses the Celune API commands to provide an interface for control.
+Celune exposes a web interface for remote access to Celune. It reuses the Celune API commands to provide
+an interface for control.
 It can be accessed via `/ui` on Celune's exposed API URL.
 
 ## Shortlink

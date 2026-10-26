@@ -2,19 +2,71 @@
 """Qwen3 backend implementation for Celune."""
 
 import time
+import inspect
 import contextlib
 from typing import Optional
 from collections.abc import Callable, Iterator
 
+import torch
+from huggingface_hub import snapshot_download
 from faster_qwen3_tts import FasterQwen3TTS
 from faster_qwen3_tts import __version__ as qwen3_ver
 
-from ...utils import available, custom_assert
-from ...i18n import string
-from ...typing.aliases import AudioChunk
-from ...cevoice import CEVoiceLoader, default_loader
-from ...paths import configure_numba_cache, huggingface_progress
 from .base import CeluneBackend, local_hf_offline_mode, cached_hf_snapshot_path
+from ...i18n import string
+from ...paths import (
+    huggingface_progress,
+    configure_numba_cache,
+    huggingface_hub_cache_dir,
+)
+from ...utils import available, custom_assert
+from ...cevoice import CEVoiceLoader, default_loader
+from ...modeling import QuantizedKVCache, create_quantized_kv_cache
+from ...registry.tts import TTS_DEFAULT_VOICE, QWEN3_DEFAULT_MODEL_ID
+from ...typing.aliases import AudioChunk
+from ...registry.consent import require_model_consent
+
+
+def _quantized_talker_cache(
+    model: FasterQwen3TTS,
+    enabled: bool,
+) -> Optional[tuple[torch.nn.Module, QuantizedKVCache]]:
+    """Prepare a cache and talker only when the installed Qwen path supports it."""
+    try:
+        if (
+            "parity_mode"
+            not in inspect.signature(model.generate_voice_clone_streaming).parameters
+        ):
+            return None
+    except (TypeError, ValueError):
+        return None
+
+    current: Optional[object] = model
+    for _ in range(4):
+        if current is None:
+            return None
+        talker = getattr(current, "talker", None)
+        if isinstance(talker, torch.nn.Module):
+            config = getattr(getattr(current, "config", None), "talker_config", None)
+            if config is None:
+                config = getattr(talker, "config", None)
+            try:
+                device = next(talker.parameters()).device
+            except StopIteration:
+                return None
+            if config is not None:
+                try:
+                    cache = create_quantized_kv_cache(
+                        config=config,
+                        device=device,
+                        enabled=enabled,
+                    )
+                except (TypeError, ValueError):
+                    return None
+                if cache is not None:
+                    return talker, cache
+        current = getattr(current, "model", None)
+    return None
 
 
 class Qwen3(CeluneBackend[FasterQwen3TTS]):
@@ -44,8 +96,8 @@ class Qwen3(CeluneBackend[FasterQwen3TTS]):
     # this may be reassigned to a different size model as needed
     # low VRAM presets use 0.6B model
     # medium and above VRAM presets use 1.7B model
-    clone_model: str = "Qwen/Qwen3-TTS-12Hz-1.7B-Base"
-    default_voice: Optional[str] = "balanced"
+    clone_model: str = QWEN3_DEFAULT_MODEL_ID
+    default_voice: Optional[str] = TTS_DEFAULT_VOICE
 
     def __init__(
         self,
@@ -53,8 +105,15 @@ class Qwen3(CeluneBackend[FasterQwen3TTS]):
         x_vector_only: bool = False,
         clone_model_id: Optional[str] = None,
         fatal: Optional[Callable[[], None]] = None,
+        quantize: bool = True,
+        quantize_kv_cache: bool = True,
     ) -> None:
-        super().__init__(log=log, fatal=fatal)
+        super().__init__(
+            log=log,
+            fatal=fatal,
+            quantize=quantize,
+            quantize_kv_cache=quantize_kv_cache,
+        )
         self.x_vector_only = x_vector_only
         self.model_name = clone_model_id or self.clone_model
         self._validate_refs()
@@ -164,17 +223,21 @@ class Qwen3(CeluneBackend[FasterQwen3TTS]):
         Returns:
             FasterQwen3TTS: The loaded Qwen3 TTS model instance.
         """
+        metadata = require_model_consent(model_id)
         available, path = self.model_is_available_locally(model_id)
+        if not available or path is None:
+            self.log(string("tts.model_download_start"), "info")
+            with huggingface_progress(self.report_progress):
+                path = snapshot_download(
+                    repo_id=model_id,
+                    revision=metadata.revision,
+                    cache_dir=str(huggingface_hub_cache_dir(create=True)),
+                )
         configure_numba_cache()
 
-        if available and path is not None:
-            with local_hf_offline_mode(), huggingface_progress(self.report_progress):
-                self.model = FasterQwen3TTS.from_pretrained(path)
-            return self.model
-
-        self.log(string("tts.model_download_start"), "info")
-        with huggingface_progress(self.report_progress):
-            self.model = FasterQwen3TTS.from_pretrained(model_id)
+        with local_hf_offline_mode(), huggingface_progress(self.report_progress):
+            self.model = FasterQwen3TTS.from_pretrained(path)
+        self.model = self.apply_runtime_quantization(self.model, model_id)
         return self.model
 
     def generate_stream(
@@ -223,12 +286,32 @@ class Qwen3(CeluneBackend[FasterQwen3TTS]):
 
         stream = None
         first_chunk_time: Optional[float] = None
+        cache_target = _quantized_talker_cache(model, self.quantize_kv_cache)
+        original_talker_forward = None
+        cache_injected = False
         try:
+            stream_kwargs = {}
+            if cache_target is not None:
+                talker, cache = cache_target
+                original_forward = talker.forward
+                original_talker_forward = original_forward
+
+                def forward_with_quantized_cache(*args, **call_kwargs):
+                    """Supply a fresh compact cache to Qwen's dynamic decode path."""
+                    nonlocal cache_injected
+                    if call_kwargs.get("use_cache") and not cache_injected:
+                        call_kwargs["past_key_values"] = cache
+                        cache_injected = True
+                    return original_forward(*args, **call_kwargs)
+
+                talker.forward = forward_with_quantized_cache
+                stream_kwargs["parity_mode"] = True
             stream = model.generate_voice_clone_streaming(
                 ref_audio=ref_wav,
                 ref_text=ref_text,
                 non_streaming_mode=False,  # VERY IMPORTANT ON >=0.2.5
                 xvec_only=self.x_vector_only,
+                **stream_kwargs,
                 **kwargs,
             )
 
@@ -249,3 +332,5 @@ class Qwen3(CeluneBackend[FasterQwen3TTS]):
             if stream is not None and available("close", obj=stream):
                 with contextlib.suppress(Exception):
                     stream.close()
+            if cache_target is not None and original_talker_forward is not None:
+                cache_target[0].forward = original_talker_forward

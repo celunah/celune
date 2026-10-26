@@ -6,16 +6,18 @@ import stat
 import zipfile
 import datetime
 import tempfile
-import subprocess
 from pathlib import Path
 from unittest import mock
 
 import pytest
+from git import Repo
+from git.exc import GitError
 
 from celune import i18n, updater, namedays
+from celune.vcs import get_revision, is_git_checkout
 
-from .support import CeluneTestCase
 from .platform import LINUX_ONLY
+from .support import CeluneTestCase
 
 
 class TestNameDay(CeluneTestCase):
@@ -123,32 +125,88 @@ class TestI18n(CeluneTestCase):
 class TestUpdater(CeluneTestCase):
     """Tests for pure updater decision logic."""
 
-    def test_missing_update_metadata_uses_active_locale(self) -> None:
-        """Verify missing update metadata is reported through the locale table."""
-        original_strings = dict(i18n.STRINGS)
-        original_locale = i18n.get_locale()
-        try:
-            i18n.STRINGS["zz"] = {
-                "cli.update_missing_metadata": "localized metadata missing",
-            }
-            i18n.set_locale("zz")
-            with tempfile.TemporaryDirectory() as temp_dir:
-                root = Path(temp_dir)
-                zip_path = root / "artifact.zip"
-                destination = root / "destination"
-                destination.mkdir()
-                with zipfile.ZipFile(zip_path, "w"):
-                    pass
+    def test_gitpython_helpers_read_repository_metadata(self) -> None:
+        """Verify repository state is read through GitPython's Repo API."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            repository = Repo.init(root)
+            try:
+                with repository.config_writer() as config:
+                    config.set_value("user", "name", "Celune Tests")
+                    config.set_value("user", "email", "celune@example.invalid")
+                (root / "note.txt").write_text("tracked", encoding="utf-8")
+                repository.index.add(["note.txt"])
+                commit = repository.index.commit("initial commit")
+                repository.create_tag("v5.0.4")
 
-                with self.assertRaisesRegex(
-                    updater.UpdateError,
-                    "localized metadata missing",
-                ):
-                    updater._extract_artifact_root(zip_path, destination)
-        finally:
-            i18n.set_locale(original_locale)
-            i18n.STRINGS.clear()
-            i18n.STRINGS.update(original_strings)
+                with mock.patch("celune.updater._repo_root", return_value=root):
+                    assert updater._is_git_checkout()
+                    assert is_git_checkout(root)
+                    assert updater._current_branch() == repository.active_branch.name
+                    assert updater._local_revision() == commit.hexsha
+                    assert updater._local_tag() == "5.0.4"
+                    assert not updater._has_local_changes()
+                    assert updater._run_git(["status", "--porcelain"]) == ""
+
+                assert get_revision(root) == commit.hexsha[:7]
+                (root / "untracked.txt").write_text("untracked", encoding="utf-8")
+                assert get_revision(root) == f"{commit.hexsha[:7]}*"
+                with mock.patch("celune.updater._repo_root", return_value=root):
+                    assert updater._has_local_changes()
+                    assert updater._run_git(["status", "--porcelain"]) == (
+                        "?? untracked.txt"
+                    )
+            finally:
+                repository.close()
+
+    def test_git_checkout_detection_rejects_uninitialized_source_archive(self) -> None:
+        """Verify a source directory without Git metadata is not a checkout."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            assert not is_git_checkout(Path(temp_dir))
+
+    def test_git_checkout_detection_handles_a_missing_git_executable(self) -> None:
+        """Verify missing Git is treated as unavailable repository metadata."""
+        with mock.patch(
+            "celune.vcs.open_repository",
+            side_effect=FileNotFoundError("git"),
+        ):
+            assert not is_git_checkout(Path.cwd())
+
+    def test_git_checkout_detection_rejects_a_parent_repository(self) -> None:
+        """Verify a Git parent does not make an extracted ZIP a checkout."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            repository = Repo.init(root)
+            try:
+                with repository.config_writer() as config:
+                    config.set_value("user", "name", "Celune Tests")
+                    config.set_value("user", "email", "celune@example.invalid")
+                (root / "tracked.txt").write_text("tracked", encoding="utf-8")
+                repository.index.add(["tracked.txt"])
+                repository.index.commit("initial commit")
+                source_archive = root / "source-archive"
+                source_archive.mkdir()
+
+                assert not is_git_checkout(source_archive)
+                assert get_revision(source_archive) == ""
+            finally:
+                repository.close()
+
+    def test_missing_update_metadata_uses_raw_exception_message(self) -> None:
+        """Keep missing update metadata exception details independent of locale."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            zip_path = root / "artifact.zip"
+            destination = root / "destination"
+            destination.mkdir()
+            with zipfile.ZipFile(zip_path, "w"):
+                pass
+
+            with self.assertRaisesRegex(
+                updater.UpdateError,
+                "downloaded artifact is missing update metadata",
+            ):
+                updater._extract_artifact_root(zip_path, destination)
 
     def test_extract_artifact_rejects_unsafe_zip_members(self) -> None:
         """Reject traversal, absolute, and symbolic-link ZIP members before extraction."""
@@ -210,35 +268,26 @@ class TestUpdater(CeluneTestCase):
             self.assertFalse((outside / "escaped.txt").exists())
 
     @LINUX_ONLY
-    def test_zip_safety_errors_use_localized_messages(self) -> None:
-        """Verify ZIP safety failures resolve their user-facing messages through i18n."""
+    def test_zip_safety_errors_keep_raw_exception_messages(self) -> None:
+        """Verify ZIP safety failures report raw technical exception messages."""
         symlink = zipfile.ZipInfo("release/link")
         symlink.create_system = 3
         symlink.external_attr = (stat.S_IFLNK | 0o777) << 16
         cases = (
             (
                 zipfile.ZipInfo("../escape.txt"),
-                "cli.update_unsafe_zip_member_path",
+                "unsafe ZIP member path",
             ),
-            (symlink, "cli.update_unsafe_zip_symbolic_link"),
+            (symlink, "unsafe ZIP symbolic link"),
         )
 
-        for member, key in cases:
-            with self.subTest(key=key):
-                with (
-                    mock.patch.object(
-                        updater, "string", wraps=i18n.string
-                    ) as localized_string,
-                    self.assertRaises(updater.UpdateError) as raised,
-                ):
+        for member, message in cases:
+            with self.subTest(message=message):
+                with self.assertRaises(updater.UpdateError) as raised:
                     updater._validate_zip_member(member, Path("destination"))
 
                 self.assertEqual(
-                    str(raised.exception),
-                    i18n.string(key, member=repr(member.filename)),
-                )
-                localized_string.assert_called_once_with(
-                    key, member=repr(member.filename)
+                    str(raised.exception), f"{message}: {member.filename!r}"
                 )
 
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -250,22 +299,12 @@ class TestUpdater(CeluneTestCase):
             (destination / "release").symlink_to(outside, target_is_directory=True)
 
             member = zipfile.ZipInfo("release/file.txt")
-            with (
-                mock.patch.object(
-                    updater, "string", wraps=i18n.string
-                ) as localized_string,
-                self.assertRaises(updater.UpdateError) as raised,
-            ):
+            with self.assertRaises(updater.UpdateError) as raised:
                 updater._validate_zip_member(member, destination)
 
             self.assertEqual(
                 str(raised.exception),
-                i18n.string(
-                    "cli.update_zip_member_escape", member=repr(member.filename)
-                ),
-            )
-            localized_string.assert_called_once_with(
-                "cli.update_zip_member_escape", member=repr(member.filename)
+                f"ZIP member escapes extraction directory: {member.filename!r}",
             )
 
     def test_extract_artifact_preserves_valid_nested_archives(self) -> None:
@@ -315,6 +354,56 @@ class TestUpdater(CeluneTestCase):
         if release is not None:
             assert release.version == "4.5.0"
             assert release.asset_url == "https://example.com/celune.zip"
+
+    def test_parse_release_selects_only_versioned_signed_archive(self) -> None:
+        """Verify updates select the signed archive matching the release tag."""
+        with mock.patch(
+            "celune.updater._platform_artifact_name",
+            return_value="Celune-win-x64",
+        ):
+            release = updater._parse_release(
+                {
+                    "tag_name": "v5.0.0",
+                    "assets": [
+                        {
+                            "name": "Celune-win-x64-v5.0.0.zip",
+                            "browser_download_url": "https://example.com/unsigned.zip",
+                        },
+                        {
+                            "name": "Celune-win-x64-v4.3.2-signed.zip",
+                            "browser_download_url": "https://example.com/wrong-version.zip",
+                        },
+                        {
+                            "name": "Celune-win-x64-v5.0.0-signed.zip",
+                            "browser_download_url": "https://example.com/signed.zip",
+                        },
+                    ],
+                }
+            )
+
+        assert release is not None
+        assert release.asset_url == "https://example.com/signed.zip"
+
+    def test_parse_release_ignores_unsigned_archive(self) -> None:
+        """Verify releases without a signed archive cannot be used for updates."""
+        with mock.patch(
+            "celune.updater._platform_artifact_name",
+            return_value="Celune-win-x64",
+        ):
+            release = updater._parse_release(
+                {
+                    "tag_name": "v5.0.0",
+                    "assets": [
+                        {
+                            "name": "Celune-win-x64-v5.0.0.zip",
+                            "browser_download_url": "https://example.com/unsigned.zip",
+                        }
+                    ],
+                }
+            )
+
+        assert release is not None
+        assert release.asset_url == ""
 
     def test_check_for_update_returns_none_for_dirty_worktree(self) -> None:
         """Verify dirty repositories suppress update prompts.
@@ -541,9 +630,14 @@ class TestUpdater(CeluneTestCase):
         """
         with (
             mock.patch("celune.updater._is_git_checkout", return_value=False),
-            pytest.raises(updater.UpdateError, match="did not find"),
+            pytest.raises(updater.UpdateError) as error,
         ):
             updater.update_to_latest()
+        assert (
+            "This action requires Git and a checkout with a commit; install Git if needed."
+            in str(error.value)
+        )
+        assert updater.git_checkout_hint() in str(error.value)
 
         with (
             mock.patch("celune.updater._is_git_checkout", return_value=True),
@@ -557,8 +651,8 @@ class TestUpdater(CeluneTestCase):
             mock.patch("celune.updater._has_local_changes", return_value=False),
             mock.patch(
                 "celune.updater._current_branch",
-                side_effect=subprocess.TimeoutExpired("git", 5),
+                side_effect=GitError("branch inspection failed"),
             ),
-            pytest.raises(updater.UpdateError, match="timed out"),
+            pytest.raises(updater.UpdateError, match="branch inspection failed"),
         ):
             updater.update_to_latest()

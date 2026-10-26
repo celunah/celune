@@ -5,22 +5,26 @@ from __future__ import annotations
 
 import threading
 from dataclasses import dataclass
-from collections.abc import Mapping, Sequence, Callable
+from collections.abc import Mapping, Callable, Sequence
 from typing import TYPE_CHECKING, Union, Optional, cast
 
 import torch
 import numpy as np
 
-from ..audio.dsp import resample_audio
-from ..paths import huggingface_progress
-from ..typing.aliases import AudioChunk
 from ..typing.persona import (
     WhisperScalar,
     WhisperSegmentPayload,
     WhisperGenerationPayload,
-    _WhisperModel,
-    _WhisperProcessor,
+    WhisperModel,
+    WhisperProcessor,
 )
+from ..audio.dsp import resample_audio
+from ..typing.aliases import AudioChunk
+from ..paths import huggingface_progress
+from ..registry import get_model_metadata
+from ..registry.consent import require_model_consent
+from ..registry.asr import DEFAULT_PERSONA_SPEECH_MODEL_ID
+from ..exceptions import ModelConsentDeclined, ModelConsentRequired
 
 if TYPE_CHECKING:
     # noinspection PyPep8Naming
@@ -29,7 +33,6 @@ if TYPE_CHECKING:
     from torch import device as Device
 
 
-DEFAULT_PERSONA_SPEECH_MODEL_ID = "openai/whisper-large-v3-turbo"
 PERSONA_SPEECH_NO_INPUT_TIMEOUT_SECONDS = 5.0
 PERSONA_SPEECH_END_DELAY_SECONDS = 1.5
 WHISPER_SAMPLE_RATE = 16000
@@ -66,14 +69,32 @@ class WhisperTranscriber:
         ] = None,
     ) -> None:
         self.model_id = model_id.strip() or DEFAULT_PERSONA_SPEECH_MODEL_ID
+        metadata = get_model_metadata(self.model_id)
+        self._revision = metadata.revision if metadata is not None else None
         self.language = language.strip() if language and language.strip() else None
-        self._processor: Optional[_WhisperProcessor] = None
-        self._model: Optional[_WhisperModel] = None
+        self._processor: Optional[WhisperProcessor] = None
+        self._model: Optional[WhisperModel] = None
         self._device: Optional[Device] = None
         self._dtype: Optional[DType] = None
         self._is_multilingual = True
         self._load_lock = threading.Lock()
+        self._inference_lock = threading.Lock()
         self._progress_callback = progress_callback
+
+    @property
+    def loaded_model(self) -> Optional[WhisperModel]:
+        """Return the loaded Whisper model, if speech recognition initialized it."""
+        return self._model
+
+    def unload(self) -> None:
+        """Release the Whisper model and its processor from this transcriber."""
+        with self._inference_lock, self._load_lock:
+            self._model = None
+            self._processor = None
+            self._device = None
+            self._dtype = None
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
     def _load_model(self) -> None:
         """Load the configured Whisper processor and model once."""
@@ -83,6 +104,9 @@ class WhisperTranscriber:
         with self._load_lock:
             if self._processor is not None and self._model is not None:
                 return
+
+            metadata = require_model_consent(self.model_id)
+            self._revision = metadata.revision
 
             from transformers import (
                 AutoProcessor,
@@ -96,19 +120,24 @@ class WhisperTranscriber:
             bnb_config = BitsAndBytesConfig(
                 load_in_8bit=True,
             )
+            model_kwargs: dict[str, str] = {}
+            if self._revision is not None:
+                model_kwargs["revision"] = self._revision
             with huggingface_progress(self._progress_callback):
                 model = cast(
-                    _WhisperModel,
+                    WhisperModel,
                     AutoModelForSpeechSeq2Seq.from_pretrained(
                         self.model_id,
                         dtype=torch.bfloat16,
                         low_cpu_mem_usage=True,
                         quantization_config=bnb_config,
                         device_map="auto",
+                        **model_kwargs,
                     ),
                 )
                 self._processor = cast(
-                    _WhisperProcessor, AutoProcessor.from_pretrained(self.model_id)
+                    WhisperProcessor,
+                    AutoProcessor.from_pretrained(self.model_id, **model_kwargs),
                 )
             model.eval()
             generation_config = getattr(model, "generation_config", None)
@@ -120,6 +149,16 @@ class WhisperTranscriber:
             self._dtype = torch.bfloat16
 
     def _decode(
+        self,
+        audio: AudioChunk,
+        sample_rate: int,
+        return_segments: bool = False,
+    ) -> Union[str, tuple[WhisperSegment, ...]]:
+        """Serialize one Whisper inference and decode its result."""
+        with self._inference_lock:
+            return self._decode_unlocked(audio, sample_rate, return_segments)
+
+    def _decode_unlocked(
         self,
         audio: AudioChunk,
         sample_rate: int,
@@ -176,7 +215,7 @@ class WhisperTranscriber:
 
     @staticmethod
     def _decode_segments(
-        processor: _WhisperProcessor,
+        processor: WhisperProcessor,
         generated: WhisperGenerationPayload,
     ) -> tuple[WhisperSegment, ...]:
         """Extract timestamped text segments from a Whisper generation result."""
@@ -238,7 +277,7 @@ class WhisperTranscriber:
 
     @staticmethod
     def _decode_words(
-        processor: _WhisperProcessor,
+        processor: WhisperProcessor,
         raw_segment: WhisperSegmentPayload,
         segment_start: float,
         segment_end: float,
@@ -423,6 +462,8 @@ class WhisperTranscriber:
                 WHISPER_SAMPLE_RATE,
                 return_segments=True,
             )
+        except (ModelConsentDeclined, ModelConsentRequired):
+            raise
         except (RuntimeError, TypeError, ValueError):
             return ()
         return result if isinstance(result, tuple) else ()

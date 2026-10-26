@@ -3,9 +3,11 @@
 
 import pathlib
 import warnings
-import contextlib
 import threading
+import contextlib
 from pathlib import Path
+
+# noinspection PyProtectedMember
 from typing import Optional, cast
 from collections.abc import Callable
 
@@ -18,12 +20,9 @@ from matplotlib import pyplot as plt
 from matplotlib import colors as mcolors
 from matplotlib.projections import PolarAxes
 from matplotlib import rcParams, font_manager
-from transformers import AutoModel, AutoProcessor
 
 from .constants import (
     N_A_NUMERIC,
-    VOICE_EMBEDDING_MODEL,
-    remote_code_model_revision,
 )
 from .i18n import string
 from .utils import run_async
@@ -37,7 +36,10 @@ from .typing.analysis import (
 )
 from .typing.aliases import AudioChunk
 from .paths import huggingface_progress
+from .compat import torchao_compatibility
+from .registry.other import VOICE_EMBEDDING_MODEL
 from .cevoice import ManifestValue, default_loader
+from .registry.consent import require_model_consent
 
 matplotlib.use("Agg")
 
@@ -280,7 +282,7 @@ def _embedding_tensor_to_numpy(value: EmbeddingPayload) -> npt.NDArray[np.float3
         elif len(value) == 1:
             value = next(iter(value.values()))
         else:
-            raise ValueError(string("analysis.reference_embedding_dict_missing_key"))
+            raise ValueError("reference embedding dict has no speaker_embedding key")
 
     if isinstance(value, torch.Tensor):
         array = value.detach().cpu().float().numpy()
@@ -289,16 +291,9 @@ def _embedding_tensor_to_numpy(value: EmbeddingPayload) -> npt.NDArray[np.float3
 
     array = np.squeeze(array).astype(np.float32, copy=False)
     if array.ndim != 1:
-        raise ValueError(
-            string("analysis.reference_embedding_dimension_invalid", shape=array.shape)
-        )
+        raise ValueError(f"expected a 1D embedding, got shape {array.shape}")
     if array.shape[0] != 2048:
-        raise ValueError(
-            string(
-                "analysis.reference_embedding_size_invalid",
-                size=array.shape[0],
-            )
-        )
+        raise ValueError(f"expected a 2048-size embedding, got {array.shape[0]}")
     return array
 
 
@@ -306,34 +301,30 @@ def _load_reference_embedding(voice: str) -> npt.NDArray[np.float32]:
     """Load a packaged Qwen3 reference embedding for your character's voice."""
     loader = default_loader()
     if loader is None:
-        raise FileNotFoundError(string("analysis.reference_embedding_bundle_missing"))
+        raise FileNotFoundError(
+            "no compatible CEVOICE/CECHAR package with reference embeddings is loaded"
+        )
     try:
         ref_path = loader.materialize(voice, "pt")
     except KeyError as error:
-        raise FileNotFoundError(
-            string("analysis.reference_embedding_not_found", voice=voice)
-        ) from error
+        raise FileNotFoundError(f"{voice}.pt not found") from error
     try:
         value = torch.load(ref_path, map_location="cpu", weights_only=True)
     except Exception as error:
-        raise ValueError(
-            string("analysis.invalid_reference_embedding", voice=voice)
-        ) from error
+        raise ValueError(f"invalid reference embedding for {voice}") from error
 
     if isinstance(value, dict):
         if set(value) != {"speaker_embedding"}:
-            raise ValueError(
-                string("analysis.invalid_reference_embedding", voice=voice)
-            )
+            raise ValueError(f"invalid reference embedding for {voice}")
         value = value["speaker_embedding"]
     if not isinstance(value, torch.Tensor):
-        raise TypeError(string("analysis.invalid_reference_embedding", voice=voice))
+        raise TypeError(f"invalid reference embedding for {voice}")
     if value.dtype != torch.float32 or value.ndim not in {1, 2}:
-        raise ValueError(string("analysis.invalid_reference_embedding", voice=voice))
+        raise ValueError(f"invalid reference embedding for {voice}")
     if value.shape not in {(2048,), (1, 2048)}:
-        raise ValueError(string("analysis.invalid_reference_embedding", voice=voice))
+        raise ValueError(f"invalid reference embedding for {voice}")
     if not bool(torch.isfinite(value).all()):
-        raise ValueError(string("analysis.invalid_reference_embedding", voice=voice))
+        raise ValueError(f"invalid reference embedding for {voice}")
     return _embedding_tensor_to_numpy(value)
 
 
@@ -362,24 +353,28 @@ def _load_embedding_model(
     global _EMBEDDING_MODEL, _EMBEDDING_PROCESSOR
 
     if _EMBEDDING_MODEL is None or _EMBEDDING_PROCESSOR is None:
-        revision = remote_code_model_revision(VOICE_EMBEDDING_MODEL)
-        with huggingface_progress(progress_callback):
-            _EMBEDDING_PROCESSOR = cast(
-                EmbeddingProcessor,
-                AutoProcessor.from_pretrained(
-                    VOICE_EMBEDDING_MODEL,
-                    trust_remote_code=True,
-                    revision=revision,
-                ),
-            )
-            _EMBEDDING_MODEL = cast(
-                EmbeddingModel,
-                AutoModel.from_pretrained(
-                    VOICE_EMBEDDING_MODEL,
-                    trust_remote_code=True,
-                    revision=revision,
-                ),
-            )
+        metadata = require_model_consent(VOICE_EMBEDDING_MODEL)
+        revision = metadata.revision
+        with torchao_compatibility():
+            from transformers import AutoModel, AutoProcessor
+
+            with huggingface_progress(progress_callback):
+                _EMBEDDING_PROCESSOR = cast(
+                    EmbeddingProcessor,
+                    AutoProcessor.from_pretrained(
+                        VOICE_EMBEDDING_MODEL,
+                        trust_remote_code=True,
+                        revision=revision,
+                    ),
+                )
+                _EMBEDDING_MODEL = cast(
+                    EmbeddingModel,
+                    AutoModel.from_pretrained(
+                        VOICE_EMBEDDING_MODEL,
+                        trust_remote_code=True,
+                        revision=revision,
+                    ),
+                )
         _EMBEDDING_MODEL.eval()
         with contextlib.suppress(AttributeError):
             _EMBEDDING_MODEL.to(torch.device("cpu"))
@@ -395,15 +390,16 @@ def _compute_qwen3_embedding(
     ] = None,
 ) -> npt.NDArray[np.float32]:
     """Compute a Qwen3 ECAPA-TDNN speaker embedding for a mono waveform."""
-    processor, model = _load_embedding_model(progress_callback)
-    inputs = processor(y, sampling_rate=sr)
-    inputs = {
-        key: value.to("cpu") if isinstance(value, torch.Tensor) else value
-        for key, value in inputs.items()
-    }
+    with torchao_compatibility():
+        processor, model = _load_embedding_model(progress_callback)
+        inputs = processor(y, sampling_rate=sr)
+        inputs = {
+            key: value.to("cpu") if isinstance(value, torch.Tensor) else value
+            for key, value in inputs.items()
+        }
 
-    with torch.no_grad():
-        output = model(**inputs).last_hidden_state
+        with torch.no_grad():
+            output = model(**inputs).last_hidden_state
 
     return _embedding_tensor_to_numpy(output)
 
@@ -415,7 +411,7 @@ def _cosine_similarity_percent(
     """Return cosine similarity and a clipped percentage-style score."""
     denom = float(np.linalg.norm(embedding) * np.linalg.norm(reference))
     if denom <= 1e-9:
-        raise ValueError(string("analysis.embedding_norm_is_zero"))
+        raise ValueError("embedding norm is zero")
 
     cosine = float(np.dot(embedding, reference) / denom)
     cosine = float(np.clip(cosine, -1.0, 1.0))
@@ -1091,7 +1087,7 @@ def analyze_voice_audio(
     )
 
 
-def _schedule_voice_analysis(
+def schedule_voice_analysis(
     audio: npt.NDArray[np.float32],
     sr: int,
     display_name: str,

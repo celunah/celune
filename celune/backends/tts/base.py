@@ -25,11 +25,17 @@ import soundfile as sf
 from huggingface_hub import snapshot_download
 
 from ...i18n import string
+from ...vram import backend_vram_report, is_cuda_out_of_memory, release_cuda_after_oom
 from ...paths import temp_data_dir, huggingface_progress, huggingface_hub_cache_dir
 from ...utils import discard
 from ...cevoice import CEVoiceLoader, default_loader
 from ...constants import N_A_NUMERIC
-from ...typing.aliases import AudioChunk, LogLevel, RuntimeValue
+from ...exceptions import BackendError
+from .quantization import QuantizationMode, quantization_mode, quantize_component
+from ...registry.tts import ModelContract
+from ...registry.tts import model_contract as resolve_model_contract
+from ...typing.common import JSON
+from ...typing.aliases import LogLevel, AudioChunk, RuntimeValue
 from ...typing.backends import BackendModel
 
 __all__ = [
@@ -37,6 +43,7 @@ __all__ = [
     "CeluneBackend",
     "cached_hf_snapshot_path",
     "local_hf_offline_mode",
+    "to_numpy_audio",
 ]
 
 
@@ -45,7 +52,7 @@ _MAX_REFERENCE_SECONDS = 10.0
 _RUNTIME_PRIMITIVE_TYPES = (str, bytes, bytearray, int, float, bool, type(None))
 
 
-def _to_numpy_audio(chunk: Union[torch.Tensor, np.ndarray]) -> AudioChunk:
+def to_numpy_audio(chunk: Union[torch.Tensor, np.ndarray]) -> AudioChunk:
     """Convert one streamed tensor or array to normalized one-dimensional audio."""
     if isinstance(chunk, torch.Tensor):
         audio = (
@@ -91,13 +98,16 @@ def _call_runtime_hook_if_present(value: RuntimeValue, name: str) -> bool:
 
 
 def cached_hf_snapshot_path(
-    model: str, expected_files: list[str]
+    model: str,
+    expected_files: list[str],
+    revision: Optional[str] = None,
 ) -> tuple[bool, Optional[str]]:
     """Return whether a cached Hugging Face cache path for a model is available and usable.
 
     Args:
         model: The model ID to return a cache path for.
         expected_files: The files that are expected to already exist in the cache path, if found.
+        revision: Exact commit to inspect when the model is not built in.
 
     Returns:
         tuple[bool, Optional[str]]: Whether there is a usable cache path for the model, and its location.
@@ -106,14 +116,19 @@ def cached_hf_snapshot_path(
         str(huggingface_hub_cache_dir()),
         f"models--{model.replace('/', '--')}",
     )
-    refs_main = os.path.join(model_dir, "refs", "main")
     snapshot_dir = os.path.join(model_dir, "snapshots")
+    from ...registry import get_model_metadata
 
-    if not os.path.exists(refs_main):
-        return False, None
-
-    with open(refs_main, encoding="utf-8") as f:
-        commit = f.read().strip()
+    metadata = get_model_metadata(model)
+    commit = metadata.revision if metadata is not None else revision
+    if metadata is not None and revision is not None and revision != metadata.revision:
+        raise ValueError("built-in model cache lookup requires its registry revision")
+    if commit is None:
+        refs_main = os.path.join(model_dir, "refs", "main")
+        if not os.path.exists(refs_main):
+            return False, None
+        with open(refs_main, encoding="utf-8") as f:
+            commit = f.read().strip()
 
     snapshot_path = os.path.join(snapshot_dir, commit)
     if not os.path.isdir(snapshot_path):
@@ -238,6 +253,9 @@ class CeluneBackend[ModelT](ABC):
         log: Callable[[str, str], None],
         model_name: Optional[str] = None,
         fatal: Optional[Callable[[], None]] = None,
+        quantize: bool = True,
+        quantize_kv_cache: bool = True,
+        singing: bool = False,
     ) -> None:
         self.model_name: Optional[str]
         if model_name is not None:
@@ -250,6 +268,12 @@ class CeluneBackend[ModelT](ABC):
         self.model: Optional[ModelT] = None
         self.log = log
         self._fatal_callback = fatal
+        self.quantization_requested = quantize
+        self.quantize_kv_cache = quantize_kv_cache
+        self.singing = singing
+        self.quantization_mode: Optional[QuantizationMode] = quantization_mode(quantize)
+        self.quantization_active = False
+        self.quantization_attempted = False
         self._progress_callback: Optional[
             Callable[[Optional[float], Optional[float]], None]
         ] = None
@@ -260,6 +284,21 @@ class CeluneBackend[ModelT](ABC):
     def __str__(self) -> str:
         """Return the backend name for callers using str(CeluneBackend(...))."""
         return self.name
+
+    def cesn_to_model(self, text: str) -> str:
+        """Convert Celune Singing Notation to this backend's input format.
+
+        Celune validates the original CESN before invoking this hook so backend
+        errors can retain the user's source locations. The base implementation
+        preserves the notation for backends without a custom singing representation.
+
+        Args:
+            text: Complete CESN notation from the user's request, if any.
+
+        Returns:
+            str: Backend-ready text. The base implementation returns ``text`` unchanged.
+        """
+        return text
 
     def bind_fatal(self, fatal: Optional[Callable[[], None]]) -> None:
         """Bind the active Celune fatal callback to this backend instance.
@@ -412,6 +451,115 @@ class CeluneBackend[ModelT](ABC):
 
         raise ValueError(f"{self.name} does not define a default model")
 
+    def model_contract(self, model_id: str, **kwargs: object) -> ModelContract:
+        """Return the pinned upstream weight contract for one model.
+
+        Args:
+            model_id: The Hugging Face repository identifier to resolve.
+            kwargs: Reserved for backend-specific contract variants.
+
+        Returns:
+            ModelContract: The immutable artifact and tensor inventory contract.
+
+        Raises:
+            ModelContractError: No pinned contract exists for the model.
+        """
+        del kwargs
+        return resolve_model_contract(self.name, model_id)
+
+    def quantization_components(
+        self, model: ModelT, contract: ModelContract
+    ) -> Mapping[str, torch.nn.Module]:
+        """Return loaded module roots corresponding to contract components.
+
+        Backends with wrapper objects override this hook. A single native
+        ``torch.nn.Module`` can use the component itself as its root.
+        """
+        components: dict[str, torch.nn.Module] = {}
+        for component in contract.components:
+            candidates = (
+                getattr(model, component.name, None),
+                getattr(getattr(model, "model", None), component.name, None),
+                model,
+                getattr(model, "model", None),
+            )
+            for candidate in candidates:
+                if isinstance(candidate, torch.nn.Module):
+                    components[component.name] = candidate
+                    break
+        if (
+            len(contract.components) == 1
+            and not components
+            and isinstance(model, torch.nn.Module)
+        ):
+            components[contract.components[0].name] = model
+        return components
+
+    def apply_runtime_quantization(
+        self,
+        model: ModelT,
+        model_id: str,
+        **contract_kwargs: RuntimeValue,
+    ) -> ModelT:
+        """Apply the contract-approved runtime quantization to one model.
+
+        Args:
+            model: Loaded BF16 model instance.
+            model_id: Model identifier used to resolve its pinned contract.
+            contract_kwargs: Backend-specific contract variant selectors.
+
+        Returns:
+            ModelT: The same model after in-place quantization.
+
+        Raises:
+            BackendError: Quantization was requested but no safe conversion
+                could be completed.
+            InvalidCheckpoint: The model state violates its contract.
+        """
+        if not getattr(self, "quantization_requested", False):
+            self.quantization_active = False
+            return model
+
+        selected_mode = quantization_mode(True)
+        self.quantization_attempted = True
+        if selected_mode is None:
+            self.quantization_active = False
+            self.quantization_mode = None
+            return model
+
+        contract = self.model_contract(model_id, **contract_kwargs)
+        components = self.quantization_components(model, contract)
+        converted = 0
+        for component in contract.components:
+            module = components.get(component.name)
+            if module is None or component.quantization is None:
+                continue
+            converted += quantize_component(
+                module,
+                component,
+                mode=selected_mode,
+                backend=self.name,
+            )
+
+        if converted == 0:
+            raise BackendError(
+                f"{self.name} has no contract-approved layers for {selected_mode} quantization",
+                error_code="tts_quantization_empty",
+            )
+        self.quantization_mode = selected_mode
+        self.quantization_active = True
+        return model
+
+    def disable_runtime_quantization(self) -> None:
+        """Disable quantization before a BF16 recovery load."""
+        self.quantization_requested = False
+        self.quantization_mode = None
+        self.quantization_active = False
+
+    def runtime_quantization_active(self) -> bool:
+        """Return whether this backend currently owns a quantized model."""
+        return self.quantization_active
+
     @property
     def all_model_ids(self) -> list[str]:
         """Return every known model identifier for this backend.
@@ -495,7 +643,25 @@ class CeluneBackend[ModelT](ABC):
         if self.model_name is None:
             raise ValueError(f"{self.name} does not have a configured model to load")
 
-        self.model = self.load_model(self.model_name)
+        from ...registry.consent import require_model_consent
+
+        require_model_consent(self.model_name)
+
+        try:
+            self.model = self.load_model(self.model_name)
+        except Exception as error:
+            if is_cuda_out_of_memory(error):
+                with contextlib.suppress(Exception):
+                    self.unload_model()
+                release_cuda_after_oom()
+                raise
+            if not getattr(self, "quantization_attempted", False) or not getattr(
+                self, "quantization_requested", False
+            ):
+                raise
+            self.disable_runtime_quantization()
+            self.unload_model()
+            self.model = self.load_model(self.model_name)
         return self.model
 
     def unload_model(self, release_cuda_cache: bool = True) -> None:
@@ -532,16 +698,25 @@ class CeluneBackend[ModelT](ABC):
                 truncated_path.unlink(missing_ok=True)
         self._truncated_reference_paths.clear()
 
+    def vram_report(self) -> JSON:
+        """Return the backend model's memory footprint and process memory."""
+        return backend_vram_report(self.name, self.model)
+
     def preload_models(self) -> None:
         """Ensure all required models are available locally."""
+        from ...registry.consent import require_model_consent
+
+        cache_dir = huggingface_hub_cache_dir(create=True)
         for model_id in self.all_model_ids:
+            metadata = require_model_consent(model_id)
             available, _ = self.model_is_available_locally(model_id)
             if not available:
                 self.log(string("tts.model_downloading", model_id=model_id), "info")
                 with huggingface_progress(self.report_progress):
                     snapshot_download(
                         repo_id=model_id,
-                        cache_dir=str(huggingface_hub_cache_dir(create=True)),
+                        revision=metadata.revision,
+                        cache_dir=str(cache_dir),
                     )
             else:
                 self.log(string("tts.model_available", model_id=model_id), "info")

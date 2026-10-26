@@ -10,7 +10,6 @@ import sounddevice as sd
 from transformers.modeling_utils import PreTrainedModel
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 
-from ..locks import ComponentLockManager
 from ..chroma import AudioRGBGlow
 from ..config import Config
 from ..cevoice import CEVoicePersona
@@ -22,7 +21,7 @@ from ..backends.vc import CeluneVCBackend
 from ..backends.tts import CeluneBackend
 from ..persona.impl import PersonaClient
 from ..typing.locks import ComponentLockOwner, ComponentBusyResult
-from ..typing.modes import BackendMode
+from ..typing.modes import BackendMode, OperationState
 from ..typing.celune import (
     IdleCallback,
     ErrorCallback,
@@ -40,6 +39,7 @@ from ..typing.celune import (
 from ..typing.common import JSON, JSONSerializable
 from ..typing.aliases import LogLevel, AudioChunks
 from ..typing.backends import BackendModel
+from ..core.concurrency import ComponentLockManager
 from ..extensions.manager import CeluneExtensionManager
 
 
@@ -72,7 +72,6 @@ class CeluneBackendState:
     vc_backend_spec: Optional[VCBackendRecipe] = None
     vc_backend: Optional[CeluneVCBackend] = None
     voice_conversion_backend: str = ""
-    vc_pitch_shift: int = 0
     vc_f0_condition: bool = False
     input_mode: str = "text_to_speech"
     chunk_size: int = 0
@@ -181,6 +180,7 @@ class CeluneAudioState:
 class CeluneRuntimeState:
     """Top-level lifecycle and runtime integration state."""
 
+    operation_state: OperationState = OperationState.NORMAL
     closed: bool = False
     backend_mode: BackendMode = "normal"
     regenerate: bool = False
@@ -270,7 +270,6 @@ CELUNE_FORWARDED_PROPERTIES = (
         "_backend_state",
         "voice_conversion_backend",
     ),
-    ForwardedPropertySpec("vc_pitch_shift", "_backend_state", "vc_pitch_shift"),
     ForwardedPropertySpec("vc_f0_condition", "_backend_state", "vc_f0_condition"),
     ForwardedPropertySpec("input_mode", "_backend_state", "input_mode"),
     ForwardedPropertySpec("chunk_size", "_backend_state", "chunk_size"),
@@ -337,24 +336,24 @@ CELUNE_FORWARDED_PROPERTIES = (
         "_playback_generation", "_pipeline_state", "playback_generation"
     ),
     ForwardedPropertySpec(
-        "_next_playback_source_id",
+        "next_playback_source_id",
         "_pipeline_state",
         "next_playback_source_id",
     ),
     ForwardedPropertySpec(
-        "_playback_source_statuses",
+        "playback_source_statuses",
         "_pipeline_state",
         "playback_source_statuses",
     ),
     ForwardedPropertySpec(
-        "_playback_source_meta", "_pipeline_state", "playback_source_meta"
+        "playback_source_meta", "_pipeline_state", "playback_source_meta"
     ),
     ForwardedPropertySpec(
-        "_playback_caption_states", "_pipeline_state", "playback_caption_states"
+        "playback_caption_states", "_pipeline_state", "playback_caption_states"
     ),
     ForwardedPropertySpec("_caption_source_id", "_pipeline_state", "caption_source_id"),
     ForwardedPropertySpec(
-        "_playback_chunk_last_queued_at",
+        "playback_chunk_last_queued_at",
         "_pipeline_state",
         "playback_chunk_last_queued_at",
     ),
@@ -469,6 +468,7 @@ CELUNE_FORWARDED_PROPERTIES = (
     ForwardedPropertySpec("kept_sfx_audio", "_audio_state", "kept_sfx_audio"),
     ForwardedPropertySpec("regenerate", "_runtime_state", "regenerate"),
     ForwardedPropertySpec("backend_mode", "_runtime_state", "backend_mode"),
+    ForwardedPropertySpec("operation_state", "_runtime_state", "operation_state"),
     ForwardedPropertySpec("locked", "_runtime_state", "locked"),
     ForwardedPropertySpec("loaded", "_runtime_state", "loaded"),
     ForwardedPropertySpec("sleeping", "_runtime_state", "sleeping"),

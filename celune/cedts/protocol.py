@@ -12,6 +12,7 @@ from collections.abc import Mapping, Sequence
 
 import numpy as np
 
+from ..i18n import string
 from ..exceptions import (
     CEDTSError,
     CEDTSEOFError,
@@ -19,7 +20,6 @@ from ..exceptions import (
     CEDTSPayloadError,
     CEDTSProtocolError,
 )
-from ..i18n import string
 from ..typing.common import JSONSerializable
 from ..typing.worker import (
     WorkerValue,
@@ -30,12 +30,14 @@ from ..typing.worker import (
 from ..dataclasses.pipeline import AudioOutput, VoiceConversionRequest
 
 __all__ = [
+    "CALL_ARGUMENT_SCHEMAS",
     "CEDTS_VERSION",
     "CONTROL_PACKET_KINDS",
     "CORE_CAPABILITIES",
     "DEFAULT_CEDTS_LIMITS",
     "SUPPORTED_OPERATIONS",
     "WORKER_CAPABILITIES",
+    "WORKER_TRACEBACK_MARKER",
     "CEDTSLimits",
     "WorkerPayload",
     "build_packet",
@@ -93,7 +95,8 @@ _AUDIO_MEDIA_TYPES = frozenset(
 _CEDTS_AUDIO_PEAK = np.float32(0.95)
 _TENSOR_MEDIA_TYPES = frozenset({"application/x-tensor"})
 _VALID_DTYPES = frozenset({"bool", "float32", "float64", "int8", "int16", "uint8"})
-CEDTS_VERSION = 1
+CEDTS_VERSION = (1, 2)
+WORKER_TRACEBACK_MARKER = "\n\n--- CEDTS worker traceback ---\n"
 CONTROL_PACKET_KINDS = frozenset(
     {
         "hello",
@@ -136,6 +139,16 @@ _PROTOCOL_OPERATIONS = frozenset(
 )
 _UI_OPERATIONS = frozenset({"ui_timed_update"})
 _VALID_OPERATIONS = SUPPORTED_OPERATIONS | _PROTOCOL_OPERATIONS | _UI_OPERATIONS
+CALL_ARGUMENT_SCHEMAS: dict[str, tuple[frozenset[str], frozenset[str]]] = {
+    "disable_runtime_quantization": (frozenset({"method"}), frozenset()),
+    "runtime_quantization_active": (frozenset({"method"}), frozenset()),
+    "vram_report": (frozenset({"method"}), frozenset()),
+    "resolve_generation_language": (frozenset({"method", "lang"}), frozenset()),
+    "should_reload_for_language": (frozenset({"method", "lang"}), frozenset()),
+    "cesn_to_model": (frozenset({"method", "text"}), frozenset({"voice_bundle"})),
+    "convert_live": (frozenset({"method", "request"}), frozenset()),
+    "stop_live": (frozenset({"method"}), frozenset()),
+}
 _EVENT_OPERATIONS = frozenset(
     {
         "fatal",
@@ -286,7 +299,7 @@ def build_packet(
     if reply_to is not None and not isinstance(reply_to, str):
         raise _worker_protocol_error("backend_worker_packet_reply_target_is_invalid")
     return {
-        "cedts_version": CEDTS_VERSION,
+        "cedts_version": cast(WorkerValue, list(CEDTS_VERSION)),
         "kind": kind,
         "message_id": message_id or uuid4().hex,
         "reply_to": reply_to,
@@ -848,7 +861,6 @@ def _encode_value(value: WorkerValue, builder: _PayloadBuilder) -> object:
             "target_character": value.target_character,
             "target_references": [str(path) for path in value.target_references],
             "label": value.label,
-            "pitch_shift": value.pitch_shift,
             "f0_condition": value.f0_condition,
         }
     if isinstance(value, AudioOutput):
@@ -972,6 +984,7 @@ def _decode_value(value: object, payloads: Mapping[str, WorkerPayload]) -> Worke
             sample_rate = _typed_int(value.get("sample_rate"), "sample_rate")
             _typed_optional(value.get("target_voice"), str, "target_voice")
             _typed_optional(value.get("target_character"), str, "target_character")
+            # Older clients may still send this retired output pitch control.
             _typed_optional(value.get("pitch_shift"), int, "pitch_shift")
             _typed_optional(value.get("f0_condition"), bool, "f0_condition")
             return VoiceConversionRequest(
@@ -987,7 +1000,6 @@ def _decode_value(value: object, payloads: Mapping[str, WorkerPayload]) -> Worke
                 label=_typed_string(
                     value.get("label", string("ui.audio_input_label")), "label"
                 ),
-                pitch_shift=value.get("pitch_shift"),
                 f0_condition=value.get("f0_condition"),
             )
         if value_type == "audio_output":
@@ -1202,11 +1214,15 @@ def _validate_packet(
     reply_to = packet.get("reply_to")
     operation = packet.get("operation")
     data = packet.get("data")
+    if not _is_current_version(version):
+        raise _worker_protocol_error(
+            "backend_worker_packet_envelope_is_invalid",
+            field="cedts_version",
+            received=repr(version)[:48],
+            expected=repr(list(CEDTS_VERSION)),
+        )
     if (
-        not isinstance(version, int)
-        or isinstance(version, bool)
-        or version != CEDTS_VERSION
-        or not isinstance(kind, str)
+        not isinstance(kind, str)
         or kind not in CONTROL_PACKET_KINDS
         or not isinstance(message_id, str)
         or not message_id
@@ -1316,8 +1332,18 @@ def _validate_exact_fields(
 
 def _validate_version(value: object) -> None:
     """Validate one negotiated CEDTS version."""
-    if not isinstance(value, int) or isinstance(value, bool) or value != CEDTS_VERSION:
+    if not _is_current_version(value):
         raise _worker_protocol_error("backend_worker_cedts_version_is_invalid")
+
+
+def _is_current_version(value: object) -> bool:
+    """Return whether a JSON version pair matches the current CEDTS version."""
+    return (
+        isinstance(value, list)
+        and len(value) == len(CEDTS_VERSION)
+        and all(isinstance(part, int) and not isinstance(part, bool) for part in value)
+        and tuple(value) == CEDTS_VERSION
+    )
 
 
 def _validate_identifier(value: object, field_name: str) -> None:
@@ -1341,10 +1367,7 @@ def _validate_hello_data(data: dict[str, object]) -> None:
     if (
         not isinstance(versions, list)
         or not versions
-        or any(
-            not isinstance(version, int) or isinstance(version, bool)
-            for version in versions
-        )
+        or any(not _is_current_version(version) for version in versions)
     ):
         raise _worker_protocol_error("cedts_hello_versions_are_invalid")
     _validate_capabilities(data["capabilities"])
@@ -1483,17 +1506,25 @@ def _validate_call_arguments(value: dict[str, object]) -> None:
     method = value.get("method")
     if not isinstance(method, str):
         raise _worker_protocol_error("backend_worker_callback_method_is_invalid")
-    fields = {
-        "resolve_generation_language": {"method", "lang"},
-        "should_reload_for_language": {"method", "lang"},
-        "convert_live": {"method", "request"},
-        "stop_live": {"method"},
-    }.get(method)
-    if fields is None or set(value) != fields:
+    schema = CALL_ARGUMENT_SCHEMAS.get(method)
+    if schema is None:
+        raise _worker_protocol_error("backend_worker_callback_arguments_are_invalid")
+    required_fields, optional_fields = schema
+    allowed_fields = required_fields | optional_fields
+    if not required_fields.issubset(value) or not set(value).issubset(allowed_fields):
         raise _worker_protocol_error("backend_worker_callback_arguments_are_invalid")
     if method in {"resolve_generation_language", "should_reload_for_language"}:
         if value["lang"] is not None and not isinstance(value["lang"], str):
             raise _worker_protocol_error("backend_worker_language_argument_is_invalid")
+    elif method == "cesn_to_model":
+        if not isinstance(value["text"], str):
+            raise _worker_protocol_error("backend_worker_cesn_text_is_invalid")
+        if value.get("voice_bundle") is not None and not isinstance(
+            value["voice_bundle"], str
+        ):
+            raise _worker_protocol_error(
+                "backend_worker_voice_bundle_argument_is_invalid"
+            )
     elif method == "convert_live" and not isinstance(value["request"], dict):
         raise _worker_protocol_error(
             "backend_worker_live_conversion_request_is_invalid"
@@ -1506,7 +1537,17 @@ def _validate_response_data(
     required: Optional[set[str]] = None,
 ) -> None:
     """Validate response, stream-terminal, and shutdown acknowledgement data."""
-    allowed = {"ok", "value", "error", "error_type", "stream", "done", "cancelled"}
+    allowed = {
+        "ok",
+        "value",
+        "error",
+        "error_type",
+        "source_start",
+        "source_end",
+        "stream",
+        "done",
+        "cancelled",
+    }
     required_fields = {"ok"} if required is None else required
     _validate_exact_fields(data, required_fields, allowed - required_fields)
     _validate_bool(data["ok"], "backend worker response status")
@@ -1518,11 +1559,16 @@ def _validate_response_data(
             raise _worker_protocol_error(
                 "response_field_is_invalid", field_name=field_name
             )
+    _validate_error_source_span(data)
 
 
 def _validate_error_data(data: dict[str, object]) -> None:
     """Validate a structured error packet."""
-    _validate_exact_fields(data, {"ok", "error", "error_type"})
+    _validate_exact_fields(
+        data,
+        {"ok", "error", "error_type"},
+        {"source_start", "source_end"},
+    )
     _validate_bool(data["ok"], "backend worker error status")
     if (
         data["ok"] is not False
@@ -1530,6 +1576,25 @@ def _validate_error_data(data: dict[str, object]) -> None:
         or not isinstance(data["error_type"], str)
     ):
         raise _worker_protocol_error("backend_worker_error_data_is_invalid")
+    _validate_error_source_span(data)
+
+
+def _validate_error_source_span(data: dict[str, object]) -> None:
+    """Require valid paired, zero-based source offsets on worker errors."""
+    source_start = data.get("source_start")
+    source_end = data.get("source_end")
+    if source_start is None and source_end is None:
+        return
+    if (
+        data.get("ok") is not False
+        or not isinstance(source_start, int)
+        or isinstance(source_start, bool)
+        or source_start < 0
+        or not isinstance(source_end, int)
+        or isinstance(source_end, bool)
+        or source_end <= source_start
+    ):
+        raise _worker_protocol_error("backend_worker_error_source_span_is_invalid")
 
 
 def _validate_state_data(data: dict[str, object]) -> None:

@@ -3,11 +3,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from typing import Union, Optional, TypedDict
+from collections.abc import Mapping
 
-from .aliases import AudioChunk
 from .common import JSONSerializable
+from .aliases import AudioChunk
 from .backends import BackendDescription
 from ..dataclasses.pipeline import AudioOutput, VoiceConversionRequest
 
@@ -43,7 +43,7 @@ type WorkerControlMessage = dict[str, JSONSerializable]
 class WorkerPacket(TypedDict, total=False):
     """Common CEDTS packet envelope shared by core and worker."""
 
-    cedts_version: int
+    cedts_version: list[int]
     kind: str
     message_id: str
     reply_to: Optional[str]
@@ -66,6 +66,8 @@ class WorkerResponse(TypedDict, total=False):
     value: WorkerValue
     error: str
     error_type: str
+    source_start: int
+    source_end: int
     stream: bool
     done: bool
     cancelled: bool

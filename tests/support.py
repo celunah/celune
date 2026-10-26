@@ -2,34 +2,35 @@
 """Lightweight test fakes for Celune's unit test suite."""
 
 from __future__ import annotations
-
 import sys
 import queue
 import importlib
 import threading
 import contextlib
-from collections.abc import Callable, Container, Iterable, Iterator
-from pathlib import Path
 from re import Pattern
-from types import MappingProxyType, ModuleType, SimpleNamespace, TracebackType
+from pathlib import Path
+from unittest import TestCase, mock
+from collections.abc import Callable, Iterable, Iterator, Container
+from types import ModuleType, TracebackType, SimpleNamespace, MappingProxyType
 from typing import (
     TYPE_CHECKING,
+    Self,
+    Union,
     ClassVar,
     Optional,
     Protocol,
-    Self,
     TypedDict,
-    Union,
+    Any,
     cast,
 )
-from unittest import TestCase, mock
 
 import numpy as np
 import numpy.typing as npt
+
 from celune.utils import discard
 from celune.constants import PipelineStates
 from celune.typing.aliases import AudioChunk
-from celune.locks import ComponentLockManager
+from celune.core.concurrency import ComponentLockManager
 from celune.typing.common import JSONSerializable
 from celune.backends.tts.base import CeluneBackend
 from celune.backends.vc.base import CeluneVCBackend
@@ -245,6 +246,18 @@ class CeluneTestCase:
         """Register a callback to run after the current test."""
         self._cleanups.append((function, args, kwargs))
 
+    def patch_owner(
+        self,
+        module: ModuleType,
+        name: str,
+        **kwargs: Any,
+    ) -> mock.Mock:
+        """Patch one subsystem-owned function for the current test."""
+        patcher = mock.patch.object(module, name, **kwargs)
+        replacement = patcher.start()
+        self.addCleanup(patcher.stop)
+        return cast(mock.Mock, replacement)
+
 
 class CeluneAsyncTestCase(CeluneTestCase):
     """Shared pytest lifecycle compatibility for async Celune tests."""
@@ -271,10 +284,14 @@ class FakeBackend(CeluneBackend):
         self,
         log: Optional[Callable[[str, str], None]] = None,
         fatal: Optional[Callable[[], None]] = None,
+        quantize: bool = False,
+        singing: bool = False,
     ) -> None:
         super().__init__(
             log=log or (lambda _msg, _severity="info": None),
             fatal=fatal,
+            quantize=quantize,
+            singing=singing,
         )
 
     def model_is_available_locally(
@@ -306,6 +323,12 @@ class FakeBackend(CeluneBackend):
             FakeModel: A dictionary describing the requested fake model.
         """
         return {"model_id": model_id, "kwargs": kwargs}
+
+    def load_default_model(self) -> FakeModel:
+        """Return a fake model without resolving a synthetic Hub repository."""
+        model = self.load_model(self.default_model_id)
+        self.model = model
+        return model
 
     def generate_stream(
         self, model: FakeModel, **kwargs: JSONSerializable
@@ -479,14 +502,17 @@ def make_pipeline_engine() -> SimpleNamespace:
     engine.config = {}
     engine.input_mode = "text_to_speech"
     engine.language = "Auto"
-    engine.log_level = "info"
+    engine.log_level = "debug"
     engine.current_voice = "balanced"
+    engine.voices = ()
     engine.current_character = None
     engine.persona_attachments = []
     engine.persona_recent_visual_context = ()
     engine.use_normalization = False
     engine.normalize = mock.Mock(return_value=None)
     engine.is_in_tutorial = False
+    engine.test_finished = False
+    engine.backend_mode = "standard"
     engine.model_ready = threading.Event()
     engine.model_ready.set()
     engine.loaded = True
@@ -495,6 +521,12 @@ def make_pipeline_engine() -> SimpleNamespace:
     engine._pipeline_lock_owner = None
     engine._last_component_busy = None
     engine.cur_state = "idle"
+
+    def update_cur_state(state: str) -> None:
+        engine.cur_state = state
+
+    engine.update_cur_state = update_cur_state
+    engine.emit_event = mock.Mock()
     engine.exit_requested = False
     engine.stream = None
     engine._stream = None
@@ -527,7 +559,7 @@ def make_pipeline_engine() -> SimpleNamespace:
     engine.utterance_force_stop = threading.Event()
     engine.speech_generation = 0
     engine._playback_generation = 0
-    engine._playback_chunk_last_queued_at = {}
+    engine.playback_chunk_last_queued_at = {}
     engine.kept_sfx_audio = None
     engine.force_stop_marker = PipelineStates.UTTERANCE_FORCE_END
     engine.log = lambda msg, severity="info", **kwargs: messages.append((msg, severity))
@@ -536,6 +568,8 @@ def make_pipeline_engine() -> SimpleNamespace:
         (msg, severity)
     )
     engine.progress_callback = lambda current, total: progress.append((current, total))
+    engine.change_input_state_callback = mock.Mock()
+    engine.change_voice_lock_state_callback = mock.Mock()
     engine.idle_callback = mock.Mock()
     engine.glow = SimpleNamespace(
         schedule=mock.Mock(),

@@ -3,7 +3,8 @@
 CEDTS is Celune's private **C**elune **E**xtensible **D**ata **T**ransport
 **S**tandard for isolated backend workers and in-process frontend timed-update
 notifications. It is an implementation contract, not a public network API.
-The current protocol version is `1`.
+The current protocol version is `(1, 2)`, written as `[1, 2]` in JSON. The
+pair is ordered as `(major, minor)`.
 
 The design keeps control frames and binary payloads separate, uses explicit
 lengths, and never relies on backend stdout for protocol data. Worker logs are
@@ -46,7 +47,7 @@ Control packets use these fields:
 
 | Field | Meaning |
 | --- | --- |
-| `cedts_version` | Protocol version, currently `1`. |
+| `cedts_version` | Two-element `[major, minor]` protocol version, currently `[1, 2]`. |
 | `kind` | Packet kind. |
 | `message_id` | Unique ID for a request/event. |
 | `reply_to` | Message ID being answered, when applicable. |
@@ -85,11 +86,17 @@ not expose a second public socket or permit arbitrary frontend commands.
 
 ## Handshake
 
-The worker sends `hello` with version 1, its supported operations, supported
-media types, a `describe` result, and capability flags. The peer replies with
-`hello_ack` containing the negotiated intersection. Limits are negotiated by
-taking the smaller peer limit. Current capability flags cover streaming,
-cancellation, and callbacks; the core callback capability is currently false.
+The worker sends `hello` with `versions: [[1, 2]]`, its supported operations,
+supported media types, a `describe` result, and capability flags. The peer
+replies with `hello_ack` containing the selected `[1, 2]` version and the
+negotiated capability intersection. Limits are negotiated by taking the smaller
+peer limit. Current capability flags cover streaming, cancellation, and
+callbacks; the core callback capability is currently false. Version selection
+currently requires an exact major/minor pair match. Version 1.2 adds optional
+`source_start` and `source_end` integer fields to error response data. They are
+zero-based, half-open CESN source offsets and must appear together; other error
+responses may omit them. Since peers require an exact version match, a 1.1 peer
+cannot exchange packets with a 1.2 peer.
 
 The supported operation names are:
 
@@ -149,6 +156,16 @@ supports it. Progress packets are throttled to approximately 100 ms. Streaming
 outputs carry typed audio or backend-generation values and finish with a
 terminal response/event.
 
+`call` accepts only the methods registered by the worker. The
+`cesn_to_model` call requires a string `text` and accepts an optional
+`voice_bundle` string. Omitting `voice_bundle` or sending JSON `null` keeps the
+worker's currently selected bundle; a string selects that bundle before the
+backend converts the notation. CEDTS transports the bundle path; the CECHAR
+manifest remains in the file and is validated by the backend's CECHAR loader.
+
+Progress packets require a non-negative integer `step`. Their optional `total`
+is a non-negative integer when known; omission means the total is unknown.
+
 Worker stderr is retained for failure diagnostics, but CEDTS applies the same
 known-benign runtime-message suppression list used by Celune's local runtime
 log redirect. This keeps isolated workers from reintroducing filtered model,
@@ -175,12 +192,22 @@ waiter, and emits the failure through Celune's log callback immediately. The
 worker is then torn down; the caller does not wait for the operation's normal
 timeout boundary.
 
+Worker exceptions and JSON response-encoding failures are returned to the
+requesting core as correlated `error` packets when the control stream remains
+writable. The proxy raises the worker error in the requesting operation and
+preserves the worker traceback as an exception note. At debug log level,
+Celune writes both the core traceback and that worker traceback to
+`celune_traceback.txt`.
+
 ## Errors and implementation API
 
 The transport defines these exception categories:
 
 `CEDTSError`, `CEDTSStreamError`, `CEDTSEOFError`, `CEDTSTimeoutError`,
 `CEDTSProtocolError`, and `CEDTSPayloadError`.
+
+Packet envelope version mismatches include the received and expected versions
+in the protocol error so stale peers can be identified without a traceback.
 
 The implementation lives in `celune.cedts.protocol` and is used by
 `celune.cedts.worker` and `celune.cedts.remote`. Backend authors should

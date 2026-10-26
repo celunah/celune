@@ -8,7 +8,7 @@ engine accepts text or audio.
 
 | Mode | Text route | Typical use |
 | --- | --- | --- |
-| `speak` | Text goes directly to the TTS queue. | Speech-only applications and deterministic playback. |
+| `performance` | Text goes directly to the TTS queue. | Speech-only applications and deterministic playback. |
 | `converse` | Text goes to Persona, whose response is spoken through the same queue. | Character conversation, memory, vision, and talkback. |
 | `agent` | Persona plans, selects a registered tool, executes it under policy, and responds. | Bounded local tasks with typed tool calls and approvals. |
 
@@ -18,14 +18,16 @@ Set the mode in YAML:
 mode: converse
 ```
 
-The resolver accepts the explicit names `speak`, `converse`, and `agent`. The
-older input names `text_to_speech`, `tts`, `voice_conversion`, and `revoice`
-remain accepted when older integrations construct the runtime. They are
-normalized internally and should not be used as new public configuration.
+The resolver accepts `performance`, `converse`, and `agent`. Existing
+configurations that use the former name `speak` continue to resolve to
+`performance`. The older input names `text_to_speech`, `tts`,
+`voice_conversion`, and `revoice` remain accepted when older integrations
+construct the runtime. They are normalized internally and should not be used
+as new public configuration.
 
 ## Text-to-speech flow
 
-In `speak` mode, `say()` and `/say` queue the supplied text literally. A new
+In `performance` mode, `say()` and `/say` queue the supplied text literally. A new
 request does not implicitly stop an utterance that is already playing; a direct
 request is reported as busy until the shared speech pipeline is available. Use
 `/stop` or `force_stop_speech()` when interruption is intentional. Celune
@@ -48,7 +50,10 @@ The voice button uses `press` to cycle to the next loaded voice and `hold` to
 open the voice selector. These capabilities are independent, so the UI can set
 `ButtonActions(press=False, hold=True)` while Celune sleeps. A short press then
 does nothing, while a hold opens the selector; confirming a voice wakes Celune
-before applying the selected voice.
+before applying the selected voice. With a singing backend, voice cycling stays
+locked and the hold menu lists only packs that provide the reserved `sing`
+voice. Since each pack provides one singing role, the menu has no entry search;
+confirming a row loads that character pack.
 
 ## Conversation flow
 
@@ -65,20 +70,20 @@ accepts a request asynchronously and returns `202` when the turn is accepted.
 Agent mode extends Persona with a typed, allowlisted tool catalog. A task can
 plan, call read-only tools, pause for approval, execute an approved mutating
 tool, and answer through the speech pipeline. The production limits are 20
-loops, a 32,768-token agent context size, and compaction at 75 percent. See
+loops, up to 8,192 context tokens, and compaction at 75 percent. See
 [Agent mode](agent.md) for every built-in tool family and its permissions.
-Persona requires at least the `high` VRAM preset. Agent mode additionally
-requires `xhigh` while agent memory usage is being optimized. An incompatible
-preset disables the corresponding feature instead of being raised
-automatically. At `high`, `agent` keeps Persona conversation available and
-falls back to the `converse` route because agent tasks are disabled.
+Persona and standard agent models require at least the `high` VRAM preset.
+Smart 8B-tier Persona models require `xhigh`. An incompatible preset disables
+the corresponding feature instead of being raised automatically.
 
 ## Voice-conversion input
 
 Voice conversion is an audio-input mode. Text commands that require TTS are
 not accepted while VC is active. Use `/vc <file>` for a file or `CTRL+R` to
 toggle live microphone capture. The converted audio still passes through the
-shared playback and save path, but it does not load a TTS model.
+shared playback and save path, but it does not load a TTS model. See
+[Speech buffering and playback](configuration.md#speech-buffering-and-playback)
+for live microphone playback latency behavior.
 
 ## Mode changes
 

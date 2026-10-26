@@ -7,19 +7,18 @@ while the engine is in VC mode.
 ## Backends
 
 The Seed-VC backend is the production conversion path. It supports
-reference-based conversion, pitch adjustment, optional F0 conditioning, and a
-low-latency live path.
+reference-based conversion, optional F0 conditioning, and a low-latency live
+path.
 
 Seed-VC's primary controls are:
 
 | Control | Default | Meaning |
 | --- | ---: | --- |
-| diffusion steps | 30 | Quality/latency tradeoff. |
+| diffusion steps | 20 | Quality/latency tradeoff. |
 | length adjust | 1 | Timing adjustment. |
 | inference CFG rate | 0.5 | Diffusion guidance. |
 | F0 condition | `false` | Talk mode by default; singing/intonation path when enabled. |
-| automatic F0 adjust | `true` | Aligns pitch for conversion. |
-| pitch shift | 0 | Semitones; UI range -12 through +12. |
+| automatic F0 adjust | `false` | Aligns pitch for conversion. |
 
 The active CEVOICE/CECHAR pack supplies the target reference WAV. A pack with
 no compatible WAV cannot be used as a VC target.
@@ -38,8 +37,12 @@ pipeline, and plays the converted output. Python callers can use
 an `AudioOutput` value back.
 
 The REST API exposes the same operation at `POST /v1/convert` as a multipart
-upload. Optional `pitch_shift` and `f0_condition` form fields override the
-runtime defaults for that request.
+upload. The optional `f0_condition` form field overrides the runtime default
+for that request.
+
+Celune plays converted audio with a 2 dB attenuation to bring its playback
+level closer to TTS. This affects file and live VC playback only; conversion
+results returned to Python or the REST API retain the backend's original level.
 
 ## Live microphone conversion
 
@@ -50,12 +53,23 @@ limit. With the optional `live-vc-ai` extra, Celune uses Silero VAD; otherwise
 it uses the built-in energy detector. VAD is always active during live capture.
 
 Use `/vcmode talk` for ordinary speech and `/vcmode sing` for F0-conditioned
-singing. Use `/vcpitch <semitones>` or `/vcpitch clear` to adjust pitch. The UI
-also exposes buttons for F0 mode and pitch cycling.
+singing. The UI exposes a button for changing F0 mode.
+
+To inspect the live signal, run `/vcdebug on`, speak through live VC, stop the
+microphone stream, then run `/vcdebug off`. Celune saves the raw microphone
+capture and converted output as `microphone.flac` and `converted.flac` in a
+temporary folder under its AppData directory. Both files use 48 kHz, 24-bit
+FLAC. Debug capture writes asynchronously and does not change the audio sent to
+the converter or playback. Turn it off to finish exporting the files. The files
+remain there for inspection; delete the temporary folder when they are no
+longer needed.
 
 The live backend keeps overlap state between blocks. Call
 `convert_live_audio()` for each low-latency block and `stop_live_audio()` when
-the stream ends so that backend state is flushed.
+the stream ends so that backend state is flushed. Stopping live conversion
+clears its stream buffers but keeps the loaded models available. A later
+non-F0 file conversion can reuse those cached native models; F0-conditioned
+conversion continues to use its wrapper path.
 
 ## Audio and rate behavior
 
@@ -67,3 +81,8 @@ the sample rate from the number of samples; use the returned metadata.
 Feedback protection stops a live capture when playback leakage creates a large
 RMS spike. If live capture stops unexpectedly, move the microphone away from
 speakers, lower output volume, or use headphones before changing VAD thresholds.
+
+## See also
+
+- [TUI commands](../interfaces/tui.md#slash-commands)
+- [Configuration](configuration.md)

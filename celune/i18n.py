@@ -7,15 +7,14 @@ import json
 import ctypes
 import contextlib
 from pathlib import Path
-import locale as _locale  # else it gets shadowed
 from typing import Optional
 from types import SimpleNamespace
+import locale as _locale  # else it gets shadowed
 
 DEFAULT_LOCALE = "en"
 _LANG_DIR = Path(__file__).resolve().parent / "lang"
 
 STRINGS: dict[str, dict[str, str]] = {}
-_current_locale = DEFAULT_LOCALE
 
 
 def _normalize_locale_name(locale_name: Optional[str]) -> str:
@@ -179,7 +178,7 @@ def string(key: str, locale: Optional[str] = None, **kwargs) -> str:
     return text
 
 
-_current_locale = get_system_locale()
+_current_locale = get_system_locale() or DEFAULT_LOCALE
 
 
 def tagged_string(

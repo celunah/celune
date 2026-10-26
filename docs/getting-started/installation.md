@@ -8,14 +8,20 @@ to install and launch Celune from the source repository.
 Celune supports Python 3.12, 3.13, and 3.14 on Windows and Linux. The core
 environment is GPU-oriented: most Persona and TTS features expect an NVIDIA
 RTX 30-series-or-newer GPU, while CPU-only operation is supported for the Mini
-backend. VRAM presets are approximately:
+backend. VRAM presets name the minimum total GPU capacity and reserve 2 GiB for
+the system and other GPU users:
 
-| Preset | Target VRAM |
-| --- | ---: |
-| `low` | 6 GB |
-| `medium` | 8 GB |
-| `high` | 12 GB |
-| `xhigh` | 16 GB or more |
+| Preset | Total VRAM | Celune budget |
+| --- | ---: | ---: |
+| `low` | 6 GB | 4 GiB |
+| `medium` | 8 GB | 6 GiB |
+| `high` | 12 GB | 10 GiB |
+| `xhigh` | 16 GB or more | 14 GiB or more |
+
+An unprofiled hardware/model combination is allowed to start with a warning that
+it may not work on that hardware. A confirmed profile that exceeds the budget
+or current GPU headroom is rejected. Persona and standard agent models require
+`high`; registered smart 8B-tier models require `xhigh`.
 
 The `doctor` command reports the active Python, PyTorch, CUDA, GPU, and system
 dependency state. It is the first diagnostic to run when a feature is missing.
@@ -29,8 +35,8 @@ Install these before using the corresponding features:
   falls back to a simpler speed path when it is unavailable.
 - OpenRGB, plus a compatible device, for audio-reactive lighting.
 - A C/C++ compiler for VoxCPM2 and any backend that builds native extensions.
-- CUDA Toolkit 12.8-compatible runtime components for the supported PyTorch
-  CUDA build. The exact driver must still support the installed CUDA runtime.
+- A driver that supports the core PyTorch CUDA 13.0 build. The runtime also
+  accepts CUDA 12.8; CEDTS workers use a separate CUDA 12.8 stack.
 - Symbolic-link support on Windows when developing or using workflows that
   create links.
 
@@ -45,6 +51,15 @@ PortAudio development headers for `sounddevice`. The CI workflow installs
 ## Source installation
 
 From a clean checkout:
+
+GitHub's **Download ZIP** archive does not include Git metadata. Source builds
+and in-place source updates require a Git checkout with a commit. Celune reports
+when that metadata is missing and prints the upstream clone command. Clone the
+repository with:
+
+```bash
+git clone https://github.com/celunah/celune
+```
 
 The project uses `uv` for dependency resolution. Run the setup helper from the
 repository root:
@@ -64,8 +79,8 @@ existing installation unchanged. Run the helper with a system Python
 interpreter rather than the `.venv` interpreter when repairing, because the
 active environment cannot safely remove itself.
 The optional `live-vc-ai` extra adds Silero VAD for AI-assisted live
-voice-conversion capture; `openzl` adds OpenZL-compressed CECHAR v4 support on
-Linux.
+voice-conversion capture; `cechar4-openzl` adds OpenZL-compressed CECHAR v4/v5
+support on Linux.
 
 For a dependency-only manual setup, use `uv sync --dev --all-extras` on Linux
 or `uv sync --dev --extra api` on Windows.
@@ -117,7 +132,7 @@ These variables are useful for diagnostics and deployment:
 | `CELUNE_LOG_LEVEL` | Initial log level: `info`, `verbose`, or `debug`. |
 | `CELUNE_BACKEND` | Overrides the configured backend name. |
 | `CELUNE_HEADLESS` | Overrides `headless`; enabled values start without Textual. |
-| `CELUNE_API_TOKEN` | Supplies the API bearer token when config does not contain one. |
+| `CELUNE_API_TOKEN` | Supplies the API key as a bearer token when config does not contain one. |
 | `CELUNE_LAUNCHER` | Marks a launch as owned by the Celune launcher. |
 | `CELUNE_OVERRIDE_CELINE_DAY` | Bypasses the name-day startup pause used by the app. |
 | `CELUNE_THEME` | Overrides the selected UI theme. |

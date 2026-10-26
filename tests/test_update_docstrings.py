@@ -7,6 +7,7 @@ import importlib.util
 from pathlib import Path
 from types import SimpleNamespace
 from tempfile import TemporaryDirectory
+
 from .support import CeluneTestCase
 
 ROOT = Path(__file__).resolve().parents[1]

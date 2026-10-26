@@ -2,7 +2,7 @@
 
 Celune source code is licensed under the Apache 2.0 License. The repository also
 contains third-party dependencies, downloaded model checkpoints, reference
-recordings, tutorial audio, icons, and other assets. Those materials are not
+recordings, icons, and other assets. Those materials are not
 automatically covered by Celune's Apache 2.0 license.
 
 Before redistributing a build, voice pack, model cache, or generated bundle:
@@ -17,3 +17,9 @@ Before redistributing a build, voice pack, model cache, or generated bundle:
 The `docs/` pages describe interfaces and file formats; they do not grant
 rights to redistribute models or voice recordings. The lore-only
 `resources/about/about-celune.md` is not a technical license notice.
+
+Celune's model catalog records each built-in model's Hugging Face revision,
+license source, and known restrictions. Restricted, unknown-license, and
+unreviewed models require acknowledgement for the exact revision before Celune
+downloads or loads them. See [Model registry and license consent](development/model-registry.md)
+for the catalog and consent contract.

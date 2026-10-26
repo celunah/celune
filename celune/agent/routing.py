@@ -2,19 +2,18 @@
 """Conversation-first routing for Celune's typed agent boundary."""
 
 from __future__ import annotations
-
 import json
 from uuid import uuid4
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Optional, cast
 
-from ..i18n import string
 from .runtime import AgentRuntime
+
+from ..i18n import string
 from ..modes import mode_allows_agents
 from ..vram import agent_vram_compatible
-from ..typing.common import JSON, JSONSerializable
+from ..exceptions import EmptyClassifierOutput
 from ..typing.persona import PersonaClientResponse
-from ..conversation import build_agent_classification_request
 from ..typing.locks import (
     ComponentLockName,
     ComponentLockOwner,
@@ -37,14 +36,18 @@ from ..typing.agent import (
     AgentClassificationFailure,
     AgentClassificationFailureKind,
 )
-from ..utils import format_error_message
+from ..persona.prompts import PersonaPromptBuilder
+from ..typing.common import JSON, JSONSerializable
+from ..persona.conversation import build_persona_context
+from ..persona.impl import persona_model_id, persona_quantization
+from ..constants import (
+    AGENT_CONTEXT_SPACE,
+    AGENT_ROUTING_CONTEXT_SPACE,
+    AGENT_ROUTING_MAX_NEW_TOKENS,
+)
 
 if TYPE_CHECKING:
     from ..celune import Celune
-
-
-class _EmptyClassifierOutput(ValueError):
-    """Identify a response that contains an empty structured-output field."""
 
 
 class AgentInputRouter:
@@ -337,7 +340,7 @@ class AgentInputRouter:
                 error=exc,
                 task=task,
             )
-        except _EmptyClassifierOutput as exc:
+        except EmptyClassifierOutput as exc:
             return self._classifier_failure(
                 AgentClassificationFailureKind.EMPTY_OUTPUT,
                 str(exc),
@@ -391,7 +394,7 @@ class AgentInputRouter:
                 return cast(JSON, decoded)
             raise TypeError("classifier response content must be a JSON object")
         if found_field and not found_text:
-            raise _EmptyClassifierOutput("classifier response output was empty")
+            raise EmptyClassifierOutput("classifier response output was empty")
         if not found_text:
             raise ValueError("classifier response did not contain structured output")
         raise ValueError("classifier response content was empty")
@@ -569,14 +572,13 @@ class AgentInputRouter:
         if callable(log):
             log_level = getattr(self.engine, "log_level", "info")
             if log_level in {"verbose", "debug"}:
-                log(
-                    format_error_message(
-                        string("agent.classifier_failed"),
-                        error,
-                        log_level,
-                    )
+                reason = (
+                    f"{type(error).__name__}: {error}"
                     if error is not None
-                    else f"{string('agent.classifier_failed')}: {detail or kind.value}",
+                    else detail or kind.value
+                )
+                log(
+                    f"{string('agent.classifier_failed')} {reason}",
                     "warning",
                     loglevel="verbose",
                 )
@@ -733,3 +735,113 @@ class AgentInputRouter:
                 "allow_freeform": pending_choice.allow_freeform,
             }
         return context
+
+
+AGENT_CLASSIFICATION_INSTRUCTIONS = (
+    "This is an internal routing request, not a character response. The routing "
+    "output rules below take priority over any character-response, speech, or "
+    "conversation-style guidance in the Persona context. Classify the latest user "
+    "input for conversation-first routing. The latest user message is the primary "
+    "intent signal; use earlier history only to resolve references such as 'this file' "
+    "or 'that process'. Return only one "
+    "JSON object with these keys: classification (conversation or task), route "
+    "(conversation, task, clarification, task_input, approval_response, choice_response, "
+    "cancellation, or interruption), confidence (number from 0 to 1), intent "
+    "(a short agentic intent type or null), task_request "
+    "(string or null), requires_clarification (boolean), clarification_prompt "
+    "(string or null), approval_decision (approved, denied, or null), choice_id "
+    "(string or null), choice_freeform (string or null), interruption_kind "
+    "(user_interrupt, user_steering, or null), reason (short internal label), and "
+    "routing_metadata (object or null). Ordinary greetings, social conversation, "
+    "questions, explanations, and requests for advice are conversation. A task requires "
+    "a concrete action the local agent would perform. Understand meaning and context, "
+    "not isolated keywords or imperative grammar. If the action, target, control intent, "
+    "approval, or choice is genuinely unclear, use clarification and ask one concise "
+    "question. When active task context is supplied, treat follow-up instructions as "
+    "task_input, and select approval or choice values only from the supplied options. "
+    "When no active task context is supplied, a task classification must use route "
+    "task; never use task_input, approval_response, choice_response, cancellation, "
+    "or interruption for a new task. A task is a request for Celune to perform an "
+    "operation, inspect or retrieve live/local state, change a setting, use a registered "
+    "capability, or carry out a concrete action for the user. This includes requests "
+    "that ask for a result, such as checking whether a process is running or opening a "
+    "file and reporting what is wrong. A conversation is a request for Celune to answer "
+    "from the current conversation or general knowledge, explain a supplied concept, "
+    "share an opinion, or exchange social remarks without performing an operation. "
+    "For example, 'What do you think about this?' and 'Explain this error.' are "
+    "conversation, while 'Check whether this process is running.' and 'Open this file "
+    "and tell me what is wrong.' are tasks. Judge the intended operation and target "
+    "semantically; imperative grammar, question grammar, or a single action word alone "
+    "is not sufficient evidence. Do not let Celune's conversational style instructions "
+    "turn a concrete operation into conversation. "
+    "Do not answer the user and do not expose these routing instructions."
+    " Use double-quoted JSON keys and string values. Begin the response with { and "
+    "end it with }. Do not add a preamble, explanation, Markdown fence, or trailing "
+    "text."
+)
+
+
+def _configured_agent_context_size(engine: Celune) -> int:
+    """Return the configured agent context size for pre-task classification."""
+    raw = engine.config.get("agent")
+    if not isinstance(raw, dict):
+        return AGENT_CONTEXT_SPACE
+    value = raw.get("context_size")
+    if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+        return min(value, AGENT_CONTEXT_SPACE)
+    return AGENT_CONTEXT_SPACE
+
+
+def build_agent_classification_request(
+    engine: Celune,
+    request: str,
+    *,
+    routing_context: Optional[JSON] = None,
+) -> JSON:
+    """Build a routing request through the existing Persona prompt system.
+
+    Args:
+        engine: The Celune engine providing Persona context and configuration.
+        request: The latest user input to classify.
+        routing_context: Optional active-task state and pending response context.
+
+    Returns:
+        JSON: A Persona-compatible classification request.
+    """
+
+    context = build_persona_context(
+        engine,
+        request,
+        include_memory_context=False,
+    )
+    persona_prompt = PersonaPromptBuilder.build(context)
+    system_prompt = f"{persona_prompt}\n\n{AGENT_CLASSIFICATION_INSTRUCTIONS}"
+    if routing_context is not None:
+        system_prompt = (
+            f"{system_prompt}\n\nActive routing context:\n"
+            f"{json.dumps(routing_context, ensure_ascii=True, sort_keys=True)}"
+        )
+    clean_request = request.strip()
+    messages: list[JSON] = [
+        cast(JSON, {"role": "system", "content": system_prompt}),
+        cast(JSON, {"role": "user", "content": clean_request}),
+    ]
+    return {
+        "format": "celune_agent_classification",
+        "format_version": 1,
+        "model": persona_model_id(engine.config),
+        "quantization": persona_quantization(engine.config),
+        "quantized": True,
+        "system": system_prompt,
+        "user": clean_request,
+        "request": clean_request,
+        "context_space": min(
+            _configured_agent_context_size(engine), AGENT_ROUTING_CONTEXT_SPACE
+        ),
+        "routing_context": routing_context,
+        "messages": cast(JSONSerializable, messages),
+        "max_new_tokens": AGENT_ROUTING_MAX_NEW_TOKENS,
+        "temperature": 0.0,
+        "top_p": 1.0,
+        "repetition_penalty": 1.0,
+    }

@@ -1,17 +1,22 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for CEVOICE parsing, writing, loading, and fallback behavior."""
 
+import io
 import copy
 import gzip
 import json
+import wave
 import shutil
 import tempfile
 from typing import cast
 from pathlib import Path
 from unittest import mock
+
 import pytest
 
 from celune import cevoice
+from celune.cevoice import v4 as cevoice_v4
+from celune.cevoice import base as cevoice_base
 from celune.exceptions import CEVoiceError
 
 from .support import CeluneTestCase
@@ -30,18 +35,30 @@ class TestCEVoice(CeluneTestCase):
         """Remove the temporary fixture directory."""
         shutil.rmtree(self.temp_dir, ignore_errors=True)
 
+    @staticmethod
+    def _minimal_wav() -> bytes:
+        """Return a small canonical CECHAR reference WAV."""
+        buffer = io.BytesIO()
+        output = wave.Wave_write(buffer)
+        output.setnchannels(1)
+        output.setsampwidth(2)
+        output.setframerate(24000)
+        output.writeframes(b"\0\0" * 240)
+        output.close()
+        return buffer.getvalue()
+
     def tearDown(self) -> None:
         """Reset shared CEVOICE loader globals after one test."""
-        loader = cevoice._DEFAULT_LOADER
+        loader = cevoice_base._DEFAULT_LOADER
         if loader is not None:
             loader.close()
-        cevoice._DEFAULT_LOADER = None
-        cevoice._DEFAULT_LOADER_INITIALIZED = False
-        cevoice._DEFAULT_LOADER_ANNOUNCED = False
-        cevoice._DEFAULT_LOADER_FAILED = False
-        cevoice._SELECTED_BUNDLE = None
-        cevoice._SELECTED_BUNDLE_IS_NAMED = False
-        cevoice._DEFAULT_LOADER_FELL_BACK_FROM = None
+        cevoice_base._DEFAULT_LOADER = None
+        cevoice_base._DEFAULT_LOADER_INITIALIZED = False
+        cevoice_base._DEFAULT_LOADER_ANNOUNCED = False
+        cevoice_base._DEFAULT_LOADER_FAILED = False
+        cevoice_base._SELECTED_BUNDLE = None
+        cevoice_base._SELECTED_BUNDLE_IS_NAMED = False
+        cevoice_base._DEFAULT_LOADER_FELL_BACK_FROM = None
 
     def _write_bundle(self) -> cevoice.CEVoice:
         """Write and reopen one tiny valid CEVOICE fixture."""
@@ -142,7 +159,9 @@ class TestCEVoice(CeluneTestCase):
         assert path.read_bytes() == b"wav"
         assert loader.materialize("balanced", "wav") == path
         with mock.patch.object(
-            cevoice, "bundle_matches_default_pack_checksum", return_value=True
+            cevoice_base,
+            "bundle_matches_default_pack_checksum",
+            return_value=True,
         ):
             assert cevoice.bundle_display_name(bundle) == "Fixture (sample)"
 
@@ -199,13 +218,194 @@ class TestCEVoice(CeluneTestCase):
     def test_v4_decompression_rejects_payloads_over_the_logical_limit(self) -> None:
         """Verify compressed CECHAR v4 payloads are bounded before parsing."""
         with (
-            mock.patch.object(cevoice, "V4_MAX_DECOMPRESSED_BYTES", 3),
+            mock.patch.object(cevoice_v4, "V4_MAX_DECOMPRESSED_BYTES", 3),
             self.assertRaisesRegex(CEVoiceError, "too large"),
         ):
-            cevoice._decompress_v4_payload(
+            cevoice_v4._decompress_v4_payload(
                 gzip.compress(b"four"),
                 cevoice.V4_COMPRESSION_GZIP,
             )
+
+    def test_cechar_v5_reserves_singing_voice_outside_tts_voice_order(self) -> None:
+        """Verify CECHAR v5 keeps its singing voice separate from TTS voices."""
+        sample = self._minimal_wav()
+        cevoice.write_cechar_v5(
+            self.path,
+            {"balanced": {"wav": sample}, "sing": {"wav": sample}},
+            {"name": "Fixture", "default_voice": "balanced"},
+            {
+                "balanced": {"reference_text": "Balanced reference."},
+                "sing": {
+                    "reference_text": "Singing reference.",
+                    "cesn": "[lang:en][f#3:4,g3:4][ˈsɪŋ.ɪŋ]Singing.",
+                    "range": {"min": 54, "max": 72},
+                },
+            },
+        )
+
+        bundle = cevoice.CEVoice.open(self.path)
+
+        assert bundle.metadata["version"] == cevoice.V5_VERSION
+        assert bundle.voice_order == ("balanced",)
+        assert bundle.singing_voice == cevoice.SINGING_VOICE_NAME
+        assert bundle.voices["balanced"]["cesn"] is None
+        assert bundle.voices["sing"]["cfg_scale"] is None
+        assert bundle.voices["sing"]["persona"] is None
+        assert bundle.voices["sing"]["cesn"] == (
+            "[lang:en][f#3:4,g3:4][ˈsɪŋ.ɪŋ]Singing."
+        )
+        assert bundle.singing_pitch_range == (54, 72)
+
+    def test_default_pack_uses_v5_and_keeps_classic_on_v4(self) -> None:
+        """Keep the default pack's singing reference scoped to CECHAR v5."""
+        default = cevoice.CEVoice.open(Path("voices/default.cevoice"))
+        classic = cevoice.CEVoice.open(Path("voices/classic.cevoice"))
+
+        assert default.metadata["version"] == cevoice.V5_VERSION
+        assert default.voice_order == ("balanced", "calm", "bold", "upbeat")
+        assert default.singing_voice == cevoice.SINGING_VOICE_NAME
+        assert default.singing_pitch_range == (54, 72)
+        assert (
+            default.voices["sing"]["reference_text"]
+            == "Moonlight resting, silver-blue, I'll keep one quiet light for you."
+        )
+        assert default.voices["sing"]["cesn"] == (
+            "[bpm:108,key:g#,scale:natural_minor][lang:en]"
+            "[a3:4,b3:4d][ˈmuːn.laɪt] Moonlight "
+            "[c#4:4,b3:4d][ˈrɛs.tɪŋ] resting "
+            "[g#3:4,a#3:8,a#3:4][ˈsɪl.vɚ.bluː] silver-blue. "
+            "[tuplet:3,2][r:1,g#3:4][ˈaɪl] I'll "
+            "[a#3:4][ˈkiːp] keep [b3:4][ˈwʌn] one "
+            "[tuplet:3,2][c#4:4,c4:4][ˈkwaɪ.ət] quiet "
+            "[g#3:4][ˈlaɪt] light [r:2,g#3:4][fɚ] for "
+            "[f#3:4][ˈjuː] you."
+        )
+        assert all(
+            default.voices[voice]["cesn"] is None for voice in default.voice_order
+        )
+        assert cevoice.bundle_matches_default_pack_checksum(default.path)
+        assert classic.metadata["version"] == cevoice.V4_VERSION
+
+    def test_voice_display_names_do_not_change_backend_identifiers(self) -> None:
+        """Keep lowercase selection keys separate from title-case UI labels."""
+        cevoice.write_cechar_v5(
+            self.path,
+            {
+                "balanced": {"wav": self._minimal_wav()},
+                "spirited": {"wav": self._minimal_wav()},
+            },
+            {"name": "Nol", "default_voice": "balanced"},
+            {
+                "balanced": {
+                    "reference_text": "Hello.",
+                    "display_name": "Balanced",
+                },
+                "spirited": {"reference_text": "Ha!"},
+            },
+        )
+
+        bundle = cevoice.CEVoice.open(self.path)
+
+        assert bundle.voice_order == ("balanced", "spirited")
+        assert bundle.voice_display_name("balanced") == "Balanced"
+        assert bundle.voice_display_name("spirited") == "Spirited"
+
+    def test_repository_packs_are_registered_as_official_defaults(self) -> None:
+        """Keep every repository-bundled character pack in the default registry."""
+        assert set(cevoice.KNOWN_DEFAULT_CEVOICE_PACKS) == {
+            "default.cevoice",
+            "default_sep19.cevoice",
+            "classic.cevoice",
+            "nol.cevoice",
+        }
+        for filename, checksums in cevoice.KNOWN_DEFAULT_CEVOICE_PACKS.items():
+            bundle = cevoice.CEVoice.open(Path("voices") / filename)
+            assert cevoice.bundle_sha256(bundle.path) in checksums
+            assert cevoice.bundle_matches_default_pack_checksum(bundle.path)
+            if filename == "default_sep19.cevoice":
+                assert bundle.metadata["version"] == cevoice.VERSION
+            assert cevoice.bundle_display_name(bundle) == (
+                f"{cevoice.bundle_character_name(bundle)} ({Path(filename).stem})"
+            )
+
+    def test_cechar_v5_requires_singing_cesn_and_null_tts_cesn(self) -> None:
+        """Require a score for the singing role and null for speaking roles."""
+        sample = self._minimal_wav()
+        with pytest.raises(CEVoiceError, match="singing voice cesn is required"):
+            cevoice.write_cechar_v5(
+                self.path,
+                {"balanced": {"wav": sample}, "sing": {"wav": sample}},
+                voice_metadata={"sing": {"reference_text": "Singing reference."}},
+            )
+
+        with pytest.raises(CEVoiceError, match="voice 'balanced' cesn must be null"):
+            cevoice.write_cechar_v5(
+                self.path,
+                {"balanced": {"wav": sample}, "sing": {"wav": sample}},
+                voice_metadata={
+                    "balanced": {"cesn": "[lang:en][c3:4,d3:4][ˈspiː.kɪŋ]Speaking."},
+                    "sing": {
+                        "reference_text": "Singing reference.",
+                        "cesn": "[lang:en][c3:4,d3:4][ˈsɪŋ.ɪŋ]Singing.",
+                        "range": {"min": 54, "max": 72},
+                    },
+                },
+            )
+
+    def test_cechar_v5_rejects_singing_voice_in_public_voice_order(self) -> None:
+        """Verify CECHAR v5 does not let TTS select the singing voice."""
+        sample = self._minimal_wav()
+        with pytest.raises(CEVoiceError, match="must not include the singing voice"):
+            cevoice.write_cechar_v5(
+                self.path,
+                {"balanced": {"wav": sample}, "sing": {"wav": sample}},
+                {"voice_order": ["balanced", "sing"]},
+                {
+                    "balanced": {"reference_text": "Balanced reference."},
+                    "sing": {
+                        "reference_text": "Singing reference.",
+                        "cesn": "[lang:en][f#3:4,g3:4][ˈsɪŋ.ɪŋ]Singing.",
+                        "range": {"min": 54, "max": 72},
+                    },
+                },
+            )
+
+    def test_cechar_v5_requires_a_valid_singing_range(self) -> None:
+        """Require every newly written v5 singing entry to declare valid bounds."""
+        sample = self._minimal_wav()
+        voices = {"balanced": {"wav": sample}, "sing": {"wav": sample}}
+        metadata: dict[str, cevoice.Manifest] = {
+            "balanced": {"reference_text": "Balanced reference."},
+            "sing": {
+                "reference_text": "Singing reference.",
+                "cesn": "[lang:en][f#3:4,g3:4][ˈsɪŋ.ɪŋ]Singing.",
+            },
+        }
+        with pytest.raises(CEVoiceError, match="singing voice range is required"):
+            cevoice.write_cechar_v5(self.path, voices, voice_metadata=metadata)
+
+        metadata["sing"]["range"] = {"min": 73, "max": 72}
+        with pytest.raises(CEVoiceError, match="ordered MIDI pitches"):
+            cevoice.write_cechar_v5(self.path, voices, voice_metadata=metadata)
+
+    def test_cechar_v4_treats_sing_as_an_ordinary_voice(self) -> None:
+        """Keep the reserved singing role scoped to CECHAR v5 and newer."""
+        sample = self._minimal_wav()
+        cevoice.write_cechar_v4(
+            self.path,
+            {"balanced": {"wav": sample}, "sing": {"wav": sample}},
+            {"voice_order": ["balanced", "sing"]},
+            {
+                "balanced": {"reference_text": "Balanced reference."},
+                "sing": {"reference_text": "Legacy speaking reference."},
+            },
+        )
+
+        bundle = cevoice.CEVoice.open(self.path)
+
+        assert bundle.voice_order == ("balanced", "sing")
+        assert bundle.singing_voice is None
+        assert bundle.singing_pitch_range is None
 
     # any types here are resolved dynamically
     def test_asset_checksums_are_case_insensitive(self) -> None:
@@ -446,7 +646,7 @@ class TestCEVoice(CeluneTestCase):
         cevoice.select_voice_bundle("missing")
 
         with mock.patch(
-            "celune.cevoice.default_bundle_path", return_value=default_path
+            "celune.cevoice.base.default_bundle_path", return_value=default_path
         ):
             loader = cevoice.default_loader()
             logs: list[tuple[str, str]] = []
@@ -475,7 +675,9 @@ class TestCEVoice(CeluneTestCase):
             AssertionError: Bundle path resolution changes unexpectedly.
         """
         expected = self.temp_dir / "voices" / "fixture.cevoice"
-        with mock.patch("celune.cevoice.voices_data_dir", return_value=expected.parent):
+        with mock.patch(
+            "celune.cevoice.base.voices_data_dir", return_value=expected.parent
+        ):
             assert cevoice.resolve_bundle_path("fixture") == expected
             assert cevoice.resolve_bundle_path("fixture.cevoice") == expected
 
@@ -489,11 +691,11 @@ class TestCEVoice(CeluneTestCase):
 
         with (
             mock.patch(
-                "celune.cevoice.project_root",
+                "celune.cevoice.base.project_root",
                 return_value=repository_root,
             ),
             mock.patch(
-                "celune.cevoice.voices_data_dir",
+                "celune.cevoice.base.voices_data_dir",
                 return_value=user_dir,
             ),
         ):
@@ -513,11 +715,11 @@ class TestCEVoice(CeluneTestCase):
 
         with (
             mock.patch(
-                "celune.cevoice.project_root",
+                "celune.cevoice.base.project_root",
                 return_value=repository_root,
             ),
             mock.patch(
-                "celune.cevoice.voices_data_dir",
+                "celune.cevoice.base.voices_data_dir",
                 return_value=user_dir,
             ),
         ):
@@ -539,11 +741,11 @@ class TestCEVoice(CeluneTestCase):
 
         with (
             mock.patch(
-                "celune.cevoice.project_root",
+                "celune.cevoice.base.project_root",
                 return_value=repository_root,
             ),
             mock.patch(
-                "celune.cevoice.voices_data_dir",
+                "celune.cevoice.base.voices_data_dir",
                 return_value=user_dir,
             ),
         ):
@@ -565,7 +767,7 @@ class TestCEVoice(CeluneTestCase):
         logs: list[tuple[str, str]] = []
 
         with mock.patch(
-            "celune.cevoice.default_bundle_path",
+            "celune.cevoice.base.default_bundle_path",
             return_value=missing_default,
         ):
             assert cevoice.default_loader() is None

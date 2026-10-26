@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
 """API-specific type aliases."""
 
-from typing import Union, Literal, Final, Optional
+from typing import Final, Union, Literal, Optional
 
-from .common import JSONSerializable, Sentinel
+from .common import Sentinel, JSONSerializable
 from .aliases import AudioChunk, AudioChunkNonNormalized
 
 
@@ -12,7 +12,8 @@ class WebUiUnset(Sentinel):
 
 
 type WebUiUpdate = dict[str, JSONSerializable]
-type WebUiAudioValue = Optional[tuple[int, AudioChunk]]
+type WebUiAudioArray = Union[AudioChunk, AudioChunkNonNormalized]
+type WebUiAudioValue = Optional[tuple[int, WebUiAudioArray]]
 type WebUiInputArray = Union[AudioChunk, AudioChunkNonNormalized]
 type WebUiInputAudioValue = Optional[tuple[int, WebUiInputArray]]
 type TaskEventName = Literal[

@@ -12,8 +12,8 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import tests.celtest as celtest_plugin
-from tests.celtest import CeltestMetadata, celtest
 from tests.support import CeluneTestCase
+from tests.celtest import CeltestMetadata, celtest
 
 
 class TestCeltest(CeluneTestCase):

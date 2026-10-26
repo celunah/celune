@@ -3,22 +3,27 @@
 
 import re
 import sys
+import time
 import logging
-
+import threading
 from typing import Literal, Optional
-from dataclasses import dataclass, replace
-from collections.abc import Callable, Collection, Mapping
+from collections import deque
+from collections.abc import Mapping, Callable, Sequence, Collection
+from dataclasses import replace, dataclass
 
-import readchar
 from rich.text import Text
 from rich.cells import cell_len
 from textual.dom import NoScreen
+from textual.events import Key, Click, Leave, MouseMove
 from textual.widget import Widget
 from textual.message import Message
-from textual.events import Click, Key, Leave, MouseMove
 
-from ..terminal import _infer_log_severity
+from ..i18n import string
+from ..terminal import infer_log_severity
 from ..typing.common import JSONSerializable
+from ..typing.aliases import LogCallback
+
+_MCP_DISCONNECT_CORRELATION_SECONDS = 5.0
 
 
 class SelectMenu:
@@ -64,6 +69,8 @@ class SelectMenu:
         Returns:
             str: The chosen option.
         """
+        import readchar
+
         sys.stdout.write("\033[?25l")
         sys.stdout.write(self.prompt)
         sys.stdout.write("\n\n")
@@ -111,6 +118,7 @@ class SelectMenuOption:
     show_value: bool = True
     confirm_value: Optional[JSONSerializable] = None
     explanation: Optional[str] = None
+    autocomplete_labels: Optional[Sequence[str]] = None
 
 
 class SelectMenuWidget(Widget):
@@ -227,7 +235,7 @@ class SelectMenuWidget(Widget):
                 display_value = (
                     option.display_value
                     if option.display_value is not None
-                    else self._value_text(option.value)
+                    else self._option_value_text(option, option.value)
                 )
                 if content_width > 0:
                     display_value = self._truncate_cells(
@@ -468,7 +476,9 @@ class SelectMenuWidget(Widget):
 
         if self._edit_buffer is None:
             self._edit_buffer = (
-                "" if character is not None else self._value_text(option.value)
+                ""
+                if character is not None
+                else self._option_value_text(option, option.value)
             )
         if character is not None:
             self._edit_buffer += character
@@ -511,10 +521,17 @@ class SelectMenuWidget(Widget):
                 .casefold()
                 .startswith(normalized_query)
             )
+        labels = option.autocomplete_labels or ()
         return tuple(
             value
-            for value in option.autocomplete_values
-            if normalized_query in SelectMenuWidget._value_text(value).casefold()
+            for index, value in enumerate(option.autocomplete_values)
+            if normalized_query
+            in (
+                labels[index]
+                if index < len(labels)
+                else SelectMenuWidget._value_text(value)
+            ).casefold()
+            or normalized_query in SelectMenuWidget._value_text(value).casefold()
         )
 
     @staticmethod
@@ -589,6 +606,18 @@ class SelectMenuWidget(Widget):
         )
 
     @staticmethod
+    def _option_value_text(option: SelectMenuOption, value: JSONSerializable) -> str:
+        """Return a configured autocomplete label or the value's text."""
+        if option.autocomplete_values and option.autocomplete_labels:
+            try:
+                index = tuple(option.autocomplete_values).index(value)
+            except ValueError:
+                return SelectMenuWidget._value_text(value)
+            if index < len(option.autocomplete_labels):
+                return option.autocomplete_labels[index]
+        return SelectMenuWidget._value_text(value)
+
+    @staticmethod
     def _value_text(value: JSONSerializable) -> str:
         """Convert a JSON-compatible option value into one display cell."""
         return str(value).replace("\n", " ").replace("\r", " ")
@@ -617,7 +646,7 @@ class LogRedirect:
     @staticmethod
     def _severity_for_message(message: str, default_severity: str) -> str:
         """Infer log severity from one redirected text line."""
-        return _infer_log_severity(message, default_severity)
+        return infer_log_severity(message, default_severity)
 
     def __init__(
         self,
@@ -730,12 +759,15 @@ class UILogHandler(logging.Handler):
 
     def __init__(
         self,
-        write_callback: Callable[[str, str], None],
+        write_callback: LogCallback,
         filter_messages: Optional[Collection[str]] = None,
     ) -> None:
         super().__init__()
         self.write_callback = write_callback
         self.filter_messages = filter_messages
+        self._recent_mcp_terminations: deque[tuple[float, int, str, bool]] = deque(
+            maxlen=32
+        )
 
     def _is_filtered_message(self, message: str) -> bool:
         """Return whether one logging message should be suppressed."""
@@ -745,6 +777,42 @@ class UILogHandler(logging.Handler):
         return any(
             filtered_message in message for filtered_message in self.filter_messages
         )
+
+    def _remember_mcp_termination(self, session_id: str) -> None:
+        """Remember a session being closed for its ensuing asyncio callback."""
+        self._recent_mcp_terminations.append(
+            (time.monotonic(), threading.get_ident(), session_id, False)
+        )
+
+    def _expected_mcp_termination(self) -> Optional[tuple[str, bool]]:
+        """Match a recent termination from this thread and mark its first callback."""
+        now = time.monotonic()
+        current_thread = threading.get_ident()
+        while (
+            self._recent_mcp_terminations
+            and now - self._recent_mcp_terminations[0][0]
+            > _MCP_DISCONNECT_CORRELATION_SECONDS
+        ):
+            self._recent_mcp_terminations.popleft()
+
+        for index in range(len(self._recent_mcp_terminations) - 1, -1, -1):
+            started, thread_id, session_id, reported = self._recent_mcp_terminations[
+                index
+            ]
+            if (
+                thread_id == current_thread
+                and now - started <= _MCP_DISCONNECT_CORRELATION_SECONDS
+            ):
+                if reported:
+                    return session_id, False
+                self._recent_mcp_terminations[index] = (
+                    started,
+                    thread_id,
+                    session_id,
+                    True,
+                )
+                return session_id, True
+        return None
 
     def emit(self, record: logging.LogRecord) -> None:
         """Forward one Python logging record into the UI log stream.
@@ -771,6 +839,31 @@ class UILogHandler(logging.Handler):
         if self._is_filtered_message(message):
             return
 
+        is_mcp_logger = record.name == "mcp" or record.name.startswith("mcp.")
+        termination_prefix = "Terminating session: "
+        if is_mcp_logger and message.startswith(termination_prefix):
+            session_id = message[len(termination_prefix) :].strip()
+            if session_id and session_id != "None":
+                self._remember_mcp_termination(session_id)
+
+        if (
+            record.name == "asyncio"
+            and "_ProactorBasePipeTransport._call_connection_lost" in message
+        ):
+            expected_termination = self._expected_mcp_termination()
+            if expected_termination is None:
+                self.write_callback(
+                    f"[MCP] {string('mcp.connection_lost')}",
+                    "warning",
+                )
+            elif expected_termination[1]:
+                self.write_callback(
+                    f"[MCP] "
+                    f"{string('mcp.session_terminated', session_id=expected_termination[0])}",
+                    "info",
+                )
+            return
+
         if record.levelno >= logging.ERROR:
             severity = "error"
             prefix = "Internal runtime error:"
@@ -780,6 +873,10 @@ class UILogHandler(logging.Handler):
         else:
             severity = "info"
             prefix = "Internal runtime notice:"
+
+        if is_mcp_logger:
+            self.write_callback(f"[MCP] {message}", severity, loglevel="debug")
+            return
 
         self.write_callback(f"{prefix} {message}", severity)
 

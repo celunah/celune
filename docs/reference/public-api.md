@@ -32,7 +32,7 @@ common integration shape is:
 ```python
 from celune import Celune
 
-engine = Celune(config={"mode": "speak", "voice_bundle": "default"})
+engine = Celune(config={"mode": "performance", "voice_bundle": "default"})
 try:
     engine.load()
     engine.say("Hello from Python.")
@@ -50,7 +50,7 @@ Persona state, events, and audio lifecycle until `close()`.
 | --- | --- |
 | `load() -> bool` | Load the configured character, backend, model, and audio runtime. |
 | `close() -> None` | Stop work, release backend/model/audio state, and make shutdown idempotent. |
-| `fatal() -> None` | Enter the fatal runtime path and notify listeners. |
+| `fatal(*, semi_fatal=False) -> None` | Enter the fatal runtime path and notify listeners; configuration failures can preserve settings access. |
 | `wait_until_idle_async(timeout=None) -> bool` | Await the shared playback/generation idle condition. |
 | `sleep_enabled` | Whether configured sleep is active. |
 | `sleep_timeout_seconds` | Resolved idle timeout. |
@@ -64,9 +64,71 @@ Persona state, events, and audio lifecycle until `close()`.
 | `tts_backend`, `model_name` | Active backend/model identifiers. |
 | `current_voice`, `voices` | Selected voice and available voice names. |
 | `current_character`, `voice_bundle_is_default` | Selected character identity and pack provenance. |
+| `agent_tools`, `agent_tool_schemas`, `agent_router`, `agent_needle_selector` | Typed collaborators for controlled setup of Celune's built-in agent runtime. |
+| `emit_event(event_name, event) -> None` | Dispatch a typed runtime event to subscribers. |
+| `update_cur_state(value) -> Optional[StateChangedEvent]` | Store a state label and return its transition event without dispatching it. |
+| `run_pipeline_jobs() -> None` | Run generation and playback workers in the engine's worker thread. |
 
 `load()` may download models and create isolated environments. Callers that run
 inside an event loop should prefer the async reload methods below.
+
+`operation_state` is independent of `cur_state` and normal actions such as
+speaking, sleeping, or reloading. It starts as `OperationState.NORMAL`, becomes
+`OperationState.STOPPED` after engine shutdown or test completion, and records
+fatal failures as `OperationState.FATAL`. Set `semi_fatal=True` when calling
+`fatal()` for a configuration failure that leaves the settings manager useful;
+this records `OperationState.SEMI_FATAL`. The `/settings` command is accepted in
+`NORMAL` and `SEMI_FATAL`; during `SEMI_FATAL`, other commands and speech input
+are unavailable. Fatal and stopped states reject input and commands. Import the
+enum from `celune.typing.modes`.
+
+```python
+from celune import Celune
+from celune.typing.modes import OperationState
+
+engine = Celune(config={})
+if engine.operation_state is OperationState.NORMAL:
+    engine.load()
+```
+
+When a configuration failure prevents normal operation but settings can fix
+it, integrations can mark that failure explicitly:
+
+```python
+engine.fatal(semi_fatal=True)
+assert engine.operation_state is OperationState.SEMI_FATAL
+```
+
+## Runtime coordination
+
+The engine exposes typed collaborators and event helpers for Celune's split
+runtime modules. Integrations should normally use the higher-level speech,
+agent, and lifecycle methods above. When a runtime extension needs to publish a
+state transition directly, `update_cur_state(value: str) -> Optional[StateChangedEvent]`
+stores the state and returns an event only when the value changed;
+`emit_event(event_name: EventName, event: EventPayload) -> None` dispatches a
+typed event to subscribers. `run_pipeline_jobs() -> None` is the worker-thread
+entry point for generation and playback. The
+`run_agent_route(route: AgentClassificationResult) -> bool` method executes one classified route, and
+`reset_persona_conversation() -> None` clears Persona history, summary, and
+pending attachments.
+
+```python
+event = engine.update_cur_state("ready")
+if event is not None:
+    engine.emit_event("state_changed", event)
+```
+
+Assigning `engine.cur_state` performs the state update and event dispatch
+together. The `agent_tools`, `agent_tool_schemas`, `agent_router`, and
+`agent_needle_selector` properties expose the engine's typed agent
+collaborators; replace them only during controlled runtime setup.
+
+Playback coordination exposes its source identifier, status, metadata, and
+caption maps through `next_playback_source_id`, `playback_source_statuses`,
+`playback_source_meta`, and `playback_caption_states`. These properties let
+Celune's pipeline modules share engine-owned state; integrations should use the
+playback methods and callbacks instead of mutating the maps directly.
 
 ## Backends, voices, and character packs
 
@@ -115,17 +177,30 @@ async form.
 | `persona_history`, `persona_session_summary` | Read bounded session context for integrations. |
 | `persona_attachments` | Pending attachment descriptors for the next vision turn. |
 | `agent_needle_ready`, `agent_needle_error` | Read agent selector availability/diagnostics. |
+| `run_agent_route(route: AgentClassificationResult) -> bool` | Execute one classified agent route through the shared runtime. |
+| `reset_persona_conversation() -> None` | Clear Persona history, summary, and pending attachments. |
 
 `say()` and `think()` use the same playback queue used by the UI/API. Do not
 call a backend's generator directly from application code.
+
+Runtime integrations that dispatch their own state transitions can pair
+`update_cur_state()` with `emit_event()`:
+
+```python
+event = engine.update_cur_state("ready")
+if event is not None:
+    engine.emit_event("state_changed", event)
+```
+
+Most integrations should assign `engine.cur_state`, which performs both steps.
 
 ## Audio and voice conversion
 
 | Call | Contract |
 | --- | --- |
-| `submit_audio(audio, sample_rate, label="audio input", pitch_shift=None, f0_condition=None, ...) -> bool` | Submit audio to the active non-TTS mode for playback/conversion. |
-| `convert_audio(audio, sample_rate, label="audio input", pitch_shift=None, f0_condition=None) -> Optional[AudioOutput]` | Convert one block and return the output metadata/audio. |
-| `convert_live_audio(audio, sample_rate, label="audio input", pitch_shift=None, f0_condition=None) -> Optional[AudioOutput]` | Convert one low-latency live block while preserving VC overlap state. |
+| `submit_audio(audio, sample_rate, label="audio input", f0_condition=None, ...) -> bool` | Submit audio to the active non-TTS mode for playback/conversion. |
+| `convert_audio(audio, sample_rate, label="audio input", f0_condition=None) -> Optional[AudioOutput]` | Convert one block and return the output metadata/audio. |
+| `convert_live_audio(audio, sample_rate, label="audio input", f0_condition=None) -> Optional[AudioOutput]` | Convert one low-latency live block while preserving VC overlap state. |
 | `stop_live_audio() -> None` | Reset live VC backend state. |
 | `play(sound_path, keep=False, volume=1.0) -> bool` | Queue an SFX file, optionally prepending it to the next saved utterance. |
 | `play_audio(audio, sample_rate, label="uploaded SFX", keep=False) -> bool` | Queue decoded SFX data. |
@@ -140,7 +215,7 @@ call a backend's generator directly from application code.
 | `playback_writer_gap_seconds` | Read the latest gap between the previous write finishing and this write starting. |
 | `playback_writer_write_seconds` | Read the latest time spent inside the output stream write. |
 | `playback_rebuffer_wait_seconds` | Read cumulative time spent waiting for the adaptive reserve target. |
-| `vc_pitch_shift`, `vc_f0_condition` | Read/write VC controls. |
+| `vc_f0_condition` | Read/write VC F0 conditioning state. |
 
 Arrays passed to audio calls should be numeric mono/stereo data; Celune converts
 them to normalized float32. The returned `AudioOutput` includes the actual
@@ -174,7 +249,7 @@ replace lifecycle flags or required facade assembly checks.
 from celune.utils import available
 
 available("config")
-available("pitch_shift", obj=backend)
+available("f0_condition", obj=backend)
 available("silero_vad")
 ```
 
@@ -196,19 +271,101 @@ available. `obj` and `scope` are mutually exclusive.
 The stable pack API is:
 
 ```python
-from celune.cevoice import CEVoice, write_cevoice, write_cechar_v4
+from celune.cevoice import (
+    CEVoice,
+    add_cevoice_entries,
+    remove_cevoice_entries,
+    write_cevoice,
+    write_cechar_v4,
+    write_cechar_v5,
+)
 
 bundle = CEVoice.open("voices/default.cevoice")
 wav_bytes = bundle.read_asset("balanced", "wav")
+entries = bundle.entries
+identity = bundle.read_entry("identity.md")
+add_cevoice_entries("my_pack.cevoice", ["speech_style.md"], position=1)
+remove_cevoice_entries("my_pack.cevoice", ["speech_style.md"])
 write_cevoice("legacy-compatible.cevoice", voices, metadata, voice_metadata)
 write_cechar_v4("character.cechar", files, metadata, compression=0)
+write_cechar_v5("character-with-singing.cechar", files, metadata, voice_metadata)
 ```
 
 `CEVoice.open()` validates the header, metadata, safe names, ranges, and
 checksums. `read_asset()` validates the selected asset digest before returning
 bytes. `write_cevoice()` writes the legacy-compatible layout;
-`write_cechar_v4()` is the preferred writer for new packs. See
+`write_cechar_v4()` writes indexed v4 archives, and `write_cechar_v5()` writes
+the current schema with an optional hidden `sing` voice. `CEVoice.singing_voice`
+returns `"sing"` when a v5 pack defines it, otherwise `None`. TTS voice lists
+exclude that reserved singing entry. `CEVoice.singing_pitch_range` returns its
+inclusive `(min_midi, max_midi)` pair, or `(0, 127)` for an older v5 pack with
+no declared range; packs without a singing voice return `None`. New v5 writers
+require a valid `range` object on the singing entry. See
 [CEVOICE and CECHAR](../CEVOICE.md) for the binary schemas and constraints.
+
+`CEVoice.entries` returns a tuple of `CEVoiceEntry` values (`name` and byte
+`size`) in stored order. Legacy packs use payload offsets for this order;
+indexed packs use their `files` list. `read_entry(name)` returns the named
+entry's bytes after checksum validation and raises `KeyError` when the name is
+absent or `CEVoiceError` when the bytes fail validation.
+
+`add_cevoice_entries(path, sources, position=None)` appends files when
+`position` is omitted or inserts them at a 1-based position. It accepts
+`Path` or string inputs and returns the reopened pack. It raises `CEVoiceError`
+when an asset is unsupported or the edit would leave invalid metadata,
+`FileNotFoundError` for missing input files, and `OSError` for filesystem
+failures. `remove_cevoice_entries(path, names)` removes exact entry names and
+returns the reopened pack; it raises `CEVoiceError` for missing names or an
+invalid resulting pack. Both calls validate a temporary sibling pack before
+atomically replacing `path`, preserving its generation and indexed compression.
+
+```python
+bundle = CEVoice.open("my_pack.cevoice")
+print([(entry.name, entry.size) for entry in bundle.entries])
+add_cevoice_entries("my_pack.cevoice", ["identity.md"], position=1)
+remove_cevoice_entries("my_pack.cevoice", ["identity.md"])
+```
+
+## CESN parsing
+
+`parse_cesn(text: str, *, supported_languages: Optional[tuple[str, ...]] =
+None) -> tuple[CESNSection, ...]` parses the section-based notation and aligns
+explicit IPA syllables with pitched notes. A `CESNSection` carries BPM, key,
+scale, explicit language, singer identity, and ordered note blocks. A block
+keeps `CESNNotePair` entries and `CESNRestEvent` values in event order. Each
+note pair stores its IPA syllable and slur state; rests consume no syllable.
+Every group follows `[extra tags][notes][raw dot-separated IPA] lyrics`, with
+one IPA syllable per pitched note. `render_cesn(sections:
+tuple[CESNSection, ...]) -> str`
+serializes all sections into one canonical notation string with settings
+repeated at each section boundary. `CESNTuplet(actual_count, normal_count)`
+scales the next `actual_count` note/rest events by `normal_count / actual_count`
+and then expires. Each parsed note/rest exposes its exact `duration_beats` as a
+`fractions.Fraction`; `tuplet_start` identifies where the directive belongs in
+canonical rendering. Language tags are required; providing
+`supported_languages` checks the selected model.
+
+```python
+from celune.cesn import parse_cesn, render_cesn
+
+sections = parse_cesn(
+    "[lang:en][bpm:120,key:c,scale:major][tuplet:3,2][c3:4,r:4,d3:4][ˈkwaɪ.ət]Quiet."
+)
+notation = render_cesn(sections)
+```
+
+The parser raises `CESNValidationError` for malformed notation,
+`CESNUnsupportedFeatureError` for unsupported scales, languages, or explicit
+singers, `CESNAlignmentError` when IPA syllables outnumber pitched notes, and
+`CESNMatchError` when a pitched event has no IPA syllable. These types inherit from
+`CESNSyntaxError` for compatibility. Resolving the active singer can raise
+`InvalidCharacterError` when its CECHAR v5 pack has no `sing` voice. Out-of-scale
+pitches emit `CESNNotationWarning`. Singing backend preprocessing raises
+`CESNRangeError` when a note falls outside the selected pack's declared singing
+range, and `CESNBackendFormatError` when an internal serialized score violates
+the backend format. See
+[CESN format and parsing](../formats/cesn.md) for the grammar, supported
+scales, section boundaries, and recovery behavior.
 
 ## Supporting module calls
 
@@ -221,9 +378,17 @@ bytes. `write_cevoice()` writes the legacy-compatible layout;
 | `celune.analysis` | Audio metrics, reference similarity, trait computation, radar plots, reports, and `analyze_voice_audio()`. |
 | `celune.paths` | App-data, runtime, Hugging Face cache, voice, backend-environment, config, output, and migration paths. |
 | `celune.extensions` | Extension base, context, manager, event dispatcher, and event decorator. |
+| `celune.exceptions` | Canonical Celune-owned exception hierarchy, including CESN, backend, agent, environment, and checkpoint failures. |
 | `celune.api` | `configure_api_security()`, `resolve_api_host()`, `bind_celune()`, `run_api()`, `start_api()`, `audio_bytes()`, and `stream_headers()`. |
 | `celune.backends.environment` | `BackendManifest`, `BackendEnvironment`, and `BackendEnvironmentManager`. |
 | `celune.cedts.protocol` | CEDTS framing, typed values, handshake, and stream exceptions. |
+| `celune.registry.consent` | `is_api_model_request() -> bool` reports whether the current context is handling an API or WebUI request. |
+
+```python
+from celune.registry.consent import is_api_model_request
+
+api_context = is_api_model_request()
+```
 
 Internal helpers, private backend implementations, UI widget methods, and
 dataclass fields not listed above are implementation details. Extend the

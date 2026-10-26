@@ -25,6 +25,39 @@ events, model readiness, and shutdown. Persona and agent requests enter the
 same speech pipeline used by direct TTS. Voice conversion enters the same
 playback path through an audio-input request.
 
+## Ownership and dependency direction
+
+`celune.celune.Celune` is the concrete public façade. It owns singleton
+identity, construction, state properties, and explicitly declared public
+methods. Those methods delegate to `celune.core`, which coordinates startup,
+shutdown, loading, reload transactions, voice changes, sleep and wake,
+callbacks, speech requests, Persona conversation, and engine-specific agent
+workflows. Core modules keep their private helpers with the workflow that owns
+them instead of installing them onto `Celune` dynamically.
+
+Feature packages own their implementations. `celune.pipeline` owns request
+submission, generation, buffering, playback, caption tracking, and output;
+`celune.persona` owns prompt construction, inference, history, memory, and
+emotion; `celune.agent` owns routing, tools, permissions, Needle, and task
+runtime. Core coordinates those packages without making them import the
+concrete façade at runtime. Narrow contracts in `celune.typing` and explicit
+callbacks carry engine operations such as language reload across that boundary.
+`celune.core.speech` owns the engine-level speech entry points and delegates
+request preparation and playback work to `celune.pipeline`.
+
+`celune.api` owns documented API entrypoints, FastAPI wiring, and the public
+Cloudflared tunnel lifecycle. Shared transport state, authentication, jobs,
+subscriptions, and transport audio helpers belong to `celune.server`. Textual
+and Gradio presentation stay in `celune.ui` and `celune.webui`; WebUI builders
+receive the shared server session instead of importing API globals. `CeluneUI`
+composes typed hooks from its runtime, recording, and interaction modules.
+Frontend startup remains lazy so theme registration and the loading screen
+precede core and feature imports.
+
+The 100 KB Python source recommendation is a review signal. Group modules by
+cohesive subsystem ownership; retain a substantial standalone module or a
+larger cohesive file when splitting it would create artificial boundaries.
+
 ## Startup and lazy imports
 
 `celune.__init__` configures cache defaults and exposes lazy root symbols. A
@@ -40,6 +73,16 @@ shutdown path even while runtime loading fails.
 runtime subclass creation. Integrations should use their callbacks, protocols,
 backend interfaces, and composition points rather than inheriting from these
 single-instance runtime classes.
+
+Celune modules use public functions and properties when they share state or
+behavior across module boundaries. Underscore-prefixed members stay inside
+their owning module or class; adapters around third-party APIs isolate any
+necessary access to upstream protected members.
+
+Playback source identifiers, statuses, metadata, and caption timing live on the
+engine behind typed properties. Playback helpers use those properties rather
+than attaching undeclared attributes dynamically. Queue draining is a shared
+utility used by both the pipeline and agent tools.
 
 When verbose or debug logging is enabled, the loading overlay shows only three
 startup checkpoints: checking dependencies immediately on process startup,
@@ -62,7 +105,7 @@ status and diagnostic text stays in the loading screen or main log.
 4. The backend generates chunks, locally or through a CEDTS worker.
 5. The smart buffer and contention monitor decide when to start and how much
    output reserve to maintain.
-6. Audio is resampled/normalized, optionally pitch-shifted or reverberated.
+6. Audio is resampled/normalized and optionally reverberated.
 7. A persistent playback input reader feeds the mixer, and a persistent audio
    writer drains mixed blocks to the sounddevice stream. The mixer yields
    briefly after each submitted block so the writer can keep its reserve moving
@@ -74,6 +117,10 @@ status and diagnostic text stays in the loading screen or main log.
    completion and idle transitions.
 8. The final 48 kHz stereo FLAC is saved when requested.
 
+Submission and prepared-audio requests share the same generation, buffering,
+playback, caption, and output owners. Contention policy stays with buffering,
+and timing constants stay inside the pipeline package.
+
 Cancellation travels through the same queue and worker boundary. It does not
 create a second “stop” path that could leave a backend generation alive.
 Playback completion is source-aware: speech completion closes speech captions
@@ -81,10 +128,13 @@ without waiting for unrelated SFX overlays, while the global idle transition
 still waits for every source and deferred queue-reader handoffs. A completion
 marker retains its idle notification until the final playback stage drains, so
 readiness and speech cannot leave the runtime in a stale speaking state.
+Caption progress forwards revealed-word counts to compatible consumers while
+preserving existing two-argument progress callbacks.
 Output failures clear the source maps, mark
 playback complete, and release any held pipeline lease.
 Automatic sleep also waits for every registered playback source, including SFX
-overlays, before unloading runtime state.
+overlays, before unloading runtime state. If an unload fails, the model-ready
+signal is still released and Celune remains asleep so the wake path can recover.
 
 ## Async coordination and blocking boundaries
 
@@ -106,6 +156,8 @@ than `asyncio`'s default executor. Cancelling an async wrapper cannot safely
 kill arbitrary Python code already executing in a thread, so shutdown first
 signals the owning backend or process through its cancellation hook and then
 allows the daemon worker to be abandoned without delaying process exit.
+`celune.core.concurrency` owns those wrappers and the shared component-lock
+manager used by engine, pipeline, and frontend operations.
 
 ## Component locks
 
@@ -136,6 +188,72 @@ Agent mode adds planning, schema validation, approvals, and task lifecycle on
 top of Persona. The agent can choose only registered tools; local management is
 an explicit opt-in catalog, not a hidden fallback.
 
+## VRAM budgets and profiles
+
+`celune/constants.py` keeps the minimum total capacity for each preset and
+subtracts a fixed 2 GiB system reserve to derive Celune's budget. On Windows,
+hardware capacity includes the adapter's dedicated memory plus the WDDM
+shared-memory limit. Microsoft's formula is
+`min(80% of RAM, max(RAM - 16 GiB, 50% of RAM))`; see the [graphics memory
+calculation](https://learn.microsoft.com/en-us/windows-hardware/drivers/display/calculating-graphics-memory).
+Admission uses current dedicated GPU free memory and shared-memory headroom above
+the system reserve.
+`celune/vram.py` resolves the active GPU, backend and artifact revisions,
+quantization, model tiers, context limits, and enabled GPU components into an
+exact profile key. `VramProfile` stores load, warmup, and inference peaks plus
+dtype, quantization, revision, and component metadata.
+
+At startup, Celune looks for that exact key in `VRAM_PROFILES`. A known profile
+is rejected if its peak exceeds the preset budget or the current free memory
+after subtracting this process's current allocations and the 2 GiB reserve. A
+missing profile only produces a localized warning; Celune proceeds and handles
+a runtime CUDA out-of-memory error by releasing partial allocations and
+returning generation to an idle state. Windows profile peaks sum the Celune
+process tree's dedicated and shared allocations. The stored peak is rounded up
+by 0.01 GiB from the two-decimal sample before admission.
+
+The shipped measurements are specific to a Windows NVIDIA GeForce RTX 5070.
+TTS quantization was requested for Torch backends but reported inactive, so
+those peaks do not assume quantization savings.
+
+| Configuration | Load | Warmup | Inference |
+| --- | ---: | ---: | ---: |
+| Qwen3 TTS only, xhigh | 4.53 GiB | 4.91 GiB | 4.91 GiB |
+| dots.tts TTS only, xhigh | 5.43 GiB | 6.26 GiB | 6.26 GiB |
+| FireRedTTS3 only, xhigh | 6.39 GiB | 6.39 GiB | 6.39 GiB |
+| LuxTTS only, xhigh | 1.62 GiB | 1.62 GiB | 1.64 GiB |
+| Pocket TTS only, xhigh | 0.46 GiB | 0.46 GiB | 0.46 GiB |
+| Qwen3 TTS, 4B Persona, and on-demand Whisper, high | 8.67 GiB | 9.00 GiB | 9.98 GiB |
+
+The VoxCPM2 run completed, but its exact per-phase peaks were not preserved, so
+it remains unprofiled. Other model revisions, normalizer-enabled configurations,
+and unmeasured component combinations also remain unprofiled and use the
+warning-and-proceed path.
+
+Persona and agent context are capped at 2,048 and 8,192 tokens respectively.
+Emotion analysis calls the Qwen text decoder directly with hidden-state
+collection and KV caching disabled, retaining only `last_hidden_state`.
+Whisper is loaded for a Persona recording session and unloaded after its final
+queued transcription or cancellation. Profile keys include the cached Whisper
+revision; the default model is pinned to the measured commit, while custom
+model IDs without a fixed revision cannot match a measured profile.
+
+An interrupted 8,192-token agent diagnostic reached 20.35 GiB during Persona's
+context prefill, before the Needle selector was loaded. The standalone Needle
+max-length run used 168 MiB of peak CUDA allocations and 200 MiB reserved. This
+does not establish a complete agent profile; agent configurations remain
+unprofiled until Celune can control the Persona context-prefill peak.
+
+TTS quantization defaults to enabled for supported TorchAO backends; LuxTTS is
+excluded. CUDA out-of-memory errors do not trigger BF16 recovery, which could
+require more memory. The active request fails with a warning while the runtime
+remains usable.
+
+Validation uses `python scripts/run_ci.py`. GPU profile records require
+sequential measurements of load, warmup, and inference on the target hardware;
+static tests verify profile matching, preset budgets, unknown-profile behavior,
+and out-of-memory cleanup without requiring a GPU.
+
 ## Shutdown
 
 UI unmount, `CTRL+Q`, API shutdown, process-loss detection, and `Celune.close()`
@@ -144,6 +262,10 @@ asked to shut down, streams are closed, models release their state, and event
 listeners receive terminal notifications. Pipeline blocking work uses daemon
 threads rather than the event loop's default executor, so a cancelled backend
 or reload operation cannot make `asyncio.run()` wait for the executor's
-300-second join window during restart. CEDTS backends receive an abort/shutdown
-request before their daemon caller is abandoned. A fatal state can stop
-generation without pretending that the engine is healthy.
+300-second join window during restart. The Textual UI also uses daemon threads
+for deferred runtime construction and model loading. On Windows, Textual timer
+waits use cancellable event-loop sleeps instead of blocking default-executor
+threads. These paths let UI shutdown finish without waiting for abandoned
+startup work or timer threads. CEDTS backends receive an abort/shutdown request
+before their daemon caller is abandoned. A fatal state can stop generation
+without pretending that the engine is healthy.

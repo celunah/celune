@@ -1,6 +1,6 @@
 [project]
 name = "celune"
-version = "5.0.4"
+version = "5.1.0"
 description = "Real-time AI TTS character engine for all use cases"
 readme = "README.md"
 requires-python = ">=3.12,<3.15"
@@ -12,6 +12,7 @@ dependencies = [
     # AI stack
     # Wow, up to date!
     "torch==2.13.0+cu130",
+    "torchao==0.17.0",
     "torchaudio==2.11.0+cu130",
     # This package is not required if you want to use Persona in text-only mode,
     # or Celune operates in speech-only mode.
@@ -52,12 +53,17 @@ dependencies = [
     "psutil",
     "platformdirs",
     "pyyaml",
+    "cryptography>=46",
+    # Used to get repository information.
+    # The Celune repository is used to update the software in place as needed.
+    "GitPython>=3.1.59,<4.0",
     "httpx>=0.27.0,<0.29.0",
     # Used to detect language of input.
     "lingua-language-detector>=2.2.0,<3.0.0",
     "iso639-lang>=2.0.0,<3.0.0",
     # She can also play literal [music].
     "yt-dlp[default]>=2026.08.19",
+    "lupa>=2.8,<3.0",
 ]
 
 [project.urls]
@@ -66,7 +72,7 @@ Repository = "https://github.com/celunah/celune"
 Issues = "https://github.com/celunah/celune/issues"
 
 [tool.setuptools.package-data]
-celune = ["assets/*.wav", "lang/*.json"]
+celune = ["lang/*.json", "assets/*", "release_keyring.json"]
 
 [tool.setuptools.data-files]
 voices = ["voices/*.cevoice"]
@@ -93,7 +99,7 @@ dev = [
     "pylint",
     # Docstrings matter, so everyone can read the code more easily.
     "docstr-coverage",
-    "ruff==0.16.0",
+    "ruff==0.17.0",
     # How many useless functions do we have?
     "vulture",
     # How many lines do we have?
@@ -118,15 +124,16 @@ api = [
     "python-multipart",
     "pydantic",
     "gradio",
+    "mcp>=2.2.0,<3.0.0",
 ]
 
-# Optional ONNX Runtime for IPA forced alignment of speech captions.
+# Install to support caption display with forced-alignment.
 captions = [
     "onnxruntime>=1.22",
 ]
 
 # Install to use OpenZL-compressed CECHAR v4 packages in Celune.
-openzl = [
+cechar4-openzl = [
     "openzl",
 ]
 
@@ -160,7 +167,7 @@ openzl = [
 # A cheap on compute Celune backend providing an exceptional sound quality. Fastest, with an exceptional sound quality
 # to size ratio.
 # mini = [
-#     "pocket-tts>=2.1.0,!=3.0.0",
+#     "pocket-tts>=3.2.0",
 # ]
 
 # LuxTTS is isolated in its CUDA-capable CEDTS environment and falls back to
@@ -293,13 +300,20 @@ ignore_fail = "return_non_zero"
 sequence = ["ruff", "format", "lint_basic", "types", "test_basic"]
 ignore_fail = "return_non_zero"
 
+[tool.poe.tasks.build_configure]
+cmd = "cmake --preset unsigned"
+
+[tool.poe.tasks.build_compile]
+cmd = "cmake --build --preset unsigned"
+
 [tool.poe.tasks.build]
-control.expr = "sys.platform"
+sequence = ["build_configure", "build_compile"]
 
-[[tool.poe.tasks.build.switch]]
-case = "win32"
-cmd = "pwsh -NoProfile -File scripts/build_nuitka.ps1"
+[tool.poe.tasks.build_signed_configure]
+cmd = "cmake --preset signed"
 
-[[tool.poe.tasks.build.switch]]
-case = ["linux", "darwin"]
-cmd = "bash scripts/build_nuitka.sh"
+[tool.poe.tasks.build_signed_compile]
+cmd = "cmake --build --preset signed"
+
+[tool.poe.tasks.build_signed]
+sequence = ["build_signed_configure", "build_signed_compile"]

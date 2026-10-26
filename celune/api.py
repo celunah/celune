@@ -1,205 +1,252 @@
 # SPDX-License-Identifier: Apache-2.0
 """API layer."""
 
-# pylint: disable=ungrouped-imports
-
 import os
+import re
+import html
 import json
 import time
 import uuid
 import errno
+import atexit
+import shutil
 import socket
 import asyncio
-import inspect
-import datetime
-import textwrap
 import threading
 import contextlib
+import subprocess
 from hmac import compare_digest
 from typing import (
     Union,
     Literal,
     Optional,
+    Annotated,
 )
-from collections import deque, defaultdict
-from dataclasses import field, dataclass
-from collections.abc import Callable, Iterator, Awaitable
+from pathlib import Path
+from collections import abc
 
 import numpy as np
 import gradio as gr
+import fastapi
 import uvicorn
-from fastapi import (
-    File,
-    Form,
-    FastAPI,
-    Request,
-    WebSocket,
-    UploadFile,
-    HTTPException,
-    WebSocketDisconnect,
-)
 from pydantic import Field, BaseModel
-from fastapi.responses import (
-    Response,
-    FileResponse,
-    JSONResponse,
-    RedirectResponse,
-    StreamingResponse,
-)
-from starlette.concurrency import run_in_threadpool
-from starlette.middleware.base import RequestResponseEndpoint
+from starlette import types, concurrency, datastructures
+from starlette.middleware import base as middleware_base
 
 from . import __version__
 from .ui import resources as ui_resources
+from .mcp import (
+    mcp_app,
+    mcp_lifespan,
+    configure_mcp_host_allowlist,
+)
+from .cesn import validate_singing_notation
 from .i18n import string
 from .paths import project_root
-from .theme import colors
-from .utils import available, format_error_message
+from .utils import format_error_message
+from .webui import actions as webactions
+from .webui import runtime as webui
 from .celune import Celune
-from .cevoice import default_loader
-from .speech import (
-    prepare_playback_audio,
-)
+from .server import auth as server_auth
+from .server import jobs as server_jobs
 from .audio.dsp import resample_audio
 from .constants import BASE_SR, APP_NAME
-from .exceptions import TaskSubscriptionClosed
+from .exceptions import (
+    ModelConsentDeclined,
+    ModelConsentRequired,
+    TaskSubscriptionClosed,
+    ModelCommercialUseRestricted,
+)
 from .typing.api import (
-    TaskStatus,
-    TaskEventName,
     TaskCommandName,
 )
-from .typing.common import JSONSerializable
-from .typing.events import EventName, EventCallback
-from .typing.aliases import LogLevel
-from .extensions.events import EventDispatcher
-from . import webactions, webui
-from .webactions import (
-    _build_webui,
-    _decode_uploaded_audio,
-    _voice_conversion_unavailable_response,
-    _webui_run_command,
-    _webui_speak,
+from .server.auth import (
+    _clean_token,
+    _same_origin,
+    _rate_limited,
+    _authenticated,
+    _new_ui_session,
+    _rate_limit_response,
+    _webui_authenticated,
+    is_browser_ui_request,
+    _is_public_api_request,
+    _set_ui_session_cookie,
+    _unauthorized_response,
+    _websocket_authenticated,
+    _refresh_ui_session_cookie,
+    _remember_webui_auth_client,
+    _is_webui_generation_request,
 )
-from .webui import (
-    _append_webui_log,
-    _collect_speech_job,
-    _flac_bytes,
-    _forget_speech_job,
-    _publish_active_task_log,
-    _publish_task_event,
-    _remember_speech_job,
-    _seed_webui_logs,
-    _set_active_speech_task,
-    _set_webui_status,
-    _speech_job_snapshot,
-    _strip_webui_log_prefix,
-    _subscribe_to_speech_job,
-    _subscribe_webui_events,
-    _subscribe_webui_timed_updates,
-    _task_status,
-    _unsubscribe_from_speech_job,
-    _update_speech_job,
-    _webui_input_placeholder,
-    _webui_snapshot,
-    _webui_theme_html,
-    _webui_vc_mode_active,
-    _wrap_celune_callbacks,
+from .server.jobs import SpeechJob, TaskEvent, TaskSubscription
+from .webui.actions import (
+    build_webui,
+    decode_uploaded_audio,
+    voice_conversion_unavailable_response,
+)
+from .webui.runtime import (
     api_log,
-    audio_bytes,
+    flac_bytes,
     require_celune,
-    stream_headers,
+    seed_webui_logs,
+    append_webui_log,
+    set_webui_status,
+    collect_speech_job,
+    webui_vc_mode_active,
+    configure_webui_theme,
+    wrap_celune_callbacks,
+    subscribe_webui_events,
+    get_webui_input_placeholder,
+    subscribe_webui_timed_updates,
 )
+from .registry.types import ModelMetadata
+from .server.session import ServerSession, server_session
+from .typing.pipeline import SpeechStreamQueue
+from .registry.consent import (
+    consent_status,
+    consent_details,
+    registered_models,
+    consent_prompt_text,
+    record_model_consent,
+    exit_api_model_request,
+    pending_model_consents,
+    commercial_mode_enabled,
+    enter_api_model_request,
+    model_metadata_for_revision,
+)
+from .server.constants import (
+    WEBUI_AUTH_PATH,
+)
+from .pipeline.submission import prepare_playback_audio
 
-_receive_webui_timed_update = webui._receive_webui_timed_update
-_webui_audio_waveform_options = webui._webui_audio_waveform_options
-_input_update = webui._input_update
-_webui_resources_html = webui._webui_resources_html
-_send_button_update = webui._send_button_update
-_webui_status_html = webui._webui_status_html
-_webui_vc_controls_update = webui._webui_vc_controls_update
-_webui_convert_audio = webactions._webui_convert_audio
-_webui_cycle_voice = webactions._webui_cycle_voice
+Callable = abc.Callable
+Iterator = abc.Iterator
+Awaitable = abc.Awaitable
+File = fastapi.File
+Form = fastapi.Form
+FastAPI = fastapi.FastAPI
+Request = fastapi.Request
+WebSocket = fastapi.WebSocket
+UploadFile = fastapi.UploadFile
+HTTPException = fastapi.HTTPException
+WebSocketDisconnect = fastapi.WebSocketDisconnect
+Response = fastapi.responses.Response
+FileResponse = fastapi.responses.FileResponse
+HTMLResponse = fastapi.responses.HTMLResponse
+JSONResponse = fastapi.responses.JSONResponse
+RedirectResponse = fastapi.responses.RedirectResponse
+StreamingResponse = fastapi.responses.StreamingResponse
+run_in_threadpool = concurrency.run_in_threadpool
+Headers = datastructures.Headers
+RequestResponseEndpoint = middleware_base.RequestResponseEndpoint
+Send = types.Send
+Scope = types.Scope
+ASGIApp = types.ASGIApp
+Receive = types.Receive
+
+receive_webui_timed_update = webui.receive_webui_timed_update
+webui_audio_waveform_options = webui.webui_audio_waveform_options
+input_update = webui.input_update
+webui_resources_html = webui.webui_resources_html
+send_button_update = webui.send_button_update
+webui_status_html = webui.webui_status_html
+webui_vc_controls_update = webui.webui_vc_controls_update
+webui_convert_audio = webactions.webui_convert_audio
+webui_cycle_voice = webactions.webui_cycle_voice
 CeluneUI = webui.CeluneUI
 UiTimedUpdate = webui.UiTimedUpdate
 
-api = FastAPI(title=f"{APP_NAME}API")
-bound_celune: Optional[Celune] = None
-auth_token: Optional[str] = None
-rate_limit_per_minute = 60
-rate_limit_lock = threading.Lock()
-rate_limit_hits: defaultdict[str, deque[float]] = defaultdict(deque)
-max_sfx_upload_bytes = 25 * 1024 * 1024
-speech_jobs_lock = threading.Lock()
-speech_jobs: dict[str, "SpeechJob"] = {}
-speech_job_ttl_seconds = 15 * 60
-active_speech_task_id: Optional[str] = None
-webui_log_lines: deque[tuple[str, str]] = deque(maxlen=240)
-webui_status_text = "Waiting for response"
-webui_status_severity = "info"
-webui_logs_seeded = False
-webui_caption_text = ""
-webui_caption_progress = 0.0
-webui_caption_active = False
-webui_progress_current: Optional[float] = None
-webui_progress_total: Optional[float] = None
-webui_resource_page = 0
-webui_last_resource_advance = 0.0
-webui_last_probed_state: Optional[str] = None
-webui_active_theme_name = "celune"
-webui_timed_update_sequence = 0
-webui_timed_update_received_at = 0.0
-webui_timed_update_source = "fallback"
-webui_timed_update_unsubscribe: Optional[Callable[[], None]] = None
-webui_event_dispatcher: Optional[EventDispatcher] = None
-webui_event_callbacks: tuple[tuple[EventName, EventCallback], ...] = ()
+api = FastAPI(title=f"{APP_NAME}API", lifespan=mcp_lifespan)
 
 
-def _invoke_message_callback(
-    callback: Callable[..., None],
-    msg: str,
-    severity: str,
-    loglevel: LogLevel,
+def generate_api_key() -> str:
+    """Generate a new API key without persisting it."""
+    return server_auth.generate_api_key()
+
+
+def get_or_create_api_key(
+    configured_key: Optional[str] = None,
+    path: Optional[Path] = None,
+) -> str:
+    """Return a configured API key or load and persist a generated key."""
+    return server_auth.get_or_create_api_key(configured_key, path)
+
+
+def configure_api_security(
+    token: Optional[str] = None,
+    requests_per_minute: int = 60,
 ) -> None:
-    """Invoke a message callback while preserving legacy two-argument callbacks."""
-    try:
-        signature = inspect.signature(callback)
-    except (TypeError, ValueError):
-        callback(msg, severity, loglevel=loglevel)
-        return
-
-    try:
-        signature.bind(msg, severity, loglevel=loglevel)
-    except TypeError:
-        callback(msg, severity)
-    else:
-        callback(msg, severity, loglevel=loglevel)
+    """Configure API authentication and rate limiting."""
+    return server_auth.configure_api_security(token, requests_per_minute)
 
 
-webui_input_locked = True
-webui_input_placeholder = string("ui.wait_placeholder")
-webui_voice_locked = True
-webui_theme_style = ""
-webui_status_source = "probe"
-webui_status_updated_at = 0.0
-current_api_server: Optional["StartedServer"] = None
-WEBUI_RESOURCE_ROTATE_SECONDS = 2.06
-WEBUI_POLL_INTERVAL_SECONDS = WEBUI_RESOURCE_ROTATE_SECONDS / 4
-WEBUI_STATUS_PROBE_DEBOUNCE_SECONDS = 0.9
-WEBUI_TIMED_UPDATE_STALE_SECONDS = WEBUI_RESOURCE_ROTATE_SECONDS * 2
+def resolve_api_host(token: Optional[str] = None, host: Optional[str] = None) -> str:
+    """Resolve the API bind host from authentication state."""
+    return server_auth.resolve_api_host(token, host)
 
 
-class TaskEvent(BaseModel):
-    """Typed event mirrored to clients watching one API task."""
+def audio_bytes(
+    chunks: SpeechStreamQueue,
+    on_chunk: Optional[Callable[[int], None]] = None,
+) -> Iterator[bytes]:
+    """Yield FLAC bytes from a speech stream for the documented API helper."""
+    return webui.audio_bytes(chunks, on_chunk)
 
-    task_id: str
-    event: TaskEventName
-    status: TaskStatus
-    message: Optional[str] = None
-    severity: Optional[str] = None
-    current: Optional[float] = None
-    total: Optional[float] = None
-    location: Optional[str] = None
-    error: Optional[str] = None
+
+def stream_headers(sample_rate: int = BASE_SR) -> dict[str, str]:
+    """Return headers for a streamed FLAC response."""
+    return webui.stream_headers(sample_rate)
+
+
+@api.exception_handler(ModelConsentRequired)
+async def model_consent_required_response(
+    request: Request,
+    error: ModelConsentRequired,
+) -> JSONResponse:
+    """Return structured model terms when an operation needs acknowledgement."""
+    del request
+    metadata = error.metadata
+    return JSONResponse(
+        status_code=428,
+        content={
+            "error": "model_consent_required",
+            "model": metadata.to_dict(consented=consent_status(metadata)),
+        },
+    )
+
+
+@api.exception_handler(ModelCommercialUseRestricted)
+async def model_commercial_use_restricted_response(
+    request: Request,
+    error: ModelCommercialUseRestricted,
+) -> JSONResponse:
+    """Reject a model operation that conflicts with commercial-use mode."""
+    del request
+    metadata = error.metadata
+    return JSONResponse(
+        status_code=403,
+        content={
+            "error": "commercial_model_restricted",
+            "message": str(error),
+            "model": metadata.to_dict(consented=consent_status(metadata)),
+        },
+    )
+
+
+@api.exception_handler(ModelConsentDeclined)
+async def model_consent_declined_response(
+    request: Request,
+    error: ModelConsentDeclined,
+) -> JSONResponse:
+    """Reject an operation after the user declines model terms."""
+    del request
+    return JSONResponse(
+        status_code=403,
+        content={
+            "error": "model_consent_declined",
+            "message": string("registry.consent_declined"),
+            "model": error.metadata.to_dict(consented=False),
+        },
+    )
 
 
 class TaskCommand(BaseModel):
@@ -218,634 +265,19 @@ class TaskCommandResponse(BaseModel):
     status: str
 
 
-@dataclass
-class TaskSubscription:
-    """Event-loop-owned queue with a thread-safe event publisher."""
+class ModelConsentRequest(BaseModel):
+    """Exact-revision user decision submitted by an API or WebUI client."""
 
-    loop: asyncio.AbstractEventLoop
-    events: asyncio.Queue[Optional[TaskEvent]] = field(
-        default_factory=asyncio.Queue,
-        repr=False,
-    )
-    closed: threading.Event = field(default_factory=threading.Event)
+    model_id: str = Field(min_length=3, max_length=256)
+    revision: str = Field(pattern=r"^[0-9a-f]{40}$")
+    accepted: bool
 
-    def _enqueue(self, event: Optional[TaskEvent]) -> None:
-        """Enqueue an event or the close sentinel on the owning loop."""
-        if event is None or not self.closed.is_set():
-            self.events.put_nowait(event)
 
-    def _call_on_loop(self, event: Optional[TaskEvent]) -> None:
-        """Schedule one queue mutation on the subscription's event loop."""
-        try:
-            running_loop = asyncio.get_running_loop()
-        except RuntimeError:
-            running_loop = None
-
-        if running_loop is self.loop:
-            self._enqueue(event)
-            return
-
-        with contextlib.suppress(RuntimeError):
-            self.loop.call_soon_threadsafe(self._enqueue, event)
-
-    def put(self, event: TaskEvent) -> None:
-        """Queue one event for the subscribed WebSocket.
-
-        Args:
-            event: The typed event to deliver to the subscriber.
-        """
-        if not self.closed.is_set():
-            self._call_on_loop(event)
-
-    def close(self) -> None:
-        """Stop waiting for events without affecting the underlying task."""
-        if self.closed.is_set():
-            return
-        self.closed.set()
-        self._call_on_loop(None)
-
-    async def next_event(self) -> TaskEvent:
-        """Wait natively on the subscription's event-loop queue.
-
-        Returns:
-            TaskEvent: The next event published for this subscription.
-
-        Raises:
-            TaskSubscriptionClosed: If the subscription was closed.
-        """
-        if self.closed.is_set():
-            raise TaskSubscriptionClosed
-        event = await self.events.get()
-        if event is None:
-            raise TaskSubscriptionClosed
-        return event
-
-
-def _run_async_runtime_call(
-    awaitable: Awaitable[JSONSerializable],
-) -> JSONSerializable:
-    """Run one async runtime call from a synchronous API or WebUI callback."""
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-
-        async def await_result() -> JSONSerializable:
-            return await awaitable
-
-        return asyncio.run(await_result())
-    raise RuntimeError("synchronous runtime calls cannot run on an active event loop")
-
-
-WEBUI_HEAD = textwrap.dedent(
-    """
-    <link rel="icon" type="image/x-icon" href="/favicon.ico">
-    <link rel="shortcut icon" type="image/x-icon" href="/favicon.ico">
-    <script>
-    (() => {
-      if (window.__celuneLogAutoscrollInstalled) {
-        return;
-      }
-      window.__celuneLogAutoscrollInstalled = true;
-
-      const logScrollThreshold = 24;
-
-      function isNearLogBottom(logElement) {
-        return logElement.scrollHeight - logElement.scrollTop - logElement.clientHeight
-          <= logScrollThreshold;
-      }
-
-      function scrollLogToBottom() {
-        const logElement = document.querySelector("#celune-log-panel pre");
-        if (!logElement) {
-          return;
-        }
-        logElement.scrollTop = logElement.scrollHeight;
-      }
-
-      function updateLogFollowState(event) {
-        window.__celuneLogAutoscrollFollow = isNearLogBottom(event.currentTarget);
-      }
-
-      function installLogObserver() {
-        const logElement = document.querySelector("#celune-log-panel pre");
-        if (!logElement) {
-          return;
-        }
-
-        if (window.__celuneLogAutoscrollTarget === logElement) {
-          return;
-        }
-
-        const previousLogElement = window.__celuneLogAutoscrollTarget;
-        if (previousLogElement) {
-          window.__celuneLogAutoscrollFollow = isNearLogBottom(previousLogElement);
-        } else if (typeof window.__celuneLogAutoscrollFollow !== "boolean") {
-          window.__celuneLogAutoscrollFollow = true;
-        }
-
-        window.__celuneLogAutoscrollTarget = logElement;
-        logElement.addEventListener("scroll", updateLogFollowState, {
-          passive: true,
-        });
-        if (window.__celuneLogAutoscrollFollow) {
-          window.requestAnimationFrame(scrollLogToBottom);
-        }
-
-        if (window.__celuneLogAutoscrollObserver) {
-          window.__celuneLogAutoscrollObserver.disconnect();
-        }
-
-        const observer = new MutationObserver(() => {
-          if (window.__celuneLogAutoscrollFollow) {
-            scrollLogToBottom();
-          }
-        });
-        observer.observe(logElement, {
-          childList: true,
-          characterData: true,
-          subtree: true,
-        });
-        window.__celuneLogAutoscrollObserver = observer;
-      }
-
-      const pageObserver = new MutationObserver(() => {
-        installLogObserver();
-      });
-
-      function startLogAutoscroll() {
-        installLogObserver();
-        pageObserver.observe(document.body, {
-          childList: true,
-          subtree: true,
-        });
-        window.setInterval(installLogObserver, 500);
-      }
-
-      if (document.readyState === "loading") {
-        document.addEventListener("DOMContentLoaded", startLogAutoscroll, {
-          once: true,
-        });
-      } else {
-        startLogAutoscroll();
-      }
-    })();
-
-    (() => {
-      function handleRecordingShortcut(event) {
-        if (
-          !event.altKey
-          || event.ctrlKey
-          || event.metaKey
-          || event.key.toLowerCase() !== "r"
-        ) {
-          return;
-        }
-
-        const recordButton = document.querySelector(
-          "#celune-record-hotkey button, button#celune-record-hotkey",
-        );
-        if (!recordButton || recordButton.disabled) {
-          return;
-        }
-
-        event.preventDefault();
-        recordButton.click();
-      }
-
-      document.addEventListener("keydown", handleRecordingShortcut);
-    })();
-    </script>
-    """
-)
-
-WEBUI_CSS = textwrap.dedent(
-    """
-    @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@100..900&display=swap');
-    @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@100..800&display=swap');
-
-    html,
-    body,
-    gradio-app {
-        --color-accent: var(--celune-primary, #cebaff) !important;
-        --body-text-color: var(--celune-secondary, #a595cc) !important;
-        --block-label-text-color: var(--celune-primary, #cebaff) !important;
-        --block-title-text-color: var(--celune-primary, #cebaff) !important;
-        --block-info-text-color: var(--celune-secondary, #a595cc) !important;
-        /* the Celune "accent" color in CSS is actually considered as Celune tertiary */
-        --body-text-color-subdued: var(--celune-accent, #7c7099) !important;
-        background: var(--celune-ui-bg, var(--celune-background, #1d1826)) !important;
-    }
-
-    .column {
-        place-content: center;
-    }
-
-    .gradio-container {
-        background: var(--celune-ui-bg, var(--celune-background, #1d1826));
-        font-family: Outfit, sans-serif !important;
-        height: 100dvh;
-        overflow: hidden;
-    }
-    
-    .gradio-container .tab-container::after {
-        display: none;
-    }
-
-    .gradio-container > .main,
-    .gradio-container .wrap,
-    .gradio-container .block,
-    .gradio-container .form,
-    .gradio-container label,
-    .gradio-container label.selected,
-    .gradio-container .tab-like-container,
-    .gradio-container .tab-like-container input,
-    .gradio-container .loading-container,
-    .gradio-container .loading-container > div,
-    .gradio-container button[role="tab"]:hover {
-        background: var(--celune-ui-bg, var(--celune-background, #1d1826)) !important;
-    }
-
-    .main {
-        flex: 1 1 auto !important;
-        min-height: 0;
-    }
-
-    body {
-        font-family: Outfit, sans-serif;
-    }
-
-    #celune-shell {
-        display: flex;
-        flex-direction: column;
-        gap: 0.75rem;
-        height: calc(100dvh - 2rem);
-        min-height: 0;
-        background: var(--celune-ui-bg, var(--celune-background, #1d1826));
-    }
-
-    #celune-header {
-        display: flex;
-        place-items: center;
-    }
-
-    #celune-header .line {
-        width: 100%;
-        background: var(--celune-ui-accent, var(--celune-primary, #cebaff));
-        height: 2px;
-    }
-
-    #celune-header .title {
-        font-weight: bold;
-        padding: 0 2em;
-        color: var(--celune-ui-accent, var(--celune-primary, #cebaff));
-    }
-
-    button#celune-send, button#celune-convert {
-        background: var(--celune-button-bg, #3a304c);
-        color: var(--celune-ui-accent, var(--celune-primary, #cebaff));
-        border-radius: 4px;
-    }
-
-    button#celune-send:hover, button#celune-convert:hover {
-        background: var(--celune-button-hover, #443a56);
-    }
-
-    #celune-log-panel {
-        border: 2px solid var(--celune-ui-accent, var(--celune-primary, #cebaff));
-        background: var(--celune-ui-bg, var(--celune-background, #1d1826));
-        padding: 1em;
-        border-radius: 8px;
-        max-height: min(75dvh, calc(100dvh - 20rem));
-        overflow: hidden;
-        flex: 1 1 auto;
-        min-height: 0;
-    }
-
-    #celune-log-panel pre {
-        font-family: "JetBrains Mono", monospace;
-        color: var(--celune-ui-accent, var(--celune-primary, #cebaff));
-        white-space: pre-wrap;
-        margin: 0;
-        max-height: min(calc(75dvh - 2em), calc(75dvh - 15rem));
-        height: 100%;
-        overflow-y: auto;
-        padding-right: 0.75em;
-        scrollbar-gutter: stable both-edges;
-        scrollbar-color: var(--celune-ui-accent, var(--celune-primary, #cebaff))
-            var(--celune-ui-bg, var(--celune-background, #1d1826));
-    }
-
-    #celune-input textarea {
-        background: var(--celune-ui-input-bg, var(--celune-input-bg, #3a304c));
-        color: var(--celune-ui-accent, var(--celune-primary, #cebaff));
-        border-radius: 4px;
-        scrollbar-color: var(--celune-ui-accent, var(--celune-primary, #cebaff))
-            var(--celune-ui-bg, var(--celune-background, #1d1826));
-    }
-
-    #celune-input textarea::placeholder {
-        color: var(--celune-placeholder, #9c88ce);
-    }
-
-    #celune-resources .footer-block {
-        text-align: right;
-        color: var(--celune-ui-accent, var(--celune-primary, #cebaff));
-    }
-
-    .webui-recording-hint {
-        margin-top: 0.25rem;
-        font-size: 0.9rem;
-    }
-
-    #celune-record-hotkey {
-        display: none !important;
-    }
-
-    .webui-desktop-only {
-        display: inline !important;
-        color: inherit;
-    }
-
-    .webui-mobile-only {
-        display: none !important;
-        color: inherit;
-    }
-
-    #celune-actions {
-        gap: 0.75rem;
-    }
-
-    button#celune-send {
-        min-height: 2.75rem;
-    }
-
-    #celune-input-row, #celune-footer {
-        padding: 0 1em;
-    }
-
-    button#celune-send {
-        display: none;
-    }
-
-    #celune-log-panel pre::-webkit-scrollbar,
-    #celune-input textarea::-webkit-scrollbar {
-        width: 0.8rem;
-    }
-
-    #celune-log-panel pre::-webkit-scrollbar-track,
-    #celune-input textarea::-webkit-scrollbar-track {
-        background: var(--celune-ui-bg, var(--celune-background, #1d1826));
-    }
-
-    #celune-log-panel pre::-webkit-scrollbar-thumb,
-    #celune-input textarea::-webkit-scrollbar-thumb {
-        background: var(--celune-ui-accent, var(--celune-primary, #cebaff));
-        border-radius: 999px;
-        border: 2px solid var(--celune-ui-bg, var(--celune-background, #1d1826));
-    }
-
-    .gradio-container .minimal-audio-player button:hover,
-    .gradio-container .minimal-audio-player button:focus,
-    .gradio-container .standard-player button:hover,
-    .gradio-container .standard-player button:focus,
-    .gradio-container .controls .icon:hover,
-    .gradio-container .controls .icon:focus,
-    .gradio-container .controls .action:hover,
-    .gradio-container .controls .action:focus,
-    .gradio-container .controls .playback:hover,
-    .gradio-container .controls .playback:focus,
-    .gradio-container .controls .text-button:hover,
-    .gradio-container .controls .text-button:focus {
-        color: var(--celune-primary, #cebaff) !important;
-        border-color: var(--celune-primary, #cebaff) !important;
-    }
-
-    .gradio-container .standard-player input[type="range"],
-    .gradio-container .minimal-audio-player input[type="range"] {
-        accent-color: var(--celune-primary, #cebaff) !important;
-    }
-
-    .gradio-container .standard-player input[type="range"]::-webkit-slider-thumb,
-    .gradio-container .minimal-audio-player input[type="range"]::-webkit-slider-thumb {
-        background-color: var(--celune-primary, #cebaff) !important;
-    }
-
-    .gradio-container .standard-player input[type="range"]::-moz-range-thumb,
-    .gradio-container .minimal-audio-player input[type="range"]::-moz-range-thumb {
-        background-color: var(--celune-primary, #cebaff) !important;
-    }
-
-    .toast-body.error {
-        position: fixed;
-        background: color-mix(
-            in srgb,
-            var(--celune-background, #1d1826) 90%,
-            transparent 10%
-        ) !important;
-        border: none;
-        top: 0;
-    }
-
-    .toast-header {
-        display: none !important;
-    }
-
-    .toast-messages {
-        height: 100vh;
-        width: 100vw;
-        place-items: center;
-        justify-content: center;
-    }
-
-    .toast-message-text.error {
-        font-size: 0;
-    }
-
-    .toast-message-text.error::before {
-        content: __CELUNE_CONNECTION_LOST_MESSAGE__;
-        font-size: 16px;
-        color: var(--celune-error, #f07178);
-    }
-
-    input[type="number"] {
-        -webkit-appearance: textfield !important;
-        appearance: textfield !important;
-    }
-
-    input[type="number"]::-webkit-inner-spin-button,
-    input[type="number"]::-webkit-outer-spin-button {
-        -webkit-appearance: none;
-        appearance: none;
-        margin: 0;
-    }
-
-    input[type="radio"][aria-checked="false"][disabled] {
-        background: color-mix(
-            var(--celune-background) 90%,
-            var(--celune-primary) 10%
-        );
-    }
-
-    input[type="range"]::-moz-range-thumb {
-        background: var(--celune-primary) !important;
-        border-color: var(--celune-primary) !important;
-    }
-
-    input[type="range"]::-moz-range-track {
-        background: var(--celune-accent) !important;
-    }
-
-    input[type="range"]::-webkit-slider-runnable-track {
-        background: var(--celune-accent) !important;
-    }
-
-    input[type="range"]::-webkit-slider-thumb {
-        -webkit-appearance: none;
-        appearance: none;
-        background: var(--celune-primary) !important;
-        border: none !important;
-    }
-
-    input[type="range"] {
-        -webkit-appearance: none;
-        appearance: none;
-    }
-
-    @media (max-width: 768px), (any-pointer: coarse), (hover: none) {
-        .gradio-container {
-            height: 100dvh;
-            overflow: hidden;
-        }
-
-        #celune-shell {
-            height: calc(100dvh - 8rem);
-            min-height: 0;
-        }
-
-        #celune-input-row {
-            flex-direction: column;
-        }
-
-        #celune-actions {
-            display: flex;
-            flex-direction: row;
-            width: 100%;
-            flex-wrap: nowrap;
-            gap: 0;
-        }
-
-        #celune-actions > * {
-            flex: 1 1 0 !important;
-            min-width: 0 !important;
-        }
-
-        button#celune-send {
-            width: 100%;
-        }
-
-        button#celune-send {
-            display: flex;
-        }
-
-        #celune-input textarea, #celune-input textarea::placeholder {
-            text-align: center;
-        }
-
-        #celune-log-panel {
-            max-height: min(52dvh, calc(100dvh - 12rem));
-        }
-
-        #celune-log-panel pre {
-            max-height: min(calc(52dvh - 2em), calc(100dvh - 14rem));
-        }
-
-        button#celune-send {
-            border-radius: 4px;
-        }
-
-        .webui-desktop-only {
-            display: none !important;
-        }
-
-        .webui-mobile-only {
-            display: inline !important;
-        }
-    }
-    """
-).replace(
+WEBUI_HEAD = webui.read_webui_asset("head.html")
+WEBUI_CSS = webui.read_webui_asset("webui.css").replace(
     "__CELUNE_CONNECTION_LOST_MESSAGE__",
-    json.dumps(string("webui.connection_lost"), ensure_ascii=False),
+    json.dumps(string("webui.connection_lost", app_name=APP_NAME), ensure_ascii=False),
 )
-
-
-@dataclass
-class SpeechJob:
-    """In-memory state for an accepted speech request."""
-
-    status: TaskStatus
-    created_at: float
-    audio: Optional[bytes] = None
-    error: Optional[str] = None
-    events: deque[TaskEvent] = field(
-        default_factory=lambda: deque(maxlen=256),
-        repr=False,
-    )
-    subscriptions: list[TaskSubscription] = field(default_factory=list, repr=False)
-
-
-def _configure_webui_theme() -> None:
-    """Sync the browser UI palette with the active CEVOICE-derived theme."""
-    global webui_theme_style
-
-    colors.configure_theme()
-    loader = default_loader()
-    if loader is not None:
-        theme = loader.bundle.metadata.get("theme")
-        if isinstance(theme, dict):
-            background = theme.get("background")
-            accent = theme.get("accent")
-            faded_accent = theme.get("faded_accent")
-            if faded_accent is None:
-                faded_accent = theme.get("sleeping_color")
-            if (
-                isinstance(background, str)
-                and isinstance(accent, str)
-                and (faded_accent is None or isinstance(faded_accent, str))
-            ):
-                colors.configure_theme(background, accent, faded_accent)
-
-    background = colors.THEME.background or "#1d1826"
-    palette = colors.SEVERITY_COLORS["celune"]
-    primary = palette["info"]
-    error = palette["error"]
-    foreground = colors.THEME.foreground or "#ffffff"
-    secondary = colors.THEME.secondary or primary
-    accent = colors.THEME.accent or primary
-    sleeping = palette["sleeping"]
-    button_bg = colors.blend(primary, background, 0.72)
-    button_hover = colors.blend(primary, background, 0.6)
-    input_bg = colors.blend(primary, background, 0.78)
-
-    webui_theme_style = (
-        "<style>"
-        ":root {"
-        f"--celune-background: {background};"
-        f"--celune-primary: {primary};"
-        f"--celune-error: {error};"
-        f"--celune-foreground: {foreground};"
-        f"--celune-secondary: {secondary};"
-        f"--celune-accent: {accent};"
-        f"--celune-ui-accent: {primary};"
-        f"--celune-ui-bg: {background};"
-        f"--celune-ui-input-bg: {input_bg};"
-        f"--celune-sleeping: {sleeping};"
-        f"--celune-button-bg: {button_bg};"
-        f"--celune-button-hover: {button_hover};"
-        f"--celune-input-bg: {input_bg};"
-        f"--celune-placeholder: {secondary};"
-        "}"
-        "</style>"
-    )
 
 
 class StartedServer(uvicorn.Server):
@@ -900,136 +332,20 @@ def _bind_api_socket(host: str, port: int) -> socket.socket:
     return api_socket
 
 
-def _shutdown_api_for_fatal_error() -> None:
-    """Stop the browser/API surface after a fatal Celune runtime failure."""
-    global bound_celune
-    bound_celune = None
-    if current_api_server is not None:
-        current_api_server.should_exit = True
-        current_api_server.force_exit = True
-
-
-def _clean_token(token: Optional[str]) -> Optional[str]:
-    """Normalize empty token values to ``None``."""
-    if token is None:
-        return None
-    token = token.strip()
-    return token or None
-
-
-def _env_auth_token() -> Optional[str]:
-    """Return the API token from the environment, if configured."""
-    return _clean_token(os.getenv("CELUNE_API_TOKEN"))
-
-
-def configure_api_security(
-    token: Optional[str] = None,
-    requests_per_minute: int = 60,
-) -> None:
-    """Configure API authentication and rate limiting.
-
-    Args:
-        token: A required token to send requests.
-        requests_per_minute: The max amount of requests per minute the user is allowed to send.
-    """
-    global auth_token, rate_limit_per_minute
-
-    auth_token = _clean_token(token) or _env_auth_token()
-    rate_limit_per_minute = max(0, requests_per_minute)
-    with rate_limit_lock:
-        rate_limit_hits.clear()
-
-
-def resolve_api_host(token: Optional[str] = None, host: Optional[str] = None) -> str:
-    """Resolve the API bind host from authentication state.
-
-    Args:
-        token: The token set up with the API.
-        host: The host name or address explicitly set by the user.
-
-    Returns:
-        str: The host name or address the API is using.
-    """
-    if host:
-        return host
-    configured_token = _clean_token(token) or _env_auth_token()
-    if configured_token is None:
-        return "127.0.0.1"
-    return "0.0.0.0"
-
-
-def _request_token(request: Request) -> Optional[str]:
-    """Extract the bearer or app token from a request."""
-    auth_header = request.headers.get("authorization", "")
-    scheme, _, value = auth_header.partition(" ")
-    if scheme.lower() == "bearer" and value:
-        return value.strip()
-    return _clean_token(request.headers.get("x-celune-token"))
-
-
-def _authenticated(request: Request) -> bool:
-    """Return whether the request carries the configured API token."""
-    if auth_token is None:
-        return True
-    given = _request_token(request)
-    return given is not None and compare_digest(given, auth_token)
-
-
-def is_browser_ui_request(request: Request) -> bool:
-    """Return whether the request targets the mounted browser UI.
-
-    Args:
-        request: Incoming HTTP request to classify.
-
-    Returns:
-        bool: ``True`` when the request path points at the mounted WebUI.
-    """
-    path = request.url.path.rstrip("/")
-    return path == "/ui" or path.startswith("/ui/")
-
-
-def _is_public_api_request(request: Request) -> bool:
-    """Return whether the request is safe to serve without an API token."""
-    method = request.method.upper()
-    path = request.url.path.rstrip("/") or "/"
-
-    if is_browser_ui_request(request):
-        return True
-
-    return method == "GET" and path in {
-        "/",
-        "/favicon.ico",
-        "/v1",
-        "/v1/version",
+def _webui_auth_page() -> str:
+    """Build the standalone, blocking WebUI API-key prompt."""
+    values = {
+        "title": string("api.webui_auth_title"),
+        "message": string("api.webui_auth_message"),
+        "placeholder": string("api.webui_auth_placeholder"),
+        "submit": string("api.webui_auth_submit"),
+        "invalid": string("api.webui_auth_invalid"),
+        "error": string("api.webui_auth_error"),
     }
-
-
-def _rate_limit_key(request: Request) -> str:
-    """Return the client key used for rate limiting."""
-    if request.client is None:
-        return "unknown"
-    return request.client.host
-
-
-def _rate_limited(request: Request) -> bool:
-    """Return whether the request exceeds the configured rate limit."""
-    if rate_limit_per_minute <= 0:
-        return False
-
-    now = time.monotonic()
-    window_start = now - 60.0
-    key = _rate_limit_key(request)
-
-    with rate_limit_lock:
-        hits = rate_limit_hits[key]
-        while hits and hits[0] < window_start:
-            hits.popleft()
-
-        if len(hits) >= rate_limit_per_minute:
-            return True
-
-        hits.append(now)
-        return False
+    page = webui.read_webui_asset("api_key.html")
+    for key, value in values.items():
+        page = page.replace(f"__{key.upper()}__", html.escape(value))
+    return page
 
 
 @api.middleware("http")
@@ -1049,33 +365,112 @@ async def api_security(
     if _is_public_api_request(request):
         return await call_next(request)
 
+    if is_browser_ui_request(request):
+        path = request.url.path.rstrip("/")
+        if path.startswith("/ui/assets/") and request.method.upper() == "GET":
+            asset_name = path.removeprefix("/ui/assets/")
+            asset_response = _webui_asset_response(asset_name)
+            if asset_response is not None:
+                return asset_response
+
+        if server_session.auth_token is None:
+            model_request_token = enter_api_model_request()
+            try:
+                return await call_next(request)
+            finally:
+                exit_api_model_request(model_request_token)
+
+        if path.startswith("/ui/assets/") and request.method.upper() == "GET":
+            return await call_next(request)
+        if path == WEBUI_AUTH_PATH and request.method.upper() == "GET":
+            if _webui_authenticated(request):
+                return RedirectResponse(
+                    "/ui",
+                    status_code=307,
+                    headers={"Cache-Control": "no-store"},
+                )
+            return HTMLResponse(
+                _webui_auth_page(),
+                headers={
+                    "Cache-Control": "no-store",
+                    "Content-Security-Policy": (
+                        "default-src 'none'; style-src 'self'; "
+                        "script-src 'self'; connect-src 'self'; font-src 'self'; "
+                        "base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
+                    ),
+                    "Referrer-Policy": "no-referrer",
+                    "X-Frame-Options": "DENY",
+                },
+            )
+
+        if path == WEBUI_AUTH_PATH and request.method.upper() == "POST":
+            if not _same_origin(request):
+                return JSONResponse(status_code=403, content={"error": "forbidden"})
+            if _rate_limited(request):
+                return _rate_limit_response()
+            return await call_next(request)
+
+        if not _webui_authenticated(request):
+            if request.method.upper() == "GET" and path == "/ui":
+                return RedirectResponse(
+                    "/ui/key",
+                    status_code=307,
+                    headers={"Cache-Control": "no-store"},
+                )
+            return _unauthorized_response()
+
+        if request.method.upper() not in {"GET", "HEAD", "OPTIONS"}:
+            if not _same_origin(request):
+                return JSONResponse(status_code=403, content={"error": "forbidden"})
+            if await _is_webui_generation_request(request) and _rate_limited(request):
+                return _rate_limit_response()
+        model_request_token = enter_api_model_request()
+        try:
+            response = await call_next(request)
+        finally:
+            exit_api_model_request(model_request_token)
+        return _refresh_ui_session_cookie(request, response)
+
     if not _authenticated(request):
-        return JSONResponse(
-            status_code=401,
-            content={
-                "error": "unauthorized",
-                "message": string("api.unauthorized"),
-            },
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+        return _unauthorized_response()
 
     if _rate_limited(request):
-        current_time = datetime.datetime.now(datetime.UTC)
-        next_minute = current_time.replace(
-            second=0, microsecond=0
-        ) + datetime.timedelta(minutes=1)
-        retry_after = (next_minute - current_time).total_seconds()
+        return _rate_limit_response()
 
-        return JSONResponse(
-            status_code=429,
-            content={
-                "error": "ratelimit_exceeded",
-                "message": string("api.rate_limit"),
-            },
-            headers={"Retry-After": str(retry_after)},
-        )
+    model_request_token = enter_api_model_request()
+    try:
+        return await call_next(request)
+    finally:
+        exit_api_model_request(model_request_token)
 
-    return await call_next(request)
+
+class WebUiWebSocketSecurityMiddleware:
+    """Protect mounted WebUI WebSockets with the API token or browser session."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(
+        self,
+        scope: Scope,
+        receive: Receive,
+        send: Send,
+    ) -> None:
+        path = str(scope.get("path", "")).rstrip("/")
+        is_webui = path == "/ui" or path.startswith("/ui/")
+        if (
+            scope["type"] == "websocket"
+            and is_webui
+            and server_session.auth_token is not None
+        ):
+            websocket = WebSocket(scope, receive, send)
+            if not _webui_authenticated(websocket) or not _same_origin(websocket):
+                await send({"type": "websocket.close", "code": 4401})
+                return
+        await self.app(scope, receive, send)
+
+
+api.add_middleware(WebUiWebSocketSecurityMiddleware)
 
 
 def bind_celune(celune: Celune) -> None:
@@ -1084,172 +479,61 @@ def bind_celune(celune: Celune) -> None:
     Args:
         celune: The instance of Celune to bind.
     """
-    global bound_celune
-    bound_celune = celune
-    global webui_resource_page, webui_last_resource_advance, webui_last_probed_state
-    global webui_input_locked, webui_input_placeholder, webui_voice_locked
-    global webui_logs_seeded, webui_active_theme_name
-    global webui_timed_update_sequence, webui_timed_update_received_at
-    global webui_timed_update_source
-    global webui_caption_text, webui_caption_progress, webui_caption_active
-    global webui_progress_current, webui_progress_total
-    webui_resource_page = 0
-    webui_last_resource_advance = 0.0
-    webui_last_probed_state = None
-    webui_log_lines.clear()
-    webui_logs_seeded = False
-    webui_active_theme_name = "celune"
-    webui_caption_text = ""
-    webui_caption_progress = 0.0
-    webui_caption_active = False
-    webui_progress_current = None
-    webui_progress_total = None
-    webui_timed_update_sequence = 0
-    webui_timed_update_received_at = 0.0
-    webui_timed_update_source = "fallback"
-    _unsubscribe_webui_events()
-    _subscribe_webui_events(celune)
-    _subscribe_webui_timed_updates()
-    _configure_webui_theme()
+    server_session.bound_celune = celune
+    server_session.webui_resource_page = 0
+    server_session.webui_last_resource_advance = 0.0
+    server_session.webui_last_probed_state = None
+    server_session.webui_log_lines.clear()
+    server_session.webui_logs_seeded = False
+    server_session.webui_active_theme_name = "celune"
+    server_session.webui_caption_text = ""
+    server_session.webui_caption_progress = 0.0
+    server_session.webui_caption_active = False
+    server_session.webui_progress_current = None
+    server_session.webui_progress_total = None
+    server_session.webui_timed_update_sequence = 0
+    server_session.webui_timed_update_received_at = 0.0
+    server_session.webui_timed_update_source = "fallback"
+    _unsubscribe_webui_events(server_session)
+    subscribe_webui_events(celune, server_session)
+    subscribe_webui_timed_updates(server_session)
+    configure_webui_theme(server_session)
     has_voice = bool(celune.current_voice) or bool(celune.voices)
-    webui_input_locked = celune.locked or not has_voice
-    webui_input_placeholder = _webui_input_placeholder(
+    server_session.webui_input_locked = celune.locked or not has_voice
+    server_session.webui_input_placeholder = get_webui_input_placeholder(
         celune,
-        webui_input_locked,
+        server_session.webui_input_locked,
         has_voice,
     )
-    webui_voice_locked = (
-        len(celune.voices) < 2 or celune.is_in_tutorial or not has_voice
+    server_session.webui_voice_locked = (
+        len(celune.voices) < 2
+        or celune.is_in_tutorial
+        or not has_voice
+        or getattr(getattr(celune, "backend", None), "singing", False)
     )
-    _seed_webui_logs()
-    _wrap_celune_callbacks(celune)
+    seed_webui_logs(server_session)
+    wrap_celune_callbacks(celune, server_session)
     if celune.current_voice:
-        _append_webui_log(string("webui.voice_ready", voice=celune.current_voice))
-    _set_webui_status(
+        append_webui_log(
+            string("webui.voice_ready", voice=celune.current_voice),
+            session=server_session,
+        )
+    set_webui_status(
         string("status.idle")
         if celune.cur_state == "idle"
         else celune.cur_state.title(),
         source="probe",
+        session=server_session,
     )
 
 
-def _unsubscribe_webui_events() -> None:
+def _unsubscribe_webui_events(session: ServerSession = server_session) -> None:
     """Remove event subscriptions owned by the browser UI bridge."""
-    global webui_event_dispatcher, webui_event_callbacks
-    if webui_event_dispatcher is not None:
-        for event_name, callback in webui_event_callbacks:
-            webui_event_dispatcher.unsubscribe(event_name, callback)
-    webui_event_dispatcher = None
-    webui_event_callbacks = ()
-
-
-class _WebUiInputProxy:
-    """Minimal input surface required by the shared slash-command handler."""
-
-    @staticmethod
-    def load_text(_value: str) -> None:
-        """Discard command input after the browser has submitted it."""
-
-
-class _WebUiCommandHost:
-    """Core-backed command host used when the Textual UI is not mounted."""
-
-    def __init__(self, celune: Celune) -> None:
-        self.celune = celune
-        self.input_box = _WebUiInputProxy()
-        self.consume_on_boundary = False
-        self.tutorial_token = 0
-
-    @property
-    def tutorial_active(self) -> bool:
-        """Return whether the core is currently in tutorial mode."""
-        return bool(getattr(self.celune, "is_in_tutorial", False))
-
-    def safe_log(
-        self,
-        message: str,
-        severity: str = "info",
-        *,
-        loglevel: LogLevel = "info",
-    ) -> None:
-        """Forward command output to both WebUI state and active task logs."""
-        _publish_active_task_log(message, severity)
-        _append_webui_log(message, severity)
-        _ = loglevel
-
-    def safe_status(self, message: str, severity: str = "info") -> None:
-        """Forward a command status to the browser footer."""
-        _set_webui_status(message, severity, source="callback")
-
-    @staticmethod
-    def call_from_thread(
-        callback: Callable[..., None], *args: object, **kwargs: object
-    ) -> None:
-        """Run a command callback immediately in the API worker context."""
-        callback(*args, **kwargs)
-
-    def refresh_vc_controls(self) -> None:
-        """Refresh browser controls on the next snapshot."""
-
-    def set_vc_f0_condition(self, enabled: bool) -> None:
-        """Set VC talk or sing conditioning through the core state."""
-        self.celune.vc_f0_condition = enabled
-        backend = getattr(self.celune, "vc_backend", None)
-        if backend is not None and available("f0_condition", obj=backend):
-            backend.f0_condition = enabled
-
-    def set_vc_pitch_shift(self, value: int) -> None:
-        """Set the active VC pitch shift through the core state."""
-        from .vc import clamp_vc_pitch_shift
-
-        clamped = clamp_vc_pitch_shift(value)
-        self.celune.vc_pitch_shift = clamped
-        backend = getattr(self.celune, "vc_backend", None)
-        if backend is not None and available("pitch_shift", obj=backend):
-            backend.pitch_shift = clamped
-
-    def open_settings_menu(self) -> None:
-        """Report that configuration editing belongs to the Textual UI."""
-        self.safe_log(string("commands.settings_unavailable"), "warning")
-
-    def begin_tutorial(self) -> None:
-        """Leave tutorial lifecycle ownership to the core runtime."""
-
-    def finish_tutorial(self) -> None:
-        """Leave tutorial lifecycle ownership to the core runtime."""
-
-    def cancel_tutorial(self, _restore_input: bool = False) -> bool:
-        """Return whether the core was already outside tutorial mode."""
-        return not self.tutorial_active
-
-    def tutorial_after(self, _delay: float, callback: Callable[[], None]) -> None:
-        """Run a command tutorial callback without a second timer source."""
-        callback()
-
-    def type_and_send(self, text: str, process_commands: bool = True) -> None:
-        """Submit a tutorial string through the browser command path."""
-        if process_commands and text.startswith("/"):
-            _webui_run_command(text)
-        else:
-            self.celune.say(text)
-
-    @staticmethod
-    def pulse_border(_selector: str) -> None:
-        """Ignore a Textual-only tutorial animation in the browser host."""
-
-    def graceful_exit(self) -> None:
-        """Close the bound runtime when the browser receives `/exit`."""
-        self.celune.close()
-
-
-configure_webui_theme = _configure_webui_theme
-webui_theme_html = _webui_theme_html
-strip_webui_log_prefix = _strip_webui_log_prefix
-set_webui_status = _set_webui_status
-wrap_celune_callbacks = _wrap_celune_callbacks
-speech_job_snapshot = _speech_job_snapshot
-webui_snapshot = _webui_snapshot
-webui_speak = _webui_speak
+    if session.webui_event_dispatcher is not None:
+        for event_name, callback in session.webui_event_callbacks:
+            session.webui_event_dispatcher.unsubscribe(event_name, callback)
+    session.webui_event_dispatcher = None
+    session.webui_event_callbacks = ()
 
 
 class RootResponse(BaseModel):
@@ -1283,6 +567,12 @@ class VoiceRequest(BaseModel):
     voice_name: str = Field(min_length=1)
 
 
+class WebUiAuthRequest(BaseModel):
+    """Request body used to establish an authenticated WebUI session."""
+
+    api_key: str = Field(min_length=1, max_length=4096)
+
+
 class ActionResponse(BaseModel):
     """Generic accepted control response."""
 
@@ -1296,9 +586,40 @@ class TaskCancelResponse(BaseModel):
     status: Literal["cancelled"] = "cancelled"
 
 
+@api.post(WEBUI_AUTH_PATH, include_in_schema=False)
+async def authenticate_webui(
+    body: WebUiAuthRequest,
+    request: Request,
+) -> Response:
+    """Exchange the configured application key for a WebUI session cookie."""
+    provided_key = _clean_token(body.api_key)
+    if server_session.auth_token is None:
+        return JSONResponse(status_code=404, content={"error": "not_found"})
+    if provided_key is None or not compare_digest(
+        provided_key, server_session.auth_token
+    ):
+        return JSONResponse(
+            status_code=401,
+            content={
+                "error": "unauthorized",
+                "message": string("api.webui_auth_invalid"),
+            },
+            headers={"Cache-Control": "no-store"},
+        )
+
+    response = JSONResponse(
+        status_code=200,
+        content={"authenticated": True},
+        headers={"Cache-Control": "no-store"},
+    )
+    _remember_webui_auth_client(request)
+    _set_ui_session_cookie(response, request, _new_ui_session())
+    return response
+
+
 async def _cancel_speech_job(job_id: str) -> bool:
     """Ask Core to stop one active speech task and publish its terminal event."""
-    status = _task_status(job_id)
+    status = server_jobs.task_status(job_id)
     if status is None or status in {"completed", "failed", "cancelled"}:
         return False
 
@@ -1319,8 +640,8 @@ async def _cancel_speech_job(job_id: str) -> bool:
     if not stopped:
         return False
 
-    _update_speech_job(job_id, status="cancelled")
-    _publish_task_event(
+    server_jobs.update_speech_job(job_id, status="cancelled")
+    server_jobs.publish_task_event(
         job_id,
         TaskEvent(
             task_id=job_id,
@@ -1328,23 +649,8 @@ async def _cancel_speech_job(job_id: str) -> bool:
             status="cancelled",
         ),
     )
-    _set_active_speech_task(None)
+    server_jobs.set_active_speech_task(None)
     return True
-
-
-def _websocket_authenticated(websocket: WebSocket) -> bool:
-    """Return whether a WebSocket carries the configured API token."""
-    if auth_token is None:
-        return True
-
-    auth_header = websocket.headers.get("authorization", "")
-    scheme, _, value = auth_header.partition(" ")
-    given = value.strip() if scheme.lower() == "bearer" and value else None
-    if given is None:
-        given = _clean_token(websocket.headers.get("x-celune-token"))
-    if given is None:
-        given = _clean_token(websocket.query_params.get("token"))
-    return given is not None and compare_digest(given, auth_token)
 
 
 async def _send_task_events(
@@ -1402,7 +708,7 @@ async def speech_task_websocket(websocket: WebSocket, job_id: str) -> None:
         await websocket.close(code=4401)
         return
 
-    subscription = _subscribe_to_speech_job(job_id)
+    subscription = server_jobs.subscribe_to_speech_job(job_id)
     if subscription is None:
         await websocket.close(code=4404)
         return
@@ -1421,7 +727,7 @@ async def speech_task_websocket(websocket: WebSocket, job_id: str) -> None:
             with contextlib.suppress(asyncio.CancelledError, RuntimeError):
                 await task
     finally:
-        _unsubscribe_from_speech_job(job_id, subscription)
+        server_jobs.unsubscribe_from_speech_job(job_id, subscription)
         if websocket.client_state.name != "DISCONNECTED":
             with contextlib.suppress(RuntimeError):
                 await websocket.close()
@@ -1475,6 +781,115 @@ def version() -> VersionResponse:
     return VersionResponse(version=f"{APP_NAME} {__version__}")
 
 
+def _model_consent_document(
+    metadata: ModelMetadata,
+    *,
+    include_prompt: bool = False,
+) -> dict[str, object]:
+    """Serialize catalog metadata and localized confirmation details."""
+    consented = not metadata.requires_consent or consent_status(metadata)
+    document = metadata.to_dict(consented=consented)
+    if include_prompt:
+        prompt, instruction = consent_prompt_text(metadata)
+        document.update(
+            {
+                "prompt": prompt,
+                "instruction": instruction,
+                "details": list(consent_details(metadata)),
+                "source_url": metadata.license_url or metadata.repository_url,
+                "entry_hint": string("registry.consent_entry_hint"),
+                "consent_phrase": string("registry.consent_phrase"),
+                "accept_label": string("registry.consent_accept"),
+                "decline_label": string("registry.consent_decline"),
+                "accepted_message": string("registry.consent_accepted_retry"),
+                "declined_message": string("registry.consent_declined"),
+                "submit_failed_message": string("registry.consent_submit_failed"),
+            }
+        )
+    return document
+
+
+@api.get("/v1/models")
+def models() -> dict[str, object]:
+    """List built-in models, pinned revisions, terms and consent state."""
+    catalog = {metadata.model_id: metadata for metadata in registered_models()}
+    catalog.update(
+        {
+            metadata.model_id: metadata
+            for metadata in pending_model_consents()
+            if metadata.model_id not in catalog
+        }
+    )
+    return {
+        "commercial_mode": commercial_mode_enabled(),
+        "models": [
+            _model_consent_document(metadata)
+            for metadata in sorted(
+                catalog.values(),
+                key=lambda item: (item.category, item.model_id),
+            )
+        ],
+    }
+
+
+def _webui_asset_response(asset_name: str) -> Optional[Response]:
+    """Build a response for a Celune-owned WebUI asset, if it is recognized."""
+    if asset_name == "theme.css":
+        return Response(
+            content=server_session.webui_theme_style,
+            media_type="text/css",
+            headers={"Cache-Control": "no-store"},
+        )
+    asset = webui.webui_asset_response_data(asset_name)
+    if asset is None:
+        return None
+    content, media_type = asset
+    return Response(
+        content=content,
+        media_type=media_type,
+        headers={"Cache-Control": "public, max-age=3600"},
+    )
+
+
+def _submit_model_consent(body: ModelConsentRequest) -> dict[str, object]:
+    """Apply one exact-revision acknowledgement submitted by a client."""
+    metadata = model_metadata_for_revision(body.model_id, body.revision)
+    record_model_consent(body.model_id, body.revision, body.accepted)
+    return {
+        "accepted": body.accepted,
+        "model": _model_consent_document(metadata),
+    }
+
+
+@api.post("/v1/models/consent")
+def submit_model_consent(body: ModelConsentRequest) -> dict[str, object]:
+    """Acknowledge model terms for one exact Hugging Face commit."""
+    return _submit_model_consent(body)
+
+
+@api.get("/ui/models/pending", include_in_schema=False)
+def webui_pending_model_consents() -> dict[str, object]:
+    """Return localized pending prompts to the authenticated browser UI."""
+    pending = pending_model_consents()
+    return {
+        "pending": [
+            _model_consent_document(metadata, include_prompt=True)
+            for metadata in pending
+        ],
+        "status": (
+            string("registry.waiting_status")
+            if pending
+            else server_session.webui_status_text
+        ),
+    }
+
+
+@api.post("/ui/models/consent", include_in_schema=False)
+def webui_submit_model_consent(body: ModelConsentRequest) -> dict[str, object]:
+    """Submit the browser UI's decision for one exact model revision."""
+    return _submit_model_consent(body)
+
+
 @api.post("/v1/speak", response_model=None)
 def speak(body: SpeakRequest) -> Union[StreamingResponse, JSONResponse]:
     """Queue speech and stream generated audio chunks back to the caller.
@@ -1487,7 +902,54 @@ def speak(body: SpeakRequest) -> Union[StreamingResponse, JSONResponse]:
         failed.
     """
     celune = require_celune()
+    if getattr(getattr(celune, "backend", None), "singing", False):
+        return JSONResponse(
+            status_code=409,
+            content={
+                "error": "unsupported_operation",
+                "message": string("api.singing_backend_use_sing_endpoint"),
+            },
+        )
+
     api_log("SPEAK(SYNC)", body.content)
+    chunks = celune.say_stream(body.content, save=body.save)
+    if chunks is None:
+        return JSONResponse(
+            status_code=409,
+            content={
+                "error": "not_ready",
+                "message": string("webui.busy_try_again"),
+            },
+        )
+
+    return StreamingResponse(
+        audio_bytes(chunks),
+        media_type="audio/flac",
+        headers=stream_headers(),
+    )
+
+
+@api.post("/v1/sing", response_model=None)
+def sing(body: SpeakRequest) -> Union[StreamingResponse, JSONResponse]:
+    """Validate CESN, queue singing, and stream generated audio to the caller."""
+    celune = require_celune()
+    if not getattr(getattr(celune, "backend", None), "singing", False):
+        return JSONResponse(
+            status_code=409,
+            content={
+                "error": "unsupported_operation",
+                "message": string("api.singing_backend_required"),
+            },
+        )
+
+    notation_error = validate_singing_notation(celune, body.content)
+    if notation_error is not None:
+        return JSONResponse(
+            status_code=422,
+            content={"error": "invalid_notation", "message": notation_error},
+        )
+
+    api_log("SING", body.content)
     chunks = celune.say_stream(body.content, save=body.save)
     if chunks is None:
         return JSONResponse(
@@ -1519,13 +981,24 @@ def speak_async(body: SpeakRequest) -> JSONResponse:
         Exception: If speech-job setup or queueing fails unexpectedly.
     """
     celune = require_celune()
+    if getattr(getattr(celune, "backend", None), "singing", False):
+        return JSONResponse(
+            status_code=409,
+            content={
+                "error": "unsupported_operation",
+                "message": string("api.singing_backend_use_sing_endpoint"),
+            },
+        )
+
     api_log("SPEAK(ASYNC)", body.content)
     job_id = uuid.uuid4().hex
     location = f"/v1/speak/jobs/{job_id}"
-    _remember_speech_job(job_id, SpeechJob(status="queued", created_at=time.time()))
-    _set_active_speech_task(job_id)
-    _update_speech_job(job_id, status="running")
-    _publish_task_event(
+    server_jobs.remember_speech_job(
+        job_id, SpeechJob(status="queued", created_at=time.time())
+    )
+    server_jobs.set_active_speech_task(job_id)
+    server_jobs.update_speech_job(job_id, status="running")
+    server_jobs.publish_task_event(
         job_id,
         TaskEvent(
             task_id=job_id,
@@ -1537,12 +1010,12 @@ def speak_async(body: SpeakRequest) -> JSONResponse:
     try:
         chunks = celune.say_stream(body.content, save=body.save)
     except Exception:
-        _set_active_speech_task(None)
-        _forget_speech_job(job_id)
+        server_jobs.set_active_speech_task(None)
+        server_jobs.forget_speech_job(job_id)
         raise
     if chunks is None:
-        _set_active_speech_task(None)
-        _forget_speech_job(job_id)
+        server_jobs.set_active_speech_task(None)
+        server_jobs.forget_speech_job(job_id)
         return JSONResponse(
             status_code=409,
             content={
@@ -1552,8 +1025,8 @@ def speak_async(body: SpeakRequest) -> JSONResponse:
         )
 
     threading.Thread(
-        target=_collect_speech_job,
-        args=(job_id, chunks),
+        target=collect_speech_job,
+        args=(job_id, chunks, server_session),
         daemon=True,
         name=f"{APP_NAME}SpeechJob-{job_id[:8]}",
     ).start()
@@ -1577,6 +1050,15 @@ def think(body: ThinkRequest) -> JSONResponse:
         think right now.
     """
     celune = require_celune()
+    if getattr(getattr(celune, "backend", None), "singing", False):
+        return JSONResponse(
+            status_code=409,
+            content={
+                "error": "unsupported_operation",
+                "message": string("celune.persona_unavailable_singing"),
+            },
+        )
+
     api_log(
         "THINK",
         body.content
@@ -1605,7 +1087,7 @@ def speak_job(job_id: str) -> Union[Response, JSONResponse]:
     Returns:
         Union[Response, JSONResponse]: A pending/error status payload, or audio.
     """
-    job = _speech_job_snapshot(job_id)
+    job = server_jobs.speech_job_snapshot(job_id)
     if job is None:
         return JSONResponse(
             status_code=404,
@@ -1623,7 +1105,7 @@ def speak_job(job_id: str) -> Union[Response, JSONResponse]:
         return JSONResponse(status_code=status_code, content=content)
 
     return Response(
-        content=job.audio or _flac_bytes(np.empty((0, 2), dtype=np.float32)),
+        content=job.audio or flac_bytes(np.empty((0, 2), dtype=np.float32)),
         media_type="audio/flac",
         headers=stream_headers(),
     )
@@ -1642,7 +1124,7 @@ async def cancel_speech_job(job_id: str) -> Union[TaskCancelResponse, JSONRespon
     Returns:
         Union[TaskCancelResponse, JSONResponse]: The cancellation result or an API error payload.
     """
-    if _task_status(job_id) is None:
+    if server_jobs.task_status(job_id) is None:
         return JSONResponse(
             status_code=404,
             content={
@@ -1677,6 +1159,15 @@ async def voice(body: VoiceRequest) -> Union[ActionResponse, JSONResponse]:
     celune = require_celune()
     api_log("VOICE", body.voice_name)
 
+    if getattr(getattr(celune, "backend", None), "singing", False):
+        return JSONResponse(
+            status_code=409,
+            content={
+                "error": "unsupported_operation",
+                "message": string("celune.singing_voice_change_unavailable"),
+            },
+        )
+
     if body.voice_name not in celune.voices:
         return JSONResponse(
             status_code=400,
@@ -1700,7 +1191,7 @@ async def voice(body: VoiceRequest) -> Union[ActionResponse, JSONResponse]:
 
 @api.post("/v1/sfx", response_model=None)
 async def sfx(
-    file: UploadFile = File(...),  # noqa: B008
+    file: Annotated[UploadFile, File()],
     keep: bool = Form(True),
 ) -> Union[StreamingResponse, JSONResponse]:
     """Play an uploaded sound effect file and stream the audio chunks back to the caller.
@@ -1717,8 +1208,8 @@ async def sfx(
     filename = file.filename or f"sfx_{uuid.uuid4()}"
     api_log("SFX", filename, f" (keep={keep})")
 
-    data = await file.read(max_sfx_upload_bytes + 1)
-    if len(data) > max_sfx_upload_bytes:
+    data = await file.read(server_session.max_sfx_upload_bytes + 1)
+    if len(data) > server_session.max_sfx_upload_bytes:
         return JSONResponse(
             status_code=413,
             content={
@@ -1729,7 +1220,7 @@ async def sfx(
 
     # noinspection PyBroadException
     try:
-        audio, sr = _decode_uploaded_audio(data)
+        audio, sr = decode_uploaded_audio(data)
         audio = resample_audio(audio, sr)
     except Exception as error:
         celune.log(
@@ -1760,7 +1251,7 @@ async def sfx(
         )
 
     def chunks() -> Iterator[bytes]:
-        yield _flac_bytes(audio)
+        yield flac_bytes(audio)
 
     return StreamingResponse(
         chunks(),
@@ -1771,15 +1262,13 @@ async def sfx(
 
 @api.post("/v1/convert", response_model=None)
 async def convert_audio(
-    file: UploadFile = File(...),  # noqa: B008
-    pitch_shift: Optional[int] = Form(None),
+    file: Annotated[UploadFile, File()],
     f0_condition: Optional[bool] = Form(None),
 ) -> Union[StreamingResponse, JSONResponse]:
     """Convert an uploaded source audio file through the active VC backend.
 
     Args:
         file: The uploaded source audio file to convert.
-        pitch_shift: Optional semitone adjustment applied for this conversion only.
         f0_condition: Optional override enabling singing mode pitch conditioning.
 
     Returns:
@@ -1787,14 +1276,14 @@ async def convert_audio(
         failed.
     """
     celune = require_celune()
-    if not _webui_vc_mode_active(celune):
-        return _voice_conversion_unavailable_response()
+    if not webui_vc_mode_active(celune):
+        return voice_conversion_unavailable_response()
 
     filename = file.filename or f"convert_{uuid.uuid4()}"
     api_log("CONVERT", filename)
 
-    data = await file.read(max_sfx_upload_bytes + 1)
-    if len(data) > max_sfx_upload_bytes:
+    data = await file.read(server_session.max_sfx_upload_bytes + 1)
+    if len(data) > server_session.max_sfx_upload_bytes:
         return JSONResponse(
             status_code=413,
             content={
@@ -1805,7 +1294,7 @@ async def convert_audio(
 
     # noinspection PyBroadException
     try:
-        audio, sample_rate = _decode_uploaded_audio(data)
+        audio, sample_rate = decode_uploaded_audio(data)
     except Exception as error:
         celune.log(
             format_error_message(
@@ -1830,7 +1319,6 @@ async def convert_audio(
             audio,
             sample_rate,
             label=filename,
-            pitch_shift=pitch_shift,
             f0_condition=f0_condition,
         )
     except Exception as error:
@@ -1861,7 +1349,7 @@ async def convert_audio(
 
     def chunks() -> Iterator[bytes]:
         prepared_audio = prepare_playback_audio(output.audio, output.sample_rate)
-        yield _flac_bytes(
+        yield flac_bytes(
             prepared_audio,
             sample_rate=BASE_SR,
         )
@@ -1875,14 +1363,181 @@ async def convert_audio(
 
 api = gr.mount_gradio_app(
     api,
-    _build_webui(),
+    build_webui(server_session),
     path="/ui",
     footer_links=[],
-    favicon_path=str(project_root() / "resources" / "celune.ico"),
     show_error=True,
     css=WEBUI_CSS,
     head=WEBUI_HEAD,
 )
+api.mount("/", app=mcp_app)
+
+
+_TUNNEL_URL = re.compile(r"https://[a-z0-9-]+\.trycloudflare\.com\b", re.IGNORECASE)
+_STARTUP_ANNOUNCEMENT_TIMEOUT = 10.0
+
+
+class CloudflaredQuickTunnel:
+    """Own one cloudflared quick-tunnel process for Celune's lifetime."""
+
+    def __init__(self, log: Callable[[str, str], None]) -> None:
+        """Create a tunnel manager.
+
+        Args:
+            log: Callback used to report tunnel status and its public URL.
+        """
+        self._log = log
+        self._process: Optional[subprocess.Popen[str]] = None
+        self._reader: Optional[threading.Thread] = None
+        self._stopping = threading.Event()
+        self._closed = False
+        self._lock = threading.Lock()
+        self._port: Optional[int] = None
+        self._startup_announced = False
+        self._startup_timer: Optional[threading.Timer] = None
+
+    def start(self, port: int) -> bool:
+        """Start the public quick tunnel and watch for its endpoint URL.
+
+        Args:
+            port: Local API port to expose through Cloudflare.
+
+        Returns:
+            bool: ``True`` when cloudflared started, otherwise ``False``.
+        """
+        with self._lock:
+            if self._closed:
+                return False
+            if self._process is not None and self._process.poll() is None:
+                return True
+
+            executable = shutil.which("cloudflared")
+            if executable is None:
+                self._log(
+                    string("celune.cloudflared_missing", app_name=APP_NAME),
+                    "warning",
+                )
+                return False
+
+            creationflags = (
+                getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
+            )
+            try:
+                process = subprocess.Popen(  # pylint: disable=R1732
+                    [executable, "tunnel", "--url", f"http://127.0.0.1:{port}"],
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    creationflags=creationflags,
+                )
+            except OSError:
+                self._log(
+                    string("celune.cloudflared_failed", app_name=APP_NAME),
+                    "warning",
+                )
+                return False
+
+            self._stopping.clear()
+            self._process = process
+            self._port = port
+            self._startup_announced = False
+            atexit.register(self.stop)
+            self._startup_timer = threading.Timer(
+                _STARTUP_ANNOUNCEMENT_TIMEOUT,
+                self._announce_local_start,
+            )
+            self._startup_timer.daemon = True
+            self._startup_timer.start()
+            self._reader = threading.Thread(
+                target=self._read_output,
+                args=(process,),
+                daemon=True,
+                name=f"{APP_NAME}Cloudflared",
+            )
+            self._reader.start()
+        return True
+
+    def _read_output(self, process: subprocess.Popen[str]) -> None:
+        """Read cloudflared output without blocking Celune's API thread."""
+        output = process.stdout
+        if output is not None:
+            for line in output:
+                match = _TUNNEL_URL.search(line)
+                if match is not None:
+                    url = match.group(0)
+                    if not self._announce_startup(url):
+                        self._log(
+                            string(
+                                "celune.public_api_endpoint",
+                                app_name=APP_NAME,
+                                url=url,
+                            ),
+                            "info",
+                        )
+
+        return_code = process.wait()
+        if not self._stopping.is_set():
+            self._announce_local_start()
+        if return_code != 0 and not self._stopping.is_set():
+            self._log(string("celune.cloudflared_failed", app_name=APP_NAME), "warning")
+
+    def _announce_local_start(self) -> None:
+        """Report the local API URL when the tunnel URL is not ready in time."""
+        with self._lock:
+            port = self._port
+        if port is not None:
+            self._announce_startup(f"http://127.0.0.1:{port}")
+
+    def _announce_startup(self, url: str) -> bool:
+        """Log the first usable API URL, returning whether this call announced it."""
+        with self._lock:
+            if self._startup_announced or self._stopping.is_set():
+                return False
+            self._startup_announced = True
+            timer = self._startup_timer
+            self._startup_timer = None
+
+        if timer is not None and timer is not threading.current_thread():
+            timer.cancel()
+        self._log(
+            string("celune.api_started", app_name=APP_NAME, url=url),
+            "info",
+        )
+        return True
+
+    def stop(self) -> None:
+        """Terminate the quick tunnel and wait for its process to exit."""
+        with self._lock:
+            self._closed = True
+            process = self._process
+            timer = self._startup_timer
+            self._startup_timer = None
+            if timer is not None:
+                timer.cancel()
+            if process is None:
+                return
+
+            atexit.unregister(self.stop)
+            self._stopping.set()
+            if process.poll() is None:
+                with contextlib.suppress(OSError):
+                    process.terminate()
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    with contextlib.suppress(OSError):
+                        process.kill()
+                    with contextlib.suppress(subprocess.TimeoutExpired):
+                        process.wait(timeout=2)
+
+            reader = self._reader
+            if reader is not None and reader is not threading.current_thread():
+                reader.join(timeout=1)
+            self._process = None
+            self._reader = None
 
 
 def run_api(
@@ -1907,10 +1562,15 @@ def run_api(
         bind_celune(celune)
 
     configure_api_security(token=token, requests_per_minute=requests_per_minute)
-    bind_host = resolve_api_host(token=auth_token, host=host)
+    bind_host = resolve_api_host(token=server_session.auth_token, host=host)
+    configure_mcp_host_allowlist(bind_host)
 
     def _default_started(bhost: str, bport: int) -> None:
-        message = f"{APP_NAME} API has started on http://{bhost}:{bport}"
+        message = string(
+            "celune.api_started",
+            app_name=APP_NAME,
+            url=f"http://{bhost}:{bport}",
+        )
         if celune is not None:
             celune.log(message)
         else:
@@ -1928,13 +1588,12 @@ def run_api(
         on_started=lambda: started_callback(bind_host, port),
     )
     api_socket = _bind_api_socket(bind_host, port)
-    global current_api_server
-    current_api_server = server
+    server_session.current_api_server = server
     try:
         server.run(sockets=[api_socket])
     finally:
         api_socket.close()
-        current_api_server = None
+        server_session.current_api_server = None
 
 
 def start_api(
@@ -1944,6 +1603,8 @@ def start_api(
     token: Optional[str] = None,
     requests_per_minute: int = 60,
     startup_timeout: float = 5.0,
+    on_started: Optional[Callable[[str, int], None]] = None,
+    defer_startup_log: bool = False,
 ) -> threading.Thread:
     """Start the API in a background thread.
 
@@ -1954,6 +1615,8 @@ def start_api(
         token: Token required for API requests.
         requests_per_minute: Maximum requests allowed per client each minute.
         startup_timeout: Seconds to wait for startup confirmation.
+        on_started: Optional callback after the server socket begins listening.
+        defer_startup_log: Leave startup URL reporting to ``on_started``.
 
     Returns:
         threading.Thread: The daemon thread running the API server.
@@ -1963,7 +1626,16 @@ def start_api(
     failed = threading.Event()
 
     def _started(bind_host: str, bind_port: int) -> None:
-        celune.log(f"{APP_NAME} API has started on http://{bind_host}:{bind_port}")
+        if not defer_startup_log or on_started is None:
+            celune.log(
+                string(
+                    "celune.api_started",
+                    app_name=APP_NAME,
+                    url=f"http://{bind_host}:{bind_port}",
+                )
+            )
+        if on_started is not None:
+            on_started(bind_host, bind_port)
         started.set()
 
     def _runner() -> None:
@@ -1981,17 +1653,17 @@ def start_api(
             if exc.code not in (0, None):
                 failed.set()
                 celune.log(
-                    f"API runner has exited. Exit code {exc.code}",
+                    string("celune.api_runner_exited", code=exc.code),
                     "warning",
                 )
         except Exception as e:
             failed.set()
             if isinstance(e, OSError) and _is_port_in_use_error(e):
-                celune.log(f"API port {port} is already in use.", "warning")
+                celune.log(string("celune.api_port_in_use", port=port), "warning")
             else:
                 celune.log(
                     format_error_message(
-                        "Could not start the API",
+                        string("celune.api_start_failed"),
                         e,
                         getattr(celune, "log_level", "info"),
                     ),
@@ -2006,13 +1678,11 @@ def start_api(
 
     if not started.is_set() and not failed.is_set():
         celune.log(
-            f"API runner has not responded after {startup_timeout:.1f}s, "
-            "and has timed out.",
+            string(
+                "celune.api_runner_timeout",
+                seconds=f"{startup_timeout:.1f}",
+            ),
             "warning",
         )
 
     return thread
-
-
-webui.install(globals())
-webactions.install(globals())

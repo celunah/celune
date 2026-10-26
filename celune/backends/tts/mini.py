@@ -19,8 +19,21 @@ from ...i18n import string
 from ...paths import temp_data_dir, huggingface_progress, huggingface_hub_cache_dir
 from ...utils import custom_assert
 from ...cevoice import CEVoiceLoader, default_loader
+from ...registry.tts import (
+    MINI_VOICE_MODELS,
+    TTS_DEFAULT_VOICE,
+    MINI_DEFAULT_LANGUAGE,
+    MINI_LANGUAGE_ALIASES,
+    MINI_SUPPORTED_LANGUAGES,
+    MINI_LANGUAGE_MODEL_VARIANTS,
+    ModelContract,
+)
+from ...registry.tts import (
+    model_contract as resolve_model_contract,
+)
 from ...typing.aliases import AudioChunk, AudioChunks
 from ...typing.backends import MiniModel, MiniPromptState
+from ...registry.consent import require_model_consent
 
 
 class Mini(CeluneBackend[TTSModel]):
@@ -29,26 +42,22 @@ class Mini(CeluneBackend[TTSModel]):
     name: str = "mini"
     uses_voice_bundles: bool = True
     chunk_rate: float = 12.5
-    supported_languages: tuple[str, ...] = ("en", "fr", "de", "it", "pt", "es")
+    supported_languages: tuple[str, ...] = MINI_SUPPORTED_LANGUAGES
 
-    voice_models: Optional[Mapping[str, str]] = {
-        "balanced": "lunahr/pocket-tts-ungated",
-        "calm": "lunahr/pocket-tts-ungated",
-        "bold": "lunahr/pocket-tts-ungated",
-        "upbeat": "lunahr/pocket-tts-ungated",
-    }
-    default_voice: Optional[str] = "balanced"
+    voice_models: Optional[Mapping[str, str]] = MINI_VOICE_MODELS
+    default_voice: Optional[str] = TTS_DEFAULT_VOICE
 
     def __init__(
         self,
         log: Callable[[str, str], None],
         fatal: Optional[Callable[[], None]] = None,
+        quantize: bool = True,
     ) -> None:
-        super().__init__(log=log, fatal=fatal)
+        super().__init__(log=log, fatal=fatal, quantize=quantize)
         self._validate_refs()
         self._voice_states: dict[str, MiniPromptState] = {}
         self._generated_config_path: Optional[Path] = None
-        self._loaded_language = "en"
+        self._loaded_language: Optional[str] = None
 
     @staticmethod
     def _get_default_loader() -> Optional[CEVoiceLoader]:
@@ -97,6 +106,15 @@ class Mini(CeluneBackend[TTSModel]):
         assert voice in voice_names
         return self.default_model_id
 
+    def model_contract(self, model_id: str, **kwargs: object) -> ModelContract:
+        """Return the Pocket TTS contract for the requested language variant."""
+        language = cast(Optional[str], kwargs.get("lang", kwargs.get("language", "en")))
+        return resolve_model_contract(
+            self.name,
+            model_id,
+            variant=self._resolve_language_name(language),
+        )
+
     def resolve_generation_language(self, lang: Optional[str]) -> str:
         """Normalize a requested language to one of Pocket TTS's supported variants.
 
@@ -106,15 +124,8 @@ class Mini(CeluneBackend[TTSModel]):
         Returns:
             str: A language-specific model identifier, or ``"en"`` if no match was found.
         """
-        alias_to_code: Mapping[str, str] = {
-            "english": "en",
-            "french": "fr",
-            "german": "de",
-            "italian": "it",
-            "portuguese": "pt",
-            "spanish": "es",
-        }
-        fallback = "en"
+        alias_to_code = MINI_LANGUAGE_ALIASES
+        fallback = MINI_DEFAULT_LANGUAGE
 
         if not lang:
             return fallback
@@ -138,16 +149,7 @@ class Mini(CeluneBackend[TTSModel]):
 
     def _resolve_language_name(self, lang: Optional[str] = "en") -> str:
         """Return the Pocket TTS language variant expected for this backend."""
-        code_to_model: Mapping[str, str] = {
-            "en": "english",
-            "fr": "french",
-            "de": "german",
-            "it": "italian",
-            "pt": "portuguese",
-            "es": "spanish",
-        }
-
-        return code_to_model[self.resolve_generation_language(lang)]
+        return MINI_LANGUAGE_MODEL_VARIANTS[self.resolve_generation_language(lang)]
 
     def _resolve_snapshot_language_dir(
         self, snapshot_path: str, lang: str = "en"
@@ -171,12 +173,23 @@ class Mini(CeluneBackend[TTSModel]):
             + (f" (available: {available})" if available else "")
         )
 
-    def _resolve_template_config_path(self, lang: str = "en") -> Path:
+    def _resolve_template_config_path(
+        self, lang: str = "en", language_variant: Optional[str] = None
+    ) -> Path:
         """Return the best matching Pocket TTS template config for one language."""
         from pocket_tts.utils.config import CONFIGS_DIR
 
         language_code = self.resolve_generation_language(lang)
         language_name = self._resolve_language_name(lang)
+        if language_variant is not None and language_variant != language_name:
+            variant_path = CONFIGS_DIR / f"{language_variant}.yaml"
+            if variant_path.is_file():
+                return variant_path
+            if language_variant.endswith("_24l"):
+                raise FileNotFoundError(
+                    f"invalid Pocket TTS snapshot: template config for {language_variant} not found"
+                )
+
         candidates = (
             CONFIGS_DIR / f"{language_name}.yaml",
             CONFIGS_DIR / f"{language_code}.yaml",
@@ -206,8 +219,8 @@ class Mini(CeluneBackend[TTSModel]):
     ) -> Path:
         """Create a temporary Pocket TTS YAML config targeting the snapshot files."""
         language_name = self._resolve_language_name(lang)
-        template_path = self._resolve_template_config_path(lang)
         language_dir = self._resolve_snapshot_language_dir(snapshot_path, lang)
+        template_path = self._resolve_template_config_path(lang, language_dir.name)
         model_path = language_dir / "model.safetensors"
         tokenizer_json_path = language_dir / "tokenizer.json"
         tokenizer_model_path = language_dir / "tokenizer.model"
@@ -309,7 +322,9 @@ class Mini(CeluneBackend[TTSModel]):
         Returns:
             bool: Whether Celune should reload a new Pocket TTS language model.
         """
-        return self.resolve_generation_language(lang) != self._loaded_language
+        return self.model is None or (
+            self.resolve_generation_language(lang) != self._loaded_language
+        )
 
     def load_model(self, model_id: str, **kwargs) -> TTSModel:
         """Load the configured Pocket TTS model snapshot.
@@ -321,6 +336,7 @@ class Mini(CeluneBackend[TTSModel]):
         Returns:
             Optional[TTSModel]: A Celune-compatible Pocket TTS model object.
         """
+        metadata = require_model_consent(model_id)
         requested_language = self.resolve_generation_language(
             cast(Optional[str], kwargs.pop("lang", kwargs.pop("language", None)))
         )
@@ -332,6 +348,7 @@ class Mini(CeluneBackend[TTSModel]):
             with huggingface_progress(self.report_progress):
                 snapshot_path = snapshot_download(
                     repo_id=model_id,
+                    revision=metadata.revision,
                     cache_dir=str(huggingface_hub_cache_dir(create=True)),
                 )
 
@@ -339,15 +356,24 @@ class Mini(CeluneBackend[TTSModel]):
             snapshot_path, requested_language
         )
         self._generated_config_path = generated_config_path
-        load_model_parameters = inspect.signature(TTSModel.load_model).parameters
-        if "sampler_decode_steps" in load_model_parameters:
-            self.model = TTSModel.load_model(
-                config=generated_config_path, temp=0.15, sampler_decode_steps=8
+        try:
+            load_model_parameters = inspect.signature(TTSModel.load_model).parameters
+            if "sampler_decode_steps" in load_model_parameters:
+                self.model = TTSModel.load_model(
+                    config=generated_config_path, temp=0.15, sampler_decode_steps=2
+                )
+            else:
+                self.model = TTSModel.load_model(
+                    config=generated_config_path, temp=0.15, lsd_decode_steps=2
+                )
+            self.model = self.apply_runtime_quantization(
+                self.model,
+                model_id,
+                lang=requested_language,
             )
-        else:
-            self.model = TTSModel.load_model(
-                config=generated_config_path, temp=0.15, lsd_decode_steps=8
-            )
+        except Exception:
+            self.unload_model(release_cuda_cache=False)
+            raise
         self._loaded_language = requested_language
         self._voice_states.clear()
         return self.model
@@ -361,6 +387,7 @@ class Mini(CeluneBackend[TTSModel]):
         generated_config_path = self._generated_config_path
         self._voice_states.clear()
         self._generated_config_path = None
+        self._loaded_language = None
         if generated_config_path is not None:
             with contextlib.suppress(OSError):
                 generated_config_path.unlink(missing_ok=True)

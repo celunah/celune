@@ -1,37 +1,56 @@
 # SPDX-License-Identifier: Apache-2.0
 """LuxTTS backend implementation for Celune."""
 
-import contextlib
-import hashlib
-import math
 import os
+import math
 import time
+import hashlib
+import contextlib
 from pathlib import Path
 from types import MethodType
-from collections.abc import Callable, Generator, Iterator, Mapping
-from typing import ClassVar, Optional, Protocol, Union, cast
+from typing import Union, Optional, Protocol, cast
+from collections.abc import Mapping, Callable, Iterator, Generator
 
+import torch
 import numpy as np
 import soundfile as sf
-import torch
 from huggingface_hub import snapshot_download
 
-from ...cevoice import CEVoiceLoader, default_loader
-from ...i18n import string
-from ...paths import huggingface_hub_cache_dir, huggingface_progress, temp_data_dir
-from ...typing.aliases import AudioChunk
-from ...typing.backends import BackendModel
-from ...utils import custom_assert
 from .base import (
     CeluneBackend,
-    _to_numpy_audio,
+    to_numpy_audio,
     local_hf_offline_mode,
     cached_hf_snapshot_path,
 )
+from ...i18n import string
+from ...registry.tts import (
+    LUXTTS_MODEL_ID as _LUXTTS_MODEL_ID,
+)
+from ...registry.tts import (
+    TTS_DEFAULT_VOICE,
+    LUXTTS_VOICE_MODELS,
+)
+from ...registry.tts import (
+    LUXTTS_CPU_TRANSCRIBER_MODEL_ID as _LUXTTS_CPU_TRANSCRIBER_MODEL_ID,
+)
+from ...registry.tts import (
+    LUXTTS_GPU_TRANSCRIBER_MODEL_ID as _LUXTTS_GPU_TRANSCRIBER_MODEL_ID,
+)
+from ...utils import custom_assert
+from ...typing.aliases import AudioChunk
+from ...typing.backends import BackendModel
+from ...cevoice import CEVoiceLoader, default_loader
+from ...registry.consent import require_model_consent
+from ...paths import temp_data_dir, huggingface_progress, huggingface_hub_cache_dir
 
-__all__ = ["LuxTTS"]
+__all__ = [
+    "LuxTTS",
+    "LuxTTSModel",
+    "install_cpu_duration_correction",
+    "install_vocoder_decode_guard",
+    "set_vocoder_silence_feature",
+]
 
-_LUXTTS_MODEL_ID = "YatharthS/LuxTTS"
 _LUXTTS_TRANSCRIBER_FILES = [
     "config.json",
     "generation_config.json",
@@ -44,8 +63,6 @@ _LUXTTS_TRANSCRIBER_FILES = [
     "tokenizer_config.json",
     "vocab.json",
 ]
-_LUXTTS_CPU_TRANSCRIBER_MODEL_ID = "openai/whisper-tiny"
-_LUXTTS_GPU_TRANSCRIBER_MODEL_ID = "openai/whisper-base"
 _LUXTTS_CPU_MODEL_FILES = [
     "tokens.txt",
     "text_encoder.onnx",
@@ -96,7 +113,7 @@ class _LuxTTSOnnxModel(Protocol):
         raise NotImplementedError("protocol not defined")
 
 
-class _LuxTTSModel(BackendModel, Protocol):
+class LuxTTSModel(BackendModel, Protocol):
     """Subset of LuxTTS required by Celune's adapter."""
 
     model: _LuxTTSOnnxModel
@@ -126,11 +143,11 @@ class _LuxTTSModel(BackendModel, Protocol):
         raise NotImplementedError("protocol not defined")
 
 
-def _load_runtime_class() -> Callable[..., _LuxTTSModel]:
+def _load_runtime_class() -> Callable[..., LuxTTSModel]:
     """Load LuxTTS only inside its isolated backend environment."""
     from zipvoice.luxvoice import LuxTTS as RuntimeLuxTTS
 
-    return cast(Callable[..., _LuxTTSModel], RuntimeLuxTTS)
+    return cast(Callable[..., LuxTTSModel], RuntimeLuxTTS)
 
 
 def _runtime_device() -> str:
@@ -189,8 +206,8 @@ def _pad_vocoder_features(
     return torch.cat((features, tail), dim=-1)
 
 
-def _set_vocoder_silence_feature(
-    model: _LuxTTSModel,
+def set_vocoder_silence_feature(
+    model: LuxTTSModel,
     encoded_prompt: _LuxPrompt,
 ) -> None:
     """Give the Vocos guard the prompt's final silent acoustic feature."""
@@ -210,7 +227,7 @@ def _set_vocoder_silence_feature(
     setattr(vocoder, _LUXTTS_VOCODER_SILENCE_FEATURE, silence_feature)
 
 
-def _install_cpu_duration_correction(model: _LuxTTSModel) -> None:
+def install_cpu_duration_correction(model: LuxTTSModel) -> None:
     """Correct the CPU ONNX duration ratio before prompt frames are removed."""
     onnx_model = getattr(model, "model", None)
     if onnx_model is None:
@@ -277,7 +294,7 @@ def _install_cpu_duration_correction(model: _LuxTTSModel) -> None:
     )
 
 
-def _install_vocoder_decode_guard(model: _LuxTTSModel) -> None:
+def install_vocoder_decode_guard(model: LuxTTSModel) -> None:
     """Protect the isolated LuxTTS Vocos decoder from empty short outputs."""
     vocoder = getattr(model, "vocos", None)
     if vocoder is None:
@@ -312,28 +329,24 @@ def _install_vocoder_decode_guard(model: _LuxTTSModel) -> None:
     vocoder.decode = MethodType(guarded_decode, vocoder)
 
 
-class LuxTTS(CeluneBackend[_LuxTTSModel]):
+class LuxTTS(CeluneBackend[LuxTTSModel]):
     """Celune's CPU-capable LuxTTS voice-cloning backend."""
 
     name: str = "luxtts"
     uses_voice_bundles: bool = True
     chunk_rate: float = 1.0
     supported_languages: tuple[str, ...] = ("en",)
-    voice_models: ClassVar[Optional[Mapping[str, str]]] = {
-        "balanced": _LUXTTS_MODEL_ID,
-        "calm": _LUXTTS_MODEL_ID,
-        "bold": _LUXTTS_MODEL_ID,
-        "upbeat": _LUXTTS_MODEL_ID,
-    }
-    default_voice: Optional[str] = "balanced"
+    voice_models: Optional[Mapping[str, str]] = LUXTTS_VOICE_MODELS
+    default_voice: Optional[str] = TTS_DEFAULT_VOICE
 
     def __init__(
         self,
         log: Callable[[str, str], None],
         fatal: Optional[Callable[[], None]] = None,
         threads: int = _LUXTTS_CPU_THREADS,
+        quantize: bool = False,
     ) -> None:
-        super().__init__(log=log, fatal=fatal)
+        super().__init__(log=log, fatal=fatal, quantize=quantize)
         self._threads = max(1, int(threads))
         self._validate_refs()
 
@@ -442,18 +455,25 @@ class LuxTTS(CeluneBackend[_LuxTTSModel]):
             required_files,
         )
 
-    def load_model(self, model_id: str, **kwargs) -> _LuxTTSModel:
+    def load_model(self, model_id: str, **kwargs) -> LuxTTSModel:
         """Load LuxTTS on CUDA when available, otherwise use its CPU path."""
         del kwargs
+        metadata = require_model_consent(model_id)
         device = _runtime_device()
         available, snapshot_path = self.model_is_available_locally(model_id)
-        target = snapshot_path if available and snapshot_path is not None else model_id
-        if not available:
+        if not available or snapshot_path is None:
             self.log(string("tts.model_download_start"), "info")
+            with huggingface_progress(self.report_progress):
+                snapshot_path = snapshot_download(
+                    repo_id=model_id,
+                    revision=metadata.revision,
+                    cache_dir=str(huggingface_hub_cache_dir(create=True)),
+                )
+        target = snapshot_path
 
         runtime_class = _load_runtime_class()
         with (
-            local_hf_offline_mode(available),
+            local_hf_offline_mode(),
             huggingface_progress(self.report_progress),
             self._suppress_backend_output(),
         ):
@@ -462,8 +482,8 @@ class LuxTTS(CeluneBackend[_LuxTTSModel]):
                 device=device,
                 threads=self._threads,
             )
-        _install_cpu_duration_correction(model)
-        _install_vocoder_decode_guard(model)
+        install_cpu_duration_correction(model)
+        install_vocoder_decode_guard(model)
         return model
 
     def prepare_model_loading(self) -> None:
@@ -475,6 +495,7 @@ class LuxTTS(CeluneBackend[_LuxTTSModel]):
         """Ensure LuxTTS and its selected Whisper transcriber are cached."""
         super().preload_models()
         transcriber_model_id = _transcriber_model_id(_runtime_device())
+        transcriber_metadata = require_model_consent(transcriber_model_id)
         available, _ = cached_hf_snapshot_path(
             transcriber_model_id,
             _LUXTTS_TRANSCRIBER_FILES,
@@ -493,16 +514,17 @@ class LuxTTS(CeluneBackend[_LuxTTSModel]):
         with huggingface_progress(self.report_progress):
             snapshot_download(
                 repo_id=transcriber_model_id,
+                revision=transcriber_metadata.revision,
                 cache_dir=str(huggingface_hub_cache_dir(create=True)),
             )
 
     def generate_stream(
-        self, model: _LuxTTSModel, **kwargs
+        self, model: LuxTTSModel, **kwargs
     ) -> Iterator[tuple[AudioChunk, int, Optional[dict]]]:
         """Generate one normalized, complete LuxTTS waveform for Celune."""
         text = kwargs.pop("text", None)
         if not isinstance(text, str) or not text.strip():
-            raise ValueError(string("tts.text_required"))
+            raise ValueError("expected text to say")
 
         voice = kwargs.pop("voice", self.default_voice)
         for name in (
@@ -538,7 +560,7 @@ class LuxTTS(CeluneBackend[_LuxTTSModel]):
                 ),
                 rms=0.01,
             )
-            _set_vocoder_silence_feature(model, encoded_prompt)
+            set_vocoder_silence_feature(model, encoded_prompt)
             try:
                 waveform = model.generate_speech(
                     text,
@@ -557,7 +579,7 @@ class LuxTTS(CeluneBackend[_LuxTTSModel]):
                 )
 
         audio = np.ascontiguousarray(
-            np.clip(_to_numpy_audio(waveform), -1.0, 1.0), dtype=np.float32
+            np.clip(to_numpy_audio(waveform), -1.0, 1.0), dtype=np.float32
         )
         if audio.size == 0:
             raise ValueError("LuxTTS produced no acoustic frames for the input")

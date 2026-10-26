@@ -51,7 +51,9 @@ nav:
       - Config: user-guide/configuration.md
       - Modes: user-guide/modes.md
       - Speech: user-guide/speech.md
+      - CESN singing tutorial: user-guide/cesn-tutorial.md
       - Persona: user-guide/persona.md
+      - Create a character pack: user-guide/creating-characters.md
       - Agent: user-guide/agent.md
       - Voice conversion: user-guide/voice-conversion.md
       - Troubleshooting: troubleshooting.md
@@ -59,9 +61,11 @@ nav:
       - CLI: interfaces/cli.md
       - TUI: interfaces/tui.md
       - REST API: API.md
+      - MCP server: interfaces/mcp.md
       - Extensions: interfaces/extensions.md
   - Formats:
       - CEVOICE/CECHAR: CEVOICE.md
+      - CESN: formats/cesn.md
       - CEDTS transport: formats/cedts.md
       - Persona Markdown: formats/persona-markdown.md
   - Reference:
@@ -75,6 +79,7 @@ nav:
       - Backends: development/backends.md
       - Docs standard: development/documentation.md
       - Testing: development/testing.md
+      - Model registry: development/model-registry.md
       - Voice and pack design: development/voice-analysis.md
       - Validation: development/validation.md
       - Packaging: development/packaging.md

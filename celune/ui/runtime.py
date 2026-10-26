@@ -11,15 +11,15 @@ import signal
 import asyncio
 import inspect
 import logging
+import itertools
 import datetime
 import threading
 import contextlib
 from io import TextIOWrapper
-from typing import Optional, cast
 from collections.abc import Callable
+from typing import Optional, Union, cast
 
 from . import app as _app
-from ..binding import install_class_functions
 
 __all__ = (
     "_agent_status_text",
@@ -52,6 +52,7 @@ __all__ = (
     "_on_agent_choice_requested",
     "_on_agent_task_finished",
     "_on_agent_task_state_changed",
+    "_on_character_bundle_changed",
     "_persist_log_entry",
     "_prepare_loading_theme",
     "_prepare_terminal_output_stream",
@@ -59,6 +60,7 @@ __all__ = (
     "_redirect_dunder_stdio",
     "_refresh_agent_status",
     "_refresh_logs",
+    "_refresh_pack_state",
     "_refresh_status",
     "_refresh_theme_text",
     "_remove_low_level_stderr_capture",
@@ -124,12 +126,9 @@ def _runtime_theme_name(self) -> str:
 
 def _ensure_themes_registered(self) -> None:
     """Register Celune's built-in themes when the app is not fully mounted yet."""
-    if _app.colors.THEME.name not in self.available_themes:
-        self.register_theme(_app.colors.THEME)
-    if _app.colors.THEME_LIGHT.name not in self.available_themes:
-        self.register_theme(_app.colors.THEME_LIGHT)
-    if _app.colors.THEME_APRIL_FOOLS.name not in self.available_themes:
-        self.register_theme(_app.colors.THEME_APRIL_FOOLS)
+    self.register_theme(_app.colors.THEME)
+    self.register_theme(_app.colors.THEME_LIGHT)
+    self.register_theme(_app.colors.THEME_APRIL_FOOLS)
     self._register_runtime_error_themes()
 
 
@@ -154,6 +153,7 @@ def _apply_theme(self, theme_name: str) -> None:
     self._clear_border_pulses()
     self.active_theme_name = theme_name
     self.theme = self._runtime_theme_name()
+    self.refresh_css(animate=False)
     self._refresh_status()
     self._refresh_theme_text()
     self._refresh_logs(recolor=True)
@@ -164,16 +164,15 @@ def _has_celune(self) -> bool:
     return self.celune is not None
 
 
-def prepare_theme(self) -> None:
-    """Prepare the selected Celune theme before the first rendered frame."""
-    if not _app._RUNTIME_DEPENDENCIES_LOADED:
-        _app._load_ui_runtime_dependencies()
+def _configure_active_pack_theme(self) -> None:
+    """Apply the selected pack's TUI colors and RGB glow color."""
     _app.colors.configure_theme()
+    glow_color = _app.colors.DEFAULT_ACCENT
 
     if self._has_celune():
         loader_factory = _app.default_loader
         if loader_factory is None:
-            _app._load_ui_runtime_dependencies()
+            _app.ensure_ui_runtime_dependencies()
             loader_factory = _app.default_loader
         loader = loader_factory() if loader_factory is not None else None
         if loader is not None:
@@ -184,6 +183,11 @@ def prepare_theme(self) -> None:
                 faded_accent = theme.get("faded_accent")
                 if faded_accent is None:
                     faded_accent = theme.get("sleeping_color")
+                if isinstance(accent, str):
+                    glow_color = accent
+                configured_glow = theme.get("glow_color")
+                if isinstance(configured_glow, str):
+                    glow_color = configured_glow
                 if (
                     isinstance(background, str)
                     and isinstance(accent, str)
@@ -195,7 +199,19 @@ def prepare_theme(self) -> None:
                         faded_accent,
                     )
 
+        glow = getattr(self.celune, "glow", None)
+        set_glow_color = getattr(glow, "_set_color", None)
+        if callable(set_glow_color):
+            set_glow_color(glow_color)
+
     self._ensure_themes_registered()
+
+
+def prepare_theme(self) -> None:
+    """Prepare the selected Celune theme before the first rendered frame."""
+    _app.ensure_ui_runtime_dependencies()
+    _configure_active_pack_theme(self)
+
     if _app.is_april_fools() and os.getenv("CELUNE_DISABLE_APRIL_FOOLS") not in {
         "1",
         "true",
@@ -364,7 +380,41 @@ def _chain_runtime_callback(
         try:
             signature.bind(*args, **kwargs)
         except TypeError:
-            target(*args)
+            positional_parameters = tuple(
+                parameter
+                for parameter in signature.parameters.values()
+                if parameter.kind
+                in {
+                    inspect.Parameter.POSITIONAL_ONLY,
+                    inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                }
+            )
+            accepts_extra_arguments = any(
+                parameter.kind == inspect.Parameter.VAR_POSITIONAL
+                for parameter in signature.parameters.values()
+            )
+            if (
+                attribute == "caption_progress_callback"
+                and not accepts_extra_arguments
+                and len(args) > len(positional_parameters)
+            ):
+                compatible_args = args[: len(positional_parameters)]
+                compatible_kwargs = dict(kwargs)
+                visible_words = signature.parameters.get("visible_words")
+                if (
+                    visible_words is not None
+                    and visible_words.kind == inspect.Parameter.KEYWORD_ONLY
+                    and len(args) == len(positional_parameters) + 1
+                ):
+                    compatible_kwargs["visible_words"] = args[-1]
+                try:
+                    signature.bind(*compatible_args, **compatible_kwargs)
+                except TypeError:
+                    target(*args)
+                else:
+                    target(*compatible_args, **compatible_kwargs)
+            else:
+                target(*args)
         else:
             target(*args, **kwargs)
 
@@ -406,7 +456,7 @@ def _publish_webui_timed_update(self) -> None:
 
 
 def _bind_agent_events(self) -> None:
-    """Subscribe the UI to the existing typed agent lifecycle events."""
+    """Subscribe the UI to typed agent and character lifecycle events."""
     self._unbind_agent_events()
     if self.celune is None:
         return
@@ -434,6 +484,21 @@ def _bind_agent_events(self) -> None:
         self._on_agent_task_finished,
         "CeluneUI",
     )
+    dispatcher.subscribe(
+        "character_changed",
+        self._on_character_bundle_changed,
+        "CeluneUI",
+    )
+    dispatcher.subscribe(
+        "character_loaded",
+        self._on_character_bundle_changed,
+        "CeluneUI",
+    )
+    dispatcher.subscribe(
+        "character_unloaded",
+        self._on_character_bundle_changed,
+        "CeluneUI",
+    )
     self._agent_event_dispatcher = dispatcher
 
 
@@ -451,7 +516,46 @@ def _unbind_agent_events(self) -> None:
     )
     dispatcher.unsubscribe("agent_choice_requested", self._on_agent_choice_requested)
     dispatcher.unsubscribe("agent_task_finished", self._on_agent_task_finished)
+    dispatcher.unsubscribe("character_changed", self._on_character_bundle_changed)
+    dispatcher.unsubscribe("character_loaded", self._on_character_bundle_changed)
+    dispatcher.unsubscribe("character_unloaded", self._on_character_bundle_changed)
     self._agent_event_dispatcher = None
+
+
+def _on_character_bundle_changed(
+    self,
+    _event: Union[
+        _app.CharacterChangedEvent,
+        _app.CharacterLoadedEvent,
+        _app.CharacterUnloadedEvent,
+    ],
+) -> None:
+    """Refresh the active pack's UI state after a voice-pack transition."""
+    self._run_on_ui_thread(self._refresh_pack_state)
+
+
+def _refresh_pack_state(self) -> None:
+    """Apply the active pack palette and synchronize its voice-cycle state."""
+    _configure_active_pack_theme(self)
+    self._apply_theme(self.active_theme_name)
+
+    celune = self.celune
+    if celune is None:
+        return
+
+    voices = tuple(celune.voices)
+    self.celune_styles = voices
+    self.celune_voices = itertools.cycle(voices)
+    current_voice = getattr(celune, "current_voice", None)
+    if isinstance(current_voice, str) and current_voice in voices:
+        self.style_index = voices.index(current_voice)
+        if self.celune_ready:
+            self.tts_voice_changed(current_voice)
+    else:
+        self.style_index = 0
+
+    if self.celune_ready:
+        self.change_voice_lock_state(locked=len(voices) < 2)
 
 
 def _on_agent_task_state_changed(
@@ -849,7 +953,8 @@ def run(
     output_stream = self._prepare_terminal_output_stream()
 
     try:
-        return super(_app.CeluneUI, self).run(
+        return _app.App.run(
+            self,
             headless=headless,
             inline=inline,
             inline_no_clear=inline_no_clear,
@@ -875,7 +980,7 @@ def compose() -> _app.ComposeResult:
     with _app.Vertical(id="container"):
         with _app.Horizontal(id="header-container"):
             yield _app.Label("", classes="line")
-            yield _app.Label(_app.APP_NAME, id="header")
+            yield _app.Label("  ".join(_app.APP_NAME.upper()), id="header")
             yield _app.Label("", classes="line")
         yield _app.RichLog(id="logs", wrap=True, markup=False)
         yield _app.Label("", id="caption", markup=False)
@@ -896,11 +1001,6 @@ def compose() -> _app.ComposeResult:
             yield _app.Button(
                 _app.string("ui.vc_mode_talk"),
                 id="vc-mode",
-                actions=_app.ButtonActions(press=False),
-            )
-            yield _app.Button(
-                _app.string("ui.vc_pitch_button", value="+0"),
-                id="vc-pitch",
                 actions=_app.ButtonActions(press=False),
             )
         with _app.Horizontal(id="bottom"):
@@ -929,7 +1029,6 @@ def on_mount(self) -> None:
     self.caption = self.query_one("#caption", _app.Label)
     self.style_button = self.query_one("#style", _app.VoiceButton)
     self.vc_mode_button = self.query_one("#vc-mode", _app.Button)
-    self.vc_pitch_button = self.query_one("#vc-pitch", _app.Button)
     self.progress_bar = self.query_one("#progress", _app.ProgressBar)
     self.progress_label = self.query_one("#progress-label", _app.ProgressLabel)
     self.header = self.query_one("#header", _app.Label)
@@ -963,7 +1062,11 @@ def on_mount(self) -> None:
 
 def _start_deferred_runtime(self) -> None:
     """Start constructing Celune after the initial loading frame renders."""
-    self.run_worker(self._load_deferred_runtime, thread=True, exclusive=True)
+    threading.Thread(
+        target=self._load_deferred_runtime,
+        name="celune-ui-runtime-startup",
+        daemon=True,
+    ).start()
 
 
 def _startup_terminal_status_for(
@@ -1026,12 +1129,19 @@ def _load_deferred_runtime(self) -> None:
         celune = self.celune
         if self._startup_loader is not None:
             celune = self._startup_loader()
-        _app._load_ui_runtime_dependencies()
+        _app.ensure_ui_runtime_dependencies()
     except BaseException as exc:
-        self.call_from_thread(self._handle_deferred_runtime_error, exc)
+        try:
+            self.call_from_thread(self._handle_deferred_runtime_error, exc)
+        except RuntimeError:
+            pass
         return
     if celune is not None:
-        self.call_from_thread(self.attach_celune, celune)
+        try:
+            self.call_from_thread(self.attach_celune, celune)
+        except RuntimeError:
+            with contextlib.suppress(Exception):
+                celune.close()
 
 
 def _handle_deferred_runtime_error(self, error: BaseException) -> None:
@@ -1075,6 +1185,7 @@ def _handle_deferred_runtime_error(self, error: BaseException) -> None:
         message,
         status_message=_app.string("status.early_initialization_failed"),
         footer_message=failure_status,
+        help_message=(self._startup_dependency_help if missing_dependency else None),
     )
 
 
@@ -1088,7 +1199,7 @@ def attach_celune(self, celune: _app.Celune) -> None:
         return
 
     if _app.default_loader is None or _app.ui_resources is None:
-        _app._load_ui_runtime_dependencies()
+        _app.ensure_ui_runtime_dependencies()
     self._log_file_path = _app.main_window_log_path(create_parent=True)
     self._unbind_agent_events()
     self.celune = celune
@@ -1283,7 +1394,7 @@ def _terminal_status_for(self, msg: str, severity: str) -> tuple[str, str]:
     if severity == "warning":
         return "warning", _app.string("osc.action_warning")
 
-    if self._persona_recording_active() or self._vc_recording_active():
+    if self.persona_recording_active() or self.vc_recording_active():
         if self._persona_recording_stop_requested:
             return "recording", _app.string("osc.action_transcribing_speech")
         return "recording", _app.string("osc.action_listening_microphone")
@@ -1300,11 +1411,11 @@ def _terminal_status_for(self, msg: str, severity: str) -> tuple[str, str]:
     if not self.celune_ready:
         return "initializing", _app.string("osc.action_loading_voice_pack")
 
-    if self._agent_task_state in _app._AGENT_AWAITING_STATES:
+    if self._agent_task_state in _app.AGENT_AWAITING_STATES:
         return "awaiting", msg
-    if self._agent_task_state in _app._AGENT_PAUSED_STATES:
+    if self._agent_task_state in _app.AGENT_PAUSED_STATES:
         return "paused", msg
-    if self._agent_task_state in _app._AGENT_ACTIVE_STATES:
+    if self._agent_task_state in _app.AGENT_ACTIVE_STATES:
         return "thinking", msg
     state_actions = {
         "idle": ("ready", _app.string("osc.action_idle")),
@@ -1594,6 +1705,7 @@ def _show_loading_error(
     *,
     status_message: Optional[str] = None,
     footer_message: Optional[str] = None,
+    help_message: Optional[str] = None,
 ) -> None:
     """Keep the loading screen visible while showing an initialization error.
 
@@ -1601,6 +1713,7 @@ def _show_loading_error(
         message: Initialization error to display.
         status_message: Optional replacement for the failure heading.
         footer_message: Optional status to show in the lower-left footer.
+        help_message: Optional recovery steps to show below the failure message.
     """
 
     def update() -> None:
@@ -1613,6 +1726,7 @@ def _show_loading_error(
                 _app.concise_error_message(message),
                 status_message=status_message,
                 footer_message=footer_message,
+                help_message=help_message,
             )
 
     self._run_on_ui_thread(update)
@@ -1671,7 +1785,7 @@ def _dismiss_loading_screen(self, *, early: bool = False) -> None:
                 self._animate_opacity(
                     main_container,
                     1.0,
-                    duration=_app._MAIN_UI_FADE_SECONDS,
+                    duration=_app.MAIN_UI_FADE_SECONDS,
                 )
             self.call_after_refresh(self._refresh_logs)
 
@@ -1681,7 +1795,7 @@ def _dismiss_loading_screen(self, *, early: bool = False) -> None:
             overlay.animate(
                 "opacity",
                 0.0,
-                duration=_app._LOADING_FADE_SECONDS,
+                duration=_app.LOADING_FADE_SECONDS,
                 easing="out_cubic",
                 on_complete=show_main_ui,
             )
@@ -1799,6 +1913,360 @@ def _restore_progress_bar(self, *, force: bool = False) -> None:
     self.progress_bar.styles.opacity = 1.0
 
 
-def install(target):
-    """Install extracted definitions in the original module."""
-    install_class_functions(target, {name: globals()[name] for name in __all__})
+class RuntimeHooks:
+    """Expose explicit Textual hooks for the owning UI subsystem."""
+
+    @staticmethod
+    def _agent_status_text(
+        task: Optional[_app.AgentTask],
+        busy_components: tuple[_app.ComponentLockName, ...],
+    ) -> Optional[str]:
+        """Delegate to the runtime implementation."""
+        return _agent_status_text(task, busy_components)
+
+    def _agent_task_for_display(self) -> Optional[_app.AgentTask]:
+        """Delegate to the runtime implementation."""
+        return _agent_task_for_display(self)
+
+    def _apply_test_finished_state(self) -> None:
+        """Delegate to the runtime implementation."""
+        return _apply_test_finished_state(self)
+
+    def _apply_theme(self, theme_name: str) -> None:
+        """Delegate to the runtime implementation."""
+        return _apply_theme(self, theme_name)
+
+    def _bind_agent_events(self) -> None:
+        """Delegate to the runtime implementation."""
+        return _bind_agent_events(self)
+
+    def _bind_runtime_callbacks(self) -> None:
+        """Delegate to the runtime implementation."""
+        return _bind_runtime_callbacks(self)
+
+    def _cancel_sleep_timer(self) -> None:
+        """Delegate to the runtime implementation."""
+        return _cancel_sleep_timer(self)
+
+    def _caption_words_for_progress(
+        self, fraction: float, visible_words: Optional[int] = None
+    ) -> tuple[tuple[str, ...], int]:
+        """Delegate to the runtime implementation."""
+        return _caption_words_for_progress(self, fraction, visible_words)
+
+    def _chain_runtime_callback(
+        self, attribute: str, callback: Callable[..., None]
+    ) -> None:
+        """Delegate to the runtime implementation."""
+        return _chain_runtime_callback(self, attribute, callback)
+
+    def _check_launcher_loss(self) -> None:
+        """Delegate to the runtime implementation."""
+        return _check_launcher_loss(self)
+
+    def _clear_border_pulses(self) -> None:
+        """Delegate to the runtime implementation."""
+        return _clear_border_pulses(self)
+
+    def _dismiss_loading_screen(self, *, early: bool = False) -> None:
+        """Delegate to the runtime implementation."""
+        return _dismiss_loading_screen(self, early=early)
+
+    def _emit_startup_diagnostic(self, message: str) -> None:
+        """Delegate to the runtime implementation."""
+        return _emit_startup_diagnostic(self, message)
+
+    def _enable_loading_ui_reveal(self) -> None:
+        """Delegate to the runtime implementation."""
+        return _enable_loading_ui_reveal(self)
+
+    def _ensure_startup_error_themes_registered(self) -> None:
+        """Delegate to the runtime implementation."""
+        return _ensure_startup_error_themes_registered(self)
+
+    def _ensure_themes_registered(self) -> None:
+        """Delegate to the runtime implementation."""
+        return _ensure_themes_registered(self)
+
+    def _enter_sleep_mode(self) -> None:
+        """Delegate to the runtime implementation."""
+        return _enter_sleep_mode(self)
+
+    def _finish_test_startup(self, success: bool, detail: Optional[str] = None) -> None:
+        """Delegate to the runtime implementation."""
+        return _finish_test_startup(self, success, detail)
+
+    def _forward_low_level_stderr(self) -> None:
+        """Delegate to the runtime implementation."""
+        return _forward_low_level_stderr(self)
+
+    def _handle_deferred_runtime_error(self, error: BaseException) -> None:
+        """Delegate to the runtime implementation."""
+        return _handle_deferred_runtime_error(self, error)
+
+    def _has_celune(self) -> bool:
+        """Delegate to the runtime implementation."""
+        return _has_celune(self)
+
+    def _install_low_level_stderr_capture(self) -> None:
+        """Delegate to the runtime implementation."""
+        return _install_low_level_stderr_capture(self)
+
+    def _is_agent_test_mode(self) -> bool:
+        """Delegate to the runtime implementation."""
+        return _is_agent_test_mode(self)
+
+    @staticmethod
+    def _is_textual_terminal_frame(payload: bytes) -> bool:
+        """Delegate to the runtime implementation."""
+        return _is_textual_terminal_frame(payload)
+
+    def _is_ui_test_mode(self) -> bool:
+        """Delegate to the runtime implementation."""
+        return _is_ui_test_mode(self)
+
+    def _load_deferred_runtime(self) -> None:
+        """Delegate to the runtime implementation."""
+        return _load_deferred_runtime(self)
+
+    def _on_character_bundle_changed(
+        self,
+        event: Union[
+            _app.CharacterChangedEvent,
+            _app.CharacterLoadedEvent,
+            _app.CharacterUnloadedEvent,
+        ],
+    ) -> None:
+        """Delegate to the runtime implementation."""
+        return _on_character_bundle_changed(self, event)
+
+    def _on_agent_approval_requested(
+        self, event: _app.AgentApprovalRequestedEvent
+    ) -> None:
+        """Delegate to the runtime implementation."""
+        return _on_agent_approval_requested(self, event)
+
+    def _on_agent_choice_requested(self, event: _app.AgentChoiceRequestedEvent) -> None:
+        """Delegate to the runtime implementation."""
+        return _on_agent_choice_requested(self, event)
+
+    def _on_agent_task_finished(self, event: _app.AgentTaskFinishedEvent) -> None:
+        """Delegate to the runtime implementation."""
+        return _on_agent_task_finished(self, event)
+
+    def _on_agent_task_state_changed(
+        self, event: _app.AgentTaskStateChangedEvent
+    ) -> None:
+        """Delegate to the runtime implementation."""
+        return _on_agent_task_state_changed(self, event)
+
+    def _persist_log_entry(self, msg: str, severity: str) -> None:
+        """Delegate to the runtime implementation."""
+        return _persist_log_entry(self, msg, severity)
+
+    def _prepare_loading_theme(self) -> None:
+        """Delegate to the runtime implementation."""
+        return _prepare_loading_theme(self)
+
+    def _prepare_terminal_output_stream(self) -> Optional[TextIOWrapper]:
+        """Delegate to the runtime implementation."""
+        return _prepare_terminal_output_stream(self)
+
+    def _publish_webui_timed_update(self) -> None:
+        """Delegate to the runtime implementation."""
+        return _publish_webui_timed_update(self)
+
+    def _redirect_dunder_stdio(self) -> None:
+        """Delegate to the runtime implementation."""
+        return _redirect_dunder_stdio(self)
+
+    def _refresh_agent_status(self) -> None:
+        """Delegate to the runtime implementation."""
+        return _refresh_agent_status(self)
+
+    def _refresh_logs(self, *, recolor: bool = False) -> None:
+        """Delegate to the runtime implementation."""
+        return _refresh_logs(self, recolor=recolor)
+
+    def _refresh_pack_state(self) -> None:
+        """Delegate to the runtime implementation."""
+        return _refresh_pack_state(self)
+
+    def _refresh_status(self) -> None:
+        """Delegate to the runtime implementation."""
+        return _refresh_status(self)
+
+    def _refresh_theme_text(self) -> None:
+        """Delegate to the runtime implementation."""
+        return _refresh_theme_text(self)
+
+    def _remove_low_level_stderr_capture(self) -> None:
+        """Delegate to the runtime implementation."""
+        return _remove_low_level_stderr_capture(self)
+
+    def _remove_runtime_log_redirects(self) -> None:
+        """Delegate to the runtime implementation."""
+        return _remove_runtime_log_redirects(self)
+
+    def _render_status_text(self) -> str:
+        """Delegate to the runtime implementation."""
+        return _render_status_text(self)
+
+    def _restore_dunder_stdio(self) -> None:
+        """Delegate to the runtime implementation."""
+        return _restore_dunder_stdio(self)
+
+    def _restore_progress_bar(self, *, force: bool = False) -> None:
+        """Delegate to the runtime implementation."""
+        return _restore_progress_bar(self, force=force)
+
+    def _reveal_main_ui(self) -> None:
+        """Delegate to the runtime implementation."""
+        return _reveal_main_ui(self)
+
+    def _run_on_ui_thread(self, callback: Callable[[], None]) -> None:
+        """Delegate to the runtime implementation."""
+        return _run_on_ui_thread(self, callback)
+
+    def _runtime_theme_name(self) -> str:
+        """Delegate to the runtime implementation."""
+        return _runtime_theme_name(self)
+
+    def _schedule_sleep_timer(self) -> None:
+        """Delegate to the runtime implementation."""
+        return _schedule_sleep_timer(self)
+
+    def _set_progress_row_display(self, visible: bool) -> None:
+        """Delegate to the runtime implementation."""
+        return _set_progress_row_display(self, visible)
+
+    def _set_terminal_status(self, state: str, action: str) -> None:
+        """Delegate to the runtime implementation."""
+        return _set_terminal_status(self, state, action)
+
+    def _severity_color(self, severity: str = "info") -> str:
+        """Delegate to the runtime implementation."""
+        return _severity_color(self, severity)
+
+    def _show_loading_error(
+        self,
+        message: str,
+        *,
+        status_message: Optional[str] = None,
+        footer_message: Optional[str] = None,
+        help_message: Optional[str] = None,
+    ) -> None:
+        """Delegate to the runtime implementation."""
+        return _show_loading_error(
+            self,
+            message,
+            status_message=status_message,
+            footer_message=footer_message,
+            help_message=help_message,
+        )
+
+    def _show_loading_screen(self) -> None:
+        """Delegate to the runtime implementation."""
+        return _show_loading_screen(self)
+
+    def _start_deferred_runtime(self) -> None:
+        """Delegate to the runtime implementation."""
+        return _start_deferred_runtime(self)
+
+    @staticmethod
+    def _startup_terminal_status_for(message: str) -> Optional[tuple[str, str]]:
+        """Delegate to the runtime implementation."""
+        return _startup_terminal_status_for(message)
+
+    def _status_view_width(self) -> int:
+        """Delegate to the runtime implementation."""
+        return _status_view_width(self)
+
+    def _terminal_status_for(self, msg: str, severity: str) -> tuple[str, str]:
+        """Delegate to the runtime implementation."""
+        return _terminal_status_for(self, msg, severity)
+
+    def _unbind_agent_events(self) -> None:
+        """Delegate to the runtime implementation."""
+        return _unbind_agent_events(self)
+
+    def _update_loading_log(self, message: str) -> None:
+        """Delegate to the runtime implementation."""
+        return _update_loading_log(self, message)
+
+    def _update_status_label(self) -> None:
+        """Delegate to the runtime implementation."""
+        return _update_status_label(self)
+
+    def _write_terminal_escape(self, escape: str) -> None:
+        """Delegate to the runtime implementation."""
+        return _write_terminal_escape(self, escape)
+
+    def _write_terminal_title(self, status: tuple[str, str, str]) -> None:
+        """Delegate to the runtime implementation."""
+        return _write_terminal_title(self, status)
+
+    def advance_resources(self) -> None:
+        """Delegate to the runtime implementation."""
+        return advance_resources(self)
+
+    def attach_celune(self, celune: _app.Celune) -> None:
+        """Delegate to the runtime implementation."""
+        return attach_celune(self, celune)
+
+    def compose(self) -> _app.ComposeResult:
+        """Delegate to the runtime implementation."""
+        return compose()
+
+    def on_mount(self) -> None:
+        """Delegate to the runtime implementation."""
+        return on_mount(self)
+
+    def on_resize(self, _event: _app.events.Resize) -> None:
+        """Delegate to the runtime implementation."""
+        return on_resize(self, _event)
+
+    def prepare_theme(self) -> None:
+        """Delegate to the runtime implementation."""
+        return prepare_theme(self)
+
+    def receive_startup_diagnostic(self, message: str) -> None:
+        """Delegate to the runtime implementation."""
+        return receive_startup_diagnostic(self, message)
+
+    def run(
+        self,
+        *,
+        headless: bool = False,
+        inline: bool = False,
+        inline_no_clear: bool = False,
+        mouse: bool = True,
+        size: Optional[tuple[int, int]] = None,
+        auto_pilot: Optional[_app.AutopilotCallbackType] = None,
+        loop: Optional[asyncio.AbstractEventLoop] = None,
+    ) -> Optional[_app.ReturnType]:
+        """Delegate to the runtime implementation."""
+        return run(
+            self,
+            headless=headless,
+            inline=inline,
+            inline_no_clear=inline_no_clear,
+            mouse=mouse,
+            size=size,
+            auto_pilot=auto_pilot,
+            loop=loop,
+        )
+
+    def safe_progress(
+        self, progress: Optional[float], total: Optional[float] = None
+    ) -> None:
+        """Delegate to the runtime implementation."""
+        return safe_progress(self, progress, total)
+
+    def start_background_init(self) -> None:
+        """Delegate to the runtime implementation."""
+        return start_background_init(self)
+
+    def update_resources(self) -> None:
+        """Delegate to the runtime implementation."""
+        return update_resources(self)

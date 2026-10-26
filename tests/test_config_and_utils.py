@@ -3,18 +3,18 @@
 
 import math
 import datetime
-from types import SimpleNamespace
-from typing import Literal, Optional, cast
 from unittest import mock
+from types import SimpleNamespace
 from collections.abc import Mapping
+from typing import Literal, Optional, cast
 
 import pytest
 
 from celune import utils, config
 from celune.typing.common import JSON, JSONSerializable
 
-from .support import CeluneTestCase
 from .platform import WINDOWS_ONLY
+from .support import CeluneTestCase
 
 
 class TestConfig(CeluneTestCase):
@@ -119,8 +119,8 @@ class TestConfig(CeluneTestCase):
         hostapis = [{"name": "MME"}, {"name": "Windows WASAPI"}]
 
         with (
-            mock.patch("celune.config.sd.query_devices", return_value=devices),
-            mock.patch("celune.config.sd.query_hostapis", return_value=hostapis),
+            mock.patch("sounddevice.query_devices", return_value=devices),
+            mock.patch("sounddevice.query_hostapis", return_value=hostapis),
             pytest.raises(
                 ValueError, match="the specified input device name has multiple matches"
             ) as caught,
@@ -155,8 +155,8 @@ class TestConfig(CeluneTestCase):
         hostapis = [{"name": "MME"}, {"name": "Windows WASAPI"}]
 
         with (
-            mock.patch("celune.config.sd.query_devices", return_value=devices),
-            mock.patch("celune.config.sd.query_hostapis", return_value=hostapis),
+            mock.patch("sounddevice.query_devices", return_value=devices),
+            mock.patch("sounddevice.query_hostapis", return_value=hostapis),
         ):
             resolved = config.resolve_audio_device(
                 {"output_device": "CABLE-B Input"},
@@ -177,8 +177,8 @@ class TestConfig(CeluneTestCase):
         hostapis = [{"name": "Windows WASAPI"}]
 
         with (
-            mock.patch("celune.config.sd.query_devices", return_value=device_info),
-            mock.patch("celune.config.sd.query_hostapis", return_value=hostapis),
+            mock.patch("sounddevice.query_devices", return_value=device_info),
+            mock.patch("sounddevice.query_hostapis", return_value=hostapis),
         ):
             resolved = config.resolve_audio_device(
                 {"input_device": "Stereo Mix (Realtek)"},
@@ -208,8 +208,8 @@ class TestConfig(CeluneTestCase):
         hostapis = [{"name": "Windows DirectSound"}, {"name": "Windows WASAPI"}]
 
         with (
-            mock.patch("celune.config.sd.query_devices", return_value=devices),
-            mock.patch("celune.config.sd.query_hostapis", return_value=hostapis),
+            mock.patch("sounddevice.query_devices", return_value=devices),
+            mock.patch("sounddevice.query_hostapis", return_value=hostapis),
         ):
             resolved = config.resolve_audio_device(
                 {
@@ -246,10 +246,10 @@ class TestConfig(CeluneTestCase):
 
         with (
             mock.patch(
-                "celune.config.sd.query_devices",
+                "sounddevice.query_devices",
                 side_effect=[direct_info, devices],
             ),
-            mock.patch("celune.config.sd.query_hostapis", return_value=hostapis),
+            mock.patch("sounddevice.query_hostapis", return_value=hostapis),
         ):
             resolved = config.resolve_audio_device(
                 {
@@ -289,10 +289,10 @@ class TestConfig(CeluneTestCase):
 
         with (
             mock.patch(
-                "celune.config.sd.query_devices",
+                "sounddevice.query_devices",
                 side_effect=[direct_info, devices],
             ),
-            mock.patch("celune.config.sd.query_hostapis", return_value=hostapis),
+            mock.patch("sounddevice.query_hostapis", return_value=hostapis),
         ):
             resolved = config.resolve_audio_device(
                 {
@@ -327,8 +327,8 @@ class TestConfig(CeluneTestCase):
         hostapis = [{"name": "Windows DirectSound"}, {"name": "Windows WASAPI"}]
 
         with (
-            mock.patch("celune.config.sd.query_devices", return_value=devices),
-            mock.patch("celune.config.sd.query_hostapis", return_value=hostapis),
+            mock.patch("sounddevice.query_devices", return_value=devices),
+            mock.patch("sounddevice.query_hostapis", return_value=hostapis),
         ):
             resolved = config.resolve_audio_device(
                 {
@@ -408,6 +408,35 @@ class TestConfig(CeluneTestCase):
 
         assert not changed
         assert merged == {"api": False}
+
+    def test_merge_missing_defaults_migrates_legacy_api_host(self) -> None:
+        """Verify old listener addresses become the matching access level."""
+        merged, changed = config.merge_missing_defaults(
+            {
+                "api": {
+                    "enabled": True,
+                    "host": "0.0.0.0",
+                    "port": 2060,
+                    "token": None,
+                }
+            },
+            {
+                "api": {
+                    "enabled": True,
+                    "access": "same_machine",
+                    "port": 2060,
+                    "token": None,
+                }
+            },
+        )
+
+        assert changed
+        assert merged["api"] == {
+            "enabled": True,
+            "access": "same_network",
+            "port": 2060,
+            "token": None,
+        }
 
     def test_merge_missing_defaults_removes_unknown_schema_keys(self) -> None:
         """Verify removed configuration options are pruned at the schema boundary."""

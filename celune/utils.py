@@ -3,32 +3,58 @@
 
 import os
 import re
+import sys
 import math
 import time
+import queue
 import random
 import inspect
-import importlib.util
 import datetime
+import platform
 import traceback
-import subprocess
+import importlib.util
 import multiprocessing
 from pathlib import Path
 from collections.abc import Callable, Iterator, Container
 from typing import Any, Union, TextIO, Literal, Optional, overload
 
 import psutil
-from lingua import (  # pylint: disable=E0611
-    Language,
-    LanguageDetectorBuilder,
-)
+
+try:
+    from lingua import (  # pylint: disable=E0611
+        Language,
+        LanguageDetectorBuilder,
+    )
+
+    _LANGUAGE_DETECTOR = LanguageDetectorBuilder.from_all_spoken_languages().build()
+except ModuleNotFoundError as module:
+    from .i18n import string
+
+    print(
+        f"{string('celune.no_language_detector')}: {module}",
+        file=sys.stderr,
+    )
+    _LANGUAGE_DETECTOR = None
 
 from .paths import traceback_path
 from .typing.aliases import LogLevel
 from .constants import REFERENCE_NEW_MOON
 from .typing.utils import CallerInfo, LanguageResult
+from .vcs import get_revision as _get_repository_revision
 from .terminal import supports_ansi as terminal_supports_ansi
 
-_LANGUAGE_DETECTOR = LanguageDetectorBuilder.from_all_spoken_languages().build()
+
+def clear_queue(q: queue.Queue) -> None:
+    """Drain all pending items from a queue.
+
+    Args:
+        q: The queue to empty.
+    """
+    try:
+        while True:
+            q.get_nowait()
+    except queue.Empty:
+        pass
 
 
 def get_revision() -> str:
@@ -38,25 +64,7 @@ def get_revision() -> str:
         str: The short commit hash, suffixed with ``*`` when the worktree is dirty, or an empty string when Git metadata
         is unavailable.
     """
-    try:
-        rev = (
-            subprocess.check_output(
-                ["git", "rev-parse", "--short", "HEAD"], stderr=subprocess.DEVNULL
-            )
-            .decode("utf-8")
-            .strip()
-        )
-        status = (
-            subprocess.check_output(
-                ["git", "status", "--porcelain"], stderr=subprocess.DEVNULL
-            )
-            .decode("utf-8")
-            .strip()
-        )
-        dirty = "*" if status else ""
-        return f"{rev}{dirty}"
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        return ""
+    return _get_repository_revision()
 
 
 def format_number(num: float, precision: int = 0, fallback: str = "N/A") -> str:
@@ -611,6 +619,15 @@ def detect_language(text: str, supported: list[str]) -> LanguageResult:
         LanguageResult: The language detection result metadata object.
     """
 
+    if not _LANGUAGE_DETECTOR:
+        fallback = _backend_language_code("en", supported)
+        return {
+            "language": fallback,
+            "languages": [fallback],
+            "supported": fallback in supported,
+            "probabilities": {fallback: 1.0},
+        }
+
     detected_language = _LANGUAGE_DETECTOR.detect_language_of(text)
     if detected_language is None:
         fallback = _backend_language_code("en", supported)
@@ -895,3 +912,30 @@ def available(
             return False
     finally:
         del frame
+
+
+def current_platform() -> str:
+    """Return the platform name and architecture.
+
+    Returns:
+        str: The platform name and architecture.
+    """
+    operating_system = platform.system()
+    architecture = platform.machine()
+
+    return f"{operating_system} {architecture}"
+
+
+def cesn_to_text(cesn: str) -> str:
+    """Extract plain text from CESN notation.
+
+    Args:
+        cesn: The CESN notation to extract plain text from.
+
+    Returns:
+        str: The extracted text.
+    """
+    cesn = re.sub(r"\[(.*?)]", "", cesn)
+    cesn = re.sub(r"\s+", " ", cesn)
+
+    return cesn.strip()

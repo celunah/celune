@@ -1,12 +1,14 @@
 # SPDX-License-Identifier: Apache-2.0
 """Unified voice-conversion backend abstractions for Celune."""
 
-from abc import ABC, abstractmethod
 from typing import Optional
+from abc import ABC, abstractmethod
 from collections.abc import Callable
 
-from ...dataclasses.pipeline import AudioOutput, VoiceConversionRequest
+from ...typing.common import JSON
 from ...typing.aliases import LogLevel
+from ...vram import backend_vram_report
+from ...dataclasses.pipeline import AudioOutput, VoiceConversionRequest
 
 __all__ = ["CeluneVCBackend"]
 
@@ -16,7 +18,6 @@ class CeluneVCBackend(ABC):
 
     name: str = "unknown"
     is_fake: bool = False
-    pitch_shift: int
     f0_condition: bool
     log_level: LogLevel = "info"
 
@@ -63,6 +64,10 @@ class CeluneVCBackend(ABC):
         Args:
             release_cuda_cache: Whether to synchronize CUDA and release cached accelerator blocks.
         """
+
+    def vram_report(self) -> JSON:
+        """Return the voice-conversion model's memory footprint and process memory."""
+        return backend_vram_report(self.name, getattr(self, "model", None))
 
     @abstractmethod
     def convert(self, request: VoiceConversionRequest) -> AudioOutput:

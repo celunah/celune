@@ -6,12 +6,12 @@ from unittest import mock
 from types import SimpleNamespace
 
 import configure
-from configure import _sync_arguments, initialize_app_data
+from configure import sync_arguments, initialize_app_data
 
 
 def test_sync_arguments_avoid_openzl_on_windows() -> None:
     """Verify Windows setup selects the API extra instead of every extra."""
-    command = _sync_arguments("Windows", Path("uv.exe"))
+    command = sync_arguments("Windows", Path("uv.exe"))
 
     assert command == ["uv.exe", "sync", "--dev", "--extra", "api"]
     assert "--all-extras" not in command
@@ -19,7 +19,7 @@ def test_sync_arguments_avoid_openzl_on_windows() -> None:
 
 def test_sync_arguments_include_linux_extras() -> None:
     """Verify Linux setup includes the complete optional dependency set."""
-    assert _sync_arguments("Linux", Path("uv")) == [
+    assert sync_arguments("Linux", Path("uv")) == [
         "uv",
         "sync",
         "--dev",

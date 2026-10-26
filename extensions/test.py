@@ -5,6 +5,7 @@ import time
 from pathlib import Path
 
 import celune
+from celune.i18n import string
 from celune.utils import discard
 from celune import CeluneExtension
 from celune.dataclasses.events import ReadyEvent, VoiceChangedEvent
@@ -24,7 +25,7 @@ class TestExtension(CeluneExtension):
         """
         discard(event)
 
-        self.log("Log test")
+        self.log(string("extensions.test_log"))
         time.sleep(1)  # due to threading, this does not block
         self.status("Status test")
         time.sleep(5)
@@ -56,9 +57,15 @@ class TestExtension(CeluneExtension):
         Args:
             event: Voice-change event carrying the previous and new voice names.
         """
-        self.log(f"Voice changed from {event.old_voice} to {event.new_voice}.")
+        self.log(
+            string(
+                "extensions.test_voice_changed",
+                old_voice=event.old_voice,
+                new_voice=event.new_voice,
+            )
+        )
 
     def invoke(self) -> None:
         """Demonstrate manual extension invocation behavior."""
-        self.log("You invoked the extension.")
+        self.log(string("extensions.test_invoked"))
         self.say("You invoked the extension.")

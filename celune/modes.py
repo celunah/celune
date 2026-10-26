@@ -3,14 +3,16 @@
 
 from __future__ import annotations
 
+# noinspection PyProtectedMember
 from typing import Optional, cast
 from collections.abc import Mapping
 
+from .utils import discard
 from .config import config_value
-from .typing.modes import OperationMode
 from .typing.common import JSONSerializable
+from .typing.modes import OPERATION_MODES, OperationMode
 
-OPERATION_MODES: tuple[OperationMode, ...] = ("speak", "converse", "agent")
+_LEGACY_OPERATION_MODE_ALIASES: dict[str, OperationMode] = {"speak": "performance"}
 _LEGACY_INPUT_MODES = {"text_to_speech", "tts", "voice_conversion", "revoice"}
 
 # legacy, please remove
@@ -43,14 +45,15 @@ def resolve_operation_mode(
         normalized = candidate.strip().casefold()
         if normalized in _LEGACY_INPUT_MODES:
             candidate = None
-        elif normalized in OPERATION_MODES:
-            resolved = normalized
+            discard(candidate)
+        else:
+            resolved = _LEGACY_OPERATION_MODE_ALIASES.get(normalized, normalized)
+            if resolved not in OPERATION_MODES:
+                raise ValueError(f"unknown Celune operation mode: '{candidate}'")
             if resolved == "agent" and AGENT_MODE_REDIRECT_TARGET is not None:
                 return AGENT_MODE_REDIRECT_TARGET
             # HACK: Pyrefly's type inference is flaky here, and may randomly turn OperationMode into str
             return cast(OperationMode, resolved)  # type: ignore[redundant-cast]
-        else:
-            raise ValueError(f"unknown Celune operation mode: '{candidate}'")
 
     return "converse"
 
@@ -63,8 +66,9 @@ def mode_allows_persona(mode: OperationMode) -> bool:
 def has_explicit_operation_mode(config: Mapping[str, JSONSerializable]) -> bool:
     """Return whether config explicitly selects a global operation mode."""
     configured = config.get("mode")
-    return (
-        isinstance(configured, str) and configured.strip().casefold() in OPERATION_MODES
+    return isinstance(configured, str) and configured.strip().casefold() in (
+        *OPERATION_MODES,
+        *_LEGACY_OPERATION_MODE_ALIASES,
     )
 
 

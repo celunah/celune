@@ -4,29 +4,36 @@
 import os
 import time
 import contextlib
-from typing import Optional
+from typing import Union, Optional, cast
 from collections.abc import Mapping, Callable, Iterator, Generator
 
+import torch
 import numpy as np
 from voxcpm import VoxCPM
 from transformers import AutoTokenizer
+from huggingface_hub import snapshot_download
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 
-from . import get_version
 from .base import (
     CeluneBackend,
     local_hf_offline_mode,
     cached_hf_snapshot_path,
 )
 from .base import (
-    _to_numpy_audio as normalize_streamed_audio,
+    to_numpy_audio as normalize_streamed_audio,
 )
+from . import get_version
 from ...i18n import string
-from ...paths import huggingface_progress
+from ...constants import BASE_SR
 from ...utils import available, custom_assert
 from ...cevoice import CEVoiceLoader, default_loader
-from ...constants import BASE_SR
+from ...registry.consent import require_model_consent
 from ...typing.aliases import AudioChunk, AudioChunks
+from ...registry.tts import TTS_DEFAULT_VOICE, VOXCPM2_VOICE_MODELS
+from ...paths import huggingface_progress, huggingface_hub_cache_dir
+from .voxcpm_cache import VoxCPMModel, install_voxcpm_quantized_cache
+
+_VOXCPM_RUNTIME_KV_CACHE_LENGTH = 2048
 
 
 class _VoxCPMTextTokenizer:
@@ -86,12 +93,7 @@ class VoxCPM2(CeluneBackend[VoxCPM]):
         "vi",
     )
 
-    voice_models: Optional[Mapping[str, str]] = {
-        "balanced": "openbmb/VoxCPM2",
-        "calm": "openbmb/VoxCPM2",
-        "bold": "openbmb/VoxCPM2",
-        "upbeat": "openbmb/VoxCPM2",
-    }
+    voice_models: Optional[Mapping[str, str]] = VOXCPM2_VOICE_MODELS
 
     # fallback values for packs that omit cfg_scale
     voice_cfg: Mapping[str, float] = {
@@ -100,14 +102,21 @@ class VoxCPM2(CeluneBackend[VoxCPM]):
         "bold": 2.4,
         "upbeat": 2.4,
     }
-    default_voice: Optional[str] = "balanced"
+    default_voice: Optional[str] = TTS_DEFAULT_VOICE
 
     def __init__(
         self,
         log: Callable[[str, str], None],
         fatal: Optional[Callable[[], None]] = None,
+        quantize: bool = True,
+        quantize_kv_cache: bool = True,
     ) -> None:
-        super().__init__(log=log, fatal=fatal)
+        super().__init__(
+            log=log,
+            fatal=fatal,
+            quantize=quantize,
+            quantize_kv_cache=quantize_kv_cache,
+        )
         self.log = log
         self.optimize_enabled = False
         self._validate_refs()
@@ -192,7 +201,7 @@ class VoxCPM2(CeluneBackend[VoxCPM]):
             raise RuntimeError("VoxCPM2 did not expose a compatible text tokenizer")
         runtime.text_tokenizer = _VoxCPMTextTokenizer(tokenizer)
 
-    _to_numpy_audio = staticmethod(normalize_streamed_audio)
+    to_numpy_audio = staticmethod(normalize_streamed_audio)
 
     def model_is_available_locally(
         self, model: str, lang: Optional[str] = None
@@ -226,7 +235,25 @@ class VoxCPM2(CeluneBackend[VoxCPM]):
         Returns:
             VoxCPM: The loaded VoxCPM2 model instance.
         """
+        metadata = require_model_consent(model_id)
         available, path = self.model_is_available_locally(model_id)
+        if not available or path is None:
+            self.log(string("tts.model_download_start"), "info")
+            with huggingface_progress(self.report_progress):
+                path = snapshot_download(
+                    repo_id=model_id,
+                    revision=metadata.revision,
+                    cache_dir=str(huggingface_hub_cache_dir(create=True)),
+                )
+        quantize_on_cpu = getattr(self, "quantization_mode", None) is not None
+        optimize = bool(kwargs.get("optimize", False))
+        load_optimize = optimize and not quantize_on_cpu
+        load_kwargs: dict[str, Union[bool, str]] = {
+            "load_denoiser": kwargs.get("load_denoiser", False),
+            "optimize": load_optimize,
+        }
+        if quantize_on_cpu:
+            load_kwargs["device"] = "cpu"
 
         # NOTE:
         # this may cause errors in internal ops when switching backends
@@ -245,34 +272,78 @@ class VoxCPM2(CeluneBackend[VoxCPM]):
         # torch.backends.cudnn.deterministic = True
         # torch.use_deterministic_algorithms(True)
 
-        if available and path is not None:
-            with (
-                local_hf_offline_mode(),
-                huggingface_progress(self.report_progress),
-                self._suppress_backend_output(),
-            ):
-                self.model = VoxCPM.from_pretrained(
-                    path,
-                    load_denoiser=kwargs.get("load_denoiser", False),
-                    optimize=kwargs.get("optimize", False),
-                )
-                self._install_checkpoint_tokenizer(self.model, path)
-
-            return self.model
-
-        self.log(string("tts.model_download_start"), "info")
         with (
+            local_hf_offline_mode(),
             huggingface_progress(self.report_progress),
             self._suppress_backend_output(),
         ):
             self.model = VoxCPM.from_pretrained(
-                model_id,
-                load_denoiser=kwargs.get("load_denoiser", False),
-                optimize=kwargs.get("optimize", False),
+                path,
+                **load_kwargs,
             )
-            _, path = self.model_is_available_locally(model_id)
             self._install_checkpoint_tokenizer(self.model, path)
+        self._resize_runtime_caches(self.model)
+        self.model = self.apply_runtime_quantization(self.model, model_id)
+        if quantize_on_cpu:
+            self._move_quantized_runtime_to_cuda(self.model)
+            if optimize:
+                self.model.tts_model.optimize()
+                self.model.tts_model.generate(
+                    target_text="Hello, this is the first test sentence.",
+                    max_len=10,
+                )
+        install_voxcpm_quantized_cache(
+            cast(VoxCPMModel, self.model),
+            self.quantize_kv_cache,
+        )
         return self.model
+
+    @staticmethod
+    def _runtime_cache_length(max_length: int) -> int:
+        """Bound VoxCPM's static cache to the supported generation envelope."""
+        return min(max_length, _VOXCPM_RUNTIME_KV_CACHE_LENGTH)
+
+    @classmethod
+    def _resize_runtime_caches(cls, model: VoxCPM) -> None:
+        """Release VoxCPM's oversized load-time caches before inference."""
+        runtime = getattr(model, "tts_model", None)
+        if runtime is None:
+            return
+        for language_model in (runtime.base_lm, runtime.residual_lm):
+            cache = language_model.kv_cache
+            if cache is None:
+                continue
+            max_length = getattr(cache, "max_length", None)
+            if not isinstance(max_length, int) or max_length <= 0:
+                continue
+            target_length = cls._runtime_cache_length(max_length)
+            if target_length == max_length:
+                continue
+            storage = cache.kv_cache
+            language_model.setup_cache(
+                1,
+                target_length,
+                storage.device,
+                storage.dtype,
+            )
+
+    @classmethod
+    def _move_quantized_runtime_to_cuda(cls, model: VoxCPM) -> None:
+        """Move a CPU-quantized VoxCPM runtime to CUDA and rebuild its caches."""
+        runtime = model.tts_model
+        runtime.to(torch.device("cuda"))
+        runtime.device = "cuda"
+        runtime.config.device = "cuda"
+        for language_model in (runtime.base_lm, runtime.residual_lm):
+            cache = language_model.kv_cache
+            if cache is None:
+                continue
+            language_model.setup_cache(
+                1,
+                cls._runtime_cache_length(cache.max_length),
+                torch.device("cuda"),
+                torch.bfloat16,
+            )
 
     def generate_stream(
         self, model: VoxCPM, **kwargs
@@ -359,7 +430,7 @@ class VoxCPM2(CeluneBackend[VoxCPM]):
                 first_chunk_time: Optional[float] = None
 
                 for chunk in stream:
-                    audio = self._to_numpy_audio(chunk)
+                    audio = self.to_numpy_audio(chunk)
                     if audio.size == 0:
                         continue
                     if first_chunk_time is None:

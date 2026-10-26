@@ -15,28 +15,30 @@ import threading
 import contextlib
 from copy import deepcopy
 from uuid import uuid4
-from typing import Optional, cast
+from typing import TYPE_CHECKING, Optional, cast
 from collections.abc import Callable, Iterator
 
 from . import app as _app
-from ..binding import install_class_functions
-from ..constants import SIGTSTP
+from ..constants import SIGTSTP, APP_NAME
+from ..typing.modes import OPERATION_MODES, OperationState
+
+if TYPE_CHECKING:
+    from ..vc import VCDebugSaveResult
 
 __all__ = (
     "_close_menu",
     "_config_autocomplete",
     "_config_explanation",
-    "_config_label",
     "_graceful_exit",
     "_hide_scrollbars_for_exit",
     "_install_windows_signal_handler",
-    "_iter_config_values",
     "_menu_footer",
     "_report_shutdown_error",
     "_run_shutdown_step",
     "_save_settings",
     "_set_config_value",
     "_show_menu",
+    "_shutdown_from_windows_signal",
     "_shutdown_live_vc_recording",
     "_shutdown_runtime",
     "_signal_handler",
@@ -47,10 +49,12 @@ __all__ = (
     "action_quit",
     "begin_tutorial",
     "cancel_tutorial",
+    "config_label",
     "consume_buffer",
     "error",
     "finish_tutorial",
     "graceful_exit",
+    "iter_config_values",
     "on_button_pressed",
     "on_key",
     "on_select_menu_widget_cancelled",
@@ -61,7 +65,9 @@ __all__ = (
     "open_settings_menu",
     "open_voice_menu",
     "process_command",
+    "request_agent_test_response",
     "split_command_input",
+    "stop_vc_debug_capture",
     "toggle_vc_recording",
     "tts_idle",
     "tts_log",
@@ -75,8 +81,8 @@ __all__ = (
 
 def _start_vc_recording(self) -> bool:
     """Start recording from the active system input device for VC."""
-    _app._load_ui_runtime_dependencies()
-    if self.celune is None or not self._is_voice_conversion_mode():
+    _app.ensure_ui_runtime_dependencies()
+    if self.celune is None or not self.is_voice_conversion_mode():
         return False
     if (
         getattr(self.celune, "sleeping", False)
@@ -89,7 +95,7 @@ def _start_vc_recording(self) -> bool:
     ):
         return False
 
-    if self._vc_recording_active():
+    if self.vc_recording_active():
         return True
 
     input_config = getattr(self.celune, "config", None)
@@ -128,12 +134,12 @@ def _start_vc_recording(self) -> bool:
         )
         return False
 
-    channels = _app._device_scalar_int(device_info.get("max_input_channels"), 0)
+    channels = _app.device_scalar_int(device_info.get("max_input_channels"), 0)
     if channels <= 0:
         self.safe_log(_app.string("pipeline.no_audio_device"), "warning")
         return False
 
-    sample_rate = _app._device_scalar_int(
+    sample_rate = _app.device_scalar_int(
         device_info.get("default_samplerate"),
         48000,
     )
@@ -147,7 +153,7 @@ def _start_vc_recording(self) -> bool:
     ai_vad = _app.create_live_voice_activity_detector()
     submission_queue: queue_module.Queue[
         Optional[tuple[_app.AudioChunk, int, str, bool]]
-    ] = queue_module.Queue(maxsize=_app._VC_LIVE_SUBMISSION_QUEUE_SIZE)
+    ] = queue_module.Queue(maxsize=_app.VC_LIVE_SUBMISSION_QUEUE_SIZE)
 
     def submit_live_audio() -> None:
         live_source_id: Optional[int] = None
@@ -177,7 +183,9 @@ def _start_vc_recording(self) -> bool:
                     audio_label,
                     source_id=live_source_id,
                     generation=live_playback_generation,
+                    volume=_app.VC_PLAYBACK_GAIN,
                     status_label_key="pipeline.revoicing_label",
+                    low_latency=True,
                     reset_ready_announcement=live_source_id is None,
                 )
                 if live_source_id is None:
@@ -213,6 +221,10 @@ def _start_vc_recording(self) -> bool:
                 return
 
             audio, queued_sample_rate, queued_label, is_final_chunk = item
+            debug_capture = getattr(self, "_vc_debug_capture", None)
+            debug_token = (
+                debug_capture.begin_conversion() if debug_capture is not None else None
+            )
             try:
                 if self.celune is None:
                     continue
@@ -228,6 +240,8 @@ def _start_vc_recording(self) -> bool:
                     label=queued_label,
                 )
                 if converted is None:
+                    if debug_capture is not None:
+                        debug_capture.record_conversion(debug_token)
                     self.safe_log(
                         _app.string("ui.recording_stream_submit_failed"),
                         "warning",
@@ -239,6 +253,12 @@ def _start_vc_recording(self) -> bool:
                 )
                 playback_sample_rate = converted.sample_rate
                 playback_label = converted.label
+                if debug_capture is not None:
+                    debug_capture.record_conversion(
+                        debug_token,
+                        converted_audio,
+                        playback_sample_rate,
+                    )
                 if len(converted_audio) > 0:
                     queue_playback_segment(
                         converted_audio,
@@ -249,6 +269,8 @@ def _start_vc_recording(self) -> bool:
                 if is_final_chunk:
                     finish_playback_segment()
             except Exception as exc:
+                if debug_capture is not None:
+                    debug_capture.record_conversion(debug_token)
                 if self.celune is None:
                     continue
                 self.safe_log(
@@ -280,12 +302,18 @@ def _start_vc_recording(self) -> bool:
         discard(status)
 
         callback_audio = _app.np.asarray(indata, dtype=_app.np.float32).copy()
+        debug_capture = getattr(self, "_vc_debug_capture", None)
+        if debug_capture is not None:
+            debug_capture.record_microphone(callback_audio, sample_rate)
         current_rms = self._vc_input_rms(callback_audio)
         should_stop_for_feedback = False
         feedback_min_capture_frames = self._vc_feedback_min_capture_frames(sample_rate)
         if ai_vad is not None:
             try:
-                voice_detected = ai_vad.has_voice(callback_audio, sample_rate)
+                voice_detected = ai_vad.has_voice(
+                    callback_audio,
+                    sample_rate,
+                ) or self._vc_input_has_voice(callback_audio)
             except (RuntimeError, AssertionError, ValueError):
                 ai_vad.reset()
                 voice_detected = self._vc_input_has_voice(callback_audio)
@@ -313,7 +341,7 @@ def _start_vc_recording(self) -> bool:
 
             if (
                 self._vc_recording_feedback_spike_count
-                >= _app._VC_FEEDBACK_REQUIRED_CONSECUTIVE_SPIKES
+                >= _app.VC_FEEDBACK_REQUIRED_CONSECUTIVE_SPIKES
             ):
                 self._vc_recording_feedback_detected = True
                 should_stop_for_feedback = True
@@ -335,7 +363,7 @@ def _start_vc_recording(self) -> bool:
                 self._vc_recording_silence_frames = 0
             elif self._vc_recording_speech_started:
                 self._vc_recording_silence_frames += len(callback_audio)
-                live_audio = _app.np.zeros_like(callback_audio)
+                live_audio = callback_audio
                 if self._vc_recording_silence_frames > vad_hangover_frames:
                     self._vc_recording_speech_started = False
                     self._vc_recording_silence_frames = 0
@@ -432,7 +460,7 @@ def toggle_vc_recording(self) -> bool:
     Returns:
         bool: ``True`` when recording started or stopped successfully.
     """
-    if self._vc_recording_active():
+    if self.vc_recording_active():
         with self._vc_recording_lock:
             (
                 stream,
@@ -476,7 +504,8 @@ def _shutdown_live_vc_recording(self) -> None:
     if self.celune is not None:
         self.celune._exit_requested = True
 
-    if not self._vc_recording_active():
+    if not self.vc_recording_active():
+        self.stop_vc_debug_capture(announce=False, discard_pending=True)
         return
 
     with self._vc_recording_lock:
@@ -494,6 +523,54 @@ def _shutdown_live_vc_recording(self) -> None:
     self._shutdown_vc_stream(stream)
     self._stop_live_vc_backend()
     self._join_vc_recording_threads(stop_thread, worker)
+    self.stop_vc_debug_capture(announce=False, discard_pending=True)
+
+
+def stop_vc_debug_capture(
+    self,
+    announce: bool = True,
+    discard_pending: bool = False,
+) -> bool:
+    """Stop and export the active diagnostic capture asynchronously."""
+    capture = getattr(self, "_vc_debug_capture", None)
+    if capture is None:
+        return False
+
+    def report(result: VCDebugSaveResult) -> None:
+        def clear_capture() -> None:
+            if getattr(self, "_vc_debug_capture", None) is capture:
+                self._vc_debug_capture = None
+
+        self._run_on_ui_thread(clear_capture)
+        files = tuple(
+            path.name
+            for path in (result.microphone_path, result.converted_path)
+            if path is not None
+        )
+        if files and announce:
+            self.safe_log(
+                _app.string(
+                    "ui.vc_debug_saved",
+                    files=", ".join(files),
+                    path=str(result.directory),
+                )
+            )
+        elif not files and not result.errors and announce:
+            self.safe_log(_app.string("ui.vc_debug_empty"), "warning")
+
+        if result.errors and announce:
+            message = "; ".join(result.errors)
+            self.safe_log(
+                _app.format_error_message(
+                    _app.string("ui.vc_debug_save_failed"),
+                    RuntimeError(message),
+                    getattr(self.celune, "log_level", "info"),
+                ),
+                "warning",
+            )
+
+    capture.stop(report, discard_pending=discard_pending)
+    return True
 
 
 def tts_voice_changed(self, name: str) -> None:
@@ -509,6 +586,11 @@ def tts_voice_changed(self, name: str) -> None:
         self.style_index = self.celune_styles.index(name)
 
     label = name.capitalize()
+    from ..cevoice import default_loader
+
+    loader = default_loader()
+    if loader is not None and name in loader.bundle.voices:
+        label = loader.bundle.voice_display_name(name)
 
     if threading.current_thread() is threading.main_thread():
         self.style_button.label = label
@@ -561,8 +643,8 @@ def open_settings_menu(self) -> None:
 
     options: list[_app.SelectMenuOption] = []
     paths: list[tuple[str, ...]] = []
-    for path, value in self._iter_config_values(self.celune.config):
-        label = self._config_label(path)
+    for path, value in self.iter_config_values(self.celune.config):
+        label = self.config_label(path)
         options.append(
             _app.SelectMenuOption(
                 label=label,
@@ -595,7 +677,7 @@ def open_settings_menu(self) -> None:
     )
 
 
-def _iter_config_values(
+def iter_config_values(
     config: dict[str, _app.JSONSerializable],
     prefix: tuple[str, ...] = (),
 ) -> Iterator[tuple[tuple[str, ...], _app.JSONSerializable]]:
@@ -603,7 +685,7 @@ def _iter_config_values(
     for key, value in config.items():
         path = (*prefix, key)
         if isinstance(value, dict) and value:
-            yield from _app.CeluneUI._iter_config_values(value, path)
+            yield from iter_config_values(value, path)
         else:
             yield path, value
 
@@ -618,6 +700,7 @@ def _config_autocomplete(
         return (True, False)
 
     candidates: dict[tuple[str, ...], tuple[_app.JSONSerializable, ...]] = {
+        ("api", "access"): ("same_machine", "same_network", "everyone"),
         ("backend",): (
             None,
             "mini",
@@ -628,7 +711,7 @@ def _config_autocomplete(
             "seed-vc",
         ),
         ("log_level",): ("info", "verbose", "debug"),
-        ("mode",): ("speak", "converse", "agent"),
+        ("mode",): OPERATION_MODES,
         ("theme",): ("dark", "light"),
         ("vram",): ("low", "medium", "high", "xhigh"),
         ("audio_api",): (None, "wasapi", "directsound"),
@@ -637,7 +720,7 @@ def _config_autocomplete(
     return candidates.get(path)
 
 
-def _config_label(path: tuple[str, ...]) -> str:
+def config_label(path: tuple[str, ...]) -> str:
     """Convert a dotted configuration path into a readable setting label."""
     label = " ".join(path).replace("_", " ")
     for source, replacement in (("t2s", "T2S"),):
@@ -682,6 +765,11 @@ def _config_explanation(path: tuple[str, ...]) -> str:
             "max_short_term_messages",
         ): "persona.memory.short_term",
         ("persona", "memory", "auto_classifier"): "persona.memory.auto",
+        (
+            "persona",
+            "memory",
+            "automatic_max_age_days",
+        ): "mem.automatic_age",
         ("persona", "memory", "auto_classifier_min_confidence"): "mem.auto_conf",
         (
             "persona",
@@ -709,12 +797,13 @@ def _config_explanation(path: tuple[str, ...]) -> str:
     }
     explanation_path = aliases.get(path, ".".join(path))
     explanation_key = "ui.settings_explanation." + explanation_path
-    explanation = _app.string(explanation_key)
+    explanation = _app.string(explanation_key, app_name=APP_NAME)
     if explanation != explanation_key:
         return explanation
     return _app.string(
         "ui.settings_explanation_generic",
-        setting=_app.CeluneUI._config_label(path),
+        setting=config_label(path),
+        app_name=APP_NAME,
     )
 
 
@@ -742,9 +831,10 @@ def _menu_footer(
 
 
 def open_voice_menu(self) -> None:
-    """Open a voice menu containing every available CEVOICE/CECHAR entry."""
+    """Open a voice or singing-pack menu for the active backend."""
     if self.celune is None or self._active_menu is not None:
         return
+    singing_backend = getattr(getattr(self.celune, "backend", None), "singing", False)
 
     from ..cevoice import (
         CEVoice,
@@ -780,6 +870,21 @@ def open_voice_menu(self) -> None:
                 character=pack_name,
                 variant=path.stem,
             )
+        if singing_backend:
+            singing_voice = bundle.singing_voice
+            if singing_voice is None:
+                continue
+            self._voice_menu_paths[pack_name] = path
+            options.append(
+                _app.SelectMenuOption(
+                    label=pack_name,
+                    value=singing_voice,
+                    editable=False,
+                    confirm_value=singing_voice,
+                )
+            )
+            continue
+
         voices = bundle.voice_order
         if not voices:
             continue
@@ -797,6 +902,11 @@ def open_voice_menu(self) -> None:
                 value=selected_voice,
                 editable=len(voices) > 1,
                 autocomplete_values=voices if len(voices) > 1 else None,
+                autocomplete_labels=(
+                    tuple(bundle.voice_display_name(voice) for voice in voices)
+                    if len(voices) > 1
+                    else None
+                ),
                 confirm_value=voices[0] if len(voices) == 1 else None,
             )
         )
@@ -806,9 +916,8 @@ def open_voice_menu(self) -> None:
         return
 
     for index, option in enumerate(options):
-        if (
-            self._voice_menu_paths.get(option.label) == active_bundle
-            and option.value == active_voice
+        if self._voice_menu_paths.get(option.label) == active_bundle and (
+            singing_backend or option.value == active_voice
         ):
             options.insert(0, options.pop(index))
             break
@@ -822,7 +931,7 @@ def open_voice_menu(self) -> None:
                 option,
                 option_count=len(options),
                 confirm_hint=_app.string("ui.voice_confirm_hint"),
-                include_search=True,
+                include_search=not singing_backend,
             ),
         ),
         "voice",
@@ -999,12 +1108,44 @@ def _submit_text(self, text: str, process_commands: bool = True) -> bool:
         return True
 
     if self._is_agent_test_mode():
+        response_queue = self._agent_test_response_queue
         self._suppress_input_change = True
         try:
             self.input_box.load_text("")
         finally:
             self._suppress_input_change = False
+        if response_queue is not None:
+            try:
+                response_queue.put_nowait(text)
+            except queue_module.Full:
+                return True
+            self._agent_test_response_queue = None
+            self.change_input_state(locked=True)
+            self.safe_status(_app.string("ui.agent_test_answer_received"))
+            return True
         self.safe_status(_app.string("ui.agent_test_mode_active"))
+        return True
+
+    operation_state = getattr(
+        celune,
+        "operation_state",
+        OperationState.NORMAL,
+    )
+    if operation_state in {OperationState.FATAL, OperationState.STOPPED} or (
+        operation_state is OperationState.SEMI_FATAL
+        and (not process_commands or not text.startswith("/"))
+    ):
+        message_key = (
+            "operation_state.recovery_settings_only"
+            if operation_state is OperationState.SEMI_FATAL
+            else "operation_state.unavailable"
+        )
+        self._suppress_input_change = True
+        try:
+            self.input_box.load_text("")
+        finally:
+            self._suppress_input_change = False
+        self.safe_log(_app.string(message_key), "warning")
         return True
 
     if celune.cur_state == "waking":
@@ -1069,6 +1210,45 @@ def _submit_text(self, text: str, process_commands: bool = True) -> bool:
     self.input_box.load_text("")
     self.update_resources()
     return True
+
+
+def request_agent_test_response(
+    self,
+    prompt: str,
+    timeout_seconds: float = 120.0,
+) -> Optional[str]:
+    """Display an agent diagnostic prompt and wait for one typed answer.
+
+    Args:
+        prompt: The spoken question or approval request to display.
+        timeout_seconds: Maximum time to wait for the user's response.
+
+    Returns:
+        Optional[str]: The submitted answer, or ``None`` after timeout or exit.
+
+    Raises:
+        RuntimeError: If the UI is not running the agent test mode.
+        ValueError: If the response timeout is not positive.
+    """
+    if not self._is_agent_test_mode():
+        raise RuntimeError("agent test prompts require agent test mode")
+    if timeout_seconds <= 0:
+        raise ValueError("agent test prompt timeout must be positive")
+    response_queue: queue_module.Queue[Optional[str]] = queue_module.Queue(maxsize=1)
+    self._agent_test_response_queue = response_queue
+    self.safe_log(prompt)
+    self.safe_status(_app.string("ui.agent_test_prompt_ready"))
+    self.input_box.placeholder = _app.string("ui.agent_test_answer_placeholder")
+    self.change_input_state(locked=False)
+    try:
+        try:
+            return response_queue.get(timeout=timeout_seconds)
+        except queue_module.Empty:
+            return None
+    finally:
+        if self._agent_test_response_queue is response_queue:
+            self._agent_test_response_queue = None
+        self.change_input_state(locked=True)
 
 
 def tutorial_after(self, delay: float, callback: Callable[[], None]) -> None:
@@ -1199,6 +1379,28 @@ def on_key(self, event: _app.events.Key) -> None:
             event.stop()
             return
 
+        operation_state = getattr(
+            self.celune,
+            "operation_state",
+            OperationState.NORMAL,
+        )
+        if operation_state in {OperationState.FATAL, OperationState.STOPPED}:
+            event.prevent_default()
+            event.stop()
+            return
+        if operation_state is OperationState.SEMI_FATAL:
+            if self._active_menu is not None:
+                return
+            if event.key in {"ctrl+j", "ctrl+enter"}:
+                event.prevent_default()
+                event.stop()
+                self._submit_text(self.input_box.text)
+                return
+            if event.key.startswith("ctrl+"):
+                event.prevent_default()
+                event.stop()
+            return
+
         if event.key in {"ctrl+j", "ctrl+enter"} and self.cancel_tutorial():
             event.prevent_default()
             event.stop()
@@ -1242,7 +1444,7 @@ def on_key(self, event: _app.events.Key) -> None:
                 event.prevent_default()
                 event.stop()
                 return
-            if self._is_voice_conversion_mode():
+            if self.is_voice_conversion_mode():
                 recording_toggled = self.toggle_vc_recording()
             else:
                 recording_toggled = self.toggle_persona_recording()
@@ -1253,6 +1455,7 @@ def on_key(self, event: _app.events.Key) -> None:
 
         if event.key == "ctrl+j" and self._submit_text(self.input_box.text):
             event.prevent_default()
+            event.stop()
 
 
 def on_button_pressed(self, event: _app.Button.Pressed) -> None:
@@ -1268,6 +1471,16 @@ def on_button_pressed(self, event: _app.Button.Pressed) -> None:
     if celune is None or getattr(celune, "test_finished", False):
         return
 
+    operation_state = getattr(
+        celune,
+        "operation_state",
+        OperationState.NORMAL,
+    )
+    if operation_state is not OperationState.NORMAL and not (
+        operation_state is OperationState.SEMI_FATAL and self._active_menu is not None
+    ):
+        return
+
     if self._is_agent_test_mode():
         return
 
@@ -1275,19 +1488,10 @@ def on_button_pressed(self, event: _app.Button.Pressed) -> None:
         return
 
     if event.button == self.vc_mode_button:
-        if self._is_voice_conversion_mode():
+        if self.is_voice_conversion_mode():
             self.set_vc_f0_condition(
                 not bool(getattr(celune, "vc_f0_condition", False))
             )
-        return
-
-    if event.button == self.vc_pitch_button:
-        if self._is_voice_conversion_mode():
-            current_value = int(getattr(celune, "vc_pitch_shift", 0))
-            next_value = current_value + 1
-            if next_value > _app.VC_PITCH_SHIFT_MAX:
-                next_value = _app.VC_PITCH_SHIFT_MIN
-            self.set_vc_pitch_shift(next_value)
         return
 
     if event.button != self.style_button:
@@ -1314,11 +1518,19 @@ def on_button_pressed(self, event: _app.Button.Pressed) -> None:
 
 def on_unmount(self) -> None:
     """Unload Celune."""
+    from ..registry.consent import set_model_consent_handler
+
+    response_queue = self._agent_test_response_queue
+    if response_queue is not None:
+        self._agent_test_response_queue = None
+        with contextlib.suppress(queue_module.Full):
+            response_queue.put_nowait(None)
     restarting = self.cur_state == "restarting"
     if not restarting:
         self.cur_state = "exiting"
     self._run_shutdown_step(self._cancel_sleep_timer)
     self._run_shutdown_step(self._clear_caption_timers)
+    self._run_shutdown_step(lambda: set_model_consent_handler(None))
     self._run_shutdown_step(
         lambda: self._set_terminal_status(
             "restarting" if restarting else "exiting",
@@ -1334,7 +1546,7 @@ def on_unmount(self) -> None:
     if self._runtime_log_capture_enabled:
         self._run_shutdown_step(self._disable_runtime_log_capture)
 
-    _app.CeluneUI._instance = None
+    self.release_instance()
 
 
 def tts_idle(self) -> None:
@@ -1343,13 +1555,16 @@ def tts_idle(self) -> None:
     celune = self.celune
     if celune is None:
         return
-    if getattr(celune, "test_finished", False) or self._is_agent_test_mode():
+    if getattr(celune, "test_finished", False):
         self.change_input_state(locked=True)
         self.change_voice_lock_state(locked=True)
-        if getattr(celune, "test_finished", False):
-            if self.input_box is not None:
-                self.input_box.placeholder = _app.string("ui.stopped_placeholder")
-            self.safe_status(_app.string("status.stopped"), "sleeping")
+        if self.input_box is not None:
+            self.input_box.placeholder = _app.string("ui.stopped_placeholder")
+        self.safe_status(_app.string("status.stopped"), "sleeping")
+        return
+    if self._is_agent_test_mode():
+        self.change_input_state(locked=self._agent_test_response_queue is None)
+        self.change_voice_lock_state(locked=True)
         return
     if self.cur_state in {"exiting", "error"} or not self.celune_ready:
         if self.input_box is not None:
@@ -1411,6 +1626,9 @@ def error(self, message: str) -> None:
         return
     self._hide_caption_widgets()
     self.safe_status(message, "error")
+    celune = self.celune
+    if celune is not None and celune.cur_state == "idle" and not celune.locked:
+        self.change_input_state(locked=False)
 
 
 def on_text_area_changed(self, event: _app.TextArea.Changed) -> None:
@@ -1478,9 +1696,17 @@ def _install_windows_signal_handler(self) -> None:
 def _signal_handler_windows(self, sig: int) -> bool:
     """Handle incoming Windows signals."""
     if sig in (2, 5, 6):
-        self._graceful_exit()
+        self._shutdown_from_windows_signal()
         return True
     return False
+
+
+def _shutdown_from_windows_signal(self) -> None:
+    """Schedule graceful shutdown from a Windows console callback thread."""
+    try:
+        self.call_from_thread(self._graceful_exit)
+    except RuntimeError:
+        self._run_shutdown_step(self._shutdown_runtime)
 
 
 def _hide_scrollbars_for_exit(self) -> None:
@@ -1545,7 +1771,7 @@ def _graceful_exit(self, return_code: Optional[int] = None) -> None:
                 self.screen,
                 0.0,
                 on_complete=finish_fade,
-                duration=_app._EXIT_FADE_SECONDS,
+                duration=_app.EXIT_FADE_SECONDS,
             )
         except Exception:
             finish_exit()
@@ -1676,6 +1902,247 @@ def split_command_input(text: str) -> list[str]:
     return normalized
 
 
-def install(target):
-    """Install extracted definitions in the original module."""
-    install_class_functions(target, {name: globals()[name] for name in __all__})
+class InteractionHooks:
+    """Expose explicit Textual hooks for the owning UI subsystem."""
+
+    def _close_menu(self) -> None:
+        """Delegate to the interaction implementation."""
+        return _close_menu(self)
+
+    @staticmethod
+    def _config_autocomplete(
+        path: tuple[str, ...], value: _app.JSONSerializable
+    ) -> Optional[tuple[_app.JSONSerializable, ...]]:
+        """Delegate to the interaction implementation."""
+        return _config_autocomplete(path, value)
+
+    @staticmethod
+    def _config_explanation(path: tuple[str, ...]) -> str:
+        """Delegate to the interaction implementation."""
+        return _config_explanation(path)
+
+    def _graceful_exit(self, return_code: Optional[int] = None) -> None:
+        """Delegate to the interaction implementation."""
+        return _graceful_exit(self, return_code)
+
+    def _hide_scrollbars_for_exit(self) -> None:
+        """Delegate to the interaction implementation."""
+        return _hide_scrollbars_for_exit(self)
+
+    def _install_windows_signal_handler(self) -> None:
+        """Delegate to the interaction implementation."""
+        return _install_windows_signal_handler(self)
+
+    @staticmethod
+    def _menu_footer(
+        option: _app.SelectMenuOption,
+        *,
+        option_count: int,
+        confirm_hint: str,
+        include_search: bool,
+    ) -> str:
+        """Delegate to the interaction implementation."""
+        return _menu_footer(
+            option,
+            option_count=option_count,
+            confirm_hint=confirm_hint,
+            include_search=include_search,
+        )
+
+    def _report_shutdown_error(self, exc: Exception) -> None:
+        """Delegate to the interaction implementation."""
+        return _report_shutdown_error(self, exc)
+
+    def _run_shutdown_step(self, callback: Callable[[], None]) -> None:
+        """Delegate to the interaction implementation."""
+        return _run_shutdown_step(self, callback)
+
+    def _save_settings(self, menu: _app.SelectMenuWidget) -> None:
+        """Delegate to the interaction implementation."""
+        return _save_settings(self, menu)
+
+    @staticmethod
+    def _set_config_value(
+        config: dict[str, _app.JSONSerializable],
+        path: tuple[str, ...],
+        value: _app.JSONSerializable,
+    ) -> None:
+        """Delegate to the interaction implementation."""
+        return _set_config_value(config, path, value)
+
+    def _show_menu(self, menu: _app.SelectMenuWidget, menu_kind: str) -> None:
+        """Delegate to the interaction implementation."""
+        return _show_menu(self, menu, menu_kind)
+
+    def _shutdown_from_windows_signal(self) -> None:
+        """Delegate to the interaction implementation."""
+        return _shutdown_from_windows_signal(self)
+
+    def _shutdown_live_vc_recording(self) -> None:
+        """Delegate to the interaction implementation."""
+        return _shutdown_live_vc_recording(self)
+
+    def _shutdown_runtime(self) -> None:
+        """Delegate to the interaction implementation."""
+        return _shutdown_runtime(self)
+
+    def _signal_handler(self, sig: int, frame: Optional[types.FrameType]) -> None:
+        """Delegate to the interaction implementation."""
+        return _signal_handler(self, sig, frame)
+
+    def _signal_handler_windows(self, sig: int) -> bool:
+        """Delegate to the interaction implementation."""
+        return _signal_handler_windows(self, sig)
+
+    @staticmethod
+    def _split_command_input(text: str) -> list[str]:
+        """Delegate to the interaction implementation."""
+        return _split_command_input(text)
+
+    def _start_vc_recording(self) -> bool:
+        """Delegate to the interaction implementation."""
+        return _start_vc_recording(self)
+
+    def _submit_text(self, text: str, process_commands: bool = True) -> bool:
+        """Delegate to the interaction implementation."""
+        return _submit_text(self, text, process_commands)
+
+    async def action_quit(self) -> None:
+        """Delegate to the interaction implementation."""
+        return await action_quit(self)
+
+    def begin_tutorial(self) -> None:
+        """Delegate to the interaction implementation."""
+        return begin_tutorial(self)
+
+    def cancel_tutorial(self, stop_audio: bool = True) -> bool:
+        """Delegate to the interaction implementation."""
+        return cancel_tutorial(self, stop_audio)
+
+    @staticmethod
+    def config_label(path: tuple[str, ...]) -> str:
+        """Delegate to the interaction implementation."""
+        return config_label(path)
+
+    def consume_buffer(self, text_len: int) -> None:
+        """Delegate to the interaction implementation."""
+        return consume_buffer(self, text_len)
+
+    def error(self, message: str) -> None:
+        """Delegate to the interaction implementation."""
+        return error(self, message)
+
+    def finish_tutorial(self) -> None:
+        """Delegate to the interaction implementation."""
+        return finish_tutorial(self)
+
+    def graceful_exit(self) -> None:
+        """Delegate to the interaction implementation."""
+        return graceful_exit(self)
+
+    @staticmethod
+    def iter_config_values(
+        config: dict[str, _app.JSONSerializable],
+        prefix: tuple[str, ...] = (),
+    ) -> Iterator[tuple[tuple[str, ...], _app.JSONSerializable]]:
+        """Delegate to the interaction implementation."""
+        return iter_config_values(config, prefix)
+
+    def on_button_pressed(self, event: _app.Button.Pressed) -> None:
+        """Delegate to the interaction implementation."""
+        return on_button_pressed(self, event)
+
+    def on_key(self, event: _app.events.Key) -> None:
+        """Delegate to the interaction implementation."""
+        return on_key(self, event)
+
+    def on_select_menu_widget_cancelled(
+        self, event: _app.SelectMenuWidget.Cancelled
+    ) -> None:
+        """Delegate to the interaction implementation."""
+        return on_select_menu_widget_cancelled(self, event)
+
+    def on_select_menu_widget_confirmed(
+        self, event: _app.SelectMenuWidget.Confirmed
+    ) -> None:
+        """Delegate to the interaction implementation."""
+        return on_select_menu_widget_confirmed(self, event)
+
+    def on_text_area_changed(self, event: _app.TextArea.Changed) -> None:
+        """Delegate to the interaction implementation."""
+        return on_text_area_changed(self, event)
+
+    def on_unmount(self) -> None:
+        """Delegate to the interaction implementation."""
+        return on_unmount(self)
+
+    def on_voice_button_held(self, event: _app.VoiceButton.Held) -> None:
+        """Delegate to the interaction implementation."""
+        return on_voice_button_held(self, event)
+
+    def open_settings_menu(self) -> None:
+        """Delegate to the interaction implementation."""
+        return open_settings_menu(self)
+
+    def open_voice_menu(self) -> None:
+        """Delegate to the interaction implementation."""
+        return open_voice_menu(self)
+
+    def process_command(self, command: str, args: list[str]) -> None:
+        """Delegate to the interaction implementation."""
+        return process_command(self, command, args)
+
+    def request_agent_test_response(
+        self, prompt: str, timeout_seconds: float = 120.0
+    ) -> Optional[str]:
+        """Delegate to the interaction implementation."""
+        return request_agent_test_response(self, prompt, timeout_seconds)
+
+    @staticmethod
+    def split_command_input(text: str) -> list[str]:
+        """Delegate to the interaction implementation."""
+        return split_command_input(text)
+
+    def stop_vc_debug_capture(
+        self, announce: bool = True, discard_pending: bool = False
+    ) -> bool:
+        """Delegate to the interaction implementation."""
+        return stop_vc_debug_capture(self, announce, discard_pending)
+
+    def toggle_vc_recording(self) -> bool:
+        """Delegate to the interaction implementation."""
+        return toggle_vc_recording(self)
+
+    def tts_idle(self) -> None:
+        """Delegate to the interaction implementation."""
+        return tts_idle(self)
+
+    def tts_log(
+        self,
+        msg: str,
+        severity: str = "info",
+        *,
+        loglevel: _app.LogLevel = "info",
+    ) -> None:
+        """Delegate to the interaction implementation."""
+        return tts_log(self, msg, severity, loglevel=loglevel)
+
+    def tts_queue_avail(self) -> None:
+        """Delegate to the interaction implementation."""
+        return tts_queue_avail(self)
+
+    def tts_voice_changed(self, name: str) -> None:
+        """Delegate to the interaction implementation."""
+        return tts_voice_changed(self, name)
+
+    def tutorial_active(self) -> bool:
+        """Delegate to the interaction implementation."""
+        return tutorial_active(self)
+
+    def tutorial_after(self, delay: float, callback: Callable[[], None]) -> None:
+        """Delegate to the interaction implementation."""
+        return tutorial_after(self, delay, callback)
+
+    def tutorial_token(self) -> int:
+        """Delegate to the interaction implementation."""
+        return tutorial_token(self)

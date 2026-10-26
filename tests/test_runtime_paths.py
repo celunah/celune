@@ -223,6 +223,7 @@ class TestRuntimePath(CeluneTestCase):
 
     def test_huggingface_progress_forwards_disabled_transfer_updates(self) -> None:
         """Verify quiet Hugging Face bars still update Celune's progress callback."""
+        # noinspection PyProtectedMember
         from huggingface_hub import file_download, _snapshot_download
 
         callback = mock.Mock()
@@ -384,7 +385,7 @@ class TestRuntimePath(CeluneTestCase):
             mock.patch.dict(sys.modules, {"__main__": fake_main}),
             mock.patch.object(sys, "argv", [str(executable)]),
             mock.patch(
-                "celune.cevoice.voices_data_dir",
+                "celune.cevoice.base.voices_data_dir",
                 return_value=Path("C:/runtime-data/voices"),
             ),
         ):
@@ -433,7 +434,7 @@ class TestRuntimePath(CeluneTestCase):
             mock.patch.object(sys, "argv", [str(executable)]),
             mock.patch.object(Path, "exists", fake_exists),
             mock.patch(
-                "celune.cevoice.voices_data_dir",
+                "celune.cevoice.base.voices_data_dir",
                 return_value=Path("C:/runtime-data/voices"),
             ),
         ):

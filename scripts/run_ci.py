@@ -8,12 +8,13 @@ import sys
 import time
 import ctypes
 import signal
-import psutil
 import subprocess
 from ctypes import wintypes
 from contextlib import suppress
 from typing import Optional, cast
 from collections.abc import Callable
+
+import psutil
 
 TIMEOUT = 600
 GRACE_PERIOD = 2.0

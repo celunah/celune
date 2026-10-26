@@ -1,8 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """Frontend layer."""
 
-# pylint: disable=ungrouped-imports
-
 from __future__ import annotations
 
 import sys
@@ -29,59 +27,92 @@ from pathlib import Path
 from dataclasses import field, dataclass
 from collections.abc import Callable, Iterator
 
-from textual import work, events
+from textual import (
+    app,
+    css,
+    work,
+    theme,
+    timer,
+    events,
+    binding,
+    widgets,
+    containers,
+)
+from textual import (
+    color as textual_color,
+)
+from textual import (
+    screen as textual_screen,
+)
+from textual import (
+    widget as textual_widget,
+)
+from textual import (
+    message as textual_message,
+)
 from rich.text import Text
-from textual.app import (
-    App,
-    ReturnType,
-    ComposeResult,
-    RenderableType,
-    ScreenStackError,
-    AutopilotCallbackType,
-)
-from textual.color import Color
-from textual.theme import Theme
-from textual.timer import Timer
-from textual.screen import ModalScreen
-from textual.widget import Widget
-from textual.message import Message
-from textual.widgets import (
-    Label,
-    RichLog,
-    TextArea,
-    ProgressBar,
-)
-from textual.widgets import (
-    Button as TextualButton,
-)
-from textual.css.query import NoMatches
-from textual.css.types import EdgeStyle
-from textual.containers import Vertical, Horizontal
 
+from . import capture as _capture
+from . import runtime as _runtime
+from . import interaction as _interaction
 from ..i18n import string, tagged_string
-from .theme import CELUNE_CSS, severity_color
+from .theme import CELUNE_CSS, severity_color, with_brightness
+from .compat import install_textual_timer_sleep
 from .loading import CeluneLoadingScreen
-from ..threads import run_in_daemon_thread
 from .terminal import SelectMenuOption, SelectMenuWidget
 from ..watchdog import launcher_loss_requested
 from ..constants import BASE_SR, SIGTSTP, APP_NAME, ExitCodes
-from ..typing.ui import CeluneUIMethodSurface
 from ..typing.agent import AgentTaskState
 from ..typing.locks import (
     ComponentLockName,
     ComponentLockOwner,
     ComponentLockRequirement,
 )
+from ..typing.modes import OperationState
 from ..typing.common import JSONSerializable
 from ..typing.config import AudioDeviceInfoValue
+from ..registry.types import ModelMetadata
 from ..theme.defaults import default_theme_family, default_error_theme_family
+from ..core.concurrency import run_in_daemon_thread
+
+App = app.App
+ReturnType = app.ReturnType
+ComposeResult = app.ComposeResult
+RenderableType = app.RenderableType
+ScreenStackError = app.ScreenStackError
+AutopilotCallbackType = app.AutopilotCallbackType
+Color = textual_color.Color
+Theme = theme.Theme
+Timer = timer.Timer
+ModalScreen = textual_screen.ModalScreen
+Widget = textual_widget.Widget
+BindingType = binding.BindingType
+Message = textual_message.Message
+Input = widgets.Input
+Label = widgets.Label
+Static = widgets.Static
+RichLog = widgets.RichLog
+TextArea = widgets.TextArea
+ProgressBar = widgets.ProgressBar
+TextualButton = widgets.Button
+Vertical = containers.Vertical
+Horizontal = containers.Horizontal
+
+if TYPE_CHECKING:
+    from textual.css.query import NoMatches
+    from textual.css.types import EdgeStyle
+else:
+    NoMatches = css.query.NoMatches
+    EdgeStyle = css.types.EdgeStyle
+
+install_textual_timer_sleep()
 
 if TYPE_CHECKING:
     import sounddevice as sd
 
     from .terminal import LogRedirect, UILogHandler
     from ..typing.agent import AgentTask
-    from ..typing.aliases import LogLevel, AudioChunk, AudioChunks, _VCAudioCallback
+    from ..typing.aliases import LogLevel, AudioChunk, AudioChunks, VCAudioCallback
 
     colors: ModuleType
 
@@ -89,30 +120,25 @@ if TYPE_CHECKING:
     import numpy as np
     import numpy.typing as npt
 
-    from . import resources as ui_resources
     from ..vc import (
-        VC_PITCH_SHIFT_MAX,
-        VC_PITCH_SHIFT_MIN,
+        VC_PLAYBACK_GAIN,
+        VCDebugCapture,
         LiveVoiceActivityDetector,
         vc_input_rms,
         vc_input_has_voice,
-        clamp_vc_pitch_shift,
         vc_live_chunk_frames,
         vc_vad_preroll_frames,
         vc_vad_hangover_frames,
         vc_live_chunk_overlap_frames,
         create_live_voice_activity_detector,
     )
-    from ..locks import ComponentLockLease
     from ..paths import config_path, main_window_log_path
     from ..utils import discard, replace_ipa, is_april_fools
     from ..celune import Celune
     from ..config import format_audio_device_name, resolve_audio_device_with_info
-    from ..speech import queue_streaming_sfx_audio, finish_streaming_sfx_audio
     from ..cevoice import CEVoiceLoader
     from .commands import process_command as process_ui_command
     from .terminal import is_celune_log_record
-    from ..playback import current_playback_status
     from .resources import FOOTER_ROTATE_SECONDS
     from ..exceptions import CEDTSError
     from ..persona.asr import (
@@ -123,12 +149,21 @@ if TYPE_CHECKING:
         WhisperTranscriber,
     )
     from ..persona.impl import persona_config, persona_enabled, persona_talkback_enabled
+    from ..core.concurrency import ComponentLockLease
     from ..extensions.events import EventDispatcher
+    from ..pipeline.captions import current_playback_status
     from ..dataclasses.events import (
         AgentTaskFinishedEvent,
         AgentChoiceRequestedEvent,
         AgentTaskStateChangedEvent,
         AgentApprovalRequestedEvent,
+        CharacterChangedEvent,
+        CharacterLoadedEvent,
+        CharacterUnloadedEvent,
+    )
+    from ..pipeline.submission import (
+        queue_streaming_sfx_audio,
+        finish_streaming_sfx_audio,
     )
     from ..dataclasses.pipeline import AudioOutput
 
@@ -180,7 +215,7 @@ _UI_RUNTIME_EXPORTS = (
 if TYPE_CHECKING:
     _UI_TYPE_EXPORTS = (
         AgentTask,
-        _VCAudioCallback,
+        VCAudioCallback,
         LogRedirect,
         UILogHandler,
         sd,
@@ -194,6 +229,9 @@ if TYPE_CHECKING:
         AgentChoiceRequestedEvent,
         AgentTaskFinishedEvent,
         AgentTaskStateChangedEvent,
+        CharacterChangedEvent,
+        CharacterLoadedEvent,
+        CharacterUnloadedEvent,
         format_audio_device_name,
         resolve_audio_device_with_info,
         AudioOutput,
@@ -210,12 +248,10 @@ if TYPE_CHECKING:
         current_playback_status,
         finish_streaming_sfx_audio,
         queue_streaming_sfx_audio,
+        VC_PLAYBACK_GAIN,
         discard,
         is_april_fools,
         replace_ipa,
-        VC_PITCH_SHIFT_MAX,
-        VC_PITCH_SHIFT_MIN,
-        clamp_vc_pitch_shift,
         create_live_voice_activity_detector,
         vc_input_has_voice,
         vc_input_rms,
@@ -234,7 +270,7 @@ if TYPE_CHECKING:
 _RUNTIME_LOG_REDIRECT_FILTER_MESSAGES: frozenset[str] = frozenset()
 
 if not TYPE_CHECKING:
-    _VCAudioCallback = Callable[..., None]
+    VCAudioCallback = Callable[..., None]
 
 
 def format_error(error: BaseException, log_level: Union[LogLevel, bool]) -> str:
@@ -456,6 +492,109 @@ class SelectMenuOverlay(ModalScreen[None]):
         event.stop()
 
 
+class ModelConsentScreen(ModalScreen[bool]):
+    """Require an exact typed acknowledgement before Celune loads a model."""
+
+    BINDINGS: ClassVar[list[BindingType]] = [("escape", "decline", "Decline")]
+    DEFAULT_CSS = """
+    ModelConsentScreen {
+        align: center middle;
+        background: $background 90%;
+    }
+    #model-consent-panel {
+        width: 82%;
+        max-width: 88;
+        max-height: 90%;
+        height: auto;
+        padding: 1 2;
+        border: round $accent;
+        background: $surface;
+    }
+    #model-consent-prompt {
+        height: auto;
+        margin-bottom: 1;
+    }
+    #model-consent-detail {
+        height: auto;
+        color: $text-muted;
+    }
+    #model-consent-phrase {
+        margin-top: 1;
+    }
+    #model-consent-actions {
+        height: auto;
+        margin-top: 1;
+        align-horizontal: right;
+    }
+    """
+
+    def __init__(
+        self,
+        prompt: str,
+        instruction: str,
+        details: tuple[str, ...],
+        entry_hint: str,
+        consent_phrase: str,
+        accept_label: str,
+        decline_label: str,
+    ) -> None:
+        super().__init__()
+        self.prompt = prompt
+        self.instruction = instruction
+        self.details = details
+        self.entry_hint = entry_hint
+        self.consent_phrase = consent_phrase
+        self.accept_label = accept_label
+        self.decline_label = decline_label
+
+    def compose(self) -> ComposeResult:
+        """Yield the license source, restriction details and decision controls."""
+        with Vertical(id="model-consent-panel"):
+            yield Static(self.prompt, id="model-consent-prompt")
+            yield Static(self.instruction)
+            for detail in self.details:
+                yield Static(detail, classes="model-consent-detail")
+            yield Input(
+                placeholder=self.entry_hint,
+                id="model-consent-phrase",
+            )
+            with Horizontal(id="model-consent-actions"):
+                yield TextualButton(
+                    self.decline_label,
+                    id="model-consent-decline",
+                    variant="default",
+                )
+                yield TextualButton(
+                    self.accept_label,
+                    id="model-consent-accept",
+                    variant="primary",
+                    disabled=True,
+                )
+
+    def on_mount(self) -> None:
+        """Focus the exact phrase field when the consent screen opens."""
+        self.query_one(Input).focus()
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        """Enable consent only after the requested phrase is typed verbatim."""
+        self.query_one("#model-consent-accept", TextualButton).disabled = (
+            event.value != self.consent_phrase
+        )
+
+    def on_button_pressed(self, event: TextualButton.Pressed) -> None:
+        """Return the decision selected by the user."""
+        if event.button.id == "model-consent-accept":
+            if self.query_one(Input).value == self.consent_phrase:
+                self.dismiss(True)
+            return
+        if event.button.id == "model-consent-decline":
+            self.dismiss(False)
+
+    def action_decline(self) -> None:
+        """Reject the pending model load when the user presses Escape."""
+        self.dismiss(False)
+
+
 def indent(text: str, spaces: int, direction: str = "left") -> str:
     """Indent lightweight UI text without importing the heavy utility module."""
     if direction == "left":
@@ -490,9 +629,15 @@ def set_terminal_title(
     write_terminal_title(status, output)
 
 
-def _load_ui_runtime_dependencies() -> None:
+def ensure_ui_runtime_dependencies() -> None:
     """Load optional UI integrations after the first loading frame is visible."""
     global _RUNTIME_DEPENDENCIES_LOADED
+    global colors
+    global default_loader
+    global indent
+    global set_terminal_title
+    global supports_ansi
+    global terminal_title_escape
     if _RUNTIME_DEPENDENCIES_LOADED:
         return
 
@@ -503,11 +648,8 @@ def _load_ui_runtime_dependencies() -> None:
     global LiveVoiceActivityDetector
     global PERSONA_SPEECH_END_DELAY_SECONDS
     global PERSONA_SPEECH_NO_INPUT_TIMEOUT_SECONDS
-    global VC_PITCH_SHIFT_MAX
-    global VC_PITCH_SHIFT_MIN
     global WhisperSegment
     global WhisperTranscriber
-    global clamp_vc_pitch_shift
     global config_path
     global discard
     global format_audio_device_name
@@ -536,6 +678,7 @@ def _load_ui_runtime_dependencies() -> None:
     global vc_live_chunk_overlap_frames
     global vc_vad_hangover_frames
     global vc_vad_preroll_frames
+    global VC_PLAYBACK_GAIN
     global yaml
     global is_celune_log_record
     global _RUNTIME_LOG_REDIRECT_FILTER_MESSAGES
@@ -545,14 +688,14 @@ def _load_ui_runtime_dependencies() -> None:
     import sounddevice as sd
     import numpy.typing as npt
 
-    from . import resources as ui_resources
+    from . import resources as loaded_ui_resources
+
+    ui_resources = loaded_ui_resources
     from ..vc import (
-        VC_PITCH_SHIFT_MAX,
-        VC_PITCH_SHIFT_MIN,
+        VC_PLAYBACK_GAIN,
         LiveVoiceActivityDetector,
         vc_input_rms,
         vc_input_has_voice,
-        clamp_vc_pitch_shift,
         vc_live_chunk_frames,
         vc_vad_preroll_frames,
         vc_vad_hangover_frames,
@@ -573,14 +716,9 @@ def _load_ui_runtime_dependencies() -> None:
         supports_ansi as loaded_supports_ansi,
     )
     from ..config import format_audio_device_name, resolve_audio_device_with_info
-    from ..speech import (
-        queue_streaming_sfx_audio,
-        finish_streaming_sfx_audio,
-    )
     from ..cevoice import default_loader as loaded_default_loader
     from .commands import process_command as process_ui_command
     from .terminal import LogRedirect, UILogHandler, is_celune_log_record
-    from ..playback import current_playback_status
     from ..terminal import (
         RUNTIME_LOG_FILTER_MESSAGES,
     )
@@ -605,34 +743,35 @@ def _load_ui_runtime_dependencies() -> None:
         persona_enabled,
         persona_talkback_enabled,
     )
+    from ..pipeline.captions import current_playback_status
+    from ..pipeline.submission import (
+        queue_streaming_sfx_audio,
+        finish_streaming_sfx_audio,
+    )
     from ..dataclasses.pipeline import AudioOutput
 
-    globals().update(
-        {
-            "colors": loaded_colors,
-            "default_loader": loaded_default_loader,
-            "indent": loaded_indent,
-            "set_terminal_title": loaded_set_terminal_title,
-            "supports_ansi": loaded_supports_ansi,
-            "terminal_title_escape": loaded_terminal_title_escape,
-        }
-    )
+    colors = loaded_colors
+    default_loader = loaded_default_loader
+    indent = loaded_indent
+    set_terminal_title = loaded_set_terminal_title
+    supports_ansi = loaded_supports_ansi
+    terminal_title_escape = loaded_terminal_title_escape
     launcher_loss_requested = loaded_launcher_loss_requested
     _RUNTIME_LOG_REDIRECT_FILTER_MESSAGES = RUNTIME_LOG_FILTER_MESSAGES
     _RUNTIME_DEPENDENCIES_LOADED = True
 
 
-_LOADING_FADE_SECONDS = 1.0
-_MAIN_UI_FADE_SECONDS = 0.6
-_EXIT_FADE_SECONDS = 0.6
-_VC_FEEDBACK_MIN_CAPTURE_SECONDS = 0.35
-_VC_FEEDBACK_REQUIRED_CONSECUTIVE_SPIKES = 2
-_VC_FEEDBACK_RMS_MIN_PREVIOUS = 0.05
-_VC_FEEDBACK_RMS_MIN_CURRENT = 0.18
-_VC_FEEDBACK_RMS_RISE_RATIO = 2.0
-_VC_FEEDBACK_RMS_RISE_DELTA = 0.08
-_VC_LIVE_SUBMISSION_QUEUE_SIZE = 3
-_AGENT_ACTIVE_STATES = frozenset(
+LOADING_FADE_SECONDS = 1.0
+MAIN_UI_FADE_SECONDS = 0.6
+EXIT_FADE_SECONDS = 0.6
+VC_FEEDBACK_MIN_CAPTURE_SECONDS = 0.35
+VC_FEEDBACK_REQUIRED_CONSECUTIVE_SPIKES = 2
+VC_FEEDBACK_RMS_MIN_PREVIOUS = 0.05
+VC_FEEDBACK_RMS_MIN_CURRENT = 0.18
+VC_FEEDBACK_RMS_RISE_RATIO = 2.0
+VC_FEEDBACK_RMS_RISE_DELTA = 0.08
+VC_LIVE_SUBMISSION_QUEUE_SIZE = 3
+AGENT_ACTIVE_STATES = frozenset(
     {
         AgentTaskState.QUEUED,
         AgentTaskState.IDLE,
@@ -644,13 +783,13 @@ _AGENT_ACTIVE_STATES = frozenset(
         AgentTaskState.CANCELLING,
     }
 )
-_AGENT_AWAITING_STATES = frozenset(
+AGENT_AWAITING_STATES = frozenset(
     {AgentTaskState.AWAITING_APPROVAL, AgentTaskState.AWAITING_CHOICE}
 )
-_AGENT_PAUSED_STATES = frozenset({AgentTaskState.PAUSED, AgentTaskState.INTERRUPTED})
+AGENT_PAUSED_STATES = frozenset({AgentTaskState.PAUSED, AgentTaskState.INTERRUPTED})
 
 
-def _device_scalar_int(value: Optional[AudioDeviceInfoValue], default: int) -> int:
+def device_scalar_int(value: Optional[AudioDeviceInfoValue], default: int) -> int:
     """Return one audio-device metadata value as an integer when possible."""
     if isinstance(value, bool):
         return default
@@ -727,7 +866,6 @@ class CeluneUIWidgetState:
     input_box: Optional[TextArea] = None
     style_button: Optional[VoiceButton] = None
     vc_mode_button: Optional[Button] = None
-    vc_pitch_button: Optional[Button] = None
     status: Optional[Label] = None
     resources: Optional[Label] = None
     caption: Optional[Label] = None
@@ -834,6 +972,7 @@ class CeluneUIInteractionState:
     vc_recording_worker: Optional[threading.Thread] = None
     vc_recording_vad: Optional[LiveVoiceActivityDetector] = None
     vc_recording_component_lease: Optional[ComponentLockLease] = None
+    vc_debug_capture: Optional[VCDebugCapture] = None
     persona_recording_chunks: AudioChunks = field(default_factory=list)
     persona_recording_lock: threading.Lock = field(default_factory=threading.Lock)
     persona_recording_queue: Optional[queue_module.Queue[tuple[AudioChunk, bool]]] = (
@@ -845,7 +984,7 @@ class CeluneUIInteractionState:
     persona_recording_stop_requested: bool = False
     persona_recording_stream: Optional[sd.InputStream] = None
     persona_recording_text_prefix: str = ""
-    persona_recording_transcriber: Optional[WhisperTranscriber] = None
+    speech_transcriber: Optional[WhisperTranscriber] = None
     persona_recording_worker: Optional[threading.Thread] = None
     persona_recording_vad: Optional[LiveVoiceActivityDetector] = None
     persona_recording_last_partial_at: float = 0.0
@@ -886,7 +1025,9 @@ def _forward_ui_property(container_name: str, field_name: str) -> property:
 
 
 @final
-class CeluneUI(App, CeluneUIMethodSurface):
+class CeluneUI(
+    _runtime.RuntimeHooks, _capture.CaptureHooks, _interaction.InteractionHooks, App
+):
     """Celune's main user interface."""
 
     def __init_subclass__(cls, **kwargs: Never) -> Never:
@@ -896,6 +1037,16 @@ class CeluneUI(App, CeluneUIMethodSurface):
     CSS = CELUNE_CSS
     _instance: ClassVar[Optional[CeluneUI]] = None
 
+    @classmethod
+    def get_instance(cls) -> Optional[CeluneUI]:
+        """Return the active UI instance, if one has been created."""
+        return cls._instance
+
+    def release_instance(self) -> None:
+        """Release this UI instance from the process-wide singleton slot."""
+        if type(self)._instance is self:
+            type(self)._instance = None
+
     def __init__(
         self,
         startup_loader: Optional[Callable[[], Celune]] = None,
@@ -904,6 +1055,7 @@ class CeluneUI(App, CeluneUIMethodSurface):
         test_completion_callback: Optional[
             Callable[[Celune, bool, Optional[str]], None]
         ] = None,
+        startup_dependency_help: Optional[str] = None,
     ) -> None:
         super().__init__()
 
@@ -925,12 +1077,16 @@ class CeluneUI(App, CeluneUIMethodSurface):
             log_file_path=Path(),
         )
         self._interaction_state = CeluneUIInteractionState()
+        self._agent_test_response_queue: Optional[queue_module.Queue[Optional[str]]] = (
+            None
+        )
         self._terminal_status: Optional[tuple[str, str, str]] = None
         self._loading_screen: Optional[CeluneLoadingScreen] = None
         self._startup_loader = startup_loader
         self._startup_messages = list(startup_messages or [])
         self._startup_log_level = startup_log_level
         self._test_completion_callback = test_completion_callback
+        self._startup_dependency_help = startup_dependency_help
         self._runtime_intervals_started = False
         self._windows_signal_handler: Optional[Callable[[int], bool]] = None
         self._active_menu: Optional[SelectMenuWidget] = None
@@ -945,7 +1101,6 @@ class CeluneUI(App, CeluneUIMethodSurface):
     input_box = _forward_ui_property("_widgets", "input_box")
     style_button = _forward_ui_property("_widgets", "style_button")
     vc_mode_button = _forward_ui_property("_widgets", "vc_mode_button")
-    vc_pitch_button = _forward_ui_property("_widgets", "vc_pitch_button")
     status = _forward_ui_property("_widgets", "status")
     resources = _forward_ui_property("_widgets", "resources")
     caption = _forward_ui_property("_widgets", "caption")
@@ -1106,6 +1261,7 @@ class CeluneUI(App, CeluneUIMethodSurface):
     _vc_recording_component_lease = _forward_ui_property(
         "_interaction_state", "vc_recording_component_lease"
     )
+    _vc_debug_capture = _forward_ui_property("_interaction_state", "vc_debug_capture")
     _persona_recording_chunks = _forward_ui_property(
         "_interaction_state", "persona_recording_chunks"
     )
@@ -1133,8 +1289,8 @@ class CeluneUI(App, CeluneUIMethodSurface):
     _persona_recording_text_prefix = _forward_ui_property(
         "_interaction_state", "persona_recording_text_prefix"
     )
-    _persona_recording_transcriber = _forward_ui_property(
-        "_interaction_state", "persona_recording_transcriber"
+    _speech_transcriber = _forward_ui_property(
+        "_interaction_state", "speech_transcriber"
     )
     _persona_recording_worker = _forward_ui_property(
         "_interaction_state", "persona_recording_worker"
@@ -1224,10 +1380,8 @@ class CeluneUI(App, CeluneUIMethodSurface):
             error=colors.THEME_LIGHT.error,
             dark=False,
         )
-        if dark_theme.name not in self.available_themes:
-            self.register_theme(dark_theme)
-        if light_theme.name not in self.available_themes:
-            self.register_theme(light_theme)
+        self.register_theme(dark_theme)
+        self.register_theme(light_theme)
 
     def _wrap_runtime_fatal_glow(self) -> None:
         """Mirror runtime fatal glow events into the UI fatal theme flag."""
@@ -1253,7 +1407,7 @@ class CeluneUI(App, CeluneUIMethodSurface):
 
     def _advance_status_marquee(self) -> None:
         """Advance the marquee one character for long status messages."""
-        from ..playback import current_playback_status
+        from ..pipeline.captions import current_playback_status
 
         if self.status is None:
             return
@@ -1264,7 +1418,7 @@ class CeluneUI(App, CeluneUIMethodSurface):
             current_playback_status(self.celune) if self.celune is not None else None
         )
         agent_is_active = self._agent_task_state in (
-            _AGENT_ACTIVE_STATES | _AGENT_AWAITING_STATES | _AGENT_PAUSED_STATES
+            AGENT_ACTIVE_STATES | AGENT_AWAITING_STATES | AGENT_PAUSED_STATES
         )
         if (
             playback_status is not None
@@ -1389,12 +1543,84 @@ class CeluneUI(App, CeluneUIMethodSurface):
             if self.cur_state != "exiting" and self.celune.sleeping:
                 self.safe_status(string("ui.sleeping_status"), "sleeping")
 
-    @work(thread=True, exclusive=True)
     def load_tts(self) -> None:
+        """Start runtime loading in a daemon thread."""
+        threading.Thread(
+            target=self._load_tts,
+            name="celune-ui-runtime-load",
+            daemon=True,
+        ).start()
+
+    def _request_model_consent(self, metadata: ModelMetadata) -> bool:
+        """Show one blocking consent screen while model work waits in its thread."""
+        from ..registry.consent import consent_details, consent_prompt_text
+
+        prompt, instruction = consent_prompt_text(metadata)
+        screen = ModelConsentScreen(
+            prompt=prompt,
+            instruction=instruction,
+            details=consent_details(metadata),
+            entry_hint=string("registry.consent_entry_hint"),
+            consent_phrase=string("registry.consent_phrase"),
+            accept_label=string("registry.consent_accept"),
+            decline_label=string("registry.consent_decline"),
+        )
+        response = threading.Event()
+        decision: list[Optional[bool]] = [None]
+        waiting_status = string("registry.waiting_status")
+        from ..registry.consent import consent_status, pending_model_consents
+
+        def show_screen() -> None:
+            """Present the modal and route its result to the waiting thread."""
+            self.safe_status(waiting_status, "warning")
+
+            def on_consent_result(accepted: Optional[bool]) -> None:
+                """Wake the model-loading worker with the user's decision."""
+                decision[0] = accepted
+                response.set()
+
+            self.push_screen(screen, on_consent_result)
+
+        self._run_on_ui_thread(show_screen)
+        browser_accepted = False
+
+        def pop_screen_if_current() -> None:
+            if self.screen is screen:
+                self.pop_screen()
+
+        while not response.wait(0.2):
+            if consent_status(metadata):
+                browser_accepted = True
+                self._run_on_ui_thread(pop_screen_if_current)
+                break
+            if not any(
+                pending.model_id == metadata.model_id
+                and pending.revision == metadata.revision
+                for pending in pending_model_consents()
+            ):
+                self._run_on_ui_thread(pop_screen_if_current)
+                break
+            if self.cur_state == "exiting":
+                return False
+
+        if self._status_text == waiting_status:
+            self.safe_status(string("ui.idle_status"))
+        return browser_accepted or decision[0] is True
+
+    def _load_tts(self) -> None:
         """Load the app runtime."""
+        if self.cur_state == "exiting":
+            return
+        from ..exceptions import ModelConsentDeclined
+        from ..registry.consent import set_model_consent_handler
+
+        set_model_consent_handler(self._request_model_consent)
         self._latest_startup_error = None
         try:
-            if self.celune.load():
+            loaded = self.celune.load()
+            if self.cur_state == "exiting":
+                return
+            if loaded:
                 self.celune_styles = self.celune.voices
                 if not self.celune_styles:
                     if self._is_ui_test_mode():
@@ -1444,7 +1670,16 @@ class CeluneUI(App, CeluneUIMethodSurface):
                 self._dismiss_loading_screen()
             else:
                 self.cur_state = "error"
-                self.change_input_state(locked=True)
+                self.change_input_state(
+                    locked=(
+                        getattr(
+                            self.celune,
+                            "operation_state",
+                            OperationState.NORMAL,
+                        )
+                        is not OperationState.SEMI_FATAL
+                    )
+                )
                 self.change_voice_lock_state(locked=True)
                 failure_message = self._latest_startup_error or string(
                     "ui.app_could_not_start",
@@ -1453,7 +1688,20 @@ class CeluneUI(App, CeluneUIMethodSurface):
                 self.error(string("ui.app_could_not_start", app_name=APP_NAME))
                 self._show_loading_error(failure_message)
                 self._finish_test_startup(False, failure_message)
+        except ModelConsentDeclined:
+            if self.cur_state == "exiting":
+                return
+            self.cur_state = "error"
+            message = string("registry.consent_declined")
+            self.celune.fatal()
+            self.change_input_state(locked=True)
+            self.change_voice_lock_state(locked=True)
+            self.safe_status(message, "warning")
+            self._show_loading_error(message)
+            self._finish_test_startup(False, message)
         except Exception as e:
+            if self.cur_state == "exiting":
+                return
             self.cur_state = "error"
             error_message = format_error_message(
                 tagged_string("ui.init_error", "INIT ERROR"),
@@ -1468,26 +1716,15 @@ class CeluneUI(App, CeluneUIMethodSurface):
             self._show_loading_error(error_message)
             self._finish_test_startup(False, error_message)
 
-    @staticmethod
-    def _with_brightness(color: Color, brightness: float) -> Color:
-        """Return ``color`` blended toward the requested brightness."""
-        brightness = max(0.0, min(1.0, brightness))
-        current = color.brightness
-
-        if abs(current - brightness) < 0.01:
-            return color
-
-        destination = Color(255, 255, 255) if current < brightness else Color(0, 0, 0)
-        destination_brightness = destination.brightness
-        factor = (brightness - current) / (destination_brightness - current)
-        return color.blend(destination, max(0.0, min(1.0, factor)))
-
     def _normal_input_placeholder(self) -> str:
         """Return the unlocked input placeholder without blocking the UI."""
         from ..persona.impl import persona_enabled, persona_talkback_enabled
 
-        if self._is_voice_conversion_mode():
+        if self.is_voice_conversion_mode():
             return string("ui.voice_changer_placeholder")
+
+        if getattr(getattr(self.celune, "backend", None), "singing", False):
+            return string("ui.cesn_input_placeholder")
 
         if (
             self._persona_loaded()
@@ -1511,7 +1748,10 @@ class CeluneUI(App, CeluneUIMethodSurface):
         """Load the selected pack and voice without blocking the Textual loop."""
         if self.celune is None:
             return
-        from ..cevoice import active_bundle_path
+        singing_backend = getattr(
+            getattr(self.celune, "backend", None), "singing", False
+        )
+        from ..cevoice import SINGING_VOICE_NAME, active_bundle_path
 
         pack = value.get("pack")
         entry = value.get("entry")
@@ -1519,6 +1759,8 @@ class CeluneUI(App, CeluneUIMethodSurface):
             self._voice_menu_paths.get(pack) if isinstance(pack, str) else None
         )
         if bundle_path is None or not isinstance(entry, str):
+            return
+        if singing_backend and entry != SINGING_VOICE_NAME:
             return
 
         try:
@@ -1529,7 +1771,14 @@ class CeluneUI(App, CeluneUIMethodSurface):
                 self.safe_log(string("ui.voice_change_failed"), "warning")
                 return
 
-            if active_bundle_path() == bundle_path:
+            if singing_backend:
+                if active_bundle_path() == bundle_path:
+                    return
+                loaded = await run_in_daemon_thread(
+                    self.celune.set_cevoice_and_wait,
+                    bundle_path,
+                )
+            elif active_bundle_path() == bundle_path:
                 loaded = await run_in_daemon_thread(
                     self.celune.set_voice_and_wait,
                     entry,
@@ -1548,9 +1797,19 @@ class CeluneUI(App, CeluneUIMethodSurface):
                 self.safe_log(string("ui.voice_change_failed"), "warning")
                 return
             self.celune_styles = self.celune.voices
-            self.style_index = self.celune_styles.index(entry)
-            self.tts_voice_changed(entry)
-            self.change_voice_lock_state(locked=len(self.celune_styles) < 2)
+            current_voice = getattr(self.celune, "current_voice", None)
+            if singing_backend:
+                if (
+                    isinstance(current_voice, str)
+                    and current_voice in self.celune_styles
+                ):
+                    self.style_index = self.celune_styles.index(current_voice)
+                    self.tts_voice_changed(current_voice)
+                self.change_voice_lock_state(locked=True, can_open_menu=True)
+            else:
+                self.style_index = self.celune_styles.index(entry)
+                self.tts_voice_changed(entry)
+                self.change_voice_lock_state(locked=len(self.celune_styles) < 2)
         except Exception as error:
             self.safe_log(
                 format_error_message(
@@ -1612,24 +1871,39 @@ class CeluneUI(App, CeluneUIMethodSurface):
         ):
             self._submit_text(typed, process_commands)
 
-    register_runtime_error_themes = _register_runtime_error_themes
-    wrap_runtime_fatal_glow = _wrap_runtime_fatal_glow
-    advance_status_marquee = _advance_status_marquee
-    enable_runtime_log_capture = _enable_runtime_log_capture
-    install_runtime_log_redirects = _install_runtime_log_redirects
-    disable_runtime_log_capture = _disable_runtime_log_capture
-    with_brightness = _with_brightness
-    normal_input_placeholder = _normal_input_placeholder
-    persona_loaded = _persona_loaded
+    def register_runtime_error_themes(self) -> None:
+        """Delegate to the existing Textual UI hook."""
+        return self._register_runtime_error_themes()
 
+    def wrap_runtime_fatal_glow(self) -> None:
+        """Delegate to the existing Textual UI hook."""
+        return self._wrap_runtime_fatal_glow()
 
-def _install_ui_methods() -> None:
-    """Install split UI methods after the concrete UI class exists."""
-    from . import capture, runtime, interaction
+    def advance_status_marquee(self) -> None:
+        """Delegate to the existing Textual UI hook."""
+        return self._advance_status_marquee()
 
-    runtime.install(CeluneUI)
-    capture.install(CeluneUI)
-    interaction.install(CeluneUI)
+    def enable_runtime_log_capture(self) -> None:
+        """Delegate to the existing Textual UI hook."""
+        return self._enable_runtime_log_capture()
 
+    def install_runtime_log_redirects(self) -> None:
+        """Delegate to the existing Textual UI hook."""
+        return self._install_runtime_log_redirects()
 
-_install_ui_methods()
+    def disable_runtime_log_capture(self) -> None:
+        """Delegate to the existing Textual UI hook."""
+        return self._disable_runtime_log_capture()
+
+    @staticmethod
+    def with_brightness(color: Color, brightness: float) -> Color:
+        """Return ``color`` blended toward the requested brightness."""
+        return with_brightness(color, brightness)
+
+    def normal_input_placeholder(self) -> str:
+        """Delegate to the existing Textual UI hook."""
+        return self._normal_input_placeholder()
+
+    def persona_loaded(self) -> bool:
+        """Delegate to the existing Textual UI hook."""
+        return self._persona_loaded()

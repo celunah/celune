@@ -1,22 +1,30 @@
 #include "launcher_platform.h"
+#include "launcher_id.h"
 
 #include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
 
-static int launcher_cpu_check_is_bypassed(int argc, char **argv) {
+const volatile char launcher_id[] =
+    CELUNE_LAUNCHER_ID CELUNE_LAUNCHER_VERSION;
+
+void retain_launcher_id(void) { (void)launcher_id[0]; }
+
+static int launcher_is_main_operation(int argc, char **argv) {
     for (int index = 1; index < argc; index++) {
-        if (strcmp(argv[index], "doctor") == 0 ||
-            strcmp(argv[index], "help") == 0 ||
-            strcmp(argv[index], "--help") == 0 ||
-            strcmp(argv[index], "-h") == 0 ||
-            strcmp(argv[index], "version") == 0 ||
-            strcmp(argv[index], "--version") == 0) {
-            return 1;
+        if (strcmp(argv[index], "--root") == 0) {
+            index++;
+            continue;
         }
+        if (strncmp(argv[index], "--root=", 7) == 0) {
+            continue;
+        }
+
+        return strcmp(argv[index], "start") == 0 ||
+               strcmp(argv[index], "run") == 0;
     }
 
-    return 0;
+    return 1;
 }
 
 static int copy_launcher_text(char *dest, size_t size, const char *src) {
@@ -103,10 +111,11 @@ const char *launcher_exit_reason(int return_code) {
 }
 
 int main(int argc, char **argv) {
+    retain_launcher_id();
     launcher_setup_terminal();
+    int main_operation = launcher_is_main_operation(argc, argv);
 
-    if (!launcher_cpu_check_is_bypassed(argc, argv) &&
-        !launcher_cpu_supports_avx()) {
+    if (main_operation && !launcher_cpu_supports_avx()) {
         launcher_reset_terminal_state();
         launcher_prepare_failure_output();
         launcher_report_failure(CELUNE_EXIT_UNSUPPORTED_CPU);
@@ -116,7 +125,8 @@ int main(int argc, char **argv) {
 
     int return_code = launcher_run(argc, argv);
 
-    if (return_code != 0 || launcher_startup_was_interrupted()) {
+    if (main_operation &&
+        (return_code != 0 || launcher_startup_was_interrupted())) {
         launcher_reset_terminal_state();
         launcher_prepare_failure_output();
         launcher_report_failure(return_code);

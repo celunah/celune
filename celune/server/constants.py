@@ -1,0 +1,46 @@
+# SPDX-License-Identifier: Apache-2.0
+"""API security and browser-session timing constants."""
+
+WEBUI_AUTH_PATH = "/ui/key"
+WEBUI_AUTH_COOKIE = "celune_webui_session"
+WEBUI_AUTH_SESSION_SECONDS = 30 * 24 * 60 * 60
+WEBUI_POLL_SNAPSHOT_API_NAME = "webui_poll_snapshot"
+WEBUI_POLL_VC_API_NAME = "webui_poll_vc_controls"
+WEBUI_POLL_RECORDING_API_NAME = "webui_poll_recording_control"
+WEBUI_LOAD_SNAPSHOT_API_NAME = "webui_load_snapshot"
+WEBUI_LOAD_VC_API_NAME = "webui_load_vc_controls"
+WEBUI_LOAD_RECORDING_API_NAME = "webui_load_recording_control"
+WEBUI_CYCLE_VOICE_API_NAME = "webui_cycle_voice"
+WEBUI_TOGGLE_RECORDING_API_NAME = "webui_toggle_recording"
+WEBUI_SPEAK_INPUT_API_NAME = "webui_speak_input"
+WEBUI_SPEAK_BUTTON_API_NAME = "webui_speak_button"
+WEBUI_CONVERT_API_NAME = "webui_convert_audio"
+WEBUI_POLL_API_NAMES = frozenset(
+    {
+        WEBUI_POLL_SNAPSHOT_API_NAME,
+        WEBUI_POLL_VC_API_NAME,
+        WEBUI_POLL_RECORDING_API_NAME,
+    }
+)
+WEBUI_GENERATION_API_NAMES = frozenset(
+    {
+        WEBUI_SPEAK_INPUT_API_NAME,
+        WEBUI_SPEAK_BUTTON_API_NAME,
+        WEBUI_CONVERT_API_NAME,
+    }
+)
+WEBUI_RATE_LIMIT_EXEMPT_API_NAMES = WEBUI_POLL_API_NAMES | frozenset(
+    {
+        WEBUI_LOAD_SNAPSHOT_API_NAME,
+        WEBUI_LOAD_VC_API_NAME,
+        WEBUI_LOAD_RECORDING_API_NAME,
+        WEBUI_CYCLE_VOICE_API_NAME,
+        WEBUI_TOGGLE_RECORDING_API_NAME,
+    }
+)
+WEBUI_AUTH_CLIENTS_FILENAME = "webui-auth-clients.json"
+WEBUI_AUTH_CLIENT_LIMIT = 1024
+WEBUI_RESOURCE_ROTATE_SECONDS = 2.06
+WEBUI_POLL_INTERVAL_SECONDS = WEBUI_RESOURCE_ROTATE_SECONDS / 4
+WEBUI_STATUS_PROBE_DEBOUNCE_SECONDS = 0.9
+WEBUI_TIMED_UPDATE_STALE_SECONDS = WEBUI_RESOURCE_ROTATE_SECONDS * 2

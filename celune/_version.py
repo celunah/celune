@@ -1,30 +1,13 @@
 # SPDX-License-Identifier: Apache-2.0
 """Celune build version metadata."""
 
-import subprocess
+from pathlib import Path
 
+from .vcs import get_revision as _get_revision
 
-def _get_revision() -> str:
-    """Return the current Git revision, including a dirty-worktree marker."""
-    try:
-        revision = subprocess.check_output(
-            ["git", "rev-parse", "--short", "HEAD"],
-            stderr=subprocess.DEVNULL,
-            text=True,
-        ).strip()
-        status = subprocess.check_output(
-            ["git", "status", "--porcelain"],
-            stderr=subprocess.DEVNULL,
-            text=True,
-        ).strip()
-        return f"{revision}{'*' if status else ''}"
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        return ""
-
-
-REVISION = _get_revision()
-VERSION = "5.0.4"
-DEVELOPMENT = False
+REVISION = _get_revision(Path(__file__).resolve().parent.parent)
+VERSION = "5.1.0"
+DEVELOPMENT = True
 
 if REVISION:
     _local = REVISION.rstrip("*")

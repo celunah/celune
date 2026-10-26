@@ -1,4 +1,5 @@
 #include "launcher_platform.h"
+#include "signature.h"
 
 #include <windows.h>
 
@@ -568,6 +569,10 @@ static int search_directory_contents(
     size_t repo_root_size,
     struct search_queue *queue
 ) {
+    if (launcher_startup_was_interrupted()) {
+        return 0;
+    }
+
     ULONGLONG now = GetTickCount64();
     if (now >= search_deadline) {
         search_limit = SEARCH_LIMIT_TIME;
@@ -606,6 +611,9 @@ static int search_directory_contents(
     ULONGLONG read_deadline = GetTickCount64() + LAUNCHER_SEARCH_MAX_READ_MILLISECONDS;
     int found = 0;
     do {
+        if (launcher_startup_was_interrupted()) {
+            break;
+        }
         ULONGLONG read_now = GetTickCount64();
         if (read_now >= search_deadline || read_now >= read_deadline) {
             search_limit = SEARCH_LIMIT_TIME;
@@ -653,7 +661,8 @@ static int search_directory_contents(
 
         found = 1;
         break;
-    } while (FindNextFileA(search, &entry) &&
+    } while (!launcher_startup_was_interrupted() &&
+             FindNextFileA(search, &entry) &&
              GetTickCount64() < read_deadline &&
              GetTickCount64() < search_deadline);
 
@@ -683,7 +692,7 @@ static int search_runtime_directory(
     }
 
     int found = 0;
-    while (queue.next < queue.count) {
+    while (queue.next < queue.count && !launcher_startup_was_interrupted()) {
         struct search_queue_entry entry = queue.entries[queue.next++];
         found = search_directory_contents(
             entry.path,
@@ -811,6 +820,10 @@ static int resolve_runtime_location(
         "PROGRAMFILES(X86)"
     };
     for (size_t index = 0; index < sizeof(environment_names) / sizeof(environment_names[0]); index++) {
+        if (launcher_startup_was_interrupted()) {
+            clear_search_status();
+            return 0;
+        }
         if (read_environment_path(
                 environment_names[index],
                 environment_root_storage[environment_root_count],
@@ -824,7 +837,8 @@ static int resolve_runtime_location(
 
     char user_profile[1024];
     int found = 0;
-    if (read_environment_path("USERPROFILE", user_profile, sizeof(user_profile))) {
+    if (!launcher_startup_was_interrupted() &&
+        read_environment_path("USERPROFILE", user_profile, sizeof(user_profile))) {
         found = search_runtime_directory(
             user_profile,
             0,
@@ -837,13 +851,18 @@ static int resolve_runtime_location(
             clear_search_status();
             return 0;
         }
+        if (launcher_startup_was_interrupted()) {
+            clear_search_status();
+            return 0;
+        }
     }
     if (found) {
         clear_search_status();
         return set_runtime_target(runtime_dir, target, target_size);
     }
 
-    if (current_length > 0 && current_length < sizeof(current_directory)) {
+    if (!launcher_startup_was_interrupted() &&
+        current_length > 0 && current_length < sizeof(current_directory)) {
         found = search_runtime_directory(
             current_directory,
             0,
@@ -856,6 +875,10 @@ static int resolve_runtime_location(
             clear_search_status();
             return 0;
         }
+        if (launcher_startup_was_interrupted()) {
+            clear_search_status();
+            return 0;
+        }
     }
     if (found) {
         clear_search_status();
@@ -863,6 +886,10 @@ static int resolve_runtime_location(
     }
 
     for (size_t index = 0; index < environment_root_count; index++) {
+        if (launcher_startup_was_interrupted()) {
+            clear_search_status();
+            return 0;
+        }
         found = search_runtime_directory(
                 environment_roots[index],
                 0,
@@ -872,6 +899,10 @@ static int resolve_runtime_location(
                 repo_root_size
         );
         if (search_limit == SEARCH_ROOT_NOT_CELUNE) {
+            clear_search_status();
+            return 0;
+        }
+        if (launcher_startup_was_interrupted()) {
             clear_search_status();
             return 0;
         }
@@ -885,6 +916,10 @@ static int resolve_runtime_location(
 
     DWORD drives = GetLogicalDrives();
     for (char drive = 'A'; drive <= 'Z'; drive++) {
+        if (launcher_startup_was_interrupted()) {
+            clear_search_status();
+            return 0;
+        }
         DWORD mask = 1UL << (drive - 'A');
         if ((drives & mask) == 0) {
             continue;
@@ -904,6 +939,10 @@ static int resolve_runtime_location(
                 repo_root_size
         );
         if (search_limit == SEARCH_ROOT_NOT_CELUNE) {
+            clear_search_status();
+            return 0;
+        }
+        if (launcher_startup_was_interrupted()) {
             clear_search_status();
             return 0;
         }
@@ -1112,19 +1151,35 @@ int launcher_run(int argc, char **argv) {
             printfe("Celune could not use the requested root: %s\n", root_override);
             return 1;
         }
-    } else if (!resolve_runtime_location(
-                   base,
-                   target,
-                   sizeof(target),
-                   repo_root,
-                   sizeof(repo_root)
-               )) {
-        report_lookup_failure();
-        return 1;
+    } else {
+        int runtime_found = resolve_runtime_location(
+            base,
+            target,
+            sizeof(target),
+            repo_root,
+            sizeof(repo_root)
+        );
+        if (launcher_startup_was_interrupted()) {
+            return 130;
+        }
+        if (!runtime_found) {
+            report_lookup_failure();
+            return 1;
+        }
     }
 
     if (!lookup_file_exists(target)) {
         report_lookup_failure();
+        return 1;
+    }
+
+    if (!SetEnvironmentVariableA("CELUNE_LAUNCHER_EXE", launcher)) {
+        printfe("Celune could not configure its launcher path.\n");
+        return 1;
+    }
+
+    if (launcher_verify_bundle_target(target, launcher) == LAUNCHER_BUNDLE_INVALID) {
+        printfe("celune rejected a runtime with an invalid or corrupted release signature\n");
         return 1;
     }
 
@@ -1310,10 +1365,22 @@ int launcher_run(int argc, char **argv) {
     );
 
     if (!ok) {
+        DWORD launch_error = GetLastError();
         CancelIoEx(launcher_pipe, &pipe_connect);
         CloseHandle(pipe_connect_event);
         CloseHandle(launcher_pipe);
-        printfe("Celune could not launch her compiled runtime.\nExit code: %lu\n", GetLastError());
+        if (launch_error == ERROR_FILE_CORRUPT) {
+            printfe(
+                "Celune is corrupted.\n"
+                "Rebuild her binaries or redownload her latest release.\n"
+            );
+        } else {
+            printfe(
+                "Celune could not launch her compiled runtime.\n"
+                "Exit code: %lu\n",
+                (unsigned long)launch_error
+            );
+        }
         return 1;
     }
 

@@ -4,11 +4,12 @@
 from pathlib import Path
 from unittest import mock
 
+import pytest
 import torch
 import numpy as np
-import pytest
-from celune.theme.colors import RGB
+
 from celune import i18n, analysis
+from celune.theme.colors import RGB
 from celune.chroma import AudioRGBGlow
 from celune.constants import BASE_SR, N_A_NUMERIC
 
@@ -17,6 +18,33 @@ from .support import CeluneTestCase
 
 class TestAnalysis(CeluneTestCase):
     """Tests for deterministic analysis helper behavior."""
+
+    def test_embedding_inference_keeps_torchao_compatibility_active(
+        self, capsys
+    ) -> None:
+        """Keep the TorchAO guard active during lazy embedding inference."""
+
+        processor = mock.Mock(return_value={"input_values": torch.zeros(1)})
+
+        def model_call(**_kwargs):
+            __import__("torchao.prototype.mx_formats")
+            return mock.Mock(last_hidden_state=torch.ones(1, 2048))
+
+        with mock.patch.object(
+            analysis,
+            "_load_embedding_model",
+            return_value=(processor, model_call),
+        ):
+            embedding = analysis._compute_qwen3_embedding(
+                np.zeros(160, dtype=np.float32),
+                BASE_SR,
+            )
+
+        assert embedding.shape == (2048,)
+        assert (
+            "Calling register_constant() on Enum subclasses"
+            not in capsys.readouterr().err
+        )
 
     def test_embedding_similarity_and_drift_helpers_validate_inputs(self) -> None:
         """Validate embedding conversion, similarity, and drift helper paths.
@@ -164,13 +192,12 @@ class TestAnalysis(CeluneTestCase):
         with pytest.raises(FileNotFoundError, match="no compatible CEVOICE/CECHAR"):
             analysis.load_reference_embedding("balanced")
 
-    def test_reference_failures_use_active_locale(self) -> None:
-        """Verify reference embedding failures and metrics use localized messages."""
+    def test_reference_failures_keep_raw_exceptions_and_localized_metrics(self) -> None:
+        """Keep technical exceptions raw while localizing surrounding metrics."""
         original_strings = dict(i18n.STRINGS)
         original_locale = i18n.get_locale()
         try:
             i18n.STRINGS["zz"] = {
-                "analysis.reference_embedding_bundle_missing": "localized bundle missing",
                 "analysis.reference_similarity_error": "localized similarity: {reason}",
             }
             i18n.set_locale("zz")
@@ -179,7 +206,7 @@ class TestAnalysis(CeluneTestCase):
                 mock.patch("celune.analysis.default_loader", return_value=None),
                 self.assertRaisesRegex(
                     FileNotFoundError,
-                    "localized bundle missing",
+                    "no compatible CEVOICE/CECHAR package with reference embeddings is loaded",
                 ),
             ):
                 analysis.load_reference_embedding("balanced")
@@ -313,6 +340,19 @@ class TestChroma(CeluneTestCase):
         glow = AudioRGBGlow(celune=None, color="#ffffff")
         assert glow.speech_level(np.zeros((0, 2), dtype=np.float32)) == 0.0
         assert glow.speech_level(stereo) > 0.0
+
+    def test_set_color_updates_the_base_color_and_glow_target(self) -> None:
+        """Update pack glow colors without connecting to RGB devices."""
+        glow = AudioRGBGlow(celune=None, color="#ffffff")
+        glow._state = "normal"
+
+        glow._set_color("#d8751c")
+
+        expected = np.array(
+            AudioRGBGlow.fix_color_rendering((216, 117, 28)), dtype=np.float32
+        )
+        assert np.array_equal(glow.base_color, expected)
+        assert np.array_equal(glow._target_color, expected)
 
     def test_glow_worker_signals_completion(self) -> None:
         """Verify shutdown can observe a glow worker that exits promptly."""

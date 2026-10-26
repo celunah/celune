@@ -23,34 +23,53 @@ import soundfile as sf
 
 from celune.i18n import string
 from celune.exceptions import (
+    CESNValidationError,
     InvalidExtensionError,
     ExtensionAlreadyRegisteredError,
 )
-from celune.celune import Celune
 from celune.utils import discard
+from celune.celune import Celune
+from celune.backends.vc import (
+    BACKEND_MANIFESTS as VC_BACKEND_MANIFESTS,
+)
+from celune.backends.vc import (
+    resolve_vc_backend,
+)
+from celune.cesn import CESNSinger
+from celune.typing.backends import (
+    BackendModel,
+    SeedVCModelValue,
+    SeedVCRealtimeModule,
+)
+from celune.registry import MODEL_BY_ID
+from celune.backends.tts.luxtts import (
+    LuxTTS,
+    LuxTTSModel,
+    set_vocoder_silence_feature,
+    install_vocoder_decode_guard,
+    install_cpu_duration_correction,
+)
 from celune.typing.aliases import AudioChunk
 from celune.backends.tts.fireredtts3 import (
     FireRedTTS3,
-    _FireRedIncrementalDecoder,
-    _FireRedModel,
-    _FireRedRedAE,
-    _create_firered_model,
+    FireRedModel,
+    FireRedRedAE,
+    FireRedIncrementalDecoder,
+    create_firered_model,
 )
-from celune.backends.tts.luxtts import (
-    LuxTTS,
-    _LuxTTSModel,
-    _install_cpu_duration_correction,
-    _install_vocoder_decode_guard,
-    _set_vocoder_silence_feature,
+from celune.backends.tts.soulxsinger import (
+    SoulXSinger,
+    decode_score,
+    pitch_to_midi,
+    load_upstream_source,
 )
-from celune.backends.vc import resolve_vc_backend
+from celune.backends.tts.base import CeluneBackend
 from celune.backends.vc.seedvc import CeluneSeedVCBackend
 from celune.extensions.manager import CeluneExtensionManager
 from celune.dataclasses.pipeline import VoiceConversionRequest
 from celune.extensions.base import CeluneContext, CeluneExtension
-from celune.typing.backends import BackendModel, _SeedVCRealtimeModule
 from celune.backends.tts import BACKEND_MANIFESTS, resolve_backend
-from celune.backends.vc import BACKEND_MANIFESTS as VC_BACKEND_MANIFESTS
+from celune.registry.tts import QWEN3_DEFAULT_MODEL_ID, SOULX_SINGER_CODE_REVISION
 
 from .support import (
     FakeBackend,
@@ -66,6 +85,129 @@ from .support import (
 
 class TestBackend(CeluneTestCase):
     """Tests for backend base behavior and backend resolution."""
+
+    def setUp(self) -> None:
+        """Keep synthetic Seed-VC backend tests independent of model consent."""
+        consent_patch = mock.patch(
+            "celune.backends.vc.seedvc._require_seedvc_model_consents"
+        )
+        consent_patch.start()
+        self.addCleanup(consent_patch.stop)
+
+    def test_singing_capability_defaults_off_and_base_cesn_is_noop(self) -> None:
+        """Keep ordinary TTS unchanged until a singing backend opts in."""
+        notation = (
+            "[lang:en][bpm:120,key:c,scale:major]"
+            "[c3:4d,d3:8,e3:16][tɛkst.tu.sɪŋ] Text to sing."
+        )
+        backend = FakeBackend()
+        self.assertFalse(backend.singing)
+        self.assertEqual(backend.cesn_to_model(notation), notation)
+
+        singing_backend = FakeBackend(singing=True)
+        self.assertTrue(singing_backend.singing)
+
+    def test_soulxsinger_encodes_cesn_defaults_and_reports_missing_notation(
+        self,
+    ) -> None:
+        """Keep musical defaults in the score payload and reject lyric-only input."""
+        backend = object.__new__(SoulXSinger)
+        singer = CESNSinger("Test Singer", Path("singer.cevoice"))
+        notation = "[bpm:120,key:c,scale:major][lang:en][a4:4][ɑ] Ah"
+
+        with mock.patch(
+            "celune.backends.tts.soulxsinger.resolve_active_singer",
+            return_value=singer,
+        ):
+            section = decode_score(backend.cesn_to_model(notation))[0]
+
+        self.assertEqual((section.bpm, section.key, section.scale), (120, "c", "major"))
+        self.assertEqual(section.singer_path, str(singer.bundle_path))
+        self.assertEqual(pitch_to_midi("a4"), 69)
+        with self.assertRaises(CESNValidationError) as error:
+            backend.cesn_to_model("[#comment only]")
+        self.assertEqual(str(error.exception), "No CESN notation found")
+
+    def test_soulxsinger_description_uses_a_finite_chunk_rate(self) -> None:
+        """Give CEDTS a finite rate for SoulX's complete-score audio chunk."""
+        self.assertEqual(SoulXSinger.chunk_rate, 1.0)
+
+    def test_soulxsinger_source_install_rechecks_after_lock(self) -> None:
+        """Reuse the pinned checkout another backend worker just installed."""
+        with tempfile.TemporaryDirectory() as directory:
+            environment_root = Path(directory)
+            source_root = (
+                environment_root / "soulxsinger-source" / SOULX_SINGER_CODE_REVISION
+            )
+            package_path = source_root / "soulxsinger" / "models" / "soulxsinger.py"
+
+            @contextlib.contextmanager
+            def other_worker_installs_source() -> Generator[None, None, None]:
+                package_path.parent.mkdir(parents=True)
+                package_path.touch()
+                yield
+
+            with (
+                mock.patch(
+                    "celune.backends.tts.soulxsinger.backend_environments_dir",
+                    return_value=environment_root,
+                ),
+                mock.patch(
+                    "celune.backends.tts.soulxsinger.exclusive_lock",
+                    side_effect=lambda *_args, **_kwargs: (
+                        other_worker_installs_source()
+                    ),
+                ) as acquire_lock,
+                mock.patch("git.Repo") as repository_type,
+            ):
+                repository_type.return_value.head.commit.hexsha = source_root.name
+                repository_type.return_value.is_dirty.return_value = False
+
+                self.assertEqual(load_upstream_source(), source_root)
+
+            acquire_lock.assert_called_once_with(
+                source_root.parent / ".install.lock",
+                timeout=300.0,
+            )
+            repository_type.assert_called_once_with(source_root)
+            repository_type.clone_from.assert_not_called()
+
+    def test_soulxsinger_keeps_section_metadata_in_its_score_payload(self) -> None:
+        """Preserve musical settings and display lyrics in the backend payload."""
+        backend = object.__new__(SoulXSinger)
+        backend.name = "soulxsinger"
+        singer = CESNSinger("Test Singer", Path("singer.cevoice"))
+        notation = "[bpm:120,key:c,scale:major][lang:en][a4:4][ɑ] Ah"
+
+        with mock.patch(
+            "celune.backends.tts.soulxsinger.resolve_active_singer",
+            return_value=singer,
+        ):
+            converted = backend.cesn_to_model(notation)
+
+        section = decode_score(converted)[0]
+        self.assertEqual((section.bpm, section.key, section.scale), (120, "c", "major"))
+        self.assertEqual(section.singer_path, str(singer.bundle_path))
+        self.assertEqual(section.display_text, "Ah")
+        self.assertEqual(pitch_to_midi("a4"), 69)
+
+    def test_tts_load_oom_does_not_retry_unquantized_model(self) -> None:
+        """Verify CUDA OOM releases a partial load without retrying BF16."""
+        backend = FakeBackend(quantize=True)
+        backend.quantization_attempted = True
+        oom = torch.cuda.OutOfMemoryError("CUDA out of memory")
+        with (
+            mock.patch("celune.registry.consent.require_model_consent"),
+            mock.patch.object(backend, "load_model", side_effect=oom) as load,
+            mock.patch.object(backend, "unload_model") as unload,
+            mock.patch("celune.backends.tts.base.release_cuda_after_oom") as release,
+            pytest.raises(torch.cuda.OutOfMemoryError),
+        ):
+            CeluneBackend.load_default_model(backend)
+
+        load.assert_called_once()
+        unload.assert_called_once()
+        release.assert_called_once()
 
     def test_tts_preload_uses_celune_huggingface_cache(self) -> None:
         """Verify generic TTS preloading downloads into Celune's Hub cache."""
@@ -90,6 +232,7 @@ class TestBackend(CeluneTestCase):
 
         download.assert_called_once_with(
             repo_id="lunahr/pocket-tts-ungated",
+            revision=MODEL_BY_ID["lunahr/pocket-tts-ungated"].revision,
             cache_dir=str(Path("C:/celune/huggingface/hub")),
         )
 
@@ -147,6 +290,7 @@ class TestBackend(CeluneTestCase):
         )
         download.assert_called_once_with(
             repo_id=transcriber_model_id,
+            revision=MODEL_BY_ID[transcriber_model_id].revision,
             cache_dir=str(Path("C:/celune/huggingface/hub")),
         )
 
@@ -350,8 +494,8 @@ class TestBackend(CeluneTestCase):
         prompt: dict[str, Union[torch.Tensor, float, int]] = {
             "prompt_features": torch.full((1, 4, 2), -3.0)
         }
-        _set_vocoder_silence_feature(cast(_LuxTTSModel, model), prompt)
-        _install_vocoder_decode_guard(cast(_LuxTTSModel, model))
+        set_vocoder_silence_feature(cast(LuxTTSModel, model), prompt)
+        install_vocoder_decode_guard(cast(LuxTTSModel, model))
 
         decoded = model.vocos.decode(torch.ones(1, 2, 1))
         assert vocoder.input_shape == (1, 2, 22)
@@ -386,7 +530,7 @@ class TestBackend(CeluneTestCase):
 
         onnx_model = FakeOnnxModel()
         model = SimpleNamespace(model=onnx_model)
-        _install_cpu_duration_correction(cast(_LuxTTSModel, model))
+        install_cpu_duration_correction(cast(LuxTTSModel, model))
 
         model.model.run_text_encoder(
             torch.zeros(1, 6, dtype=torch.int64),
@@ -405,6 +549,7 @@ class TestBackend(CeluneTestCase):
         with mock_voxcpm_backend() as voxcpm2_cls:
             backend = voxcpm2_cls.__new__(voxcpm2_cls)
             backend.log = mock.Mock()
+            backend.quantize_kv_cache = True
             model = object()
             voxcpm_module = sys.modules[voxcpm2_cls.__module__]
             voxcpm_loader = voxcpm_module.__dict__["VoxCPM"]
@@ -422,6 +567,7 @@ class TestBackend(CeluneTestCase):
                     "model_is_available_locally",
                     side_effect=[(True, "cached"), (False, None), (False, None)],
                 ),
+                mock.patch.object(voxcpm_module, "install_voxcpm_quantized_cache"),
             ):
                 assert backend.load_model("openbmb/VoxCPM2") is model
                 assert backend.load_model("openbmb/VoxCPM2") is model
@@ -430,6 +576,99 @@ class TestBackend(CeluneTestCase):
                 {"load_denoiser": False, "optimize": False},
                 {"load_denoiser": False, "optimize": False},
             ]
+
+    def test_voxcpm2_quantization_loads_on_cpu_before_cuda_transfer(self) -> None:
+        """Quantize VoxCPM2 before its single transfer to CUDA."""
+        with mock_voxcpm_backend() as voxcpm2_cls:
+            backend = voxcpm2_cls.__new__(voxcpm2_cls)
+            backend.log = mock.Mock()
+            backend.quantization_mode = "int8"
+            backend.quantize_kv_cache = True
+            runtime = mock.Mock()
+            runtime.base_lm.kv_cache = None
+            runtime.residual_lm.kv_cache = None
+            runtime.config = SimpleNamespace()
+            model = SimpleNamespace(tts_model=runtime)
+            voxcpm_module = sys.modules[voxcpm2_cls.__module__]
+            voxcpm_loader = voxcpm_module.__dict__["VoxCPM"]
+
+            with (
+                mock.patch.object(
+                    voxcpm_loader,
+                    "from_pretrained",
+                    create=True,
+                    return_value=model,
+                ) as load_model,
+                mock.patch.object(
+                    backend,
+                    "_install_checkpoint_tokenizer",
+                ),
+                mock.patch.object(
+                    backend,
+                    "model_is_available_locally",
+                    return_value=(True, "cached"),
+                ),
+                mock.patch.object(
+                    backend,
+                    "apply_runtime_quantization",
+                    return_value=model,
+                ) as quantize,
+                mock.patch.object(
+                    voxcpm_module,
+                    "install_voxcpm_quantized_cache",
+                ),
+            ):
+                assert backend.load_model("openbmb/VoxCPM2") is model
+
+            assert load_model.call_args.kwargs == {
+                "load_denoiser": False,
+                "optimize": False,
+                "device": "cpu",
+            }
+            quantize.assert_called_once_with(model, "openbmb/VoxCPM2")
+            runtime.to.assert_called_once_with(torch.device("cuda"))
+            assert runtime.device == "cuda"
+            assert runtime.config.device == "cuda"
+
+    def test_voxcpm2_releases_unused_static_cache_capacity(self) -> None:
+        """Bound both private VoxCPM caches before the runtime is used."""
+        with mock_voxcpm_backend() as voxcpm2_cls:
+            cache = SimpleNamespace(
+                max_length=8192,
+                kv_cache=torch.zeros(2, 1, 1, 1, 8192, 1),
+            )
+            base_lm = SimpleNamespace(
+                kv_cache=cache,
+                setup_cache=mock.Mock(),
+            )
+            residual_lm = SimpleNamespace(
+                kv_cache=SimpleNamespace(
+                    max_length=8192,
+                    kv_cache=torch.zeros(2, 1, 1, 1, 8192, 1),
+                ),
+                setup_cache=mock.Mock(),
+            )
+            model = SimpleNamespace(
+                tts_model=SimpleNamespace(
+                    base_lm=base_lm,
+                    residual_lm=residual_lm,
+                )
+            )
+
+            voxcpm2_cls._resize_runtime_caches(model)
+
+            base_lm.setup_cache.assert_called_once_with(
+                1,
+                2048,
+                cache.kv_cache.device,
+                cache.kv_cache.dtype,
+            )
+            residual_lm.setup_cache.assert_called_once_with(
+                1,
+                2048,
+                residual_lm.kv_cache.kv_cache.device,
+                residual_lm.kv_cache.kv_cache.dtype,
+            )
 
     def test_base_backend_reports_models(self) -> None:
         """Verify model metadata helpers on a fake backend.
@@ -514,7 +753,7 @@ class TestBackend(CeluneTestCase):
                 string(
                     "celune.unknown_backend",
                     backend="missing",
-                    available="mini, qwen3, fireredtts3, dotstts, voxcpm2, luxtts",
+                    available="mini, qwen3, fireredtts3, dotstts, voxcpm2, luxtts, soulxsinger",
                 )
             ),
         ):
@@ -540,7 +779,7 @@ class TestBackend(CeluneTestCase):
             redae=SimpleNamespace(encoder=mock.Mock()),
         )
 
-        FireRedTTS3._configure_bfloat16(cast(_FireRedModel, model))
+        FireRedTTS3._configure_bfloat16(cast(FireRedModel, model))
 
         model.tts_core.backbone_llm.to.assert_called_once_with(dtype=torch.bfloat16)
         model.tts_core.stop_head.to.assert_called_once_with(dtype=torch.bfloat16)
@@ -679,7 +918,7 @@ class TestBackend(CeluneTestCase):
                 "fireredtts3.redae.redae": fake_redae,
             },
         ):
-            result = _create_firered_model(
+            result = create_firered_model(
                 "model-root",
                 log=lambda message, severity: stage_messages.append(
                     (message, severity)
@@ -749,7 +988,7 @@ class TestBackend(CeluneTestCase):
             ),
             mock.patch("celune.backends.tts.fireredtts3.torch.autocast") as autocast,
             mock.patch(
-                "celune.backends.tts.fireredtts3._FireRedIncrementalDecoder",
+                "celune.backends.tts.fireredtts3.FireRedIncrementalDecoder",
                 return_value=incremental_decoder,
             ),
         ):
@@ -849,10 +1088,10 @@ class TestBackend(CeluneTestCase):
             ),
         )
         redae = cast(
-            _FireRedRedAE,
+            FireRedRedAE,
             SimpleNamespace(decoder=decoder),
         )
-        incremental = _FireRedIncrementalDecoder(redae)
+        incremental = FireRedIncrementalDecoder(redae, torch.device("cpu"), True)
 
         prompt_audio, prompt_start = incremental.push(torch.zeros(1, 1, 1))
         generated_audio, generated_start = incremental.push(torch.zeros(1, 1, 1))
@@ -931,10 +1170,33 @@ class TestBackend(CeluneTestCase):
                 )
             )
 
-    def test_seedvc_backend_converts_audio_with_cached_wrapper(self) -> None:
-        """Verify Seed-VC wraps converted audio into Celune's VC output contract."""
-        backend = CeluneSeedVCBackend(log=lambda _msg, _severity="info": None)
+    @pytest.mark.parametrize(
+        ("cache_live_runtime", "active_live_session", "length_adjust"),
+        ((False, False, 1.0), (True, True, 1.0), (True, False, 1.5)),
+    )
+    def test_seedvc_offline_conversion_falls_back_to_wrapper(
+        self,
+        cache_live_runtime: bool,
+        active_live_session: bool,
+        length_adjust: float,
+    ) -> None:
+        """Verify first-use and unsupported requests retain wrapper conversion."""
+        backend = CeluneSeedVCBackend(
+            log=lambda _msg, _severity="info": None,
+            length_adjust=length_adjust,
+        )
         captured: dict[str, Union[str, int, float, bool]] = {}
+        if cache_live_runtime:
+            backend._live_module = cast(
+                SeedVCRealtimeModule,
+                ModuleType("seed_vc.real_time"),
+            )
+            backend._live_model_set = cast(
+                tuple[SeedVCModelValue, ...],
+                ("model", "semantic", "vocoder", "campplus", "mel", {}),
+            )
+            if active_live_session:
+                backend._live_session_key = (Path("live.wav"), 24000)
 
         class FakeWrapper:
             """Minimal Seed-VC wrapper stand-in for one backend test."""
@@ -984,6 +1246,89 @@ class TestBackend(CeluneTestCase):
         assert not captured["stream_output"]
         assert not captured["f0_condition"]
         assert captured["pitch_shift"] == 0
+
+    def test_seedvc_offline_conversion_reuses_cached_live_models(self) -> None:
+        """Verify non-F0 file conversion reuses the loaded native model set."""
+        backend = CeluneSeedVCBackend(
+            log=lambda _msg, _severity="info": None,
+            diffusion_steps=18,
+            inference_cfg_rate=0.4,
+        )
+        reference = Path("reference.wav")
+        request = VoiceConversionRequest(
+            source_audio=np.ones((6, 2), dtype=np.float32),
+            sample_rate=24000,
+            target_references=(reference,),
+            label="offline fixture",
+            f0_condition=False,
+        )
+        model_set = (
+            "model",
+            "semantic",
+            "vocoder",
+            "campplus",
+            "mel",
+            {"sampling_rate": 24000},
+        )
+        realtime_module = ModuleType("seed_vc.real_time")
+        backend._live_module = cast(SeedVCRealtimeModule, realtime_module)
+        backend._live_model_set = cast(
+            tuple[SeedVCModelValue, ...],
+            model_set,
+        )
+        captured: list[tuple[int, float]] = []
+
+        def initialize_session(
+            _module: SeedVCRealtimeModule,
+            _model_set: tuple[SeedVCModelValue, ...],
+            _reference: Path,
+            sample_rate: int,
+        ) -> None:
+            backend._live_session_key = (reference, sample_rate)
+            backend._live_model_sample_rate = 24000
+            backend._live_block_frame = 4
+
+        def convert_block(
+            audio: np.ndarray,
+            *,
+            diffusion_steps: int,
+            inference_cfg_rate: float,
+        ) -> np.ndarray:
+            captured.append((diffusion_steps, inference_cfg_rate))
+            return np.asarray(audio * 0.5, dtype=np.float32)
+
+        with (
+            mock.patch.object(backend, "_get_live_runtime") as get_live_runtime,
+            mock.patch.object(
+                backend,
+                "_initialize_live_session",
+                side_effect=initialize_session,
+            ),
+            mock.patch.object(
+                backend,
+                "_resample_live_audio",
+                side_effect=lambda audio, _source, _target: np.asarray(
+                    audio,
+                    dtype=np.float32,
+                ),
+            ),
+            mock.patch.object(
+                backend, "_convert_live_block", side_effect=convert_block
+            ),
+            mock.patch.object(backend, "_get_wrapper") as get_wrapper,
+        ):
+            output = backend.convert(request)
+
+        get_wrapper.assert_not_called()
+        get_live_runtime.assert_not_called()
+        assert output.sample_rate == 24000
+        assert output.label == "offline fixture"
+        np.testing.assert_array_equal(
+            output.audio,
+            np.full(6, 0.5, dtype=np.float32),
+        )
+        assert captured == [(18, 0.4), (18, 0.4)]
+        assert backend._live_session_key is None
 
     def test_seedvc_live_backend_uses_native_session_without_offline_wrapper(
         self,
@@ -1085,7 +1430,7 @@ class TestBackend(CeluneTestCase):
             return torch.zeros(4)
 
         setattr(module, "custom_infer", custom_infer)  # noqa: B010
-        backend._live_module = cast(_SeedVCRealtimeModule, module)
+        backend._live_module = cast(SeedVCRealtimeModule, module)
         backend._live_model_set = ("model",)
         backend._live_reference_path = Path("reference.wav")
         backend._live_reference_wav = np.zeros(4, dtype=np.float32)
@@ -1112,55 +1457,6 @@ class TestBackend(CeluneTestCase):
         assert captured_stdout.getvalue() == ""
         assert captured_stderr.getvalue() == ""
         assert output.shape == (4,)
-
-    def test_seedvc_backend_uses_configured_pitch_shift_for_wrapper_requests(
-        self,
-    ) -> None:
-        """Verify Seed-VC forwards its configured pitch shift into wrapper requests."""
-        backend = CeluneSeedVCBackend(
-            log=lambda _msg, _severity="info": None,
-            pitch_shift=-6,
-        )
-        captured: dict[str, Union[str, int, float, bool]] = {}
-
-        class FakeWrapper:
-            """Minimal Seed-VC wrapper stand-in for request override coverage."""
-
-            @staticmethod
-            def convert_voice(**kwargs):
-                """Return a generator-style conversion result for backend tests.
-
-                Args:
-                    kwargs: Wrapper arguments forwarded from the backend under test.
-
-                Returns:
-                    Generator[None, None, npt.NDArray[np.float32]]: One generator whose return value carries the
-                    converted waveform.
-                """
-                captured.update(kwargs)
-
-                def result_generator() -> Generator[None, None, AudioChunk]:
-                    yield from ()
-                    return np.array([0.1, -0.1], dtype=np.float32)
-
-                return result_generator()
-
-        backend._wrapper = FakeWrapper()
-
-        with tempfile.TemporaryDirectory() as temp_dir:
-            target = Path(temp_dir) / "target.wav"
-            sf.write(target, np.zeros((16,), dtype=np.float32), 24000)
-
-            backend.convert(
-                VoiceConversionRequest(
-                    source_audio=np.ones((12, 2), dtype=np.float32),
-                    sample_rate=24000,
-                    target_references=(target,),
-                    pitch_shift=9,
-                )
-            )
-
-        assert captured["pitch_shift"] == 9
 
     def test_seedvc_backend_prefers_request_f0_condition_over_backend_default(
         self,
@@ -1217,7 +1513,7 @@ class TestBackend(CeluneTestCase):
     ) -> None:
         """Verify Celune redirects Seed-VC downloads into the shared Hugging Face cache."""
         backend = CeluneSeedVCBackend(log=lambda _msg, _severity="info": None)
-        captured: list[tuple[str, str, str]] = []
+        captured: list[tuple[str, str, str, Optional[str]]] = []
 
         fake_hf_utils = ModuleType("seed_vc.hf_utils")
         fake_wrapper = ModuleType("seed_vc.seed_vc_wrapper")
@@ -1226,21 +1522,16 @@ class TestBackend(CeluneTestCase):
             repo_id: str,
             filename: str,
             cache_dir: str,
+            revision: Optional[str] = None,
         ) -> str:
-            captured.append((repo_id, filename, cache_dir))
+            captured.append((repo_id, filename, cache_dir, revision))
             return str(Path(cache_dir) / filename)
 
         setattr(fake_hf_utils, "hf_hub_download", fake_hf_hub_download)  # noqa: B010
         setattr(  # noqa: B010
-            fake_hf_utils,
-            "load_custom_model_from_hf",
-            lambda *args, **kwargs: None,
+            fake_hf_utils, "load_custom_model_from_hf", lambda *args, **kwargs: None
         )
-        setattr(  # noqa: B010
-            fake_wrapper,
-            "load_custom_model_from_hf",
-            lambda *args, **kwargs: None,
-        )
+        setattr(fake_wrapper, "load_custom_model_from_hf", lambda *args, **kwargs: None)  # noqa: B010
         setattr(fake_wrapper, "SeedVCWrapper", type("FakeSeedVCWrapper", (), {}))  # noqa: B010
 
         def import_module(name: str) -> ModuleType:
@@ -1264,7 +1555,10 @@ class TestBackend(CeluneTestCase):
                 ),
             ):
                 backend._load_wrapper_type()
-                resolved = getattr(fake_wrapper, "load_custom_model_from_hf")(  # noqa: B009
+                resolved = getattr(  # noqa: B009
+                    fake_wrapper,
+                    "load_custom_model_from_hf",
+                )(
                     "funasr/campplus",
                     "campplus_cn_common.bin",
                     None,
@@ -1276,6 +1570,7 @@ class TestBackend(CeluneTestCase):
                 "funasr/campplus",
                 "campplus_cn_common.bin",
                 str(expected_cache_dir),
+                "e4b6ede7ce16997aff4ae69fbca1f0175e2afede",
             )
         ]
 
@@ -1599,8 +1894,10 @@ class TestBackend(CeluneTestCase):
                 ) as from_pretrained,
                 mock.patch.dict(os.environ, {}, clear=False),
             ):
-                backend = qwen3_cls(log=lambda _msg, _severity="info": None)
-                assert backend.load_model("Qwen/test") is model
+                backend = qwen3_cls(
+                    log=lambda _msg, _severity="info": None, quantize=False
+                )
+                assert backend.load_model(QWEN3_DEFAULT_MODEL_ID) is model
                 assert os.environ["NUMBA_CACHE_DIR"] == str(tmp_path / "numba")
 
             from_pretrained.assert_called_once_with(str(tmp_path / "snapshot"))

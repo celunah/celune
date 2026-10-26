@@ -11,21 +11,24 @@ import loguru
 import numpy as np
 from transformers import AutoTokenizer
 from dots_tts.runtime import DotsTtsRuntime
+from huggingface_hub import snapshot_download
 
-from ...utils import available, discard, custom_assert
-from ...i18n import string
-from ...typing.backends import _LoguruLogger
-from ...cevoice import CEVoiceLoader, default_loader
-from ...paths import huggingface_progress
-from ...typing.aliases import AudioChunk, AudioChunks
-from .base import (
-    _to_numpy_audio as normalize_streamed_audio,
-)
 from .base import (
     CeluneBackend,
     local_hf_offline_mode,
     cached_hf_snapshot_path,
 )
+from .base import (
+    to_numpy_audio as normalize_streamed_audio,
+)
+from ...i18n import string
+from ...typing.backends import LoguruLogger
+from ...cevoice import CEVoiceLoader, default_loader
+from ...registry.consent import require_model_consent
+from ...typing.aliases import AudioChunk, AudioChunks
+from ...utils import discard, available, custom_assert
+from ...paths import huggingface_progress, huggingface_hub_cache_dir
+from ...registry.tts import TTS_DEFAULT_VOICE, DOTS_TTS_VOICE_MODELS
 
 
 class DotsTtsMF(CeluneBackend[DotsTtsRuntime]):
@@ -68,20 +71,16 @@ class DotsTtsMF(CeluneBackend[DotsTtsRuntime]):
         "vi",
     )
 
-    voice_models: Optional[Mapping[str, str]] = {
-        "balanced": "rednote-hilab/dots.tts-mf",
-        "calm": "rednote-hilab/dots.tts-mf",
-        "bold": "rednote-hilab/dots.tts-mf",
-        "upbeat": "rednote-hilab/dots.tts-mf",
-    }
-    default_voice: Optional[str] = "balanced"
+    voice_models: Optional[Mapping[str, str]] = DOTS_TTS_VOICE_MODELS
+    default_voice: Optional[str] = TTS_DEFAULT_VOICE
 
     def __init__(
         self,
         log: Callable[[str, str], None],
         fatal: Optional[Callable[[], None]] = None,
+        quantize: bool = True,
     ) -> None:
-        super().__init__(log=log, fatal=fatal)
+        super().__init__(log=log, fatal=fatal, quantize=quantize)
         self._validate_refs()
 
     @staticmethod
@@ -157,7 +156,7 @@ class DotsTtsMF(CeluneBackend[DotsTtsRuntime]):
         with open(os.devnull, "w", encoding="utf-8") as devnull:
             disabled_loguru = False
             bound_logger = cast(
-                Optional[_LoguruLogger],
+                Optional[LoguruLogger],
                 getattr(loguru, "logger", None),
             )
             with contextlib.suppress(Exception):
@@ -221,33 +220,77 @@ class DotsTtsMF(CeluneBackend[DotsTtsRuntime]):
         Returns:
             DotsTtsRuntime: The loaded dots.tts runtime instance.
         """
+        metadata = require_model_consent(model_id)
         available, path = self.model_is_available_locally(model_id)
+        if not available or path is None:
+            self.log(string("tts.model_download_start"), "info")
+            with huggingface_progress(self.report_progress):
+                path = snapshot_download(
+                    repo_id=model_id,
+                    revision=metadata.revision,
+                    cache_dir=str(huggingface_hub_cache_dir(create=True)),
+                )
         precision = kwargs.get("precision", "bfloat16")
         optimize = bool(kwargs.get("optimize", False))
         max_generate_length = int(
             kwargs.get("max_generate_length", self.max_new_tokens)
         )
 
-        target = path if available and path is not None else model_id
-        if target == model_id:
-            self.log(string("tts.model_download_start"), "info")
-
+        target = path
+        quantize_on_cpu = getattr(self, "quantization_mode", None) is not None
         with (
-            local_hf_offline_mode(available and path is not None),
+            local_hf_offline_mode(),
             huggingface_progress(self.report_progress),
             self._suppress_backend_output(),
         ):
-            self.model = DotsTtsRuntime.from_pretrained(
-                target,
-                precision=precision,
-                optimize=optimize,
-                max_generate_length=max_generate_length,
-            )
+            if quantize_on_cpu:
+                self.model = self._load_quantized_runtime(
+                    target,
+                    model_id=model_id,
+                    precision=precision,
+                    optimize=optimize,
+                    max_generate_length=max_generate_length,
+                )
+            else:
+                self.model = DotsTtsRuntime.from_pretrained(
+                    target,
+                    precision=precision,
+                    optimize=optimize,
+                    max_generate_length=max_generate_length,
+                )
             self._fix_checkpoint_tokenizer(self.model)
 
+        if not quantize_on_cpu:
+            self.model = self.apply_runtime_quantization(self.model, model_id)
         return self.model
 
-    _to_numpy_audio = staticmethod(normalize_streamed_audio)
+    def _load_quantized_runtime(
+        self,
+        target: str,
+        *,
+        model_id: str,
+        precision: str,
+        optimize: bool,
+        max_generate_length: int,
+    ) -> DotsTtsRuntime:
+        """Quantize dots.tts on CPU before its runtime moves the model to CUDA."""
+        import torch
+        from dots_tts.models.dots_tts.model import DotsTtsModel
+
+        # noinspection PyProtectedMember
+        pretrained_path = DotsTtsRuntime._resolve_pretrained_path(target)
+        loaded_model = DotsTtsModel.from_pretrained(pretrained_path)
+        loaded_model.core.to(dtype=torch.bfloat16)
+        loaded_model = self.apply_runtime_quantization(loaded_model, model_id)
+        return DotsTtsRuntime(
+            model=loaded_model,
+            pretrained_path=pretrained_path,
+            precision=precision,
+            optimize=optimize,
+            max_generate_length=max_generate_length,
+        )
+
+    to_numpy_audio = staticmethod(normalize_streamed_audio)
 
     def generate_stream(
         self, model: DotsTtsRuntime, **kwargs
@@ -324,7 +367,7 @@ class DotsTtsMF(CeluneBackend[DotsTtsRuntime]):
                 first_chunk_time: Optional[float] = None
 
                 for chunk in stream:
-                    audio = self._to_numpy_audio(chunk)
+                    audio = self.to_numpy_audio(chunk)
                     if audio.size == 0:
                         continue
                     if first_chunk_time is None:

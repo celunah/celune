@@ -10,7 +10,7 @@ selection, and the checks that confirm Celune is ready to speak.
    pack there.
 2. Run `uv run python main.py doctor` and resolve failed prerequisites.
 3. Start Celune once. Existing configuration and voice data are preserved.
-4. Leave `backend: null`, `voice_bundle: default`, `mode: converse`, and
+4. Leave `backend: null`, `voice_bundle: default`, `mode: performance`, and
    `vram: medium` until the basic engine is working.
 5. Use `/help` in the Textual UI to see commands supported by the active
    backend and mode.
@@ -47,7 +47,7 @@ active capabilities.
 
 ## Verify speech
 
-In speak mode, type text and press `CTRL+ENTER`. In converse mode, the same
+In performance mode, type text and press `CTRL+ENTER`. In converse mode, the same
 action sends the text through Persona; use `CTRL+R` for Persona speech input.
 Generated files are placed in the repository
 `outputs/` directory when saving is enabled. Celune writes 48 kHz, 24-bit FLAC
@@ -80,3 +80,17 @@ Then inspect the application log and traceback path reported by the runtime.
 Do not delete a backend environment while it is running. If an environment is
 corrupt, use `celune doctor --fix` where the doctor offers a repair, or remove
 only the named backend environment after Celune has fully exited.
+
+### Recover a corrupted Windows runtime
+
+If the Windows launcher reports `Celune is corrupted.`, it received Windows
+error `1392` (`ERROR_FILE_CORRUPT`) while starting the compiled runtime.
+Rebuild the binaries from a source checkout using the [CMake release
+build](../development/packaging.md#cmake-release-builds), or download and
+extract Celune's latest release again. Then launch Celune from the repaired
+build or release folder.
+
+## See also
+
+- [Installation](installation.md)
+- [CMake release builds](../development/packaging.md#cmake-release-builds)

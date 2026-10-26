@@ -10,6 +10,7 @@ import json
 import stat
 import time
 import ctypes
+import locale
 import shutil
 import hashlib
 import zipfile
@@ -17,23 +18,35 @@ import tempfile
 import subprocess
 import urllib.request
 from dataclasses import dataclass
-from typing import Union, Optional
+from typing import Optional, Union
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
+from .vcs import (
+    UPSTREAM_REPOSITORY_URL,
+    is_git_checkout,
+    open_repository,
+    git_checkout_hint,
+)
 from .i18n import string
 from . import __version__
-from .constants import CELUNE_UA
 from .exceptions import UpdateError
+from .constants import APP_NAME, CELUNE_UA
 from .typing.common import JSONSerializable
 from .paths import project_root, running_compiled
+from .signature import SIGNATURE_NAME, load_signature, verify_manifest_signature
 
-REMOTE_URL = "https://github.com/celunah/celune.git"
+REMOTE_URL = f"{UPSTREAM_REPOSITORY_URL}.git"
 RELEASES_API_URL = "https://api.github.com/repos/celunah/celune/releases?per_page=100"
 UPDATE_MANIFEST_NAME = "celune-update.json"
 SHORT_HASH_LENGTH = 7
 UPDATE_BRANCHES = {"main", "master"}
 DOWNLOAD_TIMEOUT = 30
 FORCE_DISABLE_UPDATES = False
+_UPDATE_INVALID_RELEASE_MESSAGE = "the release ZIP has invalid update metadata"
+_UPDATE_NO_PLATFORM_ZIP_MESSAGE = "the latest SemVer release has no platform ZIP"
+_GIT_CHECKOUT_REQUIRED_MESSAGE = (
+    "This action requires Git and a checkout with a commit; install Git if needed."
+)
 SEMVER_PATTERN = re.compile(
     r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)"
     r"(?:-((?:0|[1-9]\d*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)"
@@ -70,6 +83,8 @@ class BundleManifest:
     revision: str
     artifact: str
     files: dict[str, str]
+    signature_required: bool = False
+    signature_verified: bool = False
 
 
 @dataclass(frozen=True)
@@ -115,13 +130,13 @@ def _parse_release(raw: JSONSerializable) -> Optional[ReleaseInfo]:
     tag = raw.get("tag_name")
     if not isinstance(tag, str) or not _is_semver(tag):
         return None
-    if raw.get("draft") is True:
+    if raw.get("draft"):
         return None
 
     asset_url = ""
     assets = raw.get("assets")
     if isinstance(assets, list):
-        expected_name = f"{_platform_artifact_name()}.zip"
+        expected_name = f"{_platform_artifact_name()}-{tag}-signed.zip"
         for asset in assets:
             if not isinstance(asset, dict):
                 continue
@@ -173,16 +188,38 @@ def _latest_release() -> Optional[ReleaseInfo]:
 
 
 def _run_git(args: list[str], timeout: int = 15) -> str:
-    """Run a Git command on the repository."""
-    result = subprocess.run(
-        ["git", *args],
-        cwd=_repo_root(),
-        check=True,
-        text=True,
-        timeout=timeout,
-        capture_output=True,
-    )
-    return result.stdout.strip()
+    """Run a timeout-bounded GitPython command, including on Windows."""
+    from git import Git
+    from git.exc import GitCommandNotFound
+
+    git = Git(working_dir=str(_repo_root()))
+    try:
+        process = git.execute(
+            ["git", *args],
+            as_process=True,
+        )
+    except GitCommandNotFound as error:
+        raise FileNotFoundError("git") from error
+
+    try:
+        stdout_bytes, stderr_bytes = process.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.communicate()
+        raise
+
+    encoding = locale.getpreferredencoding(False)
+    stdout = stdout_bytes.decode(encoding) if stdout_bytes else ""
+    stderr = stderr_bytes.decode(encoding) if stderr_bytes else ""
+    return_code = process.returncode
+    if return_code:
+        raise subprocess.CalledProcessError(
+            return_code,
+            ["git", *args],
+            output=stdout,
+            stderr=stderr,
+        )
+    return (stdout or "").strip()
 
 
 def _format_git_error(exc: subprocess.CalledProcessError) -> str:
@@ -197,15 +234,6 @@ def _format_git_error(exc: subprocess.CalledProcessError) -> str:
         return f"{command} failed:\n{details}"
 
     return f"{command} failed with exit code {exc.returncode}."
-
-
-def _git_succeeds(args: list[str], timeout: int = 15) -> bool:
-    """Check if Git succeeded this command."""
-    try:
-        _run_git(args, timeout=timeout)
-        return True
-    except subprocess.CalledProcessError:
-        return False
 
 
 def _short_revision(revision: str) -> str:
@@ -284,37 +312,52 @@ def _is_newer_version_tag(candidate: str, current: str) -> bool:
 
 def _current_branch() -> str:
     """Get current branch."""
-    return _run_git(["branch", "--show-current"])
+    with open_repository(_repo_root()) as repository:
+        if repository.head.is_detached:
+            return ""
+        return repository.active_branch.name
 
 
 def _local_tag() -> str:
     """Get current local tag."""
+    from git.exc import GitError
+
     try:
-        return _normalize_tag(_run_git(["describe", "--tags", "--exact-match", "HEAD"]))
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        with open_repository(_repo_root()) as repository:
+            tag = repository.git.describe(
+                "HEAD",
+                tags=True,
+                exact_match=True,
+            )
+        return _normalize_tag(tag)
+    except GitError:
         return ""
 
 
 def _local_revision() -> str:
     """Get current local revision."""
-    return _run_git(["rev-parse", "HEAD"])
+    with open_repository(_repo_root()) as repository:
+        return repository.head.commit.hexsha
 
 
 def _has_local_changes() -> bool:
     """Does the local repository have any changes pending for commit?"""
-    return bool(_run_git(["status", "--porcelain"]))
+    with open_repository(_repo_root()) as repository:
+        return repository.is_dirty(untracked_files=True)
 
 
 def _is_git_checkout() -> bool:
-    """Can the repository be checked out?"""
-    try:
-        return _run_git(["rev-parse", "--is-inside-work-tree"]) == "true"
-    except (
-        subprocess.CalledProcessError,
-        FileNotFoundError,
-        subprocess.TimeoutExpired,
-    ):
-        return False
+    """Return whether the active source root is a committed Git checkout."""
+    return is_git_checkout(_repo_root())
+
+
+def _update_is_fast_forward() -> bool:
+    """Return whether FETCH_HEAD descends from the current local commit."""
+    with open_repository(_repo_root()) as repository:
+        return repository.is_ancestor(
+            repository.head.commit,
+            repository.commit("FETCH_HEAD"),
+        )
 
 
 def _sha256_file(path: Path) -> str:
@@ -339,7 +382,11 @@ def _bundle_checksums(
     return checksums
 
 
-def _parse_bundle_manifest(raw: JSONSerializable) -> Optional[BundleManifest]:
+def _parse_bundle_manifest(
+    raw: JSONSerializable,
+    *,
+    signature_verified: bool = False,
+) -> Optional[BundleManifest]:
     """Convert raw JSON-like data into bundle metadata."""
     if not isinstance(raw, dict):
         return None
@@ -348,11 +395,13 @@ def _parse_bundle_manifest(raw: JSONSerializable) -> Optional[BundleManifest]:
     revision = raw.get("revision")
     artifact = raw.get("artifact")
     files = raw.get("files")
+    signature_required = raw.get("signature_required", False)
     if not (
         isinstance(version, str)
         and isinstance(revision, str)
         and isinstance(artifact, str)
         and isinstance(files, dict)
+        and isinstance(signature_required, bool)
     ):
         return None
 
@@ -369,6 +418,43 @@ def _parse_bundle_manifest(raw: JSONSerializable) -> Optional[BundleManifest]:
         revision=revision,
         artifact=artifact,
         files=normalized_files,
+        signature_required=signature_required,
+        signature_verified=signature_verified,
+    )
+
+
+def _parse_bundle_manifest_data(
+    manifest_data: bytes,
+    signature_data: Optional[bytes],
+    *,
+    require_signature: bool = False,
+) -> Optional[BundleManifest]:
+    """Parse manifest bytes after enforcing their declared signature policy."""
+    try:
+        raw_manifest = json.loads(manifest_data)
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(raw_manifest, dict):
+        return None
+
+    signature_required = raw_manifest.get("signature_required", False)
+    if not isinstance(signature_required, bool):
+        return None
+    if require_signature and not signature_required:
+        return None
+
+    signature_verified = False
+    if require_signature or signature_required or signature_data is not None:
+        if signature_data is None or not verify_manifest_signature(
+            manifest_data,
+            signature_data,
+        ):
+            return None
+        signature_verified = True
+
+    return _parse_bundle_manifest(
+        raw_manifest,
+        signature_verified=signature_verified,
     )
 
 
@@ -378,10 +464,13 @@ def _load_local_bundle_manifest(
     """Load the local compiled bundle manifest when available."""
     manifest_file = _manifest_path(bundle_dir)
     try:
-        payload = json.loads(manifest_file.read_text(encoding="utf-8"))
-    except (FileNotFoundError, OSError, json.JSONDecodeError):
+        manifest_data = manifest_file.read_bytes()
+    except OSError:
         return None
-    return _parse_bundle_manifest(payload)
+    return _parse_bundle_manifest_data(
+        manifest_data,
+        load_signature(manifest_file.with_name(SIGNATURE_NAME)),
+    )
 
 
 def _download_to_file(url: str, destination: Path) -> None:
@@ -400,23 +489,37 @@ def _download_to_file(url: str, destination: Path) -> None:
 def _download_release_zip(release: ReleaseInfo, destination: Path) -> None:
     """Download the current-platform ZIP attached to one GitHub release."""
     if not release.asset_url:
-        raise UpdateError(string("cli.update_no_platform_zip"))
+        raise UpdateError(_UPDATE_NO_PLATFORM_ZIP_MESSAGE)
     _download_to_file(release.asset_url, destination)
 
 
-def _manifest_from_zip(zip_path: Path) -> Optional[BundleManifest]:
+def _manifest_from_zip(
+    zip_path: Path,
+    *,
+    require_signature: bool = False,
+) -> Optional[BundleManifest]:
     """Load bundled update metadata from an artifact ZIP file."""
     try:
         with zipfile.ZipFile(zip_path) as archive:
+            manifest_data: Optional[bytes] = None
+            signature_data: Optional[bytes] = None
             for name in archive.namelist():
-                if Path(name).name != UPDATE_MANIFEST_NAME:
-                    continue
-                with archive.open(name) as handle:
-                    payload = json.loads(handle.read().decode("utf-8"))
-                return _parse_bundle_manifest(payload)
-    except (OSError, zipfile.BadZipFile, json.JSONDecodeError):
+                basename = Path(name).name
+                if basename == UPDATE_MANIFEST_NAME:
+                    with archive.open(name) as handle:
+                        manifest_data = handle.read()
+                elif basename == SIGNATURE_NAME:
+                    with archive.open(name) as handle:
+                        signature_data = handle.read()
+            if manifest_data is None:
+                return None
+            return _parse_bundle_manifest_data(
+                manifest_data,
+                signature_data,
+                require_signature=require_signature,
+            )
+    except (OSError, zipfile.BadZipFile, RuntimeError):
         return None
-    return None
 
 
 def _read_remote_bundle_manifest(release: ReleaseInfo) -> Optional[BundleManifest]:
@@ -428,7 +531,7 @@ def _read_remote_bundle_manifest(release: ReleaseInfo) -> Optional[BundleManifes
             _download_release_zip(release, zip_path)
         except (OSError, UpdateError):
             return None
-        return _manifest_from_zip(zip_path)
+        return _manifest_from_zip(zip_path, require_signature=True)
 
 
 def _compiled_bundle_matches_manifest(
@@ -438,6 +541,43 @@ def _compiled_bundle_matches_manifest(
     """Return whether the installed bundle matches the supplied manifest."""
     local_files = _bundle_checksums(bundle_dir, list(manifest.files))
     return bool(local_files) and local_files == manifest.files
+
+
+def verify_local_bundle(bundle_dir: Optional[Path] = None) -> None:
+    """Verify a signed compiled install or warn when it has no signature.
+
+    Args:
+        bundle_dir: Optional directory containing the compiled Celune bundle.
+
+    Raises:
+        UpdateError: the local manifest signature or a required file is invalid
+    """
+    resolved_bundle = bundle_dir or _bundle_dir()
+    manifest_path = _manifest_path(resolved_bundle)
+    signature_path = manifest_path.with_name(SIGNATURE_NAME)
+    if not signature_path.is_file():
+        print(
+            string("cli.unsigned_release_warning", app_name=APP_NAME),
+            file=sys.stderr,
+        )
+        return
+
+    try:
+        manifest_data = manifest_path.read_bytes()
+        signature_data = signature_path.read_bytes()
+    except OSError as exc:
+        raise UpdateError(_UPDATE_INVALID_RELEASE_MESSAGE) from exc
+
+    manifest = _parse_bundle_manifest_data(
+        manifest_data,
+        signature_data,
+        require_signature=True,
+    )
+    if manifest is None or not _compiled_bundle_matches_manifest(
+        resolved_bundle,
+        manifest,
+    ):
+        raise UpdateError(_UPDATE_INVALID_RELEASE_MESSAGE)
 
 
 def _release_manifest_matches(
@@ -513,6 +653,15 @@ def check_for_update() -> Optional[UpdateInfo]:
         Optional[UpdateInfo]: Metadata describing the available update, or ``None`` when no safe update path is
         currently available.
     """
+    try:
+        from git.exc import GitError
+    except ModuleNotFoundError as module:
+        print(
+            f"{string('celune.cannot_check_updates')}: {module}",
+            file=sys.stderr,
+        )
+        return None
+
     if FORCE_DISABLE_UPDATES:
         return None
 
@@ -534,9 +683,7 @@ def check_for_update() -> Optional[UpdateInfo]:
         local_revision = _local_revision()
         local_tag = _local_tag()
     except (
-        subprocess.CalledProcessError,
-        subprocess.TimeoutExpired,
-        FileNotFoundError,
+        GitError,
         ValueError,
     ):
         return None
@@ -571,7 +718,72 @@ def _extract_artifact_root(zip_path: Path, destination: Path) -> Path:
     for manifest in destination.rglob(UPDATE_MANIFEST_NAME):
         return manifest.parent
 
-    raise UpdateError(string("cli.update_missing_metadata"))
+    raise UpdateError("downloaded artifact is missing update metadata")
+
+
+def _validate_extracted_update(
+    extraction_root: Path,
+    root: Path,
+    manifest: BundleManifest,
+) -> None:
+    """Verify extracted files match the authenticated update manifest."""
+    extraction_root = extraction_root.resolve()
+    root = root.resolve()
+    manifest_path = root / UPDATE_MANIFEST_NAME
+    signature_path = root / SIGNATURE_NAME
+    if (
+        manifest_path.is_symlink()
+        or signature_path.is_symlink()
+        or not manifest_path.is_file()
+        or not signature_path.is_file()
+    ):
+        raise UpdateError(_UPDATE_INVALID_RELEASE_MESSAGE)
+
+    extracted_manifest = _parse_bundle_manifest_data(
+        manifest_path.read_bytes(),
+        signature_path.read_bytes(),
+        require_signature=True,
+    )
+    if extracted_manifest != manifest:
+        raise UpdateError(_UPDATE_INVALID_RELEASE_MESSAGE)
+
+    for path in extraction_root.rglob("*"):
+        if path.is_symlink():
+            raise UpdateError(_UPDATE_INVALID_RELEASE_MESSAGE)
+        if path.is_dir():
+            if path.resolve() != root and path.resolve() not in root.parents:
+                raise UpdateError(_UPDATE_INVALID_RELEASE_MESSAGE)
+        elif path.is_file():
+            if path.parent.resolve() != root:
+                raise UpdateError(_UPDATE_INVALID_RELEASE_MESSAGE)
+        else:
+            raise UpdateError(_UPDATE_INVALID_RELEASE_MESSAGE)
+
+    reserved_names = {UPDATE_MANIFEST_NAME, SIGNATURE_NAME}
+    expected_names = set(manifest.files)
+    for filename, digest in manifest.files.items():
+        if (
+            not filename
+            or PurePosixPath(filename).name != filename
+            or PureWindowsPath(filename).name != filename
+            or filename in reserved_names
+            or re.fullmatch(r"[0-9a-f]{64}", digest) is None
+        ):
+            raise UpdateError(_UPDATE_INVALID_RELEASE_MESSAGE)
+
+    actual_names: set[str] = set()
+    for path in root.iterdir():
+        if path.is_symlink() or not path.is_file():
+            raise UpdateError(_UPDATE_INVALID_RELEASE_MESSAGE)
+        actual_names.add(path.name)
+
+    if actual_names != expected_names | reserved_names:
+        raise UpdateError(_UPDATE_INVALID_RELEASE_MESSAGE)
+    if any(
+        _sha256_file(root / filename) != digest
+        for filename, digest in manifest.files.items()
+    ):
+        raise UpdateError(_UPDATE_INVALID_RELEASE_MESSAGE)
 
 
 def _validate_zip_member(member: zipfile.ZipInfo, destination: Path) -> None:
@@ -588,21 +800,17 @@ def _validate_zip_member(member: zipfile.ZipInfo, destination: Path) -> None:
         or windows_path.drive
         or any(part == ".." for part in member_path.parts)
     ):
-        raise UpdateError(
-            string("cli.update_unsafe_zip_member_path", member=repr(member_name))
-        )
+        raise UpdateError(f"unsafe ZIP member path: {member_name!r}")
 
     if stat.S_ISLNK(member.external_attr >> 16):
-        raise UpdateError(
-            string("cli.update_unsafe_zip_symbolic_link", member=repr(member_name))
-        )
+        raise UpdateError(f"unsafe ZIP symbolic link: {member_name!r}")
 
     candidate = (destination / Path(*member_path.parts)).resolve()
     try:
         candidate.relative_to(destination)
     except ValueError as exc:
         raise UpdateError(
-            string("cli.update_zip_member_escape", member=repr(member_name))
+            f"ZIP member escapes extraction directory: {member_name!r}"
         ) from exc
 
 
@@ -627,7 +835,7 @@ def _apply_compiled_update(install_dir: Optional[Path] = None) -> None:
     artifact = _platform_artifact_name()
     release = _get_latest_release()
     if release is None or not release.asset_url:
-        raise UpdateError(string("cli.update_no_platform_zip"))
+        raise UpdateError(_UPDATE_NO_PLATFORM_ZIP_MESSAGE)
 
     with tempfile.TemporaryDirectory(prefix="celune-update-") as temp_dir:
         temp_root = Path(temp_dir)
@@ -635,18 +843,27 @@ def _apply_compiled_update(install_dir: Optional[Path] = None) -> None:
         try:
             _download_release_zip(release, zip_path)
         except OSError as exc:
-            raise UpdateError(string("cli.update_download_failed")) from exc
+            raise UpdateError("Could not download the release ZIP.") from exc
 
-        release_manifest = _manifest_from_zip(zip_path)
+        release_manifest = _manifest_from_zip(zip_path, require_signature=True)
         if release_manifest is None or not _release_manifest_matches(
             release, release_manifest
         ):
-            raise UpdateError(string("cli.update_invalid_release"))
+            raise UpdateError(_UPDATE_INVALID_RELEASE_MESSAGE)
 
         try:
             extracted_root = _extract_artifact_root(zip_path, temp_root / "artifact")
         except (OSError, zipfile.BadZipFile, UpdateError) as exc:
-            raise UpdateError(string("cli.update_unpack_failed")) from exc
+            raise UpdateError("Could not unpack the release ZIP.") from exc
+
+        try:
+            _validate_extracted_update(
+                temp_root / "artifact",
+                extracted_root,
+                release_manifest,
+            )
+        except (OSError, UpdateError) as exc:
+            raise UpdateError(_UPDATE_INVALID_RELEASE_MESSAGE) from exc
 
         for source in extracted_root.iterdir():
             _replace_path(source, bundle_dir / source.name)
@@ -659,28 +876,24 @@ def update_to_latest(install_dir: Optional[Path] = None) -> None:
         install_dir: Optional compiled-install directory to replace in place.
 
     Raises:
-        UpdateError: Raised when the repository or packaged install cannot be updated safely.
+        UpdateError: if the repository or packaged install cannot be updated safely
     """
+    from git.exc import GitError
+
     if running_compiled() or install_dir is not None:
         _apply_compiled_update(install_dir=install_dir)
         return
 
     if not _is_git_checkout():
-        raise UpdateError("did not find a repository")
+        raise UpdateError(f"{_GIT_CHECKOUT_REQUIRED_MESSAGE}\n{git_checkout_hint()}")
 
     if _has_local_changes():
         raise UpdateError("repository not committed")
 
     try:
         branch = _current_branch()
-    except subprocess.CalledProcessError as exc:
-        raise UpdateError(_format_git_error(exc)) from exc
-    except subprocess.TimeoutExpired as exc:
-        raise UpdateError(
-            f"timed out checking the current branch after {exc.timeout} seconds"
-        ) from exc
-    except FileNotFoundError as exc:
-        raise UpdateError("git is not available") from exc
+    except GitError as exc:
+        raise UpdateError(str(exc)) from exc
 
     if branch and branch not in UPDATE_BRANCHES:
         raise UpdateError(f"automatic updates are disabled on branch '{branch}'")
@@ -691,7 +904,7 @@ def update_to_latest(install_dir: Optional[Path] = None) -> None:
         or not release.asset_url
         or not _is_newer_version_tag(release.version, _base_version(__version__))
     ):
-        raise UpdateError(string("cli.update_no_newer_release"))
+        raise UpdateError("no newer SemVer release ZIP is available")
 
     fetch_ref = f"refs/tags/{release.tag}"
 
@@ -704,18 +917,14 @@ def update_to_latest(install_dir: Optional[Path] = None) -> None:
             f"timed out fetching the repository after {exc.timeout} seconds"
         ) from exc
     except FileNotFoundError as exc:
-        raise UpdateError("git is not available") from exc
+        raise UpdateError(
+            f"{_GIT_CHECKOUT_REQUIRED_MESSAGE}\n{git_checkout_hint()}"
+        ) from exc
 
     try:
-        can_fast_forward = _git_succeeds(
-            ["merge-base", "--is-ancestor", "HEAD", "FETCH_HEAD"]
-        )
-    except subprocess.TimeoutExpired as exc:
-        raise UpdateError(
-            f"timed out validating the update after {exc.timeout} seconds"
-        ) from exc
-    except FileNotFoundError as exc:
-        raise UpdateError("git is not available") from exc
+        can_fast_forward = _update_is_fast_forward()
+    except GitError as exc:
+        raise UpdateError(str(exc)) from exc
 
     if not can_fast_forward:
         raise UpdateError("repository is not able to be fast-forwarded")
@@ -727,7 +936,9 @@ def update_to_latest(install_dir: Optional[Path] = None) -> None:
     except subprocess.TimeoutExpired as exc:
         raise UpdateError(f"timed out merging after {exc.timeout} seconds") from exc
     except FileNotFoundError as exc:
-        raise UpdateError("git is not available") from exc
+        raise UpdateError(
+            f"{_GIT_CHECKOUT_REQUIRED_MESSAGE}\n{git_checkout_hint()}"
+        ) from exc
 
 
 def _wait_for_pid_exit(pid: int, timeout: float = 120.0) -> None:

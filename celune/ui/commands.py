@@ -6,19 +6,15 @@ from __future__ import annotations
 import os
 import asyncio
 import threading
+from typing import TYPE_CHECKING, Optional, cast
 from pathlib import Path
 from urllib.parse import urlparse
 from collections.abc import Callable, Awaitable
-from typing import TYPE_CHECKING, Optional, cast
 
 import soundfile as sf
 
 from ..i18n import string, tagged_string
-from ..paths import project_root
-from ..constants import APP_NAME
-from ..audio.server import restart_audio_server
-from ..exceptions import InvalidExtensionError
-from ..persona.capabilities import PersonaCapabilities
+from ..vram import vram_report_int, format_vram_bytes, runtime_vram_report
 from ..utils import (
     available,
     replace_ipa,
@@ -26,12 +22,14 @@ from ..utils import (
     format_error_message,
 )
 from ..cevoice import active_bundle_path, resolve_bundle_path
-from ..threads import run_in_daemon_thread
-from ..vc import (
-    VC_PITCH_SHIFT_MAX,
-    VC_PITCH_SHIFT_MIN,
-    clamp_vc_pitch_shift,
-)
+from ..constants import APP_NAME
+from ..exceptions import InvalidExtensionError
+from ..audio.server import restart_audio_server
+from ..typing.modes import OperationState
+from ..core.lifecycle import active_runtime_backend_name
+from ..core.concurrency import run_in_daemon_thread
+from ..pipeline.playback import close_stream
+from ..persona.capabilities import PersonaCapabilities
 
 if TYPE_CHECKING:
     from .app import CeluneUI
@@ -39,6 +37,7 @@ if TYPE_CHECKING:
 
 IMAGE_EXTENSIONS = {".jpeg", ".jpg", ".png", ".webp"}
 VIDEO_EXTENSIONS = {".mp4", ".webm"}
+_TUTORIAL_SPEECH_TIMEOUT = 180.0
 
 
 def _run_runtime_async(
@@ -71,6 +70,41 @@ async def _run_runtime_async_on_loop(
         method = cast(Callable[..., Awaitable[bool]], async_method)
         return await method(*method_args)
     return bool(await run_in_daemon_thread(getattr(target, sync_name), *method_args))
+
+
+def _vram_component_label(name: str) -> str:
+    """Return the localized display label for one runtime component."""
+    category, separator, backend = name.partition("/")
+    if category == "tts" and separator:
+        return string("commands.vram_text_to_speech", backend=backend)
+    if category == "vc" and separator:
+        return string("commands.vram_speech_input", backend=backend)
+    if category == "speech" and separator:
+        return string("commands.vram_speech_input", backend=backend)
+    if name == "persona":
+        return string("commands.vram_language_model")
+    if name == "normalizer":
+        return string("commands.vram_normalizer")
+    if name == "agent":
+        return string("commands.vram_agent")
+    return name
+
+
+def _vram_memory_values(
+    allocated: int,
+    reserved: int,
+    peak: int,
+) -> tuple[str, str, str]:
+    """Format one component's memory values for the VRAM report."""
+    allocated_value = format_vram_bytes(allocated)
+    if allocated == reserved == peak:
+        not_applicable = string("commands.vram_not_applicable")
+        return allocated_value, not_applicable, not_applicable
+    return (
+        allocated_value,
+        format_vram_bytes(reserved),
+        format_vram_bytes(peak),
+    )
 
 
 def _attachment_source(path: Path) -> str:
@@ -108,94 +142,135 @@ def _remote_attachment_kind(source: str) -> Optional[str]:
     return None
 
 
+def _run_tutorial_sequence(
+    ui: CeluneUI,
+    token: int,
+    steps: tuple[
+        tuple[str, Optional[Callable[[], None]], Optional[str]],
+        ...,
+    ],
+) -> None:
+    """Speak tutorial sections in sequence and synchronize their UI actions.
+
+    Args:
+        ui: UI that owns the tutorial state and actions.
+        token: Cancellation token captured when this tutorial began.
+        steps: Spoken utterances, actions, and optional caption text overrides.
+    """
+
+    def is_active() -> bool:
+        return token == ui.tutorial_token() and ui.tutorial_active()
+
+    try:
+        from ..pipeline.submission import (
+            play_tutorial_sections,
+            prepare_tutorial_sections,
+        )
+
+        sections = tuple(text for text, _action, _display_text in steps)
+        display_sections = tuple(
+            text if display_text is None else display_text
+            for text, _action, display_text in steps
+        )
+        audio_sections = prepare_tutorial_sections(
+            ui.celune,
+            sections,
+            is_active,
+            _TUTORIAL_SPEECH_TIMEOUT * max(1, len(sections)),
+            display_sections,
+        )
+        if not is_active():
+            return
+        if audio_sections is None:
+            raise TimeoutError("tutorial speech preparation did not finish")
+
+        def start_section(index: int) -> None:
+            action = steps[index][1]
+            if action is not None:
+                ui.call_from_thread(action)
+
+        if not play_tutorial_sections(
+            ui.celune,
+            sections,
+            audio_sections,
+            is_active,
+            start_section,
+            _TUTORIAL_SPEECH_TIMEOUT,
+            display_sections=display_sections,
+        ):
+            if not is_active():
+                return
+            raise TimeoutError("tutorial speech did not finish")
+        if ui.celune.cur_state == "error":
+            raise RuntimeError("tutorial speech playback failed")
+        if is_active():
+            ui.call_from_thread(ui.finish_tutorial)
+    except Exception as exc:
+        if not is_active():
+            return
+        ui.safe_log(
+            format_error_message(
+                string("commands.tutorial_failed"),
+                exc,
+                getattr(ui.celune, "log_level", "info"),
+            ),
+            "warning",
+        )
+        ui.call_from_thread(ui.cancel_tutorial, True)
+
+
 def tutorial(ui: CeluneUI) -> None:
-    """Run actions related to the tutorial.
+    """Speak the localized tutorial through the active voice.
 
     Args:
         ui: The instance of CeluneUI that the tutorial will interact with.
     """
-    assets = project_root() / "celune" / "assets"
-    if not assets.exists():
-        assets = project_root() / "assets"
-    if not assets.exists():
-        ui.safe_log(string("commands.no_tutorial_assets"), "warning")
-        return
 
     def send_help() -> None:
         """Submit the tutorial help command after its typing animation."""
         ui.type_and_send("/help", process_commands=True)
 
-    clips = (
-        (assets / "tutorial1.wav", None),
-        (assets / "tutorial2.wav", lambda: ui.pulse_border("#input")),
-        (assets / "tutorial3.wav", lambda: ui.pulse_border("#style")),
-        (assets / "tutorial4.wav", send_help),
+    steps = (
+        (string("commands.tutorial_intro"), None, None),
+        (string("commands.tutorial_input"), lambda: ui.pulse_border("#input"), None),
+        (string("commands.tutorial_voice"), lambda: ui.pulse_border("#style"), None),
+        (string("commands.tutorial_help"), send_help, None),
+        (string("commands.tutorial_help_simple"), None, None),
+        (string("commands.tutorial_help_vibe"), None, None),
+        (string("commands.tutorial_extensions"), None, None),
+        (string("commands.tutorial_extension_example"), None, None),
+        (string("commands.tutorial_extension_code"), None, None),
+        (string("commands.tutorial_local_api"), None, None),
+        (string("commands.tutorial_local_api_usage"), None, None),
+        (string("commands.tutorial_voice_self", app_name=APP_NAME), None, None),
+        (string("commands.tutorial_voice_default", app_name=APP_NAME), None, None),
+        (
+            string("commands.tutorial_voice_pack"),
+            None,
+            string("commands.tutorial_voice_pack_display"),
+        ),
+        (string("commands.tutorial_voice_pack_continued"), None, None),
+        (string("commands.tutorial_persona"), None, None),
+        (string("commands.tutorial_persona_chat"), None, None),
+        (string("commands.tutorial_persona_speech"), None, None),
+        (string("commands.tutorial_persona_invitation"), None, None),
+        (string("commands.tutorial_agent"), None, None),
+        (string("commands.tutorial_agent_abilities"), None, None),
+        (string("commands.tutorial_agent_actions"), None, None),
+        (string("commands.tutorial_can_do_more"), None, None),
+        (string("commands.tutorial_variety", app_name=APP_NAME), None, None),
+        (string("commands.tutorial_variety_many"), None, None),
+        (string("commands.tutorial_supported"), None, None),
+        (string("commands.tutorial_wrap_up"), None, None),
+        (string("commands.tutorial_wait"), None, None),
     )
 
     ui.begin_tutorial()
-    tutorial_token = ui.tutorial_token
-
-    def prepare_and_schedule() -> None:
-        def wav_duration(pth: Path) -> float:
-            if not pth.exists():
-                raise FileNotFoundError(f"tutorial clip not found: {pth}")
-
-            info = sf.info(str(pth))
-            return info.frames / info.samplerate
-
-        def play_tutorial_clip(pth: Path) -> None:
-            def worker() -> None:
-                try:
-                    ui.celune.play(str(pth))
-                except Exception as exc:
-                    ui.safe_log(
-                        format_error_message(
-                            string("commands.tutorial_playback_failed"),
-                            exc,
-                            getattr(ui.celune, "log_level", "info"),
-                        ),
-                        "warning",
-                    )
-                    ui.call_from_thread(ui.cancel_tutorial, True)
-
-            threading.Thread(target=worker, daemon=True).start()
-
-        try:
-            clip_durations = tuple(
-                (path, action, wav_duration(path)) for path, action in clips
-            )
-        except Exception as e:
-            ui.safe_log(
-                format_error_message(
-                    string("commands.tutorial_failed"),
-                    e,
-                    getattr(ui.celune, "log_level", "info"),
-                ),
-                "warning",
-            )
-            ui.call_from_thread(ui.cancel_tutorial, True)
-            return
-
-        def schedule() -> None:
-            if tutorial_token != ui.tutorial_token or not ui.tutorial_active:
-                return
-
-            elapsed = 0.0
-            gap = 0.15
-
-            for path, action, duration in clip_durations:
-                ui.tutorial_after(elapsed, lambda pth=path: play_tutorial_clip(pth))
-
-                if action is not None:
-                    ui.tutorial_after(elapsed, action)
-
-                elapsed += duration + gap
-
-            ui.tutorial_after(elapsed, ui.finish_tutorial)
-
-        ui.call_from_thread(schedule)
-
-    threading.Thread(target=prepare_and_schedule, daemon=True).start()
+    threading.Thread(
+        target=_run_tutorial_sequence,
+        args=(ui, ui.tutorial_token(), steps),
+        daemon=True,
+    ).start()
 
 
 def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
@@ -208,6 +283,13 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
     """
 
     ui.input_box.load_text("")
+    operation_state = getattr(ui.celune, "operation_state", OperationState.NORMAL)
+    if operation_state is OperationState.SEMI_FATAL and command != "settings":
+        ui.safe_log(string("operation_state.recovery_settings_only"), "warning")
+        return
+    if operation_state in {OperationState.FATAL, OperationState.STOPPED}:
+        ui.safe_log(string("operation_state.unavailable"), "warning")
+        return
 
     def refresh_vc_controls() -> None:
         refresh = getattr(ui, "refresh_vc_controls", None)
@@ -232,20 +314,6 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
             )
         )
 
-    def set_vc_pitch_shift(svalue: int) -> None:
-        setter = getattr(ui, "set_vc_pitch_shift", None)
-        if callable(setter):
-            setter(svalue)
-            return
-
-        clamped = clamp_vc_pitch_shift(svalue)
-        ui.celune.vc_pitch_shift = clamped
-        vc_backend = getattr(ui.celune, "vc_backend", None)
-        if vc_backend is not None and available("pitch_shift", obj=vc_backend):
-            vc_backend.pitch_shift = clamped
-        refresh_vc_controls()
-        ui.safe_log(string("commands.vcpitch_set", value=clamped))
-
     if command == "help":
         ui.safe_log(string("commands.help_header", app_name=APP_NAME))
         ui.safe_log(string("commands.help_available"))
@@ -266,7 +334,7 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
         if getattr(ui.celune, "input_mode", "text_to_speech") == "voice_conversion":
             ui.safe_log(string("commands.help_vc"))
             ui.safe_log(string("commands.help_vcmode"))
-            ui.safe_log(string("commands.help_vcpitch"))
+            ui.safe_log(string("commands.help_vcdebug"))
 
         if ui.celune.backend.name == "qwen3":
             ui.safe_log(string("commands.help_xvectoronly"))
@@ -281,9 +349,86 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
         ui.safe_log(string("commands.help_tutorial", app_name=APP_NAME))
         ui.safe_log(string("commands.help_stop"))
         ui.safe_log(string("commands.help_restart_audio"))
+        ui.safe_log(string("commands.help_vram"))
         ui.safe_log(string("commands.help_settings"))
         ui.safe_log(string("commands.help_exit", app_name=APP_NAME))
         ui.safe_log(string("commands.help_help"))
+
+        if getattr(ui.celune.backend, "singing", False):
+            ui.safe_log(string("commands.help_cesn_header"))
+            ui.safe_log(string("commands.help_cesn_order"))
+            ui.safe_log(string("commands.help_cesn_language"))
+            ui.safe_log(string("commands.help_cesn_music"))
+            ui.safe_log(string("commands.help_cesn_notes"))
+            ui.safe_log(string("commands.help_cesn_rest"))
+            ui.safe_log(string("commands.help_cesn_ipa"))
+            ui.safe_log(string("commands.help_cesn_slide"))
+            ui.safe_log(string("commands.help_cesn_slur"))
+            ui.safe_log(string("commands.help_cesn_tuplet"))
+            ui.safe_log(string("commands.help_cesn_singer"))
+            ui.safe_log(string("commands.help_cesn_tutorial"))
+
+        return
+    if command == "vram":
+        speech_transcriber = getattr(ui, "_speech_transcriber", None)
+        speech_model = getattr(speech_transcriber, "loaded_model", None)
+        report = runtime_vram_report(
+            ui.celune,
+            {"speech/whisper": speech_model},
+        )
+        ui.safe_log(string("commands.vram_header"))
+        components = report.get("components")
+        entries: list[tuple[str, bool, int, int, int, str]] = []
+        if isinstance(components, list):
+            for component in components:
+                if not isinstance(component, dict):
+                    continue
+                raw_name = component.get("name")
+                if not isinstance(raw_name, str) or component.get("loaded") is not True:
+                    continue
+                name = _vram_component_label(raw_name)
+                component_available = component.get("available") is True
+                device_value = component.get("device")
+                device = (
+                    device_value
+                    if isinstance(device_value, str)
+                    else string("commands.vram_device_unknown")
+                )
+                entries.append(
+                    (
+                        name,
+                        component_available,
+                        vram_report_int(component, "allocated_bytes"),
+                        vram_report_int(component, "reserved_bytes"),
+                        vram_report_int(component, "peak_allocated_bytes"),
+                        device,
+                    )
+                )
+
+        label_width = max((len(f"{name}:") for name, *_ in entries), default=0)
+        for name, component_available, allocated, reserved, peak, device in entries:
+            padded_name = f"{name}:".ljust(label_width)
+            if not component_available:
+                ui.safe_log(
+                    string("commands.vram_component_unavailable", name=padded_name)
+                )
+                continue
+            allocated_value, reserved_value, peak_value = _vram_memory_values(
+                allocated,
+                reserved,
+                peak,
+            )
+            ui.safe_log(
+                string(
+                    "commands.vram_component",
+                    name=padded_name,
+                    allocated=allocated_value,
+                    reserved=reserved_value,
+                    peak=peak_value,
+                    device=device,
+                )
+            )
+        ui.safe_log(string("commands.vram_legend"))
         return
     if command == "settings":
         open_settings = getattr(ui, "open_settings_menu", None)
@@ -302,9 +447,8 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
                 return
 
             celune = getattr(ui, "celune", None)
-            close_stream = getattr(celune, "_close_stream", None)
-            if callable(close_stream):
-                close_stream(abort=True)
+            if celune is not None:
+                close_stream(celune, abort=True)
 
             try_play_signal = getattr(celune, "try_play_signal", None)
             if not callable(try_play_signal) or not try_play_signal("readiness"):
@@ -453,15 +597,7 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
 
         backend_name = args[0]
 
-        active_backend = getattr(ui.celune, "_active_runtime_backend_name", None)
-        if callable(active_backend):
-            active_backend_name = active_backend()
-        elif getattr(ui.celune, "input_mode", "text_to_speech") == "voice_conversion":
-            backend = getattr(ui.celune, "vc_backend", None)
-            active_backend_name = getattr(backend, "name", "")
-        else:
-            backend = getattr(ui.celune, "backend", None)
-            active_backend_name = getattr(backend, "name", "")
+        active_backend_name = active_runtime_backend_name(ui.celune)
         if backend_name == active_backend_name:
             ui.safe_log(string("commands.backend_already_loaded"), "warning")
             return
@@ -657,38 +793,42 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
 
         ui.safe_log(string("commands.usage_vcmode"), "warning")
         return
-    if command == "vcpitch":
+    if command == "vcdebug":
         if getattr(ui.celune, "input_mode", "text_to_speech") != "voice_conversion":
             ui.safe_log(string("commands.voice_conversion_only"), "warning")
             return
 
-        if not args:
-            ui.safe_log(string("commands.usage_vcpitch"), "warning")
+        if len(args) != 1 or args[0].lower() not in {"on", "off"}:
+            ui.safe_log(string("commands.usage_vcdebug"), "warning")
             return
 
-        raw_value = args[0].lower()
-        if raw_value == "clear":
-            set_vc_pitch_shift(0)
+        if args[0].lower() == "on":
+            if getattr(ui, "_vc_debug_capture", None) is not None:
+                ui.safe_log(string("commands.vc_debug_already_enabled"), "warning")
+                return
+            try:
+                from ..vc import VCDebugCapture
+
+                capture = VCDebugCapture()
+            except Exception as exc:
+                ui.safe_log(
+                    format_error_message(
+                        string("commands.vc_debug_start_failed"),
+                        exc,
+                        getattr(ui.celune, "log_level", "info"),
+                    ),
+                    "error",
+                )
+                return
+            ui._vc_debug_capture = capture
+            ui.safe_log(string("commands.vc_debug_started"))
             return
 
-        try:
-            semitones = int(raw_value)
-        except ValueError:
-            ui.safe_log(string("commands.usage_vcpitch"), "warning")
+        if getattr(ui, "_vc_debug_capture", None) is None:
+            ui.safe_log(string("commands.vc_debug_not_enabled"), "warning")
             return
-
-        if not VC_PITCH_SHIFT_MIN <= semitones <= VC_PITCH_SHIFT_MAX:
-            ui.safe_log(
-                string(
-                    "commands.vcpitch_range",
-                    min_value=VC_PITCH_SHIFT_MIN,
-                    max_value=VC_PITCH_SHIFT_MAX,
-                ),
-                "warning",
-            )
-            return
-
-        set_vc_pitch_shift(semitones)
+        ui.safe_log(string("commands.vc_debug_stopping"))
+        ui.stop_vc_debug_capture(announce=True)
         return
     if command == "xvectoronly":
         backend = ui.celune.backend
@@ -932,6 +1072,11 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
         ui.safe_log(string("commands.seed_set", value=value))
         return
     if command == "tutorial":
+        singing = getattr(ui.celune.backend, "singing", False)
+        if singing:
+            ui.safe_log(string("commands.tutorial_unavailable_singing"))
+            return
+
         ui.safe_log(string("commands.tutorial_activated", app_name=APP_NAME))
         tutorial(ui)
         return

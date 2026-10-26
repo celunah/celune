@@ -1,18 +1,16 @@
 # SPDX-License-Identifier: Apache-2.0
 """Runtime filesystem paths and global Hugging Face runtime setup for Celune."""
 
-import contextlib
 import os
-from pathlib import Path
-import shutil
 import sys
+import time
+import shutil
 import sysconfig
 import threading
-import time
+import contextlib
+from pathlib import Path
+from typing import Union, Literal, Optional
 from collections.abc import Callable, Generator
-from typing import Optional
-
-from platformdirs import user_data_dir
 
 from .constants import APP_NAME, APP_SLUG
 
@@ -22,6 +20,27 @@ _HF_HUB_CACHE_ENV = "HF_HUB_CACHE"
 _HF_HUB_DISABLE_PROGRESS_BARS_ENV = "HF_HUB_DISABLE_PROGRESS_BARS"
 _HF_PROGRESS_PATCH_LOCK = threading.RLock()
 _LEGACY_APP_DATA_MIGRATIONS = (("backends", ("environments",)),)
+
+
+def user_data_dir(
+    appname: Optional[str] = None,
+    appauthor: Optional[Union[str, Literal[False]]] = None,
+    version: Optional[str] = None,
+    roaming: bool = False,
+    ensure_exists: bool = False,
+    use_site_for_root: bool = False,
+) -> str:
+    """Resolve a platform-specific user-data directory on demand."""
+    from platformdirs import user_data_dir as resolve_user_data_dir
+
+    return resolve_user_data_dir(
+        appname=appname,
+        appauthor=appauthor,
+        version=version,
+        roaming=roaming,
+        ensure_exists=ensure_exists,
+        use_site_for_root=use_site_for_root,
+    )
 
 
 def running_compiled() -> bool:
@@ -160,6 +179,7 @@ def configure_numba_cache() -> Path:
     return cache_dir
 
 
+# noinspection PyPep8Naming
 @contextlib.contextmanager
 def huggingface_progress(
     callback: Optional[Callable[[Optional[float], Optional[float]], None]],
@@ -348,6 +368,18 @@ def config_path(create_parent: bool = False) -> Path:
     return path
 
 
+def api_key_path(create_parent: bool = False) -> Path:
+    """Return the private file path used for Celune's generated API key.
+
+    Args:
+        create_parent: Whether the app-data directory should be created first.
+
+    Returns:
+        Path: Celune's generated API-key file path.
+    """
+    return app_data_dir(create=create_parent) / "api.key"
+
+
 def traceback_path(create_parent: bool = False) -> Path:
     """Return the traceback capture file path.
 
@@ -361,6 +393,11 @@ def traceback_path(create_parent: bool = False) -> Path:
     if create_parent:
         path.parent.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def model_consent_path() -> Path:
+    """Return the app-data path used for model-license acknowledgements."""
+    return app_data_dir() / "model-consents.json"
 
 
 def main_window_log_path(create_parent: bool = False) -> Path:

@@ -1,0 +1,102 @@
+# SPDX-License-Identifier: Apache-2.0
+"""Compatibility boundaries for optional runtime integrations."""
+
+import sys
+import warnings
+import importlib
+import threading
+from enum import Enum
+from typing import cast
+from contextlib import contextmanager
+from collections.abc import Callable, Generator
+
+# noinspection PyProtectedMember
+import torch.utils._pytree as pytree
+
+__all__ = [
+    "suppress_torchao_quantization_syntax_warning",
+    "torchao_compatibility",
+]
+
+
+_TORCHAO_IMPORT_LOCK = threading.RLock()
+_PYTREE_REGISTER_CONSTANT_NAME = "register_constant"
+_TORCHAO_DECORATOR_NAME = "register_as_pytree_constant"
+
+
+def _is_native_opaque_enum(value: type) -> bool:
+    """Return whether PyTorch natively treats an Enum class as opaque."""
+    if not issubclass(value, Enum):
+        return False
+
+    try:
+        opaque_object = importlib.import_module("torch._library.opaque_object")
+    except ImportError:
+        return False
+    is_opaque_type = getattr(opaque_object, "is_opaque_type", None)
+    if not callable(is_opaque_type):
+        return False
+    return cast(Callable[[type], bool], is_opaque_type)(value)
+
+
+def _register_torchao_constant(value: type) -> type:
+    """Register non-Enum TorchAO constants using the active PyTorch API."""
+    if not _is_native_opaque_enum(value):
+        pytree.register_constant(value)
+    return value
+
+
+def _patch_torchao_decorator() -> None:
+    """Replace TorchAO's deprecated Enum registration decorator when loaded."""
+    torchao_utils = sys.modules.get("torchao.utils")
+    if torchao_utils is not None:
+        setattr(
+            torchao_utils,
+            _TORCHAO_DECORATOR_NAME,
+            _register_torchao_constant,
+        )
+
+
+@contextmanager
+def suppress_torchao_quantization_syntax_warning() -> Generator[None, None, None]:
+    """Suppress TorchAO's invalid-regex SyntaxWarning during startup imports."""
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message=r"invalid escape sequence",
+            category=SyntaxWarning,
+            module=r"torchao\.quantization\.quant_api",
+        )
+        yield
+
+
+@contextmanager
+def torchao_compatibility() -> Generator[None, None, None]:
+    """Suppress known TorchAO warnings for the active integration operation.
+
+    PyTorch versions that natively treat Enum classes as opaque compile values
+    warn when TorchAO registers those same classes as pytree constants. The
+    TorchAO quantization API also emits a SyntaxWarning for an invalid escape
+    in its regex documentation. The wrapper suppresses only those warnings
+    while Celune imports or initializes an integration
+    that may load TorchAO, and TorchAO's decorator is retained afterward for
+    modules imported later in the process.
+    """
+    register_constant = cast(Callable[[type], None], pytree.register_constant)
+
+    def register_constant_compat(cls: type) -> None:
+        if not _is_native_opaque_enum(cls):
+            register_constant(cls)
+
+    with _TORCHAO_IMPORT_LOCK, suppress_torchao_quantization_syntax_warning():
+        _patch_torchao_decorator()
+        setattr(
+            pytree,
+            _PYTREE_REGISTER_CONSTANT_NAME,
+            register_constant_compat,
+        )
+        try:
+            yield
+        finally:
+            setattr(pytree, _PYTREE_REGISTER_CONSTANT_NAME, register_constant)
+            _patch_torchao_decorator()

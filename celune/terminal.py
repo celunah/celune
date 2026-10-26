@@ -5,8 +5,9 @@ import re
 import sys
 import ctypes
 
-from collections.abc import Callable
+# noinspection PyProtectedMember
 from typing import IO, Optional, cast
+from collections.abc import Callable
 
 from .i18n import string
 
@@ -38,6 +39,9 @@ RUNTIME_LOG_FILTER_MESSAGES = frozenset(
         "A custom logits processor of type",
         "FireRedTTS3 (text front-end) loaded",
         "with an incorrect regex pattern",
+        "SyntaxWarning: invalid escape sequence",
+        "regex for parameter names, must start with",
+        "Redirects are currently not supported in Windows or Mac",
         "flash-attn is not installed",
         "Could not infer sample rate from base model",
         "Warming up predictor",
@@ -47,16 +51,17 @@ RUNTIME_LOG_FILTER_MESSAGES = frozenset(
         "********",
         "The tokenizer class you load from this checkpoint is",
         "The class this function is called from",
+        "HTTP Request:",
     }
 )
 
 
-def _infer_log_severity(message: str, default_severity: str) -> str:
+def infer_log_severity(message: str, default_severity: str) -> str:
     """Infer severity from message content before using its stream default."""
     lowered = message.casefold()
 
     level_match = re.search(
-        r"\[(?P<bracket>info|notice|warn(?:ing)?|error|critical|fatal)\]"
+        r"\[(?P<bracket>info|notice|warn(?:ing)?|error|critical|fatal)]"
         r"|(?:^|\s)(?P<plain>info|notice|warn(?:ing)?|error|critical|fatal)"
         r"(?:\s*:|\s+-)",
         lowered,

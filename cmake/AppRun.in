@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+set -euo pipefail
+
+appimage_path="${APPIMAGE:-$0}"
+appimage_dir="$(cd "$(dirname "$(readlink -f "$appimage_path")")" && pwd)"
+launcher="$appimage_dir/celune"
+
+if [[ ! -x "$launcher" ]]; then
+    echo "Celune launcher not found beside AppImage: $launcher" >&2
+    exit 1
+fi
+
+exec "$launcher" "$@"

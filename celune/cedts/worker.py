@@ -9,18 +9,17 @@ import time
 import argparse
 import threading
 import traceback
-from typing import IO, Optional, cast
 from contextlib import suppress
-from collections import OrderedDict
-from collections.abc import Mapping, Callable
+from typing import IO, Optional, cast
+from collections import OrderedDict, abc
 
-from ..paths import configure_numba_cache
-from ..cevoice import select_voice_bundle
 from .protocol import (
     CEDTS_VERSION,
     WORKER_CAPABILITIES,
     DEFAULT_CEDTS_LIMITS,
     SUPPORTED_OPERATIONS,
+    CALL_ARGUMENT_SCHEMAS,
+    WORKER_TRACEBACK_MARKER,
     CEDTSLimits,
     build_packet,
     send_message,
@@ -32,13 +31,15 @@ from .protocol import (
     limits_from_capabilities,
 )
 from ..exceptions import (
+    CESNError,
     CEDTSError,
     CEDTSEOFError,
     CEDTSStreamError,
     CEDTSPayloadError,
     CEDTSProtocolError,
+    CESNValidationError,
+    CESNUnsupportedFeatureError,
 )
-from ..typing.common import JSONSerializable
 from ..typing.worker import (
     WorkerValue,
     WorkerMessage,
@@ -46,24 +47,22 @@ from ..typing.worker import (
     WorkerResponse,
     WorkerPayloadDescriptor,
 )
-from ..typing.aliases import LogLevel
 from ..typing.backends import (
     BackendModel,
+    BackendRuntime,
     BackendArguments,
     BackendDescription,
-    _BackendRuntime,
 )
-from ..backends.environment import BackendManifest, backend_manifest
+from ..typing.aliases import LogLevel
+from ..cevoice import select_voice_bundle
+from ..paths import configure_numba_cache
+from ..typing.common import JSONSerializable
 from ..dataclasses.pipeline import VoiceConversionRequest
+from ..vram import is_cuda_out_of_memory, release_cuda_after_oom
+from ..backends.environment import BackendManifest, backend_manifest
 
 _WORKER_STDERR = sys.stderr
 _MESSAGE_ID_REPLAY_WINDOW = 4096
-_CALL_ARGUMENT_FIELDS = {
-    "resolve_generation_language": frozenset({"method", "lang"}),
-    "should_reload_for_language": frozenset({"method", "lang"}),
-    "convert_live": frozenset({"method", "request"}),
-    "stop_live": frozenset({"method"}),
-}
 _CANCELLABLE_OPERATIONS = frozenset({"generate_stream"})
 _REQUEST_FIELDS = frozenset({"operation", "arguments"})
 _MAX_BACKEND_ARGUMENT_FIELDS = 128
@@ -96,57 +95,64 @@ def _remember_message_id(
     return True
 
 
-def _mini_constructor() -> Callable[..., _BackendRuntime]:
+def _mini_constructor() -> abc.Callable[..., BackendRuntime]:
     """Load the approved Mini backend constructor on demand."""
     from ..backends.tts.mini import Mini
 
-    return cast(Callable[..., _BackendRuntime], Mini)
+    return cast(abc.Callable[..., BackendRuntime], Mini)
 
 
-def _qwen3_constructor() -> Callable[..., _BackendRuntime]:
+def _qwen3_constructor() -> abc.Callable[..., BackendRuntime]:
     """Load the approved Qwen3 backend constructor on demand."""
     from ..backends.tts.qwen3 import Qwen3
 
-    return cast(Callable[..., _BackendRuntime], Qwen3)
+    return cast(abc.Callable[..., BackendRuntime], Qwen3)
 
 
-def _fireredtts3_constructor() -> Callable[..., _BackendRuntime]:
+def _fireredtts3_constructor() -> abc.Callable[..., BackendRuntime]:
     """Load the approved FireRedTTS3 backend constructor on demand."""
     from ..backends.tts.fireredtts3 import FireRedTTS3
 
-    return cast(Callable[..., _BackendRuntime], FireRedTTS3)
+    return cast(abc.Callable[..., BackendRuntime], FireRedTTS3)
 
 
-def _dotstts_constructor() -> Callable[..., _BackendRuntime]:
+def _dotstts_constructor() -> abc.Callable[..., BackendRuntime]:
     """Load the approved DotsTTS backend constructor on demand."""
     from ..backends.tts.dotstts import DotsTtsMF
 
-    return cast(Callable[..., _BackendRuntime], DotsTtsMF)
+    return cast(abc.Callable[..., BackendRuntime], DotsTtsMF)
 
 
-def _voxcpm2_constructor() -> Callable[..., _BackendRuntime]:
+def _voxcpm2_constructor() -> abc.Callable[..., BackendRuntime]:
     """Load the approved VoxCPM2 backend constructor on demand."""
     from ..backends.tts.voxcpm2 import VoxCPM2
 
-    return cast(Callable[..., _BackendRuntime], VoxCPM2)
+    return cast(abc.Callable[..., BackendRuntime], VoxCPM2)
 
 
-def _luxtts_constructor() -> Callable[..., _BackendRuntime]:
+def _luxtts_constructor() -> abc.Callable[..., BackendRuntime]:
     """Load the approved LuxTTS backend constructor on demand."""
     from ..backends.tts.luxtts import LuxTTS
 
-    return cast(Callable[..., _BackendRuntime], LuxTTS)
+    return cast(abc.Callable[..., BackendRuntime], LuxTTS)
 
 
-def _seed_vc_constructor() -> Callable[..., _BackendRuntime]:
+def _soulxsinger_constructor() -> abc.Callable[..., BackendRuntime]:
+    """Load the approved SoulX-Singer backend constructor on demand."""
+    from ..backends.tts.soulxsinger import SoulXSinger
+
+    return cast(abc.Callable[..., BackendRuntime], SoulXSinger)
+
+
+def _seed_vc_constructor() -> abc.Callable[..., BackendRuntime]:
     """Load the approved Seed-VC backend constructor on demand."""
     from ..backends.vc.seedvc import CeluneSeedVCBackend
 
-    return cast(Callable[..., _BackendRuntime], CeluneSeedVCBackend)
+    return cast(abc.Callable[..., BackendRuntime], CeluneSeedVCBackend)
 
 
-_BACKEND_REGISTRY: Mapping[
-    str, tuple[str, Callable[[], Callable[..., _BackendRuntime]]]
+_BACKEND_REGISTRY: abc.Mapping[
+    str, tuple[str, abc.Callable[[], abc.Callable[..., BackendRuntime]]]
 ] = {
     "mini": ("tts", _mini_constructor),
     "qwen3": ("tts", _qwen3_constructor),
@@ -154,6 +160,7 @@ _BACKEND_REGISTRY: Mapping[
     "dotstts": ("tts", _dotstts_constructor),
     "voxcpm2": ("tts", _voxcpm2_constructor),
     "luxtts": ("tts", _luxtts_constructor),
+    "soulxsinger": ("tts", _soulxsinger_constructor),
     "seed-vc": ("vc", _seed_vc_constructor),
 }
 
@@ -189,7 +196,7 @@ def _open_binary_streams(args: argparse.Namespace) -> tuple[IO[bytes], IO[bytes]
 
             binary_flags = getattr(os, "O_BINARY", 0)
             open_osfhandle = cast(
-                Callable[[int, int], int],
+                abc.Callable[[int, int], int],
                 msvcrt.open_osfhandle,  # type: ignore[missing-attribute]
             )
             binary_input_fd = open_osfhandle(
@@ -241,10 +248,10 @@ def _detach_protocol_stream() -> IO[bytes]:
 
 def _load_backend(
     manifest: BackendManifest,
-    log: Callable[[str, str], None],
-    fatal: Callable[[], None],
+    log: abc.Callable[[str, str], None],
+    fatal: abc.Callable[[], None],
     kwargs: BackendArguments,
-) -> _BackendRuntime:
+) -> BackendRuntime:
     """Construct one backend from the worker's approved static registry."""
     try:
         expected_kind, constructor_loader = _BACKEND_REGISTRY[manifest.backend_id]
@@ -262,7 +269,7 @@ def _load_backend(
     return constructor(log=log, fatal=fatal, **kwargs)
 
 
-def _describe(backend: _BackendRuntime) -> BackendDescription:
+def _describe(backend: BackendRuntime) -> BackendDescription:
     """Return the backend metadata required by the core proxy."""
     return cast(
         BackendDescription,
@@ -278,6 +285,7 @@ def _describe(backend: _BackendRuntime) -> BackendDescription:
             "uses_voice_bundles": getattr(backend, "uses_voice_bundles", False),
             "max_new_tokens": getattr(backend, "max_new_tokens", 512),
             "is_fake": getattr(backend, "is_fake", False),
+            "singing": getattr(backend, "singing", False),
         },
     )
 
@@ -293,15 +301,49 @@ def _worker_log(
     print(f"{prefix} {message}", file=_WORKER_STDERR, flush=True)
 
 
-def _error_response(error: Exception) -> WorkerResponse:
-    """Build a response with the worker type name as inert diagnostic data."""
-    traceback.print_exc(file=_WORKER_STDERR)
+def _is_cesn_input_error(error: Exception) -> bool:
+    """Return whether a worker error belongs to a notation parse diagnostic."""
+    return isinstance(error, (CESNValidationError, CESNUnsupportedFeatureError))
+
+
+def _error_response(
+    error: Exception,
+    *,
+    limits: CEDTSLimits = DEFAULT_CEDTS_LIMITS,
+) -> WorkerResponse:
+    """Build an error response, retaining traces for non-input failures."""
+    is_cesn_input_error = _is_cesn_input_error(error)
+    if not is_cesn_input_error:
+        traceback.print_exc(file=_WORKER_STDERR)
     error_type = type(error)
-    return {
+    message = str(error)
+    if not is_cesn_input_error and error.__traceback__ is not None:
+        worker_traceback = "".join(
+            traceback.format_exception(type(error), error, error.__traceback__)
+        )
+        available_length = max(
+            0,
+            limits.max_string_length - len(message) - len(WORKER_TRACEBACK_MARKER),
+        )
+        if available_length:
+            message = (
+                f"{message}{WORKER_TRACEBACK_MARKER}"
+                f"{worker_traceback[:available_length]}"
+            )
+    message = message[: limits.max_string_length]
+    response: WorkerResponse = {
         "ok": False,
-        "error": str(error),
+        "error": message,
         "error_type": f"{error_type.__module__}.{error_type.__qualname__}",
     }
+    if (
+        isinstance(error, CESNError)
+        and error.source_start is not None
+        and error.source_end is not None
+    ):
+        response["source_start"] = error.source_start
+        response["source_end"] = error.source_end
+    return response
 
 
 def _release_worker_models(models: dict[int, BackendModel]) -> None:
@@ -356,21 +398,21 @@ def _stream_value_summary(value: WorkerValue) -> str:
 
 
 def _backend_method_map(
-    backend: _BackendRuntime,
-) -> dict[str, Callable[..., WorkerValue]]:
+    backend: BackendRuntime,
+) -> dict[str, abc.Callable[..., WorkerValue]]:
     """Return only the explicitly supported backend callback methods."""
-    method_map: dict[str, Callable[..., WorkerValue]] = {}
-    for method_name in _CALL_ARGUMENT_FIELDS:
+    method_map: dict[str, abc.Callable[..., WorkerValue]] = {}
+    for method_name in CALL_ARGUMENT_SCHEMAS:
         method = getattr(backend, method_name, None)
         if callable(method):
-            method_map[method_name] = cast(Callable[..., WorkerValue], method)
+            method_map[method_name] = cast(abc.Callable[..., WorkerValue], method)
     return method_map
 
 
 def _validate_request_arguments(
     operation: object,
     arguments: object,
-    backend: Optional[_BackendRuntime] = None,
+    backend: Optional[BackendRuntime] = None,
 ) -> dict[str, WorkerValue]:
     """Validate one request's operation, argument object, and method allowlist."""
     if not isinstance(operation, str) or operation not in SUPPORTED_OPERATIONS:
@@ -423,17 +465,12 @@ def _validate_request_arguments(
         _validate_backend_arguments(checked, {"model_id"})
     elif operation == "call":
         method_name = checked.get("method")
-        if not isinstance(method_name, str) or method_name not in _CALL_ARGUMENT_FIELDS:
+        if not isinstance(method_name, str) or method_name not in CALL_ARGUMENT_SCHEMAS:
             raise _worker_protocol_error("backend_worker_method_is_not_allowed")
-        allowed = _CALL_ARGUMENT_FIELDS[method_name]
+        required, optional = CALL_ARGUMENT_SCHEMAS[method_name]
+        allowed = required | optional
         if not set(checked).issubset(allowed):
             raise _worker_protocol_error("backend_worker_method_arguments_are_invalid")
-        required = {
-            "resolve_generation_language": {"method", "lang"},
-            "should_reload_for_language": {"method", "lang"},
-            "convert_live": {"method", "request"},
-            "stop_live": {"method"},
-        }[method_name]
         if not required.issubset(checked):
             raise _worker_protocol_error("backend_worker_method_arguments_are_invalid")
         if (
@@ -443,6 +480,17 @@ def _validate_request_arguments(
             and not isinstance(checked["lang"], str)
         ):
             raise _worker_protocol_error("backend_worker_language_argument_is_invalid")
+        if method_name == "cesn_to_model" and not isinstance(checked.get("text"), str):
+            raise _worker_protocol_error("backend_worker_cesn_text_is_invalid")
+        if (
+            method_name == "cesn_to_model"
+            and "voice_bundle" in checked
+            and checked["voice_bundle"] is not None
+            and not isinstance(checked["voice_bundle"], str)
+        ):
+            raise _worker_protocol_error(
+                "backend_worker_voice_bundle_argument_is_invalid"
+            )
         if method_name == "convert_live" and not isinstance(
             checked.get("request"), VoiceConversionRequest
         ):
@@ -502,7 +550,7 @@ def _validate_backend_arguments(
 
 
 def _run_request(
-    backend: _BackendRuntime,
+    backend: BackendRuntime,
     request: WorkerRequest,
     models: dict[int, BackendModel],
     next_model_id: int,
@@ -535,7 +583,25 @@ def _run_request(
         backend.preload_models()
         return {"ok": True, "value": None}, next_model_id
     if operation == "load_model":
-        model = backend.load_model(**cast(BackendArguments, arguments))
+        try:
+            model = backend.load_model(**cast(BackendArguments, arguments))
+        except Exception as error:
+            if is_cuda_out_of_memory(error):
+                with suppress(Exception):
+                    backend.unload_model()
+                _release_worker_models(models)
+                release_cuda_after_oom()
+                raise
+            if not bool(getattr(backend, "quantization_requested", False)):
+                raise
+            disable_quantization = getattr(
+                backend, "disable_runtime_quantization", None
+            )
+            if not callable(disable_quantization):
+                raise
+            disable_quantization()
+            backend.unload_model()
+            model = backend.load_model(**cast(BackendArguments, arguments))
         backend.model = model
         model_id = next_model_id
         models[model_id] = model
@@ -562,6 +628,9 @@ def _run_request(
             raise _worker_protocol_error("backend_worker_method_is_unavailable")
         call_arguments = dict(arguments)
         del call_arguments["method"]
+        voice_bundle = call_arguments.pop("voice_bundle", None)
+        if voice_bundle is not None:
+            select_voice_bundle(cast(str, voice_bundle))
         return {
             "ok": True,
             "value": method(**call_arguments),
@@ -650,6 +719,52 @@ def _send_message(
             send()
 
 
+def _send_request_response(
+    protocol_stream: IO[bytes],
+    binary_stream: Optional[IO[bytes]],
+    kind: str,
+    operation: str,
+    response: WorkerResponse,
+    reply_to: str,
+    send_lock: threading.Lock,
+    limits: CEDTSLimits,
+) -> None:
+    """Send a request result, converting invalid JSON responses into errors."""
+    packet = build_packet(
+        kind,
+        operation,
+        cast(dict[str, WorkerValue], response),
+        reply_to=reply_to,
+    )
+    try:
+        _send_message(
+            protocol_stream,
+            binary_stream,
+            packet,
+            send_lock,
+            limits=limits,
+        )
+    except CEDTSProtocolError as error:
+        if kind != "response":
+            raise
+        error_packet = build_packet(
+            "error",
+            operation,
+            cast(
+                dict[str, WorkerValue],
+                _error_response(error, limits=limits),
+            ),
+            reply_to=reply_to,
+        )
+        _send_message(
+            protocol_stream,
+            binary_stream,
+            error_packet,
+            send_lock,
+            limits=limits,
+        )
+
+
 def _send_error(
     protocol_stream: IO[bytes],
     binary_stream: IO[bytes],
@@ -667,7 +782,7 @@ def _send_error(
         build_packet(
             "error",
             operation,
-            cast(dict[str, WorkerValue], _error_response(error)),
+            cast(dict[str, WorkerValue], _error_response(error, limits=limits)),
             reply_to=reply_to,
         ),
         send_lock,
@@ -675,9 +790,9 @@ def _send_error(
     )
 
 
-def _negotiate_hello(control: Mapping[str, object]) -> dict[str, JSONSerializable]:
+def _negotiate_hello(control: abc.Mapping[str, object]) -> dict[str, JSONSerializable]:
     """Validate a core hello and return the worker's negotiated capabilities."""
-    if control.get("cedts_version") != CEDTS_VERSION:
+    if control.get("cedts_version") != list(CEDTS_VERSION):
         raise _worker_protocol_error("unsupported_cedts_packet_version")
     if control.get("kind") != "hello" or control.get("operation") != "handshake":
         raise _worker_protocol_error("worker_expected_a_cedts_hello_packet")
@@ -685,7 +800,7 @@ def _negotiate_hello(control: Mapping[str, object]) -> dict[str, JSONSerializabl
     if not isinstance(data, dict):
         raise _worker_protocol_error("cedts_hello_data_is_invalid")
     versions = data.get("versions")
-    if not isinstance(versions, list) or CEDTS_VERSION not in versions:
+    if not isinstance(versions, list) or list(CEDTS_VERSION) not in versions:
         raise _worker_protocol_error("no_compatible_cedts_version_was_offered")
     offered = data.get("capabilities")
     if not isinstance(offered, dict):
@@ -800,7 +915,7 @@ def main() -> int:
             "hello_ack",
             "handshake",
             {
-                "cedts_version": CEDTS_VERSION,
+                "cedts_version": cast(WorkerValue, list(CEDTS_VERSION)),
                 "capabilities": negotiated_capabilities,
             },
             reply_to=hello_id,
@@ -943,14 +1058,17 @@ def main() -> int:
             )
             next_model_id = updated_model_id
         except Exception as error:
-            response = _error_response(error)
+            if is_cuda_out_of_memory(error):
+                release_cuda_after_oom()
+            response = _error_response(error, limits=effective_limits)
             response_kind = "error"
-            _worker_log(
-                "[IPC] response operation="
-                f"{request.get('operation')} ok=False error={error}",
-                "error",
-                loglevel="verbose",
-            )
+            if not _is_cesn_input_error(error):
+                _worker_log(
+                    "[IPC] response operation="
+                    f"{request.get('operation')} ok=False error={error}",
+                    "error",
+                    loglevel="verbose",
+                )
         else:
             _worker_log(
                 "[IPC] response operation="
@@ -980,17 +1098,15 @@ def main() -> int:
                 active_request_terminal = False
                 active_thread = None
         try:
-            _send_message(
+            _send_request_response(
                 protocol_stream,
                 binary_output,
-                build_packet(
-                    response_kind,
-                    cast(str, request.get("operation")),
-                    cast(dict[str, WorkerValue], response),
-                    reply_to=request_id,
-                ),
+                response_kind,
+                cast(str, request.get("operation")),
+                cast(WorkerResponse, response),
+                request_id,
                 send_lock,
-                limits=effective_limits,
+                effective_limits,
             )
         finally:
             with active_request_lock:
@@ -1012,7 +1128,7 @@ def main() -> int:
         packet_kind = control.get("kind")
         packet_operation = control.get("operation")
         packet_id = control.get("message_id")
-        if control.get("cedts_version") != CEDTS_VERSION:
+        if control.get("cedts_version") != list(CEDTS_VERSION):
             _send_error(
                 protocol_stream,
                 binary_output,

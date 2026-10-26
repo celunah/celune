@@ -5,18 +5,19 @@ from __future__ import annotations
 
 import re
 import time
+import queue as queue_module
 import threading
 import contextlib
 from uuid import uuid4
-import queue as queue_module
-from collections.abc import Callable
 from typing import Union, Optional, cast
+from collections.abc import Callable
 
 from textual.color import Color
 
 from . import app as _app
-from .constants import _CAPTION_FADE_SECONDS
-from ..binding import install_class_functions
+from .theme import with_brightness
+from .constants import CAPTION_FADE_SECONDS
+from ..typing.modes import OperationState
 
 __all__ = (
     "_acquire_recording_component_lease",
@@ -34,12 +35,10 @@ __all__ = (
     "_finish_vc_submission_queue",
     "_flush_vc_recording_buffer_locked",
     "_flush_vc_recording_chunk_locked",
-    "_format_vc_pitch_shift",
+    "_get_persona_speech_transcriber",
     "_hide_caption_widgets",
-    "_is_voice_conversion_mode",
     "_join_vc_recording_threads",
     "_normalize_vc_overlap_audio",
-    "_persona_recording_active",
     "_persona_recording_audio_locked",
     "_persona_speech_end_delay_seconds",
     "_persona_speech_language",
@@ -66,13 +65,14 @@ __all__ = (
     "_vc_input_rms",
     "_vc_live_chunk_frames",
     "_vc_live_chunk_overlap_frames",
-    "_vc_recording_active",
     "_vc_vad_hangover_frames",
     "_vc_vad_preroll_frames",
     "_with_darkened_brightness",
     "change_input_state",
     "change_voice_lock_state",
+    "is_voice_conversion_mode",
     "on_uilog_message",
+    "persona_recording_active",
     "pulse_border",
     "refresh_vc_controls",
     "safe_caption_progress",
@@ -80,9 +80,9 @@ __all__ = (
     "safe_log_dev",
     "safe_status",
     "set_vc_f0_condition",
-    "set_vc_pitch_shift",
     "toggle_persona_recording",
     "tts_caption",
+    "vc_recording_active",
 )
 
 
@@ -111,27 +111,30 @@ def safe_caption_progress(
     """Update the active caption from speech-only playback progress."""
     if self.cur_state == "exiting" or not self._caption_active:
         return
+    if getattr(
+        getattr(getattr(self, "celune", None), "backend", None),
+        "singing",
+        False,
+    ):
+        return
+
+    # Keep the callback contract; aligned word counts now drive caption timing.
+    del progress
+    if visible_words is None:
+        self._run_on_ui_thread(self._hide_caption_widgets)
+        return
 
     def update_caption() -> None:
         if not self._caption_active or total is None or total <= 0:
             return
-        caption_visible_words = visible_words
-        if caption_visible_words is None:
-            current = 0.0 if progress is None else progress
-            fraction = max(0.0, min(1.0, current / total))
-        else:
-            self._caption_segmented_progress = True
-            caption_visible_words = min(
-                max(0, len(self._caption_words) - 1),
-                caption_visible_words,
-            )
-            fraction = max(
-                0.0,
-                min(1.0, caption_visible_words / max(len(self._caption_words), 1)),
-            )
+        self._caption_segmented_progress = True
+        caption_visible_words = min(len(self._caption_words), max(0, visible_words))
+        fraction = max(
+            0.0,
+            min(1.0, caption_visible_words / max(len(self._caption_words), 1)),
+        )
         if fraction < self._caption_progress:
             return
-        caption_finished = fraction >= 1.0
         self._caption_progress = fraction
         visible_sentence, caption_visible_words = self._caption_words_for_progress(
             self._caption_progress,
@@ -142,15 +145,11 @@ def safe_caption_progress(
             caption_visible_words == self._caption_visible_words
             and rendered_text == self._caption_rendered_text
         ):
-            if caption_finished:
-                self._hide_caption_widgets()
             return
         self._caption_visible_words = caption_visible_words
         self._caption_rendered_text = rendered_text
         if self.caption is not None:
             self.caption.update(rendered_text)
-        if caption_finished:
-            self._hide_caption_widgets()
 
     self._run_on_ui_thread(update_caption)
 
@@ -161,7 +160,7 @@ def _animate_opacity(
     opacity: float,
     on_complete: Optional[Callable[[], None]] = None,
     token: Optional[int] = None,
-    duration: float = _CAPTION_FADE_SECONDS,
+    duration: float = CAPTION_FADE_SECONDS,
 ) -> None:
     """Fade one widget through its mutable CSS opacity property.
 
@@ -302,11 +301,23 @@ def _hide_caption_widgets(self) -> None:
 
 
 def tts_caption(self, caption: Optional[str]) -> None:
-    """Show a speech caption or clear it when alignment is unavailable."""
+    """Show a caption or clear it when playback finishes."""
     if self.cur_state == "exiting" or getattr(self.celune, "test_finished", False):
         return
+    singing_caption = bool(
+        getattr(
+            getattr(getattr(self, "celune", None), "backend", None),
+            "singing",
+            False,
+        )
+    )
     if caption is None:
-        self._run_on_ui_thread(self._reset_playback_widgets)
+        clear_caption = (
+            self._hide_caption_widgets
+            if singing_caption
+            else self._reset_playback_widgets
+        )
+        self._run_on_ui_thread(clear_caption)
         return
     if not caption:
         return
@@ -324,19 +335,32 @@ def tts_caption(self, caption: Optional[str]) -> None:
         return
 
     def update() -> None:
+        if singing_caption and self._caption_active:
+            self._caption_text = caption
+            self._caption_words = words
+            self._caption_sentences = sentences
+            self._caption_rendered_text = caption.strip()
+            self._caption_visible_words = len(words)
+            self._caption_progress = 0.0
+            self._caption_segmented_progress = True
+            self._caption_transitioning = False
+            if self.caption is not None:
+                self.caption.update(caption.strip())
+            return
+
         self._clear_caption_timers()
         self._caption_transition_token += 1
         self._caption_text = caption
         self._caption_words = words
         self._caption_sentences = sentences
-        self._caption_rendered_text = ""
-        self._caption_visible_words = 0
+        self._caption_rendered_text = caption.strip() if singing_caption else ""
+        self._caption_visible_words = len(words) if singing_caption else 0
         self._caption_progress = 0.0
-        self._caption_segmented_progress = False
+        self._caption_segmented_progress = singing_caption
         self._caption_active = True
         self._caption_transitioning = False
         if self.caption is not None:
-            self.caption.update("")
+            self.caption.update(caption.strip() if singing_caption else "")
         self._show_caption_widgets()
 
     self._run_on_ui_thread(update)
@@ -345,7 +369,7 @@ def tts_caption(self, caption: Optional[str]) -> None:
 def _with_darkened_brightness(color: Color) -> Color:
     """Return ``color`` with a visibly darker brightness."""
     target_brightness = max(0.0, color.brightness * 0.6)
-    return _app.CeluneUI.with_brightness(color, target_brightness)
+    return with_brightness(color, target_brightness)
 
 
 def pulse_border(self, target: Union[str, _app.Widget]) -> None:
@@ -458,6 +482,9 @@ def change_voice_lock_state(
 ) -> None:
     """Set voice-cycle and voice-menu availability independently.
 
+    Singing backends keep cycling locked while allowing the singing-pack menu
+    when the core is idle or asleep.
+
     Args:
         locked: Whether the press action should be unavailable.
         can_open_menu: Whether holding the button can open the voice menu.
@@ -465,6 +492,16 @@ def change_voice_lock_state(
     """
     if can_open_menu is None:
         can_open_menu = not locked
+    if getattr(
+        getattr(getattr(self, "celune", None), "backend", None), "singing", False
+    ):
+        locked = True
+        celune = self.celune
+        core_state = getattr(celune, "cur_state", "idle")
+        can_open_menu = bool(getattr(self, "celune_ready", False)) and core_state in {
+            "idle",
+            "sleeping",
+        }
 
     def update() -> None:
         self.style_button.actions = _app.ButtonActions(
@@ -494,7 +531,11 @@ def _refresh_persona_availability(self) -> None:
             changed = self._persona_available != available
             self._persona_available = available
             if changed and not self._input_locked:
-                self.input_box.placeholder = self._normal_input_placeholder()
+                self.input_box.placeholder = (
+                    _app.string("ui.agent_test_answer_placeholder")
+                    if self._agent_test_response_queue is not None
+                    else self._normal_input_placeholder()
+                )
 
         self._run_on_ui_thread(apply_result)
 
@@ -508,7 +549,13 @@ def change_input_state(self, locked: bool) -> None:
         locked: Whether user input should be disabled.
     """
 
-    if not locked:
+    operation_state = getattr(
+        self.celune,
+        "operation_state",
+        OperationState.NORMAL,
+    )
+    can_operate = operation_state is OperationState.NORMAL
+    if not locked and can_operate and not self._is_agent_test_mode():
         self._schedule_sleep_timer()
 
     def update() -> None:
@@ -525,17 +572,20 @@ def change_input_state(self, locked: bool) -> None:
             if stopped
             else _app.string("ui.wait_placeholder")
             if locked
+            else _app.string("ui.agent_test_answer_placeholder")
+            if self._agent_test_response_queue is not None
             else self._normal_input_placeholder()
         )
+        controls_enabled = not locked and can_operate
         self.style_button.actions = _app.ButtonActions(
-            press=not locked,
-            hold=not locked,
+            press=controls_enabled,
+            hold=controls_enabled,
         )
         self.refresh_vc_controls()
         self.update_resources()
 
     self._run_on_ui_thread(update)
-    if not locked:
+    if not locked and can_operate:
         self._refresh_persona_availability()
 
 
@@ -556,8 +606,7 @@ def safe_status(self, msg: str, severity: str = "info") -> None:
     ):
         return
 
-    if not _app._RUNTIME_DEPENDENCIES_LOADED:
-        _app._load_ui_runtime_dependencies()
+    _app.ensure_ui_runtime_dependencies()
 
     if severity not in _app.colors.SEVERITY_COLORS["celune"]:
         self.safe_log(
@@ -611,8 +660,7 @@ def safe_log(
     if levels.get(active_log_level, 0) < levels.get(loglevel, 0):
         return
 
-    if not _app._RUNTIME_DEPENDENCIES_LOADED:
-        _app._load_ui_runtime_dependencies()
+    _app.ensure_ui_runtime_dependencies()
 
     if severity not in _app.colors.SEVERITY_COLORS["celune"]:
         severity = "info"
@@ -656,51 +704,39 @@ def safe_log_dev(self, msg: str, severity: str = "info") -> None:
     self.safe_log(msg, severity, loglevel="verbose")
 
 
-def _is_voice_conversion_mode(self) -> bool:
+def is_voice_conversion_mode(self) -> bool:
     """Return whether the attached Celune instance is running in VC mode."""
     return bool(
         self.celune is not None and getattr(self.celune, "vc_backend", None) is not None
     )
 
 
-def _format_vc_pitch_shift(value: int) -> str:
-    """Return one signed semitone label for the VC pitch control."""
-    return f"{value:+d}"
-
-
 def _set_vc_controls_visibility(self, visible: bool) -> None:
     """Show or hide the VC-only controls in the bottom input row."""
     if self.vc_mode_button is not None:
         self.vc_mode_button.display = visible
-    if self.vc_pitch_button is not None:
-        self.vc_pitch_button.display = visible
 
 
 def refresh_vc_controls(self) -> None:
     """Refresh VC control labels and enabled state from the current engine state."""
-    if (
-        self.vc_mode_button is None
-        or self.vc_pitch_button is None
-        or self.celune is None
-    ):
+    if self.vc_mode_button is None or self.celune is None:
         return
 
-    is_vc_mode = self._is_voice_conversion_mode()
+    is_vc_mode = self.is_voice_conversion_mode()
     self._set_vc_controls_visibility(is_vc_mode)
     if not is_vc_mode:
         self._cancel_vc_recording(announce=False)
     f0_condition = bool(getattr(self.celune, "vc_f0_condition", False))
-    pitch_shift = int(getattr(self.celune, "vc_pitch_shift", 0))
     self.vc_mode_button.label = _app.string(
         "ui.vc_mode_sing" if f0_condition else "ui.vc_mode_talk"
     )
-    self.vc_pitch_button.label = _app.string(
-        "ui.vc_pitch_button",
-        value=self._format_vc_pitch_shift(pitch_shift),
+    controls_available = (
+        is_vc_mode
+        and not self._input_locked
+        and getattr(self.celune, "operation_state", OperationState.NORMAL)
+        is OperationState.NORMAL
     )
-    controls_available = is_vc_mode and not self._input_locked
     self.vc_mode_button.actions = _app.ButtonActions(press=controls_available)
-    self.vc_pitch_button.actions = _app.ButtonActions(press=controls_available)
 
 
 def set_vc_f0_condition(self, enabled: bool, announce: bool = True) -> None:
@@ -731,36 +767,7 @@ def set_vc_f0_condition(self, enabled: bool, announce: bool = True) -> None:
         )
 
 
-def set_vc_pitch_shift(self, value: int, announce: bool = True) -> None:
-    """Update the active VC pitch-shift value in the UI and backend state.
-
-    Args:
-        value: The requested pitch shift in semitones before clamping.
-        announce: Whether to log the new pitch shift to the user.
-    """
-    if self.celune is None:
-        return
-
-    clamped = _app.clamp_vc_pitch_shift(value)
-    self.celune.vc_pitch_shift = clamped
-    backend = getattr(self.celune, "vc_backend", None)
-    if backend is not None:
-        from ..utils import available
-
-        if available("pitch_shift", obj=backend):
-            backend.pitch_shift = clamped
-    self.refresh_vc_controls()
-
-    if announce:
-        self.safe_log(
-            _app.string(
-                "ui.vc_pitch_changed",
-                value=self._format_vc_pitch_shift(clamped),
-            )
-        )
-
-
-def _persona_recording_active(self) -> bool:
+def persona_recording_active(self) -> bool:
     """Return whether Persona microphone capture is active."""
     return self._persona_recording_stream is not None
 
@@ -813,6 +820,18 @@ def _persona_speech_language(self) -> Optional[str]:
     }:
         return None
     return configured.strip()
+
+
+def _get_persona_speech_transcriber(self) -> _app.WhisperTranscriber:
+    """Return the Whisper transcriber shared by recording and captions."""
+    transcriber = self._speech_transcriber
+    if transcriber is None:
+        transcriber = _app.WhisperTranscriber(
+            self._persona_speech_model_id(),
+            language=self._persona_speech_language(),
+        )
+        self._speech_transcriber = transcriber
+    return transcriber
 
 
 def _persona_speech_end_delay_seconds(self) -> float:
@@ -969,7 +988,6 @@ def _persona_transcription_worker(
             self._persona_recording_queue = None
             self._persona_recording_worker = None
             self._persona_recording_vad = None
-            self._persona_recording_transcriber = None
             self._persona_recording_chunks = []
             self._persona_recording_stop_requested = False
             self._persona_recording_speech_started = False
@@ -978,6 +996,8 @@ def _persona_transcription_worker(
 
         self._shutdown_vc_stream(stream)
         self._close_live_vad(vad)
+        with contextlib.suppress(Exception):
+            transcriber.unload()
         if component_lease is not None:
             component_lease.release()
 
@@ -1015,15 +1035,15 @@ def _request_persona_recording_stop(self) -> bool:
 
 def _start_persona_recording(self) -> bool:
     """Start push-to-talk microphone capture for the active Persona."""
-    _app._load_ui_runtime_dependencies()
+    _app.ensure_ui_runtime_dependencies()
     if (
         self.celune is None
-        or self._is_voice_conversion_mode()
+        or self.is_voice_conversion_mode()
         or not self._persona_loaded()
         or not _app.persona_talkback_enabled(self.celune.config)
     ):
         return False
-    if self._persona_recording_active():
+    if self.persona_recording_active():
         return True
 
     input_config = getattr(self.celune, "config", None)
@@ -1057,12 +1077,12 @@ def _start_persona_recording(self) -> bool:
         )
         return False
 
-    channels = _app._device_scalar_int(device_info.get("max_input_channels"), 0)
+    channels = _app.device_scalar_int(device_info.get("max_input_channels"), 0)
     if channels <= 0:
         self.safe_log(_app.string("pipeline.no_audio_device"), "warning")
         return False
 
-    sample_rate = _app._device_scalar_int(
+    sample_rate = _app.device_scalar_int(
         device_info.get("default_samplerate"),
         48000,
     )
@@ -1074,10 +1094,7 @@ def _start_persona_recording(self) -> bool:
     recording_queue: queue_module.Queue[tuple[_app.AudioChunk, bool]] = (
         queue_module.Queue(maxsize=1)
     )
-    transcriber = _app.WhisperTranscriber(
-        self._persona_speech_model_id(),
-        language=self._persona_speech_language(),
-    )
+    transcriber = self._get_persona_speech_transcriber()
     prefix = self.input_box.text.strip() if self.input_box is not None else ""
     recording_started_at = time.monotonic()
     should_stop = False
@@ -1165,7 +1182,6 @@ def _start_persona_recording(self) -> bool:
             self._persona_recording_queue = recording_queue
             self._persona_recording_worker = worker
             self._persona_recording_vad = ai_vad
-            self._persona_recording_transcriber = transcriber
             self._persona_recording_sample_rate = sample_rate
             self._persona_recording_chunks = []
             self._persona_recording_silence_frames = 0
@@ -1184,7 +1200,6 @@ def _start_persona_recording(self) -> bool:
             self._persona_recording_queue = None
             self._persona_recording_worker = None
             self._persona_recording_vad = None
-            self._persona_recording_transcriber = None
             self._persona_recording_chunks = []
             self._persona_recording_stop_requested = True
             self._persona_recording_component_lease = None
@@ -1219,7 +1234,7 @@ def toggle_persona_recording(self) -> bool:
     Returns:
         ``True`` when recording was stopped or started successfully.
     """
-    if self._persona_recording_active():
+    if self.persona_recording_active():
         return self._request_persona_recording_stop()
     return self._start_persona_recording()
 
@@ -1236,7 +1251,6 @@ def _shutdown_persona_recording(self) -> None:
         self._persona_recording_queue = None
         self._persona_recording_worker = None
         self._persona_recording_vad = None
-        self._persona_recording_transcriber = None
         self._persona_recording_chunks = []
         self._persona_recording_stop_requested = True
         self._persona_recording_component_lease = None
@@ -1258,7 +1272,7 @@ def _shutdown_persona_recording(self) -> None:
         component_lease.release()
 
 
-def _vc_recording_active(self) -> bool:
+def vc_recording_active(self) -> bool:
     """Return whether live VC recording is active in the TUI."""
     return self._vc_recording_stream is not None
 
@@ -1273,18 +1287,18 @@ def _vc_feedback_rise_detected(
     current_rms: float,
 ) -> bool:
     """Return whether the latest RMS jump looks like runaway feedback."""
-    if previous_rms < _app._VC_FEEDBACK_RMS_MIN_PREVIOUS:
+    if previous_rms < _app.VC_FEEDBACK_RMS_MIN_PREVIOUS:
         return False
-    if current_rms < _app._VC_FEEDBACK_RMS_MIN_CURRENT:
+    if current_rms < _app.VC_FEEDBACK_RMS_MIN_CURRENT:
         return False
-    if current_rms < previous_rms * _app._VC_FEEDBACK_RMS_RISE_RATIO:
+    if current_rms < previous_rms * _app.VC_FEEDBACK_RMS_RISE_RATIO:
         return False
-    return (current_rms - previous_rms) >= _app._VC_FEEDBACK_RMS_RISE_DELTA
+    return (current_rms - previous_rms) >= _app.VC_FEEDBACK_RMS_RISE_DELTA
 
 
 def _vc_feedback_min_capture_frames(sample_rate: int) -> int:
     """Return the minimum capture length before feedback auto-stop is allowed."""
-    return max(1, int(sample_rate * _app._VC_FEEDBACK_MIN_CAPTURE_SECONDS))
+    return max(1, int(sample_rate * _app.VC_FEEDBACK_MIN_CAPTURE_SECONDS))
 
 
 def _request_vc_recording_feedback_stop(self) -> None:
@@ -1397,7 +1411,7 @@ def _clear_vc_preroll_locked(self) -> None:
 
 def _vc_input_has_voice(audio: _app.npt.NDArray[_app.np.float32]) -> bool:
     """Return whether one microphone callback likely contains voice activity."""
-    _app._load_ui_runtime_dependencies()
+    _app.ensure_ui_runtime_dependencies()
     return _app.vc_input_has_voice(audio)
 
 
@@ -1405,7 +1419,7 @@ def _normalize_vc_overlap_audio(
     audio: _app.npt.NDArray[_app.np.float32],
 ) -> _app.npt.NDArray[_app.np.float32]:
     """Normalize one VC overlap chunk into valid mono or stereo time-first audio."""
-    _app._load_ui_runtime_dependencies()
+    _app.ensure_ui_runtime_dependencies()
     normalized = _app.np.asarray(audio, dtype=_app.np.float32)
     if normalized.ndim == 1:
         return normalized
@@ -1426,7 +1440,7 @@ def _crossfade_vc_overlap(
     current_head: _app.npt.NDArray[_app.np.float32],
 ) -> _app.npt.NDArray[_app.np.float32]:
     """Crossfade two same-rate VC overlap regions into one seamless bridge."""
-    _app._load_ui_runtime_dependencies()
+    _app.ensure_ui_runtime_dependencies()
     overlap_frames = min(len(previous_tail), len(current_head))
     if overlap_frames <= 0:
         return _app.np.zeros((0, 2), dtype=_app.np.float32)
@@ -1608,7 +1622,7 @@ def _join_vc_recording_threads(
 
 def _cancel_vc_recording(self, announce: bool = True) -> bool:
     """Stop VC recording without submitting audio for conversion."""
-    if not self._vc_recording_active():
+    if not self.vc_recording_active():
         return False
 
     with self._vc_recording_lock:
@@ -1635,7 +1649,7 @@ def _cancel_vc_recording(self, announce: bool = True) -> bool:
 
 def _stop_vc_recording_for_feedback(self) -> None:
     """Stop live VC recording after detecting a sudden feedback-like RMS spike."""
-    if not self._vc_recording_active():
+    if not self.vc_recording_active():
         return
 
     with self._vc_recording_lock:
@@ -1669,6 +1683,353 @@ def _stop_vc_recording_for_feedback(self) -> None:
     self.update_resources()
 
 
-def install(target):
-    """Install extracted definitions in the original module."""
-    install_class_functions(target, {name: globals()[name] for name in __all__})
+class CaptureHooks:
+    """Expose explicit Textual hooks for the owning UI subsystem."""
+
+    def _acquire_recording_component_lease(
+        self, operation_id: str, components: tuple[_app.ComponentLockName, ...]
+    ) -> tuple[bool, Optional[_app.ComponentLockLease]]:
+        """Delegate to the recording and presentation implementation."""
+        return _acquire_recording_component_lease(self, operation_id, components)
+
+    def _animate_opacity(
+        self,
+        widget: _app.Widget,
+        opacity: float,
+        on_complete: Optional[Callable[[], None]] = None,
+        token: Optional[int] = None,
+        duration: float = CAPTION_FADE_SECONDS,
+    ) -> None:
+        """Delegate to the recording and presentation implementation."""
+        return _animate_opacity(self, widget, opacity, on_complete, token, duration)
+
+    def _append_vc_preroll_audio_locked(
+        self,
+        audio: _app.npt.NDArray[_app.np.float32],
+        max_frames: int,
+    ) -> None:
+        """Delegate to the recording and presentation implementation."""
+        return _append_vc_preroll_audio_locked(self, audio, max_frames)
+
+    def _cancel_vc_recording(self, announce: bool = True) -> bool:
+        """Delegate to the recording and presentation implementation."""
+        return _cancel_vc_recording(self, announce)
+
+    def _clear_caption_state(self) -> None:
+        """Delegate to the recording and presentation implementation."""
+        return _clear_caption_state(self)
+
+    def _clear_caption_timers(self) -> None:
+        """Delegate to the recording and presentation implementation."""
+        return _clear_caption_timers(self)
+
+    def _clear_vc_preroll_locked(self) -> None:
+        """Delegate to the recording and presentation implementation."""
+        return _clear_vc_preroll_locked(self)
+
+    def _clear_vc_recording_state(self) -> None:
+        """Delegate to the recording and presentation implementation."""
+        return _clear_vc_recording_state(self)
+
+    @staticmethod
+    def _close_live_vad(vad: Optional[_app.LiveVoiceActivityDetector]) -> None:
+        """Delegate to the recording and presentation implementation."""
+        return _close_live_vad(vad)
+
+    def _complete_persona_transcription(
+        self,
+        transcript: str,
+        prefix: str,
+        error: Optional[Exception] = None,
+        error_already_reported: bool = False,
+    ) -> None:
+        """Delegate to the recording and presentation implementation."""
+        return _complete_persona_transcription(
+            self, transcript, prefix, error, error_already_reported
+        )
+
+    def _crossfade_vc_overlap(
+        self,
+        previous_tail: _app.npt.NDArray[_app.np.float32],
+        current_head: _app.npt.NDArray[_app.np.float32],
+    ) -> _app.npt.NDArray[_app.np.float32]:
+        """Delegate to the recording and presentation implementation."""
+        return _crossfade_vc_overlap(self, previous_tail, current_head)
+
+    @staticmethod
+    def _enqueue_vc_submission_chunk(
+        submission_queue: queue_module.Queue[
+            Optional[tuple[_app.AudioChunk, int, str, bool]]
+        ],
+        item: tuple[_app.AudioChunk, int, str, bool],
+    ) -> None:
+        """Delegate to the recording and presentation implementation."""
+        return _enqueue_vc_submission_chunk(submission_queue, item)
+
+    @staticmethod
+    def _finish_vc_submission_queue(
+        submission_queue: Optional[
+            queue_module.Queue[Optional[tuple[_app.AudioChunk, int, str, bool]]]
+        ],
+        final_item: Optional[tuple[_app.AudioChunk, int, str, bool]] = None,
+    ) -> None:
+        """Delegate to the recording and presentation implementation."""
+        return _finish_vc_submission_queue(submission_queue, final_item)
+
+    def _flush_vc_recording_buffer_locked(self) -> Optional[_app.AudioChunk]:
+        """Delegate to the recording and presentation implementation."""
+        return _flush_vc_recording_buffer_locked(self)
+
+    def _flush_vc_recording_chunk_locked(
+        self, keep_tail_frames: int = 0
+    ) -> Optional[_app.AudioChunk]:
+        """Delegate to the recording and presentation implementation."""
+        return _flush_vc_recording_chunk_locked(self, keep_tail_frames)
+
+    def _get_persona_speech_transcriber(self) -> _app.WhisperTranscriber:
+        """Delegate to the recording and presentation implementation."""
+        return _get_persona_speech_transcriber(self)
+
+    def _hide_caption_widgets(self) -> None:
+        """Delegate to the recording and presentation implementation."""
+        return _hide_caption_widgets(self)
+
+    @staticmethod
+    def _join_vc_recording_threads(
+        stop_thread: Optional[threading.Thread],
+        worker: Optional[threading.Thread],
+        timeout: float = 2.0,
+    ) -> None:
+        """Delegate to the recording and presentation implementation."""
+        return _join_vc_recording_threads(stop_thread, worker, timeout)
+
+    @staticmethod
+    def _normalize_vc_overlap_audio(
+        audio: _app.npt.NDArray[_app.np.float32],
+    ) -> _app.npt.NDArray[_app.np.float32]:
+        """Delegate to the recording and presentation implementation."""
+        return _normalize_vc_overlap_audio(audio)
+
+    def _persona_recording_audio_locked(
+        self,
+    ) -> _app.npt.NDArray[_app.np.float32]:
+        """Delegate to the recording and presentation implementation."""
+        return _persona_recording_audio_locked(self)
+
+    def _persona_speech_end_delay_seconds(self) -> float:
+        """Delegate to the recording and presentation implementation."""
+        return _persona_speech_end_delay_seconds(self)
+
+    def _persona_speech_language(self) -> Optional[str]:
+        """Delegate to the recording and presentation implementation."""
+        return _persona_speech_language(self)
+
+    def _persona_speech_model_id(self) -> str:
+        """Delegate to the recording and presentation implementation."""
+        return _persona_speech_model_id(self)
+
+    def _persona_transcription_worker(
+        self,
+        recording_queue: queue_module.Queue[tuple[_app.AudioChunk, bool]],
+        transcriber: _app.WhisperTranscriber,
+        sample_rate: int,
+        prefix: str,
+    ) -> None:
+        """Delegate to the recording and presentation implementation."""
+        return _persona_transcription_worker(
+            self, recording_queue, transcriber, sample_rate, prefix
+        )
+
+    def _prepend_vc_preroll_locked(self) -> None:
+        """Delegate to the recording and presentation implementation."""
+        return _prepend_vc_preroll_locked(self)
+
+    def _queue_persona_recording_item_locked(self, final_value: bool) -> None:
+        """Delegate to the recording and presentation implementation."""
+        return _queue_persona_recording_item_locked(self, final_value)
+
+    def _refresh_persona_availability(self) -> None:
+        """Delegate to the recording and presentation implementation."""
+        return _refresh_persona_availability(self)
+
+    def _request_persona_recording_stop(self) -> bool:
+        """Delegate to the recording and presentation implementation."""
+        return _request_persona_recording_stop(self)
+
+    def _request_vc_recording_feedback_stop(self) -> None:
+        """Delegate to the recording and presentation implementation."""
+        return _request_vc_recording_feedback_stop(self)
+
+    def _reset_playback_widgets(self) -> None:
+        """Delegate to the recording and presentation implementation."""
+        return _reset_playback_widgets(self)
+
+    def _set_persona_recording_text(self, transcript: str) -> None:
+        """Delegate to the recording and presentation implementation."""
+        return _set_persona_recording_text(self, transcript)
+
+    def _set_vc_controls_visibility(self, visible: bool) -> None:
+        """Delegate to the recording and presentation implementation."""
+        return _set_vc_controls_visibility(self, visible)
+
+    def _show_caption_widgets(self) -> None:
+        """Delegate to the recording and presentation implementation."""
+        return _show_caption_widgets(self)
+
+    def _shutdown_persona_recording(self) -> None:
+        """Delegate to the recording and presentation implementation."""
+        return _shutdown_persona_recording(self)
+
+    @staticmethod
+    def _shutdown_vc_stream(stream: Optional[_app.sd.InputStream]) -> None:
+        """Delegate to the recording and presentation implementation."""
+        return _shutdown_vc_stream(stream)
+
+    def _start_persona_recording(self) -> bool:
+        """Delegate to the recording and presentation implementation."""
+        return _start_persona_recording(self)
+
+    def _stop_live_vc_backend(self) -> None:
+        """Delegate to the recording and presentation implementation."""
+        return _stop_live_vc_backend(self)
+
+    def _stop_vc_recording_for_feedback(self) -> None:
+        """Delegate to the recording and presentation implementation."""
+        return _stop_vc_recording_for_feedback(self)
+
+    def _stop_vc_recording_stream(
+        self,
+    ) -> tuple[
+        Optional[_app.sd.InputStream],
+        Optional[_app.AudioChunk],
+        int,
+        str,
+        Optional[queue_module.Queue[Optional[tuple[_app.AudioChunk, int, str, bool]]]],
+        int,
+        Optional[threading.Thread],
+        Optional[threading.Thread],
+    ]:
+        """Delegate to the recording and presentation implementation."""
+        return _stop_vc_recording_stream(self)
+
+    @staticmethod
+    def _vc_feedback_min_capture_frames(sample_rate: int) -> int:
+        """Delegate to the recording and presentation implementation."""
+        return _vc_feedback_min_capture_frames(sample_rate)
+
+    @staticmethod
+    def _vc_feedback_rise_detected(previous_rms: float, current_rms: float) -> bool:
+        """Delegate to the recording and presentation implementation."""
+        return _vc_feedback_rise_detected(previous_rms, current_rms)
+
+    @staticmethod
+    def _vc_input_has_voice(
+        audio: _app.npt.NDArray[_app.np.float32],
+    ) -> bool:
+        """Delegate to the recording and presentation implementation."""
+        return _vc_input_has_voice(audio)
+
+    @staticmethod
+    def _vc_input_rms(
+        audio: _app.npt.NDArray[_app.np.float32],
+    ) -> float:
+        """Delegate to the recording and presentation implementation."""
+        return _vc_input_rms(audio)
+
+    @staticmethod
+    def _vc_live_chunk_frames(sample_rate: int) -> int:
+        """Delegate to the recording and presentation implementation."""
+        return _vc_live_chunk_frames(sample_rate)
+
+    @staticmethod
+    def _vc_live_chunk_overlap_frames(sample_rate: int) -> int:
+        """Delegate to the recording and presentation implementation."""
+        return _vc_live_chunk_overlap_frames(sample_rate)
+
+    @staticmethod
+    def _vc_vad_hangover_frames(sample_rate: int) -> int:
+        """Delegate to the recording and presentation implementation."""
+        return _vc_vad_hangover_frames(sample_rate)
+
+    @staticmethod
+    def _vc_vad_preroll_frames(sample_rate: int) -> int:
+        """Delegate to the recording and presentation implementation."""
+        return _vc_vad_preroll_frames(sample_rate)
+
+    @staticmethod
+    def _with_darkened_brightness(color: Color) -> Color:
+        """Delegate to the recording and presentation implementation."""
+        return _with_darkened_brightness(color)
+
+    def change_input_state(self, locked: bool) -> None:
+        """Delegate to the recording and presentation implementation."""
+        return change_input_state(self, locked)
+
+    def change_voice_lock_state(
+        self, locked: bool, *, can_open_menu: Optional[bool] = None
+    ) -> None:
+        """Delegate to the recording and presentation implementation."""
+        return change_voice_lock_state(self, locked, can_open_menu=can_open_menu)
+
+    def is_voice_conversion_mode(self) -> bool:
+        """Delegate to the recording and presentation implementation."""
+        return is_voice_conversion_mode(self)
+
+    def on_uilog_message(self, message: _app.UILogMessage) -> None:
+        """Delegate to the recording and presentation implementation."""
+        return on_uilog_message(self, message)
+
+    def persona_recording_active(self) -> bool:
+        """Delegate to the recording and presentation implementation."""
+        return persona_recording_active(self)
+
+    def pulse_border(self, target: Union[str, _app.Widget]) -> None:
+        """Delegate to the recording and presentation implementation."""
+        return pulse_border(self, target)
+
+    def refresh_vc_controls(self) -> None:
+        """Delegate to the recording and presentation implementation."""
+        return refresh_vc_controls(self)
+
+    def safe_caption_progress(
+        self,
+        progress: Optional[float],
+        total: Optional[float] = None,
+        visible_words: Optional[int] = None,
+    ) -> None:
+        """Delegate to the recording and presentation implementation."""
+        return safe_caption_progress(self, progress, total, visible_words)
+
+    def safe_log(
+        self,
+        msg: str,
+        severity: str = "info",
+        *,
+        loglevel: _app.LogLevel = "info",
+    ) -> None:
+        """Delegate to the recording and presentation implementation."""
+        return safe_log(self, msg, severity, loglevel=loglevel)
+
+    def safe_log_dev(self, msg: str, severity: str = "info") -> None:
+        """Delegate to the recording and presentation implementation."""
+        return safe_log_dev(self, msg, severity)
+
+    def safe_status(self, msg: str, severity: str = "info") -> None:
+        """Delegate to the recording and presentation implementation."""
+        return safe_status(self, msg, severity)
+
+    def set_vc_f0_condition(self, enabled: bool, announce: bool = True) -> None:
+        """Delegate to the recording and presentation implementation."""
+        return set_vc_f0_condition(self, enabled, announce)
+
+    def toggle_persona_recording(self) -> bool:
+        """Delegate to the recording and presentation implementation."""
+        return toggle_persona_recording(self)
+
+    def tts_caption(self, caption: Optional[str]) -> None:
+        """Delegate to the recording and presentation implementation."""
+        return tts_caption(self, caption)
+
+    def vc_recording_active(self) -> bool:
+        """Delegate to the recording and presentation implementation."""
+        return vc_recording_active(self)

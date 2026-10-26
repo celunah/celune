@@ -33,22 +33,45 @@ selecting a voice wakes her first. The menu lists every readable `.cevoice` and
 `.cechar` CEVOICE/CECHAR pack as one character row. Left/Right cycles the voice
 entry when a pack has multiple entries; single-entry packs omit the bracketed
 value. Confirming a row hot-loads that pack and voice. In VC mode
-the mode button toggles talk/sing F0 conditioning and the pitch button cycles
-the pitch-shift value. Touch users can use these visible buttons rather than
-keyboard shortcuts.
+the mode button toggles talk/sing F0 conditioning. Touch users can use this
+visible button rather than keyboard shortcuts.
+
+When the active TTS backend supports singing, the input placeholder asks for
+CESN notation. A short press on the voice button remains disabled, while a hold
+opens a menu containing only packs with a CECHAR v5 `sing` voice. Each pack has
+one non-searchable singing choice; selecting it reloads that character pack.
+`/help` adds a short CESN syntax glossary for notation order, language, tempo
+and scale, notes, rests, IPA pronunciation, slurs, tuplets, singer selection,
+and comments, followed by a link to the paste-ready
+[CESN singing tutorial](../user-guide/cesn-tutorial.md). CESN input is
+preserved as written through request submission so its directives and note
+tags reach the parser intact. If a request
+is rejected before generation while the engine is idle, the error remains visible
+and the input prompt returns to the active mode. See
+[CESN format and parsing](../formats/cesn.md) for the complete notation reference.
 
 The mounted WebUI delegates its `ALT+R` recording shortcut to these same
 runtime capture paths and exposes a compact voice button beside its text input;
-clicking it cycles the active voice through the shared Core switching path. It
-does not expose the TUI's settings, Record, or Stop controls. The TUI publishes
+clicking it cycles the active voice through the shared Core switching path. That
+button is disabled for singing backends, which accept CESN input instead. The
+WebUI does not expose the TUI's settings, Record, or Stop controls. The TUI publishes
 timed status, theme, marquee, and resource-page updates through the CEDTS
 frontend channel so the browser does not maintain an independent timer state;
 browser polling is only a reconnect fallback.
 
-Tutorial text typing runs as a native Textual async worker, so its delays and
-input updates do not create a basic worker thread. Tutorial audio preparation
-and playback remain thread-backed because file metadata and audio submission
-are synchronous operations.
+The tutorial generates each localized passage as a separate utterance in the
+currently active voice, without CeluneNorm. During preparation, the progress bar
+shows how many passages have finished generating. It stitches the prepared audio
+with 500 ms pauses, then plays the sequence as one source. The combined
+transcript is phonemized and sent through one acoustic-model inference. Known
+passage audio and word boundaries constrain alignment to each passage, so words
+cannot drift across a pause into another line. When TTS uses a pronunciation
+workaround, captions can show the canonical term; for example, the tutorial says
+“CE voice” and displays “CEVOICE.” The input and voice-style
+highlights and `/help` action start at their matching passage offsets. Tutorial
+preparation and playback run in a background worker while the input and voice
+controls remain locked. If speech cannot be prepared or playback does not
+finish, the UI logs the failure and cancels the tutorial.
 
 When Celune requests an exit, including a settings-confirmed restart, the
 mounted Textual screen fades out as one surface, hides any mounted scrollbars,
@@ -68,17 +91,18 @@ startup or playback state with a later indeterminate update. The WebUI has no
 corresponding progress bar or percentage label. Captions are
 scoped to speech playback and only advance: delayed progress callbacks and late
 word-timing refinement cannot hide words that have already appeared. They fade
-out when speech ends even if an SFX overlay continues. A streaming utterance's
-caption follows the frame ranges produced by each text chunk, so a growing audio
-total cannot move its progress backward or shift later words. When enabled, a
-background worker matches IPA forced alignments from the Sadda acoustic model
-within each chunk. Generation can continue while alignment is pending, and the
-worker queues aligned audio chunks and completion markers in order. Chunk
-boundaries map synthesis tokens to display words so TTS normalization does not
-shift later captions. If an alignment fails, Celune clears the caption and
-suppresses it for the rest of that utterance. Captions stay hidden when disabled
-or unavailable, while speech playback continues. A single-chunk caption
-waits for its final playback marker before it can finish. The caption and bar
+out when speech ends even if an SFX overlay continues. During speech playback,
+caption progress follows the frame ranges produced by generated text chunks, so a
+growing audio total cannot move its progress backward or shift later words.
+When enabled, a background worker matches the combined transcript and waveform
+with one IPA forced-alignment inference from the Sadda acoustic model. Known
+chunk boundaries constrain the match to each chunk's audio range; chunk
+boundaries also map normalized synthesis tokens to display words. Captioned
+playback waits for synthesis and alignment to finish, while speech without
+captions keeps streaming. Another speech request can generate while alignment
+is pending. If alignment fails, Celune clears the caption and suppresses it for
+the rest of that utterance; speech playback continues. A caption waits for its
+final playback marker before it can finish. The caption and bar
 share one reserved line, so the bar is not restored until the caption transition
 completes; the normal bar/readout state is also restored immediately when wake
 begins.
@@ -176,11 +200,15 @@ the stream's default severity.
 If initialization fails before the core is attached, the loading overlay remains
 visible as an error report. Its heading reads `Early initialization failed`, the
 initialization error remains in the diagnostic area, the spinner is removed, and
-the overlay says `Celune can't continue.` The lower-left status identifies the cause, such
-as `Missing dependency: dateutil`; no further startup progress is pending. The
-UI switches to the red error theme and catches early startup exceptions,
-including missing dependencies, without leaving a worker traceback on the
-terminal. The terminal title changes to an error state with a concise cause.
+the overlay says `Celune can't continue.` A compact instruction appears directly
+below it for missing dependencies: use the project `.venv` with `uv run`, run
+`python configure.py` when the environment is missing or incomplete, or start
+the user-facing launcher when a compiled entrypoint was opened directly. The
+lower-left status identifies the cause, such as `Missing dependency: dateutil`;
+no further startup progress is pending. The UI switches to the red error theme
+and catches early startup exceptions, including missing dependencies, without
+leaving a worker traceback on the terminal. The terminal title changes to an
+error state with a concise cause.
 Press `CTRL+Q` on this screen to close the application; a missing-dependency
 failure then returns exit code `4` to the launcher, while other early startup
 failures return the general failure code. After core attachment, press `ESC` to
@@ -205,22 +233,38 @@ Commands are entered in the input box and start with `/`.
 | `/reverb VALUE` | Set 0–100% reverb strength. |
 | `/backend NAME` | Switch TTS/VC backend and wait for the reload worker. |
 | <code>/cevoice NAME&#124;PATH</code> | Load a CEVOICE/CECHAR pack. |
-| `/settings` | Open the configuration manager. ENTER saves nested YAML values and requests a silent launcher restart; ESC discards changes. |
+| `/settings` | Open the configuration manager in normal operation or after a recoverable configuration failure. During configuration recovery it is the only command available. ENTER saves nested YAML values and requests a silent launcher restart; ESC discards changes. Fatal and stopped states reject input. |
 | `/vc FILE` | Submit a file for voice conversion; VC mode is required. |
 | <code>/vcmode talk&#124;sing</code> | Select ordinary speech or F0-conditioned singing. |
-| <code>/vcpitch SEMITONES&#124;clear</code> | Set -12 through +12 semitones or reset to 0. |
+| <code>/vcdebug on&#124;off</code> | Save raw microphone and converted VC audio to temporary AppData files. |
 | <code>/xvectoronly true&#124;false</code> | Toggle Qwen3 identity-only cloning. Qwen3 only. |
 | `/play PATH [VOLUME]` | Play a local/remote sound effect. Remote playback reports its playing status as soon as the audio is ready to queue. |
 | `/attach FILE...` | Add vision attachments; `/attach clear` removes them. |
 | `/say TEXT` | Send a direct Persona/vision prompt when vision is available. |
 | <code>/seed NUMBER&#124;random</code> | Set a backend seed or restore random seeds. |
-| `/tutorial` | Play the four bundled tutorial clips and demonstrate `/help`. |
+| `/tutorial` | Speak short localized tutorial passages in the active voice and demonstrate `/help`. |
 | `/stop` | Stop current speech. |
+| `/vram` | Report allocated, reserved, and peak memory for each active component. |
 | `/exit` | Exit the application. |
 
 `/help` hides commands that the current backend cannot use, so the list is a
 capability report rather than a fixed promise. Unknown commands are logged as a
 warning and do not terminate the runtime.
+
+`/vram` reports each currently loaded component as
+`allocated/reserved/peak (device)`. It includes TTS, voice conversion, Persona,
+speech input, the normalizer, and the agent whether their tensors are on CUDA or
+the CPU. Persona recording and playback captions share one Whisper model, so
+speech input appears at most once in the report.
+When all three values are identical, the reserved and peak positions are shown
+as `-` because those per-component allocator statistics are not applicable.
+For CUDA components, allocated memory is the component's resident tensor
+storage; reserved and peak memory are the allocator totals from the owning
+process because PyTorch does not attribute those values to individual model
+objects. For CPU components, all three values are the component's resident
+tensor storage because the CPU allocator has no corresponding per-component
+reserved or peak counters. Worker-backed TTS and VC backends report from their
+own CEDTS processes.
 
 ## Themes and lighting
 
