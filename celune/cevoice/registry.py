@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Registry of repository-bundled default voice packs."""
 
-from types import MappingProxyType
 from typing import Final
+from types import MappingProxyType
 from collections.abc import Mapping
 
 DEFAULT_CEVOICE_PACK_SHA256: Final[str] = (
@@ -21,7 +21,7 @@ NATURAL_CEVOICE_PACK_SHA256: Final[str] = (
     "248cdf3d86a6f814dee1486408d70eef134688f0bc5cd30fe96df977b291b81b"
 )
 NOL_CEVOICE_PACK_SHA256: Final[str] = (
-    "10b83afbd20b29e1a5cd3bd7abd3632fb4758faf8f3d66c7da2b60e9af5a0100"
+    "fedf86567c834a32f21812101f9e2e3c11bc00bdd1858b5c252f84529b7ae0d6"
 )
 
 KNOWN_DEFAULT_CEVOICE_PACKS: Final[Mapping[str, frozenset[str]]] = MappingProxyType(
