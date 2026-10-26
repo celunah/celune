@@ -10,8 +10,8 @@ import shlex
 import types
 import ctypes
 import asyncio
-import threading
 import contextlib
+import threading
 
 from uuid import uuid4
 from copy import deepcopy
@@ -1362,7 +1362,7 @@ def action_toggle_debug_inspector(self) -> None:
     if isinstance(self.screen, _app.DebugInspectorScreen):
         self.pop_screen()
     else:
-        self.push_screen(_app.DebugInspectorScreen(self))
+        self.push_screen(_app.DebugInspectorScreen(self, self._debug_call_trace))
 
 
 def on_key(self, event: _app.events.Key) -> None:
@@ -1562,6 +1562,7 @@ def on_unmount(self) -> None:
     if self._runtime_log_capture_enabled:
         self._run_shutdown_step(self._disable_runtime_log_capture)
 
+    self._run_shutdown_step(lambda: self._debug_call_trace.set_enabled(False))
     self.release_instance()
 
 

@@ -540,7 +540,6 @@
     "debug.status_format": "engine {operation} • activity {activity} • backend {backend} • trace {trace}",
     "debug.thread": "Thread",
     "debug.time": "Time",
-    "debug.title": "DEBUG INSPECTOR",
     "debug.trace_active": "Recording",
     "debug.trace_paused": "Paused",
     "debug.trace_unavailable": "Unavailable",

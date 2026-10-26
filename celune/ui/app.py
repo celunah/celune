@@ -22,9 +22,9 @@ from typing import (
     final,
 )
 from pathlib import Path
-import queue as queue_module
 from io import TextIOWrapper
 from types import ModuleType
+import queue as queue_module
 from dataclasses import field, dataclass
 from collections.abc import Callable, Iterator
 
@@ -45,28 +45,28 @@ from textual import (
 )
 from rich.text import Text
 
-from . import debug as _debug
-from . import capture as _capture
-from . import runtime as _runtime
-from .loading import CeluneLoadingScreen
-from . import interaction as _interaction
-from .compat import install_textual_timer_sleep
-from .terminal import SelectMenuOption, SelectMenuWidget
-from .theme import CELUNE_CSS, severity_color, with_brightness
 from ..typing.locks import (
     ComponentLockName,
     ComponentLockOwner,
     ComponentLockRequirement,
 )
+from . import debug as _debug
+from . import capture as _capture
+from . import runtime as _runtime
 from ..i18n import string, tagged_string
+from .loading import CeluneLoadingScreen
 from ..typing.agent import AgentTaskState
 from ..typing.modes import OperationState
+from . import interaction as _interaction
 from ..registry.types import ModelMetadata
 from ..typing.common import JSONSerializable
 from ..watchdog import launcher_loss_requested
+from .compat import install_textual_timer_sleep
 from ..typing.config import AudioDeviceInfoValue
 from ..core.concurrency import run_in_daemon_thread
+from .terminal import SelectMenuOption, SelectMenuWidget
 from ..constants import BASE_SR, SIGTSTP, APP_NAME, ExitCodes
+from .theme import CELUNE_CSS, severity_color, with_brightness
 from ..theme.defaults import default_theme_family, default_error_theme_family
 
 App = app.App
@@ -1091,6 +1091,7 @@ class CeluneUI(
         self._startup_loader = startup_loader
         self._startup_messages = list(startup_messages or [])
         self._startup_log_level = startup_log_level
+        self._debug_call_trace = _debug.DebugCallTrace(self)
         self._test_completion_callback = test_completion_callback
         self._startup_dependency_help = startup_dependency_help
         self._runtime_intervals_started = False

@@ -6,8 +6,8 @@ from __future__ import annotations
 import sys
 import time
 import types
-import threading
 import contextlib
+import threading
 
 from enum import Enum
 from pathlib import Path
@@ -108,7 +108,8 @@ class DebugCallTrace:
         "PY_UNWIND",
     )
 
-    def __init__(self) -> None:
+    def __init__(self, ui: object) -> None:
+        self._ui = ui
         self._monitoring = cast(
             Optional[_MonitoringAPI], getattr(sys, "monitoring", None)
         )
@@ -119,6 +120,7 @@ class DebugCallTrace:
         self._lock = threading.RLock()
         self._next_entry_id = 0
         self._recording = True
+        self._enabled = False
         self._failed = False
 
     @property
@@ -131,12 +133,40 @@ class DebugCallTrace:
         """Return whether new call entries are currently being recorded."""
         return not self._recording
 
+    def sync_enabled(self) -> None:
+        """Keep call monitoring aligned with the active debug log level."""
+        self.set_enabled(_is_debug_enabled(self._ui))
+
+    def set_enabled(self, enabled: bool) -> None:
+        """Start or stop recording as debug logging is enabled or disabled."""
+        if not enabled:
+            if self._enabled:
+                self._enabled = False
+                self.stop()
+                self.clear()
+                self._recording = True
+            return
+
+        if not self._enabled:
+            self._enabled = True
+            self._failed = False
+            self._recording = True
+            self.clear()
+        if self.available:
+            self.refresh_code_objects()
+            return
+        if self._tool_id is not None:
+            self.stop()
+        self._failed = False
+        self.start()
+
     def start(self) -> bool:
         """Install per-code call monitoring for the loaded Celune modules."""
         if self._monitoring is None:
             return False
         if self._tool_id is not None:
             return not self._failed
+        self._failed = False
 
         tool_id = next(
             (
@@ -168,6 +198,7 @@ class DebugCallTrace:
             )
             self.refresh_code_objects()
         except Exception:
+            self._failed = True
             self.stop()
             return False
         if not self.available:
@@ -179,13 +210,13 @@ class DebugCallTrace:
         """Remove this monitor's callbacks and per-code events."""
         tool_id = self._tool_id
         monitoring = self._monitoring
-        self._failed = True
         self._tool_id = None
         if tool_id is None or monitoring is None:
             return
 
         with self._lock:
             codes = tuple(self._labels)
+            self._labels.clear()
             self._stacks.clear()
         for code in codes:
             with contextlib.suppress(Exception):
@@ -246,6 +277,7 @@ class DebugCallTrace:
                 self._labels[code] = name
         except Exception:
             self._failed = True
+            self.stop()
 
     def set_paused(self, paused: bool) -> None:
         """Pause or resume recording while keeping call stacks coherent."""
@@ -438,22 +470,14 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
     }
     #debug-heading {
         height: 2;
-        layout: vertical;
         border-bottom: solid $secondary;
         margin-bottom: 1;
-    }
-    #debug-title {
-        width: 1fr;
-        height: 1;
-        color: $primary;
-        text-style: bold;
-        text-align: center;
     }
     #debug-status {
         width: 1fr;
         height: 1;
         color: $foreground;
-        text-align: center;
+        text-align: left;
     }
     #debug-main {
         height: 1fr;
@@ -502,14 +526,15 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
         margin-top: 0;
     }
     #debug-state-table {
-        height: 1fr;
-        min-height: 2;
+        height: 1;
+        min-height: 1;
+        max-height: 8;
     }
     #debug-attributes-title {
         margin-top: 1;
     }
     #debug-attributes-table {
-        height: 2fr;
+        height: 1fr;
         min-height: 3;
     }
     #debug-live-pane {
@@ -560,10 +585,10 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
     }
     """
 
-    def __init__(self, ui: object) -> None:
+    def __init__(self, ui: object, trace: DebugCallTrace) -> None:
         super().__init__()
         self.ui = ui
-        self.trace = DebugCallTrace()
+        self.trace = trace
         self._selected_component: Optional[_InspectorComponent] = None
         self._component_signature: tuple[tuple[str, int], ...] = ()
         self._line_by_path: dict[str, int] = {}
@@ -573,13 +598,14 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
         self._shown_call_detail_id: Optional[int] = None
         self._shown_call_detail: Optional[str] = None
         self._rendered_table_values: dict[str, tuple[tuple[str, str], ...]] = {}
+        self._rendered_table_components: dict[str, str] = {}
+        self._rendered_state_table_height = 1
         self._component_tree: Optional[widgets.Tree[_InspectorComponent]] = None
 
     def compose(self) -> ComposeResult:
         """Build the component selector, snapshot, and call trace panes."""
         with containers.Vertical(id="debug-panel"):
-            with containers.Vertical(id="debug-heading"):
-                yield widgets.Static(string("debug.title"), id="debug-title")
+            with containers.Horizontal(id="debug-heading"):
                 yield widgets.Static("", id="debug-status")
             with containers.Horizontal(id="debug-main"):
                 with containers.Vertical(id="debug-components-pane"):
@@ -650,27 +676,27 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
             )
 
     def on_mount(self) -> None:
-        """Start the trace and populate the initial component snapshot."""
+        """Initialize inspector tables and populate their first snapshots."""
         table = self.query_one("#debug-state-table", widgets.DataTable)
-        table.add_columns(string("debug.field"), string("debug.value"))
+        table.add_columns(
+            (string("debug.field"), "debug-field"),
+            (string("debug.value"), "debug-value"),
+        )
         table = self.query_one("#debug-attributes-table", widgets.DataTable)
-        table.add_columns(string("debug.field"), string("debug.value"))
+        table.add_columns(
+            (string("debug.field"), "debug-field"),
+            (string("debug.value"), "debug-value"),
+        )
         table = self.query_one("#debug-call-table", widgets.DataTable)
         table.add_columns(
             string("debug.time"),
             string("debug.call"),
             (string("debug.duration"), "debug-duration"),
         )
-        self.trace.start()
         self._refresh_snapshot()
         self._refresh_live_calls()
         self.set_interval(0.25, self._refresh_snapshot)
         self.set_interval(0.25, self._refresh_live_calls)
-        self.set_interval(2.0, self._refresh_code_objects)
-
-    def on_unmount(self) -> None:
-        """Stop collecting calls when the inspector closes."""
-        self.trace.stop()
 
     def on_tree_node_selected(
         self,
@@ -741,12 +767,6 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
         self._render_component()
         self._update_pause_button()
 
-    def _refresh_code_objects(self) -> None:
-        self.trace.refresh_code_objects()
-        if not self.trace.available:
-            self.trace.stop()
-            self._update_pause_button()
-
     def _refresh_live_calls(self) -> None:
         table = self.query_one("#debug-call-table", widgets.DataTable)
         entries = self.trace.entries()
@@ -761,7 +781,6 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
             for entry_id, duration, result in self._shown_trace_signature
         }
         previous_selection = self._selected_call_id
-        previous_offset = table.scroll_offset
         was_at_bottom = table.is_vertical_scroll_end
         removed_ids = tuple(
             entry_id for entry_id in previous_ids if entry_id not in ids
@@ -821,14 +840,6 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
                 animate=False,
                 scroll=was_at_bottom and bool(added_ids),
             )
-        if (removed_ids or added_ids) and not (was_at_bottom and added_ids):
-            self.call_after_refresh(
-                table.scroll_to,
-                x=previous_offset.x,
-                y=max(0, previous_offset.y - len(removed_ids)),
-                animate=False,
-                force=True,
-            )
         self._render_call_detail()
 
     def _render_call_detail(self) -> None:
@@ -841,6 +852,12 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
             ),
             None,
         )
+        if (
+            entry is not None
+            and entry.duration_ms is None
+            and self._shown_call_detail_id == entry.entry_id
+        ):
+            return
         if entry is None:
             content = string("debug.select_call")
         else:
@@ -856,22 +873,9 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
         if content == self._shown_call_detail:
             return
 
-        detail = self.query_one("#debug-call-detail", containers.Vertical)
-        previous_offset = detail.scroll_offset
-        previous_entry_id = self._shown_call_detail_id
         body.update(Text(content, no_wrap=False) if entry is not None else content)
         self._shown_call_detail = content
         self._shown_call_detail_id = self._selected_call_id
-        if previous_entry_id == self._selected_call_id and (
-            previous_offset.x or previous_offset.y
-        ):
-            self.call_after_refresh(
-                detail.scroll_to,
-                x=previous_offset.x,
-                y=previous_offset.y,
-                animate=False,
-                force=True,
-            )
 
     def _build_component_roots(self) -> list[_InspectorComponent]:
         ui_component = _InspectorComponent(
@@ -1039,11 +1043,13 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
             "#debug-state-table",
             states,
             string("debug.no_state"),
+            component.path,
         )
         self._render_attribute_table(
             "#debug-attributes-table",
             other_attributes,
             string("debug.no_attributes"),
+            component.path,
         )
 
     def _render_attribute_table(
@@ -1051,24 +1057,44 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
         selector: str,
         values: list[tuple[str, str]],
         empty_text: str,
+        component_path: str,
     ) -> None:
         table = self.query_one(selector, widgets.DataTable)
         rows = tuple(values) if values else ((empty_text, ""),)
-        if self._rendered_table_values.get(selector) == rows:
-            return
-        previous_offset = table.scroll_offset
-        table.clear(columns=False)
-        for name, value in rows:
-            table.add_row(Text(name), Text(value, no_wrap=False))
+        previous_rows = self._rendered_table_values.get(selector, ())
+        previous_values = dict(previous_rows)
+        current_values = dict(rows)
+        if self._rendered_table_components.get(selector) != component_path:
+            table.clear(columns=False)
+            for name, value in rows:
+                table.add_row(
+                    Text(name),
+                    Text(value, no_wrap=False),
+                    key=name,
+                )
+        else:
+            for name in previous_values.keys() - current_values.keys():
+                table.remove_row(name)
+            for name, value in rows:
+                if name not in previous_values:
+                    table.add_row(
+                        Text(name),
+                        Text(value, no_wrap=False),
+                        key=name,
+                    )
+                elif previous_values[name] != value:
+                    table.update_cell(
+                        name,
+                        "debug-value",
+                        Text(value, no_wrap=False),
+                    )
         self._rendered_table_values[selector] = rows
-        if previous_offset.x or previous_offset.y:
-            self.call_after_refresh(
-                table.scroll_to,
-                x=previous_offset.x,
-                y=previous_offset.y,
-                animate=False,
-                force=True,
-            )
+        self._rendered_table_components[selector] = component_path
+        if selector == "#debug-state-table":
+            table_height = min(max(len(rows), 1), 8)
+            if table_height != self._rendered_state_table_height:
+                table.styles.height = table_height
+                self._rendered_state_table_height = table_height
 
     def _format_status(self) -> str:
         engine = getattr(self.ui, "celune", None)
