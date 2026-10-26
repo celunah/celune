@@ -4,8 +4,8 @@
 import tempfile
 import threading
 import json as _json
-from typing import cast
 from pathlib import Path
+from typing import cast
 from unittest import mock
 from types import SimpleNamespace
 
@@ -17,8 +17,8 @@ from celune import cesn
 from celune.celune import Celune
 from celune.constants import APP_SLUG
 from celune import metadata as celune_metadata
-from celune.pipeline import output, playback, submission
 from celune.dataclasses import pipeline as pipeline_types
+from celune.pipeline import output, playback, submission
 
 from ..support import (
     FakeStream,
@@ -275,7 +275,7 @@ class TestPipelineAsync(CeluneAsyncTestCase):
             _, comments = celune_metadata.parse_vorbis_comment_block(comment_block)
             tags = dict(comments)
         assert tags["artist"] == "Fixture"
-        assert tags["album"] == "Celune via fake"
+        assert tags["album"] == "Fixture via fake"
         assert tags["title"] == "one two three four five..."
         assert _json.loads(tags["comment"])["text"] == "hello"
 

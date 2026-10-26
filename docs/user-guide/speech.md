@@ -73,6 +73,12 @@ The Python `Celune.say()`, `say_async()`, `say_stream()`, and
 are FLAC. Effects can be marked `keep=true`/`keep=True` to prepend them to the
 next saved utterance.
 
+## Saved audio metadata
+
+Saved speech FLAC Vorbis comments use the active character for `artist` and the
+character portion of `album`. The album tag follows `<character> via <backend>`;
+when no character is active, Celune's name is used.
+
 ## Audio invariants
 
 Inside Celune, audio is normalized `numpy.float32` in the range -1.0 to 1.0.

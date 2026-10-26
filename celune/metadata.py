@@ -6,15 +6,15 @@ from __future__ import annotations
 import json
 import pathlib
 import datetime
-from typing import TYPE_CHECKING, Optional, cast
 from collections.abc import Mapping
+from typing import TYPE_CHECKING, Optional, cast
 
 import soundfile as sf
 
 from . import __version__
 from .constants import APP_NAME
-from .typing.common import JSON, JSONSerializable
 from .typing.aliases import AudioChunk
+from .typing.common import JSON, JSONSerializable
 
 if TYPE_CHECKING:
     from .celune import Celune
@@ -267,10 +267,11 @@ def write_celune_flac(
     if len(prompt) > 5:
         words += "..."
 
+    character = engine.current_character or APP_NAME
     tags: JSON = {
         "encoder": f"{APP_NAME} {__version__}",
-        "artist": engine.current_character or APP_NAME,
-        "album": f"{APP_NAME} via {engine.backend.name}",
+        "artist": character,
+        "album": f"{character} via {engine.backend.name}",
         "title": words,
         "comment": encoded,
         "created_at": created_at,
