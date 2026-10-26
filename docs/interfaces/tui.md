@@ -18,7 +18,33 @@ post-frame worker and report failures on the loading overlay.
 | `CTRL+Q` | Fade out the UI, then shut down through the graceful teardown path. |
 | `CTRL+T` | Toggle dark/light themes and persist the selection. |
 | `CTRL+R` | Wake from sleep, start/stop Persona speech capture, or start/stop live VC capture depending on mode. |
+| `CTRL+B` | Open or close the debug inspector when `log_level` is `debug`. |
 | `ESC` during startup | Reveal the main interface when the loading footer offers this action. |
+
+## Debug inspector
+
+Set `log_level: debug` in `config.yaml`, then press `CTRL+B` to open the
+inspector. Press `CTRL+B` or `ESC` to close it. The shortcut is ignored at other
+log levels. It remains available while the engine is `FATAL` or `STOPPED`.
+
+The left pane selects `CeluneUI`, its UI subsystems, and engine components,
+including loaded lifecycle, pipeline, playback, audio-server, and worker modules.
+The right pane refreshes the selected object's state and attributes. Sensitive
+fields such as API keys, tokens, passwords, and credentials are redacted. The
+bottom `LIVE CALLS` pane shows a bounded rolling trace of calls into loaded Celune Python modules while
+the inspector is open. Use `Pause` to stop adding entries, `Resume` to continue,
+and `Clear` to remove the visible trace. Selecting a call shows its Celune call
+path, duration, thread, and source location. Press `F` to filter component names;
+use the arrow keys to select components or trace calls, `ENTER` to expand a
+component, and `TAB` to move between panes.
+
+The call trace uses Python's `sys.monitoring` API, available on supported Python
+versions 3.12 and newer. It enables events only for Celune code and releases its
+monitor when the inspector closes. If the runtime has no free monitoring tool
+slot, the component snapshot remains available and the trace control reports
+that tracing is unavailable. Calls are captured from Celune code in the current
+process; isolated backend worker internals are not traced across a process
+boundary, though their available proxy state remains selectable.
 
 After the core is attached to the UI and startup reporting is ready, the loading
 screen adds `ESC reveal UI` to its footer. Press `ESC` to show the main interface

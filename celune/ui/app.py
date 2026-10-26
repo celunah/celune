@@ -4,13 +4,11 @@
 from __future__ import annotations
 
 import sys
-import queue as queue_module
 import asyncio
 import logging
 import itertools
 import threading
-from io import TextIOWrapper
-from types import ModuleType
+
 from typing import (
     TYPE_CHECKING,
     Never,
@@ -24,56 +22,52 @@ from typing import (
     final,
 )
 from pathlib import Path
+import queue as queue_module
+from io import TextIOWrapper
+from types import ModuleType
 from dataclasses import field, dataclass
 from collections.abc import Callable, Iterator
 
 from textual import (
     app,
+    binding,
+    color as textual_color,
+    containers,
     css,
-    work,
+    events,
+    message as textual_message,
+    screen as textual_screen,
     theme,
     timer,
-    events,
-    binding,
-    widgets,
-    containers,
-)
-from textual import (
-    color as textual_color,
-)
-from textual import (
-    screen as textual_screen,
-)
-from textual import (
     widget as textual_widget,
-)
-from textual import (
-    message as textual_message,
+    widgets,
+    work,
 )
 from rich.text import Text
 
+from . import debug as _debug
 from . import capture as _capture
 from . import runtime as _runtime
-from . import interaction as _interaction
-from ..i18n import string, tagged_string
-from .theme import CELUNE_CSS, severity_color, with_brightness
-from .compat import install_textual_timer_sleep
 from .loading import CeluneLoadingScreen
+from . import interaction as _interaction
+from .compat import install_textual_timer_sleep
 from .terminal import SelectMenuOption, SelectMenuWidget
-from ..watchdog import launcher_loss_requested
-from ..constants import BASE_SR, SIGTSTP, APP_NAME, ExitCodes
-from ..typing.agent import AgentTaskState
+from .theme import CELUNE_CSS, severity_color, with_brightness
 from ..typing.locks import (
     ComponentLockName,
     ComponentLockOwner,
     ComponentLockRequirement,
 )
+from ..i18n import string, tagged_string
+from ..typing.agent import AgentTaskState
 from ..typing.modes import OperationState
-from ..typing.common import JSONSerializable
-from ..typing.config import AudioDeviceInfoValue
 from ..registry.types import ModelMetadata
-from ..theme.defaults import default_theme_family, default_error_theme_family
+from ..typing.common import JSONSerializable
+from ..watchdog import launcher_loss_requested
+from ..typing.config import AudioDeviceInfoValue
 from ..core.concurrency import run_in_daemon_thread
+from ..constants import BASE_SR, SIGTSTP, APP_NAME, ExitCodes
+from ..theme.defaults import default_theme_family, default_error_theme_family
 
 App = app.App
 ReturnType = app.ReturnType
@@ -85,6 +79,7 @@ Color = textual_color.Color
 Theme = theme.Theme
 Timer = timer.Timer
 ModalScreen = textual_screen.ModalScreen
+DebugInspectorScreen = _debug.DebugInspectorScreen
 Widget = textual_widget.Widget
 BindingType = binding.BindingType
 Message = textual_message.Message
@@ -108,17 +103,18 @@ else:
 install_textual_timer_sleep()
 
 if TYPE_CHECKING:
-    import sounddevice as sd
-
-    from .terminal import LogRedirect, UILogHandler
-    from ..typing.agent import AgentTask
-    from ..typing.aliases import LogLevel, AudioChunk, AudioChunks, VCAudioCallback
-
-    colors: ModuleType
-
     import yaml
     import numpy as np
+    import sounddevice as sd
     import numpy.typing as npt
+
+    from .terminal import (
+        LogRedirect,
+        UILogHandler,
+        is_celune_log_record,
+    )
+    from .resources import FOOTER_ROTATE_SECONDS
+    from .commands import process_command as process_ui_command
 
     from ..vc import (
         VC_PLAYBACK_GAIN,
@@ -132,15 +128,7 @@ if TYPE_CHECKING:
         vc_live_chunk_overlap_frames,
         create_live_voice_activity_detector,
     )
-    from ..paths import config_path, main_window_log_path
-    from ..utils import discard, replace_ipa, is_april_fools
     from ..celune import Celune
-    from ..config import format_audio_device_name, resolve_audio_device_with_info
-    from ..cevoice import CEVoiceLoader
-    from .commands import process_command as process_ui_command
-    from .terminal import is_celune_log_record
-    from .resources import FOOTER_ROTATE_SECONDS
-    from ..exceptions import CEDTSError
     from ..persona.asr import (
         DEFAULT_PERSONA_SPEECH_MODEL_ID,
         PERSONA_SPEECH_END_DELAY_SECONDS,
@@ -148,10 +136,6 @@ if TYPE_CHECKING:
         WhisperSegment,
         WhisperTranscriber,
     )
-    from ..persona.impl import persona_config, persona_enabled, persona_talkback_enabled
-    from ..core.concurrency import ComponentLockLease
-    from ..extensions.events import EventDispatcher
-    from ..pipeline.captions import current_playback_status
     from ..dataclasses.events import (
         AgentTaskFinishedEvent,
         AgentChoiceRequestedEvent,
@@ -161,11 +145,24 @@ if TYPE_CHECKING:
         CharacterLoadedEvent,
         CharacterUnloadedEvent,
     )
+    from ..cevoice import CEVoiceLoader
+    from ..exceptions import CEDTSError
     from ..pipeline.submission import (
         queue_streaming_sfx_audio,
         finish_streaming_sfx_audio,
     )
+    from ..typing.agent import AgentTask
     from ..dataclasses.pipeline import AudioOutput
+    from ..extensions.events import EventDispatcher
+    from ..core.concurrency import ComponentLockLease
+    from ..paths import config_path, main_window_log_path
+    from ..pipeline.captions import current_playback_status
+    from ..utils import discard, replace_ipa, is_april_fools
+    from ..config import format_audio_device_name, resolve_audio_device_with_info
+    from ..typing.aliases import LogLevel, AudioChunk, AudioChunks, VCAudioCallback
+    from ..persona.impl import persona_config, persona_enabled, persona_talkback_enabled
+
+    colors: ModuleType
 
     class _UIResources(Protocol):
         """Type-checkable subset of the resource footer module."""
@@ -1034,6 +1031,15 @@ class CeluneUI(
         raise TypeError(f"{__class__.__name__} is final and cannot be subclassed")
 
     ENABLE_COMMAND_PALETTE = False
+    BINDINGS: ClassVar[list[BindingType]] = [
+        *App.BINDINGS,
+        binding.Binding(
+            "ctrl+b",
+            "toggle_debug_inspector",
+            string("debug.binding"),
+            priority=True,
+        ),
+    ]
     CSS = CELUNE_CSS
     _instance: ClassVar[Optional[CeluneUI]] = None
 
