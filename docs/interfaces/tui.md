@@ -30,7 +30,7 @@ log levels. It remains available while the engine is `FATAL` or `STOPPED`.
 The header reports the engine operation state, current activity, selected TTS
 backend, and whether its CEDTS worker process and packet reader are active.
 
-The left pane selects `Celune UI`, its UI subsystems, and engine components,
+The left pane selects the UI and its subsystems alongside engine components,
 including loaded lifecycle, pipeline, playback, audio-server, and worker modules.
 The right pane refreshes the selected object's state and attributes. Sensitive
 fields such as API keys, tokens, passwords, and credentials are redacted. The
@@ -39,8 +39,10 @@ Celune Python modules whenever debug logging is enabled, including while the
 inspector is closed. Use `Pause` to stop adding entries, `Resume` to continue,
 and `Clear` to remove the visible trace. Selecting a call shows its Celune call
 path, duration, thread, and source location. Press `F` to filter component names;
-use the arrow keys to select components or trace calls, `ENTER` to expand a
-component, and `TAB` to move between panes.
+the call table uses short module and function names, while Call details shows
+the full qualified name and the function's parameter values. Use the arrow
+keys to select components or trace calls, `ENTER` to expand a component, and
+`TAB` to move between panes.
 
 The call trace uses Python's `sys.monitoring` API, available on supported Python
 versions 3.12 and newer. It enables events only for Celune code and releases its

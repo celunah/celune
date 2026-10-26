@@ -6,17 +6,17 @@ from __future__ import annotations
 import sys
 import time
 import types
-import contextlib
+import inspect
 import threading
+import contextlib
 
 from enum import Enum
 from pathlib import Path
-from collections import deque
 from datetime import datetime
-from types import CodeType, ModuleType
+from collections import abc, deque
 from dataclasses import dataclass, field
-from collections.abc import Callable, Iterator
-from typing import ClassVar, Optional, Protocol, cast
+from typing import ClassVar, Optional, cast
+from types import CodeType, FrameType, ModuleType
 
 from rich.text import Text
 from textual.app import ComposeResult
@@ -27,7 +27,17 @@ from ..i18n import string
 _CELUNE_SOURCE_ROOT = Path(__file__).resolve().parent.parent
 
 
-class _MonitorEvents(Protocol):
+def _inspect_code_flag(name: str) -> int:
+    """Return an inspect code flag by its standard-library name."""
+    return cast(int, getattr(inspect, name))
+
+
+_CODE_FLAG_VARARGS = _inspect_code_flag("CO_VARARGS")
+_CODE_FLAG_VARKEYWORDS = _inspect_code_flag("CO_VARKEYWORDS")
+
+
+@dataclass(frozen=True)
+class _MonitorEvents:
     """Event constants used by the optional execution monitor."""
 
     PY_START: int
@@ -38,34 +48,74 @@ class _MonitorEvents(Protocol):
     NO_EVENTS: int
 
 
-class _MonitoringAPI(Protocol):
+@dataclass(frozen=True)
+class _MonitoringAPI:
     """Small typed surface of Python's execution monitoring API."""
 
     events: _MonitorEvents
+    get_tool: abc.Callable[[int], Optional[str]]
+    use_tool_id: abc.Callable[[int, str], None]
+    free_tool_id: abc.Callable[[int], None]
+    register_callback: abc.Callable[
+        [int, int, Optional[abc.Callable[..., object]]],
+        Optional[abc.Callable[..., object]],
+    ]
+    set_events: abc.Callable[[int, int], None]
+    set_local_events: abc.Callable[[int, CodeType, int], None]
 
-    def get_tool(self, tool_id: int, /) -> Optional[str]: ...
 
-    def use_tool_id(self, tool_id: int, name: str, /) -> None: ...
+def _monitoring_attribute(api: object, name: str) -> object:
+    """Return an optional monitoring API attribute by name."""
+    return getattr(api, name)
 
-    def free_tool_id(self, tool_id: int, /) -> None: ...
 
-    def register_callback(
-        self,
-        tool_id: int,
-        event: int,
-        callback: Optional[Callable[..., object]],
-        /,
-    ) -> Optional[Callable[..., object]]: ...
-
-    def set_events(self, tool_id: int, event_set: int, /) -> None: ...
-
-    def set_local_events(
-        self,
-        tool_id: int,
-        code: CodeType,
-        event_set: int,
-        /,
-    ) -> None: ...
+def _load_monitoring_api() -> Optional[_MonitoringAPI]:
+    """Return a typed adapter for Python's optional execution monitor."""
+    api = getattr(sys, "monitoring", None)
+    if api is None:
+        return None
+    try:
+        event_api = _monitoring_attribute(api, "events")
+        events = _MonitorEvents(
+            PY_START=cast(int, _monitoring_attribute(event_api, "PY_START")),
+            PY_RESUME=cast(int, _monitoring_attribute(event_api, "PY_RESUME")),
+            PY_RETURN=cast(int, _monitoring_attribute(event_api, "PY_RETURN")),
+            PY_YIELD=cast(int, _monitoring_attribute(event_api, "PY_YIELD")),
+            PY_UNWIND=cast(int, _monitoring_attribute(event_api, "PY_UNWIND")),
+            NO_EVENTS=cast(int, _monitoring_attribute(event_api, "NO_EVENTS")),
+        )
+        return _MonitoringAPI(
+            events=events,
+            get_tool=cast(
+                abc.Callable[[int], Optional[str]],
+                _monitoring_attribute(api, "get_tool"),
+            ),
+            use_tool_id=cast(
+                abc.Callable[[int, str], None],
+                _monitoring_attribute(api, "use_tool_id"),
+            ),
+            free_tool_id=cast(
+                abc.Callable[[int], None],
+                _monitoring_attribute(api, "free_tool_id"),
+            ),
+            register_callback=cast(
+                abc.Callable[
+                    [int, int, Optional[abc.Callable[..., object]]],
+                    Optional[abc.Callable[..., object]],
+                ],
+                _monitoring_attribute(api, "register_callback"),
+            ),
+            set_events=cast(
+                abc.Callable[[int, int], None],
+                _monitoring_attribute(api, "set_events"),
+            ),
+            set_local_events=cast(
+                abc.Callable[[int, CodeType, int], None],
+                _monitoring_attribute(api, "set_local_events"),
+            ),
+        )
+    except AttributeError:
+        return None
 
 
 @dataclass
@@ -75,7 +125,9 @@ class DebugCallEntry:
     entry_id: int
     timestamp: str
     name: str
+    display_name: str
     call_path: tuple[str, ...]
+    arguments: tuple[tuple[str, str], ...]
     thread_id: int
     source_path: str
     source_line: int
@@ -110,11 +162,9 @@ class DebugCallTrace:
 
     def __init__(self, ui: object) -> None:
         self._ui = ui
-        self._monitoring = cast(
-            Optional[_MonitoringAPI], getattr(sys, "monitoring", None)
-        )
+        self._monitoring: Optional[_MonitoringAPI] = _load_monitoring_api()
         self._tool_id: Optional[int] = None
-        self._labels: dict[CodeType, str] = {}
+        self._labels: dict[CodeType, tuple[str, str]] = {}
         self._entries: deque[DebugCallEntry] = deque(maxlen=self._TRACE_LIMIT)
         self._stacks: dict[int, list[_ActiveCall]] = {}
         self._lock = threading.RLock()
@@ -247,7 +297,7 @@ class DebugCallTrace:
             | monitoring.events.PY_YIELD
         )
         try:
-            discovered: dict[CodeType, str] = {}
+            discovered: dict[CodeType, tuple[str, str]] = {}
             seen_codes: set[CodeType] = set()
             for module_name, module in tuple(sys.modules.items()):
                 if (
@@ -265,7 +315,10 @@ class DebugCallTrace:
                     for code in _codes_from_value(value, seen_codes, module_name):
                         discovered.setdefault(
                             code,
-                            f"{module_name}.{code.co_qualname}",
+                            (
+                                f"{module_name}.{code.co_qualname}",
+                                f"{module_name}.{code.co_name}()",
+                            ),
                         )
 
             for code, name in discovered.items():
@@ -295,9 +348,10 @@ class DebugCallTrace:
         del instruction_offset
         if self._failed:
             return
-        name = self._labels.get(code)
-        if name is None:
+        label = self._labels.get(code)
+        if label is None:
             return
+        name, display_name = label
 
         started_ns = time.perf_counter_ns()
         thread_id = threading.get_ident()
@@ -307,12 +361,15 @@ class DebugCallTrace:
                 path = tuple(call.name for call in stack) + (name,)
                 entry: Optional[DebugCallEntry] = None
                 if self._recording:
+                    arguments = _call_arguments(code, sys._getframe().f_back)
                     self._next_entry_id += 1
                     entry = DebugCallEntry(
                         entry_id=self._next_entry_id,
                         timestamp=datetime.now().strftime("%H:%M:%S.%f")[:-3],
                         name=name,
+                        display_name=display_name,
                         call_path=path[-self._MAX_CALL_DEPTH :],
+                        arguments=arguments,
                         thread_id=thread_id,
                         source_path=code.co_filename,
                         source_line=code.co_firstlineno,
@@ -567,6 +624,8 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
         width: 68%;
         height: 1fr;
         border-right: solid $secondary;
+        overflow-y: auto;
+        scrollbar-size-vertical: 2;
     }
     #debug-call-detail {
         width: 1fr;
@@ -795,7 +854,7 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
             if entry.entry_id not in previous_id_set:
                 table.add_row(
                     entry.timestamp,
-                    entry.name,
+                    entry.display_name,
                     _format_duration(entry),
                     key=row_key,
                 )
@@ -860,11 +919,21 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
             content = string("debug.select_call")
         else:
             lines = [
+                f"{string('debug.function')}: {entry.name}()",
                 f"{string('debug.call_path')}: {' → '.join(entry.call_path)}",
-                f"{string('debug.duration')}: {_format_duration(entry)}",
-                f"{string('debug.thread')}: {entry.thread_id}",
-                f"{string('debug.source')}: {entry.source_path}:{entry.source_line}",
+                f"{string('debug.arguments')}:",
             ]
+            if entry.arguments:
+                lines.extend(f"  {name}={value}" for name, value in entry.arguments)
+            else:
+                lines.append(f"  {string('debug.none')}")
+            lines.extend(
+                [
+                    f"{string('debug.duration')}: {_format_duration(entry)}",
+                    f"{string('debug.thread')}: {entry.thread_id}",
+                    f"{string('debug.source')}: {entry.source_path}:{entry.source_line}",
+                ]
+            )
             if entry.exception_type is not None:
                 lines.append(f"{string('debug.exception')}: {entry.exception_type}")
             content = "\n".join(lines)
@@ -1132,7 +1201,7 @@ def _codes_from_value(
     value: object,
     seen: set[CodeType],
     module_name: str,
-) -> Iterator[CodeType]:
+) -> abc.Iterator[CodeType]:
     """Yield Celune-owned code while skipping external decorator wrappers."""
     if isinstance(value, types.FunctionType):
         if value.__module__ != module_name:
@@ -1165,7 +1234,7 @@ def _is_celune_code(code: CodeType) -> bool:
         return False
 
 
-def _walk_code(code: CodeType, seen: set[CodeType]) -> Iterator[CodeType]:
+def _walk_code(code: CodeType, seen: set[CodeType]) -> abc.Iterator[CodeType]:
     if code in seen:
         return
     seen.add(code)
@@ -1252,6 +1321,31 @@ def _format_value(name: str, value: object) -> str:
     return f"<{type(value).__name__}>"
 
 
+def _call_arguments(
+    code: CodeType,
+    frame: Optional[FrameType],
+) -> tuple[tuple[str, str], ...]:
+    """Return bounded, readable values for the parameters at function entry."""
+    if frame is None or frame.f_code is not code:
+        return ()
+
+    parameter_count = code.co_argcount + code.co_kwonlyargcount
+    parameter_names = list(code.co_varnames[:parameter_count])
+    next_name = parameter_count
+    if code.co_flags & _CODE_FLAG_VARARGS:
+        parameter_names.append(code.co_varnames[next_name])
+        next_name += 1
+    if code.co_flags & _CODE_FLAG_VARKEYWORDS:
+        parameter_names.append(code.co_varnames[next_name])
+
+    local_values = frame.f_locals
+    return tuple(
+        (name, _format_value(name, local_values[name]))
+        for name in parameter_names
+        if name in local_values
+    )
+
+
 def _is_state_name(name: str) -> bool:
     normalized = name.casefold().lstrip("_")
     return "state" in normalized or normalized in {
@@ -1309,7 +1403,7 @@ def _component_signature(
 
 def _iter_components(
     components: list[_InspectorComponent],
-) -> Iterator[_InspectorComponent]:
+) -> abc.Iterator[_InspectorComponent]:
     for component in components:
         yield component
         yield from _iter_components(component.children)
