@@ -17,8 +17,8 @@ from openrgb import OpenRGBClient
 from openrgb.utils import RGBColor
 
 from .constants import BASE_SR
-from .typing.common import RGB
 from .theme.colors import ERROR
+from .typing.common import RGB
 from .utils import to_rgb, discard, lunar_info, is_celune_day, range_interpolated
 
 if TYPE_CHECKING:
@@ -105,6 +105,16 @@ class AudioRGBGlow:
         self._smoothed_level = 0.0
 
         self._state = "none"
+
+    def _set_color(self, color: str) -> None:
+        """Update the selected pack's glow color and active target."""
+        base_color = np.array(
+            self._fix_color_rendering(to_rgb(color)), dtype=np.float32
+        )
+        with self._lock:
+            self.base_color = base_color
+            if self._state != "fatal":
+                self._target_color = base_color.copy()
 
     def connect(self) -> bool:
         """Connect to the OpenRGB backend and initialize devices.

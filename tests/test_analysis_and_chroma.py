@@ -4,8 +4,8 @@
 from pathlib import Path
 from unittest import mock
 
-import torch
 import pytest
+import torch
 import numpy as np
 
 from celune import i18n, analysis
@@ -340,6 +340,19 @@ class TestChroma(CeluneTestCase):
         glow = AudioRGBGlow(celune=None, color="#ffffff")
         assert glow.speech_level(np.zeros((0, 2), dtype=np.float32)) == 0.0
         assert glow.speech_level(stereo) > 0.0
+
+    def test_set_color_updates_the_base_color_and_glow_target(self) -> None:
+        """Update pack glow colors without connecting to RGB devices."""
+        glow = AudioRGBGlow(celune=None, color="#ffffff")
+        glow._state = "normal"
+
+        glow._set_color("#d8751c")
+
+        expected = np.array(
+            AudioRGBGlow.fix_color_rendering((216, 117, 28)), dtype=np.float32
+        )
+        assert np.array_equal(glow.base_color, expected)
+        assert np.array_equal(glow._target_color, expected)
 
     def test_glow_worker_signals_completion(self) -> None:
         """Verify shutdown can observe a glow worker that exits promptly."""

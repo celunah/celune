@@ -290,19 +290,24 @@ class TestUIStartup(CeluneTestCase):
         self.assertEqual(ui.theme, "celune_light")
         self.assertEqual(ui.current_theme.name, "celune_light")
 
-    def test_character_change_applies_the_active_pack_palette(self) -> None:
-        """Verify a selected pack replaces and reapplies the current TUI theme."""
+    def test_character_change_refreshes_the_active_pack_state(self) -> None:
+        """Verify a pack transition updates palette, glow, and voice selection."""
         colors.configure_theme()
         ui = CeluneUI()
         dispatcher = EventDispatcher(log_warning=mock.Mock())
+        glow = mock.Mock()
         celune = cast(
             Celune,
             SimpleNamespace(
                 config={"theme": "dark"},
                 _event_dispatcher=dispatcher,
+                voices=("balanced", "calm", "spirited"),
+                current_voice="calm",
+                glow=glow,
             ),
         )
         ui.celune = celune
+        ui.celune_ready = True
         ui.active_theme_name = "celune"
         ui._ensure_themes_registered()
         ui.theme = "celune"
@@ -332,12 +337,21 @@ class TestUIStartup(CeluneTestCase):
             new_is_default=True,
         )
 
-        with mock.patch("celune.ui.app.default_loader", return_value=loader):
+        with (
+            mock.patch("celune.ui.app.default_loader", return_value=loader),
+            mock.patch.object(ui, "tts_voice_changed") as voice_changed,
+            mock.patch.object(ui, "change_voice_lock_state") as update_lock,
+        ):
             dispatcher.emit("character_changed", event)
 
         self.assertEqual(ui.theme, "celune")
         self.assertEqual(ui.current_theme.background, "#21170f")
         self.assertEqual(colors.THEME.primary, "#e6c206")
+        self.assertEqual(ui.celune_styles, ("balanced", "calm", "spirited"))
+        self.assertEqual(ui.style_index, 1)
+        voice_changed.assert_called_once_with("calm")
+        update_lock.assert_called_once_with(locked=False)
+        glow._set_color.assert_called_once_with("#d8751c")
 
     def test_settings_menu_flattens_nested_configuration_values(self) -> None:
         """Verify the configuration manager exposes nested YAML leaf values."""

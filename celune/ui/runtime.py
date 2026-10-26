@@ -11,6 +11,7 @@ import signal
 import asyncio
 import inspect
 import logging
+import itertools
 import datetime
 import threading
 import contextlib
@@ -59,7 +60,7 @@ __all__ = (
     "_redirect_dunder_stdio",
     "_refresh_agent_status",
     "_refresh_logs",
-    "_refresh_pack_theme",
+    "_refresh_pack_state",
     "_refresh_status",
     "_refresh_theme_text",
     "_remove_low_level_stderr_capture",
@@ -164,8 +165,9 @@ def _has_celune(self) -> bool:
 
 
 def _configure_active_pack_theme(self) -> None:
-    """Rebuild the shared palette from the currently selected voice pack."""
+    """Apply the selected pack's TUI colors and RGB glow color."""
     _app.colors.configure_theme()
+    glow_color = _app.colors.DEFAULT_ACCENT
 
     if self._has_celune():
         loader_factory = _app.default_loader
@@ -181,6 +183,11 @@ def _configure_active_pack_theme(self) -> None:
                 faded_accent = theme.get("faded_accent")
                 if faded_accent is None:
                     faded_accent = theme.get("sleeping_color")
+                if isinstance(accent, str):
+                    glow_color = accent
+                configured_glow = theme.get("glow_color")
+                if isinstance(configured_glow, str):
+                    glow_color = configured_glow
                 if (
                     isinstance(background, str)
                     and isinstance(accent, str)
@@ -191,6 +198,11 @@ def _configure_active_pack_theme(self) -> None:
                         accent,
                         faded_accent,
                     )
+
+        glow = getattr(self.celune, "glow", None)
+        set_glow_color = getattr(glow, "_set_color", None)
+        if callable(set_glow_color):
+            set_glow_color(glow_color)
 
     self._ensure_themes_registered()
 
@@ -518,14 +530,32 @@ def _on_character_bundle_changed(
         _app.CharacterUnloadedEvent,
     ],
 ) -> None:
-    """Refresh the active TUI palette after a voice-pack transition."""
-    self._run_on_ui_thread(self._refresh_pack_theme)
+    """Refresh the active pack's UI state after a voice-pack transition."""
+    self._run_on_ui_thread(self._refresh_pack_state)
 
 
-def _refresh_pack_theme(self) -> None:
-    """Apply the selected pack palette without changing the user's theme mode."""
+def _refresh_pack_state(self) -> None:
+    """Apply the active pack palette and synchronize its voice-cycle state."""
     _configure_active_pack_theme(self)
     self._apply_theme(self.active_theme_name)
+
+    celune = self.celune
+    if celune is None:
+        return
+
+    voices = tuple(celune.voices)
+    self.celune_styles = voices
+    self.celune_voices = itertools.cycle(voices)
+    current_voice = getattr(celune, "current_voice", None)
+    if isinstance(current_voice, str) and current_voice in voices:
+        self.style_index = voices.index(current_voice)
+        if self.celune_ready:
+            self.tts_voice_changed(current_voice)
+    else:
+        self.style_index = 0
+
+    if self.celune_ready:
+        self.change_voice_lock_state(locked=len(voices) < 2)
 
 
 def _on_agent_task_state_changed(
@@ -2058,9 +2088,9 @@ class RuntimeHooks:
         """Delegate to the runtime implementation."""
         return _refresh_logs(self, recolor=recolor)
 
-    def _refresh_pack_theme(self) -> None:
+    def _refresh_pack_state(self) -> None:
         """Delegate to the runtime implementation."""
-        return _refresh_pack_theme(self)
+        return _refresh_pack_state(self)
 
     def _refresh_status(self) -> None:
         """Delegate to the runtime implementation."""

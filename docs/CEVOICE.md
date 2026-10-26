@@ -141,7 +141,7 @@ Supported optional metadata fields are:
 | `description` | Free-form descriptive text |
 | `default_voice` | Initial voice to select when present |
 | `voice_order` | Preferred UI order for voices |
-| `theme` | Optional UI colors: `background`, `accent`, and optional `glow_color` / `faded_accent` |
+| `theme` | Optional colors: `background`, `accent`, `glow_color`, and `faded_accent` |
 | `persona` | Optional character metadata used for naming and Persona-facing behavior |
 
 Each voice entry may also include:
@@ -332,9 +332,9 @@ The loader parses and validates the bundle, then lazily materializes assets into
 - SoulXSinger startup, backend overrides, and pack selection require a usable
   CECHAR v5 singing voice. Celune rejects an incompatible pack before loading
   the singing model and logs a yellow warning naming the character.
-- `theme.accent` or `theme.glow_color` can affect Celune's UI glow color.
-- Selecting or reloading a pack applies its TUI palette immediately; a pack without
-  theme colors restores Celune's default palette.
+- `theme.accent` supplies the RGB glow color unless `theme.glow_color` overrides it.
+- Selecting or reloading a pack updates its TUI palette, RGB glow, and voice cycle
+  immediately. A pack without theme colors restores Celune's defaults.
 - `persona.identity.name`, when present, becomes the bundle's character name ahead of top-level `name`.
 
 ## Persona debug overrides
