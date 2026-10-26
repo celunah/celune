@@ -10,6 +10,7 @@ import threading
 import contextlib
 
 from enum import Enum
+from pathlib import Path
 from collections import deque
 from datetime import datetime
 from types import CodeType, ModuleType
@@ -22,6 +23,8 @@ from textual.app import ComposeResult
 from textual import binding, containers, screen, widgets
 
 from ..i18n import string
+
+_CELUNE_SOURCE_ROOT = Path(__file__).resolve().parent.parent
 
 
 class _MonitorEvents(Protocol):
@@ -229,6 +232,8 @@ class DebugCallTrace:
                     ):
                         continue
                     for code in _codes_from_value(value, seen_codes):
+                        if not _is_celune_code(code):
+                            continue
                         discovered.setdefault(
                             code,
                             f"{module_name}.{code.co_qualname}",
@@ -376,6 +381,39 @@ _ENGINE_MODULE_COMPONENTS: tuple[tuple[str, str], ...] = (
     ("celune.audio.server", "debug.component_audio_server"),
     ("celune.cedts.worker", "debug.component_worker"),
 )
+_COMPONENT_ACRONYMS = frozenset(
+    {
+        "api",
+        "asr",
+        "cechar",
+        "cedts",
+        "cevoice",
+        "cli",
+        "cpu",
+        "cuda",
+        "dsp",
+        "gpu",
+        "http",
+        "https",
+        "ipa",
+        "json",
+        "kv",
+        "llm",
+        "onnx",
+        "rest",
+        "rms",
+        "tts",
+        "tui",
+        "ui",
+        "url",
+        "uuid",
+        "vc",
+        "vad",
+        "vram",
+        "webui",
+        "yaml",
+    }
+)
 
 
 class DebugInspectorScreen(screen.ModalScreen[None]):
@@ -394,32 +432,39 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
     #debug-panel {
         width: 98%;
         height: 96%;
-        border: double $warning;
+        border: round $primary;
         background: $background;
-        padding: 0 1;
+        padding: 0 2;
     }
     #debug-heading {
-        height: 1;
-        color: $warning;
-        text-style: bold;
+        height: 2;
+        layout: vertical;
+        border-bottom: solid $secondary;
+        margin-bottom: 1;
     }
     #debug-title {
         width: 1fr;
+        height: 1;
+        color: $primary;
+        text-style: bold;
+        text-align: center;
     }
     #debug-status {
+        width: 1fr;
         height: 1;
         color: $foreground;
+        text-align: center;
     }
     #debug-main {
         height: 1fr;
-        min-height: 5;
-        border-top: solid $warning;
+        min-height: 6;
     }
     #debug-components-pane {
         width: 30%;
-        min-width: 18;
-        border-right: solid $warning;
-        padding: 0 1;
+        min-width: 22;
+        border: round $secondary;
+        padding: 1;
+        margin-right: 1;
     }
     #debug-components-title,
     #debug-state-title,
@@ -427,12 +472,16 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
     #debug-live-title,
     #debug-call-detail-title {
         height: 1;
-        color: $warning;
+        color: $primary;
         text-style: bold;
+    }
+    #debug-components-title {
+        margin-bottom: 1;
     }
     #debug-filter {
         height: 3;
-        margin-bottom: 0;
+        border: round $secondary;
+        margin: 0 0 1 0;
     }
     #debug-components {
         height: 1fr;
@@ -440,12 +489,14 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
     }
     #debug-details-pane {
         width: 1fr;
-        padding: 0 1;
+        border: round $secondary;
+        padding: 1 2;
     }
     #debug-selected-component {
         height: 1;
         color: $foreground;
         text-style: bold;
+        margin-bottom: 1;
     }
     #debug-state-title {
         margin-top: 0;
@@ -463,11 +514,14 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
     }
     #debug-live-pane {
         height: 9;
-        min-height: 6;
-        border-top: double $warning;
+        min-height: 7;
+        border: round $secondary;
+        margin-top: 1;
+        padding: 0 1;
     }
     #debug-live-heading {
-        height: 1;
+        height: 3;
+        align: left middle;
     }
     #debug-live-title {
         width: 1fr;
@@ -475,11 +529,12 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
     #debug-pause,
     #debug-clear {
         min-width: 10;
-        height: 1;
+        height: 3;
         padding: 0 1;
-        border: none;
+        border: round $primary;
         background: $surface;
-        color: $warning;
+        color: $primary;
+        margin-left: 1;
     }
     #debug-live-content {
         height: 1fr;
@@ -488,7 +543,7 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
     #debug-call-table {
         width: 68%;
         height: 1fr;
-        border-right: solid $warning;
+        border-right: solid $secondary;
     }
     #debug-call-detail {
         width: 1fr;
@@ -497,9 +552,11 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
         overflow-y: auto;
     }
     #debug-footer {
-        height: 1;
+        height: 2;
+        width: 1fr;
         color: $secondary;
-        border-top: solid $warning;
+        border-top: solid $secondary;
+        padding: 0 1;
     }
     """
 
@@ -513,12 +570,15 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
         self._selected_call_id: Optional[int] = None
         self._shown_trace_signature: tuple[tuple[int, Optional[float], str], ...] = ()
         self._shown_trace_ids: tuple[int, ...] = ()
+        self._shown_call_detail_id: Optional[int] = None
+        self._shown_call_detail: Optional[str] = None
+        self._rendered_table_values: dict[str, tuple[tuple[str, str], ...]] = {}
         self._component_tree: Optional[widgets.Tree[_InspectorComponent]] = None
 
     def compose(self) -> ComposeResult:
         """Build the component selector, snapshot, and call trace panes."""
         with containers.Vertical(id="debug-panel"):
-            with containers.Horizontal(id="debug-heading"):
+            with containers.Vertical(id="debug-heading"):
                 yield widgets.Static(string("debug.title"), id="debug-title")
                 yield widgets.Static("", id="debug-status")
             with containers.Horizontal(id="debug-main"):
@@ -694,31 +754,81 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
         signature = tuple(
             (entry.entry_id, entry.duration_ms, entry.result) for entry in entries
         )
-        if signature != self._shown_trace_signature:
-            table.clear(columns=False)
-            for entry in entries:
+        previous_ids = self._shown_trace_ids
+        previous_id_set = set(previous_ids)
+        previous_signature = {
+            entry_id: (duration, result)
+            for entry_id, duration, result in self._shown_trace_signature
+        }
+        previous_selection = self._selected_call_id
+        previous_offset = table.scroll_offset
+        was_at_bottom = table.is_vertical_scroll_end
+        removed_ids = tuple(
+            entry_id for entry_id in previous_ids if entry_id not in ids
+        )
+        added_ids = tuple(
+            entry_id for entry_id in ids if entry_id not in previous_id_set
+        )
+
+        for entry_id in removed_ids:
+            table.remove_row(str(entry_id))
+
+        for entry in entries:
+            row_key = str(entry.entry_id)
+            if entry.entry_id not in previous_id_set:
                 table.add_row(
                     entry.timestamp,
                     entry.name,
                     _format_duration(entry),
-                    key=str(entry.entry_id),
+                    key=row_key,
                 )
-            self._shown_trace_signature = signature
-            self._shown_trace_ids = ids
-
-        for entry in entries:
-            if entry.duration_ms is None and entry.result == "running":
+            elif (
+                previous_signature.get(entry.entry_id)
+                != (
+                    entry.duration_ms,
+                    entry.result,
+                )
+                or entry.result == "running"
+            ):
                 table.update_cell(
-                    str(entry.entry_id),
+                    row_key,
                     "debug-duration",
                     _format_duration(entry),
                 )
 
-        if self._selected_call_id not in ids:
-            self._selected_call_id = ids[-1] if ids else None
-        if self._selected_call_id is not None:
-            row = ids.index(self._selected_call_id)
-            table.move_cursor(row=row, column=0, animate=False, scroll=True)
+        self._shown_trace_signature = signature
+        self._shown_trace_ids = ids
+        if not ids:
+            self._selected_call_id = None
+        elif previous_selection not in ids:
+            if previous_selection is None or not previous_ids or was_at_bottom:
+                self._selected_call_id = ids[-1]
+            else:
+                previous_row = (
+                    previous_ids.index(previous_selection)
+                    if previous_selection in previous_ids
+                    else 0
+                )
+                self._selected_call_id = ids[min(previous_row, len(ids) - 1)]
+        elif added_ids and was_at_bottom:
+            self._selected_call_id = ids[-1]
+
+        selection_changed = self._selected_call_id != previous_selection
+        if self._selected_call_id is not None and (selection_changed or removed_ids):
+            table.move_cursor(
+                row=ids.index(self._selected_call_id),
+                column=0,
+                animate=False,
+                scroll=was_at_bottom and bool(added_ids),
+            )
+        if (removed_ids or added_ids) and not (was_at_bottom and added_ids):
+            self.call_after_refresh(
+                table.scroll_to,
+                x=previous_offset.x,
+                y=max(0, previous_offset.y - len(removed_ids)),
+                animate=False,
+                force=True,
+            )
         self._render_call_detail()
 
     def _render_call_detail(self) -> None:
@@ -732,18 +842,36 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
             None,
         )
         if entry is None:
-            body.update(string("debug.select_call"))
+            content = string("debug.select_call")
+        else:
+            lines = [
+                f"{string('debug.call_path')}: {' → '.join(entry.call_path)}",
+                f"{string('debug.duration')}: {_format_duration(entry)}",
+                f"{string('debug.thread')}: {entry.thread_id}",
+                f"{string('debug.source')}: {entry.source_path}:{entry.source_line}",
+            ]
+            if entry.exception_type is not None:
+                lines.append(f"{string('debug.exception')}: {entry.exception_type}")
+            content = "\n".join(lines)
+        if content == self._shown_call_detail:
             return
 
-        lines = [
-            f"{string('debug.call_path')}: {' → '.join(entry.call_path)}",
-            f"{string('debug.duration')}: {_format_duration(entry)}",
-            f"{string('debug.thread')}: {entry.thread_id}",
-            f"{string('debug.source')}: {entry.source_path}:{entry.source_line}",
-        ]
-        if entry.exception_type is not None:
-            lines.append(f"{string('debug.exception')}: {entry.exception_type}")
-        body.update(Text("\n".join(lines), no_wrap=False))
+        detail = self.query_one("#debug-call-detail", containers.Vertical)
+        previous_offset = detail.scroll_offset
+        previous_entry_id = self._shown_call_detail_id
+        body.update(Text(content, no_wrap=False) if entry is not None else content)
+        self._shown_call_detail = content
+        self._shown_call_detail_id = self._selected_call_id
+        if previous_entry_id == self._selected_call_id and (
+            previous_offset.x or previous_offset.y
+        ):
+            self.call_after_refresh(
+                detail.scroll_to,
+                x=previous_offset.x,
+                y=previous_offset.y,
+                animate=False,
+                force=True,
+            )
 
     def _build_component_roots(self) -> list[_InspectorComponent]:
         ui_component = _InspectorComponent(
@@ -799,7 +927,7 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
                 continue
             if not _is_component_object(value):
                 continue
-            child_name = name.lstrip("_").replace("_", " ")
+            child_name = _component_label(name)
             engine_component.children.append(
                 _InspectorComponent(
                     path=f"celune.{name}",
@@ -893,7 +1021,7 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
         if component is None:
             return
         self.query_one("#debug-selected-component", widgets.Static).update(
-            Text(f"{component.label} · {type(component.value).__name__}")
+            Text(component.label)
         )
         attributes = _object_attributes(component.value)
         states: list[tuple[str, str]] = []
@@ -925,12 +1053,22 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
         empty_text: str,
     ) -> None:
         table = self.query_one(selector, widgets.DataTable)
+        rows = tuple(values) if values else ((empty_text, ""),)
+        if self._rendered_table_values.get(selector) == rows:
+            return
+        previous_offset = table.scroll_offset
         table.clear(columns=False)
-        if values:
-            for name, value in values:
-                table.add_row(Text(name), Text(value, no_wrap=False))
-        else:
-            table.add_row(Text(empty_text), Text(""))
+        for name, value in rows:
+            table.add_row(Text(name), Text(value, no_wrap=False))
+        self._rendered_table_values[selector] = rows
+        if previous_offset.x or previous_offset.y:
+            self.call_after_refresh(
+                table.scroll_to,
+                x=previous_offset.x,
+                y=previous_offset.y,
+                animate=False,
+                force=True,
+            )
 
     def _format_status(self) -> str:
         engine = getattr(self.ui, "celune", None)
@@ -939,7 +1077,7 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
             activity = string("debug.not_attached")
             backend = string("debug.unknown")
         else:
-            operation = _short_value(getattr(engine, "operation_state", None))
+            operation = _short_value(getattr(engine, "operation_state", None)).upper()
             activity = _short_value(getattr(engine, "cur_state", None))
             backend_value = getattr(engine, "backend", None)
             if backend_value is None:
@@ -976,6 +1114,9 @@ def _codes_from_value(
 ) -> Iterator[CodeType]:
     if isinstance(value, types.FunctionType):
         yield from _walk_code(value.__code__, seen)
+        wrapped = getattr(value, "__wrapped__", None)
+        if isinstance(wrapped, types.FunctionType) and wrapped.__code__ not in seen:
+            yield from _codes_from_value(wrapped, seen)
     elif isinstance(value, (staticmethod, classmethod)):
         yield from _codes_from_value(value.__func__, seen)
     elif isinstance(value, property):
@@ -985,6 +1126,14 @@ def _codes_from_value(
     elif isinstance(value, type):
         for member in vars(value).values():
             yield from _codes_from_value(member, seen)
+
+
+def _is_celune_code(code: CodeType) -> bool:
+    """Return whether a code object was compiled from the Celune package."""
+    try:
+        return Path(code.co_filename).resolve().is_relative_to(_CELUNE_SOURCE_ROOT)
+    except (OSError, RuntimeError, ValueError):
+        return False
 
 
 def _walk_code(code: CodeType, seen: set[CodeType]) -> Iterator[CodeType]:
@@ -1015,6 +1164,16 @@ def _is_component_object(value: object) -> bool:
     if isinstance(value, (ModuleType, type)) or callable(value):
         return False
     return bool(_object_attributes(value))
+
+
+def _component_label(name: str) -> str:
+    """Format an internal component identifier for the selector tree."""
+    words = name.lstrip("_").split("_")
+    return " ".join(
+        word.upper() if word.casefold() in _COMPONENT_ACRONYMS else word.capitalize()
+        for word in words
+        if word
+    )
 
 
 def _is_simple_value(value: object) -> bool:
