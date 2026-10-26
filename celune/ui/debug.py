@@ -262,9 +262,7 @@ class DebugCallTrace:
                         and value.__module__ != module_name
                     ):
                         continue
-                    for code in _codes_from_value(value, seen_codes):
-                        if not _is_celune_code(code):
-                            continue
+                    for code in _codes_from_value(value, seen_codes, module_name):
                         discovered.setdefault(
                             code,
                             f"{module_name}.{code.co_qualname}",
@@ -1102,26 +1100,22 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
             operation = string("debug.not_attached")
             activity = string("debug.not_attached")
             backend = string("debug.unknown")
+            worker = string("debug.worker_not_applicable")
         else:
             operation = _short_value(getattr(engine, "operation_state", None)).upper()
             activity = _short_value(getattr(engine, "cur_state", None))
             backend_value = getattr(engine, "backend", None)
-            if backend_value is None:
-                backend_value = getattr(engine, "tts_backend", None)
-            backend = _short_value(backend_value)
-        trace_state = (
-            string("debug.trace_unavailable")
-            if not self.trace.available
-            else string("debug.trace_paused")
-            if self.trace.paused
-            else string("debug.trace_active")
-        )
+            backend_name = getattr(engine, "tts_backend", None)
+            if not backend_name:
+                backend_name = getattr(backend_value, "name", backend_value)
+            backend = _short_value(backend_name)
+            worker = _worker_status(backend_value)
         return string(
             "debug.status_format",
             operation=operation,
             activity=activity,
             backend=backend,
-            trace=trace_state,
+            worker=worker,
         )
 
     def _update_pause_button(self) -> None:
@@ -1137,21 +1131,30 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
 def _codes_from_value(
     value: object,
     seen: set[CodeType],
+    module_name: str,
 ) -> Iterator[CodeType]:
+    """Yield Celune-owned code while skipping external decorator wrappers."""
     if isinstance(value, types.FunctionType):
-        yield from _walk_code(value.__code__, seen)
+        if value.__module__ != module_name:
+            return
         wrapped = getattr(value, "__wrapped__", None)
-        if isinstance(wrapped, types.FunctionType) and wrapped.__code__ not in seen:
-            yield from _codes_from_value(wrapped, seen)
+        if wrapped is None or _is_celune_code(value.__code__):
+            yield from _walk_code(value.__code__, seen)
+        if (
+            isinstance(wrapped, types.FunctionType)
+            and wrapped.__module__ == module_name
+            and wrapped.__code__ not in seen
+        ):
+            yield from _codes_from_value(wrapped, seen, module_name)
     elif isinstance(value, (staticmethod, classmethod)):
-        yield from _codes_from_value(value.__func__, seen)
+        yield from _codes_from_value(value.__func__, seen, module_name)
     elif isinstance(value, property):
         for function in (value.fget, value.fset, value.fdel):
             if function is not None:
-                yield from _codes_from_value(function, seen)
+                yield from _codes_from_value(function, seen, module_name)
     elif isinstance(value, type):
         for member in vars(value).values():
-            yield from _codes_from_value(member, seen)
+            yield from _codes_from_value(member, seen, module_name)
 
 
 def _is_celune_code(code: CodeType) -> bool:
@@ -1270,6 +1273,29 @@ def _short_value(value: object) -> str:
     if isinstance(value, (str, int, float, bool)):
         return _format_value("", value)
     return type(value).__name__
+
+
+def _worker_status(backend: object) -> str:
+    worker = getattr(backend, "_worker", backend)
+    if not hasattr(worker, "_process"):
+        return string("debug.worker_not_applicable")
+
+    process = getattr(worker, "_process", None)
+    reader = getattr(worker, "_reader_thread", None)
+    poll = getattr(process, "poll", None)
+    is_alive = getattr(reader, "is_alive", None)
+    if (
+        process is None
+        or reader is None
+        or not callable(poll)
+        or not callable(is_alive)
+    ):
+        return string("debug.worker_inactive")
+    try:
+        active = poll() is None and is_alive()
+    except Exception:
+        active = False
+    return string("debug.worker_active" if active else "debug.worker_inactive")
 
 
 def _component_signature(

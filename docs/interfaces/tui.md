@@ -27,6 +27,9 @@ Set `log_level: debug` in `config.yaml`, then press `CTRL+B` to open the
 inspector. Press `CTRL+B` or `ESC` to close it. The shortcut is ignored at other
 log levels. It remains available while the engine is `FATAL` or `STOPPED`.
 
+The header reports the engine operation state, current activity, selected TTS
+backend, and whether its CEDTS worker process and packet reader are active.
+
 The left pane selects `Celune UI`, its UI subsystems, and engine components,
 including loaded lifecycle, pipeline, playback, audio-server, and worker modules.
 The right pane refreshes the selected object's state and attributes. Sensitive
