@@ -1328,7 +1328,7 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
     def _update_live_calls(self, *, force: bool = False) -> None:
         self._refresh_source_status()
         table = self.query_one("#debug-call-table", _DebugCallTable)
-        if not force and (not table.is_vertical_scroll_end or table.scroll_x > 0):
+        if not force and table.scroll_x > 0:
             return
         entries = self.trace.entries(self._CALL_TABLE_LIMIT)
         ids = tuple(entry.entry_id for entry in entries)
@@ -1343,7 +1343,12 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
         }
         previous_selection = self._selected_call_id
         previous_scroll_y = table.scroll_y
-        was_at_bottom = table.is_vertical_scroll_end
+        scroll_anchor_id, scroll_anchor_offset = self._call_table_scroll_anchor(table)
+        scroll_anchor_index = (
+            previous_ids.index(scroll_anchor_id)
+            if scroll_anchor_id in previous_ids
+            else None
+        )
         removed_ids = tuple(
             entry_id for entry_id in previous_ids if entry_id not in ids
         )
@@ -1379,7 +1384,7 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
         if not ids:
             self._selected_call_id = None
         elif previous_selection not in ids:
-            if previous_selection is None or not previous_ids or was_at_bottom:
+            if previous_selection is None or not previous_ids:
                 self._selected_call_id = ids[-1]
             else:
                 previous_row = (
@@ -1388,8 +1393,6 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
                     else 0
                 )
                 self._selected_call_id = ids[min(previous_row, len(ids) - 1)]
-        elif added_ids and was_at_bottom:
-            self._selected_call_id = ids[-1]
 
         if self._selected_call_id is not None and (
             self._selected_call_id != previous_selection or removed_ids
@@ -1398,21 +1401,85 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
                 ids.index(self._selected_call_id),
                 0,
             )
-        if was_at_bottom and added_ids:
-            table.call_after_refresh(self._follow_call_table, previous_scroll_y)
+        if removed_ids or added_ids:
+            if scroll_anchor_id not in ids:
+                scroll_anchor_id = self._next_scroll_anchor(
+                    previous_ids,
+                    scroll_anchor_index,
+                    ids,
+                )
+            table.call_after_refresh(
+                self._restore_call_table_scroll,
+                scroll_anchor_id,
+                scroll_anchor_offset,
+                previous_scroll_y,
+            )
         self._render_call_detail()
 
-    def _follow_call_table(self, previous_scroll_y: float) -> None:
-        """Follow new rows only if the user has not scrolled away meanwhile."""
-        table = self.query_one("#debug-call-table", widgets.DataTable)
-        if table.scroll_y >= previous_scroll_y:
-            table.scroll_to(y=table.max_scroll_y, animate=False, force=True)
+    def _call_table_scroll_anchor(
+        self,
+        table: widgets.DataTable,
+    ) -> tuple[Optional[int], float]:
+        """Return the call at the top of the viewport and its visible offset."""
+        scroll_y = table.scroll_y
+        row_top = 0.0
+        for row in table.ordered_rows:
+            if row.height > 0 and row_top + row.height > scroll_y:
+                row_id = row.key.value
+                if row_id is None:
+                    return None, scroll_y
+                try:
+                    return int(row_id), scroll_y - row_top
+                except (TypeError, ValueError):
+                    return None, scroll_y
+            row_top += row.height
+        return None, scroll_y
+
+    @staticmethod
+    def _next_scroll_anchor(
+        previous_ids: tuple[int, ...],
+        anchor_index: Optional[int],
+        current_ids: tuple[int, ...],
+    ) -> Optional[int]:
+        """Choose the next retained call when the visible call was evicted."""
+        if not previous_ids or not current_ids:
+            return None
+        start = anchor_index if anchor_index is not None else 0
+        retained_ids = set(current_ids)
+        for entry_id in previous_ids[start:]:
+            if entry_id in retained_ids:
+                return entry_id
+        for entry_id in reversed(previous_ids[:start]):
+            if entry_id in retained_ids:
+                return entry_id
+        return None
+
+    def _restore_call_table_scroll(
+        self,
+        anchor_id: Optional[int],
+        anchor_offset: float,
+        fallback_scroll_y: float,
+    ) -> None:
+        """Restore the viewport to the same call after row updates settle."""
+        table = self.query_one("#debug-call-table", _DebugCallTable)
+        if anchor_id is None or str(anchor_id) not in table.rows:
+            target_y = fallback_scroll_y
+        else:
+            row_index = table.get_row_index(str(anchor_id))
+            target_y = (
+                sum(row.height for row in table.ordered_rows[:row_index])
+                + anchor_offset
+            )
+        table.scroll_to(
+            y=min(max(0.0, target_y), table.max_scroll_y),
+            animate=False,
+            force=True,
+        )
 
     def _select_source_filter(self) -> None:
         source_input = self.query_one("#debug-source-filter", widgets.Input)
         if not self.trace.add_source_filter(source_input.value):
             return
-        source_input.value = ""
         self._refresh_source_status()
         self._refresh_live_calls(force=True)
 

@@ -63,6 +63,11 @@ def test_source_filters_append_package_names_and_reset() -> None:
     assert _module_matches_filters("pathlib", trace.source_filters)
     assert not _module_matches_filters("json", trace.source_filters)
 
+    assert trace.add_source_filter("celune")
+    assert _module_matches_filters("celune", trace.source_filters)
+    assert _module_matches_filters("celune.ui.debug", trace.source_filters)
+    assert not _module_matches_filters("celunex.ui", trace.source_filters)
+
     trace.reset_source_filters()
 
     assert trace.source_filters == ()
@@ -161,6 +166,7 @@ def test_inspector_remains_usable_without_an_attached_core() -> None:
     ui = type("DebugUI", (), {"celune": None, "_startup_log_level": "debug"})()
     trace = DebugCallTrace(ui)
     trace.set_enabled(True)
+    trace.set_paused(True)
     host = _InspectorHost(ui, trace)
 
     async def inspect_screen() -> None:
@@ -192,7 +198,19 @@ def test_inspector_remains_usable_without_an_attached_core() -> None:
             assert 16 <= source_input.region.width <= 34
             inspector = host.screen
             assert isinstance(inspector, DebugInspectorScreen)
-            trace.set_paused(True)
+
+            source_input.value = "celune"
+            await pilot.click("#debug-select-source")
+            assert trace.source_filters == ("celune",)
+            assert source_input.value == "celune"
+
+            source_input.value = "celune.ui.debug"
+            await pilot.click("#debug-select-source")
+            assert trace.source_filters == ("celune", "celune.ui.debug")
+            assert source_input.value == "celune.ui.debug"
+
+            await pilot.click("#debug-reset-sources")
+            assert trace.source_filters == ()
             with trace._lock:
                 trace._entries.clear()
                 trace._entries.extend(
@@ -234,7 +252,11 @@ def test_inspector_remains_usable_without_an_attached_core() -> None:
                 f"scroll_y={calls.scroll_y}, max_scroll_y={calls.max_scroll_y}"
             )
             assert " ms running" in calls.render_line(1).text
-            rows_before_scroll_refresh = tuple(calls.rows)
+            calls.move_cursor(row=9, column=0, animate=False, scroll=False)
+            await pilot.pause()
+            assert inspector._selected_call_id == 10
+            assert inspector._shown_call_detail_id == 10
+            calls.scroll_to(y=0, animate=False, force=True)
             with trace._lock:
                 trace._next_entry_id += 1
                 trace._entries.append(
@@ -255,15 +277,50 @@ def test_inspector_remains_usable_without_an_attached_core() -> None:
                     )
                 )
             inspector._refresh_live_calls()
-            assert tuple(calls.rows) == rows_before_scroll_refresh
+            await pilot.pause()
+            shown_ids = []
+            for row in calls.ordered_rows:
+                row_id = row.key.value
+                assert row_id is not None
+                shown_ids.append(int(row_id))
+            assert shown_ids == list(range(2, 27))
+            assert inspector._selected_call_id == 10
+            assert inspector._shown_call_detail_id == 10
             assert calls.scroll_y == 0
+            calls.scroll_to(y=8, animate=False, force=True)
+            await pilot.pause()
+            scroll_anchor_id, _ = inspector._call_table_scroll_anchor(calls)
+            assert scroll_anchor_id == 10
+            with trace._lock:
+                trace._next_entry_id += 1
+                trace._entries.append(
+                    DebugCallEntry(
+                        entry_id=trace._next_entry_id,
+                        timestamp_ns=trace._next_entry_id,
+                        name="sample_package.module.next_call",
+                        display_name="sample_package.module.next_call",
+                        source_category="third_party",
+                        module_name="sample_package.module",
+                        special_method=False,
+                        call_path=("sample_package.module.next_call",),
+                        arguments=(),
+                        thread_id=1,
+                        source_path="sample_package/module.py",
+                        source_line=1,
+                        started_ns=trace._next_entry_id,
+                    )
+                )
+            inspector._refresh_live_calls()
+            await pilot.pause()
+            restored_anchor_id, _ = inspector._call_table_scroll_anchor(calls)
+            assert restored_anchor_id == scroll_anchor_id
+            assert inspector._selected_call_id == 10
             calls.scroll_to(y=calls.max_scroll_y, animate=False, force=True)
             await pilot.pause()
-            inspector._refresh_live_calls()
-            assert inspector._shown_trace_ids[-1] == trace._next_entry_id
-            assert calls.cursor_row == calls.row_count - 1
-            await pilot.pause()
             assert calls.is_vertical_scroll_end
+            calls.scroll_to(y=0, animate=False, force=True)
+            await pilot.pause()
+            assert not calls.is_vertical_scroll_end
 
             await pilot.click("#debug-show-special-methods")
             assert trace._show_special_methods

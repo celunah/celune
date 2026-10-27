@@ -50,20 +50,23 @@ process-wide. Newly imported modules are discovered during the once-per-second
 snapshot refresh. This avoids callback traffic from unrelated interpreter code.
 
 Enter a package or module name and choose `Select Source` to limit the trace to
-that module and its dotted submodules. Repeat to add more names to the active
-filter; `Reset Sources` returns to all sources. The status directly below
-`LIVE CALLS` shows the active filter or `Tracing all function calls`. Special
-methods such as `__init__` and `__eq__` are hidden by default; enable `Show
-special methods` to include them. Use `Pause` to stop adding entries, `Resume`
-to continue, and `Clear` to remove the visible trace. Press `F` to filter
-component names, use the arrow keys to select components or calls, `ENTER` to
-expand a component, and `TAB` to move between panes.
+that module and its dotted submodules. The input keeps the submitted name
+visible. Repeat to add more names to the active filter; `Reset Sources` returns
+to all sources. The status directly below `LIVE CALLS` shows the active filter
+or `Tracing all function calls`. Special methods such as `__init__` and
+`__eq__` are hidden by default; enable `Show special methods` to include them.
+Use `Pause` to stop adding entries, `Resume` to continue, and `Clear` to remove
+the visible trace. Press `F` to filter component names, use the arrow keys to
+select components or calls, `ENTER` to expand a component, and `TAB` to move
+between panes.
 
 The call table keeps its columns within the inspector pane, shows the complete
 duration status, and truncates long call names; selecting a call still shows
-its full name in the details pane. The table pauses visual updates while it is
-scrolled away from the newest calls, so the scrollbar remains usable during
-active tracing. Updates resume when the table returns to the bottom.
+its full name in the details pane. Each refresh updates new and completed calls
+while preserving the selected call and the visible call by their entry IDs.
+This keeps the details open as calls arrive and lets the table continue
+scrolling while tracing is active. If the visible call leaves the rolling
+buffer, the viewport moves to the next retained call.
 
 The call trace uses Python's `sys.monitoring` API, available on supported Python
 versions 3.12 and newer. It monitors loaded Python function activations and
