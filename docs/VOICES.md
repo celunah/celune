@@ -13,7 +13,7 @@ This document describes how Celune's voice identities were created, selected, an
 
 A comprehensive explanation is available in her lore documentation.
 
-Please check [the Book of Celune](https://github.com/celunah/celune/blob/dev/resources/about/about-celune.md) for lore-accurate details and a comprehensive description of Celune.
+Please check [the Book of Celune](https://github.com/celunah/celune/blob/main/resources/about/book-of-celune.pdf) for lore-accurate details and a comprehensive description of Celune.
 
 ## Pronunciation glossary
 
