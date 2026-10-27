@@ -527,7 +527,7 @@
     "debug.filter_placeholder": "Filter components",
     "debug.footer": "CTRL+B/ESC close · ↑/↓ select · ENTER expand · F filter · TAB panes",
     "debug.function": "Function",
-    "debug.live_calls": "LIVE CALLS",
+    "debug.live_calls": "Live Calls",
     "debug.none": "None",
     "debug.no_attributes": "No attributes exposed",
     "debug.no_state": "No state fields exposed",
