@@ -4,9 +4,12 @@
 from __future__ import annotations
 
 import sys
+import site
 import time
 import types
 import inspect
+import functools
+import sysconfig
 import threading
 import contextlib
 
@@ -23,8 +26,31 @@ from textual.app import ComposeResult
 from textual import binding, containers, screen, widgets
 
 from ..i18n import string
+from ..constants import APP_NAME
 
-_CELUNE_SOURCE_ROOT = Path(__file__).resolve().parent.parent
+
+def _site_package_roots() -> tuple[Path, ...]:
+    """Return installed third-party package roots for this interpreter."""
+    roots: set[Path] = set()
+    for path in sysconfig.get_paths().values():
+        if path and ("site-packages" in path or "dist-packages" in path):
+            with contextlib.suppress(OSError, RuntimeError, ValueError):
+                roots.add(Path(path).resolve())
+    for path in site.getsitepackages():
+        if "site-packages" in path or "dist-packages" in path:
+            with contextlib.suppress(OSError, RuntimeError, ValueError):
+                roots.add(Path(path).resolve())
+    user_site = site.getusersitepackages()
+    if isinstance(user_site, str) and (
+        "site-packages" in user_site or "dist-packages" in user_site
+    ):
+        with contextlib.suppress(OSError, RuntimeError, ValueError):
+            roots.add(Path(user_site).resolve())
+    return tuple(sorted(roots, key=str))
+
+
+_SITE_PACKAGE_ROOTS = _site_package_roots()
+_STANDARD_LIBRARY_MODULES = getattr(sys, "stdlib_module_names", frozenset())
 
 
 def _inspect_code_flag(name: str) -> int:
@@ -45,6 +71,9 @@ class _MonitorEvents:
     PY_RETURN: int
     PY_YIELD: int
     PY_UNWIND: int
+    CALL: int
+    C_RETURN: int
+    C_RAISE: int
     NO_EVENTS: int
 
 
@@ -82,6 +111,9 @@ def _load_monitoring_api() -> Optional[_MonitoringAPI]:
             PY_RETURN=cast(int, _monitoring_attribute(event_api, "PY_RETURN")),
             PY_YIELD=cast(int, _monitoring_attribute(event_api, "PY_YIELD")),
             PY_UNWIND=cast(int, _monitoring_attribute(event_api, "PY_UNWIND")),
+            CALL=cast(int, _monitoring_attribute(event_api, "CALL")),
+            C_RETURN=cast(int, _monitoring_attribute(event_api, "C_RETURN")),
+            C_RAISE=cast(int, _monitoring_attribute(event_api, "C_RAISE")),
             NO_EVENTS=cast(int, _monitoring_attribute(event_api, "NO_EVENTS")),
         )
         return _MonitoringAPI(
@@ -120,12 +152,15 @@ def _load_monitoring_api() -> Optional[_MonitoringAPI]:
 
 @dataclass
 class DebugCallEntry:
-    """One observed Celune function activation."""
+    """One observed Python or native callable activation."""
 
     entry_id: int
-    timestamp: str
+    timestamp_ns: int
     name: str
     display_name: str
+    source_category: str
+    module_name: Optional[str]
+    special_method: bool
     call_path: tuple[str, ...]
     arguments: tuple[tuple[str, str], ...]
     thread_id: int
@@ -145,32 +180,57 @@ class _ActiveCall:
     name: str
     started_ns: int
     entry: Optional[DebugCallEntry]
+    kind: str = "python"
+    instruction_offset: Optional[int] = None
+    callable_id: Optional[int] = None
 
 
 class DebugCallTrace:
-    """Capture bounded calls to loaded Celune Python functions."""
+    """Capture bounded Python and native calls visible to Python monitoring."""
 
     _MAX_CALL_DEPTH = 24
-    _TRACE_LIMIT = 500
+    _TRACE_LIMIT = 100
     _EVENTS: ClassVar[tuple[str, ...]] = (
         "PY_START",
         "PY_RESUME",
         "PY_RETURN",
         "PY_YIELD",
         "PY_UNWIND",
+        "CALL",
+        "C_RETURN",
+        "C_RAISE",
     )
+    _LOCAL_EVENTS: ClassVar[tuple[str, ...]] = (
+        "PY_START",
+        "PY_RESUME",
+        "PY_RETURN",
+        "PY_YIELD",
+        "CALL",
+    )
+    _INSPECTOR_MODULES: ClassVar[tuple[str, ...]] = ("textual", "rich")
 
     def __init__(self, ui: object) -> None:
         self._ui = ui
         self._monitoring: Optional[_MonitoringAPI] = _load_monitoring_api()
         self._tool_id: Optional[int] = None
-        self._labels: dict[CodeType, tuple[str, str]] = {}
         self._entries: deque[DebugCallEntry] = deque(maxlen=self._TRACE_LIMIT)
         self._stacks: dict[int, list[_ActiveCall]] = {}
         self._lock = threading.RLock()
+        self._source_cache: dict[tuple[Optional[str], Optional[str]], str] = {}
+        self._source_filters: tuple[str, ...] = ()
+        self._module_codes: dict[str, set[CodeType]] = {}
+        self._module_identities: dict[str, int] = {}
+        self._code_modules: dict[CodeType, str] = {}
+        self._active_codes: set[CodeType] = set()
+        self._local_event_mask = 0
         self._next_entry_id = 0
         self._recording = True
+        self._suspended = 0
+        self._show_special_methods = False
         self._enabled = False
+        self._inspector_open = False
+        self._active_event_mask = 0
+        self._events_active = False
         self._failed = False
 
     @property
@@ -190,9 +250,11 @@ class DebugCallTrace:
     def set_enabled(self, enabled: bool) -> None:
         """Start or stop recording as debug logging is enabled or disabled."""
         if not enabled:
-            if self._enabled:
-                self._enabled = False
+            was_enabled = self._enabled
+            self._enabled = False
+            if was_enabled or self.available:
                 self.stop()
+            if was_enabled:
                 self.clear()
                 self._recording = True
             return
@@ -202,8 +264,22 @@ class DebugCallTrace:
             self._failed = False
             self._recording = True
             self.clear()
+        if self._inspector_open:
+            self._ensure_started()
+
+    def set_inspector_open(self, opened: bool) -> None:
+        """Start tracing while the debug inspector is mounted."""
+        if self._inspector_open == opened:
+            return
+        self._inspector_open = opened
+        if not opened:
+            self.stop()
+            return
+        if self._enabled:
+            self._ensure_started()
+
+    def _ensure_started(self) -> None:
         if self.available:
-            self.refresh_code_objects()
             return
         if self._tool_id is not None:
             self.stop()
@@ -211,7 +287,7 @@ class DebugCallTrace:
         self.start()
 
     def start(self) -> bool:
-        """Install per-code call monitoring for the loaded Celune modules."""
+        """Install local Python and exposed C-call monitoring."""
         if self._monitoring is None:
             return False
         if self._tool_id is not None:
@@ -238,14 +314,19 @@ class DebugCallTrace:
                 "PY_RETURN": self._on_return,
                 "PY_YIELD": self._on_return,
                 "PY_UNWIND": self._on_unwind,
+                "CALL": self._on_c_call,
+                "C_RETURN": self._on_c_return,
+                "C_RAISE": self._on_c_raise,
             }
             for event_name, callback in callbacks.items():
                 event = getattr(self._monitoring.events, event_name)
                 self._monitoring.register_callback(tool_id, event, callback)
-            self._monitoring.set_events(
-                tool_id,
-                self._monitoring.events.PY_UNWIND,
-            )
+            self._active_event_mask = self._monitoring.events.PY_UNWIND
+            self._local_event_mask = 0
+            for event_name in self._LOCAL_EVENTS:
+                self._local_event_mask |= getattr(self._monitoring.events, event_name)
+            self._monitoring.set_events(tool_id, self._active_event_mask)
+            self._events_active = True
             self.refresh_code_objects()
         except Exception:
             self._failed = True
@@ -257,20 +338,27 @@ class DebugCallTrace:
         return self.available
 
     def stop(self) -> None:
-        """Remove this monitor's callbacks and per-code events."""
+        """Remove this monitor's callbacks and global events."""
         tool_id = self._tool_id
         monitoring = self._monitoring
         self._tool_id = None
+        self._events_active = False
+        self._active_event_mask = 0
         if tool_id is None or monitoring is None:
             return
 
-        with self._lock:
-            codes = tuple(self._labels)
-            self._labels.clear()
-            self._stacks.clear()
-        for code in codes:
+        self._finalize_active_calls()
+        for code in tuple(self._active_codes):
             with contextlib.suppress(Exception):
-                monitoring.set_local_events(tool_id, code, monitoring.events.NO_EVENTS)
+                monitoring.set_local_events(
+                    tool_id,
+                    code,
+                    monitoring.events.NO_EVENTS,
+                )
+        self._active_codes.clear()
+        self._code_modules.clear()
+        self._module_codes.clear()
+        self._module_identities.clear()
         with contextlib.suppress(Exception):
             monitoring.set_events(tool_id, monitoring.events.NO_EVENTS)
         for event_name in self._EVENTS:
@@ -283,91 +371,161 @@ class DebugCallTrace:
         with contextlib.suppress(Exception):
             monitoring.free_tool_id(tool_id)
 
-    def refresh_code_objects(self) -> None:
-        """Enable monitoring for newly imported Celune modules."""
+    @contextlib.contextmanager
+    def suspend_events(self) -> abc.Generator[None, None, None]:
+        """Suspend monitoring around inspector work to avoid tracing its redraws."""
+        self._suspended += 1
+        try:
+            yield
+        finally:
+            self._suspended -= 1
+
+    def set_paused(self, paused: bool) -> None:
+        """Pause or resume trace collection and its local monitor events."""
+        recording = not paused
+        if self._recording == recording:
+            return
+        self._recording = recording
+        self._finalize_active_calls()
+        if self.available:
+            monitoring = self._monitoring
+            if monitoring is not None and self._tool_id is not None:
+                event_mask = (
+                    self._active_event_mask
+                    if recording
+                    else monitoring.events.NO_EVENTS
+                )
+                with contextlib.suppress(Exception):
+                    monitoring.set_events(self._tool_id, event_mask)
+            self._apply_local_event_scope()
+
+    @property
+    def source_filters(self) -> tuple[str, ...]:
+        """Return the active package and module filters."""
+        with self._lock:
+            return self._source_filters
+
+    def add_source_filter(self, module_name: str) -> bool:
+        """Append a package or module name to the active source filters."""
+        normalized = module_name.strip()
+        if not normalized or _is_blacklisted_module(normalized):
+            return False
+        with self._lock:
+            if normalized in self._source_filters:
+                return True
+            self._source_filters += (normalized,)
+        self._refresh_module_scope()
+        return True
+
+    def reset_source_filters(self) -> None:
+        """Clear source filters so calls from all modules are recorded."""
+        with self._lock:
+            self._source_filters = ()
+        self._refresh_module_scope()
+
+    def refresh_code_objects(self, *, apply_scope: bool = False) -> None:
+        """Monitor newly loaded Python modules without tracing the inspector UI."""
         tool_id = self._tool_id
         monitoring = self._monitoring
         if tool_id is None or monitoring is None or self._failed:
             return
+        for module_name, module in tuple(sys.modules.items()):
+            if not isinstance(module, ModuleType):
+                continue
+            module_identity = id(module)
+            if self._module_identities.get(module_name) == module_identity:
+                continue
+            old_codes = self._module_codes.get(module_name, set())
+            for code in old_codes:
+                self._set_code_monitoring(code, False)
+                self._code_modules.pop(code, None)
+            codes: set[CodeType] = set()
+            visited: set[int] = set()
+            for value in vars(module).values():
+                codes.update(_codes_from_value(value, visited, module_name))
+            self._module_codes[module_name] = codes
+            self._module_identities[module_name] = module_identity
+            self._code_modules.update((code, module_name) for code in codes)
+            for code in codes:
+                self._set_code_monitoring(
+                    code,
+                    self._recording and self._should_monitor_module(module_name),
+                )
+        if apply_scope:
+            self._apply_local_event_scope()
 
-        local_events = (
-            monitoring.events.PY_START
-            | monitoring.events.PY_RESUME
-            | monitoring.events.PY_RETURN
-            | monitoring.events.PY_YIELD
-        )
-        try:
-            discovered: dict[CodeType, tuple[str, str]] = {}
-            seen_codes: set[CodeType] = set()
-            for module_name, module in tuple(sys.modules.items()):
-                if (
-                    not module_name.startswith("celune.")
-                    or module_name == "celune.ui.debug"
-                    or not isinstance(module, ModuleType)
-                ):
-                    continue
-                for value in vars(module).values():
-                    if (
-                        isinstance(value, (types.FunctionType, type))
-                        and value.__module__ != module_name
-                    ):
-                        continue
-                    for code in _codes_from_value(value, seen_codes, module_name):
-                        discovered.setdefault(
-                            code,
-                            (
-                                f"{module_name}.{code.co_qualname}",
-                                f"{module_name}.{code.co_name}()",
-                            ),
-                        )
-
-            for code, name in discovered.items():
-                if code in self._labels:
-                    continue
-                monitoring.set_local_events(tool_id, code, local_events)
-                self._labels[code] = name
-        except Exception:
-            self._failed = True
-            self.stop()
-
-    def set_paused(self, paused: bool) -> None:
-        """Pause or resume recording while keeping call stacks coherent."""
-        self._recording = not paused
+    def set_show_special_methods(self, show: bool) -> None:
+        """Choose whether Python special methods are included in the trace."""
+        self._show_special_methods = show
 
     def clear(self) -> None:
         """Remove all visible entries from the rolling trace."""
         with self._lock:
             self._entries.clear()
 
-    def entries(self) -> tuple[DebugCallEntry, ...]:
+    def entries(
+        self,
+        limit: Optional[int] = None,
+    ) -> tuple[DebugCallEntry, ...]:
         """Return a stable snapshot of the rolling call buffer."""
+        if limit is not None and limit <= 0:
+            return ()
         with self._lock:
-            return tuple(self._entries)
+            snapshot = tuple(self._entries)
+            source_filters = self._source_filters
+            show_special_methods = self._show_special_methods
+        selected: list[DebugCallEntry] = []
+        for entry in reversed(snapshot):
+            if not _module_matches_filters(entry.module_name, source_filters):
+                continue
+            if not show_special_methods and entry.special_method:
+                continue
+            selected.append(entry)
+            if limit is not None and len(selected) >= limit:
+                break
+        return tuple(reversed(selected))
+
+    def get_entry(self, entry_id: int) -> Optional[DebugCallEntry]:
+        """Return a buffered call by its entry identifier."""
+        with self._lock:
+            snapshot = tuple(self._entries)
+        return next(
+            (entry for entry in reversed(snapshot) if entry.entry_id == entry_id),
+            None,
+        )
 
     def _on_start(self, code: CodeType, instruction_offset: int) -> None:
         del instruction_offset
-        if self._failed:
+        if self._failed or self._suspended or not self._recording:
             return
-        label = self._labels.get(code)
-        if label is None:
-            return
-        name, display_name = label
-
-        started_ns = time.perf_counter_ns()
-        thread_id = threading.get_ident()
         try:
+            frame = sys._getframe().f_back
+            module_name = _frame_module_name(frame, code)
+            source_path = code.co_filename
+            source_category = self._classify_source(module_name, source_path)
+            name = _qualified_python_name(module_name, code)
+            special_method = _is_special_method(code.co_name)
+            started_ns = time.perf_counter_ns()
+            thread_id = threading.get_ident()
             with self._lock:
                 stack = self._stacks.setdefault(thread_id, [])
-                path = tuple(call.name for call in stack) + (name,)
                 entry: Optional[DebugCallEntry] = None
-                if self._recording:
-                    arguments = _call_arguments(code, sys._getframe().f_back)
+                if (
+                    self._recording
+                    and _module_matches_filters(module_name, self._source_filters)
+                    and (self._show_special_methods or not special_method)
+                ):
+                    path = tuple(call.name for call in stack) + (name,)
+                    arguments = _call_arguments(code, frame)
                     self._next_entry_id += 1
                     entry = DebugCallEntry(
                         entry_id=self._next_entry_id,
-                        timestamp=datetime.now().strftime("%H:%M:%S.%f")[:-3],
+                        timestamp_ns=time.time_ns(),
                         name=name,
-                        display_name=display_name,
+                        display_name=f"{name}()",
+                        source_category=source_category,
+                        module_name=module_name,
+                        special_method=special_method,
                         call_path=path[-self._MAX_CALL_DEPTH :],
                         arguments=arguments,
                         thread_id=thread_id,
@@ -378,7 +536,111 @@ class DebugCallTrace:
                     self._entries.append(entry)
                 stack.append(_ActiveCall(code, name, started_ns, entry))
         except Exception:
-            self._failed = True
+            self._fail()
+
+    def _on_c_call(
+        self,
+        code: CodeType,
+        instruction_offset: int,
+        callable_value: object,
+        arg0: object,
+    ) -> None:
+        del arg0
+        if (
+            self._failed
+            or self._suspended
+            or not self._recording
+            or _is_python_callable(callable_value)
+        ):
+            return
+        try:
+            if isinstance(callable_value, types.BuiltinFunctionType):
+                module_name, name, special_method = _builtin_callable_metadata(
+                    callable_value
+                )
+            else:
+                module_name = _callable_module_name(callable_value)
+                name = _qualified_callable_name(module_name, callable_value)
+                special_method = _is_special_method(name.rpartition(".")[2])
+            source_category = self._classify_source(module_name, None)
+            started_ns = time.perf_counter_ns()
+            thread_id = threading.get_ident()
+            frame = sys._getframe().f_back
+            source_path = code.co_filename
+            source_line = frame.f_lineno if frame is not None else code.co_firstlineno
+            with self._lock:
+                stack = self._stacks.setdefault(thread_id, [])
+                entry: Optional[DebugCallEntry] = None
+                if (
+                    self._recording
+                    and _module_matches_filters(module_name, self._source_filters)
+                    and (self._show_special_methods or not special_method)
+                ):
+                    path = tuple(call.name for call in stack) + (name,)
+                    self._next_entry_id += 1
+                    entry = DebugCallEntry(
+                        entry_id=self._next_entry_id,
+                        timestamp_ns=time.time_ns(),
+                        name=name,
+                        display_name=f"{name}()",
+                        source_category=source_category,
+                        module_name=module_name,
+                        special_method=special_method,
+                        call_path=path[-self._MAX_CALL_DEPTH :],
+                        arguments=(),
+                        thread_id=thread_id,
+                        source_path=source_path,
+                        source_line=source_line,
+                        started_ns=started_ns,
+                    )
+                    self._entries.append(entry)
+                stack.append(
+                    _ActiveCall(
+                        code,
+                        name,
+                        started_ns,
+                        entry,
+                        kind="native",
+                        instruction_offset=instruction_offset,
+                        callable_id=id(callable_value),
+                    )
+                )
+        except Exception:
+            self._fail()
+
+    def _on_c_return(
+        self,
+        code: CodeType,
+        instruction_offset: int,
+        callable_value: object,
+        arg0: object,
+    ) -> None:
+        del arg0
+        self._finish_call(
+            code,
+            "returned",
+            None,
+            kind="native",
+            instruction_offset=instruction_offset,
+            callable_id=id(callable_value),
+        )
+
+    def _on_c_raise(
+        self,
+        code: CodeType,
+        instruction_offset: int,
+        callable_value: object,
+        arg0: object,
+    ) -> None:
+        del arg0
+        self._finish_call(
+            code,
+            "raised",
+            None,
+            kind="native",
+            instruction_offset=instruction_offset,
+            callable_id=id(callable_value),
+        )
 
     def _on_return(
         self,
@@ -387,6 +649,8 @@ class DebugCallTrace:
         return_value: object,
     ) -> None:
         del instruction_offset, return_value
+        if self._suspended or not self._recording:
+            return
         self._finish_call(code, "returned", None)
 
     def _on_unwind(
@@ -396,6 +660,8 @@ class DebugCallTrace:
         exception: BaseException,
     ) -> None:
         del instruction_offset
+        if self._suspended or not self._recording:
+            return
         self._finish_call(code, "raised", type(exception).__name__)
 
     def _finish_call(
@@ -403,8 +669,12 @@ class DebugCallTrace:
         code: CodeType,
         result: str,
         exception_type: Optional[str],
+        *,
+        kind: str = "python",
+        instruction_offset: Optional[int] = None,
+        callable_id: Optional[int] = None,
     ) -> None:
-        if self._failed:
+        if self._failed or self._suspended or not self._recording:
             return
         thread_id = threading.get_ident()
         finished_ns = time.perf_counter_ns()
@@ -413,11 +683,42 @@ class DebugCallTrace:
                 stack = self._stacks.get(thread_id)
                 if not stack:
                     return
+                active = stack[-1]
+                if (
+                    active.code is code
+                    and active.kind == kind
+                    and (
+                        kind == "python"
+                        or (
+                            active.instruction_offset == instruction_offset
+                            and active.callable_id == callable_id
+                        )
+                    )
+                ):
+                    stack.pop()
+                    if not stack:
+                        self._stacks.pop(thread_id, None)
+                    entry = active.entry
+                    if entry is not None:
+                        entry.duration_ms = (
+                            finished_ns - active.started_ns
+                        ) / 1_000_000
+                        entry.result = result
+                        entry.exception_type = exception_type
+                    return
                 matching_index = next(
                     (
                         index
-                        for index in range(len(stack) - 1, -1, -1)
+                        for index in range(len(stack) - 2, -1, -1)
                         if stack[index].code is code
+                        and stack[index].kind == kind
+                        and (
+                            kind == "python"
+                            or (
+                                stack[index].instruction_offset == instruction_offset
+                                and stack[index].callable_id == callable_id
+                            )
+                        )
                     ),
                     None,
                 )
@@ -435,7 +736,82 @@ class DebugCallTrace:
                     entry.result = result
                     entry.exception_type = exception_type
         except Exception:
-            self._failed = True
+            self._fail()
+
+    def _classify_source(
+        self,
+        module_name: Optional[str],
+        source_path: Optional[str],
+    ) -> str:
+        key = (module_name, source_path)
+        source_category = self._source_cache.get(key)
+        if source_category is None:
+            source_category = _classify_source(module_name, source_path)
+            self._source_cache[key] = source_category
+        return source_category
+
+    def _fail(self) -> None:
+        self._failed = True
+        self.stop()
+
+    def _should_monitor_module(self, module_name: str) -> bool:
+        if _is_blacklisted_module(module_name):
+            return False
+        source_filters = self.source_filters
+        if source_filters:
+            return _module_matches_filters(module_name, source_filters)
+        if module_name == "celune.ui.debug":
+            return False
+        return not any(
+            module_name == package or module_name.startswith(f"{package}.")
+            for package in self._INSPECTOR_MODULES
+        )
+
+    def _refresh_module_scope(self) -> None:
+        if not self.available:
+            return
+        self._finalize_active_calls()
+        self.refresh_code_objects(apply_scope=True)
+
+    def _apply_local_event_scope(self) -> None:
+        tool_id = self._tool_id
+        monitoring = self._monitoring
+        if tool_id is None or monitoring is None:
+            return
+        for code, module_name in self._code_modules.items():
+            self._set_code_monitoring(
+                code,
+                self._recording and self._should_monitor_module(module_name),
+            )
+
+    def _set_code_monitoring(self, code: CodeType, enabled: bool) -> None:
+        tool_id = self._tool_id
+        monitoring = self._monitoring
+        if tool_id is None or monitoring is None:
+            return
+        if enabled == (code in self._active_codes):
+            return
+        event_mask = self._local_event_mask if enabled else monitoring.events.NO_EVENTS
+        try:
+            monitoring.set_local_events(tool_id, code, event_mask)
+        except Exception:
+            return
+        if enabled:
+            self._active_codes.add(code)
+        else:
+            self._active_codes.discard(code)
+
+    def _finalize_active_calls(self) -> None:
+        finished_ns = time.perf_counter_ns()
+        with self._lock:
+            for stack in self._stacks.values():
+                for active in stack:
+                    if active.entry is not None:
+                        active.entry.duration_ms = (
+                            finished_ns - active.started_ns
+                        ) / 1_000_000
+                        active.entry.result = "interrupted"
+            self._stacks.clear()
 
 
 @dataclass
@@ -503,6 +879,27 @@ _COMPONENT_ACRONYMS = frozenset(
 )
 
 
+class _DebugCallTable(widgets.DataTable):
+    """Call table that can reposition its hidden cursor without auto-scrolling."""
+
+    _preserve_cursor_scroll = False
+
+    def move_cursor_preserving_scroll(self, row: int, column: int) -> None:
+        """Move the cursor while suppressing Textual's deferred auto-scroll."""
+        self._preserve_cursor_scroll = True
+        self.move_cursor(row=row, column=column, animate=False, scroll=False)
+        self.call_after_refresh(self._restore_cursor_scroll)
+
+    def _restore_cursor_scroll(self) -> None:
+        """Restore normal keyboard cursor scrolling after the pending refresh."""
+        self._preserve_cursor_scroll = False
+
+    def _scroll_cursor_into_view(self, animate: bool = False) -> None:
+        """Keep deferred cursor updates from overriding manual scrollbar use."""
+        if not self._preserve_cursor_scroll:
+            super()._scroll_cursor_into_view(animate)
+
+
 class DebugInspectorScreen(screen.ModalScreen[None]):
     """Show live Celune and UI state in a debug-only modal."""
 
@@ -510,6 +907,9 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
         ("escape", "close_inspector", "Close inspector"),
         ("f", "focus_filter", "Filter components"),
     ]
+    _CALL_TABLE_LIMIT: ClassVar[int] = 25
+    _LIVE_CALL_REFRESH_SECONDS: ClassVar[float] = 1.0
+    _SNAPSHOT_REFRESH_SECONDS: ClassVar[float] = 1.0
     DEFAULT_CSS = """
     DebugInspectorScreen {
         align: center middle;
@@ -593,21 +993,38 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
         min-height: 3;
     }
     #debug-live-pane {
-        height: 9;
-        min-height: 7;
+        height: 10;
+        min-height: 9;
         border: round $secondary;
         margin-top: 1;
         padding: 0 1;
     }
     #debug-live-heading {
+        height: 5;
+        align: left top;
+    }
+    #debug-live-labels {
+        width: 26;
+        min-width: 26;
+        height: 2;
+    }
+    #debug-live-controls {
+        width: 1fr;
+        height: 5;
+    }
+    #debug-live-actions {
         height: 3;
-        align: left middle;
+        width: 1fr;
+        align: right middle;
     }
     #debug-live-title {
-        width: 1fr;
+        width: auto;
+        min-width: 12;
     }
     #debug-pause,
-    #debug-clear {
+    #debug-clear,
+    #debug-select-source,
+    #debug-reset-sources {
         min-width: 10;
         height: 3;
         padding: 0 1;
@@ -616,12 +1033,42 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
         color: $primary;
         margin-left: 1;
     }
+    #debug-source-status-row {
+        height: 1;
+        align: right middle;
+        margin-bottom: 1;
+    }
+    #debug-source-filter {
+        width: 1fr;
+        min-width: 16;
+        max-width: 34;
+        height: 3;
+        border: round $secondary;
+        margin-left: 1;
+        margin-right: 1;
+    }
+    #debug-select-source,
+    #debug-reset-sources {
+        min-width: 16;
+    }
+    #debug-source-status {
+        width: 1fr;
+        height: 1;
+        color: $secondary;
+    }
+    #debug-show-special-methods {
+        width: auto;
+        height: 1;
+        padding: 0 1;
+        border: none;
+        background: $background;
+    }
     #debug-live-content {
         height: 1fr;
-        min-height: 4;
+        min-height: 3;
     }
     #debug-call-table {
-        width: 68%;
+        width: 75%;
         height: 1fr;
         border-right: solid $secondary;
         overflow-y: auto;
@@ -702,17 +1149,40 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
                     )
             with containers.Vertical(id="debug-live-pane"):
                 with containers.Horizontal(id="debug-live-heading"):
-                    yield widgets.Static(
-                        string("debug.live_calls"), id="debug-live-title"
-                    )
-                    yield widgets.Button(
-                        string("debug.pause"), id="debug-pause", compact=True
-                    )
-                    yield widgets.Button(
-                        string("debug.clear"), id="debug-clear", compact=True
-                    )
+                    with containers.Vertical(id="debug-live-labels"):
+                        yield widgets.Static(
+                            string("debug.live_calls"), id="debug-live-title"
+                        )
+                        yield widgets.Static("", id="debug-source-status")
+                    with containers.Vertical(id="debug-live-controls"):
+                        with containers.Horizontal(id="debug-live-actions"):
+                            yield widgets.Input(
+                                placeholder=string("debug.package_module_placeholder"),
+                                id="debug-source-filter",
+                            )
+                            yield widgets.Button(
+                                string("debug.select_source"),
+                                id="debug-select-source",
+                                compact=True,
+                            )
+                            yield widgets.Button(
+                                string("debug.reset_sources"),
+                                id="debug-reset-sources",
+                                compact=True,
+                            )
+                            yield widgets.Button(
+                                string("debug.pause"), id="debug-pause", compact=True
+                            )
+                            yield widgets.Button(
+                                string("debug.clear"), id="debug-clear", compact=True
+                            )
+                        with containers.Horizontal(id="debug-source-status-row"):
+                            yield widgets.Checkbox(
+                                string("debug.show_special_methods"),
+                                id="debug-show-special-methods",
+                            )
                 with containers.Horizontal(id="debug-live-content"):
-                    yield widgets.DataTable(
+                    yield _DebugCallTable(
                         cursor_type="row",
                         show_header=True,
                         show_row_labels=False,
@@ -744,16 +1214,21 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
             (string("debug.field"), "debug-field"),
             (string("debug.value"), "debug-value"),
         )
-        table = self.query_one("#debug-call-table", widgets.DataTable)
-        table.add_columns(
-            string("debug.time"),
-            string("debug.call"),
-            (string("debug.duration"), "debug-duration"),
-        )
+        table = self.query_one("#debug-call-table", _DebugCallTable)
+        table.add_column(string("debug.time"), width=12)
+        table.add_column(string("debug.call"), width=14)
+        table.add_column(string("debug.source"), key="debug-call-source", width=16)
+        table.add_column(string("debug.duration"), key="debug-duration", width=18)
         self._refresh_snapshot()
+        self._refresh_source_status()
         self._refresh_live_calls()
-        self.set_interval(0.25, self._refresh_snapshot)
-        self.set_interval(0.25, self._refresh_live_calls)
+        self.set_interval(self._SNAPSHOT_REFRESH_SECONDS, self._refresh_snapshot)
+        self.set_interval(self._LIVE_CALL_REFRESH_SECONDS, self._refresh_live_calls)
+        self.trace.set_inspector_open(True)
+
+    def on_unmount(self) -> None:
+        """Stop tracing when the debug inspector closes."""
+        self.trace.set_inspector_open(False)
 
     def on_tree_node_selected(
         self,
@@ -771,15 +1246,32 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
         if event.input.id == "debug-filter":
             self._populate_tree(event.value)
 
+    def on_input_submitted(self, event: widgets.Input.Submitted) -> None:
+        """Apply a package or module filter submitted from its input."""
+        if event.input.id == "debug-source-filter":
+            self._select_source_filter()
+
+    def on_checkbox_changed(self, event: widgets.Checkbox.Changed) -> None:
+        """Update whether special methods are shown in the call trace."""
+        if event.checkbox.id == "debug-show-special-methods":
+            self.trace.set_show_special_methods(event.value)
+            self._refresh_live_calls(force=True)
+
     def on_button_pressed(self, event: widgets.Button.Pressed) -> None:
-        """Apply the live-trace pause and clear controls."""
+        """Apply the live-trace controls."""
         if event.button.id == "debug-pause":
             self.trace.set_paused(not self.trace.paused)
             self._update_pause_button()
         elif event.button.id == "debug-clear":
             self.trace.clear()
             self._selected_call_id = None
-            self._refresh_live_calls()
+            self._refresh_live_calls(force=True)
+        elif event.button.id == "debug-select-source":
+            self._select_source_filter()
+        elif event.button.id == "debug-reset-sources":
+            self.trace.reset_source_filters()
+            self._refresh_source_status()
+            self._refresh_live_calls(force=True)
 
     def on_data_table_row_highlighted(
         self,
@@ -804,9 +1296,14 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
         self.query_one("#debug-filter", widgets.Input).focus()
 
     def _refresh_snapshot(self) -> None:
+        with self.trace.suspend_events():
+            self._update_snapshot()
+
+    def _update_snapshot(self) -> None:
         if not _is_debug_enabled(self.ui):
             self.app.pop_screen()
             return
+        self.trace.refresh_code_objects()
         roots = self._build_component_roots()
         signature = _component_signature(roots)
         if signature != self._component_signature:
@@ -824,9 +1321,16 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
         self._render_component()
         self._update_pause_button()
 
-    def _refresh_live_calls(self) -> None:
-        table = self.query_one("#debug-call-table", widgets.DataTable)
-        entries = self.trace.entries()
+    def _refresh_live_calls(self, *, force: bool = False) -> None:
+        with self.trace.suspend_events():
+            self._update_live_calls(force=force)
+
+    def _update_live_calls(self, *, force: bool = False) -> None:
+        self._refresh_source_status()
+        table = self.query_one("#debug-call-table", _DebugCallTable)
+        if not force and (not table.is_vertical_scroll_end or table.scroll_x > 0):
+            return
+        entries = self.trace.entries(self._CALL_TABLE_LIMIT)
         ids = tuple(entry.entry_id for entry in entries)
         signature = tuple(
             (entry.entry_id, entry.duration_ms, entry.result) for entry in entries
@@ -838,6 +1342,7 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
             for entry_id, duration, result in self._shown_trace_signature
         }
         previous_selection = self._selected_call_id
+        previous_scroll_y = table.scroll_y
         was_at_bottom = table.is_vertical_scroll_end
         removed_ids = tuple(
             entry_id for entry_id in previous_ids if entry_id not in ids
@@ -853,18 +1358,15 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
             row_key = str(entry.entry_id)
             if entry.entry_id not in previous_id_set:
                 table.add_row(
-                    entry.timestamp,
-                    entry.display_name,
+                    _format_timestamp(entry.timestamp_ns),
+                    Text(entry.display_name, no_wrap=True, overflow="ellipsis"),
+                    _source_category_label(entry.source_category),
                     _format_duration(entry),
                     key=row_key,
                 )
-            elif (
-                previous_signature.get(entry.entry_id)
-                != (
-                    entry.duration_ms,
-                    entry.result,
-                )
-                or entry.result == "running"
+            elif previous_signature.get(entry.entry_id) != (
+                entry.duration_ms,
+                entry.result,
             ):
                 table.update_cell(
                     row_key,
@@ -889,25 +1391,45 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
         elif added_ids and was_at_bottom:
             self._selected_call_id = ids[-1]
 
-        selection_changed = self._selected_call_id != previous_selection
-        if self._selected_call_id is not None and (selection_changed or removed_ids):
-            table.move_cursor(
-                row=ids.index(self._selected_call_id),
-                column=0,
-                animate=False,
-                scroll=was_at_bottom and bool(added_ids),
+        if self._selected_call_id is not None and (
+            self._selected_call_id != previous_selection or removed_ids
+        ):
+            table.move_cursor_preserving_scroll(
+                ids.index(self._selected_call_id),
+                0,
             )
+        if was_at_bottom and added_ids:
+            table.call_after_refresh(self._follow_call_table, previous_scroll_y)
         self._render_call_detail()
+
+    def _follow_call_table(self, previous_scroll_y: float) -> None:
+        """Follow new rows only if the user has not scrolled away meanwhile."""
+        table = self.query_one("#debug-call-table", widgets.DataTable)
+        if table.scroll_y >= previous_scroll_y:
+            table.scroll_to(y=table.max_scroll_y, animate=False, force=True)
+
+    def _select_source_filter(self) -> None:
+        source_input = self.query_one("#debug-source-filter", widgets.Input)
+        if not self.trace.add_source_filter(source_input.value):
+            return
+        source_input.value = ""
+        self._refresh_source_status()
+        self._refresh_live_calls(force=True)
+
+    def _refresh_source_status(self) -> None:
+        filters = self.trace.source_filters
+        if filters:
+            status = string("debug.trace_sources", sources=", ".join(filters))
+        else:
+            status = string("debug.trace_all_calls")
+        self.query_one("#debug-source-status", widgets.Static).update(status)
 
     def _render_call_detail(self) -> None:
         body = self.query_one("#debug-call-detail-body", widgets.Static)
-        entry = next(
-            (
-                candidate
-                for candidate in self.trace.entries()
-                if candidate.entry_id == self._selected_call_id
-            ),
-            None,
+        entry = (
+            self.trace.get_entry(self._selected_call_id)
+            if self._selected_call_id is not None
+            else None
         )
         if (
             entry is not None
@@ -920,6 +1442,14 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
         else:
             lines = [
                 f"{string('debug.function')}: {entry.name}()",
+                (
+                    f"{string('debug.source_category')}: "
+                    f"{_source_category_label(entry.source_category)}"
+                ),
+                (
+                    f"{string('debug.package_module')}: "
+                    f"{entry.module_name or string('debug.unknown')}"
+                ),
                 f"{string('debug.call_path')}: {' → '.join(entry.call_path)}",
                 f"{string('debug.arguments')}:",
             ]
@@ -1197,51 +1727,184 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
         button.label = string("debug.resume" if self.trace.paused else "debug.pause")
 
 
+def _classify_source(module_name: Optional[str], source_path: Optional[str]) -> str:
+    """Classify a callable source when its module or file identifies it."""
+    if not module_name:
+        return "unknown"
+    root_module = module_name.partition(".")[0]
+    if root_module == "celune":
+        return "celune"
+    if root_module == "builtins":
+        return "built_in"
+    if root_module in _STANDARD_LIBRARY_MODULES:
+        return "standard_library"
+
+    if source_path is None:
+        module = sys.modules.get(module_name)
+        source_path = getattr(module, "__file__", None)
+        if not isinstance(source_path, str):
+            specification = getattr(module, "__spec__", None)
+            origin = getattr(specification, "origin", None)
+            source_path = origin if isinstance(origin, str) else None
+    if source_path is None or source_path in {"built-in", "frozen"}:
+        return "unknown"
+    try:
+        path = Path(source_path).resolve()
+        if any(path == root or root in path.parents for root in _SITE_PACKAGE_ROOTS):
+            return "third_party"
+    except (OSError, RuntimeError, ValueError):
+        return "unknown"
+    return "unknown"
+
+
 def _codes_from_value(
     value: object,
-    seen: set[CodeType],
+    visited: set[int],
     module_name: str,
 ) -> abc.Iterator[CodeType]:
-    """Yield Celune-owned code while skipping external decorator wrappers."""
-    if isinstance(value, types.FunctionType):
-        if value.__module__ != module_name:
+    """Yield code objects owned by a module's functions and classes."""
+    value_id = id(value)
+    if value_id in visited:
+        return
+    value_type = type(value)
+    if value_type is types.FunctionType:
+        function = cast(types.FunctionType, value)
+        visited.add(value_id)
+        if function.__module__ != module_name:
             return
-        wrapped = getattr(value, "__wrapped__", None)
-        if wrapped is None or _is_celune_code(value.__code__):
-            yield from _walk_code(value.__code__, seen)
-        if (
-            isinstance(wrapped, types.FunctionType)
-            and wrapped.__module__ == module_name
-            and wrapped.__code__ not in seen
-        ):
-            yield from _codes_from_value(wrapped, seen, module_name)
-    elif isinstance(value, (staticmethod, classmethod)):
-        yield from _codes_from_value(value.__func__, seen, module_name)
-    elif isinstance(value, property):
-        for function in (value.fget, value.fset, value.fdel):
-            if function is not None:
-                yield from _codes_from_value(function, seen, module_name)
-    elif isinstance(value, type):
-        for member in vars(value).values():
-            yield from _codes_from_value(member, seen, module_name)
-
-
-def _is_celune_code(code: CodeType) -> bool:
-    """Return whether a code object was compiled from the Celune package."""
-    try:
-        return Path(code.co_filename).resolve().is_relative_to(_CELUNE_SOURCE_ROOT)
-    except (OSError, RuntimeError, ValueError):
-        return False
+        yield from _walk_code(function.__code__, set())
+        wrapped = getattr(function, "__wrapped__", None)
+        wrapped_type = type(wrapped)
+        if wrapped_type is types.FunctionType:
+            yield from _codes_from_value(wrapped, visited, module_name)
+        return
+    if value_type is staticmethod:
+        visited.add(value_id)
+        descriptor = cast(staticmethod, value)
+        yield from _codes_from_value(descriptor.__func__, visited, module_name)
+        return
+    if value_type is classmethod:
+        visited.add(value_id)
+        descriptor = cast(classmethod, value)
+        yield from _codes_from_value(descriptor.__func__, visited, module_name)
+        return
+    if value_type is property:
+        visited.add(value_id)
+        descriptor = cast(property, value)
+        for accessor in (descriptor.fget, descriptor.fset, descriptor.fdel):
+            if accessor is not None:
+                yield from _codes_from_value(accessor, visited, module_name)
+        return
+    if issubclass(value_type, type):
+        class_value = cast(type, value)
+        class_module = type.__getattribute__(class_value, "__module__")
+        if class_module == module_name:
+            visited.add(value_id)
+            members = type.__getattribute__(class_value, "__dict__").values()
+            for member in members:
+                yield from _codes_from_value(member, visited, module_name)
 
 
 def _walk_code(code: CodeType, seen: set[CodeType]) -> abc.Iterator[CodeType]:
+    """Yield a code object and nested code constants once each."""
     if code in seen:
         return
     seen.add(code)
     yield code
-    for constant in code.co_consts:
-        if isinstance(constant, CodeType):
-            yield from _walk_code(constant, seen)
+    for value in code.co_consts:
+        if isinstance(value, CodeType):
+            yield from _walk_code(value, seen)
+
+
+def _frame_module_name(frame: Optional[FrameType], code: CodeType) -> Optional[str]:
+    if frame is None or frame.f_code is not code:
+        return None
+    module_name = frame.f_globals.get("__name__")
+    return module_name if isinstance(module_name, str) else None
+
+
+def _callable_module_name(callable_value: object) -> Optional[str]:
+    module_name = getattr(callable_value, "__module__", None)
+    if isinstance(module_name, str) and module_name:
+        return module_name
+    owner = getattr(callable_value, "__objclass__", None)
+    module_name = getattr(owner, "__module__", None)
+    if isinstance(module_name, str) and module_name:
+        return module_name
+    module_name = getattr(type(callable_value), "__module__", None)
+    return module_name if isinstance(module_name, str) and module_name else None
+
+
+def _qualified_python_name(
+    module_name: Optional[str],
+    code: CodeType,
+) -> str:
+    qualified_name = code.co_qualname
+    if not module_name:
+        return qualified_name
+    return f"{module_name}.{qualified_name}"
+
+
+def _qualified_callable_name(module_name: Optional[str], callable_value: object) -> str:
+    name = getattr(callable_value, "__qualname__", None)
+    if not isinstance(name, str):
+        name = getattr(callable_value, "__name__", None)
+    if not isinstance(name, str):
+        name = type(callable_value).__qualname__
+    if not module_name:
+        return name
+    return f"{module_name}.{name}"
+
+
+@functools.lru_cache(maxsize=1024)
+def _builtin_callable_metadata(
+    callable_value: types.BuiltinFunctionType,
+) -> tuple[Optional[str], str, bool]:
+    """Return cached source and display metadata for a built-in callable."""
+    module_name = getattr(callable_value, "__module__", None)
+    if not isinstance(module_name, str) or not module_name:
+        module_name = None
+    name = _qualified_callable_name(module_name, callable_value)
+    return module_name, name, _is_special_method(name.rpartition(".")[2])
+
+
+@functools.lru_cache(maxsize=256)
+def _has_python_call_method(callable_type: type[object]) -> bool:
+    """Return whether instances of this type use a Python ``__call__``."""
+    call_method = inspect.getattr_static(callable_type, "__call__", None)
+    return isinstance(call_method, (types.FunctionType, types.MethodType))
+
+
+def _is_python_callable(callable_value: object) -> bool:
+    if isinstance(callable_value, (types.FunctionType, types.MethodType)):
+        return True
+    return _has_python_call_method(type(callable_value))
+
+
+def _module_matches_filters(
+    module_name: Optional[str],
+    source_filters: tuple[str, ...],
+) -> bool:
+    if not source_filters:
+        return True
+    if not module_name:
+        return False
+    return any(
+        module_name == selected or module_name.startswith(f"{selected}.")
+        for selected in source_filters
+    )
+
+
+def _is_special_method(name: str) -> bool:
+    return name.startswith("__") and name.endswith("__") and len(name) > 4
+
+
+def _is_blacklisted_module(module_name: str) -> bool:
+    """Return whether a module belongs to the inspector's excluded UI stack."""
+    return any(
+        module_name == package or module_name.startswith(f"{package}.")
+        for package in DebugCallTrace._INSPECTOR_MODULES
+    )
 
 
 def _object_attributes(value: object) -> dict[str, object]:
@@ -1416,6 +2079,26 @@ def _format_duration(entry: DebugCallEntry) -> str:
         elapsed_ms = (time.perf_counter_ns() - entry.started_ns) / 1_000_000
         return string("debug.running_duration", duration=f"{elapsed_ms:.1f}")
     return string("debug.unknown")
+
+
+def _format_timestamp(timestamp_ns: int) -> str:
+    return datetime.fromtimestamp(timestamp_ns / 1_000_000_000).strftime("%H:%M:%S.%f")[
+        :-3
+    ]
+
+
+def _source_category_label(source_category: str) -> str:
+    labels = {
+        "celune": "debug.source_celune",
+        "third_party": "debug.source_third_party",
+        "standard_library": "debug.source_standard_library",
+        "built_in": "debug.source_built_in",
+        "unknown": "debug.source_unknown",
+    }
+    key = labels.get(source_category, "debug.source_unknown")
+    if source_category == "celune":
+        return string(key, app_name=APP_NAME)
+    return string(key)
 
 
 def _is_debug_enabled(ui: object) -> bool:

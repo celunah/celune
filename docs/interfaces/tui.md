@@ -34,24 +34,48 @@ The left pane selects the UI and its subsystems alongside engine components,
 including loaded lifecycle, pipeline, playback, audio-server, and worker modules.
 The right pane refreshes the selected object's state and attributes. Sensitive
 fields such as API keys, tokens, passwords, and credentials are redacted. The
-bottom `LIVE CALLS` pane shows a bounded rolling trace of calls into loaded
-Celune Python modules whenever debug logging is enabled, including while the
-inspector is closed. Use `Pause` to stop adding entries, `Resume` to continue,
-and `Clear` to remove the visible trace. Selecting a call shows its Celune call
-path, duration, thread, and source location. Press `F` to filter component names;
-the call table uses short module and function names, while Call details shows
-the full qualified name and the function's parameter values. Use the arrow
-keys to select components or trace calls, `ENTER` to expand a component, and
-`TAB` to move between panes.
+bottom `LIVE CALLS` pane keeps a rolling buffer of up to 100 calls while the
+inspector is open. Closing the inspector stops tracing; opening it again resumes
+tracing and retains the buffer. The table displays the latest 25 entries and
+refreshes once per second. By default, it
+records calls from Celune, third-party packages, the Python standard library,
+and built-in functions exposed by the monitor. The table shows Time, Call,
+Source, and Duration; source is labeled Celune, Third party, Standard library,
+Built-in, or Unknown when classification is uncertain. Select a call to inspect
+its call path, arguments, duration, thread, and source location. Completed
+durations update without repainting still-running rows on each refresh. The
+source input and actions share the `LIVE CALLS` title row, with trace status
+directly underneath. Monitoring is enabled per loaded code object rather than
+process-wide. Newly imported modules are discovered during the once-per-second
+snapshot refresh. This avoids callback traffic from unrelated interpreter code.
+
+Enter a package or module name and choose `Select Source` to limit the trace to
+that module and its dotted submodules. Repeat to add more names to the active
+filter; `Reset Sources` returns to all sources. The status directly below
+`LIVE CALLS` shows the active filter or `Tracing all function calls`. Special
+methods such as `__init__` and `__eq__` are hidden by default; enable `Show
+special methods` to include them. Use `Pause` to stop adding entries, `Resume`
+to continue, and `Clear` to remove the visible trace. Press `F` to filter
+component names, use the arrow keys to select components or calls, `ENTER` to
+expand a component, and `TAB` to move between panes.
+
+The call table keeps its columns within the inspector pane, shows the complete
+duration status, and truncates long call names; selecting a call still shows
+its full name in the details pane. The table pauses visual updates while it is
+scrolled away from the newest calls, so the scrollbar remains usable during
+active tracing. Updates resume when the table returns to the bottom.
 
 The call trace uses Python's `sys.monitoring` API, available on supported Python
-versions 3.12 and newer. It enables events only for Celune code and releases its
-monitor when debug logging is disabled or the UI closes. Turning debug logging
-off also clears its buffer. If the runtime has no free monitoring tool slot, the
-component snapshot remains available and the trace control reports that tracing
-is unavailable. Calls are captured from Celune code in the current process;
-isolated backend worker internals are not traced across a process boundary,
-though their available proxy state remains selectable.
+versions 3.12 and newer. It monitors loaded Python function activations and
+exposed C-callable boundaries in the current process. It cannot inspect the
+internal execution of native libraries or calls inside isolated backend worker
+processes. To prevent the inspector from tracing its own rendering workload,
+`textual` and `rich` modules are always excluded. `celune.ui.debug` is excluded
+by default but can be selected explicitly. Source filters narrow the monitored
+code as well as the displayed entries. Turning debug logging off releases the
+monitor and clears its buffer. If `sys.monitoring` is unavailable or the runtime
+has no free monitoring tool slot, the component snapshot remains available and
+the trace control reports that tracing is unavailable.
 
 After the core is attached to the UI and startup reporting is ready, the loading
 screen adds `ESC reveal UI` to its footer. Press `ESC` to show the main interface
