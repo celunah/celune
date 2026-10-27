@@ -6,17 +6,19 @@ from __future__ import annotations
 import os
 import re
 import sys
-import queue as queue_module
 import shlex
 import types
 import ctypes
 import asyncio
-import threading
 import contextlib
-from copy import deepcopy
+import threading
+
 from uuid import uuid4
-from typing import TYPE_CHECKING, Optional, cast
+from copy import deepcopy
+import queue as queue_module
+
 from collections.abc import Callable, Iterator
+from typing import TYPE_CHECKING, Optional, cast
 
 from . import app as _app
 from ..constants import SIGTSTP, APP_NAME
@@ -47,6 +49,7 @@ __all__ = (
     "_start_vc_recording",
     "_submit_text",
     "action_quit",
+    "action_toggle_debug_inspector",
     "begin_tutorial",
     "cancel_tutorial",
     "config_label",
@@ -1349,6 +1352,19 @@ async def action_quit(self) -> None:
     self._graceful_exit(return_code=self._startup_error_exit_code)
 
 
+def action_toggle_debug_inspector(self) -> None:
+    """Open the inspector only while Celune's active log level is debug."""
+    if self.cur_state == "exiting":
+        return
+    log_level = getattr(self.celune, "log_level", self._startup_log_level)
+    if _app.resolve_log_level(log_level, self._startup_log_level) != "debug":
+        return
+    if isinstance(self.screen, _app.DebugInspectorScreen):
+        self.pop_screen()
+    else:
+        self.push_screen(_app.DebugInspectorScreen(self, self._debug_call_trace))
+
+
 def on_key(self, event: _app.events.Key) -> None:
     """Accept input and send text to Celune.
 
@@ -1546,6 +1562,7 @@ def on_unmount(self) -> None:
     if self._runtime_log_capture_enabled:
         self._run_shutdown_step(self._disable_runtime_log_capture)
 
+    self._run_shutdown_step(lambda: self._debug_call_trace.set_enabled(False))
     self.release_instance()
 
 
@@ -2010,6 +2027,10 @@ class InteractionHooks:
     async def action_quit(self) -> None:
         """Delegate to the interaction implementation."""
         return await action_quit(self)
+
+    def action_toggle_debug_inspector(self) -> None:
+        """Delegate the debug-inspector binding to the interaction module."""
+        return action_toggle_debug_inspector(self)
 
     def begin_tutorial(self) -> None:
         """Delegate to the interaction implementation."""

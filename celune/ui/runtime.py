@@ -11,10 +11,10 @@ import signal
 import asyncio
 import inspect
 import logging
-import itertools
 import datetime
-import threading
 import contextlib
+import itertools
+import threading
 from io import TextIOWrapper
 from collections.abc import Callable
 from typing import Optional, Union, cast
@@ -1019,6 +1019,8 @@ def on_mount(self) -> None:
         signal.signal(signal.SIGTERM, self._signal_handler)
 
     self.set_interval(0.1, self._check_launcher_loss)
+    self._debug_call_trace.sync_enabled()
+    self.set_interval(1.0, self._debug_call_trace.sync_enabled)
 
     self._loading_screen = self.query_one("#loading-overlay", _app.CeluneLoadingScreen)
     self._loading_screen.set_startup_messages(self._startup_messages)
