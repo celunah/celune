@@ -4,15 +4,14 @@ Updated: Sep 30, 2026 (Classic Remastered)
 
 This document describes how Celune's voice identities were created, selected, and refined.
 
+> [!NOTE]
+>
+> Nol's voice summary is not included in this document.
+> Give him a rest, he just came recently.
+
 ## Who is Celune
 
-This is only a simplified explanation. More details are included in her lore.
-
-Celune by nature appears to be a young female of approximately 28 years of age, who speaks with a low contralto tone.
-
-Her average pitch range during speech is ~170 Hz. This is reflected across all four of her tones, however her Upbeat tone may modulate more than the rest, contributing to a higher perceived pitch of approx. 210 Hz.
-
-The character personality is loosely based on Japanese-style philosophies, and the connected UX practices follow a Korean style. When she speaks, she tends to be slightly hesitant and keeps her responses brief, while naturally pausing in her speech. The interpretation is left to the user to decipher.
+A comprehensive explanation is available in her lore documentation.
 
 Please check [the Book of Celune](https://github.com/celunah/celune/blob/dev/resources/about/about-celune.md) for lore-accurate details and a comprehensive description of Celune.
 
@@ -42,6 +41,9 @@ Refer to the following models for details:
 - [Pocket TTS](<https://huggingface.co/kyutai/pocket-tts>) [(ungated)](<https://huggingface.co/lunahr/pocket-tts-ungated>)
 - [dots.tts](<https://huggingface.co/dots-studio/dots.tts-mf>)
 - [LuxTTS](<https://huggingface.co/YatharthS/LuxTTS>)
+- [SoulX-Singer](<https://huggingface.co/Soul-AILab/SoulX-Singer>)*
+
+<sub><sup>Models marked * generate singing instead of speech.</sup></sub>
 
 ## Reference text
 
