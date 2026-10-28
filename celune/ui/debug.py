@@ -9,9 +9,9 @@ import time
 import types
 import inspect
 import sysconfig
+import contextlib
 import functools
 import threading
-import contextlib
 
 from enum import Enum
 from pathlib import Path
@@ -106,7 +106,7 @@ def _load_monitoring_api() -> Optional[_MonitoringAPI]:
         return None
     try:
         event_api = _monitoring_attribute(api, "events")
-        events = _MonitorEvents(
+        monitor_events = _MonitorEvents(
             PY_START=cast(int, _monitoring_attribute(event_api, "PY_START")),
             PY_RESUME=cast(int, _monitoring_attribute(event_api, "PY_RESUME")),
             PY_RETURN=cast(int, _monitoring_attribute(event_api, "PY_RETURN")),
@@ -118,7 +118,7 @@ def _load_monitoring_api() -> Optional[_MonitoringAPI]:
             NO_EVENTS=cast(int, _monitoring_attribute(event_api, "NO_EVENTS")),
         )
         return _MonitoringAPI(
-            events=events,
+            events=monitor_events,
             get_tool=cast(
                 abc.Callable[[int], Optional[str]],
                 _monitoring_attribute(api, "get_tool"),
@@ -909,9 +909,9 @@ class _DebugResizeHandle(widgets.Static):
         axis: str,
         on_drag: abc.Callable[[int], None],
         *,
-        id: str,
+        widget_id: str,
     ) -> None:
-        super().__init__("", id=id)
+        super().__init__("", id=widget_id)
         self._axis = axis
         self._on_drag = on_drag
         self._dragging = False
@@ -1197,7 +1197,7 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
                 yield _DebugResizeHandle(
                     "x",
                     self._resize_component_pane,
-                    id="debug-main-resizer",
+                    widget_id="debug-main-resizer",
                 )
                 with containers.Vertical(id="debug-details-pane"):
                     yield widgets.Static("", id="debug-selected-component")
@@ -1222,7 +1222,7 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
             yield _DebugResizeHandle(
                 "y",
                 self._resize_live_pane,
-                id="debug-live-resizer",
+                widget_id="debug-live-resizer",
             )
             with containers.Vertical(id="debug-live-pane"):
                 with containers.Horizontal(id="debug-live-heading"):
@@ -1268,7 +1268,7 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
                     yield _DebugResizeHandle(
                         "x",
                         self._resize_call_table,
-                        id="debug-call-resizer",
+                        widget_id="debug-call-resizer",
                     )
                     with containers.Vertical(id="debug-call-detail"):
                         yield widgets.Static(
