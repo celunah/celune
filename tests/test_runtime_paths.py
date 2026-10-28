@@ -5,9 +5,9 @@ import os
 import sys
 import tempfile
 import threading
-from typing import Optional, cast
 from pathlib import Path
 from unittest import mock
+from typing import Optional, cast
 
 import yaml
 import pytest
@@ -28,11 +28,11 @@ from celune.paths import (
     configure_huggingface_runtime,
     configure_huggingface_cache_environment,
 )
+from celune.constants import APP_SLUG
 from celune.utils import discard, format_error
 from celune.ui.app import CeluneUI, UILogMessage
-from celune.cevoice import bundled_voices_dir, default_bundle_path
-from celune.constants import APP_SLUG
 from celune.persona.memory import default_memory_dir
+from celune.cevoice import bundled_voices_dir, default_bundle_path
 
 from .support import CeluneTestCase
 from .platform import LINUX_ONLY, WINDOWS_ONLY
@@ -224,20 +224,23 @@ class TestRuntimePath(CeluneTestCase):
     def test_huggingface_progress_forwards_disabled_transfer_updates(self) -> None:
         """Verify quiet Hugging Face bars still update Celune's progress callback."""
         # noinspection PyProtectedMember
-        from huggingface_hub import file_download, _snapshot_download
+        import importlib
+
+        from huggingface_hub import _snapshot_download, file_download
 
         callback = mock.Mock()
-        previous_tqdm = file_download.tqdm
+        progress_module = importlib.import_module("huggingface_hub.utils.tqdm")
+        previous_tqdm = progress_module.__dict__["tqdm"]
         previous_hf_tqdm = _snapshot_download.hf_tqdm
         with huggingface_progress(callback):
-            progress_bar = file_download.tqdm(
+            with file_download._get_progress_bar_context(
                 total=100,
                 initial=0,
                 desc="model.safetensors",
-                disable=True,
-            )
-            progress_bar.update(25)
-            progress_bar.close()
+                log_level=0,
+                name="huggingface_hub.http_get",
+            ) as progress_bar:
+                progress_bar.update(25)
             aggregate_bar = _snapshot_download.hf_tqdm(
                 total=200,
                 initial=0,
@@ -247,7 +250,7 @@ class TestRuntimePath(CeluneTestCase):
             aggregate_bar.update(50)
             aggregate_bar.close()
 
-        assert file_download.tqdm is previous_tqdm
+        assert progress_module.__dict__["tqdm"] is previous_tqdm
         assert _snapshot_download.hf_tqdm is previous_hf_tqdm
         callback.assert_any_call(25.0, 100.0)
         callback.assert_any_call(50.0, 200.0)

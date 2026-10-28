@@ -6,8 +6,9 @@ import sys
 import time
 import shutil
 import sysconfig
-import threading
 import contextlib
+import threading
+import importlib
 from pathlib import Path
 from typing import Union, Literal, Optional
 from collections.abc import Callable, Generator
@@ -193,11 +194,9 @@ def huggingface_progress(
         yield
         return
 
-    import importlib
-
     from huggingface_hub.utils.tqdm import tqdm as HuggingFaceTqdm
 
-    file_download = importlib.import_module("huggingface_hub.file_download")
+    progress_module = importlib.import_module("huggingface_hub.utils.tqdm")
     snapshot_download = importlib.import_module("huggingface_hub._snapshot_download")
 
     class CeluneHuggingFaceTqdm(HuggingFaceTqdm):
@@ -247,14 +246,14 @@ def huggingface_progress(
                 self._celune_progress_callback(progress, normalized_total)
 
     with _HF_PROGRESS_PATCH_LOCK:
-        previous_file_tqdm = file_download.__dict__["tqdm"]
+        previous_progress_tqdm = progress_module.__dict__["tqdm"]
         previous_snapshot_tqdm = snapshot_download.__dict__["hf_tqdm"]
-        file_download.__dict__["tqdm"] = CeluneHuggingFaceTqdm
+        progress_module.__dict__["tqdm"] = CeluneHuggingFaceTqdm
         snapshot_download.__dict__["hf_tqdm"] = CeluneHuggingFaceTqdm
         try:
             yield
         finally:
-            file_download.__dict__["tqdm"] = previous_file_tqdm
+            progress_module.__dict__["tqdm"] = previous_progress_tqdm
             snapshot_download.__dict__["hf_tqdm"] = previous_snapshot_tqdm
 
 
