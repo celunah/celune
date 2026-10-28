@@ -43,11 +43,14 @@ and built-in functions exposed by the monitor. The table shows Time, Call,
 Source, and Duration; source is labeled Celune, Third party, Standard library,
 Built-in, or Unknown when classification is uncertain. Select a call to inspect
 its call path, arguments, duration, thread, and source location. Completed
-durations update without repainting still-running rows on each refresh. The
+durations update without repainting still-running rows on each refresh. Details
+remain available for the selected call as the rolling trace advances. The
 source input and actions share the `LIVE CALLS` title row, with trace status
-directly underneath. Monitoring is enabled per loaded code object rather than
-process-wide. Newly imported modules are discovered during the once-per-second
-snapshot refresh. This avoids callback traffic from unrelated interpreter code.
+directly underneath. Drag the separators to resize the component and details
+panes, the upper section and `LIVE CALLS`, or the call list and call details.
+Monitoring is enabled per loaded code object rather than process-wide. Newly
+imported modules are discovered during the once-per-second snapshot refresh.
+This avoids callback traffic from unrelated interpreter code.
 
 Enter a package or module name and choose `Select Source` to limit the trace to
 that module and its dotted submodules. The input keeps the submitted name
@@ -72,7 +75,10 @@ The call trace uses Python's `sys.monitoring` API, available on supported Python
 versions 3.12 and newer. It monitors loaded Python function activations and
 exposed C-callable boundaries in the current process. It cannot inspect the
 internal execution of native libraries or calls inside isolated backend worker
-processes. To prevent the inspector from tracing its own rendering workload,
+processes. When a selected source targets compiled code in a Nuitka build, Live
+Calls shows a first row with the current time, a compiled-code call, an
+unreachable source, and an unavailable duration; its details explain the
+tracing limitation. To prevent the inspector from tracing its own rendering workload,
 `textual` and `rich` modules are always excluded. `celune.ui.debug` is excluded
 by default but can be selected explicitly. Source filters narrow the monitored
 code as well as the displayed entries. Turning debug logging off releases the
