@@ -8,13 +8,15 @@ import asyncio
 import logging
 import itertools
 import threading
+import queue as queue_module
+
 from typing import (
     TYPE_CHECKING,
     Never,
-    Union,
     TextIO,
     Literal,
     ClassVar,
+    Union,
     Optional,
     Protocol,
     cast,
@@ -23,9 +25,8 @@ from typing import (
 from pathlib import Path
 from io import TextIOWrapper
 from types import ModuleType
-import queue as queue_module
-from dataclasses import field, dataclass
-from collections.abc import Callable, Iterator
+from dataclasses import dataclass, field
+from collections.abc import Awaitable, Callable, Iterator
 
 from textual import (
     app,
@@ -54,9 +55,9 @@ from . import capture as _capture
 from . import runtime as _runtime
 from ..i18n import string, tagged_string
 from .loading import CeluneLoadingScreen
-from . import interaction as _interaction
 from ..typing.agent import AgentTaskState
 from ..typing.modes import OperationState
+from . import interaction as _interaction
 from ..registry.types import ModelMetadata
 from ..typing.common import JSONSerializable
 from ..watchdog import launcher_loss_requested
@@ -1814,9 +1815,12 @@ class CeluneUI(
 
         async def reload_voice_pack() -> bool:
             """Wait for the pack reload callbacks to finish before changing voice."""
-            async_reload = getattr(celune, "set_cevoice_async", None)
+            async_reload = cast(
+                Optional[Callable[[Path], Awaitable[bool]]],
+                getattr(celune, "set_cevoice_async", None),
+            )
             if callable(async_reload):
-                return bool(await async_reload(bundle_path))
+                return await async_reload(bundle_path)
             return bool(
                 await run_in_daemon_thread(
                     celune.set_cevoice_and_wait,
