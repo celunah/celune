@@ -8,8 +8,8 @@ import site
 import time
 import types
 import inspect
-import functools
 import sysconfig
+import functools
 import threading
 import contextlib
 
@@ -23,10 +23,11 @@ from types import CodeType, FrameType, ModuleType
 
 from rich.text import Text
 from textual.app import ComposeResult
-from textual import binding, containers, screen, widgets
+from textual import binding, containers, events, screen, widgets
 
 from ..i18n import string
 from ..constants import APP_NAME
+from ..paths import running_compiled
 
 
 def _site_package_roots() -> tuple[Path, ...]:
@@ -900,6 +901,52 @@ class _DebugCallTable(widgets.DataTable):
             super()._scroll_cursor_into_view(animate)
 
 
+class _DebugResizeHandle(widgets.Static):
+    """Resize one inspector split when its handle is dragged with the mouse."""
+
+    def __init__(
+        self,
+        axis: str,
+        on_drag: abc.Callable[[int], None],
+        *,
+        id: str,
+    ) -> None:
+        super().__init__("", id=id)
+        self._axis = axis
+        self._on_drag = on_drag
+        self._dragging = False
+
+    def on_mouse_down(self, event: events.MouseDown) -> None:
+        """Capture the mouse when the primary button grabs this handle."""
+        if event.button != 1:
+            return
+        self._dragging = True
+        self.app.capture_mouse(self)
+        event.stop()
+
+    def on_mouse_move(self, event: events.MouseMove) -> None:
+        """Resize the adjacent pane while the mouse remains captured."""
+        if not self._dragging:
+            return
+        delta = event.delta_x if self._axis == "x" else event.delta_y
+        if delta:
+            self._on_drag(delta)
+        event.stop()
+
+    def on_mouse_up(self, event: events.MouseUp) -> None:
+        """Release the mouse after a resize drag ends."""
+        if not self._dragging:
+            return
+        self._dragging = False
+        self.app.capture_mouse(None)
+        event.stop()
+
+    def on_mouse_release(self, event: events.MouseRelease) -> None:
+        """Clear drag state if another widget takes mouse capture."""
+        del event
+        self._dragging = False
+
+
 class DebugInspectorScreen(screen.ModalScreen[None]):
     """Show live Celune and UI state in a debug-only modal."""
 
@@ -937,6 +984,21 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
     #debug-main {
         height: 1fr;
         min-height: 6;
+    }
+    #debug-main-resizer,
+    #debug-call-resizer {
+        width: 1;
+        min-width: 1;
+        height: 1fr;
+        color: $background;
+        background: $background;
+    }
+    #debug-live-resizer {
+        height: 1;
+        min-height: 1;
+        width: 1fr;
+        color: $background;
+        background: $background;
     }
     #debug-components-pane {
         width: 30%;
@@ -996,7 +1058,6 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
         height: 10;
         min-height: 9;
         border: round $secondary;
-        margin-top: 1;
         padding: 0 1;
     }
     #debug-live-heading {
@@ -1070,7 +1131,6 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
     #debug-call-table {
         width: 75%;
         height: 1fr;
-        border-right: solid $secondary;
         overflow-y: auto;
         scrollbar-size-vertical: 2;
     }
@@ -1097,10 +1157,17 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
         self._component_signature: tuple[tuple[str, int], ...] = ()
         self._line_by_path: dict[str, int] = {}
         self._selected_call_id: Optional[int] = None
+        self._selected_call_entry: Optional[DebugCallEntry] = None
+        self._displayed_call_entries: dict[int, DebugCallEntry] = {}
+        self._component_width_percent = 30.0
+        self._live_pane_height = 10
+        self._call_table_width_percent = 75.0
         self._shown_trace_signature: tuple[tuple[int, Optional[float], str], ...] = ()
         self._shown_trace_ids: tuple[int, ...] = ()
         self._shown_call_detail_id: Optional[int] = None
         self._shown_call_detail: Optional[str] = None
+        self._compiled_notice_filters: tuple[str, ...] = ()
+        self._compiled_notice_target: Optional[str] = None
         self._rendered_table_values: dict[str, tuple[tuple[str, str], ...]] = {}
         self._rendered_table_components: dict[str, str] = {}
         self._rendered_state_table_height = 1
@@ -1127,6 +1194,11 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
                     tree.show_root = False
                     self._component_tree = tree
                     yield tree
+                yield _DebugResizeHandle(
+                    "x",
+                    self._resize_component_pane,
+                    id="debug-main-resizer",
+                )
                 with containers.Vertical(id="debug-details-pane"):
                     yield widgets.Static("", id="debug-selected-component")
                     yield widgets.Static(string("debug.state"), id="debug-state-title")
@@ -1147,6 +1219,11 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
                         show_row_labels=False,
                         id="debug-attributes-table",
                     )
+            yield _DebugResizeHandle(
+                "y",
+                self._resize_live_pane,
+                id="debug-live-resizer",
+            )
             with containers.Vertical(id="debug-live-pane"):
                 with containers.Horizontal(id="debug-live-heading"):
                     with containers.Vertical(id="debug-live-labels"):
@@ -1187,6 +1264,11 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
                         show_header=True,
                         show_row_labels=False,
                         id="debug-call-table",
+                    )
+                    yield _DebugResizeHandle(
+                        "x",
+                        self._resize_call_table,
+                        id="debug-call-resizer",
                     )
                     with containers.Vertical(id="debug-call-detail"):
                         yield widgets.Static(
@@ -1265,6 +1347,7 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
         elif event.button.id == "debug-clear":
             self.trace.clear()
             self._selected_call_id = None
+            self._selected_call_entry = None
             self._refresh_live_calls(force=True)
         elif event.button.id == "debug-select-source":
             self._select_source_filter()
@@ -1280,11 +1363,32 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
         """Show the call path for the highlighted trace entry."""
         if event.data_table.id != "debug-call-table":
             return
-        row_key = event.row_key.value
+        self._select_call(event.row_key.value)
+
+    def on_data_table_row_selected(
+        self,
+        event: widgets.DataTable.RowSelected,
+    ) -> None:
+        """Show details when a mouse click selects a trace entry."""
+        if event.data_table.id != "debug-call-table":
+            return
+        self._select_call(event.row_key.value)
+
+    def _select_call(self, row_key: Optional[str]) -> None:
+        """Keep a stable detail snapshot for the selected trace entry."""
+        if row_key is None:
+            return
         try:
-            self._selected_call_id = int(row_key) if row_key is not None else None
+            entry_id = int(row_key)
         except (TypeError, ValueError):
-            self._selected_call_id = None
+            return
+        entry = self._displayed_call_entries.get(entry_id)
+        if entry is None:
+            entry = self.trace.get_entry(entry_id)
+        if entry is None:
+            return
+        self._selected_call_id = entry_id
+        self._selected_call_entry = entry
         self._render_call_detail()
 
     def action_close_inspector(self) -> None:
@@ -1298,6 +1402,48 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
     def _refresh_snapshot(self) -> None:
         with self.trace.suspend_events():
             self._update_snapshot()
+
+    def _resize_component_pane(self, delta_x: int) -> None:
+        """Resize the component selector relative to its available width."""
+        main = self.query_one("#debug-main")
+        if main.size.width <= 0:
+            return
+        self._component_width_percent = min(
+            70.0,
+            max(
+                18.0,
+                self._component_width_percent + delta_x * 100 / main.size.width,
+            ),
+        )
+        self.query_one(
+            "#debug-components-pane"
+        ).styles.width = f"{self._component_width_percent:.1f}%"
+
+    def _resize_live_pane(self, delta_y: int) -> None:
+        """Resize Live Calls while keeping enough height for the upper panes."""
+        panel = self.query_one("#debug-panel")
+        max_height = max(9, panel.content_region.height - 12)
+        self._live_pane_height = min(
+            max_height,
+            max(9, self._live_pane_height - delta_y),
+        )
+        self.query_one("#debug-live-pane").styles.height = self._live_pane_height
+
+    def _resize_call_table(self, delta_x: int) -> None:
+        """Resize the call table relative to its available width."""
+        content = self.query_one("#debug-live-content")
+        if content.size.width <= 0:
+            return
+        self._call_table_width_percent = min(
+            90.0,
+            max(
+                25.0,
+                self._call_table_width_percent + delta_x * 100 / content.size.width,
+            ),
+        )
+        self.query_one(
+            "#debug-call-table"
+        ).styles.width = f"{self._call_table_width_percent:.1f}%"
 
     def _update_snapshot(self) -> None:
         if not _is_debug_enabled(self.ui):
@@ -1330,8 +1476,33 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
         table = self.query_one("#debug-call-table", _DebugCallTable)
         if not force and table.scroll_x > 0:
             return
-        entries = self.trace.entries(self._CALL_TABLE_LIMIT)
+        notice_target = self._compiled_notice_target_for_filters()
+        notice: Optional[DebugCallEntry] = None
+        if notice_target is not None:
+            call_label = string("debug.compiled_code")
+            notice = DebugCallEntry(
+                entry_id=-1,
+                timestamp_ns=0,
+                name=call_label,
+                display_name=call_label,
+                source_category=_classify_source(notice_target, None),
+                module_name=notice_target,
+                special_method=False,
+                call_path=(),
+                arguments=(),
+                thread_id=0,
+                source_path="",
+                source_line=0,
+                started_ns=0,
+                result="notice",
+            )
+        entries = self.trace.entries(
+            self._CALL_TABLE_LIMIT - (1 if notice is not None else 0)
+        )
+        if notice is not None:
+            entries = (notice,) + entries
         ids = tuple(entry.entry_id for entry in entries)
+        self._displayed_call_entries = {entry.entry_id: entry for entry in entries}
         signature = tuple(
             (entry.entry_id, entry.duration_ms, entry.result) for entry in entries
         )
@@ -1349,12 +1520,24 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
             if scroll_anchor_id in previous_ids
             else None
         )
-        removed_ids = tuple(
-            entry_id for entry_id in previous_ids if entry_id not in ids
+        rebuild_for_notice = (
+            notice is not None and notice.entry_id not in previous_id_set
         )
-        added_ids = tuple(
-            entry_id for entry_id in ids if entry_id not in previous_id_set
-        )
+        if rebuild_for_notice:
+            removed_ids = previous_ids
+            added_ids = ids
+            previous_id_set.clear()
+        else:
+            removed_ids = tuple(
+                entry_id for entry_id in previous_ids if entry_id not in ids
+            )
+            added_ids = tuple(
+                entry_id for entry_id in ids if entry_id not in previous_id_set
+            )
+
+        if previous_selection == -1 and -1 not in ids:
+            self._selected_call_id = None
+            self._selected_call_entry = None
 
         for entry_id in removed_ids:
             table.remove_row(str(entry_id))
@@ -1363,10 +1546,26 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
             row_key = str(entry.entry_id)
             if entry.entry_id not in previous_id_set:
                 table.add_row(
-                    _format_timestamp(entry.timestamp_ns),
-                    Text(entry.display_name, no_wrap=True, overflow="ellipsis"),
-                    _source_category_label(entry.source_category),
-                    _format_duration(entry),
+                    (
+                        _format_timestamp(time.time_ns())
+                        if entry.result == "notice"
+                        else _format_timestamp(entry.timestamp_ns)
+                    ),
+                    Text(
+                        entry.display_name,
+                        no_wrap=entry.result != "notice",
+                        overflow=("fold" if entry.result == "notice" else "ellipsis"),
+                    ),
+                    (
+                        string("debug.source_unreachable")
+                        if entry.result == "notice"
+                        else _source_category_label(entry.source_category)
+                    ),
+                    (
+                        string("debug.not_applicable")
+                        if entry.result == "notice"
+                        else _format_duration(entry)
+                    ),
                     key=row_key,
                 )
             elif previous_signature.get(entry.entry_id) != (
@@ -1376,13 +1575,14 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
                 table.update_cell(
                     row_key,
                     "debug-duration",
-                    _format_duration(entry),
+                    "" if entry.result == "notice" else _format_duration(entry),
                 )
 
         self._shown_trace_signature = signature
         self._shown_trace_ids = ids
         if not ids:
-            self._selected_call_id = None
+            if self._selected_call_entry is None:
+                self._selected_call_id = None
         elif previous_selection not in ids:
             if previous_selection is None or not previous_ids:
                 self._selected_call_id = ids[-1]
@@ -1393,9 +1593,17 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
                     else 0
                 )
                 self._selected_call_id = ids[min(previous_row, len(ids) - 1)]
+        selected_call_id = self._selected_call_id
+        if (
+            selected_call_id is not None
+            and selected_call_id in self._displayed_call_entries
+        ):
+            self._selected_call_entry = self._displayed_call_entries[selected_call_id]
 
-        if self._selected_call_id is not None and (
-            self._selected_call_id != previous_selection or removed_ids
+        if (
+            self._selected_call_id is not None
+            and self._selected_call_id in ids
+            and (self._selected_call_id != previous_selection or removed_ids)
         ):
             table.move_cursor_preserving_scroll(
                 ids.index(self._selected_call_id),
@@ -1415,6 +1623,14 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
                 previous_scroll_y,
             )
         self._render_call_detail()
+
+    def _compiled_notice_target_for_filters(self) -> Optional[str]:
+        """Return the selected source when Nuitka makes it untraceable."""
+        source_filters = self.trace.source_filters
+        if source_filters != self._compiled_notice_filters:
+            self._compiled_notice_filters = source_filters
+            self._compiled_notice_target = _compiled_source_filter(source_filters)
+        return self._compiled_notice_target
 
     def _call_table_scroll_anchor(
         self,
@@ -1493,11 +1709,12 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
 
     def _render_call_detail(self) -> None:
         body = self.query_one("#debug-call-detail-body", widgets.Static)
-        entry = (
-            self.trace.get_entry(self._selected_call_id)
-            if self._selected_call_id is not None
-            else None
-        )
+        entry = self._selected_call_entry
+        if entry is None and self._selected_call_id is not None:
+            entry = self._displayed_call_entries.get(self._selected_call_id)
+            if entry is None:
+                entry = self.trace.get_entry(self._selected_call_id)
+            self._selected_call_entry = entry
         if (
             entry is not None
             and entry.duration_ms is None
@@ -1506,6 +1723,8 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
             return
         if entry is None:
             content = string("debug.select_call")
+        elif entry.result == "notice":
+            content = string("debug.compiled_code_cannot_be_traced")
         else:
             lines = [
                 f"{string('debug.function')}: {entry.name}()",
@@ -1535,11 +1754,12 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
                 lines.append(f"{string('debug.exception')}: {entry.exception_type}")
             content = "\n".join(lines)
         if content == self._shown_call_detail:
+            self._shown_call_detail_id = entry.entry_id if entry is not None else None
             return
 
         body.update(Text(content, no_wrap=False) if entry is not None else content)
         self._shown_call_detail = content
-        self._shown_call_detail_id = self._selected_call_id
+        self._shown_call_detail_id = entry.entry_id if entry is not None else None
 
     def _build_component_roots(self) -> list[_InspectorComponent]:
         ui_component = _InspectorComponent(
@@ -1959,6 +2179,37 @@ def _module_matches_filters(
     return any(
         module_name == selected or module_name.startswith(f"{selected}.")
         for selected in source_filters
+    )
+
+
+def _compiled_source_filter(source_filters: tuple[str, ...]) -> Optional[str]:
+    """Find a selected source covered by compiled code in this Nuitka process."""
+    if not source_filters or not running_compiled():
+        return None
+
+    compiled_modules = tuple(
+        module_name
+        for module_name, module in tuple(sys.modules.items())
+        if isinstance(module, ModuleType) and bool(vars(module).get("__compiled__"))
+    )
+    app_package = (__package__ or "").partition(".")[0]
+    for source_filter in source_filters:
+        if app_package and _module_names_overlap(source_filter, app_package):
+            return source_filter
+        if any(
+            _module_names_overlap(source_filter, module_name)
+            for module_name in compiled_modules
+        ):
+            return source_filter
+    return None
+
+
+def _module_names_overlap(first: str, second: str) -> bool:
+    """Return whether two dotted module names share a package boundary."""
+    return (
+        first == second
+        or first.startswith(f"{second}.")
+        or second.startswith(f"{first}.")
     )
 
 
