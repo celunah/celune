@@ -8,7 +8,6 @@ import asyncio
 import logging
 import itertools
 import threading
-
 from typing import (
     TYPE_CHECKING,
     Never,
@@ -55,9 +54,9 @@ from . import capture as _capture
 from . import runtime as _runtime
 from ..i18n import string, tagged_string
 from .loading import CeluneLoadingScreen
+from . import interaction as _interaction
 from ..typing.agent import AgentTaskState
 from ..typing.modes import OperationState
-from . import interaction as _interaction
 from ..registry.types import ModelMetadata
 from ..typing.common import JSONSerializable
 from ..watchdog import launcher_loss_requested
@@ -1797,11 +1796,10 @@ class CeluneUI(
     @work(exclusive=True)
     async def _apply_voice_selection(self, value: dict[str, JSONSerializable]) -> None:
         """Load the selected pack and voice without blocking the Textual loop."""
-        if self.celune is None:
+        celune = self.celune
+        if celune is None:
             return
-        singing_backend = getattr(
-            getattr(self.celune, "backend", None), "singing", False
-        )
+        singing_backend = getattr(getattr(celune, "backend", None), "singing", False)
         from ..cevoice import SINGING_VOICE_NAME, active_bundle_path
 
         pack = value.get("pack")
@@ -1814,10 +1812,22 @@ class CeluneUI(
         if singing_backend and entry != SINGING_VOICE_NAME:
             return
 
+        async def reload_voice_pack() -> bool:
+            """Wait for the pack reload callbacks to finish before changing voice."""
+            async_reload = getattr(celune, "set_cevoice_async", None)
+            if callable(async_reload):
+                return bool(await async_reload(bundle_path))
+            return bool(
+                await run_in_daemon_thread(
+                    celune.set_cevoice_and_wait,
+                    bundle_path,
+                )
+            )
+
         try:
             if (
-                getattr(self.celune, "sleeping", False)
-                and not await self.celune.wake_from_sleep_async()
+                getattr(celune, "sleeping", False)
+                and not await celune.wake_from_sleep_async()
             ):
                 self.safe_log(string("ui.voice_change_failed"), "warning")
                 return
@@ -1825,30 +1835,24 @@ class CeluneUI(
             if singing_backend:
                 if active_bundle_path() == bundle_path:
                     return
-                loaded = await run_in_daemon_thread(
-                    self.celune.set_cevoice_and_wait,
-                    bundle_path,
-                )
+                loaded = await reload_voice_pack()
             elif active_bundle_path() == bundle_path:
                 loaded = await run_in_daemon_thread(
-                    self.celune.set_voice_and_wait,
+                    celune.set_voice_and_wait,
                     entry,
                 )
             else:
-                loaded = await run_in_daemon_thread(
-                    self.celune.set_cevoice_and_wait,
-                    bundle_path,
-                )
+                loaded = await reload_voice_pack()
                 if loaded:
                     loaded = await run_in_daemon_thread(
-                        self.celune.set_voice_and_wait,
+                        celune.set_voice_and_wait,
                         entry,
                     )
             if not loaded:
                 self.safe_log(string("ui.voice_change_failed"), "warning")
                 return
-            self.celune_styles = self.celune.voices
-            current_voice = getattr(self.celune, "current_voice", None)
+            self.celune_styles = celune.voices
+            current_voice = getattr(celune, "current_voice", None)
             if singing_backend:
                 if (
                     isinstance(current_voice, str)
@@ -1866,7 +1870,7 @@ class CeluneUI(
                 format_error_message(
                     string("ui.voice_change_failed_error"),
                     error,
-                    getattr(self.celune, "log_level", self._startup_log_level),
+                    getattr(celune, "log_level", self._startup_log_level),
                 ),
                 "error",
             )
