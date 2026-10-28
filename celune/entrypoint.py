@@ -37,12 +37,12 @@ from celune.constants import (
     SUPPORTED_CUDA_VERSIONS,
     ExitCodes,
 )
+from celune.exceptions import CEVoiceDependencyUnavailableError
 from celune.typing.common import Config
 
 if TYPE_CHECKING:
     from celune.celune import Celune
     from celune.cevoice import CEVoice
-    from celune.exceptions import CEVoiceCodecUnavailableError
 
 
 def _env_flag(name: str) -> bool:
@@ -1862,7 +1862,7 @@ def handle_tar_command(arguments: list[str], program: str) -> int:
 def _list_pack(path: Path) -> int:
     """Validate and print the ordered entries in one pack."""
     from celune.cevoice import bundle_character_name
-    from celune.exceptions import CEVoiceError, CEVoiceCodecUnavailableError
+    from celune.exceptions import CEVoiceError
 
     try:
         bundle = _open_validated_pack(path)
@@ -1880,7 +1880,7 @@ def _list_pack(path: Path) -> int:
                 )
             )
         return 0
-    except CEVoiceCodecUnavailableError as error:
+    except CEVoiceDependencyUnavailableError as error:
         _print_pack_dependency_error(error)
     except CEVoiceError:
         print(string("cli.pack_invalid"))
@@ -1891,7 +1891,7 @@ def _list_pack(path: Path) -> int:
 
 def _extract_pack(path: Path, destination: Optional[Path]) -> int:
     """Extract a validated pack without replacing any existing destination."""
-    from celune.exceptions import CEVoiceError, CEVoiceCodecUnavailableError
+    from celune.exceptions import CEVoiceError
 
     try:
         bundle = _open_validated_pack(path)
@@ -1956,7 +1956,7 @@ def _extract_pack(path: Path, destination: Optional[Path]) -> int:
                 target.unlink(missing_ok=True)
             raise
         return 0
-    except CEVoiceCodecUnavailableError as error:
+    except CEVoiceDependencyUnavailableError as error:
         _print_pack_dependency_error(error)
     except CEVoiceError:
         print(string("cli.pack_invalid"))
@@ -1976,11 +1976,11 @@ def _add_pack_entries(
         SUPPORTED_PERSONA_FILENAMES,
         add_cevoice_entries,
     )
-    from celune.exceptions import CEVoiceError, CEVoiceCodecUnavailableError
+    from celune.exceptions import CEVoiceError
 
     try:
         bundle = _open_validated_pack(path)
-    except CEVoiceCodecUnavailableError as error:
+    except CEVoiceDependencyUnavailableError as error:
         _print_pack_dependency_error(error)
         return 1
     except CEVoiceError:
@@ -2004,6 +2004,20 @@ def _add_pack_entries(
         ):
             print(string("cli.pack_unsupported_file", name=source.name))
             return 1
+        if suffix == ".pt" and bundle.is_indexed:
+            from celune.cevoice.v4 import _validate_v4_embedding
+
+            try:
+                _validate_v4_embedding(source.name, source.read_bytes())
+            except CEVoiceDependencyUnavailableError as error:
+                _print_pack_dependency_error(error)
+                return 1
+            except CEVoiceError:
+                print(string("cli.pack_update_failed"))
+                return 1
+            except OSError:
+                print(string("cli.pack_io_error"))
+                return 1
         new_names.append(_added_entry_name(source))
     existing_names = {entry.name.casefold() for entry in bundle.entries}
     seen_names: set[str] = set()
@@ -2014,10 +2028,13 @@ def _add_pack_entries(
         seen_names.add(name.casefold())
     try:
         add_cevoice_entries(
-            path, [Path(name) for name in source_names], insertion_position
+            path,
+            [Path(name) for name in source_names],
+            insertion_position,
+            validate_embeddings=False,
         )
         return 0
-    except CEVoiceCodecUnavailableError as error:
+    except CEVoiceDependencyUnavailableError as error:
         _print_pack_dependency_error(error)
     except CEVoiceError:
         print(string("cli.pack_update_failed"))
@@ -2035,11 +2052,11 @@ def _remove_pack_entries(
 ) -> int:
     """Resolve and remove exact names or 1-based selectors."""
     from celune.cevoice import remove_cevoice_entries
-    from celune.exceptions import CEVoiceError, CEVoiceCodecUnavailableError
+    from celune.exceptions import CEVoiceError
 
     try:
         bundle = _open_validated_pack(path)
-    except CEVoiceCodecUnavailableError as error:
+    except CEVoiceDependencyUnavailableError as error:
         _print_pack_dependency_error(error)
         return 1
     except CEVoiceError:
@@ -2077,9 +2094,9 @@ def _remove_pack_entries(
             return _selector_error(program, selector)
         names.append(name)
     try:
-        remove_cevoice_entries(path, names)
+        remove_cevoice_entries(path, names, validate_embeddings=False)
         return 0
-    except CEVoiceCodecUnavailableError as error:
+    except CEVoiceDependencyUnavailableError as error:
         _print_pack_dependency_error(error)
     except CEVoiceError:
         print(string("cli.pack_update_failed"))
@@ -2092,14 +2109,14 @@ def _open_validated_pack(path: Path) -> "CEVoice":
     """Open a pack through CEVoice and validate every entry checksum."""
     from celune.cevoice import CEVoice
 
-    bundle = CEVoice.open(path)
+    bundle = CEVoice.open(path, validate_embeddings=False)
     for entry in bundle.entries:
         bundle.read_entry(entry.name)
     return bundle
 
 
-def _print_pack_dependency_error(error: "CEVoiceCodecUnavailableError") -> None:
-    """Report an unavailable compression dependency without rejecting the pack."""
+def _print_pack_dependency_error(error: "CEVoiceDependencyUnavailableError") -> None:
+    """Report an unavailable optional dependency without rejecting the pack."""
     print(string("cli.pack_dependency_missing", dependency=error.dependency))
 
 

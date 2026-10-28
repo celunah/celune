@@ -25,7 +25,7 @@ from .base import (
     _is_hex_color,
     _validate_persona_metadata,
 )
-from ..exceptions import CEVoiceError, CEVoiceCodecUnavailableError
+from ..exceptions import CEVoiceError, CEVoiceDependencyUnavailableError
 from ..typing.cevoice import Manifest, ManifestValue, VoiceManifest
 
 FORMAT_NAME: Final[str] = "CECHAR"
@@ -98,6 +98,8 @@ def _write_indexed_cechar(
     entry_order: Optional[Sequence[str]],
     extra_assets: Optional[Mapping[str, bytes]],
     voice_asset_names: Optional[Mapping[tuple[str, str], str]],
+    *,
+    validate_embeddings: bool = True,
 ) -> Path:
     """Write one version of the indexed CECHAR binary layout."""
     from .v5 import V5_VERSION, prepare_voice_metadata
@@ -124,7 +126,7 @@ def _write_indexed_cechar(
                 )
             name = (voice_asset_names or {}).get((voice, kind), f"{voice}.{kind}")
             data = _read_source(source)
-            _validate_v4_file_data(name, data)
+            _validate_v4_file_data(name, data, validate_embeddings)
 
             folded = name.casefold()
             if folded in seen_names:
@@ -148,7 +150,7 @@ def _write_indexed_cechar(
         if Path(name).name not in SUPPORTED_PERSONA_FILENAMES:
             raise CEVoiceError(f"unsupported bundle asset '{name}'")
         data = _read_source(source)
-        _validate_v4_file_data(name, data)
+        _validate_v4_file_data(name, data, validate_embeddings)
         folded = name.casefold()
         if folded in seen_names:
             raise CEVoiceError(f"{name} already exists")
@@ -159,7 +161,7 @@ def _write_indexed_cechar(
 
     for name, data in (extra_assets or {}).items():
         _validate_v4_name(name, "file")
-        _validate_v4_file_data(name, data)
+        _validate_v4_file_data(name, data, validate_embeddings)
         if Path(name).suffix.lower() not in V4_ALLOWED_ASSET_SUFFIXES:
             raise CEVoiceError(f"unsupported indexed CECHAR asset extension '{name}'")
         if (
@@ -242,6 +244,7 @@ def open_indexed(
     path: Path,
     header: bytes,
     stored_payload: bytes,
+    validate_embeddings: bool = True,
 ) -> CEVoice:
     """Open and validate an indexed CECHAR v4 or v5 archive."""
     magic, version, compression = V4_HEADER.unpack(header)
@@ -256,6 +259,7 @@ def open_indexed(
     metadata, asset_entries, bundle_asset_entries, file_entries = _parse_v4_payload(
         payload,
         version,
+        validate_embeddings,
     )
     return cls(
         path,
@@ -269,7 +273,11 @@ def open_indexed(
     )
 
 
-def _validate_v4_file_data(name: str, data: bytes) -> None:
+def _validate_v4_file_data(
+    name: str,
+    data: bytes,
+    validate_embeddings: bool = True,
+) -> None:
     """Validate one file before placing it into an indexed CECHAR archive."""
     suffix = Path(name).suffix.lower()
     if suffix not in V4_ALLOWED_ASSET_SUFFIXES:
@@ -279,7 +287,8 @@ def _validate_v4_file_data(name: str, data: bytes) -> None:
     if suffix == ".wav":
         _validate_v4_wav(name, data)
     elif suffix == ".pt":
-        _validate_v4_embedding(name, data)
+        if validate_embeddings:
+            _validate_v4_embedding(name, data)
     else:
         _validate_v4_persona_markdown(name, data)
 
@@ -294,7 +303,7 @@ def _compress_v4_payload(payload: bytes, compression: int) -> bytes:
         try:
             import zstandard  # type: ignore[import-not-found]
         except ImportError as error:
-            raise CEVoiceCodecUnavailableError("Zstandard") from error
+            raise CEVoiceDependencyUnavailableError("Zstandard") from error
         return zstandard.ZstdCompressor().compress(payload)
     if compression == V4_COMPRESSION_XZ:
         return lzma.compress(payload)
@@ -302,11 +311,11 @@ def _compress_v4_payload(payload: bytes, compression: int) -> bytes:
         try:
             import openzl.ext as zl  # type: ignore[import-not-found]
         except ImportError as error:
-            raise CEVoiceCodecUnavailableError("OpenZL") from error
+            raise CEVoiceDependencyUnavailableError("OpenZL") from error
         try:
             import numpy as np
         except ImportError as error:
-            raise CEVoiceCodecUnavailableError("NumPy") from error
+            raise CEVoiceDependencyUnavailableError("NumPy") from error
         compressor = zl.Compressor()
         compressor.select_starting_graph(zl.graphs.Compress()(compressor))
         context = zl.CCtx()
@@ -337,7 +346,7 @@ def _decompress_v4_payload(stored_payload: bytes, compression: int) -> bytes:
             try:
                 import zstandard  # type: ignore[import-not-found]
             except ImportError as error:
-                raise CEVoiceCodecUnavailableError("Zstandard") from error
+                raise CEVoiceDependencyUnavailableError("Zstandard") from error
             return _check_size(
                 zstandard.ZstdDecompressor().decompress(
                     stored_payload,
@@ -355,7 +364,7 @@ def _decompress_v4_payload(stored_payload: bytes, compression: int) -> bytes:
             try:
                 import openzl.ext as zl  # type: ignore[import-not-found]
             except ImportError as error:
-                raise CEVoiceCodecUnavailableError("OpenZL") from error
+                raise CEVoiceDependencyUnavailableError("OpenZL") from error
             frame_info = zl.FrameInfo(stored_payload)
             if frame_info.num_outputs != 1:
                 raise CEVoiceError("invalid OpenZL indexed CECHAR payload")
@@ -375,6 +384,7 @@ def _decompress_v4_payload(stored_payload: bytes, compression: int) -> bytes:
 def _parse_v4_payload(
     payload: bytes,
     expected_version: int,
+    validate_embeddings: bool = True,
 ) -> tuple[
     Manifest,
     dict[tuple[str, str], CEVoiceAsset],
@@ -475,7 +485,7 @@ def _parse_v4_payload(
                 f"overlapping indexed CECHAR file ranges '{first[2]}' and '{second[2]}'"
             )
 
-    _validate_v4_assets(payload, entries)
+    _validate_v4_assets(payload, entries, validate_embeddings)
     normalized_metadata = _normalize_v4_metadata(metadata, entries)
     asset_entries, bundle_asset_entries = _index_v4_manifest(
         normalized_metadata,
@@ -676,6 +686,7 @@ def _validate_v4_name(value: ManifestValue, field_name: str) -> None:
 def _validate_v4_assets(
     payload: bytes,
     entries: Mapping[str, CEVoiceAsset],
+    validate_embeddings: bool = True,
 ) -> None:
     """Validate each indexed asset according to its extension."""
     for name, entry in entries.items():
@@ -683,7 +694,7 @@ def _validate_v4_assets(
         suffix = Path(name).suffix.lower()
         if suffix == ".wav":
             _validate_v4_wav(name, data)
-        elif suffix == ".pt":
+        elif suffix == ".pt" and validate_embeddings:
             _validate_v4_embedding(name, data)
         elif suffix == ".md":
             _validate_v4_persona_markdown(name, data)
@@ -740,7 +751,7 @@ def _validate_v4_embedding(name: str, data: bytes) -> None:
     try:
         import torch
     except ModuleNotFoundError as error:
-        raise CEVoiceError("PyTorch not found, can't validate .pt assets") from error
+        raise CEVoiceDependencyUnavailableError("PyTorch") from error
     try:
         value = torch.load(io.BytesIO(data), map_location="cpu", weights_only=True)
     except Exception as error:

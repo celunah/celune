@@ -281,6 +281,10 @@ from celune.cevoice import (
 )
 
 bundle = CEVoice.open("voices/default.cevoice")
+bundle_without_tensor_validation = CEVoice.open(
+    "voices/default.cevoice",
+    validate_embeddings=False,
+)
 wav_bytes = bundle.read_asset("balanced", "wav")
 entries = bundle.entries
 identity = bundle.read_entry("identity.md")
@@ -291,12 +295,15 @@ write_cechar_v4("character.cechar", files, metadata, compression=0)
 write_cechar_v5("character-with-singing.cechar", files, metadata, voice_metadata)
 ```
 
-`CEVoice.open()` validates the header, metadata, safe names, ranges, and
-checksums. `read_asset()` validates the selected asset digest before returning
-bytes. `write_cevoice()` writes the legacy-compatible layout;
-`write_cechar_v4()` writes indexed v4 archives, and `write_cechar_v5()` writes
-the current schema with an optional hidden `sing` voice. `CEVoice.singing_voice`
-returns `"sing"` when a v5 pack defines it, otherwise `None`. TTS voice lists
+`CEVoice.open(path, *, validate_embeddings=True)` validates the header,
+metadata, safe names, ranges, and indexed `.pt` tensor contents by default.
+Set `validate_embeddings=False` for archive operations that do not need tensor
+validation. `read_asset()` and `read_entry()` validate the selected asset
+digest before returning bytes. `write_cevoice()` writes the legacy-compatible
+layout; `write_cechar_v4()` writes indexed v4 archives, and `write_cechar_v5()`
+writes the current schema with an optional hidden `sing` voice.
+`CEVoice.singing_voice` returns `"sing"` when a v5 pack defines it, otherwise
+`None`. TTS voice lists
 exclude that reserved singing entry. `CEVoice.singing_pitch_range` returns its
 inclusive `(min_midi, max_midi)` pair, or `(0, 127)` for an older v5 pack with
 no declared range; packs without a singing voice return `None`. New v5 writers
@@ -309,15 +316,18 @@ indexed packs use their `files` list. `read_entry(name)` returns the named
 entry's bytes after checksum validation and raises `KeyError` when the name is
 absent or `CEVoiceError` when the bytes fail validation.
 
-`add_cevoice_entries(path, sources, position=None)` appends files when
-`position` is omitted or inserts them at a 1-based position. It accepts
-`Path` or string inputs and returns the reopened pack. It raises `CEVoiceError`
-when an asset is unsupported or the edit would leave invalid metadata,
-`FileNotFoundError` for missing input files, and `OSError` for filesystem
-failures. `remove_cevoice_entries(path, names)` removes exact entry names and
-returns the reopened pack; it raises `CEVoiceError` for missing names or an
-invalid resulting pack. Both calls validate a temporary sibling pack before
-atomically replacing `path`, preserving its generation and indexed compression.
+`add_cevoice_entries(path, sources, position=None, *,
+validate_embeddings=True)` appends files when `position` is omitted or inserts
+them at a 1-based position. It accepts `Path` or string inputs and returns the
+reopened pack. It raises `CEVoiceError` when an asset is unsupported or the edit
+would leave invalid metadata, `FileNotFoundError` for missing input files, and
+`OSError` for filesystem failures. `remove_cevoice_entries(path, names, *,
+validate_embeddings=True)` removes exact entry names and returns the reopened
+pack; it raises `CEVoiceError` for missing names or an invalid resulting pack.
+Both calls validate a temporary sibling pack before atomically replacing
+`path`, preserving its generation and indexed compression.
+`validate_embeddings=False` skips tensor checks on existing indexed `.pt`
+entries; callers adding a new `.pt` asset should leave validation enabled.
 
 ```python
 bundle = CEVoice.open("my_pack.cevoice")

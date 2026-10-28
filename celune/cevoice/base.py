@@ -90,11 +90,17 @@ class CEVoice:
         return self._compression
 
     @classmethod
-    def open(cls, path: Union[str, Path]) -> CEVoice:
+    def open(
+        cls,
+        path: Union[str, Path],
+        *,
+        validate_embeddings: bool = True,
+    ) -> CEVoice:
         """Parse and validate a CEVOICE/CECHAR package.
 
         Args:
             path: The CEVOICE/CECHAR package to load.
+            validate_embeddings: Whether to load PyTorch and validate indexed `.pt` assets.
 
         Returns:
             CEVoice: The CEVoice object.
@@ -113,7 +119,12 @@ class CEVoice:
                 and len(prefix) >= v4.V4_HEADER.size
                 and prefix[7] != 0
             ):
-                return cls._open_indexed(bundle_path, prefix, stream.read())
+                return cls._open_indexed(
+                    bundle_path,
+                    prefix,
+                    stream.read(),
+                    validate_embeddings,
+                )
             stream.seek(0)
             magic, version, metadata_length = _read_header(stream)
             if not _is_known_legacy_magic(magic):
@@ -146,11 +157,12 @@ class CEVoice:
         path: Path,
         header: bytes,
         stored_payload: bytes,
+        validate_embeddings: bool,
     ) -> CEVoice:
         """Open an indexed CECHAR archive after its fixed header was identified."""
         from .v4 import open_indexed
 
-        return open_indexed(cls, path, header, stored_payload)
+        return open_indexed(cls, path, header, stored_payload, validate_embeddings)
 
     @property
     def voices(self) -> VoiceManifest:
@@ -604,6 +616,8 @@ def add_cevoice_entries(
     path: Union[str, Path],
     sources: Sequence[Union[str, Path]],
     position: Optional[int] = None,
+    *,
+    validate_embeddings: bool = True,
 ) -> CEVoice:
     """Append or insert supported files into a validated CEVOICE pack.
 
@@ -611,9 +625,10 @@ def add_cevoice_entries(
         path: The pack to update in place.
         sources: Files to add in their requested order.
         position: Optional 1-based insertion position; omit it to append.
+        validate_embeddings: Whether to validate indexed `.pt` assets with PyTorch.
 
     Returns:
-        CEVoice: The reopened and validated updated pack.
+        CEVoice: The reopened pack, with tensor validation controlled by the option.
 
     Raises:
         CEVoiceError: An input cannot be represented while keeping the pack valid.
@@ -622,7 +637,7 @@ def add_cevoice_entries(
     """
     if not sources:
         raise CEVoiceError("at least one input file is required")
-    bundle = CEVoice.open(path)
+    bundle = CEVoice.open(path, validate_embeddings=validate_embeddings)
     entries = list(bundle.entries)
     insert_at = len(entries) if position is None else position - 1
     if position is not None and not 1 <= position <= len(entries) + 1:
@@ -688,22 +703,26 @@ def add_cevoice_entries(
         extra_assets,
         names,
         voice_asset_names,
+        validate_embeddings=validate_embeddings,
     )
-    return CEVoice.open(path)
+    return CEVoice.open(path, validate_embeddings=validate_embeddings)
 
 
 def remove_cevoice_entries(
     path: Union[str, Path],
     names: Sequence[str],
+    *,
+    validate_embeddings: bool = True,
 ) -> CEVoice:
     """Remove named files from a validated CEVOICE pack.
 
     Args:
         path: The pack to update in place.
         names: Exact entry names to remove.
+        validate_embeddings: Whether to validate indexed `.pt` assets with PyTorch.
 
     Returns:
-        CEVoice: The reopened and validated updated pack.
+        CEVoice: The reopened pack, with tensor validation controlled by the option.
 
     Raises:
         CEVoiceError: A name is missing or removal would make the pack invalid.
@@ -712,7 +731,7 @@ def remove_cevoice_entries(
     """
     if not names or len(names) != len(set(names)):
         raise CEVoiceError("entry names must be present and unique")
-    bundle = CEVoice.open(path)
+    bundle = CEVoice.open(path, validate_embeddings=validate_embeddings)
     entry_names = [entry.name for entry in bundle.entries]
     if any(name not in entry_names for name in names):
         missing = next(name for name in names if name not in entry_names)
@@ -759,8 +778,9 @@ def remove_cevoice_entries(
         extra_assets,
         retained_order,
         voice_asset_names,
+        validate_embeddings=validate_embeddings,
     )
-    return CEVoice.open(path)
+    return CEVoice.open(path, validate_embeddings=validate_embeddings)
 
 
 def _bundle_mutation_data(
@@ -854,6 +874,8 @@ def _atomic_rewrite_cevoice(
     extra_assets: Mapping[str, bytes],
     entry_order: Sequence[str],
     voice_asset_names: Mapping[tuple[str, str], str],
+    *,
+    validate_embeddings: bool = True,
 ) -> None:
     """Write, validate, and atomically replace a CEVOICE file."""
     pack_path = Path(path).resolve()
@@ -879,6 +901,7 @@ def _atomic_rewrite_cevoice(
                 entry_order,
                 extra_assets,
                 voice_asset_names,
+                validate_embeddings=validate_embeddings,
             )
         else:
             format_name = original.metadata["format"]
@@ -896,7 +919,10 @@ def _atomic_rewrite_cevoice(
                 version,
                 entry_order,
             )
-        rewritten = CEVoice.open(temporary_path)
+        rewritten = CEVoice.open(
+            temporary_path,
+            validate_embeddings=validate_embeddings,
+        )
         for entry in rewritten.entries:
             rewritten.read_entry(entry.name)
         os.chmod(temporary_path, pack_path.stat().st_mode & 0o777)

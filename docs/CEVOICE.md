@@ -81,6 +81,8 @@ OpenZL. If a pack uses a codec that is not installed, `celune ls` and
 `celune tar` report the missing dependency instead of classifying the pack as invalid.
 OpenZL writing also requires NumPy; other CEVOICE reads and edits do not import
 NumPy for OpenZL support.
+CLI pack operations skip PyTorch tensor validation for existing `.pt` entries.
+Adding a new indexed `.pt` entry validates it with PyTorch.
 Codec loading is implemented in `celune/cevoice/v4.py`; CLI reporting is in
 `celune/entrypoint.py`.
 
@@ -567,12 +569,17 @@ print(bundle.voice_order)
 print(bundle.read_asset("balanced", "wav")[:16])
 ```
 
-`CEVoice.open()` validates:
+`CEVoice.open()` validates indexed `.pt` tensors by default, in addition to:
 
 - the header
 - metadata structure
 - allowed asset kinds
 - offsets and lengths against the payload size
+
+Pass `validate_embeddings=False` to check the container without importing
+PyTorch or validating indexed `.pt` tensor contents. The CLI uses this option;
+entry checksums and all non-tensor format validation still run. Callers that
+consume `.pt` data should use the default full validation.
 
 `read_asset()` additionally validates the SHA-256 digest of the asset bytes before returning them.
 

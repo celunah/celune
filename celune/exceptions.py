@@ -177,13 +177,13 @@ class CEVoiceError(RuntimeError, CeluneError):
     """CEVOICE data is malformed or unsupported."""
 
 
-class CEVoiceCodecUnavailableError(CEVoiceError):
-    """A CEVOICE compression operation needs an unavailable dependency."""
+class CEVoiceDependencyUnavailableError(CEVoiceError):
+    """A CEVOICE operation needs an unavailable optional dependency."""
 
     def __init__(self, dependency: str) -> None:
-        """Initialize an unavailable compression dependency error."""
+        """Initialize an unavailable CEVOICE dependency error."""
         self.dependency = dependency
-        super().__init__(f"{dependency} is required for this CEVOICE compression mode")
+        super().__init__(f"{dependency} is required for this CEVOICE operation")
 
 
 class InvalidCharacterError(CEVoiceError):

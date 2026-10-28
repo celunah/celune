@@ -68,8 +68,10 @@ do not shift the text.
 ## Voice pack operations
 
 `celune ls <pack.cevoice>` and `celune tar -tf <pack.cevoice>` validate the
-pack and list its filename, optional character name, and entries in stored
-order. Each entry has a 1-based number and size in bytes.
+container structure and entry checksums, then list its filename, optional
+character name, and entries in stored order. They do not load PyTorch to
+inspect `.pt` tensor contents. Each entry has a 1-based number and size in
+bytes.
 
 `celune tar` accepts one operation per invocation:
 
@@ -114,6 +116,7 @@ unsupported files, metadata violations, duplicate additions, existing
 extraction targets, unavailable compression dependencies, and filesystem
 failures return exit code `1`. When a pack uses an unavailable codec, Celune
 names the required dependency instead of reporting the pack as invalid.
+Adding a new indexed `.pt` entry requires PyTorch to validate the tensor.
 
 The `-v` spelling is accepted both as the verbose start flag and as the version
 alias by the dispatcher; use `--verbose` and `--version` in scripts to avoid
