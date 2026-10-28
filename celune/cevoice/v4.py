@@ -15,8 +15,6 @@ from typing import Final, Union, Optional, cast
 from pathlib import Path
 from collections.abc import Mapping, Sequence
 
-import numpy as np
-
 from .base import (
     ALLOWED_ASSET_KINDS,
     SUPPORTED_ENTRY_SUFFIXES,
@@ -27,7 +25,7 @@ from .base import (
     _is_hex_color,
     _validate_persona_metadata,
 )
-from ..exceptions import CEVoiceError
+from ..exceptions import CEVoiceError, CEVoiceCodecUnavailableError
 from ..typing.cevoice import Manifest, ManifestValue, VoiceManifest
 
 FORMAT_NAME: Final[str] = "CECHAR"
@@ -296,7 +294,7 @@ def _compress_v4_payload(payload: bytes, compression: int) -> bytes:
         try:
             import zstandard  # type: ignore[import-not-found]
         except ImportError as error:
-            raise CEVoiceError("Zstandard compression is unavailable") from error
+            raise CEVoiceCodecUnavailableError("Zstandard") from error
         return zstandard.ZstdCompressor().compress(payload)
     if compression == V4_COMPRESSION_XZ:
         return lzma.compress(payload)
@@ -304,7 +302,11 @@ def _compress_v4_payload(payload: bytes, compression: int) -> bytes:
         try:
             import openzl.ext as zl  # type: ignore[import-not-found]
         except ImportError as error:
-            raise CEVoiceError("OpenZL compression is unavailable") from error
+            raise CEVoiceCodecUnavailableError("OpenZL") from error
+        try:
+            import numpy as np
+        except ImportError as error:
+            raise CEVoiceCodecUnavailableError("NumPy") from error
         compressor = zl.Compressor()
         compressor.select_starting_graph(zl.graphs.Compress()(compressor))
         context = zl.CCtx()
@@ -335,7 +337,7 @@ def _decompress_v4_payload(stored_payload: bytes, compression: int) -> bytes:
             try:
                 import zstandard  # type: ignore[import-not-found]
             except ImportError as error:
-                raise CEVoiceError("Zstandard compression is unavailable") from error
+                raise CEVoiceCodecUnavailableError("Zstandard") from error
             return _check_size(
                 zstandard.ZstdDecompressor().decompress(
                     stored_payload,
@@ -353,7 +355,7 @@ def _decompress_v4_payload(stored_payload: bytes, compression: int) -> bytes:
             try:
                 import openzl.ext as zl  # type: ignore[import-not-found]
             except ImportError as error:
-                raise CEVoiceError("OpenZL compression is unavailable") from error
+                raise CEVoiceCodecUnavailableError("OpenZL") from error
             frame_info = zl.FrameInfo(stored_payload)
             if frame_info.num_outputs != 1:
                 raise CEVoiceError("invalid OpenZL indexed CECHAR payload")

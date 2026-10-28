@@ -73,6 +73,17 @@ Asset offsets are relative to the start of the decompressed logical payload,
 not the start of the file. Physical offsets and lengths are never stored in
 v4/v5 JSON metadata.
 
+### Compression availability
+
+Celune loads a compression codec only when an indexed pack declares that
+codec. Packs using no compression, gzip, or XZ do not require Zstandard or
+OpenZL. If a pack uses a codec that is not installed, `celune ls` and
+`celune tar` report the missing dependency instead of classifying the pack as invalid.
+OpenZL writing also requires NumPy; other CEVOICE reads and edits do not import
+NumPy for OpenZL support.
+Codec loading is implemented in `celune/cevoice/v4.py`; CLI reporting is in
+`celune/entrypoint.py`.
+
 ## Metadata schema
 
 `write_cevoice()` creates the required metadata automatically:

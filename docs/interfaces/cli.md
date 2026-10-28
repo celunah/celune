@@ -111,7 +111,9 @@ celune tar -df voices/custom.cevoice identity.md 2
 
 Syntax errors and invalid selectors return exit code `5`. Invalid packs,
 unsupported files, metadata violations, duplicate additions, existing
-extraction targets, and filesystem failures return exit code `1`.
+extraction targets, unavailable compression dependencies, and filesystem
+failures return exit code `1`. When a pack uses an unavailable codec, Celune
+names the required dependency instead of reporting the pack as invalid.
 
 The `-v` spelling is accepted both as the verbose start flag and as the version
 alias by the dispatcher; use `--verbose` and `--version` in scripts to avoid

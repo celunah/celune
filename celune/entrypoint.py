@@ -42,6 +42,7 @@ from celune.typing.common import Config
 if TYPE_CHECKING:
     from celune.celune import Celune
     from celune.cevoice import CEVoice
+    from celune.exceptions import CEVoiceCodecUnavailableError
 
 
 def _env_flag(name: str) -> bool:
@@ -1368,6 +1369,7 @@ def start(
     global _STARTUP_DIAGNOSTIC_SINK
 
     from rich.console import Console
+
     from celune.watchdog import start_watchdog, launcher_loss_requested
 
     csystem = Console(stderr=True).color_system
@@ -1859,7 +1861,8 @@ def handle_tar_command(arguments: list[str], program: str) -> int:
 
 def _list_pack(path: Path) -> int:
     """Validate and print the ordered entries in one pack."""
-    from celune.cevoice import CEVoiceError, bundle_character_name
+    from celune.cevoice import bundle_character_name
+    from celune.exceptions import CEVoiceError, CEVoiceCodecUnavailableError
 
     try:
         bundle = _open_validated_pack(path)
@@ -1877,6 +1880,8 @@ def _list_pack(path: Path) -> int:
                 )
             )
         return 0
+    except CEVoiceCodecUnavailableError as error:
+        _print_pack_dependency_error(error)
     except CEVoiceError:
         print(string("cli.pack_invalid"))
     except OSError:
@@ -1886,7 +1891,7 @@ def _list_pack(path: Path) -> int:
 
 def _extract_pack(path: Path, destination: Optional[Path]) -> int:
     """Extract a validated pack without replacing any existing destination."""
-    from celune.cevoice import CEVoiceError
+    from celune.exceptions import CEVoiceError, CEVoiceCodecUnavailableError
 
     try:
         bundle = _open_validated_pack(path)
@@ -1951,6 +1956,8 @@ def _extract_pack(path: Path, destination: Optional[Path]) -> int:
                 target.unlink(missing_ok=True)
             raise
         return 0
+    except CEVoiceCodecUnavailableError as error:
+        _print_pack_dependency_error(error)
     except CEVoiceError:
         print(string("cli.pack_invalid"))
     except OSError:
@@ -1967,12 +1974,15 @@ def _add_pack_entries(
     """Append or insert source files into a validated pack."""
     from celune.cevoice import (
         SUPPORTED_PERSONA_FILENAMES,
-        CEVoiceError,
         add_cevoice_entries,
     )
+    from celune.exceptions import CEVoiceError, CEVoiceCodecUnavailableError
 
     try:
         bundle = _open_validated_pack(path)
+    except CEVoiceCodecUnavailableError as error:
+        _print_pack_dependency_error(error)
+        return 1
     except CEVoiceError:
         print(string("cli.pack_invalid"))
         return 1
@@ -2007,6 +2017,8 @@ def _add_pack_entries(
             path, [Path(name) for name in source_names], insertion_position
         )
         return 0
+    except CEVoiceCodecUnavailableError as error:
+        _print_pack_dependency_error(error)
     except CEVoiceError:
         print(string("cli.pack_update_failed"))
     except OSError:
@@ -2022,10 +2034,14 @@ def _remove_pack_entries(
     indexed: bool,
 ) -> int:
     """Resolve and remove exact names or 1-based selectors."""
-    from celune.cevoice import CEVoiceError, remove_cevoice_entries
+    from celune.cevoice import remove_cevoice_entries
+    from celune.exceptions import CEVoiceError, CEVoiceCodecUnavailableError
 
     try:
         bundle = _open_validated_pack(path)
+    except CEVoiceCodecUnavailableError as error:
+        _print_pack_dependency_error(error)
+        return 1
     except CEVoiceError:
         print(string("cli.pack_invalid"))
         return 1
@@ -2063,6 +2079,8 @@ def _remove_pack_entries(
     try:
         remove_cevoice_entries(path, names)
         return 0
+    except CEVoiceCodecUnavailableError as error:
+        _print_pack_dependency_error(error)
     except CEVoiceError:
         print(string("cli.pack_update_failed"))
     except OSError:
@@ -2078,6 +2096,11 @@ def _open_validated_pack(path: Path) -> "CEVoice":
     for entry in bundle.entries:
         bundle.read_entry(entry.name)
     return bundle
+
+
+def _print_pack_dependency_error(error: "CEVoiceCodecUnavailableError") -> None:
+    """Report an unavailable compression dependency without rejecting the pack."""
+    print(string("cli.pack_dependency_missing", dependency=error.dependency))
 
 
 def _added_entry_name(path: Path) -> str:

@@ -269,6 +269,7 @@
     "cli.or_set_env_var": "or set the following environment variable:",
     "cli.pack_character": "Character: {name}",
     "cli.pack_duplicate": "Entry already exists: {name}",
+    "cli.pack_dependency_missing": "This operation requires the {dependency} dependency.",
     "cli.pack_entry": "{index}. {name} ({size} bytes)",
     "cli.pack_exists": "An extraction destination already exists.",
     "cli.pack_invalid": "The file is not a valid supported CEVOICE pack.",
