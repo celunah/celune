@@ -38,11 +38,11 @@ from celune.celune import Celune
 from celune.utils import discard
 from celune.ui import app as ui_app
 from celune.ui import compat as ui_compat
-from celune.i18n import string, tagged_string
-from celune.ui import terminal as ui_terminal
-from celune.ui.headless import CeluneHeadlessUI
 from celune.ui import resources as ui_resources
+from celune.ui import terminal as ui_terminal
+from celune.i18n import string, tagged_string
 from celune.typing.modes import OperationState
+from celune.ui.headless import CeluneHeadlessUI
 from celune.core import lifecycle as core_lifecycle
 from celune.extensions.events import EventDispatcher
 from celune.dataclasses.events import CharacterChangedEvent
@@ -1061,6 +1061,61 @@ class TestUIStartup(CeluneTestCase):
 
         ensure_dependencies.assert_not_called()
         call_after_refresh.assert_called_once_with(ui.start_background_init)
+
+    def test_ui_test_startup_reports_mode_and_stops_without_optional_integrations(
+        self,
+    ) -> None:
+        """Report UI test mode and finish startup without loading integrations."""
+        from celune.testmode import UITestRuntime
+
+        statuses: list[str] = []
+
+        def finish_test(
+            runtime: Celune,
+            success: bool,
+            detail: Optional[str],
+        ) -> None:
+            runtime.finish_test_mode("ui", success, detail=detail)
+
+        ui = CeluneUI(test_completion_callback=finish_test)
+        ui.status = Label()
+        runtime = UITestRuntime(config={}, backend_mode="ui_test", log_level="info")
+        ui.celune = cast(Celune, runtime)
+        ui._bind_runtime_callbacks()
+        ui.safe_progress = mock.Mock()
+        ui.change_input_state = mock.Mock()
+        ui.change_voice_lock_state = mock.Mock()
+        ui._dismiss_loading_screen = mock.Mock()
+        safe_status = ui.safe_status
+
+        def record_status(msg: str, severity: str = "info") -> None:
+            statuses.append(msg)
+            safe_status(msg, severity)
+
+        ui.safe_status = record_status
+
+        with (
+            mock.patch(
+                "celune.ui.app.ensure_ui_runtime_dependencies",
+                side_effect=AssertionError("optional UI dependencies were loaded"),
+            ) as ensure_dependencies,
+            mock.patch.object(ui, "_set_terminal_status"),
+        ):
+            ui._load_tts()
+
+        ensure_dependencies.assert_not_called()
+        assert statuses == [
+            string("ui.test_mode_active"),
+            string("status.stopped"),
+        ]
+        assert ui._status_text == string("status.stopped")
+        assert runtime.log_callback is not None
+        assert runtime.test_finished
+        assert runtime.operation_state is OperationState.STOPPED
+        assert runtime.cur_state == "stopped"
+        assert (string("celune.test_mode_active", app_name=APP_NAME), "info") in (
+            ui.log_history
+        )
 
     def test_callback_binding_does_not_chain_same_callback(self) -> None:
         """Verify an already-installed callback is not invoked through a wrapper."""

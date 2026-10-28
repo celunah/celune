@@ -5,6 +5,7 @@ from typing import Optional
 from collections.abc import Callable
 
 from .i18n import string
+from .constants import APP_NAME
 from .typing.common import Config, JSON
 from .typing.modes import BackendMode, OperationState
 
@@ -24,6 +25,7 @@ class UITestRuntime:
     voices: tuple[str, ...] = ()
     current_voice: Optional[str] = None
     use_normalization = False
+    log_callback: Optional[Callable[[str, str], None]] = None
 
     def __init__(
         self,
@@ -51,7 +53,13 @@ class UITestRuntime:
         """Complete lightweight startup without loading models or audio devices."""
         if self._startup_callback is not None:
             self._startup_callback(string("ui.startup_initializing_core"))
+        self.log(string("celune.test_mode_active", app_name=APP_NAME))
         return not self._closed
+
+    def log(self, message: str, severity: str = "info") -> None:
+        """Send a runtime message to the attached UI when one is available."""
+        if self.log_callback is not None:
+            self.log_callback(message, severity)
 
     def finish_test_mode(
         self,

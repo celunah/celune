@@ -5,19 +5,19 @@ from __future__ import annotations
 
 import re
 import time
-import queue as queue_module
 import threading
 import contextlib
 from uuid import uuid4
-from typing import Union, Optional, cast
+import queue as queue_module
 from collections.abc import Callable
+from typing import Union, Optional, cast
 
 from textual.color import Color
 
 from . import app as _app
 from .theme import with_brightness
-from .constants import CAPTION_FADE_SECONDS
 from ..typing.modes import OperationState
+from .constants import CAPTION_FADE_SECONDS
 
 __all__ = (
     "_acquire_recording_component_lease",
@@ -606,9 +606,11 @@ def safe_status(self, msg: str, severity: str = "info") -> None:
     ):
         return
 
-    _app.ensure_ui_runtime_dependencies()
+    ui_test_mode = self._is_ui_test_mode()
+    if not ui_test_mode:
+        _app.ensure_ui_runtime_dependencies()
 
-    if severity not in _app.colors.SEVERITY_COLORS["celune"]:
+    if not ui_test_mode and severity not in _app.colors.SEVERITY_COLORS["celune"]:
         self.safe_log(
             f"[WARNING] Unknown severity '{severity}', defaulting to info",
             "warning",
@@ -630,7 +632,8 @@ def safe_status(self, msg: str, severity: str = "info") -> None:
             self._loading_screen.set_status_message(msg)
         self._set_terminal_status(terminal_state, terminal_action)
         self.update_resources()
-        self._publish_webui_timed_update()
+        if not ui_test_mode:
+            self._publish_webui_timed_update()
 
     self._run_on_ui_thread(update)
 
@@ -660,9 +663,11 @@ def safe_log(
     if levels.get(active_log_level, 0) < levels.get(loglevel, 0):
         return
 
-    _app.ensure_ui_runtime_dependencies()
+    ui_test_mode = self._is_ui_test_mode()
+    if not ui_test_mode:
+        _app.ensure_ui_runtime_dependencies()
 
-    if severity not in _app.colors.SEVERITY_COLORS["celune"]:
+    if not ui_test_mode and severity not in _app.colors.SEVERITY_COLORS["celune"]:
         severity = "info"
 
     with self._log_history_lock:

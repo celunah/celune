@@ -51,8 +51,9 @@ after a failure.
 
 UI test mode opens the live Textual interface without importing the production
 engine, TTS backend, model, GPU, or audio integrations. The screen remains
-available for visual inspection, while its runtime actions stay disabled. Use
-agent test mode when checking the configured engine and its integrations.
+available for visual inspection, while its runtime actions stay disabled. It
+reports that test mode is active, then marks the runtime stopped after startup.
+Use agent test mode when checking the configured engine and its integrations.
 
 The stopped test UI log shows one `PASS`, `FAIL`, or `SKIP` entry per check and
 a total for each status. Local-management tools are skipped when
