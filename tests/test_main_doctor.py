@@ -233,19 +233,12 @@ class TestDoctorCommand(CeluneTestCase):
         existing.wait.assert_called_once_with(timeout=5)
         runtime.SelectMenu.assert_called_once()
 
-    def test_ui_test_backend_is_loaded_lazily(self) -> None:
-        """Verify normal entrypoint imports do not require the test suite package."""
-        fake_support = mock.Mock(FakeBackend=SimpleNamespace())
+    def test_ui_test_runtime_is_loaded_without_test_suite_modules(self) -> None:
+        """Use the production lightweight runtime instead of test-suite fixtures."""
+        runtime = entrypoint._load_ui_test_runtime()
 
-        with mock.patch.object(
-            entrypoint,
-            "import_module",
-            return_value=fake_support,
-        ) as import_module:
-            backend = entrypoint._load_ui_test_backend()
-
-        assert backend is fake_support.FakeBackend
-        import_module.assert_called_once_with("tests.support")
+        assert runtime.Celune.__name__ == "UITestRuntime"
+        assert runtime.ExitCodes is entrypoint.EXIT_CODES
 
     def test_main_reports_unsupported_python_before_loading_entrypoint(self) -> None:
         """Verify doctor on Python 3.11 exits cleanly before importing 3.12-only modules."""

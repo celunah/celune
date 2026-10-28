@@ -118,10 +118,11 @@ _CELUNE_PROCESS_NAMES = frozenset(
 )
 
 
-def _load_ui_test_backend() -> type:
-    """Load the lightweight fake backend used by the explicit UI test mode."""
-    support = import_module("tests.support")
-    return support.FakeBackend
+def _load_ui_test_runtime() -> SimpleNamespace:
+    """Load only the runtime boundary needed to render the UI test screen."""
+    from celune.testmode import UITestRuntime
+
+    return SimpleNamespace(Celune=UITestRuntime, ExitCodes=ExitCodes)
 
 
 def _load_test_runtime_config(runtime: SimpleNamespace) -> tuple[Config, Optional[str]]:
@@ -1380,36 +1381,38 @@ def start(
     _FORCE_STARTUP_DIAGNOSTICS = log_level not in {None, "info"}
     _STARTUP_DIAGNOSTICS.clear()
     _print_startup_diagnostic(string("ui.startup_checking_dependencies"))
-    runtime = _load_runtime()
+    lightweight_ui_test = testing and test_mode in {None, "ui"}
+    runtime = _load_ui_test_runtime() if lightweight_ui_test else _load_runtime()
     active_log_level = normalize_log_level(log_level or INITIAL_LOG_LEVEL)
 
     try:
-        migrate_legacy_app_data()
         if testing:
             if test_mode not in {None, "ui", "agent"}:
                 raise ValueError(f"unknown test mode: {test_mode}")
             from celune.ui import CeluneUI
 
-            runtime = _load_core_runtime()
             active_test_mode = test_mode or "ui"
             backend_mode = "ui_test" if active_test_mode == "ui" else "agent_test"
-            test_config: Config = {}
-            test_backend: Optional[str] = None
-            configured_test_config, configured_test_backend = _load_test_runtime_config(
-                runtime
-            )
-            active_log_level = normalize_log_level(
-                log_level
-                if log_level is not None
-                else config_log_level(configured_test_config)
-            )
             if active_test_mode == "agent":
+                migrate_legacy_app_data()
+                runtime = _load_core_runtime()
+                configured_test_config, configured_test_backend = (
+                    _load_test_runtime_config(runtime)
+                )
                 test_config = configured_test_config
                 test_backend = configured_test_backend
+                active_log_level = normalize_log_level(
+                    log_level
+                    if log_level is not None
+                    else config_log_level(configured_test_config)
+                )
                 from celune.compat import suppress_torchao_quantization_syntax_warning
 
                 runtime_startup_context = suppress_torchao_quantization_syntax_warning()
             else:
+                test_config = {}
+                test_backend = None
+                active_log_level = normalize_log_level(log_level or INITIAL_LOG_LEVEL)
                 runtime_startup_context = contextlib.nullcontext()
 
             def finish_test(
@@ -1447,7 +1450,6 @@ def start(
                 _print_startup_diagnostic(string("ui.startup_loading_core"))
                 celune = runtime.Celune(
                     config=test_config,
-                    backend=_load_ui_test_backend(),
                     backend_mode=backend_mode,
                     log_level=active_log_level,
                     startup_callback=_print_startup_diagnostic,
@@ -1483,6 +1485,7 @@ def start(
             if test_mode is None:
                 sys.exit(EXIT_CODES.EXIT_SUCCESS.value)
             return
+        migrate_legacy_app_data()
         if runtime.supports_ansi():
             set_terminal_title(
                 (
@@ -1712,6 +1715,19 @@ def start(
         if launcher_loss_requested():
             sys.exit(runtime.ExitCodes.EXIT_LAUNCHER_LOST.value)
     except Exception as exc:
+        if lightweight_ui_test:
+            if active_log_level == "debug":
+                with contextlib.suppress(ModuleNotFoundError):
+                    from rich.traceback import install
+
+                    install()
+
+                raise
+            print(string("cli.internal_error_running", app_name=APP_NAME))
+            if active_log_level == "verbose" and str(exc):
+                print(str(exc))
+            sys.exit(runtime.ExitCodes.EXIT_FAILURE.value)
+
         if exc.__class__ != runtime.No:
             stdout = getattr(sys.stdout, "underlying_stdout", sys.stdout)
             stderr = getattr(sys.stderr, "underlying_stderr", sys.stderr)

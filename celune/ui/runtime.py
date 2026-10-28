@@ -126,6 +126,12 @@ def _runtime_theme_name(self) -> str:
 
 def _ensure_themes_registered(self) -> None:
     """Register Celune's built-in themes when the app is not fully mounted yet."""
+    if self._is_ui_test_mode():
+        for theme in (*_app.default_theme_family(), *_app.default_error_theme_family()):
+            if theme.name not in self.available_themes:
+                self.register_theme(theme)
+        return
+
     self.register_theme(_app.colors.THEME)
     self.register_theme(_app.colors.THEME_LIGHT)
     self.register_theme(_app.colors.THEME_APRIL_FOOLS)
@@ -166,6 +172,10 @@ def _has_celune(self) -> bool:
 
 def _configure_active_pack_theme(self) -> None:
     """Apply the selected pack's TUI colors and RGB glow color."""
+    if self._is_ui_test_mode():
+        self._ensure_themes_registered()
+        return
+
     _app.colors.configure_theme()
     glow_color = _app.colors.DEFAULT_ACCENT
 
@@ -209,16 +219,17 @@ def _configure_active_pack_theme(self) -> None:
 
 def prepare_theme(self) -> None:
     """Prepare the selected Celune theme before the first rendered frame."""
-    _app.ensure_ui_runtime_dependencies()
+    ui_test_mode = self._is_ui_test_mode()
+    if not ui_test_mode:
+        _app.ensure_ui_runtime_dependencies()
     _configure_active_pack_theme(self)
 
-    if _app.is_april_fools() and os.getenv("CELUNE_DISABLE_APRIL_FOOLS") not in {
-        "1",
-        "true",
-        "on",
-        "yes",
-        "enabled",
-    }:
+    if (
+        not ui_test_mode
+        and _app.is_april_fools()
+        and os.getenv("CELUNE_DISABLE_APRIL_FOOLS")
+        not in {"1", "true", "on", "yes", "enabled"}
+    ):
         self.active_theme_name = "celune_april_fools"
     else:
         theme = os.getenv("CELUNE_THEME") or (
@@ -253,7 +264,6 @@ def _clear_border_pulses(self) -> None:
 
 def _refresh_theme_text(self) -> None:
     """Refresh widgets after a runtime theme change."""
-    from ..utils import available
 
     def repaint(widget: _app.Widget) -> None:
         refresh = getattr(widget, "refresh", None)
@@ -272,7 +282,7 @@ def _refresh_theme_text(self) -> None:
         screen = self.screen
     except _app.ScreenStackError:
         screen = None
-    if screen is not None and available("styles", obj=screen):
+    if screen is not None and hasattr(screen, "styles"):
         screen.styles.background = None
         repaint(screen)
     if self.logs is not None:
@@ -311,11 +321,11 @@ def _refresh_theme_text(self) -> None:
     for line in self.header_lines:
         line.styles.border_top = None
         repaint(line)
-    if self.progress_bar is not None and available("styles", obj=self.progress_bar):
+    if self.progress_bar is not None and hasattr(self.progress_bar, "styles"):
         self.progress_bar.styles.color = None
         self.progress_bar.styles.background = None
         repaint(self.progress_bar)
-    if self.caption is not None and available("styles", obj=self.caption):
+    if self.caption is not None and hasattr(self.caption, "styles"):
         self.caption.styles.color = None
         self.caption.styles.background = None
         repaint(self.caption)
@@ -1200,9 +1210,11 @@ def attach_celune(self, celune: _app.Celune) -> None:
         celune.close()
         return
 
-    if _app.default_loader is None or _app.ui_resources is None:
+    ui_test_mode = getattr(celune, "backend_mode", None) == "ui_test"
+    if not ui_test_mode and (_app.default_loader is None or _app.ui_resources is None):
         _app.ensure_ui_runtime_dependencies()
-    self._log_file_path = _app.main_window_log_path(create_parent=True)
+    if not ui_test_mode:
+        self._log_file_path = _app.main_window_log_path(create_parent=True)
     self._unbind_agent_events()
     self.celune = celune
     self._bind_runtime_callbacks()
@@ -1221,6 +1233,11 @@ def attach_celune(self, celune: _app.Celune) -> None:
     self.refresh_vc_controls()
     if not self.celune.backend.is_fake or "pytest" in sys.modules:
         self._enable_runtime_log_capture()
+    if ui_test_mode:
+        self._enable_loading_ui_reveal()
+        self.call_after_refresh(self.start_background_init)
+        return
+
     resources = _app.ui_resources
     if resources is None:
         return
