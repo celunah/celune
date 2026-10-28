@@ -1038,6 +1038,30 @@ class TestUIStartup(CeluneTestCase):
         resources.prime_usage.assert_called_once_with()
         call_after_refresh.assert_called_once_with(start_init)
 
+    def test_ui_test_runtime_skips_optional_startup_integrations(self) -> None:
+        """Keep test-screen startup independent of audio and resource modules."""
+        from celune.testmode import UITestRuntime
+
+        ui = CeluneUI()
+        runtime = UITestRuntime(
+            config={},
+            backend_mode="ui_test",
+            log_level="info",
+        )
+        with (
+            mock.patch(
+                "celune.ui.app.ensure_ui_runtime_dependencies",
+                side_effect=AssertionError("optional UI dependencies were loaded"),
+            ) as ensure_dependencies,
+            mock.patch.object(ui, "_enable_runtime_log_capture"),
+            mock.patch.object(ui, "refresh_vc_controls"),
+            mock.patch.object(ui, "call_after_refresh") as call_after_refresh,
+        ):
+            ui.attach_celune(cast(Celune, runtime))
+
+        ensure_dependencies.assert_not_called()
+        call_after_refresh.assert_called_once_with(ui.start_background_init)
+
     def test_callback_binding_does_not_chain_same_callback(self) -> None:
         """Verify an already-installed callback is not invoked through a wrapper."""
         calls: list[str] = []

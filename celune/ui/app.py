@@ -1618,6 +1618,50 @@ class CeluneUI(
         """Load the app runtime."""
         if self.cur_state == "exiting":
             return
+        if self._is_ui_test_mode():
+            self._latest_startup_error = None
+            try:
+                loaded = self.celune.load()
+                if self.cur_state == "exiting":
+                    return
+                if not loaded:
+                    failure_message = self._latest_startup_error or string(
+                        "ui.app_could_not_start",
+                        app_name=APP_NAME,
+                    )
+                    self.cur_state = "error"
+                    self.change_input_state(locked=True)
+                    self.change_voice_lock_state(locked=True)
+                    self.error(string("ui.app_could_not_start", app_name=APP_NAME))
+                    self._show_loading_error(failure_message)
+                    self._finish_test_startup(False, failure_message)
+                    return
+
+                self.celune_styles = ()
+                if not self.celune.use_normalization:
+                    self.safe_progress(1, 1)
+                self.change_input_state(locked=True)
+                self.change_voice_lock_state(locked=True)
+                self.safe_status(string("ui.test_mode_active"))
+                self._dismiss_loading_screen()
+                self._finish_test_startup(True)
+            except Exception as error:
+                if self.cur_state == "exiting":
+                    return
+                failure_message = str(error) or string(
+                    "ui.app_could_not_start",
+                    app_name=APP_NAME,
+                )
+                self.cur_state = "error"
+                self.safe_log(failure_message, "error")
+                self.celune.fatal()
+                self.change_input_state(locked=True)
+                self.change_voice_lock_state(locked=True)
+                self.error(string("ui.app_could_not_start", app_name=APP_NAME))
+                self._show_loading_error(failure_message)
+                self._finish_test_startup(False, failure_message)
+            return
+
         from ..exceptions import ModelConsentDeclined
         from ..registry.consent import set_model_consent_handler
 

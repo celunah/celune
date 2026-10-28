@@ -7,8 +7,9 @@ Commands that do not start the core keep that boundary: help, version, the
 doctor report, and the test-mode listing use lightweight command dependencies.
 Configuration commands load only the configuration-path and system-browser
 helpers. Voice-pack commands use the CEVOICE reader and writer without starting
-the runtime. The full Celune dependency contract is loaded by the default start,
-explicit start/run commands, and the UI or agent test modes.
+the runtime. Normal starts load the full Celune dependency contract. Agent test
+mode loads the engine and configured integrations; UI test mode uses the Textual
+interface with a lightweight runtime state object.
 
 ## Commands
 
@@ -22,7 +23,7 @@ explicit start/run commands, and the UI or agent test modes.
 | <code>celune start --log-level=info&#124;verbose&#124;debug</code> | Choose one startup log level. |
 | `celune start --test` / `-t` | Run the lightweight UI test runtime. |
 | `celune test` | Print available explicit test modes. |
-| `celune test ui` | Run the UI test mode. |
+| `celune test ui` | Open the UI without starting the engine or audio runtime. |
 | `celune test agent` | Run the agent test mode. |
 | `celune config view` | Print the active YAML configuration. |
 | `celune config edit` | Open the active configuration in the system editor. |
@@ -47,6 +48,11 @@ fails that check. When local-management tools are enabled, filesystem operations
 inside a temporary directory; process and application mutations use test
 doubles and never launch or close real resources. Independent checks continue
 after a failure.
+
+UI test mode opens the live Textual interface without importing the production
+engine, TTS backend, model, GPU, or audio integrations. The screen remains
+available for visual inspection, while its runtime actions stay disabled. Use
+agent test mode when checking the configured engine and its integrations.
 
 The stopped test UI log shows one `PASS`, `FAIL`, or `SKIP` entry per check and
 a total for each status. Local-management tools are skipped when

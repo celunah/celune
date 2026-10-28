@@ -1534,7 +1534,10 @@ def on_button_pressed(self, event: _app.Button.Pressed) -> None:
 
 def on_unmount(self) -> None:
     """Unload Celune."""
-    from ..registry.consent import set_model_consent_handler
+    if not self._is_ui_test_mode():
+        from ..registry.consent import set_model_consent_handler
+
+        self._run_shutdown_step(lambda: set_model_consent_handler(None))
 
     response_queue = self._agent_test_response_queue
     if response_queue is not None:
@@ -1546,7 +1549,6 @@ def on_unmount(self) -> None:
         self.cur_state = "exiting"
     self._run_shutdown_step(self._cancel_sleep_timer)
     self._run_shutdown_step(self._clear_caption_timers)
-    self._run_shutdown_step(lambda: set_model_consent_handler(None))
     self._run_shutdown_step(
         lambda: self._set_terminal_status(
             "restarting" if restarting else "exiting",
@@ -1555,7 +1557,7 @@ def on_unmount(self) -> None:
             ),
         )
     )
-    if _app.ui_resources is not None:
+    if _app.ui_resources is not None and not self._is_ui_test_mode():
         self._run_shutdown_step(_app.ui_resources.stop_gpu_usage_worker)
     self._run_shutdown_step(self._shutdown_runtime)
 
@@ -1840,10 +1842,11 @@ def _shutdown_runtime(self) -> None:
         if self._interaction_state.runtime_shutdown_complete:
             return
         try:
-            try:
-                self._shutdown_live_vc_recording()
-            except Exception as exc:
-                self._report_shutdown_error(exc)
+            if not self._is_ui_test_mode():
+                try:
+                    self._shutdown_live_vc_recording()
+                except Exception as exc:
+                    self._report_shutdown_error(exc)
             try:
                 self._unbind_agent_events()
             except Exception as exc:

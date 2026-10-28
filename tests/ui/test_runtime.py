@@ -6,6 +6,7 @@
 
 import sys
 import asyncio
+import textwrap
 import subprocess
 from typing import cast
 from pathlib import Path
@@ -457,6 +458,44 @@ class TestUIRuntime(CeluneTestCase):
                     "sorted(blocked.intersection(sys.modules))"
                 ),
             ],
+            cwd=project_root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        self.assertEqual(check.returncode, 0, check.stderr)
+
+    def test_ui_test_command_avoids_unused_runtime_dependencies(self) -> None:
+        """Start the explicit UI test without importing engine integrations."""
+        project_root = Path(__file__).resolve().parents[2]
+        script = textwrap.dedent(
+            """\
+            import importlib.abc
+            import sys
+
+            from celune import entrypoint
+            from celune.ui import CeluneUI
+
+            blocked = {"numpy", "psutil", "sounddevice", "torch", "transformers", "yaml"}
+
+            class ImportBlocker(importlib.abc.MetaPathFinder):
+                def find_spec(self, fullname, path=None, target=None):
+                    if fullname.split(".", maxsplit=1)[0] in blocked:
+                        raise ModuleNotFoundError(name=fullname)
+                    return None
+
+            sys.meta_path.insert(0, ImportBlocker())
+            CeluneUI.run = lambda self: None
+            entrypoint._load_runtime = lambda: (_ for _ in ()).throw(AssertionError())
+            entrypoint._load_core_runtime = lambda: (_ for _ in ()).throw(AssertionError())
+            entrypoint.migrate_legacy_app_data = lambda: (_ for _ in ()).throw(AssertionError())
+            entrypoint.start(testing=True, test_mode="ui")
+            assert blocked.isdisjoint(sys.modules), sorted(blocked.intersection(sys.modules))
+            """
+        )
+        check = subprocess.run(
+            [sys.executable, "-c", script],
             cwd=project_root,
             capture_output=True,
             text=True,
