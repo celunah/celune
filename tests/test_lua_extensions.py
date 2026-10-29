@@ -205,10 +205,17 @@ class LuaExtensionTests(TestCase):
 
     def test_lua_ready_callbacks_do_not_block_core_loading(self) -> None:
         """Verify blocking Lua startup work runs outside the ready dispatcher."""
+        callback_started = threading.Event()
+        release_callback = threading.Event()
         completed = threading.Event()
+
+        def block_callback(_duration: float) -> None:
+            callback_started.set()
+            release_callback.wait(timeout=5.0)
+
         core = SimpleNamespace(
             log=lambda message, severity="info": completed.set(),
-            sleep=time.sleep,
+            sleep=block_callback,
             version="test",
         )
         manager = CeluneExtensionManager(
@@ -232,14 +239,20 @@ class LuaExtensionTests(TestCase):
             )
             manager.autoload(temp_dir)
 
-        started = time.monotonic()
-        self.dispatcher.emit(
-            "ready",
-            ReadyEvent(celune=cast("Celune", core)),
+        dispatch_thread = threading.Thread(
+            target=self.dispatcher.emit,
+            args=("ready", ReadyEvent(celune=cast("Celune", core))),
+            daemon=True,
         )
-        elapsed = time.monotonic() - started
+        dispatch_thread.start()
+        try:
+            self.assertTrue(callback_started.wait(timeout=5.0))
+            dispatch_thread.join(timeout=5.0)
+            self.assertFalse(dispatch_thread.is_alive())
+        finally:
+            release_callback.set()
+            dispatch_thread.join(timeout=5.0)
 
-        self.assertLess(elapsed, 0.15)
         self.assertTrue(completed.wait(timeout=5))
 
     def test_nested_lua_events_do_not_deadlock_a_reload(self) -> None:
