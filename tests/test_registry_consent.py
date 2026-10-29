@@ -4,25 +4,24 @@
 import re
 import json
 import asyncio
-
+from types import SimpleNamespace
 from typing import cast
 from pathlib import Path
 from unittest import mock
-from types import SimpleNamespace
 
 from starlette.requests import Request
 
 from celune import api
 from celune.i18n import string
-from celune.backends.vc import seedvc
-from celune.cedts.remote import RemoteBackendProxy
 from celune.registry import ALL_MODELS, get_model_metadata
-from celune.agent.needle import checkpoints as needle_checkpoints
 from celune.exceptions import (
     ModelConsentDeclined,
     ModelConsentRequired,
     ModelCommercialUseRestricted,
 )
+from celune.backends.vc import seedvc
+from celune.agent.needle import checkpoints as needle_checkpoints
+from celune.cedts.remote import RemoteBackendProxy
 from celune.registry.other import (
     OTHER_MODELS,
     SOULX_SINGER_RMVPE_MODEL_ID,
@@ -31,10 +30,10 @@ from celune.registry.other import (
 from celune.registry.consent import (
     ModelConsentStore,
     consent_prompt_text,
+    set_commercial_mode,
     record_model_consent,
     require_model_consent,
     resolve_model_metadata,
-    set_commercial_mode,
 )
 
 
@@ -52,9 +51,18 @@ def test_catalogs_have_unique_pinned_models_and_explicit_unknown_terms() -> None
         for model in ALL_MODELS
     )
 
-    unknown = get_model_metadata("Plachta/ASTRAL-quantization")
-    assert unknown is not None
-    assert unknown in OTHER_MODELS
+    astral = get_model_metadata("Plachta/ASTRAL-quantization")
+    assert astral is not None
+    assert astral in OTHER_MODELS
+    assert astral.license_id == "gpl-3.0"
+    assert astral.license_url == "https://www.gnu.org/licenses/gpl-3.0.html"
+    assert astral.non_commercial is False
+    assert astral.research_only is False
+    assert not astral.terms_review_required
+    assert astral.commercial_use_allowed
+    assert not astral.requires_consent
+
+    unknown = resolve_model_metadata("custom/model", "c" * 40)
     assert unknown.license_id is None
     assert unknown.non_commercial is None
     assert unknown.research_only is None
@@ -78,37 +86,45 @@ def test_commercial_mode_requires_reviewed_commercial_terms() -> None:
         for metadata in ALL_MODELS
         if metadata.commercial_use_allowed and not metadata.requires_consent
     )
-    research_only = get_model_metadata("FireRedTeam/FireRedTTS3")
+    astral = get_model_metadata("Plachta/ASTRAL-quantization")
+    firered = get_model_metadata("FireRedTeam/FireRedTTS3")
+    dots_mf = get_model_metadata("rednote-hilab/dots.tts-mf")
     unknown = resolve_model_metadata("custom/model", "c" * 40)
-    assert research_only is not None
+    assert astral is not None
+    assert firered is not None
+    assert dots_mf is not None
+    assert astral.license_id == "gpl-3.0"
+    assert astral.commercial_use_allowed
+    assert not astral.requires_consent
+    assert firered.research_only is False
+    assert dots_mf.research_only is False
+    assert not dots_mf.terms_review_required
+    assert firered.commercial_use_allowed
+    assert dots_mf.commercial_use_allowed
+    assert not firered.requires_consent
+    assert not dots_mf.requires_consent
 
     set_commercial_mode(True)
     try:
-        assert (
-            require_model_consent(commercially_allowed.model_id) == commercially_allowed
-        )
-        for metadata in (research_only, unknown):
-            with mock.patch(
-                "celune.registry.consent._STORE.has_acknowledged",
-                return_value=True,
-            ):
-                try:
-                    require_model_consent(metadata.model_id, metadata.revision)
-                except ModelCommercialUseRestricted as error:
-                    assert error.metadata == metadata
-                else:
-                    raise AssertionError(
-                        "commercial mode allowed model terms that were not cleared"
-                    )
+        for metadata in (commercially_allowed, astral, firered, dots_mf):
+            assert require_model_consent(metadata.model_id) == metadata
+        with mock.patch(
+            "celune.registry.consent._STORE.has_acknowledged",
+            return_value=True,
+        ):
+            try:
+                require_model_consent(unknown.model_id, unknown.revision)
+            except ModelCommercialUseRestricted as error:
+                assert error.metadata == unknown
+            else:
+                raise AssertionError(
+                    "commercial mode allowed model terms that were not cleared"
+                )
         with mock.patch(
             "celune.registry.consent._STORE.set_acknowledged"
         ) as save_acknowledgement:
             try:
-                record_model_consent(
-                    research_only.model_id,
-                    research_only.revision,
-                    True,
-                )
+                record_model_consent(unknown.model_id, unknown.revision, True)
             except ModelCommercialUseRestricted:
                 pass
             else:
@@ -199,39 +215,28 @@ def test_needle_checkpoint_requires_consent_before_downloading() -> None:
     download.assert_not_called()
 
 
-def test_seed_vc_blocks_model_load_when_any_role_needs_consent() -> None:
-    """Check Seed-VC licensing before importing the model wrapper."""
-    metadata = get_model_metadata("Plachta/ASTRAL-quantization")
-    assert metadata is not None
-    backend = seedvc.CeluneSeedVCBackend(log=lambda _message, _level: None)
-
+def test_seed_vc_reviewed_models_do_not_require_consent() -> None:
+    """Verify reviewed Seed-VC dependencies do not trigger consent prompts."""
     with (
         mock.patch("celune.registry.consent._STORE") as store,
         mock.patch("celune.registry.consent._PENDING_CONSENTS", {}),
         mock.patch("celune.registry.consent._CONSENT_HANDLER", None),
-        mock.patch.object(backend, "_load_wrapper_type") as load_wrapper,
     ):
         store.has_acknowledged.return_value = False
-        try:
-            backend._get_wrapper()
-        except ModelConsentRequired as error:
-            assert error.metadata == metadata
-        else:
-            raise AssertionError("Seed-VC loaded without required model consent")
+        seedvc._require_seedvc_model_consents()
 
-    load_wrapper.assert_not_called()
+    store.has_acknowledged.assert_not_called()
 
 
 def test_main_ui_consent_prompt_matches_the_requested_copy() -> None:
     """Verify the localized TUI prompt includes the exact acceptance phrase."""
-    metadata = get_model_metadata("Plachta/ASTRAL-quantization")
-    assert metadata is not None
+    metadata = resolve_model_metadata("custom/model", "c" * 40)
 
     prompt, instruction = consent_prompt_text(metadata)
 
     assert prompt == (
-        "Please read the license terms for ASTRAL Quantization: "
-        "https://huggingface.co/Plachta/ASTRAL-quantization"
+        "Please read the license terms for custom/model: "
+        "https://huggingface.co/custom/model"
     )
     assert instruction == 'Once read, type "I consent" to continue.'
     assert string("registry.waiting_status") == "Waiting for consent"
@@ -239,21 +244,13 @@ def test_main_ui_consent_prompt_matches_the_requested_copy() -> None:
 
 def test_consent_api_records_and_withdraws_the_exact_revision(tmp_path: Path) -> None:
     """Verify the consent endpoint persists the decision for the catalog pin."""
-    metadata = get_model_metadata("Plachta/ASTRAL-quantization")
-    assert metadata is not None
+    metadata = resolve_model_metadata("custom/model", "c" * 40)
     store = ModelConsentStore(tmp_path / "consent.json")
 
     with (
         mock.patch("celune.registry.consent._STORE", store),
         mock.patch("celune.registry.consent._PENDING_CONSENTS", {}),
     ):
-        listed = cast(dict[str, list[dict[str, object]]], api.models())["models"]
-        catalog_entry = next(
-            item for item in listed if item["model_id"] == metadata.model_id
-        )
-        assert catalog_entry["revision"] == metadata.revision
-        assert catalog_entry["requires_consent"] is True
-
         accepted = api.submit_model_consent(
             api.ModelConsentRequest(
                 model_id=metadata.model_id,
@@ -282,8 +279,7 @@ def test_consent_api_records_and_withdraws_the_exact_revision(tmp_path: Path) ->
 
 def test_missing_consent_uses_http_428_and_decline_uses_http_403() -> None:
     """Verify REST errors expose exact model metadata and reject a decline."""
-    metadata = get_model_metadata("Plachta/ASTRAL-quantization")
-    assert metadata is not None
+    metadata = resolve_model_metadata("custom/model", "c" * 40)
 
     required = asyncio.run(
         api.model_consent_required_response(
@@ -306,8 +302,9 @@ def test_missing_consent_uses_http_428_and_decline_uses_http_403() -> None:
 
 def test_commercial_policy_uses_http_403() -> None:
     """Verify a restricted model returns an actionable commercial-mode error."""
-    metadata = get_model_metadata("FireRedTeam/FireRedTTS3")
-    assert metadata is not None
+    metadata = resolve_model_metadata("custom/restricted-model", "d" * 40)
+    astral = get_model_metadata("Plachta/ASTRAL-quantization")
+    assert astral is not None
     set_commercial_mode(True)
     try:
         model_listing = api.models()
@@ -326,14 +323,13 @@ def test_commercial_policy_uses_http_403() -> None:
     assert payload["model"]["commercial_use_allowed"] is False
     assert model_listing["commercial_mode"] is True
     listed_models = cast(list[dict[str, object]], model_listing["models"])
-    restricted_models = {cast(str, model["model_id"]): model for model in listed_models}
-    assert restricted_models[metadata.model_id]["commercial_use_allowed"] is False
+    catalog_models = {cast(str, model["model_id"]): model for model in listed_models}
+    assert catalog_models[astral.model_id]["commercial_use_allowed"] is True
 
 
 def test_declining_terms_does_not_create_an_acknowledgement(tmp_path: Path) -> None:
     """Verify a declined decision leaves later model operations blocked."""
-    metadata = get_model_metadata("Plachta/ASTRAL-quantization")
-    assert metadata is not None
+    metadata = resolve_model_metadata("custom/model", "c" * 40)
     store = ModelConsentStore(tmp_path / "consent.json")
 
     with (
@@ -357,15 +353,20 @@ def test_declining_terms_does_not_create_an_acknowledgement(tmp_path: Path) -> N
 def test_worker_proxy_does_not_load_before_consent(tmp_path: Path) -> None:
     """Verify the parent process gates a CEDTS model load before worker IPC."""
     store = ModelConsentStore(tmp_path / "consent.json")
+    metadata = resolve_model_metadata("custom/model", "c" * 40)
     proxy = object.__new__(RemoteBackendProxy)
     proxy.request = mock.Mock()
 
     with (
         mock.patch("celune.registry.consent._STORE", store),
         mock.patch("celune.registry.consent._PENDING_CONSENTS", {}),
+        mock.patch(
+            "celune.registry.consent.resolve_model_metadata",
+            return_value=metadata,
+        ),
     ):
         try:
-            proxy.load_model("Plachta/ASTRAL-quantization")
+            proxy.load_model(metadata.model_id)
         except ModelConsentRequired:
             pass
         else:
@@ -378,12 +379,15 @@ def test_worker_proxy_blocks_commercially_restricted_models() -> None:
     """Verify commercial policy is enforced before worker model-load IPC."""
     proxy = object.__new__(RemoteBackendProxy)
     proxy.request = mock.Mock()
-    metadata = get_model_metadata("FireRedTeam/FireRedTTS3")
-    assert metadata is not None
+    metadata = resolve_model_metadata("custom/restricted-model", "d" * 40)
     set_commercial_mode(True)
     try:
         try:
-            proxy.load_model(metadata.model_id)
+            with mock.patch(
+                "celune.registry.consent.resolve_model_metadata",
+                return_value=metadata,
+            ):
+                proxy.load_model(metadata.model_id)
         except ModelCommercialUseRestricted:
             pass
         else:

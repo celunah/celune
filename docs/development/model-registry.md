@@ -15,6 +15,8 @@ This page is for Celune contributors who add model metadata or change a model lo
 
 Each `ModelMetadata` entry records its model ID, display name, category, immutable Hugging Face commit SHA, repository URL, license identifier and source URL, restriction flags, and any runtime roles. A missing license or restriction value is represented by `None`; Celune treats unknown terms as requiring consent. Set `terms_review_required` when the published terms need human review, even if a license identifier exists.
 
+Set `non_commercial` and `research_only` only when applicable terms restrict those uses; an advisory about intended research use alone does not set either flag or require review. FireRedTTS3 and dots.tts MF have Apache-2.0 entries with `research_only=False` and `terms_review_required=False`. The [ASTRAL Quantization model card](https://huggingface.co/Plachta/ASTRAL-quantization) declares GPL-3.0; its entry uses `non_commercial=False` and `research_only=False` and does not require review.
+
 ## Commercial use mode
 
 The top-level `commercial` key in `default_config.yaml` declares the runtime's
@@ -39,7 +41,7 @@ Celune stores acknowledgement in its app-data directory, keyed by the exact mode
 
 Before any cataloged or custom model is downloaded or loaded, the calling path uses `require_model_consent`. The guard covers startup preload, Textual and browser UI actions, REST requests, and CEDTS worker-backed loads. A missing acknowledgement raises `ModelConsentRequired`; declining raises `ModelConsentDeclined`. Neither path permits the model load to continue.
 
-The main Textual UI displays the localized `registry.consent_prompt` and `registry.consent_instruction` messages, and requires the exact phrase from `registry.consent_phrase`. Its bottom-left status uses `registry.waiting_status` while it waits. The browser UI shows the same localized license details, restriction flags, and source link in an obstructing modal, and updates its footer while consent is pending.
+The main Textual UI displays the localized `registry.consent_prompt` and `registry.consent_instruction` messages, and requires the exact phrase from `registry.consent_phrase`. Its modal overlays the app and uses the active theme for its input and buttons. The bottom-left status uses `registry.waiting_status` while it waits. The browser UI shows the same localized license details, restriction flags, and source link in a themed modal over the app, and updates its footer while consent is pending.
 
 ## REST consent endpoints
 
@@ -47,8 +49,8 @@ All endpoints use the API's configured authentication. `GET /v1/models` returns 
 
 ```json
 {
-  "model_id": "Plachta/ASTRAL-quantization",
-  "revision": "4a2e9679f76eb03753adc8c503e3c23bb9c22f26",
+  "model_id": "custom/model",
+  "revision": "cccccccccccccccccccccccccccccccccccccccc",
   "accepted": true
 }
 ```
