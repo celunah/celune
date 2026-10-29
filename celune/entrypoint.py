@@ -12,24 +12,19 @@ import platform
 import warnings
 import contextlib
 import subprocess
+from dataclasses import dataclass
+from collections.abc import Callable
+from importlib import util, import_module
 from types import ModuleType, SimpleNamespace
 from typing import TYPE_CHECKING, NoReturn, Optional
 from pathlib import Path, PurePosixPath, PureWindowsPath
-from importlib import util, import_module
-from dataclasses import dataclass
-from collections.abc import Callable
 
-from celune import REVISION, __tagline__, __version__
-from celune.vcs import is_git_checkout, git_checkout_hint
-from celune.i18n import string
 from celune.paths import (
     project_root,
     running_compiled,
     migrate_legacy_app_data,
     configure_huggingface_runtime,
 )
-from celune.config import config_log_level, normalize_log_level
-from celune.terminal import set_terminal_title
 from celune.constants import (
     APP_NAME,
     APP_SLUG,
@@ -37,8 +32,13 @@ from celune.constants import (
     SUPPORTED_CUDA_VERSIONS,
     ExitCodes,
 )
-from celune.exceptions import CEVoiceDependencyUnavailableError
+from celune.i18n import string
 from celune.typing.common import Config
+from celune.terminal import set_terminal_title
+from celune import REVISION, __tagline__, __version__
+from celune.vcs import is_git_checkout, git_checkout_hint
+from celune.exceptions import CEVoiceDependencyUnavailableError
+from celune.config import config_log_level, normalize_log_level
 
 if TYPE_CHECKING:
     from celune.celune import Celune
@@ -1372,7 +1372,16 @@ def start(
 
     from celune.watchdog import start_watchdog, launcher_loss_requested
 
-    csystem = Console(stderr=True).color_system
+    configured_color_system = os.environ.get("TEXTUAL_COLOR_SYSTEM", "auto")
+    if sys.platform == "win32" and configured_color_system == "auto":
+        configured_color_system = "truecolor"
+        os.environ["TEXTUAL_COLOR_SYSTEM"] = configured_color_system
+
+    csystem = (
+        Console(stderr=True).color_system
+        if configured_color_system == "auto"
+        else configured_color_system
+    )
     if csystem != "truecolor":
         print(
             string("celune.no_truecolor", color_system=csystem),
