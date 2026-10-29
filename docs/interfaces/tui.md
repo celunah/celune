@@ -34,7 +34,14 @@ The left pane selects the UI and its subsystems alongside engine components,
 including loaded lifecycle, pipeline, playback, audio-server, and worker modules.
 The right pane refreshes the selected object's state and attributes. Sensitive
 fields such as API keys, tokens, passwords, and credentials are redacted. The
-bottom `LIVE CALLS` pane keeps a rolling buffer of up to 100 calls while the
+`UI Modals` entry under `Components > UI` replaces the state and attributes
+tables with buttons for voice selection, the settings menu, and the license
+modal. It opens the current voice and settings menus when available, using
+inert examples otherwise. Preview modal responses are discarded, and closing a
+preview returns to the debug inspector without applying a selection, saving
+settings, or loading a model.
+
+The bottom `LIVE CALLS` pane keeps a rolling buffer of up to 100 calls while the
 inspector is open. Closing the inspector stops tracing; opening it again resumes
 tracing and retains the buffer. The table displays the latest 25 entries and
 refreshes once per second. By default, it

@@ -454,13 +454,39 @@ class VoiceButton(Button):
 class SelectMenuOverlay(ModalScreen[None]):
     """Center one selection menu over the application content."""
 
-    def __init__(self, menu: SelectMenuWidget) -> None:
+    def __init__(
+        self,
+        menu: SelectMenuWidget,
+        *,
+        discard_result: bool = False,
+    ) -> None:
         super().__init__()
         self.menu = menu
+        self.discard_result = discard_result
 
     def compose(self) -> ComposeResult:
         """Yield the menu that should be centered by this overlay."""
         yield self.menu
+
+    def on_select_menu_widget_confirmed(
+        self,
+        event: SelectMenuWidget.Confirmed,
+    ) -> None:
+        """Dismiss a preview after consuming its selection event."""
+        if not self.discard_result:
+            return
+        event.stop()
+        self.dismiss(None)
+
+    def on_select_menu_widget_cancelled(
+        self,
+        event: SelectMenuWidget.Cancelled,
+    ) -> None:
+        """Dismiss a preview after consuming its cancellation event."""
+        if not self.discard_result:
+            return
+        event.stop()
+        self.dismiss(None)
 
     def on_key(self, event: events.Key) -> None:
         """Keep unhandled keys from reaching the application underneath."""

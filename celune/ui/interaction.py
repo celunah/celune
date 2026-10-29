@@ -6,19 +6,18 @@ from __future__ import annotations
 import os
 import re
 import sys
+import queue as queue_module
 import shlex
 import types
 import ctypes
 import asyncio
-import contextlib
 import threading
-
-from uuid import uuid4
+import contextlib
 from copy import deepcopy
-import queue as queue_module
-
-from collections.abc import Callable, Iterator
+from uuid import uuid4
 from typing import TYPE_CHECKING, Optional, cast
+from pathlib import Path
+from collections.abc import Callable, Iterator
 
 from . import app as _app
 from ..constants import SIGTSTP, APP_NAME
@@ -639,9 +638,9 @@ def process_command(self, command: str, args: list[str]) -> None:
     _app.process_ui_command(self, command, args)
 
 
-def open_settings_menu(self) -> None:
-    """Open the configuration manager and prepare a restart on save."""
-    if self.celune is None or self._active_menu is not None:
+def open_settings_menu(self, *, preview: bool = False) -> None:
+    """Open the configuration manager or a no-op preview of it."""
+    if self.celune is None or (self._active_menu is not None and not preview):
         return
 
     options: list[_app.SelectMenuOption] = []
@@ -659,10 +658,12 @@ def open_settings_menu(self) -> None:
         paths.append(path)
 
     if not options:
-        self.safe_log(_app.string("ui.settings_empty"), "warning")
+        if not preview:
+            self.safe_log(_app.string("ui.settings_empty"), "warning")
         return
 
-    self._settings_paths = tuple(paths)
+    if not preview:
+        self._settings_paths = tuple(paths)
     self._show_menu(
         _app.SelectMenuWidget(
             _app.string("ui.settings_title"),
@@ -677,6 +678,7 @@ def open_settings_menu(self) -> None:
             ),
         ),
         "settings",
+        preview=preview,
     )
 
 
@@ -833,9 +835,9 @@ def _menu_footer(
     return _app.string("ui.menu_hint_separator").join(hints)
 
 
-def open_voice_menu(self) -> None:
-    """Open a voice or singing-pack menu for the active backend."""
-    if self.celune is None or self._active_menu is not None:
+def open_voice_menu(self, *, preview: bool = False) -> None:
+    """Open voice selection or a no-op preview of it."""
+    if self.celune is None or (self._active_menu is not None and not preview):
         return
     singing_backend = getattr(getattr(self.celune, "backend", None), "singing", False)
 
@@ -848,7 +850,7 @@ def open_voice_menu(self) -> None:
     )
 
     options: list[_app.SelectMenuOption] = []
-    self._voice_menu_paths = {}
+    voice_menu_paths: dict[str, Path] = {}
     active_bundle = active_bundle_path()
     active_voice = getattr(self.celune, "current_voice", None)
     voice_directory = bundled_voices_dir()
@@ -867,7 +869,7 @@ def open_voice_menu(self) -> None:
             continue
 
         pack_name = bundle_display_name(bundle)
-        if pack_name in self._voice_menu_paths:
+        if pack_name in voice_menu_paths:
             pack_name = _app.string(
                 "cevoice.official_bundle_label",
                 character=pack_name,
@@ -877,7 +879,7 @@ def open_voice_menu(self) -> None:
             singing_voice = bundle.singing_voice
             if singing_voice is None:
                 continue
-            self._voice_menu_paths[pack_name] = path
+            voice_menu_paths[pack_name] = path
             options.append(
                 _app.SelectMenuOption(
                     label=pack_name,
@@ -891,7 +893,7 @@ def open_voice_menu(self) -> None:
         voices = bundle.voice_order
         if not voices:
             continue
-        self._voice_menu_paths[pack_name] = path
+        voice_menu_paths[pack_name] = path
         selected_voice = voices[0]
         if (
             path == active_bundle
@@ -915,16 +917,20 @@ def open_voice_menu(self) -> None:
         )
 
     if not options:
-        self.safe_log(_app.string("ui.no_voices_loaded"), "warning")
+        if not preview:
+            self._voice_menu_paths = {}
+            self.safe_log(_app.string("ui.no_voices_loaded"), "warning")
         return
 
     for index, option in enumerate(options):
-        if self._voice_menu_paths.get(option.label) == active_bundle and (
+        if voice_menu_paths.get(option.label) == active_bundle and (
             singing_backend or option.value == active_voice
         ):
             options.insert(0, options.pop(index))
             break
 
+    if not preview:
+        self._voice_menu_paths = voice_menu_paths
     self._show_menu(
         _app.SelectMenuWidget(
             _app.string("ui.voice_menu_title"),
@@ -938,12 +944,27 @@ def open_voice_menu(self) -> None:
             ),
         ),
         "voice",
+        preview=preview,
     )
 
 
-def _show_menu(self, menu: _app.SelectMenuWidget, menu_kind: str) -> None:
-    """Mount and focus one application menu overlay."""
-    overlay = _app.SelectMenuOverlay(menu)
+def _discard_menu_preview_result(result: None) -> None:
+    """Consume a preview overlay result without applying a selection."""
+    del result
+
+
+def _show_menu(
+    self,
+    menu: _app.SelectMenuWidget,
+    menu_kind: str,
+    *,
+    preview: bool = False,
+) -> None:
+    """Mount a menu overlay, optionally discarding its result as a preview."""
+    overlay = _app.SelectMenuOverlay(menu, discard_result=preview)
+    if preview:
+        self.push_screen(overlay, _discard_menu_preview_result)
+        return
     self._active_menu = menu
     self._active_menu_overlay = overlay
     self._active_menu_kind = menu_kind
@@ -1990,9 +2011,15 @@ class InteractionHooks:
         """Delegate to the interaction implementation."""
         return _set_config_value(config, path, value)
 
-    def _show_menu(self, menu: _app.SelectMenuWidget, menu_kind: str) -> None:
-        """Delegate to the interaction implementation."""
-        return _show_menu(self, menu, menu_kind)
+    def _show_menu(
+        self,
+        menu: _app.SelectMenuWidget,
+        menu_kind: str,
+        *,
+        preview: bool = False,
+    ) -> None:
+        """Delegate menu opening with optional result discard for previews."""
+        return _show_menu(self, menu, menu_kind, preview=preview)
 
     def _shutdown_from_windows_signal(self) -> None:
         """Delegate to the interaction implementation."""
@@ -2104,13 +2131,13 @@ class InteractionHooks:
         """Delegate to the interaction implementation."""
         return on_voice_button_held(self, event)
 
-    def open_settings_menu(self) -> None:
-        """Delegate to the interaction implementation."""
-        return open_settings_menu(self)
+    def open_settings_menu(self, *, preview: bool = False) -> None:
+        """Delegate configuration-menu opening or its no-op preview."""
+        return open_settings_menu(self, preview=preview)
 
-    def open_voice_menu(self) -> None:
-        """Delegate to the interaction implementation."""
-        return open_voice_menu(self)
+    def open_voice_menu(self, *, preview: bool = False) -> None:
+        """Delegate voice-menu opening or its no-op preview."""
+        return open_voice_menu(self, preview=preview)
 
     def process_command(self, command: str, args: list[str]) -> None:
         """Delegate to the interaction implementation."""

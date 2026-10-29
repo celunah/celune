@@ -8,26 +8,27 @@ import site
 import time
 import types
 import inspect
-import sysconfig
-import contextlib
 import functools
+import sysconfig
 import threading
-
+import contextlib
 from enum import Enum
+from types import CodeType, FrameType, ModuleType
+from typing import Literal, ClassVar, Optional, cast
 from pathlib import Path
 from datetime import datetime
 from collections import abc, deque
-from dataclasses import dataclass, field
-from typing import ClassVar, Optional, cast
-from types import CodeType, FrameType, ModuleType
+from dataclasses import field, dataclass
 
+from textual import app as textual_app
+from textual import events, screen, binding, widgets, containers
 from rich.text import Text
-from textual.app import ComposeResult
-from textual import binding, containers, events, screen, widgets
 
 from ..i18n import string
-from ..constants import APP_NAME
 from ..paths import running_compiled
+from ..constants import APP_NAME
+
+ComposeResult = textual_app.ComposeResult
 
 
 def _site_package_roots() -> tuple[Path, ...]:
@@ -1010,6 +1011,7 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
     #debug-components-title,
     #debug-state-title,
     #debug-attributes-title,
+    #debug-modal-preview-title,
     #debug-live-title,
     #debug-call-detail-title {
         height: 1;
@@ -1053,6 +1055,37 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
     #debug-attributes-table {
         height: 1fr;
         min-height: 3;
+    }
+    #debug-modal-preview {
+        display: none;
+        width: 1fr;
+        height: 1fr;
+    }
+    #debug-modal-preview-title {
+        height: 1;
+        color: $primary;
+        text-style: bold;
+        margin-bottom: 1;
+    }
+    #debug-modal-preview-description,
+    #debug-modal-preview-result {
+        height: auto;
+        color: $secondary;
+        margin-bottom: 1;
+    }
+    #debug-modal-preview-actions {
+        height: auto;
+        width: 1fr;
+    }
+    #debug-modal-preview-actions Button {
+        width: 1fr;
+        min-width: 20;
+        height: 3;
+        padding: 0 1;
+        border: round $primary;
+        background: $surface;
+        color: $primary;
+        margin-bottom: 1;
     }
     #debug-live-pane {
         height: 10;
@@ -1219,6 +1252,32 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
                         show_row_labels=False,
                         id="debug-attributes-table",
                     )
+                    with containers.Vertical(id="debug-modal-preview"):
+                        yield widgets.Static(
+                            string("debug.component_ui_modals"),
+                            id="debug-modal-preview-title",
+                        )
+                        yield widgets.Static(
+                            string("debug.modal_preview_description"),
+                            id="debug-modal-preview-description",
+                        )
+                        yield widgets.Static(
+                            string("debug.modal_preview_result_ignored"),
+                            id="debug-modal-preview-result",
+                        )
+                        with containers.Vertical(id="debug-modal-preview-actions"):
+                            yield widgets.Button(
+                                string("debug.modal_preview_voice"),
+                                id="debug-modal-preview-voice",
+                            )
+                            yield widgets.Button(
+                                string("debug.modal_preview_settings"),
+                                id="debug-modal-preview-settings",
+                            )
+                            yield widgets.Button(
+                                string("debug.modal_preview_license"),
+                                id="debug-modal-preview-license",
+                            )
             yield _DebugResizeHandle(
                 "y",
                 self._resize_live_pane,
@@ -1355,6 +1414,112 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
             self.trace.reset_source_filters()
             self._refresh_source_status()
             self._refresh_live_calls(force=True)
+        elif event.button.id == "debug-modal-preview-voice":
+            self._open_menu_preview("voice")
+        elif event.button.id == "debug-modal-preview-settings":
+            self._open_menu_preview("settings")
+        elif event.button.id == "debug-modal-preview-license":
+            self._open_license_preview()
+
+    def _ignore_modal_preview_result(self, result: object) -> None:
+        """Consume a preview modal result without changing application state."""
+        del result
+
+    def _open_menu_preview(self, menu_kind: Literal["voice", "settings"]) -> None:
+        """Open a no-op preview of the active voice or settings menu."""
+        from . import app as _app
+
+        ui = cast(_app.CeluneUI, self.ui)
+        if ui.celune is not None:
+            if menu_kind == "voice":
+                ui.open_voice_menu(preview=True)
+            else:
+                ui.open_settings_menu(preview=True)
+            if self.app.screen is not self:
+                return
+
+        if menu_kind == "voice":
+            options = (
+                _app.SelectMenuOption(
+                    label=string("debug.modal_preview_voice_pack"),
+                    value="example_voice_1",
+                    autocomplete_values=("example_voice_1", "example_voice_2"),
+                    autocomplete_labels=(
+                        string("debug.modal_preview_voice_one"),
+                        string("debug.modal_preview_voice_two"),
+                    ),
+                ),
+            )
+            title = string("ui.voice_menu_title")
+            confirm_hint = string("ui.voice_confirm_hint")
+            return_value = True
+        else:
+            options = (
+                _app.SelectMenuOption(
+                    label=string("debug.modal_preview_theme_setting"),
+                    value="dark",
+                    autocomplete_values=("dark", "light"),
+                    display_value=string("debug.modal_preview_theme_dark"),
+                    explanation=string("ui.settings_explanation.theme"),
+                    autocomplete_labels=(
+                        string("debug.modal_preview_theme_dark"),
+                        string("debug.modal_preview_theme_light"),
+                    ),
+                ),
+                _app.SelectMenuOption(
+                    label=string("debug.modal_preview_vram_setting"),
+                    value="medium",
+                    autocomplete_values=("low", "medium", "high", "xhigh"),
+                    display_value=string("debug.modal_preview_vram_medium"),
+                    explanation=string("ui.settings_explanation.vram"),
+                    autocomplete_labels=(
+                        string("debug.modal_preview_vram_low"),
+                        string("debug.modal_preview_vram_medium"),
+                        string("debug.modal_preview_vram_high"),
+                        string("debug.modal_preview_vram_xhigh"),
+                    ),
+                ),
+            )
+            title = string("ui.settings_title")
+            confirm_hint = string("ui.settings_confirm_hint")
+            return_value = False
+        footer = string("ui.menu_hint_separator").join(
+            (
+                string("ui.menu_hint_select"),
+                string("ui.menu_hint_choose"),
+                confirm_hint,
+                string("ui.menu_hint_cancel"),
+            )
+        )
+        menu = _app.SelectMenuWidget(
+            title,
+            options,
+            value_display="all",
+            return_value=return_value,
+            footer=footer,
+        )
+
+        self.app.push_screen(
+            _app.SelectMenuOverlay(menu, discard_result=True),
+            self._ignore_modal_preview_result,
+        )
+
+    def _open_license_preview(self) -> None:
+        """Open the license dialog with preview-only text and no model load."""
+        from . import app as _app
+
+        self.app.push_screen(
+            _app.ModelConsentScreen(
+                prompt=string("debug.modal_preview_license_prompt"),
+                instruction=string("registry.consent_instruction"),
+                details=(string("debug.modal_preview_license_detail"),),
+                entry_hint=string("registry.consent_entry_hint"),
+                consent_phrase=string("registry.consent_phrase"),
+                accept_label=string("registry.consent_accept"),
+                decline_label=string("registry.consent_decline"),
+            ),
+            self._ignore_modal_preview_result,
+        )
 
     def on_data_table_row_highlighted(
         self,
@@ -1785,6 +1950,13 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
                         value=value,
                     )
                 )
+        ui_component.children.append(
+            _InspectorComponent(
+                path="ui.modals",
+                label=string("debug.component_ui_modals"),
+                value=(),
+            )
+        )
         for module_name, label_key in _UI_MODULE_COMPONENTS:
             module = sys.modules.get(module_name)
             if isinstance(module, ModuleType):
@@ -1906,7 +2078,16 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
 
     def _render_component(self) -> None:
         component = self._selected_component
+        is_modal_catalog = component is not None and component.path == "ui.modals"
+        self.query_one("#debug-modal-preview").display = is_modal_catalog
+        self.query_one("#debug-selected-component").display = not is_modal_catalog
+        self.query_one("#debug-state-title").display = not is_modal_catalog
+        self.query_one("#debug-state-table").display = not is_modal_catalog
+        self.query_one("#debug-attributes-title").display = not is_modal_catalog
+        self.query_one("#debug-attributes-table").display = not is_modal_catalog
         if component is None:
+            return
+        if is_modal_catalog:
             return
         self.query_one("#debug-selected-component", widgets.Static).update(
             Text(component.label)
