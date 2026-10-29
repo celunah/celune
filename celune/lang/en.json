@@ -724,7 +724,7 @@
     "registry.consent_accepted_retry": "Terms accepted. Retry your request.",
     "registry.consent_decline": "Decline",
     "registry.consent_declined": "Terms declined. The model was not loaded.",
-    "registry.consent_entry_hint": "Type I consent to continue.",
+    "registry.consent_entry_hint": "I consent",
     "registry.consent_instruction": "Once read, type \"I consent\" to continue.",
     "registry.consent_phrase": "I consent",
     "registry.consent_prompt": "Please read the license terms for {model_name}: {license_url}",
