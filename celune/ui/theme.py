@@ -11,6 +11,10 @@ CELUNE_CSS = """
         background: $background;
     }
 
+    ModelConsentScreen {
+        background: transparent;
+    }
+
     SelectMenuOverlay {
         align: center middle;
         background: transparent;
