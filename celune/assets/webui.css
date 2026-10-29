@@ -100,6 +100,7 @@ html,
     #celune-style button,
     #celune-send button,
     #celune-convert button,
+    #celune-model-consent button,
     button#celune-style,
     button#celune-send,
     button#celune-convert {
@@ -113,6 +114,7 @@ html,
     #celune-style button:hover:not(:disabled),
     #celune-send button:hover:not(:disabled),
     #celune-convert button:hover:not(:disabled),
+    #celune-model-consent button:hover:not(:disabled),
     button#celune-style:hover:not(:disabled),
     button#celune-send:hover:not(:disabled),
     button#celune-convert:hover:not(:disabled) {
@@ -122,6 +124,7 @@ html,
     #celune-style button:disabled,
     #celune-send button:disabled,
     #celune-convert button:disabled,
+    #celune-model-consent button:disabled,
     button#celune-style:disabled,
     button#celune-send:disabled,
     button#celune-convert:disabled {
@@ -138,6 +141,7 @@ html,
     #celune-style button:focus-visible,
     #celune-send button:focus-visible,
     #celune-convert button:focus-visible,
+    #celune-model-consent button:focus-visible,
     button#celune-style:focus-visible,
     button#celune-send:focus-visible,
     button#celune-convert:focus-visible {
@@ -170,12 +174,33 @@ html,
             var(--celune-ui-bg, var(--celune-background, #1d1826));
     }
 
-    #celune-input textarea {
+    #celune-input textarea,
+    #celune-model-consent input {
         background: var(--celune-ui-input-bg, var(--celune-input-bg, #3a304c));
         color: var(--celune-ui-accent, var(--celune-primary, #cebaff));
         border-radius: 4px;
+    }
+
+    #celune-input textarea {
         scrollbar-color: var(--celune-ui-accent, var(--celune-primary, #cebaff))
             var(--celune-ui-bg, var(--celune-background, #1d1826));
+    }
+
+    #celune-model-consent input {
+        width: 100%;
+        box-sizing: border-box;
+        margin: .5rem 0 1rem;
+        padding: .8rem;
+        border: 1px solid var(--celune-ui-accent, var(--celune-primary, #cebaff));
+    }
+
+    #celune-model-consent input::placeholder {
+        color: var(--celune-placeholder, #9c88ce);
+    }
+
+    #celune-model-consent input:focus-visible {
+        outline: 2px solid var(--celune-ui-accent, var(--celune-primary, #cebaff));
+        outline-offset: 2px;
     }
 
     #celune-input textarea::placeholder {
@@ -311,7 +336,7 @@ html,
   display: grid;
   place-items: center;
   padding: 1.5rem;
-  background: color-mix(in srgb, var(--celune-background, #1d1826) 94%, black);
+  background: color-mix(in srgb, var(--celune-background, #1d1826) 45%, transparent);
   color: var(--celune-foreground, #fff);
 }
 
@@ -335,14 +360,6 @@ html,
   color: var(--celune-primary, #cebaff);
 }
 
-#celune-model-consent input {
-  width: 100%;
-  box-sizing: border-box;
-  margin: .5rem 0 1rem;
-  padding: .8rem;
-  border-radius: .6rem;
-}
-
 #celune-model-consent .actions {
   display: flex;
   gap: .75rem;
@@ -351,26 +368,8 @@ html,
 #celune-model-consent button {
   flex: 1;
   min-height: 2.75rem;
-  border: 0;
-  border-radius: .6rem;
   font: inherit;
   cursor: pointer;
-}
-
-#celune-model-consent button:disabled {
-  opacity: .55;
-  cursor: not-allowed;
-}
-
-#celune-model-consent [data-role="accept"] {
-  background: var(--celune-primary, #cebaff);
-  color: #17121f;
-}
-
-#celune-model-consent [data-role="decline"] {
-  border: 1px solid var(--celune-primary, #cebaff);
-  background: transparent;
-  color: var(--celune-foreground, #fff);
 }
 
 .celune-consent-notice {

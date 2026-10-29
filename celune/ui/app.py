@@ -4,70 +4,77 @@
 from __future__ import annotations
 
 import sys
+import queue as queue_module
 import asyncio
 import logging
 import itertools
 import threading
-import queue as queue_module
-
+from io import TextIOWrapper
+from types import ModuleType
 from typing import (
     TYPE_CHECKING,
     Never,
+    Union,
     TextIO,
     Literal,
     ClassVar,
-    Union,
     Optional,
     Protocol,
     cast,
     final,
 )
 from pathlib import Path
-from io import TextIOWrapper
-from types import ModuleType
-from dataclasses import dataclass, field
-from collections.abc import Awaitable, Callable, Iterator
+from dataclasses import field, dataclass
+from collections.abc import Callable, Iterator, Awaitable
 
 from textual import (
     app,
-    binding,
-    color as textual_color,
-    containers,
     css,
-    events,
-    message as textual_message,
-    screen as textual_screen,
+    work,
     theme,
     timer,
-    widget as textual_widget,
+    events,
+    binding,
     widgets,
-    work,
+    containers,
+)
+from textual import (
+    color as textual_color,
+)
+from textual import (
+    screen as textual_screen,
+)
+from textual import (
+    widget as textual_widget,
+)
+from textual import (
+    message as textual_message,
 )
 from rich.text import Text
 
+from . import debug as _debug
+from . import capture as _capture
+from . import runtime as _runtime
+from . import interaction as _interaction
+from ..i18n import string, tagged_string
+from .theme import CELUNE_CSS, severity_color, with_brightness
+from .compat import install_textual_timer_sleep
+from .loading import CeluneLoadingScreen
+from .terminal import SelectMenuOption, SelectMenuWidget
+from ..watchdog import launcher_loss_requested
+from ..constants import BASE_SR, SIGTSTP, APP_NAME, ExitCodes
+from ..typing.agent import AgentTaskState
 from ..typing.locks import (
     ComponentLockName,
     ComponentLockOwner,
     ComponentLockRequirement,
 )
-from . import debug as _debug
-from . import capture as _capture
-from . import runtime as _runtime
-from ..i18n import string, tagged_string
-from .loading import CeluneLoadingScreen
-from ..typing.agent import AgentTaskState
 from ..typing.modes import OperationState
-from . import interaction as _interaction
-from ..registry.types import ModelMetadata
 from ..typing.common import JSONSerializable
-from ..watchdog import launcher_loss_requested
-from .compat import install_textual_timer_sleep
 from ..typing.config import AudioDeviceInfoValue
-from ..core.concurrency import run_in_daemon_thread
-from .terminal import SelectMenuOption, SelectMenuWidget
-from ..constants import BASE_SR, SIGTSTP, APP_NAME, ExitCodes
-from .theme import CELUNE_CSS, severity_color, with_brightness
+from ..registry.types import ModelMetadata
 from ..theme.defaults import default_theme_family, default_error_theme_family
+from ..core.concurrency import run_in_daemon_thread
 
 App = app.App
 ReturnType = app.ReturnType
@@ -108,14 +115,6 @@ if TYPE_CHECKING:
     import sounddevice as sd
     import numpy.typing as npt
 
-    from .terminal import (
-        LogRedirect,
-        UILogHandler,
-        is_celune_log_record,
-    )
-    from .resources import FOOTER_ROTATE_SECONDS
-    from .commands import process_command as process_ui_command
-
     from ..vc import (
         VC_PLAYBACK_GAIN,
         VCDebugCapture,
@@ -128,7 +127,19 @@ if TYPE_CHECKING:
         vc_live_chunk_overlap_frames,
         create_live_voice_activity_detector,
     )
+    from ..paths import config_path, main_window_log_path
+    from ..utils import discard, replace_ipa, is_april_fools
     from ..celune import Celune
+    from ..config import format_audio_device_name, resolve_audio_device_with_info
+    from ..cevoice import CEVoiceLoader
+    from .commands import process_command as process_ui_command
+    from .terminal import (
+        LogRedirect,
+        UILogHandler,
+        is_celune_log_record,
+    )
+    from .resources import FOOTER_ROTATE_SECONDS
+    from ..exceptions import CEDTSError
     from ..persona.asr import (
         DEFAULT_PERSONA_SPEECH_MODEL_ID,
         PERSONA_SPEECH_END_DELAY_SECONDS,
@@ -136,31 +147,26 @@ if TYPE_CHECKING:
         WhisperSegment,
         WhisperTranscriber,
     )
+    from ..persona.impl import persona_config, persona_enabled, persona_talkback_enabled
+    from ..typing.agent import AgentTask
+    from ..typing.aliases import LogLevel, AudioChunk, AudioChunks, VCAudioCallback
+    from ..core.concurrency import ComponentLockLease
+    from ..extensions.events import EventDispatcher
+    from ..pipeline.captions import current_playback_status
     from ..dataclasses.events import (
+        CharacterLoadedEvent,
+        CharacterChangedEvent,
         AgentTaskFinishedEvent,
+        CharacterUnloadedEvent,
         AgentChoiceRequestedEvent,
         AgentTaskStateChangedEvent,
         AgentApprovalRequestedEvent,
-        CharacterChangedEvent,
-        CharacterLoadedEvent,
-        CharacterUnloadedEvent,
     )
-    from ..cevoice import CEVoiceLoader
-    from ..exceptions import CEDTSError
     from ..pipeline.submission import (
         queue_streaming_sfx_audio,
         finish_streaming_sfx_audio,
     )
-    from ..typing.agent import AgentTask
     from ..dataclasses.pipeline import AudioOutput
-    from ..extensions.events import EventDispatcher
-    from ..core.concurrency import ComponentLockLease
-    from ..paths import config_path, main_window_log_path
-    from ..pipeline.captions import current_playback_status
-    from ..utils import discard, replace_ipa, is_april_fools
-    from ..config import format_audio_device_name, resolve_audio_device_with_info
-    from ..typing.aliases import LogLevel, AudioChunk, AudioChunks, VCAudioCallback
-    from ..persona.impl import persona_config, persona_enabled, persona_talkback_enabled
 
     colors: ModuleType
 
@@ -496,7 +502,7 @@ class ModelConsentScreen(ModalScreen[bool]):
     DEFAULT_CSS = """
     ModelConsentScreen {
         align: center middle;
-        background: $background 90%;
+        background: transparent;
     }
     #model-consent-panel {
         width: 82%;
@@ -504,8 +510,9 @@ class ModelConsentScreen(ModalScreen[bool]):
         max-height: 90%;
         height: auto;
         padding: 1 2;
-        border: round $accent;
-        background: $surface;
+        border: round $primary;
+        background: $background;
+        color: $foreground;
     }
     #model-consent-prompt {
         height: auto;
@@ -517,6 +524,19 @@ class ModelConsentScreen(ModalScreen[bool]):
     }
     #model-consent-phrase {
         margin-top: 1;
+        width: 1fr;
+        height: 3;
+        border: round $primary;
+        background: $background;
+        color: $foreground;
+    }
+    #model-consent-phrase:focus {
+        border: round $foreground;
+        background: $background;
+        background-tint: transparent;
+    }
+    #model-consent-phrase .input--placeholder {
+        color: $secondary;
     }
     #model-consent-actions {
         height: auto;
@@ -556,25 +576,25 @@ class ModelConsentScreen(ModalScreen[bool]):
                 id="model-consent-phrase",
             )
             with Horizontal(id="model-consent-actions"):
-                yield TextualButton(
+                yield Button(
                     self.decline_label,
                     id="model-consent-decline",
                     variant="default",
                 )
-                yield TextualButton(
+                yield Button(
                     self.accept_label,
                     id="model-consent-accept",
                     variant="primary",
-                    disabled=True,
                 )
 
     def on_mount(self) -> None:
         """Focus the exact phrase field when the consent screen opens."""
+        self.query_one("#model-consent-accept", Button).disabled = True
         self.query_one(Input).focus()
 
     def on_input_changed(self, event: Input.Changed) -> None:
         """Enable consent only after the requested phrase is typed verbatim."""
-        self.query_one("#model-consent-accept", TextualButton).disabled = (
+        self.query_one("#model-consent-accept", Button).disabled = (
             event.value != self.consent_phrase
         )
 
