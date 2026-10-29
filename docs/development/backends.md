@@ -10,6 +10,11 @@ environment. The resolver imports the selected backend lazily, so
 backend-specific packages must not be imported by core modules at startup.
 Explicit CEDTS worker callers may still use the manifest-backed environment
 manager; normal application configuration does not select that path.
+`BackendEnvironmentManager` in `celune/backends/environment.py` stores each
+worker environment under its backend and manifest fingerprint. After the
+current environment is ready, it removes older fingerprinted environments for
+that backend. If installation fails, the prior environment remains available.
+`tests/backends/test_environment.py` covers this cleanup behavior.
 
 If a CEDTS worker exits before its first handshake frame, Celune reports the
 unexpected end of the protocol stream. When worker stderr contains an

@@ -362,7 +362,10 @@ class BackendEnvironmentManager:
             BackendEnvironmentError: If uv is unavailable or installation fails.
         """
         environment = self.environment_for(manifest)
+        lock_path = self.root / manifest.backend_id / ".install.lock"
         if environment.is_ready:
+            with exclusive_lock(lock_path, self.lock_timeout):
+                self._remove_superseded_environments(environment)
             return environment
 
         if self.uv_executable is None:
@@ -370,9 +373,9 @@ class BackendEnvironmentManager:
                 "uv is required to install isolated backend environments"
             )
 
-        lock_path = self.root / manifest.backend_id / ".install.lock"
         with exclusive_lock(lock_path, self.lock_timeout):
             if environment.is_ready:
+                self._remove_superseded_environments(environment)
                 return environment
 
             environment.root.parent.mkdir(parents=True, exist_ok=True)
@@ -432,11 +435,48 @@ class BackendEnvironmentManager:
             finally:
                 shutil.rmtree(temporary_root, ignore_errors=True)
 
-        if not environment.is_ready:
-            raise _BackendEnvironmentError(
-                f"Backend environment was not created: {environment.root}"
-            )
+            if not environment.is_ready:
+                raise _BackendEnvironmentError(
+                    f"Backend environment was not created: {environment.root}"
+                )
+            self._remove_superseded_environments(environment)
+
         return environment
+
+    @staticmethod
+    def _remove_superseded_environments(environment: BackendEnvironment) -> None:
+        """Remove prior fingerprinted environments for a ready backend."""
+        try:
+            candidates = tuple(environment.root.parent.iterdir())
+        except OSError:
+            return
+
+        for candidate in candidates:
+            if candidate == environment.root or not candidate.is_dir():
+                continue
+            if len(candidate.name) != 16 or any(
+                character not in "0123456789abcdef" for character in candidate.name
+            ):
+                continue
+
+            metadata_path = candidate / "manifest.json"
+            try:
+                metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+
+            if not isinstance(metadata, dict):
+                continue
+            stored_manifest = metadata.get("manifest")
+            if (
+                not isinstance(stored_manifest, dict)
+                or stored_manifest.get("backend_id") != environment.manifest.backend_id
+                or metadata.get("fingerprint") != candidate.name
+            ):
+                continue
+
+            with suppress(OSError):
+                shutil.rmtree(candidate)
 
     @staticmethod
     def _python_path(virtualenv: Path) -> Path:

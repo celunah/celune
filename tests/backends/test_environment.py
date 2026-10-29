@@ -9,34 +9,12 @@ import threading
 import subprocess
 from pathlib import Path
 from unittest import mock
-from typing import IO, Optional, cast
-from types import SimpleNamespace
 from collections import abc
+from types import SimpleNamespace
+from typing import IO, Optional, cast
 
 import numpy as np
 
-from celune.backends import environment
-from celune.cedts import remote, worker
-from celune.dataclasses.pipeline import AudioOutput, VoiceConversionRequest
-from celune.typing.worker import (
-    WorkerValue,
-    WorkerRequest,
-    WorkerResponse,
-    WorkerPayloadDescriptor,
-)
-from celune.typing.backends import (
-    BackendModel,
-    BackendRuntime,
-    BackendGeneration,
-    BackendArgumentValue,
-)
-from celune.backends.environment import (
-    BACKEND_MANIFESTS,
-    BackendManifest,
-    BackendEnvironmentManager,
-    exclusive_lock,
-    backend_manifest,
-)
 from celune.exceptions import (
     CEDTSError,
     CEDTSEOFError,
@@ -45,6 +23,12 @@ from celune.exceptions import (
     CEDTSTimeoutError,
     CEDTSProtocolError,
     BackendEnvironmentError,
+)
+from celune.typing.worker import (
+    WorkerValue,
+    WorkerRequest,
+    WorkerResponse,
+    WorkerPayloadDescriptor,
 )
 from celune.cedts.protocol import (
     CEDTSLimits,
@@ -58,6 +42,22 @@ from celune.cedts.protocol import (
     receive_payloads,
     validate_payload_descriptors,
 )
+from celune.typing.backends import (
+    BackendModel,
+    BackendRuntime,
+    BackendGeneration,
+    BackendArgumentValue,
+)
+from celune.cedts import remote, worker
+from celune.backends import environment
+from celune.backends.environment import (
+    BACKEND_MANIFESTS,
+    BackendManifest,
+    BackendEnvironmentManager,
+    exclusive_lock,
+    backend_manifest,
+)
+from celune.dataclasses.pipeline import AudioOutput, VoiceConversionRequest
 
 from ..support import CeluneTestCase
 
@@ -565,6 +565,48 @@ class TestBackendEnvironment(CeluneTestCase):
                 self.assertEqual(manager.ensure(manifest), backend_environment)
 
             run.assert_not_called()
+
+    def test_ensure_removes_superseded_backend_environments(self) -> None:
+        """Remove older dependency fingerprints after the current setup succeeds."""
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            manager = BackendEnvironmentManager(root=root, uv_executable="uv")
+            old_manifest = BackendManifest(
+                "test", "tts", ("demo==1",), "module", "Backend"
+            )
+            manifest = BackendManifest("test", "tts", ("demo==2",), "module", "Backend")
+            old_environment = manager.environment_for(old_manifest)
+            old_environment.root.mkdir(parents=True)
+            old_environment.metadata_path.write_text(
+                json.dumps(
+                    {
+                        "manifest": {"backend_id": "test"},
+                        "fingerprint": old_manifest.fingerprint(),
+                    }
+                ),
+                encoding="utf-8",
+            )
+            unrelated_directory = root / "test" / "keep"
+            unrelated_directory.mkdir()
+
+            def fake_run(command: list[str], **_kwargs) -> None:
+                if command[1] == "venv":
+                    backend_environment = manager.environment_for(manifest)
+                    relative_python = backend_environment.python.relative_to(
+                        backend_environment.virtualenv
+                    )
+                    virtualenv_python = Path(command[-1]) / relative_python
+                    virtualenv_python.parent.mkdir(parents=True, exist_ok=True)
+                    virtualenv_python.touch()
+
+            with mock.patch(
+                "celune.backends.environment.subprocess.run", side_effect=fake_run
+            ):
+                current_environment = manager.ensure(manifest)
+
+            self.assertTrue(current_environment.is_ready)
+            self.assertFalse(old_environment.root.exists())
+            self.assertTrue(unrelated_directory.is_dir())
 
     def test_ensure_uses_the_backend_python_by_default(self) -> None:
         """Verify backend environments do not inherit the core interpreter."""
