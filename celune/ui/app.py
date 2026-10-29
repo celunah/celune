@@ -1623,8 +1623,8 @@ class CeluneUI(
         waiting_status = string("registry.waiting_status")
         from ..registry.consent import consent_status, pending_model_consents
 
-        def show_screen() -> None:
-            """Present the modal and route its result to the waiting thread."""
+        def show_consent_screen() -> None:
+            """Present the modal after the main UI has been revealed."""
             self.safe_status(waiting_status, "warning")
 
             def on_consent_result(accepted: Optional[bool]) -> None:
@@ -1633,6 +1633,11 @@ class CeluneUI(
                 response.set()
 
             self.push_screen(screen, on_consent_result)
+
+        def show_screen() -> None:
+            """Reveal the app beneath the modal, then present the consent prompt."""
+            self._reveal_main_ui()
+            self.call_after_refresh(show_consent_screen)
 
         self._run_on_ui_thread(show_screen)
         browser_accepted = False

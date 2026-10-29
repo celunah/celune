@@ -41,7 +41,15 @@ Celune stores acknowledgement in its app-data directory, keyed by the exact mode
 
 Before any cataloged or custom model is downloaded or loaded, the calling path uses `require_model_consent`. The guard covers startup preload, Textual and browser UI actions, REST requests, and CEDTS worker-backed loads. A missing acknowledgement raises `ModelConsentRequired`; declining raises `ModelConsentDeclined`. Neither path permits the model load to continue.
 
-The main Textual UI displays the localized `registry.consent_prompt` and `registry.consent_instruction` messages, and requires the exact phrase from `registry.consent_phrase`. Its modal overlays the app and uses the active theme for its input and buttons. The bottom-left status uses `registry.waiting_status` while it waits. The browser UI shows the same localized license details, restriction flags, and source link in a themed modal over the app, and updates its footer while consent is pending.
+The main Textual UI displays the localized `registry.consent_prompt` and
+`registry.consent_instruction` messages, and requires the exact phrase from
+`registry.consent_phrase`. Its modal overlays the app and uses the active theme
+for its input and buttons. If consent is requested during startup, Celune
+reveals the main UI beneath the modal instead of leaving the loading screen up.
+The bottom-left status uses `registry.waiting_status` while it waits. The
+browser UI shows the same localized license details, restriction flags, and
+source link in a themed modal over the app, and updates its footer while consent
+is pending.
 
 ## REST consent endpoints
 
