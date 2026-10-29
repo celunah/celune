@@ -610,7 +610,7 @@ class ModelConsentScreen(ModalScreen[bool]):
                 yield Button(
                     self.accept_label,
                     id="model-consent-accept",
-                    variant="primary",
+                    variant="default",
                 )
 
     def on_mount(self) -> None:

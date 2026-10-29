@@ -177,7 +177,7 @@ CELUNE_CSS = """
         border: round $primary;
     }
 
-    #style, #vc-mode {
+    #style, #vc-mode, #model-consent-actions Button {
         width: 14;
         height: 3;
         border: round $primary;
@@ -200,7 +200,12 @@ CELUNE_CSS = """
         color: $secondary;
     }
 
-    #style:focus, #style:hover, #style.-active, #vc-mode:focus, #vc-mode:hover, #vc-mode.-active, #input:hover {
+    #style:focus, #style:hover, #style.-active,
+    #vc-mode:focus, #vc-mode:hover, #vc-mode.-active,
+    #model-consent-actions Button:focus,
+    #model-consent-actions Button:hover,
+    #model-consent-actions Button.-active,
+    #input:hover {
         border: round $foreground;
         background: $background;
         background-tint: transparent;
