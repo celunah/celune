@@ -8,6 +8,8 @@ import contextlib
 from typing import Optional
 from collections.abc import Mapping, Generator
 
+from .capabilities import PersonaCapabilities
+from .runtime import PersonaRuntime, response_to_json, request_from_json
 from ..modes import (
     mode_allows_persona,
     resolve_operation_mode,
@@ -35,10 +37,9 @@ from ..typing.persona import (
 )
 from ..vram import resolve_vram_preset
 from ..typing.aliases import LogCallback
-from .capabilities import PersonaCapabilities
 from ..typing.common import JSON, JSONSerializable
 from ..registry.llm import PERSONA_DEFAULT_MODEL_ID, persona_model_tier
-from .runtime import PersonaRuntime, response_to_json, request_from_json
+from ..core.concurrency import InferencePriority, PriorityInferenceScheduler
 
 PERSONA_QUANTIZATION = "4bit"
 _CONVERSATION_SUMMARY_SYSTEM_PROMPT = (
@@ -73,6 +74,7 @@ class PersonaClient:
         self.runtime = PersonaRuntime(config=config)
         self.config = config
         self.log = log or log_dev
+        self.inference_scheduler: Optional[PriorityInferenceScheduler] = None
 
     @contextlib.contextmanager
     def _capture_backend_output(self) -> Generator[None, None, None]:
@@ -101,7 +103,12 @@ class PersonaClient:
             model_id: The Persona model ID.
             quantization: The requested quantization mode.
         """
-        with self._capture_backend_output():
+        scheduler = (
+            self.inference_scheduler.inference(InferencePriority.PERSONA)
+            if self.inference_scheduler is not None
+            else contextlib.nullcontext()
+        )
+        with scheduler, self._capture_backend_output():
             self.runtime.load(model_id, quantization)
 
     def post(self, json: dict[str, JSONSerializable]) -> PersonaClientResponse:
@@ -114,7 +121,12 @@ class PersonaClient:
             PersonaClientResponse: The client response received from Persona.
         """
         request = request_from_json(json)
-        with self._capture_backend_output():
+        scheduler = (
+            self.inference_scheduler.inference(InferencePriority.PERSONA)
+            if self.inference_scheduler is not None
+            else contextlib.nullcontext()
+        )
+        with scheduler, self._capture_backend_output():
             response = self.runtime.generate(request)
         return PersonaClientResponse(
             response_to_json(response),

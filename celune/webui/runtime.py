@@ -6,18 +6,19 @@ from __future__ import annotations
 import io
 import re
 import time
+import queue
 import inspect
 import datetime
 import contextlib
 from html import escape
-from typing import TYPE_CHECKING, Union, Optional, cast
 from pathlib import Path
 from functools import partial
-from collections.abc import Mapping, Callable, Iterator, Sequence
 from importlib.resources import files
+from typing import TYPE_CHECKING, Union, Optional, cast
+from collections.abc import Mapping, Callable, Iterator, Sequence
 
-import numpy as np
 import gradio as gr
+import numpy as np
 import soundfile as sf
 from fastapi import HTTPException
 
@@ -934,6 +935,59 @@ def audio_bytes(
         yield flac_bytes(np.concatenate(audio_chunks))
     else:
         yield flac_bytes(np.empty((0, 2), dtype=np.float32))
+
+
+def flac_stream_parts(
+    chunks: SpeechStreamQueue,
+    boundary: str,
+    on_disconnect: Callable[[], bool],
+) -> Iterator[bytes]:
+    """Yield generated audio chunks as independent PCM24 FLAC multipart parts.
+
+    Args:
+        chunks: A queue of generated 48 kHz stereo float32 audio chunks.
+        boundary: The multipart boundary used to frame each FLAC part.
+        on_disconnect: Callback used to stop speech if delivery ends early.
+
+    Returns:
+        Iterator[bytes]: Multipart framing and one FLAC payload per generated chunk.
+
+    Raises:
+        Exception: If the speech pipeline places an error in the audio queue.
+    """
+    completed = False
+    try:
+        while True:
+            item = chunks.get()
+            if item is None:
+                yield f"--{boundary}--\r\n".encode("ascii")
+                completed = True
+                return
+            if isinstance(item, Exception):
+                raise item
+
+            payload = flac_bytes(normalized_audio(item))
+            part_header = (
+                f"--{boundary}\r\n"
+                "Content-Type: audio/flac\r\n"
+                f"Content-Length: {len(payload)}\r\n\r\n"
+            ).encode("ascii")
+            yield part_header + payload + b"\r\n"
+    finally:
+        if not completed:
+            stop_requested = False
+            with contextlib.suppress(Exception):
+                stop_requested = on_disconnect()
+            drain_started = time.monotonic()
+            while True:
+                try:
+                    item = chunks.get(timeout=0.25)
+                except queue.Empty:
+                    if not stop_requested or time.monotonic() - drain_started >= 5.0:
+                        break
+                    continue
+                if item is None:
+                    break
 
 
 def stream_headers(sample_rate: int = BASE_SR) -> dict[str, str]:

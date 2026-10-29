@@ -51,9 +51,12 @@ def think(engine: Celune, text: str) -> bool:
 
     from . import agent as core_agent
 
-    core_agent.interrupt_active_agent_for_input(engine, text)
     with engine.say_lock:
-        engine._persona_queue.put(text)
+        if engine._persona_queue.full():
+            engine.log(string("webui.busy_try_again"), "warning")
+            return False
+        core_agent.interrupt_active_agent_for_input(engine, text)
+        engine._persona_queue.put_nowait(text)
         thread = engine._persona_thread
         if thread is not None and thread.is_alive():
             return True

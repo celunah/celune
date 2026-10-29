@@ -39,8 +39,8 @@ from ..typing.celune import (
 from ..typing.common import JSON, JSONSerializable
 from ..typing.aliases import LogLevel, AudioChunks
 from ..typing.backends import BackendModel
-from ..core.concurrency import ComponentLockManager
 from ..extensions.manager import CeluneExtensionManager
+from ..core.concurrency import ComponentLockManager, PriorityInferenceScheduler
 
 
 @dataclass
@@ -119,7 +119,7 @@ class CelunePipelineState:
     persona_thread: Optional[threading.Thread] = None
     wake_background_thread: Optional[threading.Thread] = None
     wake_background_lock: threading.Lock = field(default_factory=threading.Lock)
-    persona_queue: queue.Queue = field(default_factory=queue.Queue)
+    persona_queue: queue.Queue = field(default_factory=lambda: queue.Queue(maxsize=4))
     queue_lock: threading.Lock = field(default_factory=threading.Lock)
     utterance_force_stop: threading.Event = field(default_factory=threading.Event)
     speech_generation: int = 0
@@ -143,6 +143,9 @@ class CelunePipelineState:
     wake_lock: threading.Lock = field(default_factory=threading.Lock)
     model_lock: threading.RLock = field(default_factory=threading.RLock)
     component_locks: ComponentLockManager = field(default_factory=ComponentLockManager)
+    inference_scheduler: PriorityInferenceScheduler = field(
+        default_factory=PriorityInferenceScheduler
+    )
     pipeline_lock_owner: Optional[ComponentLockOwner] = None
     last_component_busy: Optional[ComponentBusyResult] = None
     exit_requested: bool = False
@@ -377,6 +380,12 @@ CELUNE_FORWARDED_PROPERTIES = (
     ForwardedPropertySpec("_say_lock", "_pipeline_state", "say_lock"),
     ForwardedPropertySpec("_wake_lock", "_pipeline_state", "wake_lock"),
     ForwardedPropertySpec("_model_lock", "_pipeline_state", "model_lock"),
+    ForwardedPropertySpec(
+        "_inference_scheduler",
+        "_pipeline_state",
+        "inference_scheduler",
+        read_only=True,
+    ),
     ForwardedPropertySpec(
         "_component_locks",
         "_pipeline_state",

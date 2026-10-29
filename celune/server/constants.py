@@ -4,6 +4,7 @@
 WEBUI_AUTH_PATH = "/ui/key"
 WEBUI_AUTH_COOKIE = "celune_webui_session"
 WEBUI_AUTH_SESSION_SECONDS = 30 * 24 * 60 * 60
+MAX_PENDING_SPEECH_JOBS = 4
 WEBUI_POLL_SNAPSHOT_API_NAME = "webui_poll_snapshot"
 WEBUI_POLL_VC_API_NAME = "webui_poll_vc_controls"
 WEBUI_POLL_RECORDING_API_NAME = "webui_poll_recording_control"

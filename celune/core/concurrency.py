@@ -3,13 +3,16 @@
 
 from __future__ import annotations
 
+import heapq
 import asyncio
+import itertools
 import contextlib
-import contextvars
 import threading
-from collections.abc import Callable, Sequence
+import contextvars
+from enum import IntEnum
 from types import TracebackType
 from typing import Optional, Self
+from collections.abc import Callable, Generator, Sequence
 
 from ..typing.locks import (
     ComponentLockName,
@@ -18,6 +21,54 @@ from ..typing.locks import (
     ComponentLockAcquisition,
     ComponentLockRequirement,
 )
+
+
+class InferencePriority(IntEnum):
+    """Priority order for inference sharing one accelerator."""
+
+    SPEECH = 0
+    PERSONA = 1
+
+
+class PriorityInferenceScheduler:
+    """Serialize accelerator work and let waiting speech run before Persona."""
+
+    def __init__(self) -> None:
+        """Create an idle inference scheduler."""
+        self._condition = threading.Condition()
+        self._waiters: list[tuple[int, int]] = []
+        self._tickets = itertools.count()
+        self._owner_thread: Optional[int] = None
+        self._owner_depth = 0
+
+    @contextlib.contextmanager
+    def inference(self, priority: InferencePriority) -> Generator[None, None, None]:
+        """Reserve the accelerator for one inference operation.
+
+        Args:
+            priority: Scheduling priority for the operation.
+        """
+        thread_id = threading.get_ident()
+        with self._condition:
+            if self._owner_thread == thread_id:
+                self._owner_depth += 1
+            else:
+                waiter = (int(priority), next(self._tickets))
+                heapq.heappush(self._waiters, waiter)
+                while self._owner_thread is not None or self._waiters[0] != waiter:
+                    self._condition.wait()
+                heapq.heappop(self._waiters)
+                self._owner_thread = thread_id
+                self._owner_depth = 1
+
+        try:
+            yield
+        finally:
+            with self._condition:
+                self._owner_depth -= 1
+                if self._owner_depth == 0:
+                    self._owner_thread = None
+                    self._condition.notify_all()
 
 
 class ComponentLockLease:

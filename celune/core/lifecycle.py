@@ -1005,7 +1005,10 @@ def persona_conn(self) -> Optional[PersonaClient]:
     if not persona_is_available():
         self.log(string("celune.persona_init_failed"), "warning")
         return None
-    return create_persona_client(self.config, log=self.log)
+    client = create_persona_client(self.config, log=self.log)
+    if client is not None:
+        client.inference_scheduler = self._inference_scheduler
+    return client
 
 
 def start_persona_background_load(self) -> None:

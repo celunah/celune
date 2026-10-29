@@ -97,11 +97,12 @@ api_key = key_file.read_text(encoding="utf-8").strip()
 | `GET` | `/ui/key` | Show the WebUI API-key prompt. |
 | `POST` | `/ui/key` | Exchange the API key for a browser WebUI session. |
 | `POST` | `/v1/think` | Ask Celune to think through Persona and reply asynchronously through her normal speech pipeline. |
-| `POST` | `/v1/speak` | Queue speech and keep the HTTP request open until `audio/flac` is ready. |
+| `POST` | `/v1/speak` | Queue speech and return one complete `audio/flac` response. |
+| `POST` | `/v1/speak/stream` | Return generated speech progressively as multipart `audio/flac` chunks. |
 | `POST` | `/v1/sing` | Validate CESN, queue singing, and stream the result as `audio/flac`. |
-| `POST` | `/v1/speak/async` | Queue speech and return `202 Accepted` immediately with a job ID. |
+| `POST` | `/v1/speak/async` | Add speech to the bounded FIFO and return `202 Accepted` with a job ID. |
 | `GET` | `/v1/speak/jobs/{job_id}` | Poll an async speech job; returns `202` while pending and `audio/flac` when complete. |
-| `POST` | `/v1/speak/jobs/{job_id}/cancel` | Explicitly request cancellation of an active async speech job. |
+| `POST` | `/v1/speak/jobs/{job_id}/cancel` | Cancel a queued job or stop an active async speech job. |
 | `WebSocket` | `/v1/ws/tasks/{job_id}` | Replay and stream typed lifecycle events for an async speech job. |
 | `POST` | `/v1/voice` | Change the active voice. |
 | `POST` | `/v1/sfx` | Upload and play a sound effect. |
@@ -204,8 +205,8 @@ curl.exe -i -X POST http://127.0.0.1:2060/v1/think ^
 
 Response:
 
-- `202 application/json` with `{"status":"accepted"}` when Celune starts processing the Persona request.
-- `409 application/json` when Celune is busy.
+- `202 application/json` with `{"status":"accepted"}` when Celune accepts the Persona request.
+- `409 application/json` when Celune is busy or the Persona input queue is full.
 - `503 application/json` when Celune is unavailable.
 
 Submitting another request does not cancel speech that is already playing. An
@@ -245,13 +246,37 @@ Response:
 - `200 audio/flac` when speech is generated.
 - `409 application/json` when Celune is busy or unavailable.
 
-Submitting another speech request does not cancel speech that is already
-playing; the request receives the busy response until the shared pipeline is
-available.
+Submitting another synchronous speech request does not cancel speech that is
+already playing; it receives the busy response until the shared pipeline is
+available. Use `/v1/speak/async` to wait in the API speech queue.
+
+## Speak (Streaming)
+
+Use `/v1/speak/stream` with the same request fields as `/v1/speak` when the
+client can consume multipart responses and wants
+audio before the full utterance has finished. Each part is an independent,
+complete PCM24 FLAC file at 48 kHz stereo. The response uses
+`multipart/mixed; boundary=celune-audio`; clients decode each part and append its
+frames in order. A disconnected client stops the active request; a slow client
+applies backpressure to audio delivery.
+
+```bash
+curl -N -X POST http://127.0.0.1:2060/v1/speak/stream \
+  -H "Content-Type: application/json" \
+  -d '{"content":"Hello from Celune.","save":false}' \
+  --output celune.multipart
+```
+
+The synchronous `/v1/speak` endpoint remains a single `audio/flac` response.
+`/v1/speak/stream` returns `409 Conflict` when the shared speech pipeline is
+busy; use the asynchronous endpoint when requests should wait for their turn.
 
 ## Speak (Asynchronous)
 
-Use `/v1/speak/async` when the client needs a quick acknowledgement and can poll for the result later.
+Use `/v1/speak/async` when the client needs a quick acknowledgement and can poll
+for the result later. Celune runs one API speech job at a time and keeps up to
+four waiting jobs in FIFO order. If that waiting queue is full, the endpoint
+returns `429 Too Many Requests` with `queue_full`.
 
 Linux, macOS, or Git Bash:
 
@@ -304,8 +329,19 @@ Job responses:
 - `200 audio/flac` when the generated speech is ready.
 - `404 application/json` if the job ID is unknown.
 - `500 application/json` if the job failed.
+- `429 application/json` from submission when the waiting queue is full.
 
 Async jobs are kept in memory for 15 minutes and are not persisted across Celune restarts.
+Queued jobs wait until the shared speech pipeline is available, including while
+local speech is playing. Cancelling a queued job removes it from the FIFO;
+cancelling a running job stops that job.
+
+## Request scheduling
+
+TTS and Persona inference share a priority scheduler for the active accelerator.
+When both are waiting, speech inference runs first; an inference already in
+progress is allowed to finish. This keeps waiting Persona work from starting
+ahead of speech that is ready to use the accelerator.
 
 ### Task WebSocket Events
 

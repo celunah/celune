@@ -16,7 +16,7 @@ import pyrubberband as rb
 
 from ..i18n import string, tagged_string
 from ..typing.common import JSONSerializable
-from ..core.concurrency import run_in_daemon_thread
+from ..core.concurrency import InferencePriority, run_in_daemon_thread
 from ..typing.aliases import AudioChunk, AudioChunks
 from ..persona.conversation import effective_voice_prompt
 from ..cesn import format_cesn_error, prepare_synthesis_chunks
@@ -327,7 +327,10 @@ def _process_generation_request(
                 is_first_chunk = chunk_index == 0
                 last_timing: Optional[dict] = None
 
-                with engine.model_lock:
+                with (
+                    engine.model_lock,
+                    engine._inference_scheduler.inference(InferencePriority.SPEECH),
+                ):
                     resolve_generation_language = getattr(
                         engine.backend,
                         "resolve_generation_language",

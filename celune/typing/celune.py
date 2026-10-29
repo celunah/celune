@@ -36,7 +36,6 @@ if TYPE_CHECKING:
     from ..agent.runtime import AgentRuntime
     from ..persona.memory import PersonaMemoryStore
     from ..persona.emotion import PersonaEmotionAnalyzer
-    from ..core.concurrency import ComponentLockManager
     from ..extensions.events import EventDispatcher
     from ..dataclasses.celune import (
         CeluneAudioState,
@@ -51,6 +50,7 @@ if TYPE_CHECKING:
     from ..dataclasses.pipeline import (
         CaptionPlaybackState,
     )
+    from ..core.concurrency import ComponentLockManager, PriorityInferenceScheduler
 
 
 type GenerationKwarg = Union[torch.Tensor, int, bool, None]
@@ -330,6 +330,7 @@ class CeluneStateAccessors:
     _say_lock: threading.Lock
     _wake_lock: threading.Lock
     _model_lock: threading.RLock
+    _inference_scheduler: PriorityInferenceScheduler
     _component_locks: ComponentLockManager
     _pipeline_lock_owner: Optional[ComponentLockOwner]
     _last_component_busy: Optional[ComponentBusyResult]

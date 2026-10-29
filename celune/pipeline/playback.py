@@ -518,6 +518,16 @@ def force_stop_speech(engine: Celune) -> bool:
     Returns:
         bool: ``True`` when active speech or playback was stopped, otherwise ``False``.
     """
+    return _force_stop_speech(engine, clear_persona_queue=True)
+
+
+def force_stop_streamed_speech(engine: Celune) -> bool:
+    """Stop streamed speech without discarding pending Persona inputs."""
+    return _force_stop_speech(engine, clear_persona_queue=False)
+
+
+def _force_stop_speech(engine: Celune, *, clear_persona_queue: bool) -> bool:
+    """Invalidate active speech with the requested pending-input policy."""
     with engine.say_lock:
         if engine.utterance_force_stop.is_set():
             return False
@@ -534,12 +544,16 @@ def force_stop_speech(engine: Celune) -> bool:
         return False
 
     engine.log(string("pipeline.forcefully_stopping_speech"))
-    invalidate_speech_work(engine)
+    invalidate_speech_work(engine, clear_persona_queue=clear_persona_queue)
 
     return True
 
 
-def invalidate_speech_work(engine: Celune) -> None:
+def invalidate_speech_work(
+    engine: Celune,
+    *,
+    clear_persona_queue: bool = True,
+) -> None:
     """Invalidate queued and in-flight speech generations immediately."""
     engine.utterance_force_stop.set()
 
@@ -552,7 +566,8 @@ def invalidate_speech_work(engine: Celune) -> None:
         engine._speech_generation = getattr(engine, "_speech_generation", 0) + 1
         engine._playback_generation = getattr(engine, "_playback_generation", 0) + 1
         clear_queue(engine.text_queue)
-        clear_queue(engine.persona_queue)
+        if clear_persona_queue:
+            clear_queue(engine.persona_queue)
         clear_queue(engine.audio_queue)
         engine.kept_sfx_audio = None
         engine.audio_queue.put(engine.force_stop_marker)

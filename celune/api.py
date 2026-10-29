@@ -115,7 +115,9 @@ from .registry.consent import (
 )
 from .server.constants import (
     WEBUI_AUTH_PATH,
+    MAX_PENDING_SPEECH_JOBS,
 )
+from .pipeline.playback import force_stop_streamed_speech
 from .pipeline.submission import prepare_playback_audio
 
 Callable = abc.Callable
@@ -142,6 +144,8 @@ Send = types.Send
 Scope = types.Scope
 ASGIApp = types.ASGIApp
 Receive = types.Receive
+
+AUDIO_STREAM_BOUNDARY = "celune-audio"
 
 receive_webui_timed_update = webui.receive_webui_timed_update
 webui_audio_waveform_options = webui.webui_audio_waveform_options
@@ -618,10 +622,28 @@ async def authenticate_webui(
 
 
 async def _cancel_speech_job(job_id: str) -> bool:
-    """Ask Core to stop one active speech task and publish its terminal event."""
-    status = server_jobs.task_status(job_id)
-    if status is None or status in {"completed", "failed", "cancelled"}:
-        return False
+    """Cancel one pending speech job or stop that job when it is active."""
+    queued = False
+    with server_session.speech_jobs_lock:
+        job = server_session.speech_jobs.get(job_id)
+        if job is None or job.status in {"completed", "failed", "cancelled"}:
+            return False
+        if job.status == "queued":
+            for request in tuple(server_session.speech_job_queue):
+                if request[0] == job_id:
+                    server_session.speech_job_queue.remove(request)
+                    break
+            job.status = "cancelled"
+            queued = True
+        elif server_session.active_speech_task_id != job_id:
+            return False
+
+    if queued:
+        server_jobs.publish_task_event(
+            job_id,
+            TaskEvent(task_id=job_id, event="cancelled", status="cancelled"),
+        )
+        return True
 
     celune = require_celune()
     # noinspection PyBroadException
@@ -643,13 +665,11 @@ async def _cancel_speech_job(job_id: str) -> bool:
     server_jobs.update_speech_job(job_id, status="cancelled")
     server_jobs.publish_task_event(
         job_id,
-        TaskEvent(
-            task_id=job_id,
-            event="cancelled",
-            status="cancelled",
-        ),
+        TaskEvent(task_id=job_id, event="cancelled", status="cancelled"),
     )
-    server_jobs.set_active_speech_task(None)
+    with server_session.speech_jobs_lock:
+        if server_session.active_speech_task_id == job_id:
+            server_session.active_speech_task_id = None
     return True
 
 
@@ -929,6 +949,43 @@ def speak(body: SpeakRequest) -> Union[StreamingResponse, JSONResponse]:
     )
 
 
+@api.post("/v1/speak/stream", response_model=None)
+def speak_stream(body: SpeakRequest) -> Union[StreamingResponse, JSONResponse]:
+    """Stream each generated speech chunk as a complete PCM24 FLAC part."""
+    celune = require_celune()
+    if getattr(getattr(celune, "backend", None), "singing", False):
+        return JSONResponse(
+            status_code=409,
+            content={
+                "error": "unsupported_operation",
+                "message": string("api.singing_backend_use_sing_endpoint"),
+            },
+        )
+
+    api_log("SPEAK(STREAM)", body.content)
+    chunks = celune.say_stream(body.content, save=body.save)
+    if chunks is None:
+        return JSONResponse(
+            status_code=409,
+            content={
+                "error": "not_ready",
+                "message": string("webui.busy_try_again"),
+            },
+        )
+
+    headers = stream_headers()
+    headers["X-Audio-Format"] = "multipart-flac-pcm24"
+    return StreamingResponse(
+        webui.flac_stream_parts(
+            chunks,
+            AUDIO_STREAM_BOUNDARY,
+            on_disconnect=lambda: force_stop_streamed_speech(celune),
+        ),
+        media_type=f"multipart/mixed; boundary={AUDIO_STREAM_BOUNDARY}",
+        headers=headers,
+    )
+
+
 @api.post("/v1/sing", response_model=None)
 def sing(body: SpeakRequest) -> Union[StreamingResponse, JSONResponse]:
     """Validate CESN, queue singing, and stream generated audio to the caller."""
@@ -967,6 +1024,168 @@ def sing(body: SpeakRequest) -> Union[StreamingResponse, JSONResponse]:
     )
 
 
+def _speech_pipeline_is_busy(celune: Celune) -> bool:
+    """Return whether the shared speech pipeline cannot accept an API job."""
+    if not celune.model_ready.is_set():
+        return True
+    with celune.say_lock:
+        return bool(
+            celune.locked
+            or getattr(celune, "_reload_pending", False)
+            or celune.cur_state in {"generating", "speaking", "reloading"}
+        )
+
+
+def _remove_queued_speech_job(job_id: str, session: ServerSession) -> None:
+    """Remove one queued API request and clear its dispatch marker."""
+    with session.speech_jobs_lock:
+        for request in tuple(session.speech_job_queue):
+            if request[0] == job_id:
+                session.speech_job_queue.remove(request)
+                break
+
+
+def _fail_queued_speech_job(
+    job_id: str,
+    error: Optional[Exception],
+    session: ServerSession,
+) -> None:
+    """Mark one queued API request failed and publish its terminal event."""
+    celune = session.bound_celune
+    message = (
+        format_error_message(
+            string("pipeline.gen_error"),
+            error,
+            getattr(celune, "log_level", "info"),
+        )
+        if error is not None
+        else string("webui.busy_try_again")
+    )
+    with session.speech_jobs_lock:
+        job = session.speech_jobs.get(job_id)
+        if job is None or job.status != "queued":
+            return
+        job.status = "failed"
+        job.error = message
+        event = TaskEvent(
+            task_id=job_id,
+            event="failed",
+            status="failed",
+            error="speech_unavailable",
+        )
+        job.events.append(event)
+        subscriptions = tuple(job.subscriptions)
+        if session.active_speech_task_id == job_id:
+            session.active_speech_task_id = None
+    for subscription in subscriptions:
+        subscription.put(event)
+
+
+def _dispatch_speech_jobs(session: ServerSession) -> None:
+    """Run accepted API requests one at a time as the speech pipeline frees."""
+    while True:
+        with session.speech_jobs_lock:
+            if not session.speech_job_queue:
+                session.speech_job_worker = None
+                return
+            job_id, content, save = session.speech_job_queue[0]
+
+        if server_jobs.task_status(job_id, session) != "queued":
+            _remove_queued_speech_job(job_id, session)
+            continue
+
+        celune = session.bound_celune
+        if celune is None or celune.exit_requested:
+            _fail_queued_speech_job(job_id, None, session)
+            _remove_queued_speech_job(job_id, session)
+            continue
+        if _speech_pipeline_is_busy(celune):
+            time.sleep(0.05)
+            continue
+
+        try:
+            chunks = celune.say_stream(content, save=save)
+        except Exception as error:
+            _fail_queued_speech_job(job_id, error, session)
+            _remove_queued_speech_job(job_id, session)
+            continue
+
+        if chunks is None:
+            if _speech_pipeline_is_busy(celune):
+                time.sleep(0.05)
+                continue
+            _fail_queued_speech_job(job_id, None, session)
+            _remove_queued_speech_job(job_id, session)
+            continue
+
+        event: Optional[TaskEvent] = None
+        subscriptions: tuple[TaskSubscription, ...] = ()
+        with session.speech_jobs_lock:
+            job = session.speech_jobs.get(job_id)
+            accepted = job is not None and job.status == "queued"
+            if job is not None and accepted:
+                if (
+                    session.speech_job_queue
+                    and session.speech_job_queue[0][0] == job_id
+                ):
+                    session.speech_job_queue.popleft()
+                job.status = "running"
+                session.active_speech_task_id = job_id
+                event = TaskEvent(
+                    task_id=job_id,
+                    event="started",
+                    status="running",
+                )
+                job.events.append(event)
+                subscriptions = tuple(job.subscriptions)
+
+        if not accepted:
+            celune.force_stop_speech()
+            collect_speech_job(job_id, chunks, session)
+            _remove_queued_speech_job(job_id, session)
+            continue
+
+        if event is not None:
+            for subscription in subscriptions:
+                subscription.put(event)
+        collect_speech_job(job_id, chunks, session)
+
+
+def _enqueue_speech_job(
+    job_id: str,
+    content: str,
+    save: bool,
+    session: ServerSession = server_session,
+) -> bool:
+    """Add one bounded API speech job and start the shared dispatcher."""
+    with session.speech_jobs_lock:
+        server_jobs.delete_expired_speech_jobs(time.time(), session)
+        if len(session.speech_job_queue) >= MAX_PENDING_SPEECH_JOBS:
+            return False
+        session.speech_jobs[job_id] = SpeechJob(
+            status="queued",
+            created_at=time.time(),
+        )
+        session.speech_job_queue.append((job_id, content, save))
+        worker = session.speech_job_worker
+        if worker is None or not worker.is_alive():
+            worker = threading.Thread(
+                target=_dispatch_speech_jobs,
+                args=(session,),
+                daemon=True,
+                name=f"{APP_NAME}SpeechQueue",
+            )
+            session.speech_job_worker = worker
+            try:
+                worker.start()
+            except Exception:
+                session.speech_job_worker = None
+                session.speech_job_queue.pop()
+                session.speech_jobs.pop(job_id, None)
+                raise
+    return True
+
+
 @api.post("/v1/speak/async", response_model=None)
 def speak_async(body: SpeakRequest) -> JSONResponse:
     """Queue speech, return immediately, and expose the eventual result as a job.
@@ -990,46 +1209,26 @@ def speak_async(body: SpeakRequest) -> JSONResponse:
             },
         )
 
-    api_log("SPEAK(ASYNC)", body.content)
-    job_id = uuid.uuid4().hex
-    location = f"/v1/speak/jobs/{job_id}"
-    server_jobs.remember_speech_job(
-        job_id, SpeechJob(status="queued", created_at=time.time())
-    )
-    server_jobs.set_active_speech_task(job_id)
-    server_jobs.update_speech_job(job_id, status="running")
-    server_jobs.publish_task_event(
-        job_id,
-        TaskEvent(
-            task_id=job_id,
-            event="started",
-            status="running",
-        ),
-    )
-
-    try:
-        chunks = celune.say_stream(body.content, save=body.save)
-    except Exception:
-        server_jobs.set_active_speech_task(None)
-        server_jobs.forget_speech_job(job_id)
-        raise
-    if chunks is None:
-        server_jobs.set_active_speech_task(None)
-        server_jobs.forget_speech_job(job_id)
+    if celune.input_mode != "text_to_speech":
         return JSONResponse(
             status_code=409,
             content={
-                "error": "not_ready",
+                "error": "unsupported_operation",
                 "message": string("webui.busy_try_again"),
             },
         )
 
-    threading.Thread(
-        target=collect_speech_job,
-        args=(job_id, chunks, server_session),
-        daemon=True,
-        name=f"{APP_NAME}SpeechJob-{job_id[:8]}",
-    ).start()
+    api_log("SPEAK(ASYNC)", body.content)
+    job_id = uuid.uuid4().hex
+    location = f"/v1/speak/jobs/{job_id}"
+    if not _enqueue_speech_job(job_id, body.content, body.save):
+        return JSONResponse(
+            status_code=429,
+            content={
+                "error": "queue_full",
+                "message": string("webui.busy_try_again"),
+            },
+        )
 
     return JSONResponse(
         status_code=202,
