@@ -10,7 +10,13 @@
 
 Celune is a conversational character engine with agentic features.
 
-She can speak. She can sing. She can talk. She can also work.
+She can speak.
+
+She can sing.
+
+She can talk.
+
+She can also work.
 
 Proudly made in :poland: Poland, for the finest of use cases.
 
@@ -59,8 +65,7 @@ Celune never was, and will never become an "AI slop" project.
 
 ## Documentation
 
-Visit <https://celune.readthedocs.io/en/latest> to view Celune documentation. 
-They will help you learn to use Celune.
+See the [Celune documentation](https://celune.readthedocs.io/en/latest) for setup instructions and user guides.
 
 ## License note
 
@@ -141,30 +146,25 @@ For details on voice production, check [VOICES.md](./docs/VOICES.md).
 
 ## System Requirements
 
-Celune requires [Python](https://python.org) 3.12, 3.13 or 3.14.
+Celune requires Python 3.12, 3.13, or 3.14. Most features require an NVIDIA RTX 30-series GPU or newer. 
+CPU-only operation is supported by Celune Mini and LuxTTS.
 
-Celune also depends on external system dependencies that are not available in `pip`:
+Celune also uses system dependencies for specific features:
 
-- **CUDA Toolkit 12.8 (or 13.0)** - only if not using pre-built PyTorch wheels
-- **SoX (Sound eXchange)** - required for audio processing
-- **Rubber Band library** - required to control Celune's speed
-- **OpenRGB** - required to glow compatible devices
-- **Symbolic link support** - recommended on Windows for optimal operation
-- **C/C++ compiler** - to compile required dependencies for VoxCPM2
-- **eSpeak-NG** - for IPA-based forced alignment of captions
+| Dependency                | Needed for                                                                        |
+| ------------------------- | --------------------------------------------------------------------------------- |
+| SoX                       | Audio processing                                                                  |
+| Rubber Band               | Speed control; without it, Celune speaks at normal speed                          |
+| CUDA Toolkit 12.8 or 13.0 | Building PyTorch from source; not needed with compatible pre-built PyTorch wheels |
+| C/C++ compiler            | Building dependencies for the VoxCPM2 backend                                     |
+| eSpeak-NG                 | Captioning and caption display                                                    |
+| OpenRGB                   | Lighting compatible devices                                                       |
+| Symbolic link support     | Recommended on Windows for best performance and compatibility                     |
 
-Celune requires an RTX 30 series GPU or newer to use most features.
+The UI requires an ANSI-capable terminal. Terminals without ANSI support can use headless mode instead. 
+True Color is recommended; without it, themes may look different. 
 
-CPU-only execution is supported with Celune Mini and LuxTTS.
-
-Usage of Celune's UI requires an ANSI-capable terminal. Non-compliant terminals can only use the 
-headless (CEF) mode.
-
-The terminal should support True Color, especially when using voice packs that declare new app themes.
-
-Terminals not supporting True Color may look incorrect, as Textual will fall back to a lower color mode.
-
-If Celune looks incorrect while your terminal supports True Color on Linux, run Celune with the following command:
+On Linux, if your terminal supports True Color but Celune does not detect it, run:
 
 ```bash
 COLORTERM=truecolor /path/to/celune
@@ -203,76 +203,66 @@ Tested on: RTX 5070 (12 GB VRAM)
 
 ## Installation
 
-Download and extract the [latest SemVer binary release](https://github.com/celunah/celune/releases/latest) prior 
-to running the below commands in an already cloned copy of Celune.
+### Run a released build
 
-Copies obtained via `Download ZIP` will not work.
+Download and extract the [latest release](https://github.com/celunah/celune/releases/latest). 
+Keep the launcher and `celune-bin` together in the extracted application directory; the launcher depends on 
+files in the Celune repository.
 
-To manually compile Celune, run the following commands:
+Set up the environment:
 
 ```bash
-# Unsigned build, no tamper protection
-cmake --preset unsigned
-cmake --build --preset unsigned
-
-# Signed build, tamper-protected
-cmake --preset signed
-cmake --build --preset signed
+python configure.py
 ```
 
-Don't have a copy yet? Run the following commands:
+Then run Celune from the application directory:
+
+```bat
+REM Command Prompt
+bin\celune
+
+REM PowerShell
+.\bin\celune.exe
+```
+```bash
+# Linux
+./bin/celune.AppImage
+```
+
+### Build from source
+
+Clone the repository:
 
 ```bash
 git clone https://github.com/celunah/celune
 cd celune
 ```
-
-Then, follow these steps:
+Install `uv`, then set up the development environment:
 
 ```bash
-# Quick setup
-python configure.py
-
-# Manual setup
-# Install uv
-powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
-
-# Or on Unix systems:
-curl -Ls https://astral.sh/uv/install.sh | sh
-
-# Validate uv works
-uv --version
-
-# Expected output:
-# uv 0.11.2 (02036a8ba 2026-03-26 x86_64-pc-windows-msvc) (or similar version)
-
-# Manual environment setup
-# Linux: uv sync --dev --all-extras
-# Windows: uv sync --dev --extra api --extra captions
-# The selected backend is installed automatically into Celune's AppData
-# environment the first time it is used.
-
-# Run
-# It is recommended to double check the environment with `celune doctor`.
-#
-# Command Prompt users
-bin\celune
-
-# PowerShell users
-# The dot is important to resolve the path.
-.\bin\celune.exe
-
-# Or on Unix systems:
-./bin/celune.AppImage
+uv sync --dev --all-extras
 ```
 
-Don't run `celune-bin` manually. The `celune` binary is Celune's main entrypoint.
+On Windows, install only the extras you need:
 
-Both binaries are required for correct operation, `celune-bin` contains core code, while `celune` is the 
-outer launcher.
+```powershell
+uv sync --dev --extra api --extra captions
+```
 
-Celune can also run from other working directories, provided the main binary is installed correctly. 
-The binary must always be located as part of the cloned repository, as it depends on files contained within it.
+Build the launcher:
+
+```bash
+# Unsigned build, without tamper protection
+cmake --preset unsigned
+cmake --build --preset unsigned
+
+# Signed build, with tamper protection
+cmake --preset signed
+cmake --build --preset signed
+```
+
+The selected backend is installed into Celune’s AppData environment the first time it is used. 
+Run `celune doctor` to check the environment.
 
 ### SoX & Rubber Band installation
 
