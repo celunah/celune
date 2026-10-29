@@ -50,6 +50,15 @@ Build from a Git checkout with at least one commit. CMake checks for a valid
 in `.celune-root` and the update manifest; use a Git clone to build release
 artifacts.
 
+Celune treats a build as non-development only when `HEAD` matches an annotated
+tag named for the project version, with or without a leading `v`. Lightweight
+tags do not count, and tracked source changes or untracked files keep the
+development warning enabled. The generated `.celune-root` marker may differ
+because release preparation refreshes it before compilation. Compiled bundles
+store this decision in the `development` field of `celune-update.json`, so the
+runtime can retain the correct status without shipping Git metadata. Earlier
+manifests without this field are treated as development builds.
+
 The compiled build remains a deployment build rather than a fully standalone
 bundle, so its `.venv` must use the matching Python 3.13 runtime. Python 3.14
 remains available for source development and source-based launches; a Python
@@ -146,11 +155,13 @@ launches. Explicit `HF_HOME` and `HF_HUB_CACHE` values remain authoritative.
 ## Updates
 
 The update manifest records the project version, Git revision, artifact name,
-and files. Exit code 7 is `EXIT_PENDING_RESTART`: the launcher silently restarts
-Celune when no manifest is present, and uses the existing update helper and
-internal `__apply_update` command when the compiled bundle contains a manifest.
-The UI terminal title changes to `Restarting` before the handoff. Do not call
-that internal command directly; it is a launcher protocol.
+development status, and files. The `development` field is `false` only for a
+matching annotated release tag; it participates in the manifest signature when
+the bundle is signed. Exit code 7 is `EXIT_PENDING_RESTART`: the launcher
+silently restarts Celune when no manifest is present, and uses the existing
+update helper and internal `__apply_update` command when the compiled bundle
+contains a manifest. The UI terminal title changes to `Restarting` before the
+handoff. Do not call that internal command directly; it is a launcher protocol.
 
 ### Release signatures
 

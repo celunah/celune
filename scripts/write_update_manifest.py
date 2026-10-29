@@ -10,6 +10,7 @@ import argparse
 from pathlib import Path
 from typing import Optional
 
+from celune._version import DEVELOPMENT
 from celune.signature import sign_manifest
 
 
@@ -37,6 +38,7 @@ def write_manifest(
     filenames: list[str],
     signing_key: Optional[Path] = None,
     require_signature: bool = False,
+    development: bool = True,
 ) -> None:
     """Write formatted update metadata for compiled bundle files.
 
@@ -48,6 +50,10 @@ def write_manifest(
         filenames: Bundle filenames to include when present.
         signing_key: Optional trusted Ed25519 private-key file.
         require_signature: Whether to fail when no key is supplied.
+        development: Whether the bundle contains a development build.
+
+    Returns:
+        None: The manifest and optional detached signature are written to disk.
 
     Raises:
         ValueError: if a signature is required but no signing key is supplied
@@ -64,6 +70,7 @@ def write_manifest(
         "version": version,
         "revision": revision,
         "artifact": artifact,
+        "development": development,
         "files": files,
         "signature_required": signing_key is not None,
     }
@@ -107,6 +114,7 @@ def main() -> None:
         artifact=arguments.artifact,
         filenames=arguments.filenames,
         signing_key=arguments.signing_key,
+        development=DEVELOPMENT,
         require_signature=arguments.require_signature,
     )
 
