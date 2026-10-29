@@ -200,12 +200,16 @@ def test_inspector_remains_usable_without_an_attached_core() -> None:
             assert isinstance(inspector, DebugInspectorScreen)
 
             source_input.value = "celune"
+            await pilot.pause()
             await pilot.click("#debug-select-source")
+            await pilot.pause()
             assert trace.source_filters == ("celune",)
             assert source_input.value == "celune"
 
             source_input.value = "celune.ui.debug"
+            await pilot.pause()
             await pilot.click("#debug-select-source")
+            await pilot.pause()
             assert trace.source_filters == ("celune", "celune.ui.debug")
             assert source_input.value == "celune.ui.debug"
 

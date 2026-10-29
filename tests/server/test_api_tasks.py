@@ -198,6 +198,7 @@ class TestApiTaskWebSocket(CeluneTestCase):
         """Verify explicit HTTP cancellation delegates to the Core cancellation method."""
         job_id = self._job()
         self._publish(job_id, "started", "running")
+        api.server_session.active_speech_task_id = job_id
         calls: list[str] = []
 
         async def force_stop_speech_async() -> bool:

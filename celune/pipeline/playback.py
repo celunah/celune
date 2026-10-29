@@ -146,9 +146,15 @@ class _PlaybackWriteItem:
 class _PlaybackWriter:
     """Write mixed audio on one persistent thread with reserve accounting."""
 
-    def __init__(self, engine: Celune, monitor: PlaybackContentionMonitor) -> None:
+    def __init__(
+        self,
+        engine: Celune,
+        monitor: PlaybackContentionMonitor,
+        on_error: Optional[collections.abc.Callable[[], None]] = None,
+    ) -> None:
         self._engine = engine
         self._monitor = monitor
+        self._on_error = on_error
         self._queue: queue.Queue[Optional[_PlaybackWriteItem]] = queue.Queue()
         self._thread: Optional[threading.Thread] = None
         self._lock = threading.Lock()
@@ -233,6 +239,8 @@ class _PlaybackWriter:
                 failed = error
                 with self._lock:
                     self._error = error
+                if self._on_error is not None:
+                    self._on_error()
             finally:
                 finished_at = time.monotonic()
                 self._decrement_pending(item)
@@ -286,10 +294,12 @@ class _PlaybackWriter:
             self._discard_pending()
             with self._lock:
                 self._error = None
-        self._queue.put(None)
-        thread.join(timeout=2.0)
+        if thread.is_alive():
+            self._queue.put(None)
+            thread.join(timeout=2.0)
         if not thread.is_alive():
             self._thread = None
+            self._discard_pending()
 
     def has_pending_source(self, source_id: int) -> bool:
         """Return whether output still contains audio for one source."""
@@ -343,6 +353,13 @@ class _PlaybackInputReader:
         if event is not None:
             event.set()
 
+    def wake(self) -> None:
+        """Wake the playback coroutine to inspect asynchronous worker state."""
+        loop = self._loop
+        if loop is not None:
+            with contextlib.suppress(RuntimeError):
+                loop.call_soon_threadsafe(self._notify)
+
     def _run(self) -> None:
         """Forward source items without creating a thread per polling cycle."""
         while not self._stop.is_set():
@@ -383,6 +400,10 @@ class _PlaybackInputReader:
                     return self._queue.get_nowait()
                 except queue.Empty:
                     await event.wait()
+                    try:
+                        return self._queue.get_nowait()
+                    except queue.Empty:
+                        return None
 
     def get_nowait(self) -> object:
         """Remove one already-forwarded item for priority-aware draining."""
@@ -861,8 +882,8 @@ async def playback_worker_job(engine: Celune) -> None:
     ) = pipeline_cpu_config(engine)
     buffered_seconds = 0.0
     contention = PlaybackContentionMonitor(engine)
-    writer = _PlaybackWriter(engine, contention)
     input_reader = _PlaybackInputReader(engine)
+    writer = _PlaybackWriter(engine, contention, on_error=input_reader.wake)
     input_reader.start()
     last_monitor_at = monotonic_time()
     buffering_started_at: Optional[float] = None
@@ -1149,7 +1170,6 @@ async def playback_worker_job(engine: Celune) -> None:
 
         if (writer_error := writer.error) is not None:
             await handle_playback_error(writer_error)
-            continue
 
         if engine.exit_requested:
             continue

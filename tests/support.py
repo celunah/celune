@@ -2,16 +2,12 @@
 """Lightweight test fakes for Celune's unit test suite."""
 
 from __future__ import annotations
+
 import sys
 import queue
 import importlib
 import threading
 import contextlib
-from re import Pattern
-from pathlib import Path
-from unittest import TestCase, mock
-from collections.abc import Callable, Iterable, Iterator, Container
-from types import ModuleType, TracebackType, SimpleNamespace, MappingProxyType
 from typing import (
     TYPE_CHECKING,
     Self,
@@ -23,6 +19,11 @@ from typing import (
     Any,
     cast,
 )
+from re import Pattern
+from pathlib import Path
+from unittest import TestCase, mock
+from collections.abc import Callable, Iterable, Iterator, Container
+from types import ModuleType, TracebackType, SimpleNamespace, MappingProxyType
 
 import numpy as np
 import numpy.typing as npt
@@ -30,11 +31,11 @@ import numpy.typing as npt
 from celune.utils import discard
 from celune.constants import PipelineStates
 from celune.typing.aliases import AudioChunk
-from celune.core.concurrency import ComponentLockManager
 from celune.typing.common import JSONSerializable
 from celune.backends.tts.base import CeluneBackend
 from celune.backends.vc.base import CeluneVCBackend
 from celune.dataclasses.pipeline import AudioOutput, VoiceConversionRequest
+from celune.core.concurrency import ComponentLockManager, PriorityInferenceScheduler
 
 if TYPE_CHECKING:
     from celune.celune import Celune
@@ -498,6 +499,7 @@ def make_pipeline_engine() -> SimpleNamespace:
     progress: list[tuple[Optional[float], Optional[float]]] = []
     engine = SimpleNamespace()
     engine.backend = SimpleNamespace(supported_languages=("en",))
+    engine._inference_scheduler = PriorityInferenceScheduler()
     engine.vc_backend = None
     engine.config = {}
     engine.input_mode = "text_to_speech"

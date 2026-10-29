@@ -6,20 +6,21 @@ import json
 import time
 import queue
 import asyncio
+import threading
+from unittest import mock
 from types import SimpleNamespace
 from typing import Optional, cast
-from unittest import mock
 
-import numpy as np
 import pytest
+import numpy as np
 import soundfile as sf
 from fastapi import UploadFile
 from fastapi.responses import JSONResponse, StreamingResponse
 from starlette.responses import Response
 
 from celune import api
-from celune.celune import Celune
 from celune.server import jobs
+from celune.celune import Celune
 from celune.typing.pipeline import SpeechStreamQueue
 
 from ..support import CeluneTestCase
@@ -79,10 +80,21 @@ class TestApiAudio(CeluneTestCase):
         chunks.put(np.zeros((2, 8), dtype=np.float32))
         chunks.put(None)
         previous_celune = api.server_session.bound_celune
+        model_ready = threading.Event()
+        model_ready.set()
 
         try:
             api.server_session.bound_celune = cast(
-                Celune, SimpleNamespace(say_stream=lambda content, save=True: chunks)
+                Celune,
+                SimpleNamespace(
+                    input_mode="text_to_speech",
+                    exit_requested=False,
+                    model_ready=model_ready,
+                    say_lock=threading.Lock(),
+                    locked=False,
+                    cur_state="idle",
+                    say_stream=lambda content, save=True: chunks,
+                ),
             )
             response = api.speak_async(api.SpeakRequest(content="hello"))
             payload = json.loads(bytes(response.body))

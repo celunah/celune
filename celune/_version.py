@@ -15,7 +15,7 @@ from .vcs import (
 
 REVISION = _get_revision(Path(__file__).resolve().parent.parent)
 VERSION = "5.1.0"
-EXTRA_IDENTIFIER = "realtime"
+EXTRA_IDENTIFIER: str = "realtime"
 
 
 def _is_annotated_release(path: Path, version: str) -> bool:
