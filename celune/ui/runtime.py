@@ -7,17 +7,17 @@ import os
 import sys
 import math
 import time
-import signal
 import asyncio
+import signal
 import inspect
 import logging
 import datetime
-import contextlib
 import itertools
 import threading
+import contextlib
 from io import TextIOWrapper
 from collections.abc import Callable
-from typing import Optional, Union, cast
+from typing import Union, Optional, cast
 
 from . import app as _app
 
@@ -1751,21 +1751,36 @@ def _show_loading_error(
     self._run_on_ui_thread(update)
 
 
-def _reveal_main_ui(self) -> None:
-    """Hide the loading overlay early and reveal the initialized interface."""
+def _reveal_main_ui(
+    self,
+    on_complete: Optional[Callable[[], None]] = None,
+) -> None:
+    """Hide the loading overlay early and reveal the initialized interface.
+
+    Args:
+        on_complete: Optional callback after the main interface is visible.
+    """
     if not self._loading_ui_reveal_available or self._loading_ui_revealed:
+        if on_complete is not None:
+            self.call_after_refresh(on_complete)
         return
     if not self.celune_ready:
         self.change_input_state(locked=True)
         self.change_voice_lock_state(locked=True)
-    self._dismiss_loading_screen(early=True)
+    self._dismiss_loading_screen(early=True, on_complete=on_complete)
 
 
-def _dismiss_loading_screen(self, *, early: bool = False) -> None:
+def _dismiss_loading_screen(
+    self,
+    *,
+    early: bool = False,
+    on_complete: Optional[Callable[[], None]] = None,
+) -> None:
     """Fade out and remove the startup overlay.
 
     Args:
         early: Whether the user requested the reveal before startup completed.
+        on_complete: Optional callback after the loading overlay is dismissed.
     """
     if self._loading_ui_revealed and not early:
         return
@@ -1778,6 +1793,8 @@ def _dismiss_loading_screen(self, *, early: bool = False) -> None:
     def dismiss() -> None:
         overlay = self._loading_screen
         if overlay is None:
+            if on_complete is not None:
+                on_complete()
             return
         main_container: Optional[_app.Vertical] = None
 
@@ -1801,11 +1818,21 @@ def _dismiss_loading_screen(self, *, early: bool = False) -> None:
                 return
             overlay.display = False
             if main_container is not None:
-                self._animate_opacity(
-                    main_container,
-                    1.0,
-                    duration=_app.MAIN_UI_FADE_SECONDS,
-                )
+                if on_complete is None:
+                    self._animate_opacity(
+                        main_container,
+                        1.0,
+                        duration=_app.MAIN_UI_FADE_SECONDS,
+                    )
+                else:
+                    self._animate_opacity(
+                        main_container,
+                        1.0,
+                        on_complete=on_complete,
+                        duration=_app.MAIN_UI_FADE_SECONDS,
+                    )
+            elif on_complete is not None:
+                on_complete()
             self.call_after_refresh(self._refresh_logs)
 
         def fade_overlay() -> None:
@@ -1987,9 +2014,14 @@ class RuntimeHooks:
         """Delegate to the runtime implementation."""
         return _clear_border_pulses(self)
 
-    def _dismiss_loading_screen(self, *, early: bool = False) -> None:
+    def _dismiss_loading_screen(
+        self,
+        *,
+        early: bool = False,
+        on_complete: Optional[Callable[[], None]] = None,
+    ) -> None:
         """Delegate to the runtime implementation."""
-        return _dismiss_loading_screen(self, early=early)
+        return _dismiss_loading_screen(self, early=early, on_complete=on_complete)
 
     def _emit_startup_diagnostic(self, message: str) -> None:
         """Delegate to the runtime implementation."""
@@ -2139,9 +2171,12 @@ class RuntimeHooks:
         """Delegate to the runtime implementation."""
         return _restore_progress_bar(self, force=force)
 
-    def _reveal_main_ui(self) -> None:
+    def _reveal_main_ui(
+        self,
+        on_complete: Optional[Callable[[], None]] = None,
+    ) -> None:
         """Delegate to the runtime implementation."""
-        return _reveal_main_ui(self)
+        return _reveal_main_ui(self, on_complete=on_complete)
 
     def _run_on_ui_thread(self, callback: Callable[[], None]) -> None:
         """Delegate to the runtime implementation."""

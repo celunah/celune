@@ -4,13 +4,11 @@
 from __future__ import annotations
 
 import sys
-import queue as queue_module
 import asyncio
 import logging
 import itertools
 import threading
-from io import TextIOWrapper
-from types import ModuleType
+import queue as queue_module
 from typing import (
     TYPE_CHECKING,
     Never,
@@ -24,6 +22,8 @@ from typing import (
     final,
 )
 from pathlib import Path
+from types import ModuleType
+from io import TextIOWrapper
 from dataclasses import field, dataclass
 from collections.abc import Callable, Iterator, Awaitable
 
@@ -37,44 +37,38 @@ from textual import (
     binding,
     widgets,
     containers,
-)
-from textual import (
     color as textual_color,
-)
-from textual import (
     screen as textual_screen,
-)
-from textual import (
     widget as textual_widget,
-)
-from textual import (
     message as textual_message,
 )
 from rich.text import Text
 
-from . import debug as _debug
-from . import capture as _capture
-from . import runtime as _runtime
-from . import interaction as _interaction
-from ..i18n import string, tagged_string
-from .theme import CELUNE_CSS, severity_color, with_brightness
-from .compat import install_textual_timer_sleep
+from . import (
+    debug as _debug,
+    capture as _capture,
+    runtime as _runtime,
+    interaction as _interaction,
+)
 from .loading import CeluneLoadingScreen
+from .compat import install_textual_timer_sleep
 from .terminal import SelectMenuOption, SelectMenuWidget
-from ..watchdog import launcher_loss_requested
-from ..constants import BASE_SR, SIGTSTP, APP_NAME, ExitCodes
-from ..typing.agent import AgentTaskState
+from .theme import CELUNE_CSS, severity_color, with_brightness
 from ..typing.locks import (
     ComponentLockName,
     ComponentLockOwner,
     ComponentLockRequirement,
 )
+from ..i18n import string, tagged_string
+from ..typing.agent import AgentTaskState
+from ..registry.types import ModelMetadata
 from ..typing.modes import OperationState
 from ..typing.common import JSONSerializable
+from ..watchdog import launcher_loss_requested
 from ..typing.config import AudioDeviceInfoValue
-from ..registry.types import ModelMetadata
-from ..theme.defaults import default_theme_family, default_error_theme_family
 from ..core.concurrency import run_in_daemon_thread
+from ..constants import BASE_SR, SIGTSTP, APP_NAME, ExitCodes
+from ..theme.defaults import default_theme_family, default_error_theme_family
 
 App = app.App
 ReturnType = app.ReturnType
@@ -1636,8 +1630,7 @@ class CeluneUI(
 
         def show_screen() -> None:
             """Reveal the app beneath the modal, then present the consent prompt."""
-            self._reveal_main_ui()
-            self.call_after_refresh(show_consent_screen)
+            self._reveal_main_ui(on_complete=show_consent_screen)
 
         self._run_on_ui_thread(show_screen)
         browser_accepted = False
