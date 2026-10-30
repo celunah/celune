@@ -14,7 +14,7 @@ from pathlib import Path
 from unittest import mock
 from typing import Union, Optional, cast
 from types import ModuleType, SimpleNamespace
-from collections.abc import Iterator, Generator
+from collections import OrderedDict, abc as cabc
 
 import torch
 import pytest
@@ -27,7 +27,6 @@ from celune.exceptions import (
     InvalidExtensionError,
     ExtensionAlreadyRegisteredError,
 )
-from celune.utils import discard
 from celune.celune import Celune
 from celune.backends.vc import (
     BACKEND_MANIFESTS as VC_BACKEND_MANIFESTS,
@@ -35,6 +34,7 @@ from celune.backends.vc import (
 from celune.backends.vc import (
     resolve_vc_backend,
 )
+from celune.utils import discard
 from celune.cesn import CESNSinger
 from celune.typing.backends import (
     BackendModel,
@@ -142,7 +142,7 @@ class TestBackend(CeluneTestCase):
             package_path = source_root / "soulxsinger" / "models" / "soulxsinger.py"
 
             @contextlib.contextmanager
-            def other_worker_installs_source() -> Generator[None, None, None]:
+            def other_worker_installs_source() -> cabc.Generator[None, None, None]:
                 package_path.parent.mkdir(parents=True)
                 package_path.touch()
                 yield
@@ -396,16 +396,22 @@ class TestBackend(CeluneTestCase):
             "cached", device=expected_device, threads=2
         )
 
-    def test_luxtts_generates_a_normalized_complete_48khz_chunk(self) -> None:
+    def test_luxtts_generates_a_normalized_complete_48khz_chunk(
+        self, tmp_path: Path
+    ) -> None:
         """Verify LuxTTS consumes the pack reference and emits Celune audio."""
         loader = make_voice_loader(
             "balanced",
             {"reference_text": "Pack reference."},
         )
+        prepared_reference = tmp_path / "prepared-reference.wav"
+        prepared_reference.touch()
         backend = LuxTTS.__new__(LuxTTS)
         backend.random_seed = False
         backend.current_seed = None
         backend._truncated_reference_paths = set()
+        backend._encoded_prompt_cache = OrderedDict()
+        backend._encoded_prompt_cache_model = None
         model = mock.Mock()
         prompt = {"prompt_features": torch.zeros(1)}
         model.encode_prompt.return_value = prompt
@@ -421,7 +427,7 @@ class TestBackend(CeluneTestCase):
             mock.patch.object(
                 backend,
                 "_prepare_prompt_reference",
-                return_value=Path("prepared-reference.wav"),
+                return_value=prepared_reference,
             ),
         ):
             result = list(
@@ -433,7 +439,7 @@ class TestBackend(CeluneTestCase):
             )
 
         model.encode_prompt.assert_called_once_with(
-            "prepared-reference.wav",
+            str(prepared_reference),
             duration=5.2,
             rms=0.01,
         )
@@ -949,12 +955,15 @@ class TestBackend(CeluneTestCase):
             use_wetext=False,
         )
 
-    def test_fireredtts3_streams_cedts_audio_chunks(self) -> None:
+    def test_fireredtts3_streams_cedts_audio_chunks(self, tmp_path: Path) -> None:
         """Verify FireRedTTS3 decodes and yields progressive CEDTS chunks."""
         loader = make_voice_loader(
             "balanced",
             {"reference_text": "Reference prompt."},
         )
+        reference_wav = tmp_path / "balanced.wav"
+        reference_wav.touch()
+        loader.materialize = mock.Mock(return_value=reference_wav)
         model = mock.Mock()
         model.device = torch.device("cpu")
         model.redae.sample_rate = 24000
@@ -1209,14 +1218,14 @@ class TestBackend(CeluneTestCase):
                     kwargs: Wrapper arguments forwarded from the backend under test.
 
                 Returns:
-                    Generator[None, None, npt.NDArray[np.float32]]: One generator whose return value carries the
+                    cabc.Generator[None, None, npt.NDArray[np.float32]]: One generator whose return value carries the
                     converted waveform.
                 """
                 captured.update(kwargs)
                 assert Path(str(kwargs["source"])).exists()
                 assert Path(str(kwargs["target"])).exists()
 
-                def result_generator() -> Generator[None, None, AudioChunk]:
+                def result_generator() -> cabc.Generator[None, None, AudioChunk]:
                     yield from ()
                     return np.array([0.25, -0.25], dtype=np.float32)
 
@@ -1479,12 +1488,12 @@ class TestBackend(CeluneTestCase):
                     kwargs: Wrapper arguments forwarded from the backend under test.
 
                 Returns:
-                    Generator[None, None, npt.NDArray[np.float32]]: One generator whose return value carries the
+                    cabc.Generator[None, None, npt.NDArray[np.float32]]: One generator whose return value carries the
                     converted waveform.
                 """
                 captured.update(kwargs)
 
-                def result_generator() -> Generator[None, None, AudioChunk]:
+                def result_generator() -> cabc.Generator[None, None, AudioChunk]:
                     yield from ()
                     return np.array([0.1, -0.1], dtype=np.float32)
 
@@ -1599,7 +1608,9 @@ class TestBackend(CeluneTestCase):
                 def __init__(self) -> None:
                     self.cfg_value = None
 
-                def generate_streaming(self, *args, **kwargs) -> Iterator[AudioChunk]:
+                def generate_streaming(
+                    self, *args, **kwargs
+                ) -> cabc.Iterator[AudioChunk]:
                     """Generate fake VoxCPM2 chunks.
 
                     Args:
@@ -1680,7 +1691,9 @@ class TestBackend(CeluneTestCase):
                 def __init__(self) -> None:
                     self.reference_wav_path = None
 
-                def generate_streaming(self, *args, **kwargs) -> Iterator[AudioChunk]:
+                def generate_streaming(
+                    self, *args, **kwargs
+                ) -> cabc.Iterator[AudioChunk]:
                     """Generate fake VoxCPM2 chunks.
 
                     Args:
@@ -1771,7 +1784,7 @@ class TestBackend(CeluneTestCase):
                 @staticmethod
                 def generate_audio_stream(
                     model_state: dict, text_to_generate: str
-                ) -> Iterator[torch.Tensor]:
+                ) -> cabc.Iterator[torch.Tensor]:
                     """Generate fake Pocket TTS chunks.
 
                     Args:
@@ -1843,7 +1856,7 @@ class TestBackend(CeluneTestCase):
 
                 def generate_voice_clone_streaming(
                     self, *args, **kwargs
-                ) -> Iterator[tuple[AudioChunk, int, Optional[dict]]]:
+                ) -> cabc.Iterator[tuple[AudioChunk, int, Optional[dict]]]:
                     """Generate fake Qwen3 chunks.
 
                     Args:
@@ -1916,7 +1929,7 @@ class TestBackend(CeluneTestCase):
 
                 def generate_voice_clone_streaming(
                     self, *args, **kwargs
-                ) -> Iterator[tuple[AudioChunk, int, Optional[dict]]]:
+                ) -> cabc.Iterator[tuple[AudioChunk, int, Optional[dict]]]:
                     """Generate fake Qwen3 chunks.
 
                     Args:
@@ -1959,7 +1972,9 @@ class TestBackend(CeluneTestCase):
                     self.prompt_audio_path = None
                     self.prompt_text = None
 
-                def generate_stream(self, *args, **kwargs) -> Iterator[torch.Tensor]:
+                def generate_stream(
+                    self, *args, **kwargs
+                ) -> cabc.Iterator[torch.Tensor]:
                     """Generate fake dots.tts chunks.
 
                     Args:
@@ -2026,7 +2041,9 @@ class TestBackend(CeluneTestCase):
                     self.prompt_audio_path = None
                     self.prompt_text = None
 
-                def generate_stream(self, *args, **kwargs) -> Iterator[torch.Tensor]:
+                def generate_stream(
+                    self, *args, **kwargs
+                ) -> cabc.Iterator[torch.Tensor]:
                     """Generate fake dots.tts chunks.
 
                     Args:
@@ -2068,7 +2085,9 @@ class TestBackend(CeluneTestCase):
                     self.prompt_audio_path = None
                     self.prompt_text = None
 
-                def generate_stream(self, *args, **kwargs) -> Iterator[torch.Tensor]:
+                def generate_stream(
+                    self, *args, **kwargs
+                ) -> cabc.Iterator[torch.Tensor]:
                     """Generate fake dots.tts chunks.
 
                     Args:
@@ -2338,7 +2357,7 @@ class TestBackend(CeluneTestCase):
                 @staticmethod
                 def generate_voice_clone_streaming(
                     *args, **kwargs
-                ) -> Iterator[tuple[AudioChunk, int, Optional[dict]]]:
+                ) -> cabc.Iterator[tuple[AudioChunk, int, Optional[dict]]]:
                     """Generate fake Qwen3 chunks.
 
                     Args:
@@ -2383,7 +2402,7 @@ class TestBackend(CeluneTestCase):
                 """Fake model class for use in this test suite."""
 
                 @staticmethod
-                def generate_streaming(*args, **kwargs) -> Iterator[AudioChunk]:
+                def generate_streaming(*args, **kwargs) -> cabc.Iterator[AudioChunk]:
                     """Generate fake VoxCPM2 chunks.
 
                     Args:
