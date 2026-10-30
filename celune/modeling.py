@@ -8,18 +8,9 @@ from collections.abc import Mapping, Callable
 from typing import TYPE_CHECKING, Any, Union, Literal, Optional, cast
 
 import torch
-from transformers.modeling_utils import PreTrainedModel
 from transformers.cache_utils import Cache, CacheLayerMixin
+from transformers.modeling_utils import PreTrainedModel
 from transformers import AutoTokenizer, AutoModelForCausalLM
-
-if TYPE_CHECKING:
-    from transformers.configuration_utils import PreTrainedConfig
-
-try:
-    from transformers.cache_utils import LinearAttentionCacheLayerMixin
-except ImportError:
-    LinearAttentionCacheLayerMixin = CacheLayerMixin
-
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 
 from .i18n import string
@@ -29,6 +20,14 @@ from .paths import huggingface_progress
 from .typing.common import JSONSerializable
 from .registry.other import NORMALIZER_MODEL_ID
 from .registry.consent import require_model_consent
+
+try:
+    from transformers.cache_utils import LinearAttentionCacheLayerMixin
+except ImportError:
+    LinearAttentionCacheLayerMixin = CacheLayerMixin
+
+if TYPE_CHECKING:
+    from transformers.configuration_utils import PreTrainedConfig
 
 NORMALIZER_SPECIAL_TOKENS = ("<|im_start|>", "<|im_end|>", "<NORM>")
 NORMALIZER_DEVICE = "cpu"
@@ -642,6 +641,7 @@ class GraphQuantizedKVCacheLayer(QuantizedKVCacheLayer):
         self.prefix_capacity = max_cache_len - residual_length
         self.workspace = workspace
         self.cumulative_length = 0
+        self.max_batch_size = -1
 
     def lazy_initialization(
         self,
@@ -696,11 +696,20 @@ class GraphQuantizedKVCacheLayer(QuantizedKVCacheLayer):
         self,
         key_states: torch.Tensor,
         value_states: torch.Tensor,
-        cache_kwargs: Optional[dict[str, Any]] = None,
+        *args: object,
+        **kwargs: object,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """Update fixed storage and return a graph-stable attention view."""
+        cache_kwargs_value: object = args[0] if args else kwargs.get("cache_kwargs")
+        cache_kwargs = (
+            cast(dict[str, Any], cache_kwargs_value)
+            if isinstance(cache_kwargs_value, dict)
+            else None
+        )
         if not self.is_initialized:
             self.lazy_initialization(key_states, value_states)
+        keys = cast(torch.Tensor, self.keys)
+        values = cast(torch.Tensor, self.values)
         if key_states.dtype != self.dtype:
             key_states = key_states.to(self.dtype)
         if value_states.dtype != self.dtype:
@@ -718,8 +727,8 @@ class GraphQuantizedKVCacheLayer(QuantizedKVCacheLayer):
         if self.prefix_capacity:
             promote_position = (position - self.residual_length).clamp(min=0)
             promote_index = promote_position.remainder(self.residual_length)
-            promoted_keys = self.keys.index_select(2, promote_index)
-            promoted_values = self.values.index_select(2, promote_index)
+            promoted_keys = keys.index_select(2, promote_index)
+            promoted_values = values.index_select(2, promote_index)
             quantized_keys, key_scales = self._quantize(promoted_keys)
             quantized_values, value_scales = self._quantize(promoted_values)
             promote_valid = (position >= self.residual_length).view(1, 1, -1, 1)
@@ -736,23 +745,29 @@ class GraphQuantizedKVCacheLayer(QuantizedKVCacheLayer):
                 promote_valid, value_scales, torch.ones_like(value_scales)
             )
             quantized_position = promote_position.clamp(max=self.prefix_capacity - 1)
-            self._quantized_keys.index_copy_(2, quantized_position, quantized_keys)
-            self._quantized_values.index_copy_(2, quantized_position, quantized_values)
-            self._key_scales.index_copy_(2, quantized_position, key_scales)
-            self._value_scales.index_copy_(2, quantized_position, value_scales)
+            quantized_keys_storage = cast(torch.Tensor, self._quantized_keys)
+            quantized_values_storage = cast(torch.Tensor, self._quantized_values)
+            key_scales_storage = cast(torch.Tensor, self._key_scales)
+            value_scales_storage = cast(torch.Tensor, self._value_scales)
+            quantized_keys_storage.index_copy_(2, quantized_position, quantized_keys)
+            quantized_values_storage.index_copy_(
+                2, quantized_position, quantized_values
+            )
+            key_scales_storage.index_copy_(2, quantized_position, key_scales)
+            value_scales_storage.index_copy_(2, quantized_position, value_scales)
 
         tail_position = position.remainder(self.residual_length)
-        self.keys.index_copy_(2, tail_position, key_states)
-        self.values.index_copy_(2, tail_position, value_states)
+        keys.index_copy_(2, tail_position, key_states)
+        values.index_copy_(2, tail_position, value_states)
         self.cumulative_length += key_states.shape[-2]
         return self._attention_view(position[-1])
 
     def get_mask_sizes(
         self,
-        cache_position: Union[int, torch.Tensor],
+        query_length: Union[int, torch.Tensor],
     ) -> tuple[int, int]:
         """Return the fixed attention length used by the graph cache."""
-        del cache_position
+        del query_length
         return self.max_cache_len, 0
 
     def get_seq_length(self) -> int:
@@ -771,8 +786,8 @@ class GraphQuantizedKVCacheLayer(QuantizedKVCacheLayer):
         """Clear cache storage without reallocating graph-captured tensors."""
         if not self.is_initialized:
             return
-        self.keys.zero_()
-        self.values.zero_()
+        cast(torch.Tensor, self.keys).zero_()
+        cast(torch.Tensor, self.values).zero_()
         if self._quantized_keys is not None:
             self._quantized_keys.zero_()
         if self._quantized_values is not None:
@@ -792,6 +807,8 @@ class GraphQuantizedKVCacheLayer(QuantizedKVCacheLayer):
         source_keys, source_values = source._residual_states()
         if not self.is_initialized:
             self.lazy_initialization(source_keys, source_values)
+        target_keys = cast(torch.Tensor, self.keys)
+        target_values = cast(torch.Tensor, self.values)
         sequence_length = source.get_seq_length()
         if sequence_length > self.max_cache_len:
             raise ValueError("prompt exceeds the graph cache capacity")
@@ -822,8 +839,8 @@ class GraphQuantizedKVCacheLayer(QuantizedKVCacheLayer):
                 prefix_length + tail_length,
                 device=self.device,
             ).remainder(self.residual_length)
-            self.keys.index_copy_(2, positions, source_keys)
-            self.values.index_copy_(2, positions, source_values)
+            target_keys.index_copy_(2, positions, source_keys)
+            target_values.index_copy_(2, positions, source_values)
         self.cumulative_length = sequence_length
         return sequence_length
 
@@ -838,6 +855,8 @@ class GraphQuantizedKVCacheLayer(QuantizedKVCacheLayer):
         if sequence_length > self.max_cache_len:
             raise ValueError("prompt exceeds the graph cache capacity")
         self.reset()
+        keys = cast(torch.Tensor, self.keys)
+        values = cast(torch.Tensor, self.values)
         prefix_length = max(0, sequence_length - self.residual_length)
         if prefix_length:
             quantized_keys, key_scales = self._quantize(
@@ -865,8 +884,8 @@ class GraphQuantizedKVCacheLayer(QuantizedKVCacheLayer):
             else:
                 positions = cache_position[-tail_keys.shape[-2] :]
             positions = positions.remainder(self.residual_length)
-            self.keys.index_copy_(2, positions, tail_keys)
-            self.values.index_copy_(2, positions, tail_values)
+            keys.index_copy_(2, positions, tail_keys)
+            values.index_copy_(2, positions, tail_values)
         self.cumulative_length = sequence_length
         return self._attention_view(
             torch.tensor(sequence_length - 1, device=self.device)
@@ -884,8 +903,10 @@ class GraphQuantizedKVCacheLayer(QuantizedKVCacheLayer):
             or self.workspace.value_states is None
         ):
             raise RuntimeError("graph cache workspace is not initialized")
-        key_states = self.keys.index_select(2, self.workspace.ring_positions)
-        value_states = self.values.index_select(2, self.workspace.ring_positions)
+        keys = cast(torch.Tensor, self.keys)
+        values = cast(torch.Tensor, self.values)
+        key_states = keys.index_select(2, self.workspace.ring_positions)
+        value_states = values.index_select(2, self.workspace.ring_positions)
         tail_start = position - self.residual_length + 1
         valid_tail = (self.workspace.positions >= tail_start) & (
             self.workspace.positions <= position
@@ -932,7 +953,7 @@ class GraphQuantizedKVCache(Cache):
             raise ValueError("model cache layout is not supported")
         workspace = _GraphQuantizedKVWorkspace(max_cache_len)
         layers = cast(
-            list[CacheLayerMixin],
+            list[Union[CacheLayerMixin, LinearAttentionCacheLayerMixin]],
             [
                 GraphQuantizedKVCacheLayer(
                     mode=mode,
