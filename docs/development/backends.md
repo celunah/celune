@@ -209,11 +209,12 @@ for the notation and conversion behavior.
 Changes in singer, tempo, key, or scale remain section boundaries. By default,
 the model synthesizes each section in one call and Celune concatenates the
 resulting audio. With `backend_options.soulxsinger.streaming: true`, Celune
-splits sections longer than two seconds at event boundaries, keeping ties and
-slurs intact, then yields each completed chunk for playback. Every chunk remains
-a complete SoulX inference call; Celune does not stream from inside the model's
-reverse-diffusion pass. This mode can reset expression at chunk boundaries and
-adds a model call plus onset context for each chunk, so it is opt-in. See
+splits sections at event boundaries around 1.92 seconds (three default TTS
+chunk lengths), keeping ties and slurs intact, then yields each completed chunk
+for playback. Every chunk remains a complete SoulX inference call; Celune does
+not stream from inside the model's reverse-diffusion pass. This mode can reset
+expression at chunk boundaries and adds a model call plus onset context for
+each chunk, so it is opt-in. See
 [backend-specific options](../user-guide/configuration.md#backend-specific-options)
 for the configuration contract. By default, each section uses one
 score-conditioned inference pass. With

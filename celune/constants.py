@@ -12,6 +12,7 @@ from ._version import VERSION
 # don't blame her when you fork Celune and rename her to something else
 APP_NAME = "Celune"
 APP_SLUG = "".join(char if char.isalnum() else "_" for char in APP_NAME.lower())
+DEFAULT_TARGET_CHUNK_LENGTH_SECONDS = 0.64
 SUPPORTED_CUDA_VERSIONS = ("12.8", "13.0")
 NVIDIA_DEVICE_KEYWORDS = (
     "nvidia",

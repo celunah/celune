@@ -11,19 +11,13 @@ import shutil
 import asyncio
 import threading
 import contextlib
-from typing import Union, Optional, cast
 from pathlib import Path
 from functools import partial
+from typing import Union, Optional, cast
 from collections.abc import Mapping, Callable, Generator
 
 import torch
 
-from ..i18n import string, set_locale, get_system_locale
-from ..vram import backend_allowed, resolve_vram_preset, resolve_backend_name
-from ..modes import resolve_operation_mode
-from ..paths import api_key_path, temp_data_dir
-from ..utils import discard, available, clear_queue, format_error_message
-from ..chroma import AudioRGBGlow
 from ..config import (
     Config,
     config_bool,
@@ -41,19 +35,19 @@ from ..cevoice import (
     close_default_loader,
     is_protected_temp_path,
 )
-from .callbacks import _buffer_startup_log
-from ..constants import APP_NAME, AGENT_MAX_LOOPS, AGENT_COMPACT_AT, AGENT_CONTEXT_SPACE
-from ..exceptions import BackendError
-from .concurrency import ComponentLockLease
+from ..constants import (
+    APP_NAME,
+    AGENT_MAX_LOOPS,
+    AGENT_COMPACT_AT,
+    AGENT_CONTEXT_SPACE,
+    DEFAULT_TARGET_CHUNK_LENGTH_SECONDS,
+)
 from ..agent.tools import (
     agent_test_tools,
     production_agent_tools,
     agent_test_tool_schemas,
     production_agent_tool_schemas,
 )
-from ..backends.vc import VC_BACKENDS, CeluneVCBackend
-from ..agent.needle import NeedleToolSelector
-from ..backends.tts import BACKENDS, CeluneBackend
 from ..persona.impl import (
     PersonaClient,
     persona_enabled,
@@ -62,16 +56,11 @@ from ..persona.impl import (
     persona_quantization,
     create_persona_client,
 )
-from ..typing.agent import AgentTaskConfig, AgentToolSelector, AgentCancellationReason
 from ..typing.locks import (
     ComponentLockName,
     ComponentLockOwner,
     ComponentLockRequirement,
 )
-from ..typing.modes import BackendMode, OperationState
-from ..agent.persona import PersonaAgentBridge
-from ..agent.routing import AgentInputRouter
-from ..agent.runtime import AgentRuntime
 from ..typing.celune import (
     VCBackendSpec,
     TTSBackendSpec,
@@ -83,10 +72,7 @@ from ..typing.celune import (
     VoiceLockStateCallback,
     CaptionProgressCallback,
 )
-from ..typing.common import JSON, JSONSerializable
-from ..typing.aliases import LogLevel
-from ..persona.emotion import PersonaEmotionAnalyzer
-from ..extensions.events import EventDispatcher
+from ..chroma import AudioRGBGlow
 from ..dataclasses.celune import (
     CeluneAudioState,
     CeluneModelState,
@@ -96,7 +82,27 @@ from ..dataclasses.celune import (
     CeluneCallbackState,
     CelunePipelineState,
 )
+from ..exceptions import BackendError
+from ..typing.aliases import LogLevel
+from ..agent.runtime import AgentRuntime
+from ..modes import resolve_operation_mode
+from .callbacks import _buffer_startup_log
+from .concurrency import ComponentLockLease
+from ..agent.routing import AgentInputRouter
+from ..agent.needle import NeedleToolSelector
+from ..agent.persona import PersonaAgentBridge
 from ..dataclasses.events import ShutdownEvent
+from ..extensions.events import EventDispatcher
+from ..paths import api_key_path, temp_data_dir
+from ..backends.tts import BACKENDS, CeluneBackend
+from ..typing.common import JSON, JSONSerializable
+from ..persona.emotion import PersonaEmotionAnalyzer
+from ..backends.vc import VC_BACKENDS, CeluneVCBackend
+from ..typing.modes import BackendMode, OperationState
+from ..i18n import string, set_locale, get_system_locale
+from ..utils import discard, available, clear_queue, format_error_message
+from ..vram import backend_allowed, resolve_vram_preset, resolve_backend_name
+from ..typing.agent import AgentTaskConfig, AgentToolSelector, AgentCancellationReason
 
 TTS_KV_CACHE_BACKENDS = frozenset({"qwen3", "fireredtts3", "voxcpm2"})
 
@@ -110,7 +116,7 @@ def initialize(
     vc_f0_condition: Optional[bool] = None,
     input_mode: Optional[str] = None,
     chunk_size: int = 0,  # defaulted to 0 because not all backends use this
-    target_chunk_length: float = 0.64,
+    target_chunk_length: float = DEFAULT_TARGET_CHUNK_LENGTH_SECONDS,
     language: str = "Auto",  # Qwen3 backend accepts a language, others may not
     log_callback: Optional[MessageCallback] = None,
     status_callback: Optional[MessageCallback] = None,

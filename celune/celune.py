@@ -1,25 +1,16 @@
 # SPDX-License-Identifier: Apache-2.0
 """Celune's public engine facade."""
 
-from typing import Never, Union, ClassVar, Optional, final
 from pathlib import Path
 from collections.abc import Mapping, Callable
+from typing import Never, Union, ClassVar, Optional, final
 
 import numpy as np
 
-from . import vc as core_vc
-from .core import agent as core_agent
-from .core import sleep as core_sleep
-from .core import voice as core_voice
-from .core import reload as core_reload
-from .core import speech as core_speech
-from .core import loading as core_loading
-from .core import callbacks as core_callbacks
-from .core import lifecycle as core_lifecycle
-from .core import conversation as core_conversation
 from .config import (
     Config,
 )
+from . import vc as core_vc
 from .typing.agent import (
     AgentTool,
     AgentTaskConfig,
@@ -27,8 +18,6 @@ from .typing.agent import (
     AgentToolSelector,
     AgentClassificationResult,
 )
-from .typing.modes import BackendMode
-from .agent.routing import AgentInputRouter
 from .typing.celune import (
     CaptionCallback,
     CoreBackendSpec,
@@ -39,10 +28,6 @@ from .typing.celune import (
     VoiceLockStateCallback,
     CaptionProgressCallback,
 )
-from .typing.common import JSON, JSONSerializable
-from .typing.events import EventName, EventPayload
-from .typing.aliases import LogLevel
-from .typing.pipeline import SpeechStreamQueue
 from .dataclasses.celune import (
     CELUNE_CONSTANT_PROPERTIES,
     CELUNE_FORWARDED_PROPERTIES,
@@ -50,11 +35,27 @@ from .dataclasses.celune import (
 from .dataclasses.events import (
     StateChangedEvent,
 )
-from .dataclasses.pipeline import AudioOutput, CaptionPlaybackState
+from .typing.aliases import LogLevel
+from .core import agent as core_agent
+from .core import sleep as core_sleep
+from .core import voice as core_voice
 from .dataclasses.properties import (
     bind_constant_properties,
     bind_forwarded_properties,
 )
+from .typing.modes import BackendMode
+from .core import reload as core_reload
+from .core import speech as core_speech
+from .core import loading as core_loading
+from .agent.routing import AgentInputRouter
+from .core import callbacks as core_callbacks
+from .core import lifecycle as core_lifecycle
+from .typing.pipeline import SpeechStreamQueue
+from .typing.common import JSON, JSONSerializable
+from .typing.events import EventName, EventPayload
+from .core import conversation as core_conversation
+from .constants import DEFAULT_TARGET_CHUNK_LENGTH_SECONDS
+from .dataclasses.pipeline import AudioOutput, CaptionPlaybackState
 
 npt = np.typing
 
@@ -192,7 +193,7 @@ class Celune(CeluneStateAccessors):
         vc_f0_condition: Optional[bool] = None,
         input_mode: Optional[str] = None,
         chunk_size: int = 0,  # defaulted to 0 because not all backends use this
-        target_chunk_length: float = 0.64,
+        target_chunk_length: float = DEFAULT_TARGET_CHUNK_LENGTH_SECONDS,
         language: str = "Auto",  # Qwen3 backend accepts a language, others may not
         log_callback: Optional[MessageCallback] = None,
         status_callback: Optional[MessageCallback] = None,

@@ -66,6 +66,7 @@ from ...typing.aliases import AudioChunk
 from ..environment import exclusive_lock
 from ...registry.consent import require_model_consent
 from ...registry.other import SOULX_SINGER_RMVPE_MODEL_ID
+from ...constants import DEFAULT_TARGET_CHUNK_LENGTH_SECONDS
 from .base import CeluneBackend, to_numpy_audio, cached_hf_snapshot_path
 
 
@@ -79,7 +80,10 @@ __all__ = [
 _MODEL_FILES = ["config.yaml", "model.pt"]
 _MODEL_LOAD_STEPS = 8
 _MODEL_ONSET_PREROLL_SECONDS = 2.0
-_SOULX_STREAMING_CHUNK_SECONDS = 2.0
+_SOULX_STREAMING_CHUNK_COUNT = 3
+_SOULX_STREAMING_CHUNK_SECONDS = (
+    DEFAULT_TARGET_CHUNK_LENGTH_SECONDS * _SOULX_STREAMING_CHUNK_COUNT
+)
 _ARPABET_VOWELS = frozenset(
     {
         "AA",

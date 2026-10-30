@@ -53,10 +53,10 @@ backend_options:
 ```
 
 With `streaming: true`, Celune divides long singing sections into chunks of
-about two seconds at event boundaries. It keeps tied and slurred note chains
-together. Each chunk is a separate inference call, so playback can begin before
-the complete section is generated. The default `false` preserves full-section
-generation and phrasing.
+about 1.92 seconds, equal to three default TTS chunk lengths, at event
+boundaries. It keeps tied and slurred note chains together. Each chunk is a
+separate inference call, so playback can begin before the complete section is
+generated. The default `false` preserves full-section generation and phrasing.
 
 This mode downloads SoulX-Singer's pinned RMVPE F0 extractor checkpoint if it is
 not already cached. Celune measures the singer reference's F0, generates a
