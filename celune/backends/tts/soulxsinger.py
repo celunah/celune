@@ -12,17 +12,16 @@ import shutil
 import tempfile
 import importlib
 import unicodedata
-from types import ModuleType
-from typing import Union, Optional, Protocol, cast
 from pathlib import Path
+from types import ModuleType
 from dataclasses import field, dataclass
+from typing import Union, Optional, Protocol, cast
 from collections.abc import Mapping, Callable, Iterator
 
-import numpy as np
 import torch
+import numpy as np
 from huggingface_hub import snapshot_download
 
-from .base import CeluneBackend, to_numpy_audio, cached_hf_snapshot_path
 from ...cesn import (
     CESNSection,
     CESNVibrato,
@@ -55,7 +54,6 @@ from ...exceptions import (
     CESNBackendFormatError,
     CESNUnsupportedFeatureError,
 )
-from ..environment import exclusive_lock
 from ...registry.tts import (
     TTS_DEFAULT_VOICE,
     SOULX_SINGER_MODEL_ID,
@@ -64,9 +62,12 @@ from ...registry.tts import (
     SOULX_SINGER_CODE_REPOSITORY,
 )
 from ...typing.common import JSON
-from ...registry.other import SOULX_SINGER_RMVPE_MODEL_ID
 from ...typing.aliases import AudioChunk
+from ..environment import exclusive_lock
 from ...registry.consent import require_model_consent
+from ...registry.other import SOULX_SINGER_RMVPE_MODEL_ID
+from .base import CeluneBackend, to_numpy_audio, cached_hf_snapshot_path
+
 
 __all__ = [
     "SoulXSinger",
@@ -1457,6 +1458,7 @@ class SoulXSinger(CeluneBackend[_SoulXRuntime]):
         sections = decode_score(text)
         section_count = len(sections)
         owned_loaders: dict[str, CEVoiceLoader] = {}
+        first_chunk_time: Optional[float] = None
         self._apply_seed()
         try:
             for section_index, section in enumerate(sections):
@@ -1559,6 +1561,8 @@ class SoulXSinger(CeluneBackend[_SoulXRuntime]):
                         error_code="soulx_empty_audio",
                     )
                 section_audio = generated_audio[onset_preroll_samples:]
+                if first_chunk_time is None:
+                    first_chunk_time = time.monotonic()
                 yield (
                     section_audio,
                     model.sample_rate,
@@ -1569,7 +1573,7 @@ class SoulXSinger(CeluneBackend[_SoulXRuntime]):
                         "total_steps_so_far": section_index + 1,
                         "section_caption": section.display_text,
                         "section_final": True,
-                        "first_chunk_time": time.monotonic(),
+                        "first_chunk_time": first_chunk_time,
                         "is_final": section_index + 1 == section_count,
                     },
                 )

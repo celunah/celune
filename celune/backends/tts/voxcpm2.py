@@ -18,8 +18,6 @@ from .base import (
     CeluneBackend,
     local_hf_offline_mode,
     cached_hf_snapshot_path,
-)
-from .base import (
     to_numpy_audio as normalize_streamed_audio,
 )
 from . import get_version
@@ -32,6 +30,7 @@ from ...typing.aliases import AudioChunk, AudioChunks
 from ...registry.tts import TTS_DEFAULT_VOICE, VOXCPM2_VOICE_MODELS
 from ...paths import huggingface_progress, huggingface_hub_cache_dir
 from .voxcpm_cache import VoxCPMModel, install_voxcpm_quantized_cache
+
 
 _VOXCPM_RUNTIME_KV_CACHE_LENGTH = 2048
 
@@ -433,15 +432,10 @@ class VoxCPM2(CeluneBackend[VoxCPM]):
                     audio = self.to_numpy_audio(chunk)
                     if audio.size == 0:
                         continue
-                    if first_chunk_time is None:
-                        first_chunk_time = time.monotonic()
-                    batch.append(audio)
-
-                    if len(batch) < chunks_per_batch:
-                        continue
-
                     if pending_audio is not None:
                         total_steps += pending_steps
+                        if first_chunk_time is None:
+                            first_chunk_time = time.monotonic()
                         yield (
                             pending_audio,
                             sample_rate,
@@ -455,6 +449,13 @@ class VoxCPM2(CeluneBackend[VoxCPM]):
                             },
                         )
                         chunk_index += 1
+                        pending_audio = None
+                        pending_steps = 0
+
+                    batch.append(audio)
+
+                    if len(batch) < chunks_per_batch:
+                        continue
 
                     pending_audio = np.concatenate(batch)
                     pending_steps = len(batch)
@@ -463,6 +464,8 @@ class VoxCPM2(CeluneBackend[VoxCPM]):
                 if batch:
                     if pending_audio is not None:
                         total_steps += pending_steps
+                        if first_chunk_time is None:
+                            first_chunk_time = time.monotonic()
                         yield (
                             pending_audio,
                             sample_rate,
@@ -478,6 +481,8 @@ class VoxCPM2(CeluneBackend[VoxCPM]):
                         chunk_index += 1
 
                     total_steps += len(batch)
+                    if first_chunk_time is None:
+                        first_chunk_time = time.monotonic()
                     yield (
                         np.concatenate(batch),
                         sample_rate,
@@ -493,6 +498,8 @@ class VoxCPM2(CeluneBackend[VoxCPM]):
                     )
                 elif pending_audio is not None:
                     total_steps += pending_steps
+                    if first_chunk_time is None:
+                        first_chunk_time = time.monotonic()
                     yield (
                         pending_audio,
                         sample_rate,

@@ -1222,7 +1222,7 @@ def play_prepared_speech(
             caption_word_total=len(words) if caption_enabled else 0,
         )
         engine.log(f"[GEN] {item.display_text}")
-        speech_timing = SpeechTiming(start_time=time.monotonic())
+        speech_timing = SpeechTiming(start_time=item.submitted_at)
         if caption_enabled and caption_worker is not None:
             language_resolver = getattr(
                 engine.backend,

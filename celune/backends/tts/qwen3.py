@@ -9,22 +9,21 @@ from collections.abc import Callable, Iterator
 
 import torch
 from huggingface_hub import snapshot_download
-from faster_qwen3_tts import FasterQwen3TTS
-from faster_qwen3_tts import __version__ as qwen3_ver
+from faster_qwen3_tts import FasterQwen3TTS, __version__ as qwen3_ver
 
-from .base import CeluneBackend, local_hf_offline_mode, cached_hf_snapshot_path
-from ...i18n import string
 from ...paths import (
     huggingface_progress,
     configure_numba_cache,
     huggingface_hub_cache_dir,
 )
+from ...i18n import string
+from ...typing.aliases import AudioChunk
 from ...utils import available, custom_assert
 from ...cevoice import CEVoiceLoader, default_loader
+from ...registry.consent import require_model_consent
 from ...modeling import QuantizedKVCache, create_quantized_kv_cache
 from ...registry.tts import TTS_DEFAULT_VOICE, QWEN3_DEFAULT_MODEL_ID
-from ...typing.aliases import AudioChunk
-from ...registry.consent import require_model_consent
+from .base import CeluneBackend, local_hf_offline_mode, cached_hf_snapshot_path
 
 
 def _quantized_talker_cache(
@@ -324,7 +323,7 @@ class Qwen3(CeluneBackend[FasterQwen3TTS]):
                     total_steps = timing.get("total_steps_so_far")
                     if timing.get("is_final") and isinstance(total_steps, int):
                         timing["missing_eos"] = total_steps >= self.max_new_tokens
-                    timing.setdefault("first_chunk_time", first_chunk_time)
+                    timing["first_chunk_time"] = first_chunk_time
                 else:
                     timing = {"first_chunk_time": first_chunk_time}
                 yield audio_chunk, sample_rate, timing

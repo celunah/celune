@@ -229,6 +229,31 @@ GPU. If the source checkout, model weights, or singing reference cannot be
 prepared, the backend raises an English technical error and does not synthesize
 the request.
 
+## Generation timing and reference reuse
+
+The speech pipeline owns the canonical `TTFC` measurement. Its clock starts
+when Celune enqueues a `SpeechRequest` and records the first nonempty,
+non-silent audio chunk after sample-rate conversion and configured DSP,
+immediately before buffering it. This includes speech-queue wait, inference
+scheduler wait, backend chunk aggregation, conversion, and DSP. Backend
+`first_chunk_time` metadata does not override this value. Generation speed and
+RTF use a separate timer that begins when the worker starts processing, so
+request-queue delay does not make model throughput appear slower. `TTFC`
+measures audio ready for the playback buffer; it does not measure when playback
+becomes audible.
+
+Streaming adapters retain their configured chunk batches and final-chunk
+metadata. Once the first batch is ready, they release it when the next
+nonempty backend chunk arrives instead of waiting for a complete second batch.
+This preserves final-chunk reporting while reducing the initial buffering delay.
+
+Reference audio truncated to Celune's ten-second limit is reused while its
+resolved path, modification time, and size remain unchanged. FireRedTTS3 also
+caches each loaded voice's resampled prompt latents and speaker embedding while
+the model is loaded. LuxTTS caches its prepared prompt WAV and encoded prompt
+features for the same model and reference. The FireRedTTS3 and LuxTTS feature
+caches retain up to four references each and clear on model unload.
+
 ## Model weight contracts
 
 `celune.backends.tts.contracts` records the pinned Hugging Face revision and

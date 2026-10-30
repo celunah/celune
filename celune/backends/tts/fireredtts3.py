@@ -10,13 +10,14 @@ import tempfile
 import threading
 import contextlib
 import urllib.request
-from typing import TYPE_CHECKING, ClassVar, Optional, Protocol, cast
 from pathlib import Path
+from collections import OrderedDict
 from collections.abc import Callable, Iterator, Generator
+from typing import TYPE_CHECKING, ClassVar, Optional, Protocol, cast
 
-import numpy as np
 import torch
 import torchaudio
+import numpy as np
 from huggingface_hub import snapshot_download
 
 from .base import (
@@ -25,18 +26,19 @@ from .base import (
     local_hf_offline_mode,
     cached_hf_snapshot_path,
 )
-from ...i18n import string
 from ...paths import (
     runtime_data_dir,
     huggingface_progress,
     huggingface_hub_cache_dir,
 )
-from ...cevoice import CEVoiceLoader, default_loader
-from ...modeling import create_quantized_kv_cache
-from ...registry.tts import TTS_DEFAULT_VOICE, FIREREDTTS3_MODEL_ID
+from ...i18n import string
 from ...typing.aliases import AudioChunk
 from ...typing.backends import BackendModel
+from ...modeling import create_quantized_kv_cache
+from ...cevoice import CEVoiceLoader, default_loader
 from ...registry.consent import require_model_consent
+from ...registry.tts import TTS_DEFAULT_VOICE, FIREREDTTS3_MODEL_ID
+
 
 if TYPE_CHECKING:
     from transformers.cache_utils import Cache
@@ -51,6 +53,7 @@ __all__ = [
 ]
 
 _FIRERED_ATTENTION_IMPLEMENTATION = "sdpa"
+_FIRERED_REFERENCE_CACHE_SIZE = 4
 
 
 class FireRedModel(BackendModel, Protocol):
@@ -715,7 +718,21 @@ class FireRedTTS3(CeluneBackend[FireRedModel]):
             quantize=quantize,
             quantize_kv_cache=quantize_kv_cache,
         )
+        self._reference_prompt_cache: OrderedDict[
+            tuple[str, int, int], tuple[torch.Tensor, torch.Tensor, int, int]
+        ] = OrderedDict()
+        self._reference_prompt_cache_model: Optional[FireRedModel] = None
         self._validate_refs()
+
+    def unload_model(self, release_cuda_cache: bool = True) -> None:
+        """Release cached reference features before unloading FireRedTTS3.
+
+        Args:
+            release_cuda_cache: Whether to synchronize CUDA and release cached accelerator blocks.
+        """
+        self._reference_prompt_cache.clear()
+        self._reference_prompt_cache_model = None
+        super().unload_model(release_cuda_cache=release_cuda_cache)
 
     @staticmethod
     def _get_default_loader() -> Optional[CEVoiceLoader]:
@@ -922,14 +939,13 @@ class FireRedTTS3(CeluneBackend[FireRedModel]):
         model.device = device
         return model
 
-    @staticmethod
     def _stream_latents(
+        self,
         model: FireRedModel,
         *,
         language: str,
         prompt_text: str,
-        prompt_audio: torch.Tensor,
-        prompt_audio_sr: int,
+        reference_wav: Path,
         text: str,
         stop_threshold: float,
         n_timesteps: int,
@@ -942,25 +958,51 @@ class FireRedTTS3(CeluneBackend[FireRedModel]):
             # noinspection PyProtectedMember
             text_tokens = model._tokenize_text(input_text)
 
-            prompt_audio = prompt_audio[:1]
-            prompt_audio = torchaudio.functional.resample(
-                prompt_audio,
-                prompt_audio_sr,
-                model.redae.sample_rate,
+            if self._reference_prompt_cache_model is not model:
+                self._reference_prompt_cache.clear()
+                self._reference_prompt_cache_model = model
+
+            reference_stat = reference_wav.stat()
+            cache_key = (
+                str(reference_wav.resolve()),
+                reference_stat.st_mtime_ns,
+                reference_stat.st_size,
             )
-            prompt_audio = model.redae.pad_to_multiple_of(
-                prompt_audio,
-                model.redae.downsample_rate * model.tts_core.patch_size,
-            )
-            prompt_audio = prompt_audio.to(model.device)
-            prompt_latents = model.redae.encode(
-                prompt_audio,
-                model.redae.sample_rate,
-            ).to(torch.float32)
-            spk_emb = model.spk_extractor.forward(
-                prompt_audio,
-                model.redae.sample_rate,
-            ).to(model.device)
+            cached_prompt = self._reference_prompt_cache.get(cache_key)
+            if cached_prompt is None:
+                prompt_audio, prompt_audio_sr = torchaudio.load(str(reference_wav))
+                prompt_audio = prompt_audio[:1]
+                prompt_audio = torchaudio.functional.resample(
+                    prompt_audio,
+                    prompt_audio_sr,
+                    model.redae.sample_rate,
+                )
+                prompt_audio = model.redae.pad_to_multiple_of(
+                    prompt_audio,
+                    model.redae.downsample_rate * model.tts_core.patch_size,
+                )
+                prompt_audio = prompt_audio.to(model.device)
+                prompt_latents = model.redae.encode(
+                    prompt_audio,
+                    model.redae.sample_rate,
+                ).to(torch.float32)
+                spk_emb = model.spk_extractor.forward(
+                    prompt_audio,
+                    model.redae.sample_rate,
+                ).to(model.device)
+                cached_prompt = (
+                    prompt_latents,
+                    spk_emb,
+                    int(prompt_audio.shape[1]),
+                    int(model.redae.sample_rate),
+                )
+                if len(self._reference_prompt_cache) >= _FIRERED_REFERENCE_CACHE_SIZE:
+                    self._reference_prompt_cache.popitem(last=False)
+                self._reference_prompt_cache[cache_key] = cached_prompt
+            else:
+                self._reference_prompt_cache.move_to_end(cache_key)
+
+            prompt_latents, spk_emb, prompt_samples, prompt_sample_rate = cached_prompt
 
             if seed is not None:
                 torch.manual_seed(seed)
@@ -978,8 +1020,8 @@ class FireRedTTS3(CeluneBackend[FireRedModel]):
                 yield (
                     prompt_latents,
                     latent_patch,
-                    int(prompt_audio.shape[1]),
-                    int(model.redae.sample_rate),
+                    prompt_samples,
+                    prompt_sample_rate,
                 )
 
     def prepare_model_loading(self) -> None:
@@ -1055,8 +1097,6 @@ class FireRedTTS3(CeluneBackend[FireRedModel]):
         reference_text = loader.bundle.voices[voice].get("reference_text")
         if not isinstance(reference_text, str) or not reference_text.strip():
             raise ValueError(f"unknown voice: {voice}")
-        prompt_audio, prompt_audio_sr = torchaudio.load(str(reference_wav))
-
         language = self.resolve_generation_language(kwargs.pop("language", None))
         chunk_size = max(1, int(kwargs.pop("chunk_size", 1)))
         kwargs.pop("instruct", None)
@@ -1078,12 +1118,11 @@ class FireRedTTS3(CeluneBackend[FireRedModel]):
         total_steps = 0
         first_chunk_time: Optional[float] = None
 
-        def stream_decoded_audio() -> Iterator[tuple[AudioChunk, int, int]]:
+        def stream_decoded_audio() -> Iterator[tuple[AudioChunk, int]]:
             """Yield generated audio using one cached incremental decoder."""
             decoder: Optional[FireRedIncrementalDecoder] = None
             prompt_samples = 0
             sample_rate = 0
-            audio_batch: list[AudioChunk] = []
 
             for (
                 prompt_latents,
@@ -1094,8 +1133,7 @@ class FireRedTTS3(CeluneBackend[FireRedModel]):
                 model,
                 language=language or "English",
                 prompt_text=reference_text.strip(),
-                prompt_audio=prompt_audio,
-                prompt_audio_sr=int(prompt_audio_sr),
+                reference_wav=reference_wav,
                 text=text,
                 stop_threshold=stop_threshold,
                 n_timesteps=n_timesteps,
@@ -1116,32 +1154,26 @@ class FireRedTTS3(CeluneBackend[FireRedModel]):
                 trim = max(0, prompt_samples - audio_start)
                 if trim >= audio.shape[-1]:
                     continue
-                audio_batch.append(audio[trim:])
-                if len(audio_batch) < chunks_per_batch:
-                    continue
-                yield np.concatenate(audio_batch), sample_rate, len(audio_batch)
-                audio_batch.clear()
+                yield audio[trim:], sample_rate
 
             if decoder is not None:
                 audio, audio_start = decoder.finish()
                 if audio is not None:
                     trim = max(0, prompt_samples - audio_start)
                     if trim < audio.shape[-1]:
-                        audio_batch.append(audio[trim:])
-
-            if audio_batch:
-                yield np.concatenate(audio_batch), sample_rate, len(audio_batch)
+                        yield audio[trim:], sample_rate
 
         with (
             self._suppress_backend_output(),
             # "I only speak BF16. Do not give me FP32." - she says
             torch.autocast(device_type="cuda", dtype=torch.bfloat16),
         ):
-            for audio, sample_rate, batch_steps in stream_decoded_audio():
-                if first_chunk_time is None:
-                    first_chunk_time = time.monotonic()
+            audio_batch: list[AudioChunk] = []
+            for audio, sample_rate in stream_decoded_audio():
                 if pending_audio is not None:
                     total_steps += pending_steps
+                    if first_chunk_time is None:
+                        first_chunk_time = time.monotonic()
                     yield (
                         pending_audio,
                         int(sample_rate),
@@ -1155,11 +1187,57 @@ class FireRedTTS3(CeluneBackend[FireRedModel]):
                         },
                     )
                     chunk_index += 1
-                pending_audio = audio
-                pending_steps = batch_steps
+                    pending_audio = None
+                    pending_steps = 0
 
-            if pending_audio is not None:
+                audio_batch.append(audio)
+                if len(audio_batch) < chunks_per_batch:
+                    continue
+
+                pending_audio = np.concatenate(audio_batch)
+                pending_steps = len(audio_batch)
+                audio_batch.clear()
+
+            if audio_batch:
+                if pending_audio is not None:
+                    total_steps += pending_steps
+                    if first_chunk_time is None:
+                        first_chunk_time = time.monotonic()
+                    yield (
+                        pending_audio,
+                        int(sample_rate),
+                        {
+                            "backend": self.name,
+                            "chunk_index": chunk_index,
+                            "chunk_steps": pending_steps,
+                            "total_steps_so_far": total_steps,
+                            "first_chunk_time": first_chunk_time,
+                            "is_final": False,
+                        },
+                    )
+                    chunk_index += 1
+                    pending_audio = None
+                    pending_steps = 0
+
+                total_steps += len(audio_batch)
+                if first_chunk_time is None:
+                    first_chunk_time = time.monotonic()
+                yield (
+                    np.concatenate(audio_batch),
+                    int(sample_rate),
+                    {
+                        "backend": self.name,
+                        "chunk_index": chunk_index,
+                        "chunk_steps": len(audio_batch),
+                        "total_steps_so_far": total_steps,
+                        "first_chunk_time": first_chunk_time,
+                        "is_final": True,
+                    },
+                )
+            elif pending_audio is not None:
                 total_steps += pending_steps
+                if first_chunk_time is None:
+                    first_chunk_time = time.monotonic()
                 yield (
                     pending_audio,
                     int(sample_rate),

@@ -14,58 +14,20 @@ import torch
 import numpy as np
 import pyrubberband as rb
 
-from ..i18n import string, tagged_string
-from ..typing.common import JSONSerializable
-from ..core.concurrency import InferencePriority, run_in_daemon_thread
-from ..typing.aliases import AudioChunk, AudioChunks
-from ..persona.conversation import effective_voice_prompt
-from ..cesn import format_cesn_error, prepare_synthesis_chunks
-from ..vram import is_cuda_out_of_memory, release_cuda_after_oom
-from ..exceptions import CESNError, BackendError, NotAvailableError
 from ..paths import (
     outputs_dir,
-)
-from .timing import (
-    monotonic_time,
-)
-from ..constants import (
-    BASE_SR,
-    APP_NAME,
 )
 from ..utils import (
     format_number,
     format_error_message,
-)
-from ..dataclasses.pipeline import (
-    SpeechTiming,
-    SpeechRequest,
-)
-from ..metadata import (
-    write_celune_flac,
-    celune_metadata_payload,
-)
-from ..audio.dsp import (
-    soften,
-    to_48khz,
-    is_silent_utterance,
-)
-from .submission import (
-    split_text,
-    play_prepared_speech,
-    finish_tutorial_audio_capture,
 )
 from .output import (
     format_stat_duration,
     _output_filename_prefix,
     _output_filename_fragment,
 )
-from .buffering import (
-    release_pipeline,
-    queue_playback_done,
-    queue_playback_chunk,
-    remember_smart_buffer_speed,
-    smart_buffer_target_seconds,
-    flush_buffered_speech_chunks,
+from .timing import (
+    monotonic_time,
 )
 from .captions import (
     playback_source_meta,
@@ -79,6 +41,45 @@ from .captions import (
     build_caption_alignment_sections,
     record_caption_playback_audio_chunk,
 )
+from ..metadata import (
+    write_celune_flac,
+    celune_metadata_payload,
+)
+from .buffering import (
+    release_pipeline,
+    queue_playback_done,
+    queue_playback_chunk,
+    remember_smart_buffer_speed,
+    smart_buffer_target_seconds,
+    flush_buffered_speech_chunks,
+)
+from ..audio.dsp import (
+    soften,
+    to_48khz,
+    is_silent_utterance,
+)
+from ..constants import (
+    BASE_SR,
+    APP_NAME,
+)
+from .submission import (
+    split_text,
+    play_prepared_speech,
+    finish_tutorial_audio_capture,
+)
+from ..dataclasses.pipeline import (
+    SpeechTiming,
+    SpeechRequest,
+)
+from ..i18n import string, tagged_string
+from ..typing.common import JSONSerializable
+from ..typing.aliases import AudioChunk, AudioChunks
+from ..persona.conversation import effective_voice_prompt
+from ..cesn import format_cesn_error, prepare_synthesis_chunks
+from ..vram import is_cuda_out_of_memory, release_cuda_after_oom
+from ..exceptions import CESNError, BackendError, NotAvailableError
+from ..core.concurrency import InferencePriority, run_in_daemon_thread
+
 
 if TYPE_CHECKING:
     from ..celune import Celune
@@ -193,7 +194,7 @@ def _process_generation_request(
                 release_pipeline(engine)
                 break
 
-            start_time = monotonic_time()
+            generation_start_time = monotonic_time()
             engine.log(f"[GEN] {display_text}")
             engine.log(
                 "[GEN] start "
@@ -210,7 +211,7 @@ def _process_generation_request(
                 0.0,
             )
             engine.smart_buffer_target_seconds = buffer_target_seconds
-            speech_timing = SpeechTiming(start_time)
+            speech_timing = SpeechTiming(item.submitted_at)
             pushed_audio = False
             stream_frame_count = 0
             accepted_stream_frame_count = 0
@@ -379,14 +380,6 @@ def _process_generation_request(
                         ):
                             break
 
-                        first_chunk_time = None
-                        if timing is not None:
-                            raw_first_chunk_time = timing.get("first_chunk_time")
-                            if isinstance(raw_first_chunk_time, float):
-                                first_chunk_time = raw_first_chunk_time
-
-                        speech_timing.mark_first_chunk(first_chunk_time)
-
                         if isinstance(audio_chunk, torch.Tensor):
                             audio_chunk = audio_chunk.cpu().numpy()
 
@@ -442,6 +435,7 @@ def _process_generation_request(
                         ):
                             break
 
+                        speech_timing.mark_first_chunk()
                         buffer.append(audio_chunk)
                         full_audio.append(audio_chunk)
                         if caption_alignment_enabled:
@@ -458,7 +452,7 @@ def _process_generation_request(
                         speech_len += chunk_dur
                         buffered_speech_len += chunk_dur
                         generation_elapsed = max(
-                            monotonic_time() - start_time,
+                            monotonic_time() - generation_start_time,
                             1e-6,
                         )
                         buffer_target_seconds = smart_buffer_target_seconds(
@@ -575,7 +569,10 @@ def _process_generation_request(
             if generated_text_parts:
                 text = timing_text
 
-            generation_time = max(monotonic_time() - start_time, 1e-6)
+            generation_time = max(
+                monotonic_time() - generation_start_time,
+                1e-6,
+            )
 
             engine.log(
                 "[GEN] stream complete "

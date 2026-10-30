@@ -9,34 +9,34 @@ import hashlib
 import secrets
 import threading
 import contextlib
-import unittest.mock
-from abc import ABC, abstractmethod
 from typing import (
     Union,
     Optional,
     cast,
 )
+import unittest.mock
 from pathlib import Path
+from abc import ABC, abstractmethod
 from collections.abc import Mapping, Callable, Iterator, Generator
 
-import numpy as np
 import torch
+import numpy as np
 import soundfile as sf
 from huggingface_hub import snapshot_download
 
 from ...i18n import string
-from ...vram import backend_vram_report, is_cuda_out_of_memory, release_cuda_after_oom
-from ...paths import temp_data_dir, huggingface_progress, huggingface_hub_cache_dir
 from ...utils import discard
-from ...cevoice import CEVoiceLoader, default_loader
+from ...typing.common import JSON
 from ...constants import N_A_NUMERIC
 from ...exceptions import BackendError
-from .quantization import QuantizationMode, quantization_mode, quantize_component
-from ...registry.tts import ModelContract
-from ...registry.tts import model_contract as resolve_model_contract
-from ...typing.common import JSON
-from ...typing.aliases import LogLevel, AudioChunk, RuntimeValue
 from ...typing.backends import BackendModel
+from ...cevoice import CEVoiceLoader, default_loader
+from ...typing.aliases import LogLevel, AudioChunk, RuntimeValue
+from .quantization import QuantizationMode, quantization_mode, quantize_component
+from ...paths import temp_data_dir, huggingface_progress, huggingface_hub_cache_dir
+from ...registry.tts import ModelContract, model_contract as resolve_model_contract
+from ...vram import backend_vram_report, is_cuda_out_of_memory, release_cuda_after_oom
+
 
 __all__ = [
     "BackendModel",
@@ -379,12 +379,18 @@ class CeluneBackend[ModelT](ABC):
 
         sample_rate = int(info.samplerate)
         frame_limit = int(sample_rate * _MAX_REFERENCE_SECONDS)
-        audio, _ = sf.read(reference_wav, frames=frame_limit, dtype="float32")
         temp_dir = temp_data_dir(create=True)
-        digest = hashlib.sha1(str(reference_wav.resolve()).encode("utf-8")).hexdigest()[
-            :12
-        ]
+        source_stat = reference_wav.stat()
+        cache_identity = (
+            f"{reference_wav.resolve()}:{source_stat.st_mtime_ns}:{source_stat.st_size}"
+        )
+        digest = hashlib.sha1(cache_identity.encode("utf-8")).hexdigest()[:12]
         truncated_path = temp_dir / f"{reference_wav.stem}-{digest}-10s.wav"
+        if truncated_path.is_file():
+            self._truncated_reference_paths.add(truncated_path)
+            return truncated_path
+
+        audio, _ = sf.read(reference_wav, frames=frame_limit, dtype="float32")
         sf.write(truncated_path, audio, sample_rate)
         self._truncated_reference_paths.add(truncated_path)
         return truncated_path

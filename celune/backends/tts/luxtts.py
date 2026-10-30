@@ -8,6 +8,7 @@ import hashlib
 import contextlib
 from pathlib import Path
 from types import MethodType
+from collections import OrderedDict
 from typing import Union, Optional, Protocol, cast
 from collections.abc import Mapping, Callable, Iterator, Generator
 
@@ -25,16 +26,10 @@ from .base import (
 from ...i18n import string
 from ...registry.tts import (
     LUXTTS_MODEL_ID as _LUXTTS_MODEL_ID,
-)
-from ...registry.tts import (
+    LUXTTS_CPU_TRANSCRIBER_MODEL_ID as _LUXTTS_CPU_TRANSCRIBER_MODEL_ID,
+    LUXTTS_GPU_TRANSCRIBER_MODEL_ID as _LUXTTS_GPU_TRANSCRIBER_MODEL_ID,
     TTS_DEFAULT_VOICE,
     LUXTTS_VOICE_MODELS,
-)
-from ...registry.tts import (
-    LUXTTS_CPU_TRANSCRIBER_MODEL_ID as _LUXTTS_CPU_TRANSCRIBER_MODEL_ID,
-)
-from ...registry.tts import (
-    LUXTTS_GPU_TRANSCRIBER_MODEL_ID as _LUXTTS_GPU_TRANSCRIBER_MODEL_ID,
 )
 from ...utils import custom_assert
 from ...typing.aliases import AudioChunk
@@ -42,6 +37,7 @@ from ...typing.backends import BackendModel
 from ...cevoice import CEVoiceLoader, default_loader
 from ...registry.consent import require_model_consent
 from ...paths import temp_data_dir, huggingface_progress, huggingface_hub_cache_dir
+
 
 __all__ = [
     "LuxTTS",
@@ -87,6 +83,7 @@ _LUXTTS_VOCODER_TAIL_FRAMES = 15
 _LUXTTS_VOCODER_TRIM_FRAMES = 2
 _LUXTTS_VOCODER_HOP_LENGTH = 512
 _LUXTTS_VOCODER_SILENCE_FEATURE = "_celune_silence_feature"
+_LUXTTS_REFERENCE_CACHE_SIZE = 4
 _LuxPromptValue = Union[torch.Tensor, float, int]
 _LuxPrompt = dict[str, _LuxPromptValue]
 
@@ -348,7 +345,21 @@ class LuxTTS(CeluneBackend[LuxTTSModel]):
     ) -> None:
         super().__init__(log=log, fatal=fatal, quantize=quantize)
         self._threads = max(1, int(threads))
+        self._encoded_prompt_cache: OrderedDict[tuple[str, int, int], _LuxPrompt] = (
+            OrderedDict()
+        )
+        self._encoded_prompt_cache_model: Optional[LuxTTSModel] = None
         self._validate_refs()
+
+    def unload_model(self, release_cuda_cache: bool = True) -> None:
+        """Release cached LuxTTS prompt features before unloading the model.
+
+        Args:
+            release_cuda_cache: Whether to synchronize CUDA and release cached accelerator blocks.
+        """
+        self._encoded_prompt_cache.clear()
+        self._encoded_prompt_cache_model = None
+        super().unload_model(release_cuda_cache=release_cuda_cache)
 
     @staticmethod
     def _get_default_loader() -> Optional[CEVoiceLoader]:
@@ -372,6 +383,19 @@ class LuxTTS(CeluneBackend[LuxTTSModel]):
         five-second prompt and adding silence after it gives the model a clean
         acoustic boundary without changing the reference voice.
         """
+        source_stat = reference_wav.stat()
+        cache_identity = (
+            f"{reference_wav.resolve()}:{source_stat.st_mtime_ns}:{source_stat.st_size}"
+        )
+        digest = hashlib.sha1(cache_identity.encode("utf-8")).hexdigest()[:12]
+        prepared_path = (
+            temp_data_dir(create=True)
+            / f"{reference_wav.stem}-{digest}-luxtts-prompt.wav"
+        )
+        if prepared_path.is_file():
+            self._truncated_reference_paths.add(prepared_path)
+            return prepared_path
+
         info = sf.info(reference_wav)
         sample_rate = int(info.samplerate)
         prompt_frames = min(
@@ -393,17 +417,51 @@ class LuxTTS(CeluneBackend[LuxTTSModel]):
         )
         padded_audio = np.concatenate((audio, silence))
 
-        digest = hashlib.sha1(str(reference_wav.resolve()).encode("utf-8")).hexdigest()[
-            :12
-        ]
-        prepared_path = (
-            temp_data_dir(create=True)
-            / f"{reference_wav.stem}-{digest}-luxtts-prompt.wav"
-        )
-        if not prepared_path.exists():
-            sf.write(prepared_path, padded_audio, sample_rate)
+        sf.write(prepared_path, padded_audio, sample_rate)
         self._truncated_reference_paths.add(prepared_path)
         return prepared_path
+
+    def _get_encoded_prompt(
+        self,
+        model: LuxTTSModel,
+        reference_wav: Path,
+    ) -> _LuxPrompt:
+        """Return cached LuxTTS prompt features for one model and reference.
+
+        Args:
+            model: The loaded LuxTTS model instance.
+            reference_wav: Prepared, stable reference audio path.
+
+        Returns:
+            _LuxPrompt: Encoded prompt features ready for speech generation.
+        """
+        if self._encoded_prompt_cache_model is not model:
+            self._encoded_prompt_cache.clear()
+            self._encoded_prompt_cache_model = model
+
+        reference_stat = reference_wav.stat()
+        cache_key = (
+            str(reference_wav.resolve()),
+            reference_stat.st_mtime_ns,
+            reference_stat.st_size,
+        )
+        encoded_prompt = self._encoded_prompt_cache.get(cache_key)
+        if encoded_prompt is not None:
+            self._encoded_prompt_cache.move_to_end(cache_key)
+            return encoded_prompt
+
+        encoded_prompt = model.encode_prompt(
+            str(reference_wav),
+            duration=(
+                _LUXTTS_PROMPT_DURATION_SECONDS
+                + _LUXTTS_PROMPT_TRAILING_SILENCE_SECONDS
+            ),
+            rms=0.01,
+        )
+        if len(self._encoded_prompt_cache) >= _LUXTTS_REFERENCE_CACHE_SIZE:
+            self._encoded_prompt_cache.popitem(last=False)
+        self._encoded_prompt_cache[cache_key] = encoded_prompt
+        return encoded_prompt
 
     @property
     def voices(self) -> list[str]:
@@ -550,16 +608,8 @@ class LuxTTS(CeluneBackend[LuxTTSModel]):
             self._truncate_reference(loader.materialize(voice, "wav"))
         )
         self._apply_seed()
-        started = time.monotonic()
         with self._suppress_backend_output():
-            encoded_prompt = model.encode_prompt(
-                str(ref_wav),
-                duration=(
-                    _LUXTTS_PROMPT_DURATION_SECONDS
-                    + _LUXTTS_PROMPT_TRAILING_SILENCE_SECONDS
-                ),
-                rms=0.01,
-            )
+            encoded_prompt = self._get_encoded_prompt(model, ref_wav)
             set_vocoder_silence_feature(model, encoded_prompt)
             try:
                 waveform = model.generate_speech(
@@ -583,6 +633,7 @@ class LuxTTS(CeluneBackend[LuxTTSModel]):
         )
         if audio.size == 0:
             raise ValueError("LuxTTS produced no acoustic frames for the input")
+        first_chunk_time = time.monotonic()
         yield (
             audio,
             _LUXTTS_SAMPLE_RATE,
@@ -591,7 +642,7 @@ class LuxTTS(CeluneBackend[LuxTTSModel]):
                 "chunk_index": 0,
                 "chunk_steps": 1,
                 "total_steps_so_far": 1,
-                "first_chunk_time": started,
+                "first_chunk_time": first_chunk_time,
                 "is_final": True,
             },
         )

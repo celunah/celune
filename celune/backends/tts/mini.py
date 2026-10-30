@@ -5,8 +5,8 @@ import time
 import inspect
 import tempfile
 import contextlib
-from typing import Optional, cast
 from pathlib import Path
+from typing import Optional, cast
 from collections.abc import Mapping, Callable, Iterator
 
 import yaml
@@ -14,11 +14,7 @@ import numpy as np
 from pocket_tts import TTSModel
 from huggingface_hub import snapshot_download
 
-from .base import CeluneBackend, cached_hf_snapshot_path
 from ...i18n import string
-from ...paths import temp_data_dir, huggingface_progress, huggingface_hub_cache_dir
-from ...utils import custom_assert
-from ...cevoice import CEVoiceLoader, default_loader
 from ...registry.tts import (
     MINI_VOICE_MODELS,
     TTS_DEFAULT_VOICE,
@@ -27,13 +23,15 @@ from ...registry.tts import (
     MINI_SUPPORTED_LANGUAGES,
     MINI_LANGUAGE_MODEL_VARIANTS,
     ModelContract,
-)
-from ...registry.tts import (
     model_contract as resolve_model_contract,
 )
-from ...typing.aliases import AudioChunk, AudioChunks
-from ...typing.backends import MiniModel, MiniPromptState
+from ...utils import custom_assert
+from ...cevoice import CEVoiceLoader, default_loader
 from ...registry.consent import require_model_consent
+from ...typing.aliases import AudioChunk, AudioChunks
+from .base import CeluneBackend, cached_hf_snapshot_path
+from ...typing.backends import MiniModel, MiniPromptState
+from ...paths import temp_data_dir, huggingface_progress, huggingface_hub_cache_dir
 
 
 class Mini(CeluneBackend[TTSModel]):
@@ -428,16 +426,11 @@ class Mini(CeluneBackend[TTSModel]):
         first_chunk_time: Optional[float] = None
 
         for chunk in mini_model.generate_audio_stream(voice_state, text):
-            if first_chunk_time is None:
-                first_chunk_time = time.monotonic()
             chunk_array = chunk.detach().cpu().float().numpy()
-            batch.append(chunk_array)
-
-            if len(batch) < chunks_per_batch:
-                continue
-
             if pending_audio is not None:
                 total_steps += pending_steps
+                if first_chunk_time is None:
+                    first_chunk_time = time.monotonic()
                 yield (
                     pending_audio,
                     mini_model.sample_rate,
@@ -451,6 +444,13 @@ class Mini(CeluneBackend[TTSModel]):
                     },
                 )
                 chunk_index += 1
+                pending_audio = None
+                pending_steps = 0
+
+            batch.append(chunk_array)
+
+            if len(batch) < chunks_per_batch:
+                continue
 
             pending_audio = np.concatenate(batch)
             pending_steps = len(batch)
@@ -459,6 +459,8 @@ class Mini(CeluneBackend[TTSModel]):
         if batch:
             if pending_audio is not None:
                 total_steps += pending_steps
+                if first_chunk_time is None:
+                    first_chunk_time = time.monotonic()
                 yield (
                     pending_audio,
                     mini_model.sample_rate,
@@ -474,6 +476,8 @@ class Mini(CeluneBackend[TTSModel]):
                 chunk_index += 1
 
             total_steps += len(batch)
+            if first_chunk_time is None:
+                first_chunk_time = time.monotonic()
             yield (
                 np.concatenate(batch),
                 mini_model.sample_rate,
@@ -488,6 +492,8 @@ class Mini(CeluneBackend[TTSModel]):
             )
         elif pending_audio is not None:
             total_steps += pending_steps
+            if first_chunk_time is None:
+                first_chunk_time = time.monotonic()
             yield (
                 pending_audio,
                 mini_model.sample_rate,

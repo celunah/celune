@@ -37,7 +37,7 @@ class CaptionAlignmentSection:
 
 @dataclass(frozen=True)
 class SpeechRequest:
-    """Queued speech input and output persistence preference."""
+    """Queued speech input, submission time, and output persistence preference."""
 
     text: str
     display_text: str
@@ -54,6 +54,7 @@ class SpeechRequest:
     prepared_audio: Optional[AudioChunk] = None
     playback_source_queue: Optional[queue.Queue[Union[int, Exception]]] = None
     caption_alignment_sections: tuple[CaptionAlignmentSection, ...] = ()
+    submitted_at: float = field(default_factory=time.monotonic)
 
 
 @dataclass(frozen=True)
@@ -157,22 +158,16 @@ class CaptionPlaybackState:
 
 @dataclass
 class SpeechTiming:
-    """Timing data for a generated speech utterance."""
+    """Timing data from request submission through generated speech playback."""
 
     start_time: float
     first_chunk_time: Optional[float] = None
     first_playback_time: Optional[float] = None
 
-    def mark_first_chunk(self, chunk_time: Optional[float] = None) -> None:
-        """Record when the backend produces its first audio chunk.
-
-        Args:
-            chunk_time: Optional backend-provided monotonic timestamp to use.
-        """
+    def mark_first_chunk(self) -> None:
+        """Record when the pipeline has its first usable audio chunk."""
         if self.first_chunk_time is None:
-            self.first_chunk_time = (
-                chunk_time if isinstance(chunk_time, float) else time.monotonic()
-            )
+            self.first_chunk_time = time.monotonic()
 
     def mark_first_playback(self) -> None:
         """Record when the first audio chunk is sent to the output stream."""
@@ -180,20 +175,20 @@ class SpeechTiming:
             self.first_playback_time = time.monotonic()
 
     def ttfc_ms(self) -> float:
-        """Return time to first generated chunk in milliseconds.
+        """Return time to the first usable pipeline audio chunk in milliseconds.
 
         Returns:
-            float: Elapsed milliseconds until the first generated chunk.
+            float: Elapsed milliseconds until the first usable chunk is buffered.
         """
         if self.first_chunk_time is None:
             return N_A_NUMERIC
         return (self.first_chunk_time - self.start_time) * 1000
 
     def ttfp_seconds(self) -> float:
-        """Return time to first playback in seconds.
+        """Return time until the first audio chunk reaches the output stream.
 
         Returns:
-            float: Elapsed seconds until the first audible playback chunk.
+            float: Elapsed seconds until the first chunk reaches the output stream.
         """
         if self.first_playback_time is None:
             return N_A_NUMERIC

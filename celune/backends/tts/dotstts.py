@@ -17,8 +17,6 @@ from .base import (
     CeluneBackend,
     local_hf_offline_mode,
     cached_hf_snapshot_path,
-)
-from .base import (
     to_numpy_audio as normalize_streamed_audio,
 )
 from ...i18n import string
@@ -370,14 +368,10 @@ class DotsTtsMF(CeluneBackend[DotsTtsRuntime]):
                     audio = self.to_numpy_audio(chunk)
                     if audio.size == 0:
                         continue
-                    if first_chunk_time is None:
-                        first_chunk_time = time.monotonic()
-                    batch.append(audio)
-                    if len(batch) < chunk_size:
-                        continue
-
                     if pending_audio is not None:
                         total_steps += pending_steps
+                        if first_chunk_time is None:
+                            first_chunk_time = time.monotonic()
                         yield (
                             pending_audio,
                             int(getattr(model, "sample_rate", 48000)),
@@ -391,6 +385,12 @@ class DotsTtsMF(CeluneBackend[DotsTtsRuntime]):
                             },
                         )
                         chunk_index += 1
+                        pending_audio = None
+                        pending_steps = 0
+
+                    batch.append(audio)
+                    if len(batch) < chunk_size:
+                        continue
 
                     pending_audio = np.concatenate(batch)
                     pending_steps = len(batch)
@@ -399,6 +399,8 @@ class DotsTtsMF(CeluneBackend[DotsTtsRuntime]):
                 if batch:
                     if pending_audio is not None:
                         total_steps += pending_steps
+                        if first_chunk_time is None:
+                            first_chunk_time = time.monotonic()
                         yield (
                             pending_audio,
                             int(getattr(model, "sample_rate", 48000)),
@@ -414,6 +416,8 @@ class DotsTtsMF(CeluneBackend[DotsTtsRuntime]):
                         chunk_index += 1
 
                     total_steps += len(batch)
+                    if first_chunk_time is None:
+                        first_chunk_time = time.monotonic()
                     yield (
                         np.concatenate(batch),
                         int(getattr(model, "sample_rate", 48000)),
@@ -428,6 +432,8 @@ class DotsTtsMF(CeluneBackend[DotsTtsRuntime]):
                     )
                 elif pending_audio is not None:
                     total_steps += pending_steps
+                    if first_chunk_time is None:
+                        first_chunk_time = time.monotonic()
                     yield (
                         pending_audio,
                         int(getattr(model, "sample_rate", 48000)),
