@@ -26,8 +26,8 @@ Install the optional API dependencies with `uv sync --extra api`. The MCP endpoi
 | --- | --- | --- |
 | `status` | None | Runtime state, loaded/sleeping/locked flags, and a `ready` flag. |
 | `wake` | None | Runtime status after Celune finishes waking, with an `awake` flag. |
-| `speak` | `content: str`, `save: bool = true` | Generated FLAC audio. Requires a speaking backend. |
-| `sing` | `content: str`, `save: bool = true` | Generated FLAC audio. Requires a singing backend and valid CESN. |
+| `speak` | `content: str`, `save: bool = true` | FLAC audio after Celune finishes playing it. Requires a speaking backend. |
+| `sing` | `content: str`, `save: bool = true` | FLAC audio after Celune finishes playing it. Requires a singing backend and valid CESN. |
 | `run_persona` | `content: str` | Text confirming that Persona accepted the request. |
 | `change_voice` | Exactly one of `voice_name: str` or `pack_name: str` | Text confirming the selected voice or pack. |
 | `change_backend` | `backend_name: str` | Text confirming the selected installed TTS or VC backend. |
@@ -46,7 +46,7 @@ For example, an MCP client can inspect the runtime, wake it if needed, then veri
 
 Both tools take an empty argument object. Call `status` again after `wake` when the returned `ready` flag is false.
 
-Speech and singing tools return an MCP audio content block with MIME type `audio/flac`. They queue audio through Celune's normal generation and playback path. `save` defaults to `true`, matching `/v1/speak` and `/v1/sing`.
+Speech and singing tools return an MCP audio content block with MIME type `audio/flac`. Each call stays pending until Celune finishes playing the audio through her normal playback path. This makes the tool response a safe point for a client to issue a backend or voice change. `save` defaults to `true`, matching `/v1/speak` and `/v1/sing`.
 
 `change_voice` accepts either voice name from the active pack, or an installed voice pack's filename or stem. A voice name must exist in the active pack and is subject to Celune's normal reload rules. Voice selection remains locked while a singing backend is active. A pack change on a singing backend succeeds only when the selected pack contains a singing entry.
 

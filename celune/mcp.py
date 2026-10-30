@@ -4,26 +4,26 @@
 from __future__ import annotations
 
 import ipaddress
-from typing import TYPE_CHECKING, Union, Optional
 from pathlib import Path
-from contextlib import asynccontextmanager
 from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
+from typing import TYPE_CHECKING, Union, Optional
 
 import psutil
 import mcp.server as mcp_server
+from starlette.responses import Response
 import mcp.server.mcpserver as mcp_mcpserver
-import mcp.server.transport_security as mcp_transport_security
 import mcp.server.mcpserver.exceptions as mcp_exceptions
 from starlette.types import Send, Scope, ASGIApp, Receive
-from starlette.responses import Response
+import mcp.server.transport_security as mcp_transport_security
 
-from .cesn import validate_singing_notation
 from .i18n import string
-from .cevoice import CEVoice, bundled_voices_dir
-from .exceptions import CEVoiceError
-from .backends.vc import VC_BACKENDS
 from .backends.tts import BACKENDS
+from .backends.vc import VC_BACKENDS
+from .exceptions import CEVoiceError
+from .cesn import validate_singing_notation
 from .typing.pipeline import SpeechStreamQueue
+from .cevoice import CEVoice, bundled_voices_dir
 from .core.concurrency import run_in_daemon_thread
 
 if TYPE_CHECKING:
@@ -147,6 +147,7 @@ async def _generate_audio(content: str, save: bool, *, singing: bool) -> Audio:
     audio_data = await run_in_daemon_thread(_audio_bytes, chunks)
     if not audio_data:
         raise ToolError("The request could not be accepted right now.")
+    await run_in_daemon_thread(engine.playback_done.wait)
     return Audio(data=audio_data, format="flac")
 
 
@@ -190,12 +191,12 @@ def _find_installed_pack(pack_name: str) -> Optional[Path]:
 
 
 async def speak(content: str, save: bool = True) -> Audio:
-    """Generate speech audio from plain text."""
+    """Generate speech and return its FLAC audio after playback finishes."""
     return await _generate_audio(content, save, singing=False)
 
 
 async def sing(content: str, save: bool = True) -> Audio:
-    """Generate singing audio from CESN notation."""
+    """Generate CESN singing and return its FLAC audio after playback finishes."""
     return await _generate_audio(content, save, singing=True)
 
 
