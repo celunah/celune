@@ -12,12 +12,12 @@ from types import SimpleNamespace
 import pytest
 import numpy as np
 import mcp.types as mcp_types
-from fastapi.testclient import TestClient
 import mcp.server.mcpserver.exceptions as mcp_exceptions
+from fastapi.testclient import TestClient
 
 from celune import api, mcp
-from ..support import CeluneTestCase
 from celune.typing.pipeline import SpeechStreamQueue
+from ..support import CeluneTestCase
 
 AudioContent = mcp_types.AudioContent
 CallToolResult = mcp_types.CallToolResult
