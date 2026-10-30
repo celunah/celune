@@ -11,19 +11,24 @@ import torch
 from huggingface_hub import snapshot_download
 from faster_qwen3_tts import FasterQwen3TTS, __version__ as qwen3_ver
 
+from .base import CeluneBackend, local_hf_offline_mode, cached_hf_snapshot_path
 from ...paths import (
     huggingface_progress,
     configure_numba_cache,
     huggingface_hub_cache_dir,
+)
+from ...modeling import (
+    GraphQuantizedKVCache,
+    QuantizedKVCache,
+    create_graph_quantized_kv_cache,
+    create_quantized_kv_cache,
 )
 from ...i18n import string
 from ...typing.aliases import AudioChunk
 from ...utils import available, custom_assert
 from ...cevoice import CEVoiceLoader, default_loader
 from ...registry.consent import require_model_consent
-from ...modeling import QuantizedKVCache, create_quantized_kv_cache
 from ...registry.tts import TTS_DEFAULT_VOICE, QWEN3_DEFAULT_MODEL_ID
-from .base import CeluneBackend, local_hf_offline_mode, cached_hf_snapshot_path
 
 
 def _quantized_talker_cache(
@@ -66,6 +71,51 @@ def _quantized_talker_cache(
                     return talker, cache
         current = getattr(current, "model", None)
     return None
+
+
+def _install_graph_quantized_cache(
+    model: FasterQwen3TTS,
+    enabled: bool,
+) -> bool:
+    """Install fixed-capacity quantized storage into Qwen's talker graph."""
+    talker_graph = getattr(model, "talker_graph", None)
+    talker_model = getattr(talker_graph, "model", None)
+    config = getattr(talker_model, "config", None)
+    max_cache_len = getattr(talker_graph, "max_seq_len", None)
+    prefill = getattr(talker_graph, "prefill_kv", None)
+    if (
+        not enabled
+        or config is None
+        or not isinstance(max_cache_len, int)
+        or not callable(prefill)
+    ):
+        return False
+
+    try:
+        device = torch.device(model.device)
+    except (AttributeError, TypeError, RuntimeError):
+        return False
+    cache = create_graph_quantized_kv_cache(
+        config=config,
+        device=device,
+        max_cache_len=max_cache_len,
+        enabled=enabled,
+    )
+    if cache is None:
+        return False
+
+    original_prefill = prefill
+    talker_graph.static_cache = cache
+
+    def copy_quantized_prefill(past_key_values):
+        """Transfer Celune's quantized prompt into the graph cache directly."""
+        if isinstance(past_key_values, QuantizedKVCache):
+            return cache.copy_from(past_key_values)
+        cache.reset()
+        return original_prefill(past_key_values)
+
+    talker_graph.prefill_kv = copy_quantized_prefill
+    return True
 
 
 class Qwen3(CeluneBackend[FasterQwen3TTS]):
@@ -236,6 +286,7 @@ class Qwen3(CeluneBackend[FasterQwen3TTS]):
 
         with local_hf_offline_mode(), huggingface_progress(self.report_progress):
             self.model = FasterQwen3TTS.from_pretrained(path)
+        _install_graph_quantized_cache(self.model, self.quantize_kv_cache)
         self.model = self.apply_runtime_quantization(self.model, model_id)
         return self.model
 
@@ -304,7 +355,10 @@ class Qwen3(CeluneBackend[FasterQwen3TTS]):
                     return original_forward(*args, **call_kwargs)
 
                 talker.forward = forward_with_quantized_cache
-                stream_kwargs["parity_mode"] = True
+                stream_kwargs["parity_mode"] = not isinstance(
+                    getattr(getattr(model, "talker_graph", None), "static_cache", None),
+                    GraphQuantizedKVCache,
+                )
             stream = model.generate_voice_clone_streaming(
                 ref_audio=ref_wav,
                 ref_text=ref_text,

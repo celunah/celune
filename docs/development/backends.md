@@ -336,8 +336,13 @@ With `quantize_kv_cache: true`, Persona and the Qwen3 and FireRedTTS3 decoder
 caches store older full-attention keys and values as INT8 on Ampere or FP8 on
 `sm89+`, while keeping a short recent-token tail in the model's compute dtype.
 Attention receives dequantized values in that dtype. Qwen3 uses its dynamic
-cache path instead of CUDA graphs while this policy is active. When cache
-construction is unsupported, each backend keeps its native cache.
+quantized cache for prompt prefill and transfers it into fixed-capacity
+quantized storage for CUDA-graph decoding. The graph cache keeps the recent
+tail in the compute dtype and uses a shared dense workspace for attention;
+older keys and values remain INT8 or FP8 in resident cache storage. When cache
+construction is unsupported by the device or cache layout, Qwen3 keeps its
+native graph cache. If an installed Qwen API lacks Celune's graph-cache adapter
+surface, Qwen3 retains the dynamic quantized-cache fallback.
 
 VoxCPM2 uses two custom static MiniCPM caches, so its adapter supplies compact
 prefix storage and dequantizes each prefix for attention while preserving the

@@ -295,11 +295,11 @@ Persona, Qwen3, FireRedTTS3, and VoxCPM2 use the configured
 `quantize_kv_cache` policy for supported CUDA caches. Older keys and values
 use INT8 on Ampere GPUs or FP8 on `sm89` and newer GPUs; recent tokens remain
 in the model's compute dtype. Attention uses dequantized values, so model
-compute retains its normal dtype. Qwen3 switches from CUDA-graph decoding to
-its dynamic-cache path while this option is active. Unsupported cache layouts
-or unavailable quantized storage use the backend's native cache. Mini/Pocket
-TTS, dots.tts MeanFlow, and LuxTTS do not use autoregressive KV caches. Whisper
-and Needle are not affected.
+compute retains its normal dtype. Qwen3 keeps CUDA-graph decoding enabled and
+stores older graph-cache tokens in the selected quantized format. Unsupported
+cache layouts or unavailable quantized storage use the backend's native cache.
+Mini/Pocket TTS, dots.tts MeanFlow, and LuxTTS do not use autoregressive KV
+caches. Whisper and Needle are not affected.
 `context_size` is an upper bound: input encoding is limited to that bound while
 leaving room for at least one response token, and generation is capped by the
 remaining space after the actual prompt tokens are counted. The dynamic cache

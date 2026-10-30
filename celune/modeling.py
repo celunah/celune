@@ -4,30 +4,31 @@
 from __future__ import annotations
 
 # noinspection PyProtectedMember
-from typing import TYPE_CHECKING, Union, Literal, Optional, cast
 from collections.abc import Mapping, Callable
+from typing import TYPE_CHECKING, Any, Union, Literal, Optional, cast
 
 import torch
-from transformers import AutoTokenizer, AutoModelForCausalLM
-from transformers.cache_utils import Cache, CacheLayerMixin
 from transformers.modeling_utils import PreTrainedModel
-from transformers.tokenization_utils_base import PreTrainedTokenizerBase
+from transformers.cache_utils import Cache, CacheLayerMixin
+from transformers import AutoTokenizer, AutoModelForCausalLM
 
-from .i18n import string
-from .vram import resolve_vram_preset
-from .paths import huggingface_progress
-from .backends.tts import CeluneBackend
-from .typing.common import JSONSerializable
-from .registry.other import NORMALIZER_MODEL_ID
-from .registry.consent import require_model_consent
+if TYPE_CHECKING:
+    from transformers.configuration_utils import PreTrainedConfig
 
 try:
     from transformers.cache_utils import LinearAttentionCacheLayerMixin
 except ImportError:
     LinearAttentionCacheLayerMixin = CacheLayerMixin
 
-if TYPE_CHECKING:
-    from transformers.configuration_utils import PreTrainedConfig
+from transformers.tokenization_utils_base import PreTrainedTokenizerBase
+
+from .i18n import string
+from .vram import resolve_vram_preset
+from .backends.tts import CeluneBackend
+from .paths import huggingface_progress
+from .typing.common import JSONSerializable
+from .registry.other import NORMALIZER_MODEL_ID
+from .registry.consent import require_model_consent
 
 NORMALIZER_SPECIAL_TOKENS = ("<|im_start|>", "<|im_end|>", "<NORM>")
 NORMALIZER_DEVICE = "cpu"
@@ -588,6 +589,406 @@ class QuantizedKVCache(Cache):
             tuple[tuple[torch.Tensor, torch.Tensor], ...],
             tuple(self),
         )
+
+
+class _GraphQuantizedKVWorkspace:
+    """Reusable dense attention buffers shared by graph-cache layers."""
+
+    def __init__(self, max_cache_len: int) -> None:
+        self.max_cache_len = max_cache_len
+        self.positions: Optional[torch.Tensor] = None
+        self.ring_positions: Optional[torch.Tensor] = None
+        self.key_states: Optional[torch.Tensor] = None
+        self.value_states: Optional[torch.Tensor] = None
+
+    def initialize(
+        self,
+        key_states: torch.Tensor,
+        value_states: torch.Tensor,
+        residual_length: int,
+    ) -> None:
+        """Allocate fixed-address attention buffers from the first layer shape."""
+        if self.key_states is not None:
+            return
+        self.key_states = torch.zeros(
+            (*key_states.shape[:-2], self.max_cache_len, key_states.shape[-1]),
+            dtype=key_states.dtype,
+            device=key_states.device,
+        )
+        self.value_states = torch.zeros(
+            (*value_states.shape[:-2], self.max_cache_len, value_states.shape[-1]),
+            dtype=value_states.dtype,
+            device=value_states.device,
+        )
+        self.positions = torch.arange(self.max_cache_len, device=key_states.device)
+        self.ring_positions = self.positions.remainder(residual_length)
+
+
+class GraphQuantizedKVCacheLayer(QuantizedKVCacheLayer):
+    """Fixed-capacity quantized cache layer compatible with CUDA graph replay."""
+
+    is_compileable = True
+
+    def __init__(
+        self,
+        mode: QuantizedKVCacheMode,
+        max_cache_len: int,
+        residual_length: int,
+        workspace: _GraphQuantizedKVWorkspace,
+    ) -> None:
+        residual_length = min(residual_length, max_cache_len)
+        super().__init__(mode=mode, residual_length=residual_length)
+        self.max_cache_len = max_cache_len
+        self.prefix_capacity = max_cache_len - residual_length
+        self.workspace = workspace
+        self.cumulative_length = 0
+
+    def lazy_initialization(
+        self,
+        key_states: torch.Tensor,
+        value_states: Optional[torch.Tensor] = None,
+    ) -> None:
+        """Allocate quantized storage and initialize shared attention buffers."""
+        if value_states is None:
+            value_states = key_states
+        self.dtype = key_states.dtype
+        self.device = key_states.device
+        self.batch_size = key_states.shape[0]
+        self.max_batch_size = self.batch_size
+        self.num_heads = key_states.shape[1]
+        self._key_head_dim = key_states.shape[-1]
+        self._value_head_dim = value_states.shape[-1]
+        self.keys = torch.zeros(
+            (*key_states.shape[:-2], self.residual_length, key_states.shape[-1]),
+            dtype=key_states.dtype,
+            device=key_states.device,
+        )
+        self.values = torch.zeros(
+            (*value_states.shape[:-2], self.residual_length, value_states.shape[-1]),
+            dtype=value_states.dtype,
+            device=value_states.device,
+        )
+        quantized_dtype = cast(torch.dtype, self.quantized_dtype)
+        self._quantized_keys = torch.zeros(
+            (*key_states.shape[:-2], self.prefix_capacity, key_states.shape[-1]),
+            dtype=quantized_dtype,
+            device=key_states.device,
+        )
+        self._quantized_values = torch.zeros(
+            (*value_states.shape[:-2], self.prefix_capacity, value_states.shape[-1]),
+            dtype=quantized_dtype,
+            device=value_states.device,
+        )
+        self._key_scales = torch.ones(
+            (*key_states.shape[:-2], self.prefix_capacity, 1),
+            dtype=self._scale_dtype,
+            device=key_states.device,
+        )
+        self._value_scales = torch.ones(
+            (*value_states.shape[:-2], self.prefix_capacity, 1),
+            dtype=self._scale_dtype,
+            device=value_states.device,
+        )
+        self.workspace.initialize(key_states, value_states, self.residual_length)
+        self.is_initialized = True
+
+    def update(
+        self,
+        key_states: torch.Tensor,
+        value_states: torch.Tensor,
+        cache_kwargs: Optional[dict[str, Any]] = None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Update fixed storage and return a graph-stable attention view."""
+        if not self.is_initialized:
+            self.lazy_initialization(key_states, value_states)
+        if key_states.dtype != self.dtype:
+            key_states = key_states.to(self.dtype)
+        if value_states.dtype != self.dtype:
+            value_states = value_states.to(self.dtype)
+
+        cache_position = (
+            cache_kwargs.get("cache_position") if cache_kwargs is not None else None
+        )
+        if key_states.shape[-2] != 1:
+            return self._update_prefill(key_states, value_states, cache_position)
+        if cache_position is None:
+            raise ValueError("graph cache decode requires cache_position")
+
+        position = cache_position.reshape(-1)
+        if self.prefix_capacity:
+            promote_position = (position - self.residual_length).clamp(min=0)
+            promote_index = promote_position.remainder(self.residual_length)
+            promoted_keys = self.keys.index_select(2, promote_index)
+            promoted_values = self.values.index_select(2, promote_index)
+            quantized_keys, key_scales = self._quantize(promoted_keys)
+            quantized_values, value_scales = self._quantize(promoted_values)
+            promote_valid = (position >= self.residual_length).view(1, 1, -1, 1)
+            quantized_keys = torch.where(
+                promote_valid, quantized_keys, torch.zeros_like(quantized_keys)
+            )
+            quantized_values = torch.where(
+                promote_valid, quantized_values, torch.zeros_like(quantized_values)
+            )
+            key_scales = torch.where(
+                promote_valid, key_scales, torch.ones_like(key_scales)
+            )
+            value_scales = torch.where(
+                promote_valid, value_scales, torch.ones_like(value_scales)
+            )
+            quantized_position = promote_position.clamp(max=self.prefix_capacity - 1)
+            self._quantized_keys.index_copy_(2, quantized_position, quantized_keys)
+            self._quantized_values.index_copy_(2, quantized_position, quantized_values)
+            self._key_scales.index_copy_(2, quantized_position, key_scales)
+            self._value_scales.index_copy_(2, quantized_position, value_scales)
+
+        tail_position = position.remainder(self.residual_length)
+        self.keys.index_copy_(2, tail_position, key_states)
+        self.values.index_copy_(2, tail_position, value_states)
+        self.cumulative_length += key_states.shape[-2]
+        return self._attention_view(position[-1])
+
+    def get_mask_sizes(
+        self,
+        cache_position: Union[int, torch.Tensor],
+    ) -> tuple[int, int]:
+        """Return the fixed attention length used by the graph cache."""
+        del cache_position
+        return self.max_cache_len, 0
+
+    def get_seq_length(self) -> int:
+        """Return the most recently populated sequence length."""
+        return self.cumulative_length
+
+    def get_max_length(self) -> int:
+        """Return the fixed graph cache capacity."""
+        return self.max_cache_len
+
+    def get_max_cache_shape(self) -> int:
+        """Return the fixed graph cache capacity."""
+        return self.max_cache_len
+
+    def reset(self) -> None:
+        """Clear cache storage without reallocating graph-captured tensors."""
+        if not self.is_initialized:
+            return
+        self.keys.zero_()
+        self.values.zero_()
+        if self._quantized_keys is not None:
+            self._quantized_keys.zero_()
+        if self._quantized_values is not None:
+            self._quantized_values.zero_()
+        if self._key_scales is not None:
+            self._key_scales.fill_(1)
+        if self._value_scales is not None:
+            self._value_scales.fill_(1)
+        self.cumulative_length = 0
+
+    def copy_from(self, source: QuantizedKVCacheLayer) -> int:
+        """Copy a dynamically quantized prompt into fixed graph storage."""
+        if not source.is_initialized:
+            return 0
+        if source.mode != self.mode:
+            raise ValueError("graph and dynamic cache modes must match")
+        source_keys, source_values = source._residual_states()
+        if not self.is_initialized:
+            self.lazy_initialization(source_keys, source_values)
+        sequence_length = source.get_seq_length()
+        if sequence_length > self.max_cache_len:
+            raise ValueError("prompt exceeds the graph cache capacity")
+
+        prefix_length = source._quantized_length()
+        if prefix_length > self.prefix_capacity:
+            raise ValueError("quantized prompt prefix exceeds graph cache capacity")
+        if prefix_length:
+            assert self._quantized_keys is not None
+            assert self._quantized_values is not None
+            assert self._key_scales is not None
+            assert self._value_scales is not None
+            assert source._quantized_keys is not None
+            assert source._quantized_values is not None
+            assert source._key_scales is not None
+            assert source._value_scales is not None
+            self._quantized_keys[..., :prefix_length, :].copy_(source._quantized_keys)
+            self._quantized_values[..., :prefix_length, :].copy_(
+                source._quantized_values
+            )
+            self._key_scales[..., :prefix_length, :].copy_(source._key_scales)
+            self._value_scales[..., :prefix_length, :].copy_(source._value_scales)
+
+        tail_length = source_keys.shape[-2]
+        if tail_length:
+            positions = torch.arange(
+                prefix_length,
+                prefix_length + tail_length,
+                device=self.device,
+            ).remainder(self.residual_length)
+            self.keys.index_copy_(2, positions, source_keys)
+            self.values.index_copy_(2, positions, source_values)
+        self.cumulative_length = sequence_length
+        return sequence_length
+
+    def _update_prefill(
+        self,
+        key_states: torch.Tensor,
+        value_states: torch.Tensor,
+        cache_position: Optional[torch.Tensor],
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Populate fixed storage from a multi-token prefill operation."""
+        sequence_length = key_states.shape[-2]
+        if sequence_length > self.max_cache_len:
+            raise ValueError("prompt exceeds the graph cache capacity")
+        self.reset()
+        prefix_length = max(0, sequence_length - self.residual_length)
+        if prefix_length:
+            quantized_keys, key_scales = self._quantize(
+                key_states[..., :prefix_length, :]
+            )
+            quantized_values, value_scales = self._quantize(
+                value_states[..., :prefix_length, :]
+            )
+            assert self._quantized_keys is not None
+            assert self._quantized_values is not None
+            assert self._key_scales is not None
+            assert self._value_scales is not None
+            self._quantized_keys[..., :prefix_length, :].copy_(quantized_keys)
+            self._quantized_values[..., :prefix_length, :].copy_(quantized_values)
+            self._key_scales[..., :prefix_length, :].copy_(key_scales)
+            self._value_scales[..., :prefix_length, :].copy_(value_scales)
+
+        tail_keys = key_states[..., prefix_length:, :]
+        tail_values = value_states[..., prefix_length:, :]
+        if tail_keys.shape[-2]:
+            if cache_position is None:
+                positions = torch.arange(
+                    prefix_length, sequence_length, device=self.device
+                )
+            else:
+                positions = cache_position[-tail_keys.shape[-2] :]
+            positions = positions.remainder(self.residual_length)
+            self.keys.index_copy_(2, positions, tail_keys)
+            self.values.index_copy_(2, positions, tail_values)
+        self.cumulative_length = sequence_length
+        return self._attention_view(
+            torch.tensor(sequence_length - 1, device=self.device)
+        )
+
+    def _attention_view(
+        self,
+        position: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Dequantize into one reusable dense workspace for attention."""
+        if (
+            self.workspace.positions is None
+            or self.workspace.ring_positions is None
+            or self.workspace.key_states is None
+            or self.workspace.value_states is None
+        ):
+            raise RuntimeError("graph cache workspace is not initialized")
+        key_states = self.keys.index_select(2, self.workspace.ring_positions)
+        value_states = self.values.index_select(2, self.workspace.ring_positions)
+        tail_start = position - self.residual_length + 1
+        valid_tail = (self.workspace.positions >= tail_start) & (
+            self.workspace.positions <= position
+        )
+        key_states.masked_fill_(~valid_tail.view(1, 1, -1, 1), 0)
+        value_states.masked_fill_(~valid_tail.view(1, 1, -1, 1), 0)
+        self.workspace.key_states.copy_(key_states)
+        self.workspace.value_states.copy_(value_states)
+
+        if self.prefix_capacity:
+            assert self._quantized_keys is not None
+            assert self._quantized_values is not None
+            assert self._key_scales is not None
+            assert self._value_scales is not None
+            prefix_keys = self._dequantize(
+                self._quantized_keys,
+                self._key_scales,
+                self._key_head_dim,
+            )
+            prefix_values = self._dequantize(
+                self._quantized_values,
+                self._value_scales,
+                self._value_head_dim,
+            )
+            self.workspace.key_states[..., : self.prefix_capacity, :].copy_(prefix_keys)
+            self.workspace.value_states[..., : self.prefix_capacity, :].copy_(
+                prefix_values
+            )
+        return self.workspace.key_states, self.workspace.value_states
+
+
+class GraphQuantizedKVCache(Cache):
+    """Fixed-capacity quantized cache used by Qwen3 CUDA graph decoding."""
+
+    def __init__(
+        self,
+        config: PreTrainedConfig,
+        mode: QuantizedKVCacheMode,
+        max_cache_len: int,
+        residual_length: int = _DEFAULT_RESIDUAL_LENGTH,
+    ) -> None:
+        layer_types = _cache_layer_types(config)
+        if layer_types is None:
+            raise ValueError("model cache layout is not supported")
+        workspace = _GraphQuantizedKVWorkspace(max_cache_len)
+        layers = cast(
+            list[CacheLayerMixin],
+            [
+                GraphQuantizedKVCacheLayer(
+                    mode=mode,
+                    max_cache_len=max_cache_len,
+                    residual_length=residual_length,
+                    workspace=workspace,
+                )
+                for _ in layer_types
+            ],
+        )
+        super().__init__(layers=layers)
+        self.workspace = workspace
+
+    def copy_from(self, source: QuantizedKVCache) -> int:
+        """Transfer every dynamically quantized prompt layer into graph storage."""
+        if len(source.layers) != len(self.layers):
+            raise ValueError("dynamic and graph cache layer counts must match")
+        self.reset()
+        sequence_length = 0
+        for target, original in zip(self.layers, source.layers):
+            if not isinstance(target, GraphQuantizedKVCacheLayer):
+                raise TypeError("unexpected graph cache layer")
+            if not isinstance(original, QuantizedKVCacheLayer):
+                raise TypeError("unexpected dynamic quantized cache layer")
+            sequence_length = max(sequence_length, target.copy_from(original))
+        return sequence_length
+
+    def reset(self) -> None:
+        """Reset quantized storage and the shared attention workspace."""
+        super().reset()
+        if self.workspace.key_states is not None:
+            self.workspace.key_states.zero_()
+        if self.workspace.value_states is not None:
+            self.workspace.value_states.zero_()
+
+
+def create_graph_quantized_kv_cache(
+    config: PreTrainedConfig,
+    device: torch.device,
+    max_cache_len: int,
+    enabled: bool,
+) -> Optional[GraphQuantizedKVCache]:
+    """Create graph-compatible KV storage for supported full-attention CUDA models."""
+    mode = quantized_kv_cache_mode(enabled)
+    if mode is None or device.type != "cuda":
+        return None
+    if max_cache_len <= 0:
+        return None
+    try:
+        return GraphQuantizedKVCache(
+            config=config,
+            mode=mode,
+            max_cache_len=max_cache_len,
+        )
+    except ValueError:
+        return None
 
 
 def create_quantized_kv_cache(
