@@ -1,0 +1,133 @@
+name: CI Failure Comment
+
+on:
+  workflow_call:
+    inputs:
+      sha:
+        required: true
+        type: string
+      event_name:
+        required: true
+        type: string
+      pr_number:
+        required: false
+        type: string
+      run_url:
+        required: true
+        type: string
+      python_checks_result:
+        required: true
+        type: string
+      linux_build_result:
+        required: true
+        type: string
+      windows_build_result:
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  comment:
+    name: Post the failure comment
+    runs-on: ubuntu-slim
+
+    steps:
+      - name: Comment on pull request or commit
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_URL: ${{ inputs.run_url }}
+          SHA: ${{ inputs.sha }}
+          EVENT_NAME: ${{ inputs.event_name }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          PYTHON_CHECKS_RESULT: ${{ inputs.python_checks_result }}
+          LINUX_BUILD_RESULT: ${{ inputs.linux_build_result }}
+          WINDOWS_BUILD_RESULT: ${{ inputs.windows_build_result }}
+        run: |
+          slop_lines=(
+            "Are you vibe coding?"
+            "You call this an update?"
+            "You didn't fix that just yet."
+            "I am not impressed with that."
+            "I do not approve of your current efforts."
+            "What the hell was that for? Do your job."
+          )
+
+          timeout_lines=(
+            "Are the tests being sloths right now?"
+            "What hung this time? Please check it."
+            "I may be calm, but that was too calm."
+            "At this pace, I'll never speak again."
+            "\*yawn\* Is it done yet?"
+            "What is even happening here? I am bored."
+          )
+
+          failed_jobs=""
+          successful_jobs=""
+          condition=""
+          has_timeout=false
+
+          add_result() {
+            name="$1"
+            result="$2"
+
+            if [ "$result" = "success" ]; then
+              successful_jobs="${successful_jobs}- ${name}: success"$'\n'
+            else
+              failed_jobs="${failed_jobs}- ${name}: ${result}"$'\n'
+
+              if [ "$result" = "timed_out" ]; then
+                has_timeout=true
+              fi
+            fi
+          }
+
+          add_result "Anti AI Slop & Vibe Coding Checks" "$PYTHON_CHECKS_RESULT"
+          add_result "Linux Launcher Build" "$LINUX_BUILD_RESULT"
+          add_result "Windows Launcher Build" "$WINDOWS_BUILD_RESULT"
+
+          if [ "$PYTHON_CHECKS_RESULT" != "success" ] &&
+             [ "$PYTHON_CHECKS_RESULT" != "timed_out" ]; then
+            condition="potential slop"
+          fi
+
+          if [ "$has_timeout" = true ]; then
+            if [ -n "$condition" ]; then
+              condition="$condition and an incomplete run"
+            else
+              condition="an incomplete run"
+            fi
+            flavor_lines=("${timeout_lines[@]}")
+          elif [ "$PYTHON_CHECKS_RESULT" != "success" ]; then
+            condition="potential slop"
+            flavor_lines=("${slop_lines[@]}")
+          else
+            condition="an incomplete run"
+            flavor_lines=("${timeout_lines[@]}")
+          fi
+
+          flavor_line="${flavor_lines[RANDOM % ${#flavor_lines[@]}]}"
+          what_happened="${failed_jobs}${successful_jobs}"
+
+          body="$(printf \
+            "I have detected %s on \`%s\`\n\nHere is what happened:\n%s\n%s\n\nView the issue and fix it fast: %s" \
+            "$condition" \
+            "$SHA" \
+            "$what_happened" \
+            "*$flavor_line*" \
+            "$RUN_URL"
+          )"
+
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            gh pr comment "$PR_NUMBER" --repo "$REPO" --body "$body"
+          else
+            gh api \
+              --method POST \
+              "repos/$REPO/commits/$SHA/comments" \
+              -f body="$body"
+          fi

@@ -17,7 +17,6 @@ jobs:
   python-checks:
     name: Anti AI Slop & Vibe Coding Checks
     runs-on: ubuntu-24.04
-    # A cold CUDA dependency install can take longer than the test suite itself.
     timeout-minutes: 30
 
     steps:
@@ -39,12 +38,10 @@ jobs:
         run: python3 scripts/ci_warnings.py -- uv run ruff format --check .
 
       - name: Run lint
-        run: |
-          python3 scripts/ci_warnings.py -- uv run pylint -j 0 celune tests main.py
+        run: python3 scripts/ci_warnings.py -- uv run pylint -j 0 celune tests main.py
 
       - name: Type check
-        run: |
-          python3 scripts/ci_warnings.py -- uv run pyrefly check
+        run: python3 scripts/ci_warnings.py -- uv run pyrefly check
 
       - name: Check docstring coverage
         run: |
@@ -56,8 +53,7 @@ jobs:
         run: python3 scripts/ci_warnings.py -- uv run poe test_basic
 
       - name: Import smoke test
-        run: |
-          python3 scripts/ci_warnings.py -- uv run python -c "import celune; print(dir(celune))"
+        run: python3 scripts/ci_warnings.py -- uv run python -c "import celune; print(dir(celune))"
 
   launcher-build-linux:
     name: Linux Launcher Build
@@ -129,16 +125,10 @@ jobs:
 
   notify-failure:
     name: Comment on CI Failure
-    runs-on: ubuntu-slim
-    permissions:
-      contents: write
-      issues: write
-      pull-requests: write
     needs:
       - python-checks
       - launcher-build-linux
       - launcher-build-windows
-
     if: >-
       ${{
         always() &&
@@ -148,61 +138,16 @@ jobs:
           needs.launcher-build-windows.result != 'success'
         )
       }}
-
-    steps:
-      - name: Comment on pull request or commit
-        continue-on-error: true
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          SHA: ${{ github.sha }}
-          EVENT_NAME: ${{ github.event_name }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          PYTHON_CHECKS_RESULT: ${{ needs.python-checks.result }}
-          LINUX_BUILD_RESULT: ${{ needs.launcher-build-linux.result }}
-          WINDOWS_BUILD_RESULT: ${{ needs.launcher-build-windows.result }}
-
-        run: |
-          failed_jobs=""
-          successful_jobs=""
-
-          add_result() {
-            name="$1"
-            result="$2"
-
-            if [ "$result" = "success" ]; then
-              successful_jobs="${successful_jobs}- ${name}: success"$'\n'
-            else
-              failed_jobs="${failed_jobs}- ${name}: ${result}"$'\n'
-            fi
-          }
-
-          add_result \
-            "Anti AI Slop & Vibe Coding Checks" \
-            "$PYTHON_CHECKS_RESULT"
-
-          add_result \
-            "Linux Launcher Build" \
-            "$LINUX_BUILD_RESULT"
-
-          add_result \
-            "Windows Launcher Build" \
-            "$WINDOWS_BUILD_RESULT"
-
-          body="$(printf \
-            "Detected potential slop or an incomplete CI run in commit \`%s\`.\n\nFailed or incomplete checks:\n%s\nSuccessful checks:\n%s\nPlease check the logs and unslop your code:\n%s\n" \
-            "$SHA" \
-            "$failed_jobs" \
-            "$successful_jobs" \
-            "$RUN_URL"
-          )"
-
-          if [ "$EVENT_NAME" = "pull_request" ]; then
-            gh pr comment "$PR_NUMBER" --repo "$REPO" --body "$body"
-          else
-            gh api \
-              --method POST \
-              "repos/$REPO/commits/$SHA/comments" \
-              -f body="$body"
-          fi
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    uses: ./.github/workflows/slop-notice.yml
+    with:
+      sha: ${{ github.sha }}
+      event_name: ${{ github.event_name }}
+      pr_number: ${{ github.event.pull_request.number }}
+      run_url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      python_checks_result: ${{ needs.python-checks.result }}
+      linux_build_result: ${{ needs.launcher-build-linux.result }}
+      windows_build_result: ${{ needs.launcher-build-windows.result }}
