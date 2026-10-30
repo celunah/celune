@@ -106,7 +106,6 @@ DEVELOPMENT = (
 if REVISION:
     _local = REVISION.rstrip("*")
     _dirty = ".dirty" if REVISION.endswith("*") else ""
-    _identifier = f".{EXTRA_IDENTIFIER}"
-    __version__ = f"{VERSION}+{_identifier}{_local}{_dirty}"
+    __version__ = f"{VERSION}+{EXTRA_IDENTIFIER}{_local}{_dirty}"
 else:
     __version__ = f"{VERSION}+unknown"
