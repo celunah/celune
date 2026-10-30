@@ -14,7 +14,7 @@ import importlib
 import unicodedata
 from pathlib import Path
 from types import ModuleType
-from dataclasses import field, dataclass
+from dataclasses import dataclass, field, replace
 from typing import Union, Optional, Protocol, cast
 from collections.abc import Mapping, Callable, Iterator
 
@@ -79,6 +79,7 @@ __all__ = [
 _MODEL_FILES = ["config.yaml", "model.pt"]
 _MODEL_LOAD_STEPS = 8
 _MODEL_ONSET_PREROLL_SECONDS = 2.0
+_SOULX_STREAMING_CHUNK_SECONDS = 2.0
 _ARPABET_VOWELS = frozenset(
     {
         "AA",
@@ -701,6 +702,48 @@ def decode_score(text: str) -> tuple[_ScoreSection, ...]:
     return tuple(sections)
 
 
+def _split_streaming_section(section: _ScoreSection) -> tuple[_ScoreSection, ...]:
+    """Split a long score section at untied and unslurred event boundaries."""
+    chunks: list[_ScoreSection] = []
+    start = 0
+    chunk_seconds = 0.0
+    chunk_contains_note = False
+
+    for index, event in enumerate(section.events):
+        chunk_seconds += (
+            event.duration_numerator / event.duration_denominator * 60.0 / section.bpm
+        )
+        chunk_contains_note = chunk_contains_note or not event.rest
+        next_event = (
+            section.events[index + 1] if index + 1 < len(section.events) else None
+        )
+        safe_boundary = next_event is None or not (
+            next_event.tie_from_previous or next_event.slur_from_previous
+        )
+        if (
+            chunk_seconds >= _SOULX_STREAMING_CHUNK_SECONDS
+            and safe_boundary
+            and chunk_contains_note
+            and next_event is not None
+        ):
+            chunk_events = section.events[start : index + 1]
+            chunks.append(replace(section, events=chunk_events))
+            start = index + 1
+            chunk_seconds = 0.0
+            chunk_contains_note = False
+
+    if start < len(section.events):
+        trailing_events = section.events[start:]
+        trailing_has_note = any(not event.rest for event in trailing_events)
+        if chunks and not trailing_has_note:
+            previous = chunks.pop()
+            chunks.append(replace(section, events=previous.events + trailing_events))
+        else:
+            chunks.append(replace(section, events=trailing_events))
+
+    return tuple(chunks) if chunks else (section,)
+
+
 def pitch_to_midi(pitch: str) -> int:
     """Convert a validated CESN scientific pitch name to a MIDI note number."""
     match = _PITCH_PATTERN.fullmatch(pitch.casefold())
@@ -965,8 +1008,9 @@ class SoulXSinger(CeluneBackend[_SoulXRuntime]):
         quantize: bool = True,
         quantize_kv_cache: bool = True,
         high_precision: bool = False,
+        streaming: bool = False,
     ) -> None:
-        """Initialize SoulX-Singer with its selected pitch-conditioning mode.
+        """Initialize SoulX-Singer with selected conditioning and streaming modes.
 
         Args:
             log: Backend logging callback.
@@ -975,13 +1019,17 @@ class SoulXSinger(CeluneBackend[_SoulXRuntime]):
             quantize_kv_cache: Shared cache policy, ignored by this backend.
             high_precision: Use frame-aligned F0 conditioning instead of score
                 conditioning.
+            streaming: Split long score sections into shorter inference calls.
 
         Raises:
             TypeError: If ``high_precision`` is not a boolean.
+            TypeError: If ``streaming`` is not a boolean.
         """
         del quantize, quantize_kv_cache
         if not isinstance(high_precision, bool):
             raise TypeError("high_precision must be a boolean")
+        if not isinstance(streaming, bool):
+            raise TypeError("streaming must be a boolean")
         super().__init__(
             log=log,
             model_name=SOULX_SINGER_MODEL_ID,
@@ -991,6 +1039,7 @@ class SoulXSinger(CeluneBackend[_SoulXRuntime]):
             singing=True,
         )
         self.high_precision = high_precision
+        self.streaming = streaming
         self._source_modules: Optional[_SoulXSourceModules] = None
         self._validate_refs()
 
@@ -1448,6 +1497,7 @@ class SoulXSinger(CeluneBackend[_SoulXRuntime]):
     ) -> Iterator[tuple[AudioChunk, int, Optional[JSON]]]:
         """Generate one waveform using score or framewise F0 conditioning."""
         high_precision = getattr(self, "high_precision", False) is True
+        streaming = getattr(self, "streaming", False) is True
         text = kwargs.pop("text", None)
         if not isinstance(text, str) or not text.strip():
             raise ValueError("text must be a non-empty string")
@@ -1456,12 +1506,21 @@ class SoulXSinger(CeluneBackend[_SoulXRuntime]):
                 raise CESNValidationError("No CESN notation found")
             text = self.cesn_to_model(text)
         sections = decode_score(text)
-        section_count = len(sections)
+        inference_sections: list[tuple[_ScoreSection, bool]] = []
+        for section in sections:
+            chunks = _split_streaming_section(section) if streaming else (section,)
+            inference_sections.extend(
+                (chunk, chunk_index + 1 == len(chunks))
+                for chunk_index, chunk in enumerate(chunks)
+            )
+        section_count = len(inference_sections)
         owned_loaders: dict[str, CEVoiceLoader] = {}
         first_chunk_time: Optional[float] = None
         self._apply_seed()
         try:
-            for section_index, section in enumerate(sections):
+            for section_index, (section, section_final) in enumerate(
+                inference_sections
+            ):
                 if section.language.split("-")[0].casefold() != "en":
                     raise CESNUnsupportedFeatureError(
                         "SoulX-Singer supports English CESN only"
@@ -1572,7 +1631,7 @@ class SoulXSinger(CeluneBackend[_SoulXRuntime]):
                         "chunk_steps": section_count,
                         "total_steps_so_far": section_index + 1,
                         "section_caption": section.display_text,
-                        "section_final": True,
+                        "section_final": section_final,
                         "first_chunk_time": first_chunk_time,
                         "is_final": section_index + 1 == section_count,
                     },

@@ -206,10 +206,17 @@ lengths to seconds using each section's BPM. It does not infer pronunciation or
 syllable boundaries from the lyric spelling. Unsupported IPA sounds raise a
 backend error before model inference. See the [CESN format](../formats/cesn.md)
 for the notation and conversion behavior.
-Changes in singer, tempo, key, or scale remain section boundaries; the model
-synthesizes each section and Celune concatenates the resulting audio. SoulX
-returns one complete 24 kHz waveform, so it does not stream partial score audio.
-By default, each section uses one score-conditioned inference pass. With
+Changes in singer, tempo, key, or scale remain section boundaries. By default,
+the model synthesizes each section in one call and Celune concatenates the
+resulting audio. With `backend_options.soulxsinger.streaming: true`, Celune
+splits sections longer than two seconds at event boundaries, keeping ties and
+slurs intact, then yields each completed chunk for playback. Every chunk remains
+a complete SoulX inference call; Celune does not stream from inside the model's
+reverse-diffusion pass. This mode can reset expression at chunk boundaries and
+adds a model call plus onset context for each chunk, so it is opt-in. See
+[backend-specific options](../user-guide/configuration.md#backend-specific-options)
+for the configuration contract. By default, each section uses one
+score-conditioned inference pass. With
 `backend_options.soulxsinger.high_precision: true`, Celune first makes a
 score-conditioned teacher pass, extracts its framewise F0 with RMVPE, recenters
 each note's median pitch on the written CESN pitch, then performs a second
@@ -241,6 +248,13 @@ RTF use a separate timer that begins when the worker starts processing, so
 request-queue delay does not make model throughput appear slower. `TTFC`
 measures audio ready for the playback buffer; it does not measure when playback
 becomes audible.
+
+LuxTTS splits longer inputs at sentence and word boundaries, targeting about
+150 characters per chunk. It calls its complete-waveform API once per text
+chunk, then yields each completed waveform before generating the next. Short
+inputs remain one call. This enables chunk-level playback without changing the
+isolated library; it does not provide audio from inside a single LuxTTS
+inference call and can add phrasing breaks between segments.
 
 Streaming adapters retain their configured chunk batches and final-chunk
 metadata. Once the first batch is ready, they release it when the next

@@ -41,14 +41,22 @@ documented namespace instead of being duplicated at the top level.
 
 Put backend-only constructor options under `backend_options` and the backend's
 registered name. Celune passes only the selected backend's options to its
-isolated worker. The default enables SoulX-Singer's F0 melody-conditioning
-mode; set `high_precision` to `false` to use score conditioning instead:
+isolated worker. SoulX-Singer defaults to F0 melody-conditioning mode and
+full-section inference; set `high_precision` to `false` for score conditioning
+or `streaming` to `true` for shorter inference chunks:
 
 ```yaml
 backend_options:
   soulxsinger:
     high_precision: true
+    streaming: false
 ```
+
+With `streaming: true`, Celune divides long singing sections into chunks of
+about two seconds at event boundaries. It keeps tied and slurred note chains
+together. Each chunk is a separate inference call, so playback can begin before
+the complete section is generated. The default `false` preserves full-section
+generation and phrasing.
 
 This mode downloads SoulX-Singer's pinned RMVPE F0 extractor checkpoint if it is
 not already cached. Celune measures the singer reference's F0, generates a

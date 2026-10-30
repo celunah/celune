@@ -2,6 +2,7 @@
 """LuxTTS backend implementation for Celune."""
 
 import os
+import re
 import math
 import time
 import hashlib
@@ -84,8 +85,49 @@ _LUXTTS_VOCODER_TRIM_FRAMES = 2
 _LUXTTS_VOCODER_HOP_LENGTH = 512
 _LUXTTS_VOCODER_SILENCE_FEATURE = "_celune_silence_feature"
 _LUXTTS_REFERENCE_CACHE_SIZE = 4
+_LUXTTS_STREAM_CHUNK_CHARACTERS = 150
 _LuxPromptValue = Union[torch.Tensor, float, int]
 _LuxPrompt = dict[str, _LuxPromptValue]
+
+
+def _split_text_for_streaming(text: str) -> list[str]:
+    """Split long LuxTTS input at sentence and word boundaries."""
+    chunks: list[str] = []
+    current = ""
+    sentences = re.split(r"(?<=[.!?])\s+", text.strip())
+
+    for sentence in sentences:
+        sentence = sentence.strip()
+        if not sentence:
+            continue
+        if len(sentence) <= _LUXTTS_STREAM_CHUNK_CHARACTERS:
+            if (
+                current
+                and len(current) + len(sentence) + 1 > _LUXTTS_STREAM_CHUNK_CHARACTERS
+            ):
+                chunks.append(current)
+                current = ""
+            current = f"{current} {sentence}".strip()
+            continue
+
+        if current:
+            chunks.append(current)
+            current = ""
+        for word in sentence.split():
+            if (
+                current
+                and len(current) + len(word) + 1 > _LUXTTS_STREAM_CHUNK_CHARACTERS
+            ):
+                chunks.append(current)
+                current = ""
+            current = f"{current} {word}".strip()
+            if len(current) >= _LUXTTS_STREAM_CHUNK_CHARACTERS:
+                chunks.append(current)
+                current = ""
+
+    if current:
+        chunks.append(current)
+    return chunks
 
 
 class _LuxTTSVocoder(Protocol):
@@ -579,7 +621,7 @@ class LuxTTS(CeluneBackend[LuxTTSModel]):
     def generate_stream(
         self, model: LuxTTSModel, **kwargs
     ) -> Iterator[tuple[AudioChunk, int, Optional[dict]]]:
-        """Generate one normalized, complete LuxTTS waveform for Celune."""
+        """Yield complete LuxTTS waveforms for bounded text chunks."""
         text = kwargs.pop("text", None)
         if not isinstance(text, str) or not text.strip():
             raise ValueError("expected text to say")
@@ -607,42 +649,48 @@ class LuxTTS(CeluneBackend[LuxTTSModel]):
         ref_wav = self._prepare_prompt_reference(
             self._truncate_reference(loader.materialize(voice, "wav"))
         )
+        text_chunks = _split_text_for_streaming(text)
         self._apply_seed()
         with self._suppress_backend_output():
             encoded_prompt = self._get_encoded_prompt(model, ref_wav)
             set_vocoder_silence_feature(model, encoded_prompt)
-            try:
-                waveform = model.generate_speech(
-                    text,
-                    encoded_prompt,
-                    num_steps=4,
-                    guidance_scale=3.0,
-                    t_shift=0.5,
-                    speed=1.0,
-                    return_smooth=False,
+        first_chunk_time: Optional[float] = None
+        chunk_count = len(text_chunks)
+        try:
+            for chunk_index, text_chunk in enumerate(text_chunks):
+                with self._suppress_backend_output():
+                    waveform = model.generate_speech(
+                        text_chunk,
+                        encoded_prompt,
+                        num_steps=4,
+                        guidance_scale=3.0,
+                        t_shift=0.5,
+                        speed=1.0,
+                        return_smooth=False,
+                    )
+                audio = np.ascontiguousarray(
+                    np.clip(to_numpy_audio(waveform), -1.0, 1.0),
+                    dtype=np.float32,
                 )
-            finally:
-                setattr(
-                    model.vocos,
-                    _LUXTTS_VOCODER_SILENCE_FEATURE,
-                    None,
+                if audio.size == 0:
+                    raise ValueError("LuxTTS produced no acoustic frames for the input")
+                if first_chunk_time is None:
+                    first_chunk_time = time.monotonic()
+                yield (
+                    audio,
+                    _LUXTTS_SAMPLE_RATE,
+                    {
+                        "backend": self.name,
+                        "chunk_index": chunk_index,
+                        "chunk_steps": chunk_count,
+                        "total_steps_so_far": chunk_index + 1,
+                        "first_chunk_time": first_chunk_time,
+                        "is_final": chunk_index + 1 == chunk_count,
+                    },
                 )
-
-        audio = np.ascontiguousarray(
-            np.clip(to_numpy_audio(waveform), -1.0, 1.0), dtype=np.float32
-        )
-        if audio.size == 0:
-            raise ValueError("LuxTTS produced no acoustic frames for the input")
-        first_chunk_time = time.monotonic()
-        yield (
-            audio,
-            _LUXTTS_SAMPLE_RATE,
-            {
-                "backend": self.name,
-                "chunk_index": 0,
-                "chunk_steps": 1,
-                "total_steps_so_far": 1,
-                "first_chunk_time": first_chunk_time,
-                "is_final": True,
-            },
-        )
+        finally:
+            setattr(
+                model.vocos,
+                _LUXTTS_VOCODER_SILENCE_FEATURE,
+                None,
+            )

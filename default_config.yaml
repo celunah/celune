@@ -40,6 +40,8 @@ backend_options:
   soulxsinger:
     # Use F0 melody conditioning instead of score conditioning.
     high_precision: true
+    # Generate long score sections in shorter chunks for earlier playback.
+    streaming: false
 
 # CEVOICE voice selection
 #
