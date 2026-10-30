@@ -722,7 +722,7 @@
     "registry.commercial_use_blocked": "Commercial mode blocks {model_name} because its terms do not confirm commercial use.",
     "registry.consent_accept": "Continue",
     "registry.consent_accepted_retry": "Terms accepted. Retry your request.",
-    "registry.consent_decline": "Decline",
+    "registry.consent_decline": "Cancel",
     "registry.consent_declined": "Terms declined. The model was not loaded.",
     "registry.consent_entry_hint": "I consent",
     "registry.consent_instruction": "Once read, type \"I consent\" to continue.",
