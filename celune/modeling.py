@@ -953,9 +953,18 @@ class GraphQuantizedKVCacheLayer(QuantizedKVCacheLayer):
                 self._value_scales,
                 self._value_head_dim,
             )
-            self.workspace.key_states[..., : self.prefix_capacity, :].copy_(prefix_keys)
-            self.workspace.value_states[..., : self.prefix_capacity, :].copy_(
-                prefix_values
+            valid_prefix = (
+                self.workspace.positions[: self.prefix_capacity] < tail_start
+            ).view(1, 1, -1, 1)
+            prefix_key_view = self.workspace.key_states[..., : self.prefix_capacity, :]
+            prefix_value_view = self.workspace.value_states[
+                ..., : self.prefix_capacity, :
+            ]
+            prefix_key_view.copy_(
+                torch.where(valid_prefix, prefix_keys, prefix_key_view)
+            )
+            prefix_value_view.copy_(
+                torch.where(valid_prefix, prefix_values, prefix_value_view)
             )
         return self.workspace.key_states, self.workspace.value_states
 

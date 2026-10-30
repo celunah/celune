@@ -133,6 +133,7 @@ def test_fp8_graph_cache_copies_quantized_prefix_storage() -> None:
         residual_length=2,
         workspace=_GraphQuantizedKVWorkspace(max_cache_len=4),
     )
+    dynamic_layer = QuantizedKVCacheLayer(mode="fp8", residual_length=2)
     key_states = [
         torch.tensor([[[[1.0, -0.5]]]]),
         torch.tensor([[[[-0.25, 0.75]]]]),
@@ -141,10 +142,23 @@ def test_fp8_graph_cache_copies_quantized_prefix_storage() -> None:
     value_states = [states + 1 for states in key_states]
 
     for position, (keys, values) in enumerate(zip(key_states, value_states)):
-        layer.update(
+        graph_keys, graph_values = layer.update(
             keys,
             values,
             {"cache_position": torch.tensor([position])},
+        )
+        dynamic_keys, dynamic_values = dynamic_layer.update(keys, values)
+        torch.testing.assert_close(
+            graph_keys[..., : position + 1, :],
+            dynamic_keys,
+            rtol=0,
+            atol=0,
+        )
+        torch.testing.assert_close(
+            graph_values[..., : position + 1, :],
+            dynamic_values,
+            rtol=0,
+            atol=0,
         )
 
     quantized_keys = cast(torch.Tensor, layer._quantized_keys)
