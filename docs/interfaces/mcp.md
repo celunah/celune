@@ -48,6 +48,8 @@ Both tools take an empty argument object. Call `status` again after `wake` when 
 
 Speech and singing tools return an MCP audio content block with MIME type `audio/flac`. Each call stays pending until Celune finishes playing the audio through her normal playback path. This makes the tool response a safe point for a client to issue a backend or voice change. `save` defaults to `true`, matching `/v1/speak` and `/v1/sing`.
 
+The TUI and WebUI disable their controls while Celune wakes, reloads a voice or backend, generates speech, or plays audio. `speak` and `sing` keep those controls disabled until playback finishes. The same runtime callbacks apply when these actions start from the REST API, WebUI, or TUI. `run_persona` reports when a request is accepted; Persona processing continues in the background and the interface remains available for follow-up input.
+
 `change_voice` accepts either voice name from the active pack, or an installed voice pack's filename or stem. A voice name must exist in the active pack and is subject to Celune's normal reload rules. Voice selection remains locked while a singing backend is active. A pack change on a singing backend succeeds only when the selected pack contains a singing entry.
 
 `change_backend` accepts the canonical installed backend names, including TTS and voice-conversion backends. A failed reload is returned as a tool error from the normal Celune control path.

@@ -46,6 +46,40 @@ class TestUIInteractions(CeluneTestCase):
         """Reset singleton UI guards after each test."""
         reset_ui_singletons()
 
+    def test_tts_queue_availability_keeps_controls_locked_until_playback_ends(
+        self,
+    ) -> None:
+        """Keep TUI controls disabled after generation while audio is still playing."""
+        celune = SimpleNamespace(
+            test_finished=False,
+            locked=True,
+            is_in_tutorial=True,
+            voices=("balanced", "bold"),
+        )
+        change_input_state = mock.Mock()
+        change_voice_lock_state = mock.Mock()
+        ui = cast(
+            CeluneUI,
+            SimpleNamespace(
+                celune=celune,
+                cur_state="idle",
+                celune_ready=True,
+                _is_agent_test_mode=mock.Mock(return_value=False),
+                _cancel_sleep_timer=mock.Mock(),
+                safe_status=mock.Mock(),
+                input_box=SimpleNamespace(placeholder=""),
+                change_input_state=change_input_state,
+                change_voice_lock_state=change_voice_lock_state,
+            ),
+        )
+
+        CeluneUI.tts_queue_avail(ui)
+
+        assert not celune.locked
+        change_input_state.assert_called_once_with(locked=True)
+        change_voice_lock_state.assert_called_once_with(locked=True)
+        assert ui.input_box.placeholder == string("ui.tutorial_placeholder")
+
     def test_vc_recording_vad_plays_leading_silence(self) -> None:
         """Verify live VC converts and plays silence while its VAD gate is closed."""
         ui = CeluneUI()

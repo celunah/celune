@@ -6,18 +6,18 @@ from __future__ import annotations
 import os
 import re
 import sys
-import queue as queue_module
 import shlex
 import types
 import ctypes
 import asyncio
 import threading
 import contextlib
-from copy import deepcopy
 from uuid import uuid4
-from typing import TYPE_CHECKING, Optional, cast
 from pathlib import Path
+from copy import deepcopy
+import queue as queue_module
 from collections.abc import Callable, Iterator
+from typing import TYPE_CHECKING, Optional, cast
 
 from . import app as _app
 from ..constants import SIGTSTP, APP_NAME
@@ -1632,10 +1632,8 @@ def tts_idle(self) -> None:
     self._schedule_sleep_timer()
 
 
-def tts_queue_avail(
-    self,
-) -> None:  # allow enqueuing new inputs while speaking but after generation
-    """Unlock input queueing after Celune completes generation."""
+def tts_queue_avail(self) -> None:
+    """Keep controls locked while Celune plays generated speech."""
     celune = self.celune
     if (
         celune is None
@@ -1648,12 +1646,10 @@ def tts_queue_avail(
     celune.locked = False
     self._cancel_sleep_timer()
     self.safe_status(_app.string("status.speaking"))
+    self.change_input_state(locked=True)
+    self.change_voice_lock_state(locked=True)
     if celune.is_in_tutorial:
         self.input_box.placeholder = _app.string("ui.tutorial_placeholder")
-        self.change_voice_lock_state(locked=True)
-    else:
-        self.change_input_state(locked=False)
-        self.change_voice_lock_state(locked=len(celune.voices) < 2)
 
 
 def error(self, message: str) -> None:

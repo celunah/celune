@@ -17,20 +17,13 @@ from importlib.resources import files
 from typing import TYPE_CHECKING, Union, Optional, cast
 from collections.abc import Mapping, Callable, Iterator, Sequence
 
-import gradio as gr
 import numpy as np
+import gradio as gr
 import soundfile as sf
 from fastapi import HTTPException
 
-from ..ui import resources as ui_resources
 from ..i18n import string
-from ..paths import project_root, main_window_log_path
 from ..theme import colors
-from ..utils import available, format_error_message
-from ..ui.app import CeluneUI
-from ..cevoice import default_loader
-from ..cedts.ui import UiTimedUpdate, ui_timed_update_channel
-from ..constants import BASE_SR, APP_NAME
 from ..typing.api import (
     WEBUI_UNSET as _WEBUI_UNSET,
 )
@@ -50,26 +43,33 @@ from ..server.jobs import (
     publish_active_task_log,
     publish_active_task_progress,
 )
-from ..persona.impl import persona_enabled, persona_talkback_enabled
-from ..typing.events import EventName, EventCallback
-from ..server.runtime import invoke_message_callback, shutdown_api_for_fatal_error
-from ..server.session import ServerSession, server_session
-from ..typing.aliases import LogLevel, AudioChunks
-from ..typing.pipeline import SpeechStreamQueue
+from ..ui.app import CeluneUI
 from ..server.constants import (
     WEBUI_GENERATION_API_NAMES,
     WEBUI_RESOURCE_ROTATE_SECONDS,
     WEBUI_TIMED_UPDATE_STALE_SECONDS,
     WEBUI_STATUS_PROBE_DEBOUNCE_SECONDS,
 )
-from ..extensions.events import EventDispatcher
-from ..pipeline.captions import current_playback_status
 from ..dataclasses.events import (
     AgentTaskFinishedEvent,
     AgentChoiceRequestedEvent,
     AgentTaskStateChangedEvent,
     AgentApprovalRequestedEvent,
 )
+from ..cevoice import default_loader
+from ..constants import BASE_SR, APP_NAME
+from ..ui import resources as ui_resources
+from ..typing.pipeline import SpeechStreamQueue
+from ..extensions.events import EventDispatcher
+from ..typing.aliases import LogLevel, AudioChunks
+from ..utils import available, format_error_message
+from ..typing.events import EventName, EventCallback
+from ..paths import project_root, main_window_log_path
+from ..pipeline.captions import current_playback_status
+from ..server.session import ServerSession, server_session
+from ..cedts.ui import UiTimedUpdate, ui_timed_update_channel
+from ..persona.impl import persona_enabled, persona_talkback_enabled
+from ..server.runtime import invoke_message_callback, shutdown_api_for_fatal_error
 
 npt = np.typing
 
@@ -723,7 +723,12 @@ def wrap_celune_callbacks(
 
     def wrapped_queue_available() -> None:
         original_queue_available()
-        locked = bool(getattr(celune, "is_in_tutorial", False))
+        locked = bool(
+            getattr(celune, "locked", False)
+            or getattr(celune, "is_in_tutorial", False)
+            or getattr(celune, "cur_state", "")
+            in {"generating", "reloading", "speaking", "waking"}
+        )
         _sync_webui_runtime_locks(celune, locked=locked, session=session)
         set_webui_status(
             string("status.speaking"),
@@ -1295,7 +1300,9 @@ def webui_vc_controls_update(
     """Return the current browser VC control state."""
     celune = session.bound_celune
     vc_enabled = webui_vc_mode_active(celune)
-    control_interactive = celune is not None and vc_enabled
+    control_interactive = (
+        celune is not None and vc_enabled and not session.webui_input_locked
+    )
     return (
         gr.update(interactive=control_interactive),
         gr.update(interactive=control_interactive),

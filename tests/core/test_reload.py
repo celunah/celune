@@ -4,27 +4,27 @@
 import weakref
 import threading
 import contextlib
-from types import SimpleNamespace, MappingProxyType
-from typing import Optional, cast
 from pathlib import Path
 from unittest import mock
+from typing import Optional, cast
+from types import SimpleNamespace, MappingProxyType
 
 import pytest
 from transformers.modeling_utils import PreTrainedModel
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 
+from celune.utils import discard
+from celune.celune import Celune
 from celune.core import sleep as core_sleep
 from celune.core import voice as core_voice
 from celune.core import reload as core_reload
 from celune.core import loading as core_loading
-from celune.core import lifecycle as core_lifecycle
-from celune.utils import discard
-from celune.celune import Celune
-from celune.exceptions import WarmupError, BackendError
 from celune.typing.common import JSONSerializable
+from celune.core import lifecycle as core_lifecycle
+from celune.exceptions import WarmupError, BackendError
 
-from ..support import FakeGlow, FakeBackend, FakeVCBackend
 from .fixtures import CeluneCoreTestSupport
+from ..support import FakeGlow, FakeBackend, FakeVCBackend
 
 
 class TestCeluneReload(CeluneCoreTestSupport):
@@ -99,6 +99,27 @@ class TestCeluneReload(CeluneCoreTestSupport):
         assert celune.loaded
         assert celune._reload_pending
         assert not celune._model_ready.is_set()
+        thread_cls.return_value.start.assert_called_once_with()
+
+    def test_set_voice_locks_voice_controls_during_reload(self) -> None:
+        """Lock voice selection for every caller while one voice is reloading."""
+        celune = self._make_celune({})
+        celune.cur_state = "idle"
+        celune.loaded = True
+        celune.current_voice = "balanced"
+        celune.voices = ("balanced", "bold")
+        celune.change_input_state_callback = mock.Mock()
+        celune.change_voice_lock_state_callback = mock.Mock()
+
+        with (
+            mock.patch.object(core_voice, "speech_playback_active", return_value=False),
+            mock.patch.object(core_reload, "wait_until_idle", return_value=True),
+            mock.patch("celune.core.voice.threading.Thread") as thread_cls,
+        ):
+            assert celune.set_voice("bold")
+
+        celune.change_input_state_callback.assert_called_once_with(locked=True)
+        celune.change_voice_lock_state_callback.assert_called_once_with(locked=True)
         thread_cls.return_value.start.assert_called_once_with()
 
     def test_set_backend_rejects_non_singing_character_before_reload(self) -> None:
@@ -1100,6 +1121,8 @@ class TestCeluneReload(CeluneCoreTestSupport):
         persona_client.close.assert_called_once_with()
 
         wake_result: list[bool] = []
+        celune.change_input_state_callback = mock.Mock()
+        celune.change_voice_lock_state_callback = mock.Mock()
         wake_thread = threading.Thread(
             target=lambda: wake_result.append(celune.wake_from_sleep())
         )
@@ -1107,6 +1130,14 @@ class TestCeluneReload(CeluneCoreTestSupport):
         wake_thread.join(timeout=1)
         assert not wake_thread.is_alive()
         assert wake_result == [True]
+        assert celune.change_input_state_callback.call_args_list == [
+            mock.call(locked=True),
+            mock.call(locked=False),
+        ]
+        assert celune.change_voice_lock_state_callback.call_args_list == [
+            mock.call(locked=True),
+            mock.call(locked=False),
+        ]
         assert persona_load_started.wait(timeout=2)
         release_persona_load.set()
         background_thread = celune._wake_background_thread

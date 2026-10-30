@@ -13,20 +13,6 @@ from collections.abc import Iterator
 import pytest
 import numpy as np
 
-from celune.i18n import string
-from celune.celune import Celune
-from celune.utils import discard
-from celune.constants import PipelineStates
-from celune.typing.aliases import AudioChunk
-from celune.persona.impl import compact_persona_history
-from celune.typing.common import JSON, JSONSerializable
-from celune.core import conversation as core_conversation
-from celune.dataclasses import pipeline as pipeline_types
-from celune.pipeline import captions, playback, buffering
-from celune.persona.capabilities import PersonaCapabilities
-from celune.dataclasses.pipeline import CaptionAlignmentSection
-from celune.persona import conversation as persona_conversation
-from celune.persona.prompts import PersonaPromptBuilder, render_markdown_subsection
 from celune.cevoice import (
     CEVoice,
     CEVoiceLoader,
@@ -35,6 +21,9 @@ from celune.cevoice import (
     PersonaStyleValues,
     persona_files_from_bundle,
 )
+from celune.i18n import string
+from celune.celune import Celune
+from celune.utils import discard
 from celune.typing.agent import (
     ToolCall,
     AgentTask,
@@ -46,6 +35,17 @@ from celune.typing.agent import (
     AgentToolDangerLevel,
     AgentToolArgumentSchema,
 )
+from celune.constants import PipelineStates
+from celune.typing.aliases import AudioChunk
+from celune.persona.impl import compact_persona_history
+from celune.typing.common import JSON, JSONSerializable
+from celune.core import conversation as core_conversation
+from celune.dataclasses import pipeline as pipeline_types
+from celune.pipeline import captions, playback, buffering
+from celune.persona.capabilities import PersonaCapabilities
+from celune.dataclasses.pipeline import CaptionAlignmentSection
+from celune.persona import conversation as persona_conversation
+from celune.persona.prompts import PersonaPromptBuilder, render_markdown_subsection
 
 from .helpers import (
     LanguageAwareBackend,
@@ -54,7 +54,6 @@ from .helpers import (
     wait_for_persona_worker,
     prepare_persona_conversation_engine,
 )
-
 from ..platform import LINUX_ONLY, WINDOWS_ONLY
 from ..support import CeluneAsyncTestCase, make_pipeline_engine
 
@@ -1609,8 +1608,15 @@ class TestPipelineAsync(CeluneAsyncTestCase):
         assert engine.errors == []
         assert (string("cesn.no_notation_found"), "warning") in engine.messages
         assert engine.statuses == [(string("status.generating"), "info")]
-        engine.change_input_state_callback.assert_called_once_with(locked=False)
-        engine.change_voice_lock_state_callback.assert_called_once_with(locked=True)
+        assert engine.change_input_state_callback.call_args_list[0] == mock.call(
+            locked=True
+        )
+        assert engine.change_input_state_callback.call_args_list[-1] == mock.call(
+            locked=False
+        )
+        assert engine.change_voice_lock_state_callback.call_args_list[-1] == mock.call(
+            locked=True
+        )
         assert engine.cur_state == "idle"
         assert not engine.locked
         assert engine.text_queue.empty()
@@ -1669,8 +1675,15 @@ class TestPipelineAsync(CeluneAsyncTestCase):
             (string("status.idle"), "info"),
         ]
         assert engine.cur_state == "idle"
-        engine.change_input_state_callback.assert_called_once_with(locked=False)
-        engine.change_voice_lock_state_callback.assert_called_once_with(locked=True)
+        assert engine.change_input_state_callback.call_args_list[0] == mock.call(
+            locked=True
+        )
+        assert engine.change_input_state_callback.call_args_list[-1] == mock.call(
+            locked=False
+        )
+        assert engine.change_voice_lock_state_callback.call_args_list[-1] == mock.call(
+            locked=True
+        )
         generate_stream.assert_not_called()
 
     async def test_generation_worker_reloads_language_specific_model_when_needed(

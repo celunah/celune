@@ -204,6 +204,8 @@ def wake_from_sleep(self) -> bool:
         self.cur_state = "waking"
 
         try:
+            self.change_input_state_callback(locked=True)
+            self.change_voice_lock_state_callback(locked=True)
             with self._model_lock:
                 if core_lifecycle.is_voice_conversion_mode(self):
                     if self.vc_backend is None:

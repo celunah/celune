@@ -6,25 +6,20 @@ import queue
 import asyncio
 import tempfile
 import threading
-from types import TracebackType, SimpleNamespace
-from typing import Self, Optional, cast
 from pathlib import Path
 from unittest import mock
+from typing import Self, Optional, cast
+from types import TracebackType, SimpleNamespace
 
+import pytest
 import numpy as np
 import numpy.typing as npt
-import pytest
 
-from celune.core import conversation as core_conversation
-from celune.agent import routing as agent_routing
-from celune.utils import discard, clear_queue
-from celune.celune import Celune
 from celune.cevoice import (
     CEVoicePersona,
     PersonaIdentity,
     PersonaStyleValues,
 )
-from celune.persona import conversation as persona_conversation
 from celune.pipeline import (
     output,
     captions,
@@ -33,22 +28,27 @@ from celune.pipeline import (
     generation,
     submission,
 )
-from celune.constants import BASE_SR, PipelineStates
-from celune.dataclasses import pipeline as pipeline_types
+from celune.celune import Celune
 from celune.typing.agent import (
     AgentTask,
     AgentContext,
     AgentRequest,
 )
-from celune.typing.locks import ComponentLockName
-from celune.typing.common import JSON, JSONSerializable
-from celune.typing.aliases import AudioChunk
-from celune.core.concurrency import run_in_daemon_thread
 from celune.dataclasses.pipeline import (
     SpeechRequest,
     AudioInputRequest,
 )
+from celune.typing.aliases import AudioChunk
+from celune.utils import discard, clear_queue
+from celune.agent import routing as agent_routing
+from celune.typing.locks import ComponentLockName
+from celune.constants import BASE_SR, PipelineStates
+from celune.typing.common import JSON, JSONSerializable
+from celune.core.concurrency import run_in_daemon_thread
+from celune.core import conversation as core_conversation
+from celune.dataclasses import pipeline as pipeline_types
 from celune.persona.capabilities import PersonaCapabilities
+from celune.persona import conversation as persona_conversation
 
 from .helpers import (
     reload_callback,
@@ -224,13 +224,22 @@ class TestPipeline(CeluneTestCase):
         assert q.empty()
 
         engine = make_pipeline_engine()
+        engine.voices = ("balanced", "bold")
         celune_engine = cast(Celune, engine)
         assert buffering.acquire_pipeline(celune_engine, "speak")
         assert engine.locked
+        engine.change_input_state_callback.assert_called_once_with(locked=True)
+        engine.change_voice_lock_state_callback.assert_called_once_with(locked=True)
         assert not buffering.acquire_pipeline(celune_engine, "speak")
         buffering.release_pipeline(celune_engine)
         assert not engine.locked
         assert engine.cur_state == "idle"
+        assert engine.change_input_state_callback.call_args_list[-1] == mock.call(
+            locked=False
+        )
+        assert engine.change_voice_lock_state_callback.call_args_list[-1] == mock.call(
+            locked=False
+        )
 
         assert not playback.force_stop_speech(celune_engine)
         engine.locked = True

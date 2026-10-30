@@ -2,6 +2,7 @@
 """Pipeline locks, buffering, and playback contention policy."""
 
 from __future__ import annotations
+
 import os
 import uuid
 import queue
@@ -13,10 +14,6 @@ from typing import TYPE_CHECKING, Union, Optional, cast
 import psutil
 import numpy as np
 
-from .captions import (
-    playback_source_meta,
-    set_playback_source_status,
-)
 from .timing import (
     LEGACY_BUFFER_SECONDS,
     SMART_BUFFER_SMOOTHING,
@@ -42,20 +39,12 @@ from .timing import (
     PLAYBACK_CONTENTION_LAG_CRITICAL_SECONDS,
     monotonic_time,
 )
-
+from .captions import (
+    playback_source_meta,
+    set_playback_source_status,
+)
 from ..i18n import string
 from ..utils import discard
-from ..core.concurrency import ComponentLockManager
-from ..typing.common import JSONSerializable
-from ..typing.pipeline import SpeechStreamQueue
-from ..dataclasses.events import StateChangedEvent
-from ..typing.aliases import AudioChunk, AudioChunks
-from ..constants import BASE_SR, APP_NAME, PipelineStates
-from ..dataclasses.pipeline import (
-    SpeechTiming,
-    PlaybackChunk,
-    PlaybackSourceDone,
-)
 from ..typing.locks import (
     ComponentLockName,
     ComponentLockOwner,
@@ -63,6 +52,17 @@ from ..typing.locks import (
     ComponentLockAcquisition,
     ComponentLockRequirement,
 )
+from ..dataclasses.pipeline import (
+    SpeechTiming,
+    PlaybackChunk,
+    PlaybackSourceDone,
+)
+from ..typing.common import JSONSerializable
+from ..typing.pipeline import SpeechStreamQueue
+from ..dataclasses.events import StateChangedEvent
+from ..core.concurrency import ComponentLockManager
+from ..typing.aliases import AudioChunk, AudioChunks
+from ..constants import BASE_SR, APP_NAME, PipelineStates
 
 if TYPE_CHECKING:
     from ..celune import Celune
@@ -208,6 +208,8 @@ def acquire_pipeline_result(
             engine._ready_announced = False
         engine.locked = True
         engine.playback_done.clear()
+        engine.change_input_state_callback(locked=True)
+        engine.change_voice_lock_state_callback(locked=True)
         engine.log(
             f"[LOCK] acquired by {action} text_queue={engine.text_queue.qsize()} "
             f"audio_queue={engine.audio_queue.qsize()}",
@@ -260,6 +262,27 @@ def release_pipeline(engine: Celune, playback_idle: bool = True) -> None:
         )
     if state_event is not None:
         engine.emit_event("state_changed", state_event)
+    if playback_idle:
+        controls_locked = _controls_must_remain_locked(engine)
+        engine.change_input_state_callback(locked=controls_locked)
+        engine.change_voice_lock_state_callback(
+            locked=controls_locked or len(getattr(engine, "voices", ())) < 2
+        )
+
+
+def _controls_must_remain_locked(engine: Celune) -> bool:
+    """Keep controls disabled while the runtime cannot accept user actions."""
+    operation_state = getattr(engine, "operation_state", None)
+    state_value = getattr(operation_state, "value", "normal")
+    return bool(
+        state_value != "normal"
+        or getattr(engine, "sleeping", False)
+        or getattr(engine, "test_finished", False)
+        or getattr(engine, "exit_requested", False)
+        or getattr(engine, "is_in_tutorial", False)
+        or getattr(engine, "cur_state", "")
+        in {"error", "exiting", "reloading", "sleeping", "stopped", "waking"}
+    )
 
 
 def should_apply_contention_buffering(

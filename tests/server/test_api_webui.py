@@ -5,33 +5,33 @@ import re
 import shutil
 import asyncio
 import tempfile
-from queue import Queue
-from types import SimpleNamespace
 from typing import (
     Optional,
     cast,
 )
+from queue import Queue
 from pathlib import Path
 from unittest import mock
+from types import SimpleNamespace
 from collections import abc, deque
 
 import numpy as np
 import fastapi.testclient
-from starlette.types import Send, Scope, Message, Receive
 from starlette.requests import Request
 from starlette.responses import Response
+from starlette.types import Send, Scope, Message, Receive
 
 from celune import api
 from celune.i18n import string
 from celune.theme import colors
-from celune.webui import actions as webui_actions
-from celune.webui import runtime as webui
 from celune.celune import Celune
+from celune.webui import runtime as webui
 from celune.server import auth as server_auth
+from celune.server.session import ServerSession
+from celune.webui import actions as webui_actions
+from celune.typing.pipeline import SpeechStreamQueue
 from celune.server import constants as server_constants
 from celune.typing.celune import ChunkCaptionProgressCallback
-from celune.server.session import ServerSession
-from celune.typing.pipeline import SpeechStreamQueue
 
 from ..support import CeluneTestCase
 
@@ -947,8 +947,15 @@ class TestApiWebUI(CeluneTestCase):
             api.bind_celune(celune)
 
         celune.queue_avail_callback()
-        assert not api.server_session.webui_input_locked
+        assert api.server_session.webui_input_locked
+        assert api.server_session.webui_voice_locked
         assert api.server_session.webui_status_text == string("status.speaking")
+
+        celune.locked = False
+        celune.cur_state = "idle"
+        celune.idle_callback()
+        assert not api.server_session.webui_input_locked
+        assert not api.server_session.webui_voice_locked
 
         celune.caption_callback("Hello there")
         caption_progress = cast(
@@ -973,7 +980,7 @@ class TestApiWebUI(CeluneTestCase):
         api.server_session.webui_progress_current = 1.0
         api.server_session.webui_progress_total = 1.0
         _status = api.webui_status_html()
-        assert string("status.speaking") in _status
+        assert string("status.idle") in _status
         assert "Hello there" not in _status
         assert "50%" not in _status
         assert "100%" not in _status
@@ -1212,6 +1219,7 @@ class TestApiWebUI(CeluneTestCase):
 
     def test_webui_vc_controls_enable_in_voice_conversion_mode(self) -> None:
         """Verify VC controls become interactive when the engine is in VC mode."""
+        api.server_session.webui_input_locked = False
         api.server_session.bound_celune = cast(
             Celune,
             SimpleNamespace(
@@ -1224,6 +1232,20 @@ class TestApiWebUI(CeluneTestCase):
         assert source_update["interactive"]
         assert mode_update["interactive"]
         assert button_update["interactive"]
+
+    def test_webui_vc_controls_lock_with_runtime_input(self) -> None:
+        """Keep VC controls disabled while another runtime operation is active."""
+        api.server_session.webui_input_locked = True
+        api.server_session.bound_celune = cast(
+            Celune,
+            SimpleNamespace(input_mode="voice_conversion"),
+        )
+
+        source_update, mode_update, button_update = api.webui_vc_controls_update()
+
+        assert not source_update["interactive"]
+        assert not mode_update["interactive"]
+        assert not button_update["interactive"]
 
     def test_webui_snapshot_keeps_failed_no_voice_runtime_locked(self) -> None:
         """Verify a failed no-voice runtime stays in an error/locked browser state."""

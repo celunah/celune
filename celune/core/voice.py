@@ -6,16 +6,9 @@ from __future__ import annotations
 import time
 import asyncio
 import threading
-from typing import Union, Optional
 from pathlib import Path
+from typing import Union, Optional
 
-from . import reload as core_reload
-from . import lifecycle as core_lifecycle
-from .. import __version__
-from ..i18n import string, tagged_string
-from ..paths import project_root
-from ..utils import format_error_message
-from ..config import config_value
 from ..cevoice import (
     CEVoice,
     default_loader,
@@ -26,18 +19,25 @@ from ..cevoice import (
     persona_metadata_from_manifest,
     bundle_matches_default_pack_checksum,
 )
-from .lifecycle import config_str
+from .. import __version__
+from ..paths import project_root
 from ..constants import APP_NAME
-from .concurrency import run_in_daemon_thread
-from ..backends.vc import VC_BACKENDS, CeluneVCBackend
-from ..backends.tts import BACKENDS, CeluneBackend
-from ..registry.tts import QWEN3_06B_MODEL_ID
-from ..typing.celune import BundleWithPath, CoreBackendSpec
+from ..config import config_value
+from .lifecycle import config_str
+from . import reload as core_reload
+from ..i18n import string, tagged_string
+from ..utils import format_error_message
+from . import lifecycle as core_lifecycle
 from ..extensions.base import CeluneContext
 from ..pipeline.playback import play_signal
-from ..pipeline.playback import force_stop_speech as force_stop_pipeline
+from .concurrency import run_in_daemon_thread
+from ..registry.tts import QWEN3_06B_MODEL_ID
+from ..backends.tts import BACKENDS, CeluneBackend
 from ..dataclasses.events import VoiceChangedEvent
+from ..backends.vc import VC_BACKENDS, CeluneVCBackend
 from ..extensions.manager import CeluneExtensionManager
+from ..typing.celune import BundleWithPath, CoreBackendSpec
+from ..pipeline.playback import force_stop_speech as force_stop_pipeline
 
 
 def set_voices(self, voices: tuple[str, ...]) -> None:
@@ -203,6 +203,7 @@ def _prepare_voice_change(self, name: str) -> bool:
         return False
 
     self.change_input_state_callback(locked=True)
+    self.change_voice_lock_state_callback(locked=True)
     wait_for_speech = speech_playback_active(self)
     previous_state = self.cur_state
     self.cur_state = "reloading"
@@ -212,6 +213,7 @@ def _prepare_voice_change(self, name: str) -> bool:
     if not core_reload.wait_until_idle(self, wait_for_speech=wait_for_speech):
         self.cur_state = previous_state
         self.change_input_state_callback(locked=False)
+        self.change_voice_lock_state_callback(locked=len(self.voices) < 2)
         return False
 
     self._model_ready.clear()
