@@ -4,12 +4,15 @@
 from unittest.mock import patch
 from typing import ClassVar, cast
 
+import pytest
 import torch
 from transformers.configuration_utils import PreTrainedConfig
 
 from celune.modeling import (
+    GraphQuantizedKVCacheLayer,
     QuantizedKVCache,
     QuantizedKVCacheLayer,
+    _GraphQuantizedKVWorkspace,
     quantized_kv_cache_mode,
 )
 
@@ -116,3 +119,38 @@ def test_quantized_kv_cache_mode_selects_hardware_policy() -> None:
         assert quantized_kv_cache_mode(True) == "fp8"
 
     assert quantized_kv_cache_mode(False) is None
+
+
+def test_fp8_graph_cache_copies_quantized_prefix_storage() -> None:
+    """Write FP8 quantized states through the graph cache's byte view."""
+    fp8_dtype = getattr(torch, "float8_e4m3fn", None)
+    if fp8_dtype is None:
+        pytest.skip("PyTorch does not expose FP8 cache storage")
+
+    layer = GraphQuantizedKVCacheLayer(
+        mode="fp8",
+        max_cache_len=4,
+        residual_length=2,
+        workspace=_GraphQuantizedKVWorkspace(max_cache_len=4),
+    )
+    key_states = [
+        torch.tensor([[[[1.0, -0.5]]]]),
+        torch.tensor([[[[-0.25, 0.75]]]]),
+        torch.tensor([[[[0.5, 0.25]]]]),
+    ]
+    value_states = [states + 1 for states in key_states]
+
+    for position, (keys, values) in enumerate(zip(key_states, value_states)):
+        layer.update(
+            keys,
+            values,
+            {"cache_position": torch.tensor([position])},
+        )
+
+    quantized_keys = cast(torch.Tensor, layer._quantized_keys)
+    expected_keys, _ = layer._quantize(key_states[0])
+    assert quantized_keys.dtype == fp8_dtype
+    assert torch.equal(
+        quantized_keys[..., :1, :].view(torch.uint8),
+        expected_keys.view(torch.uint8),
+    )

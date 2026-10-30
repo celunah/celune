@@ -692,6 +692,22 @@ class GraphQuantizedKVCacheLayer(QuantizedKVCacheLayer):
         self.workspace.initialize(key_states, value_states, self.residual_length)
         self.is_initialized = True
 
+    def _index_copy_quantized(
+        self,
+        destination: torch.Tensor,
+        positions: torch.Tensor,
+        source: torch.Tensor,
+    ) -> None:
+        """Copy quantized values without relying on CUDA FP8 index-copy support."""
+        if self.mode == "fp8":
+            destination.view(torch.uint8).index_copy_(
+                2,
+                positions,
+                source.view(torch.uint8),
+            )
+            return
+        destination.index_copy_(2, positions, source)
+
     def update(
         self,
         key_states: torch.Tensor,
@@ -749,9 +765,15 @@ class GraphQuantizedKVCacheLayer(QuantizedKVCacheLayer):
             quantized_values_storage = cast(torch.Tensor, self._quantized_values)
             key_scales_storage = cast(torch.Tensor, self._key_scales)
             value_scales_storage = cast(torch.Tensor, self._value_scales)
-            quantized_keys_storage.index_copy_(2, quantized_position, quantized_keys)
-            quantized_values_storage.index_copy_(
-                2, quantized_position, quantized_values
+            self._index_copy_quantized(
+                quantized_keys_storage,
+                quantized_position,
+                quantized_keys,
+            )
+            self._index_copy_quantized(
+                quantized_values_storage,
+                quantized_position,
+                quantized_values,
             )
             key_scales_storage.index_copy_(2, quantized_position, key_scales)
             value_scales_storage.index_copy_(2, quantized_position, value_scales)
