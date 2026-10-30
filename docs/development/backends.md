@@ -250,13 +250,6 @@ request-queue delay does not make model throughput appear slower. `TTFC`
 measures audio ready for the playback buffer; it does not measure when playback
 becomes audible.
 
-LuxTTS splits longer inputs at sentence and word boundaries, targeting about
-150 characters per chunk. It calls its complete-waveform API once per text
-chunk, then yields each completed waveform before generating the next. Short
-inputs remain one call. This enables chunk-level playback without changing the
-isolated library; it does not provide audio from inside a single LuxTTS
-inference call and can add phrasing breaks between segments.
-
 Streaming adapters retain their configured chunk batches and final-chunk
 metadata. Once the first batch is ready, they release it when the next
 nonempty backend chunk arrives instead of waiting for a complete second batch.
