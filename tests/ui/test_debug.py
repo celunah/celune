@@ -192,6 +192,7 @@ def test_inspector_remains_usable_without_an_attached_core() -> None:
             title = host.screen.query_one("#debug-live-title", Static)
             live_pane = host.screen.query_one("#debug-live-pane")
             calls = host.screen.query_one("#debug-call-table", DataTable)
+            pause_button = host.screen.query_one("#debug-pause", Button)
             source_input = host.screen.query_one("#debug-source-filter", Input)
             special_methods = host.screen.query_one(
                 "#debug-show-special-methods", Checkbox
@@ -208,6 +209,8 @@ def test_inspector_remains_usable_without_an_attached_core() -> None:
             assert len(calls.ordered_columns) == 4
             assert calls.ordered_columns[3].width == 18
             assert calls.max_scroll_x == 0
+            assert pause_button.label == "Resume"
+            assert pause_button.content_region.width >= len("Resume")
             assert trace.source_filters == ()
             assert 16 <= source_input.region.width <= 34
             inspector = host.screen
@@ -229,6 +232,7 @@ def test_inspector_remains_usable_without_an_attached_core() -> None:
 
             await pilot.click("#debug-reset-sources")
             assert trace.source_filters == ()
+            assert trace.paused
             with trace._lock:
                 trace._entries.clear()
                 trace._entries.extend(
@@ -448,6 +452,7 @@ def test_glow_effects_component_validates_inputs_and_runs_actions() -> None:
             assert "Invalid duration" in str(validation.content)
             glow.set_color.assert_not_called()
 
+            await pilot.pause(0.25)
             color_input.value = "#baceff"
             duration_input.value = "2.06 s"
             await pilot.pause()

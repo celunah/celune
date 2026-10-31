@@ -1214,27 +1214,24 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
     #debug-reset-sources {
         min-width: 16;
     }
+    #debug-pause {
+        min-width: 12;
+    }
     #debug-glow-effects-actions Button:hover,
     #debug-glow-effects-actions Button:focus,
+    #debug-glow-effects-actions Button.-active,
     #debug-glow-special-actions Button:hover,
     #debug-glow-special-actions Button:focus,
+    #debug-glow-special-actions Button.-active,
     #debug-live-actions Button:hover,
     #debug-live-actions Button:focus,
+    #debug-live-actions Button.-active,
     #debug-modal-preview-actions Button:hover,
-    #debug-modal-preview-actions Button:focus {
+    #debug-modal-preview-actions Button:focus,
+    #debug-modal-preview-actions Button.-active {
         border: round $foreground;
         background: $background;
         background-tint: transparent;
-        color: $foreground;
-        tint: transparent;
-    }
-    #debug-glow-effects-actions Button.-active,
-    #debug-glow-special-actions Button.-active,
-    #debug-live-actions Button.-active,
-    #debug-modal-preview-actions Button.-active {
-        border: round $primary;
-        background: $primary;
-        color: $background;
         tint: transparent;
     }
     #debug-source-status {
@@ -1521,6 +1518,7 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
         self.set_interval(self._SNAPSHOT_REFRESH_SECONDS, self._refresh_snapshot)
         self.set_interval(self._LIVE_CALL_REFRESH_SECONDS, self._refresh_live_calls)
         self.trace.set_inspector_open(True)
+        self._update_pause_button()
 
     def on_unmount(self) -> None:
         """Stop tracing when the debug inspector closes."""
