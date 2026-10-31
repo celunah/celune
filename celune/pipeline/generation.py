@@ -98,9 +98,7 @@ def _is_short_input_generation_error(error: BaseException) -> bool:
     """Return whether a backend rejected the known too-short input shape."""
     message = str(error)
     return (
-        _SHORT_INPUT_VOCODER_ERROR in message
-        or _EMPTY_INPUT_VOCODER_ERROR in message
-        or "LuxTTS produced no acoustic frames" in message
+        _SHORT_INPUT_VOCODER_ERROR in message or _EMPTY_INPUT_VOCODER_ERROR in message
     )
 
 

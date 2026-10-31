@@ -130,11 +130,11 @@ def _voxcpm2_constructor() -> abc.Callable[..., BackendRuntime]:
     return cast(abc.Callable[..., BackendRuntime], VoxCPM2)
 
 
-def _luxtts_constructor() -> abc.Callable[..., BackendRuntime]:
-    """Load the approved LuxTTS backend constructor on demand."""
-    from ..backends.tts.luxtts import LuxTTS
+def _ming3_constructor() -> abc.Callable[..., BackendRuntime]:
+    """Load the approved Ming3 backend constructor on demand."""
+    from ..backends.tts.ming3 import Ming3
 
-    return cast(abc.Callable[..., BackendRuntime], LuxTTS)
+    return cast(abc.Callable[..., BackendRuntime], Ming3)
 
 
 def _soulxsinger_constructor() -> abc.Callable[..., BackendRuntime]:
@@ -159,7 +159,7 @@ _BACKEND_REGISTRY: abc.Mapping[
     "fireredtts3": ("tts", _fireredtts3_constructor),
     "dotstts": ("tts", _dotstts_constructor),
     "voxcpm2": ("tts", _voxcpm2_constructor),
-    "luxtts": ("tts", _luxtts_constructor),
+    "ming3": ("tts", _ming3_constructor),
     "soulxsinger": ("tts", _soulxsinger_constructor),
     "seed-vc": ("vc", _seed_vc_constructor),
 }
@@ -593,6 +593,8 @@ def _run_request(
                 release_cuda_after_oom()
                 raise
             if not bool(getattr(backend, "quantization_requested", False)):
+                raise
+            if not bool(getattr(backend, "allow_quantization_fallback", True)):
                 raise
             disable_quantization = getattr(
                 backend, "disable_runtime_quantization", None

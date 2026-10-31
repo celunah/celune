@@ -16,7 +16,7 @@ latency, and reference conditioning.
 | `fireredtts3` | Multilingual zero-shot cloning | 1 complete chunk/request | Supports 24 languages and 21 Chinese dialect tags; uses the active reference WAV and transcript and loads its transformer path in BF16. |
 | `voxcpm2` | High-fidelity multilingual generation | 6.25 chunks/s | Uses reference WAV plus per-voice `cfg_scale`; needs a compiler in some installs. |
 | `dotstts` | Speaker similarity and diffusion quality | 6.25 chunks/s | Uses Celune's forked `dots.tts` package. |
-| `luxtts` | Lightweight CUDA-first voice cloning | 1 complete chunk/request | English LuxTTS/ZipVoice path; uses a five-second reference prompt, returns 48 kHz audio, and falls back to CPU when CUDA is unavailable. |
+| `ming3` | Multilingual streaming voice cloning | Native model-time stream | audio.cpp Ming 3.0 TTS; supports Chinese, English, Japanese, Korean, German, French, and Spanish. Uses Q8_0 when quantization is enabled and BF16 otherwise. |
 
 Backend-specific packages are resolved from Celune's configured application
 environment and imported lazily when the selected backend is needed. Normal
@@ -53,9 +53,8 @@ boundary. Its Qwen backbone, stop head, and RedAE encoder load in BF16; the
 flow head and decoder remain F32.
 
 VoxCPM2 reads `cfg_scale` from per-voice metadata, with the bundled defaults at
-2.4 for balanced/bold/upbeat and 3.0 for calm. LuxTTS uses the active reference
-WAV and transcribes its five-second prompt internally; it is the CPU-capable
-English cloning alternative for systems without CUDA.
+2.4 for balanced/bold/upbeat and 3.0 for calm. Ming3 uses the active voice's
+reference WAV and exact transcript, and requires a CUDA-capable runtime.
 
 ## Playback controls
 

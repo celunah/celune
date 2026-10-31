@@ -31,7 +31,7 @@ screen.
 | `fireredtts3` | TTS | `celune.backends.tts.fireredtts3:FireRedTTS3` | FireRedTTS3 source, Transformers 5.6.2, and TorchCodec 0.16.0; BF16 transformer path with PyTorch SDPA and latent streaming. |
 | `dotstts` | TTS | `celune.backends.tts.dotstts:DotsTtsMF` | Celune's `dots.tts` fork; Python 3.12. |
 | `voxcpm2` | TTS | `celune.backends.tts.voxcpm2:VoxCPM2` | `voxcpm>=2.0.0`; Python 3.12. |
-| `luxtts` | TTS | `celune.backends.tts.luxtts:LuxTTS` | CUDA-first LuxTTS worker with CPU ONNX fallback, its ZipVoice/LinaCodec VCS dependencies, and English prompt transcription. |
+| `ming3` | TTS | `celune.backends.tts.ming3:Ming3` | Multilingual Ming 3.0 voice cloning through audio.cpp v0.9.3's native streaming CUDA server. |
 | `soulxsinger` | TTS | `celune.backends.tts.soulxsinger:SoulXSinger` | Score-conditioned singing; Python 3.12, pinned upstream source and Transformers 4.41.2, `iso639-lang` for CESN, explicit English IPA, CUDA. |
 | `seed-vc` | VC | `celune.backends.vc.seedvc:CeluneSeedVCBackend` | Celune's Seed-VC fork. |
 
@@ -40,13 +40,16 @@ Celune's shared repository helpers, Hugging Face Hub and `hf-xet`, Transformers
 below 5, Lingua, librosa, llvmlite, NumPy/Numba, Pillow, platformdirs, psutil,
 sounddevice, soundfile, and Zstandard. They also use the CEDTS-compatible
 PyTorch 2.11 CUDA 12.8 worker stack.
-LuxTTS uses that same pinned PyTorch stack. It selects the native PyTorch
-checkpoint and CUDA runtime when `torch.cuda.is_available()` is true, and uses
-the ONNX CPU path only when no usable CUDA runtime exists. Its model and
-reference implementation are
-[YatharthS/LuxTTS](https://huggingface.co/YatharthS/LuxTTS) and
-[LuxTTS](https://github.com/ysharma3501/LuxTTS); those third-party assets retain
-their own Apache-2.0 licensing.
+Ming3 uses the shared worker environment for Celune integration and starts a
+pinned audio.cpp v0.9.3 CUDA server as a child process. On Windows it downloads
+the CUDA 13.3 binary and runtime archives; on Linux it uses the CUDA 12.8
+release. The server runs only on loopback and is stopped when the backend
+runtime is released. The Ming weights are converted GGUF packages from
+[audio-cpp](https://huggingface.co/audio-cpp/Ming-3.0-TTS-0.5B-GGUF), pinned
+separately from the official
+[Ming 3.0 model card](https://huggingface.co/inclusionAI/Ming-3.0-tts-0.5B).
+The model's MIT license applies to the weights; Celune's source license does not
+replace third-party model terms.
 FireRedTTS3 is intentionally separate from that Hugging Face portion: its
 manifest uses `huggingface-hub>=1.5.0,<2.0.0` and `transformers==5.6.2`, which
 cannot be resolved alongside the shared Hub-below-1 and Transformers-below-5
@@ -128,43 +131,32 @@ truncating the WAV while keeping its full transcript can make the prompt tail
 appear in the response. Use the fork declared by the manifest; the upstream
 package can carry incompatible build requirements.
 
-### LuxTTS
+### Ming3
 
-`luxtts` adapts the [LuxTTS](https://github.com/ysharma3501/LuxTTS) native GPU
-path and ONNX CPU fallback from the [YatharthS/LuxTTS model
-card](https://huggingface.co/YatharthS/LuxTTS). It supports English voice
-cloning, uses the active voice's reference WAV, and has LuxTTS transcribe the
-prompt internally. Celune supplies a five-second prompt window, requests the
-native 48 kHz waveform path, and emits one complete waveform per request. The
-installed upstream `generate_speech` API does not expose incremental acoustic
-frames, so this backend cannot provide true model-time streaming yet. The
-adapter adds the decoder look-ahead frames required by
-Vocos, corrects the CPU ONNX duration ratio so short responses retain generated
-frames after prompt removal, adds a short reference boundary to prevent prompt
-tail leakage, uses that boundary's silent acoustic feature for decoder context
-instead of repeating voiced output, and removes only the final two decoder hops
-so the last phoneme is not cut off.
-Empty or too-short acoustic output becomes a user-facing short-input warning.
-The backend uses the native GPU model when CUDA is available; its CPU fallback
-uses two ONNX threads by default. Its isolated manifest uses the shared
-PyTorch 2.11 CUDA 12.8 stack and adds the upstream Piper wheel page as a
-`find-links` source so the environment can resolve its phonemizer dependency.
-Its installer also
-passes uv's `--no-sources` option so LinaCodec cannot redirect PyTorch to its
-CUDA 12.6 source override. Preloading also
-caches the device-appropriate `openai/whisper-tiny` or
-`openai/whisper-base` transcriber required by the upstream constructor before
-Celune enables Hugging Face offline mode for model loading.
-The worker imports the LuxTTS runtime during its handshake so native runtime
-imports do not occur inside a request thread. Celune's startup warm-up uses a
-full sentence because the upstream LuxTTS vocoder cannot decode the previous
-one-character warm-up input. If a backend raises during an utterance, Celune
-reports the generation error and releases the complete speech pipeline lease,
-including its typed TTS, speech-queue, and playback ownership, so a later
-utterance can still be admitted. The known LuxTTS short-input vocoder shape and
-empty-reduction failures return Celune to idle and are presented as a warning
-asking the user to enter a longer utterance; other generation failures retain
-the normal error treatment.
+`ming3` adapts the official [Ming 3.0 TTS 0.5B model](https://huggingface.co/inclusionAI/Ming-3.0-tts-0.5B) and the pinned [audio.cpp v0.9.3 runtime](https://github.com/0xShug0/audio.cpp/tree/v0.9.3). The official Python wrapper collects the complete waveform before returning; Celune instead uses audio.cpp's `streaming` session and server-sent PCM deltas, which arrive while acoustic generation is active. This meets the backend's model-time streaming contract without patching the Python package.
+
+The backend supports Chinese, English, Japanese, Korean, German, French, and
+Spanish. It clones from the active CEVOICE/CECHAR voice's reference WAV and exact
+`reference_text`. The server runs one request at a time on the active CUDA
+device, binds only to loopback, eagerly loads one selected GGUF, and is owned by
+the CEDTS backend runtime. Celune downloads and verifies the pinned Windows CUDA
+13.3 binary and CUDA runtime packages or the Linux CUDA 12.8 package, then stores
+them under application data. It selects Q8_0 weights when `quantize: true` and
+BF16 weights when quantization is disabled. A load failure does not silently
+switch the selected precision. The model card is MIT-licensed; its usage
+disclaimer does not mark it research-only or non-commercial.
+
+| Celune quantization | Package | Download size |
+| --- | --- | ---: |
+| Enabled (`true`) | Q8_0 GGUF | 1.74 GB |
+| Disabled (`false`) | BF16 GGUF | 3.00 GB |
+
+Startup downloads the selected model package and native runtime during
+`preload_models`; `load_model` waits for the server to report that the model is
+resident. Generation decodes SSE PCM deltas into Celune's normalized float32
+44.1 kHz audio chunks and rejects an empty, incomplete, too-short, or
+implausibly long response. The runtime log is retained in Celune's temporary
+data directory when server startup or inference fails.
 
 ### SoulX-Singer
 
@@ -258,9 +250,8 @@ This preserves final-chunk reporting while reducing the initial buffering delay.
 Reference audio truncated to Celune's ten-second limit is reused while its
 resolved path, modification time, and size remain unchanged. FireRedTTS3 also
 caches each loaded voice's resampled prompt latents and speaker embedding while
-the model is loaded. LuxTTS caches its prepared prompt WAV and encoded prompt
-features for the same model and reference. The FireRedTTS3 and LuxTTS feature
-caches retain up to four references each and clear on model unload.
+the model is loaded. Its feature cache retains up to four references and clears
+on model unload.
 
 ## Model weight contracts
 
@@ -283,8 +274,9 @@ The contract includes the currently supported model variants:
 - FireRedTTS3 records the upstream F32 source inventories separately from its
   runtime dtype rules: the Qwen backbone, stop head, and RedAE encoder are
   BF16, while the flow and decoder paths remain F32.
-- LuxTTS is represented by its Torch/ONNX/BIN artifacts because its model
-  repository does not use safetensors for the selected runtime path.
+- Ming3 uses separate pinned BF16 and Q8_0 GGUF artifacts from the audio.cpp
+  package repository; the source model card remains the consent and license
+  identity.
 
 `validate_safetensors_artifact` validates a cached artifact without loading
 its tensors into VRAM. `validate_model_state` validates a loaded component's
@@ -346,8 +338,8 @@ surface, Qwen3 retains the dynamic quantized-cache fallback.
 
 VoxCPM2 uses two custom static MiniCPM caches, so its adapter supplies compact
 prefix storage and dequantizes each prefix for attention while preserving the
-existing cache capacity bound. Mini/Pocket TTS, dots.tts MeanFlow, and LuxTTS
-do not use autoregressive KV caches. Whisper and Needle are outside this policy.
+existing cache capacity bound. Mini/Pocket TTS, dots.tts MeanFlow, and Ming3 do
+not use autoregressive KV caches. Whisper and Needle are outside this policy.
 
 VoxCPM2 does not expose a Transformers cache boundary. Its two private static
 MiniCPM caches are therefore bounded at the adapter boundary to 2048 positions

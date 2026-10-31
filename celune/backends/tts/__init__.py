@@ -26,7 +26,7 @@ BACKENDS = {
     "fireredtts3": ("celune.backends.tts.fireredtts3", "FireRedTTS3"),
     "dotstts": ("celune.backends.tts.dotstts", "DotsTtsMF"),
     "voxcpm2": ("celune.backends.tts.voxcpm2", "VoxCPM2"),
-    "luxtts": ("celune.backends.tts.luxtts", "LuxTTS"),
+    "ming3": ("celune.backends.tts.ming3", "Ming3"),
     "soulxsinger": ("celune.backends.tts.soulxsinger", "SoulXSinger"),
 }
 

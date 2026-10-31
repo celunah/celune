@@ -293,63 +293,6 @@ The players below are standard HTML audio controls. They load the repository-hos
   </article>
 </div>
 
-### LuxTTS
-
-<div class="voice-sample-grid">
-  <article class="voice-sample-card">
-    <h4>Balanced</h4>
-    <p><strong>Introduction</strong></p>
-    <audio class="voice-sample-player" controls preload="none" aria-label="Balanced introduction (luxtts)">
-      <source src="https://raw.githubusercontent.com/celunah/celune/main/demos/balanced_sc_luxtts.flac" type="audio/flac">
-      <a href="https://raw.githubusercontent.com/celunah/celune/main/demos/balanced_sc_luxtts.flac">Download FLAC</a>
-    </audio>
-    <p><strong>Narration</strong></p>
-    <audio class="voice-sample-player" controls preload="none" aria-label="Balanced narration (luxtts)">
-      <source src="https://raw.githubusercontent.com/celunah/celune/main/demos/balanced_lc_luxtts.flac" type="audio/flac">
-      <a href="https://raw.githubusercontent.com/celunah/celune/main/demos/balanced_lc_luxtts.flac">Download FLAC</a>
-    </audio>
-  </article>
-  <article class="voice-sample-card">
-    <h4>Calm</h4>
-    <p><strong>Introduction</strong></p>
-    <audio class="voice-sample-player" controls preload="none" aria-label="Calm introduction (luxtts)">
-      <source src="https://raw.githubusercontent.com/celunah/celune/main/demos/calm_sc_luxtts.flac" type="audio/flac">
-      <a href="https://raw.githubusercontent.com/celunah/celune/main/demos/calm_sc_luxtts.flac">Download FLAC</a>
-    </audio>
-    <p><strong>Narration</strong></p>
-    <audio class="voice-sample-player" controls preload="none" aria-label="Calm narration (luxtts)">
-      <source src="https://raw.githubusercontent.com/celunah/celune/main/demos/calm_lc_luxtts.flac" type="audio/flac">
-      <a href="https://raw.githubusercontent.com/celunah/celune/main/demos/calm_lc_luxtts.flac">Download FLAC</a>
-    </audio>
-  </article>
-  <article class="voice-sample-card">
-    <h4>Bold</h4>
-    <p><strong>Introduction</strong></p>
-    <audio class="voice-sample-player" controls preload="none" aria-label="Bold introduction (luxtts)">
-      <source src="https://raw.githubusercontent.com/celunah/celune/main/demos/bold_sc_luxtts.flac" type="audio/flac">
-      <a href="https://raw.githubusercontent.com/celunah/celune/main/demos/bold_sc_luxtts.flac">Download FLAC</a>
-    </audio>
-    <p><strong>Narration</strong></p>
-    <audio class="voice-sample-player" controls preload="none" aria-label="Bold narration (luxtts)">
-      <source src="https://raw.githubusercontent.com/celunah/celune/main/demos/bold_lc_luxtts.flac" type="audio/flac">
-      <a href="https://raw.githubusercontent.com/celunah/celune/main/demos/bold_lc_luxtts.flac">Download FLAC</a>
-    </audio>
-  </article>
-  <article class="voice-sample-card">
-    <h4>Upbeat</h4>
-    <p><strong>Introduction</strong></p>
-    <audio class="voice-sample-player" controls preload="none" aria-label="Upbeat introduction (luxtts)">
-      <source src="https://raw.githubusercontent.com/celunah/celune/main/demos/upbeat_sc_luxtts.flac" type="audio/flac">
-      <a href="https://raw.githubusercontent.com/celunah/celune/main/demos/upbeat_sc_luxtts.flac">Download FLAC</a>
-    </audio>
-    <p><strong>Narration</strong></p>
-    <audio class="voice-sample-player" controls preload="none" aria-label="Upbeat narration (luxtts)">
-      <source src="https://raw.githubusercontent.com/celunah/celune/main/demos/upbeat_lc_luxtts.flac" type="audio/flac">
-      <a href="https://raw.githubusercontent.com/celunah/celune/main/demos/upbeat_lc_luxtts.flac">Download FLAC</a>
-    </audio>
-  </article>
-</div>
-
 ## Historical recordings
 
 The WAV recordings below predate the current FLAC refresh and are retained as an audible record of earlier backend and voice revisions. They are useful for comparison, but their filenames do not carry a complete voice-pack provenance record.

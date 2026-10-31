@@ -13,8 +13,8 @@ import pytest
 from transformers.modeling_utils import PreTrainedModel
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 
-from celune.utils import discard
 from celune.celune import Celune
+from celune.utils import discard
 from celune.core import sleep as core_sleep
 from celune.core import voice as core_voice
 from celune.core import reload as core_reload
@@ -496,7 +496,7 @@ class TestCeluneReload(CeluneCoreTestSupport):
         celune.change_voice_lock_state_callback.assert_not_called()
         try_play_signal.assert_not_called()
         celune.log_callback.assert_called_once_with(
-            "unknown backend: qwen (available: mini, qwen3, fireredtts3, dotstts, voxcpm2, luxtts, "
+            "unknown backend: qwen (available: mini, qwen3, fireredtts3, dotstts, voxcpm2, ming3, "
             "soulxsinger, seed-vc)",
             "warning",
         )

@@ -796,18 +796,12 @@ def tts_quantization_enabled(
     config: Optional[Mapping[str, JSONSerializable]],
     backend_spec: CoreBackendSpec,
 ) -> bool:
-    """Resolve the default TTS quantization policy, excluding LuxTTS."""
+    """Resolve the default TTS quantization policy."""
     if isinstance(backend_spec, CeluneVCBackend):
         return False
     if isinstance(backend_spec, type) and issubclass(backend_spec, CeluneVCBackend):
         return False
-    raw_name = (
-        backend_spec
-        if isinstance(backend_spec, str)
-        else getattr(backend_spec, "name", "")
-    )
-    backend_name = raw_name.strip().lower() if isinstance(raw_name, str) else ""
-    return backend_name != "luxtts" and config_bool(
+    return config_bool(
         config,
         "CELUNE_TTS_QUANTIZE",
         "quantize",

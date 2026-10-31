@@ -9,11 +9,11 @@ from unittest import mock
 import pytest
 
 from celune import runtime
-from celune.celune import Celune
-from celune.typing.aliases import LogLevel
 from celune.ui.app import (
     CeluneUI,
 )
+from celune.celune import Celune
+from celune.typing.aliases import LogLevel
 from celune.ui.headless import CeluneHeadlessUI
 
 from ..support import CeluneTestCase
@@ -118,9 +118,8 @@ class TestRuntimeEnvironment(CeluneTestCase):
         assert errors == ["No supported backend found"]
         assert states == ["error"]
 
-    @pytest.mark.parametrize("backend_name", ("mini", "luxtts"))
-    def test_validate_runtime_allows_cpu_tts_backends(self, backend_name: str) -> None:
-        """Verify CPU-only environments allow both CPU-capable TTS backends."""
+    def test_validate_runtime_allows_pocket_tts_on_cpu(self) -> None:
+        """Verify CPU-only environments allow Pocket TTS."""
         logs: list[tuple[str, str]] = []
         errors: list[str] = []
         states: list[str] = []
@@ -147,7 +146,7 @@ class TestRuntimeEnvironment(CeluneTestCase):
                 False,
                 lambda exc, dev: str(exc),
                 "info",
-                backend_name,
+                "mini",
             )
 
         assert not errors

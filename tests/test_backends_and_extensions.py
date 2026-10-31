@@ -12,9 +12,9 @@ import threading
 import contextlib
 from pathlib import Path
 from unittest import mock
+from collections import abc as cabc
 from typing import Union, Optional, cast
 from types import ModuleType, SimpleNamespace
-from collections import OrderedDict, abc as cabc
 
 import torch
 import pytest
@@ -27,13 +27,13 @@ from celune.exceptions import (
     InvalidExtensionError,
     ExtensionAlreadyRegisteredError,
 )
-from celune.celune import Celune
 from celune.backends.vc import (
     BACKEND_MANIFESTS as VC_BACKEND_MANIFESTS,
 )
 from celune.backends.vc import (
     resolve_vc_backend,
 )
+from celune.celune import Celune
 from celune.utils import discard
 from celune.cesn import CESNSinger
 from celune.typing.backends import (
@@ -42,13 +42,6 @@ from celune.typing.backends import (
     SeedVCRealtimeModule,
 )
 from celune.registry import MODEL_BY_ID
-from celune.backends.tts.luxtts import (
-    LuxTTS,
-    LuxTTSModel,
-    set_vocoder_silence_feature,
-    install_vocoder_decode_guard,
-    install_cpu_duration_correction,
-)
 from celune.typing.aliases import AudioChunk
 from celune.backends.tts.fireredtts3 import (
     FireRedTTS3,
@@ -235,318 +228,6 @@ class TestBackend(CeluneTestCase):
             revision=MODEL_BY_ID["lunahr/pocket-tts-ungated"].revision,
             cache_dir=str(Path("C:/celune/huggingface/hub")),
         )
-
-    @pytest.mark.parametrize(
-        ("cuda_available", "transcriber_model_id"),
-        (
-            (False, "openai/whisper-tiny"),
-            (True, "openai/whisper-base"),
-        ),
-    )
-    def test_luxtts_preload_caches_its_whisper_transcriber(
-        self, cuda_available: bool, transcriber_model_id: str
-    ) -> None:
-        """Verify LuxTTS preloads the Whisper model for its runtime path."""
-        backend = object.__new__(LuxTTS)
-        backend.log = mock.Mock()
-        backend._progress_callback = None
-
-        with (
-            mock.patch.object(
-                backend,
-                "model_is_available_locally",
-                return_value=(True, "cached"),
-            ),
-            mock.patch(
-                "celune.backends.tts.luxtts.torch.cuda.is_available",
-                return_value=cuda_available,
-            ),
-            mock.patch(
-                "celune.backends.tts.luxtts.cached_hf_snapshot_path",
-                return_value=(False, None),
-            ) as cached,
-            mock.patch("celune.backends.tts.luxtts.snapshot_download") as download,
-            mock.patch(
-                "celune.backends.tts.luxtts.huggingface_hub_cache_dir",
-                return_value=Path("C:/celune/huggingface/hub"),
-            ),
-        ):
-            backend.preload_models()
-
-        cached.assert_called_once_with(
-            transcriber_model_id,
-            [
-                "config.json",
-                "generation_config.json",
-                "merges.txt",
-                "model.safetensors",
-                "normalizer.json",
-                "preprocessor_config.json",
-                "special_tokens_map.json",
-                "tokenizer.json",
-                "tokenizer_config.json",
-                "vocab.json",
-            ],
-        )
-        download.assert_called_once_with(
-            repo_id=transcriber_model_id,
-            revision=MODEL_BY_ID[transcriber_model_id].revision,
-            cache_dir=str(Path("C:/celune/huggingface/hub")),
-        )
-
-    def test_luxtts_requires_the_cpu_snapshot_files(self) -> None:
-        """Verify LuxTTS checks the ONNX files used by its CPU loader."""
-        backend = object.__new__(LuxTTS)
-        with (
-            mock.patch(
-                "celune.backends.tts.luxtts.torch.cuda.is_available", return_value=False
-            ),
-            mock.patch(
-                "celune.backends.tts.luxtts.cached_hf_snapshot_path",
-                return_value=(True, "cached"),
-            ) as cached,
-        ):
-            assert backend.model_is_available_locally("YatharthS/LuxTTS") == (
-                True,
-                "cached",
-            )
-
-        cached.assert_called_once_with(
-            "YatharthS/LuxTTS",
-            [
-                "tokens.txt",
-                "text_encoder.onnx",
-                "fm_decoder.onnx",
-                "config.json",
-                "vocoder/config.yaml",
-                "vocoder/vocos.bin",
-            ],
-        )
-
-    def test_luxtts_requires_the_gpu_snapshot_files(self) -> None:
-        """Verify LuxTTS checks the native checkpoint for its GPU loader."""
-        backend = object.__new__(LuxTTS)
-        with (
-            mock.patch(
-                "celune.backends.tts.luxtts.torch.cuda.is_available", return_value=True
-            ),
-            mock.patch(
-                "celune.backends.tts.luxtts.cached_hf_snapshot_path",
-                return_value=(True, "cached"),
-            ) as cached,
-        ):
-            assert backend.model_is_available_locally("YatharthS/LuxTTS") == (
-                True,
-                "cached",
-            )
-
-        cached.assert_called_once_with(
-            "YatharthS/LuxTTS",
-            [
-                "tokens.txt",
-                "model.pt",
-                "config.json",
-                "vocoder/config.yaml",
-                "vocoder/vocos.bin",
-            ],
-        )
-
-    def test_luxtts_prepares_runtime_before_worker_requests(self) -> None:
-        """Verify LuxTTS imports its native runtime during worker preparation."""
-        backend = object.__new__(LuxTTS)
-        with mock.patch(
-            "celune.backends.tts.luxtts._load_runtime_class"
-        ) as load_runtime:
-            backend.prepare_model_loading()
-
-        load_runtime.assert_called_once_with()
-
-    @pytest.mark.parametrize(
-        ("cuda_available", "expected_device"),
-        ((False, "cpu"), (True, "cuda")),
-    )
-    def test_luxtts_selects_the_available_runtime(
-        self, cuda_available: bool, expected_device: str
-    ) -> None:
-        """Verify LuxTTS uses CUDA when available and CPU otherwise."""
-        backend = object.__new__(LuxTTS)
-        backend._threads = 2
-        backend._progress_callback = None
-        runtime = mock.Mock()
-        runtime_class = mock.Mock(return_value=runtime)
-
-        with (
-            mock.patch.object(
-                backend,
-                "model_is_available_locally",
-                return_value=(True, "cached"),
-            ),
-            mock.patch(
-                "celune.backends.tts.luxtts.torch.cuda.is_available",
-                return_value=cuda_available,
-            ),
-            mock.patch(
-                "celune.backends.tts.luxtts._load_runtime_class",
-                return_value=runtime_class,
-            ),
-        ):
-            assert backend.load_model("YatharthS/LuxTTS") is runtime
-
-        runtime_class.assert_called_once_with(
-            "cached", device=expected_device, threads=2
-        )
-
-    def test_luxtts_generates_a_normalized_complete_48khz_chunk(
-        self, tmp_path: Path
-    ) -> None:
-        """Verify LuxTTS consumes the pack reference and emits Celune audio."""
-        loader = make_voice_loader(
-            "balanced",
-            {"reference_text": "Pack reference."},
-        )
-        prepared_reference = tmp_path / "prepared-reference.wav"
-        prepared_reference.touch()
-        backend = LuxTTS.__new__(LuxTTS)
-        backend.random_seed = False
-        backend.current_seed = None
-        backend._truncated_reference_paths = set()
-        backend._encoded_prompt_cache = OrderedDict()
-        backend._encoded_prompt_cache_model = None
-        model = mock.Mock()
-        prompt = {"prompt_features": torch.zeros(1)}
-        model.encode_prompt.return_value = prompt
-        model.generate_speech.return_value = torch.tensor([-2.0, 0.25, 2.0])
-
-        with (
-            mock.patch(
-                "celune.backends.tts.luxtts.default_loader", return_value=loader
-            ),
-            mock.patch.object(
-                backend, "_truncate_reference", return_value=Path("reference.wav")
-            ),
-            mock.patch.object(
-                backend,
-                "_prepare_prompt_reference",
-                return_value=prepared_reference,
-            ),
-        ):
-            result = list(
-                backend.generate_stream(
-                    model,
-                    text="Hello.",
-                    voice="balanced",
-                )
-            )
-
-        model.encode_prompt.assert_called_once_with(
-            str(prepared_reference),
-            duration=5.2,
-            rms=0.01,
-        )
-        model.generate_speech.assert_called_once_with(
-            "Hello.",
-            prompt,
-            num_steps=4,
-            guidance_scale=3.0,
-            t_shift=0.5,
-            speed=1.0,
-            return_smooth=False,
-        )
-        audio, sample_rate, timing = result[0]
-        np.testing.assert_allclose(audio, [-1.0, 0.25, 1.0])
-        assert audio.dtype == np.float32
-        assert sample_rate == 48000
-        assert timing is not None
-        assert timing["is_final"] is True
-
-    def test_luxtts_adds_a_silent_prompt_boundary(self, tmp_path: Path) -> None:
-        """Verify prompt audio keeps five seconds and gains a silent tail."""
-        reference_wav = tmp_path / "reference.wav"
-        sf.write(reference_wav, np.ones(6 * 24_000, dtype=np.float32), 24_000)
-        backend = LuxTTS.__new__(LuxTTS)
-        backend._truncated_reference_paths = set()
-
-        with mock.patch(
-            "celune.backends.tts.luxtts.temp_data_dir", return_value=tmp_path
-        ):
-            prepared = backend._prepare_prompt_reference(reference_wav)
-
-        audio, sample_rate = sf.read(prepared, dtype="float32")
-        assert sample_rate == 24_000
-        assert audio.shape == (int(5.2 * 24_000),)
-        np.testing.assert_allclose(audio[-int(0.2 * 24_000) :], 0.0)
-
-    def test_luxtts_guards_vocoder_against_short_feature_sequences(self) -> None:
-        """Verify LuxTTS pads decoder context and rejects empty output frames."""
-
-        class FakeVocoder:
-            """Return decoder inputs so the guard's padding is observable."""
-
-            def __init__(self) -> None:
-                self.input_features: Optional[torch.Tensor] = None
-                self.input_shape: Optional[tuple[int, ...]] = None
-
-            def decode(
-                self, features_input: torch.Tensor, **kwargs: object
-            ) -> torch.Tensor:
-                """Return the received features unchanged."""
-                del kwargs
-                self.input_features = features_input
-                self.input_shape = tuple(features_input.shape)
-                return torch.zeros(1, 1, 10_000)
-
-        vocoder = FakeVocoder()
-        model = SimpleNamespace(vocos=vocoder)
-        prompt: dict[str, Union[torch.Tensor, float, int]] = {
-            "prompt_features": torch.full((1, 4, 2), -3.0)
-        }
-        set_vocoder_silence_feature(cast(LuxTTSModel, model), prompt)
-        install_vocoder_decode_guard(cast(LuxTTSModel, model))
-
-        decoded = model.vocos.decode(torch.ones(1, 2, 1))
-        assert vocoder.input_shape == (1, 2, 22)
-        assert vocoder.input_features is not None
-        torch.testing.assert_close(
-            vocoder.input_features[..., 1:], torch.full((1, 2, 21), -3.0)
-        )
-        assert decoded.shape == (1, 1, 10_000 - 2 * 512)
-        with pytest.raises(ValueError, match="LuxTTS produced no acoustic frames"):
-            model.vocos.decode(torch.empty(1, 2, 0))
-
-    def test_luxtts_corrects_cpu_duration_ratio(self) -> None:
-        """Verify CPU LuxTTS allocates prompt plus generated frames."""
-
-        class FakeOnnxModel:
-            """Capture the speed passed to the ONNX text encoder."""
-
-            def __init__(self) -> None:
-                self.speed: Optional[torch.Tensor] = None
-
-            def run_text_encoder(
-                self,
-                tokens: torch.Tensor,
-                prompt_tokens: torch.Tensor,
-                prompt_features_len: torch.Tensor,
-                speed: torch.Tensor,
-            ) -> torch.Tensor:
-                """Record the request and return a placeholder condition."""
-                del tokens, prompt_tokens, prompt_features_len
-                self.speed = speed
-                return torch.zeros(1, 1, 100)
-
-        onnx_model = FakeOnnxModel()
-        model = SimpleNamespace(model=onnx_model)
-        install_cpu_duration_correction(cast(LuxTTSModel, model))
-
-        model.model.run_text_encoder(
-            torch.zeros(1, 6, dtype=torch.int64),
-            torch.zeros(1, 90, dtype=torch.int64),
-            torch.tensor(469),
-            torch.tensor(1.3),
-        )
-
-        assert onnx_model.speed is not None
-        assert onnx_model.speed.item() == pytest.approx((469 / 90 * 96) / (469 + 25))
 
     def test_voxcpm2_does_not_forward_transformers_only_arguments(
         self,
@@ -759,7 +440,7 @@ class TestBackend(CeluneTestCase):
                 string(
                     "celune.unknown_backend",
                     backend="missing",
-                    available="mini, qwen3, fireredtts3, dotstts, voxcpm2, luxtts, soulxsinger",
+                    available="mini, qwen3, fireredtts3, dotstts, voxcpm2, ming3, soulxsinger",
                 )
             ),
         ):

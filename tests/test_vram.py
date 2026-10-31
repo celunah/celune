@@ -92,15 +92,16 @@ class TestVram(CeluneTestCase):
         assert format_vram_bytes(0) == "0 B"
         assert format_vram_bytes(1024**3) == "1.00 GiB"
 
-    def test_tts_quantization_defaults_on_except_for_luxtts(self) -> None:
-        """Verify default quantization covers TTS models except LuxTTS."""
+    def test_tts_quantization_defaults_on_for_ming3_package_selection(self) -> None:
+        """Verify Ming3 follows the TTS quantization setting for package selection."""
         with mock.patch(
             "celune.config.env_bool",
             side_effect=lambda _name, fallback=False: fallback,
         ):
             assert tts_quantization_enabled(None, "qwen3")
-            assert not tts_quantization_enabled(None, "luxtts")
+            assert tts_quantization_enabled(None, "ming3")
             assert not tts_quantization_enabled({"quantize": False}, "qwen3")
+            assert not tts_quantization_enabled({"quantize": False}, "ming3")
 
     def test_cuda_oom_classifier_accepts_worker_wrapped_errors(self) -> None:
         """Verify local and CEDTS-wrapped CUDA OOM errors are recognized."""

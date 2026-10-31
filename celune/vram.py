@@ -39,14 +39,14 @@ TEST_BACKENDS = ("fake", "counting")
 KNOWN_TTS_BACKENDS = (
     "mini",
     "qwen3",
+    "ming3",
     "dotstts",
     "voxcpm2",
-    "luxtts",
     "fireredtts3",
     *TEST_BACKENDS,
 )
 BACKENDS_ALLOWED: Mapping[VramTier, list[str]] = {
-    "low": ["mini", "qwen3", "luxtts", *TEST_BACKENDS],
+    "low": ["mini", "qwen3", "ming3", *TEST_BACKENDS],
     "medium": list(KNOWN_TTS_BACKENDS),
     "high": list(KNOWN_TTS_BACKENDS),
     "xhigh": list(KNOWN_TTS_BACKENDS),
@@ -276,8 +276,10 @@ def vram_profile_key(
         if quantize_setting is not None
         else values.get("quantize", True) is True
     )
-    quantization = "native-lux" if backend == "luxtts" else "bf16"
-    if backend not in {"luxtts", "mini"}:
+    quantization = "bf16"
+    if backend == "ming3":
+        quantization = "q8_0" if quantize_requested else "bf16"
+    elif backend != "mini":
         if quantize_requested:
             if capability >= (8, 9):
                 quantization = "fp8"
@@ -439,14 +441,6 @@ _FIREREDTTS3_XHIGH_KEY = _tts_profile_key(
     "redae,tts_core",
     "fp8",
 )
-_LUXTTS_XHIGH_KEY = _tts_profile_key(
-    "luxtts",
-    "YatharthS/LuxTTS",
-    "527f245a276a0eb42ea103a7a512bcfd771eb9b6:default",
-    "unknown",
-    "unknown",
-    "native-lux",
-)
 _MINI_XHIGH_KEY = _tts_profile_key(
     "mini",
     "lunahr/pocket-tts-ungated",
@@ -514,13 +508,6 @@ VRAM_PROFILES.update(
             model_revision="no-persona",
             quantization="fp8 requested; backend inactive",
             components=("tts:fireredtts3", "redae", "tts_core"),
-        ),
-        _LUXTTS_XHIGH_KEY: _measured_vram_profile(
-            _LUXTTS_XHIGH_KEY,
-            (1.62, 1.62, 1.64),
-            model_revision="no-persona",
-            quantization="ONNX; not applicable",
-            components=("tts:luxtts",),
         ),
         _MINI_XHIGH_KEY: _measured_vram_profile(
             _MINI_XHIGH_KEY,

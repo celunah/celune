@@ -14,10 +14,16 @@ __all__ = [
     "DOTS_TTS_MODEL_ID",
     "DOTS_TTS_VOICE_MODELS",
     "FIREREDTTS3_MODEL_ID",
-    "LUXTTS_CPU_TRANSCRIBER_MODEL_ID",
-    "LUXTTS_GPU_TRANSCRIBER_MODEL_ID",
-    "LUXTTS_MODEL_ID",
-    "LUXTTS_VOICE_MODELS",
+    "MING3_TTS_BF16_FILE",
+    "MING3_TTS_BF16_SHA256",
+    "MING3_TTS_BF16_SIZE",
+    "MING3_TTS_GGUF_REPO",
+    "MING3_TTS_GGUF_REVISION",
+    "MING3_TTS_MODEL_ID",
+    "MING3_TTS_MODEL_REVISION",
+    "MING3_TTS_Q8_FILE",
+    "MING3_TTS_Q8_SHA256",
+    "MING3_TTS_Q8_SIZE",
     "MINI_DEFAULT_LANGUAGE",
     "MINI_LANGUAGE_ALIASES",
     "MINI_LANGUAGE_MODEL_VARIANTS",
@@ -288,7 +294,8 @@ _QWEN17_REVISION = "fd4b254389122332181a7c3db7f27e918eec64e3"
 _DOTS_REVISION = "c28105adc8228143392b4e346994ff613ee48a06"
 _VOX_REVISION = "32279effe8c19989596f05d353d1447f51d9e915"
 _FIRERED_REVISION = "dcf1bdcd1b8b25b382fa84c3e34eb82e3054a610"
-_LUXTTS_REVISION = "527f245a276a0eb42ea103a7a512bcfd771eb9b6"
+MING3_TTS_MODEL_REVISION = "7247f4c94a5b2e987404ed28a5cfec41b1a4ca61"
+MING3_TTS_GGUF_REVISION = "2eb8d37c7f10672e69c8aa33091baa04c461b66c"
 SOULX_SINGER_MODEL_ID = "Soul-AILab/SoulX-Singer"
 SOULX_SINGER_REVISION = "40493ad90286056c7a9095035164434a79daa8c9"
 SOULX_SINGER_CODE_REPOSITORY = "https://github.com/Soul-AILab/SoulX-Singer.git"
@@ -303,7 +310,16 @@ DOTS_TTS_MODEL_ID = "rednote-hilab/dots.tts-mf"
 DOTS_TTS_CANONICAL_MODEL_ID = "dots-studio/dots.tts-mf"
 VOXCPM2_MODEL_ID = "openbmb/VoxCPM2"
 FIREREDTTS3_MODEL_ID = "FireRedTeam/FireRedTTS3"
-LUXTTS_MODEL_ID = "YatharthS/LuxTTS"
+MING3_TTS_MODEL_ID = "inclusionAI/Ming-3.0-tts-0.5B"
+MING3_TTS_GGUF_REPO = "audio-cpp/Ming-3.0-TTS-0.5B-GGUF"
+MING3_TTS_BF16_FILE = "ming-3.0-tts-0.5b-bf16.gguf"
+MING3_TTS_BF16_SIZE = 2_998_284_288
+MING3_TTS_BF16_SHA256 = (
+    "43f108a4e6bb54af13071d0cb345a094e0b011b3b8318d8fb2c61753733f5312"
+)
+MING3_TTS_Q8_FILE = "ming-3.0-tts-0.5b-q8_0.gguf"
+MING3_TTS_Q8_SIZE = 1_742_280_896
+MING3_TTS_Q8_SHA256 = "fcf2aa25e8e9cf2065a936e506581735c64d6255fb7869f09fbb61a2dde09aa1"
 
 QWEN3_TTS_0_6B_REVISION = _QWEN06_REVISION
 QWEN3_TTS_1_7B_REVISION = _QWEN17_REVISION
@@ -333,11 +349,6 @@ MINI_LANGUAGE_MODEL_VARIANTS = {
 MINI_VOICE_MODELS = {voice: POCKET_TTS_MODEL_ID for voice in TTS_VOICE_NAMES}
 DOTS_TTS_VOICE_MODELS = {voice: DOTS_TTS_MODEL_ID for voice in TTS_VOICE_NAMES}
 VOXCPM2_VOICE_MODELS = {voice: VOXCPM2_MODEL_ID for voice in TTS_VOICE_NAMES}
-LUXTTS_VOICE_MODELS = {voice: LUXTTS_MODEL_ID for voice in TTS_VOICE_NAMES}
-
-# These Whisper IDs are runtime references only. ASR metadata belongs in the ASR registry.
-LUXTTS_CPU_TRANSCRIBER_MODEL_ID = "openai/whisper-tiny"
-LUXTTS_GPU_TRANSCRIBER_MODEL_ID = "openai/whisper-base"
 
 TTS_MODELS: tuple[ModelMetadata, ...] = (
     ModelMetadata(
@@ -416,15 +427,15 @@ TTS_MODELS: tuple[ModelMetadata, ...] = (
         roles=("voice-cloning",),
     ),
     ModelMetadata(
-        model_id=LUXTTS_MODEL_ID,
-        display_name="LuxTTS",
+        model_id=MING3_TTS_MODEL_ID,
+        display_name="Ming 3.0 TTS 0.5B",
         category="tts",
-        revision=_LUXTTS_REVISION,
-        license_id="apache-2.0",
-        license_url="https://www.apache.org/licenses/LICENSE-2.0",
+        revision=MING3_TTS_MODEL_REVISION,
+        license_id="mit",
+        license_url="https://opensource.org/license/mit",
         non_commercial=False,
         research_only=False,
-        repository_url="https://huggingface.co/YatharthS/LuxTTS",
+        repository_url="https://huggingface.co/inclusionAI/Ming-3.0-tts-0.5B",
         roles=("voice-cloning",),
     ),
     ModelMetadata(
@@ -705,39 +716,34 @@ _FIRERED_CONTRACT = ModelContract(
 )
 
 
-_LUXTTS_CONTRACT = ModelContract(
-    backend_id="luxtts",
-    model_id=LUXTTS_MODEL_ID,
-    revision=_LUXTTS_REVISION,
+_MING3_BF16_CONTRACT = ModelContract(
+    backend_id="ming3",
+    model_id=MING3_TTS_GGUF_REPO,
+    revision=MING3_TTS_GGUF_REVISION,
     artifacts=(
-        _artifact("model.pt", 491318136, "745855037478eb888a1b568255c46e9275f3997"),
         _artifact(
-            "text_encoder.onnx",
-            17633735,
-            "495eca2d5f8a911f5c361bcce5bd55cdd2508ccdd26ce3e9bf1d3c29eb974861",
-        ),
-        _artifact(
-            "text_encoder_int8.onnx",
-            5570211,
-            "f2de9a761a85e5ddd125dee6e05bad1c7ee92c11b83b4d775dab216a6aa41379",
-        ),
-        _artifact(
-            "fm_decoder.onnx",
-            477534010,
-            "4510d4f5f049f14ef80207fca695e13c820e2cea61635f402954950bc62b1e3c",
-        ),
-        _artifact(
-            "fm_decoder_int8.onnx",
-            124657100,
-            "3cc2e08a96610d7ea1b227398e97cdbbe0414499741d3aec0b8113db2a2ab251",
-        ),
-        _artifact(
-            "vocoder/vocos.bin",
-            63972079,
-            "116b9875a0369d6a0156d752b4548121fe75fdc81d39943e81c46ac9bfa72d11",
+            MING3_TTS_BF16_FILE,
+            MING3_TTS_BF16_SIZE,
+            MING3_TTS_BF16_SHA256,
         ),
     ),
     components=(),
+    variant="bf16",
+)
+
+_MING3_Q8_CONTRACT = ModelContract(
+    backend_id="ming3",
+    model_id=MING3_TTS_GGUF_REPO,
+    revision=MING3_TTS_GGUF_REVISION,
+    artifacts=(
+        _artifact(
+            MING3_TTS_Q8_FILE,
+            MING3_TTS_Q8_SIZE,
+            MING3_TTS_Q8_SHA256,
+        ),
+    ),
+    components=(),
+    variant="q8_0",
 )
 
 
@@ -747,7 +753,8 @@ MODEL_CONTRACTS: tuple[ModelContract, ...] = (
     _DOTS_CONTRACT,
     _VOX_CONTRACT,
     _FIRERED_CONTRACT,
-    _LUXTTS_CONTRACT,
+    _MING3_BF16_CONTRACT,
+    _MING3_Q8_CONTRACT,
 )
 
 

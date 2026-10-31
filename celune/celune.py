@@ -64,7 +64,7 @@ def tts_quantization_enabled(
     config: Optional[Mapping[str, JSONSerializable]],
     backend_spec: CoreBackendSpec,
 ) -> bool:
-    """Resolve the default TTS quantization policy, excluding LuxTTS."""
+    """Resolve the default TTS quantization policy."""
     return core_lifecycle.tts_quantization_enabled(config, backend_spec)
 
 

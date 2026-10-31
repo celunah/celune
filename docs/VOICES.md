@@ -40,7 +40,7 @@ Refer to the following models for details:
 - [VoxCPM2](<https://huggingface.co/openbmb/VoxCPM2>)
 - [Pocket TTS](<https://huggingface.co/kyutai/pocket-tts>) [(ungated)](<https://huggingface.co/lunahr/pocket-tts-ungated>)
 - [dots.tts](<https://huggingface.co/dots-studio/dots.tts-mf>)
-- [LuxTTS](<https://huggingface.co/YatharthS/LuxTTS>)
+- [Ming 3.0 TTS](<https://huggingface.co/inclusionAI/Ming-3.0-tts-0.5B>)
 - [SoulX-Singer](<https://huggingface.co/Soul-AILab/SoulX-Singer>)*
 
 <sub><sup>Models marked * generate singing instead of speech.</sup></sub>

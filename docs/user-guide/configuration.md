@@ -16,7 +16,7 @@ before the interface opens. `celune config view` prints the active file and
 | `backend` | `null` | TTS or VC backend name. `null` lets Celune choose its normal backend. |
 | `backend_options` | `soulxsinger.high_precision: true` | Constructor options passed only to the named backend. |
 | `commercial` | `false` | Declare commercial use. Celune then allows only models whose reviewed terms confirm commercial use. |
-| `quantize` | `true` | Try contract-approved TTS weight-only quantization: INT8 on Ampere and FP8 on sm89 or newer, with BF16 recovery. LuxTTS is excluded. |
+| `quantize` | `true` | Try contract-approved TTS quantization: INT8 on Ampere and FP8 on sm89 or newer, with BF16 recovery. Ming3 selects Q8_0 when enabled and BF16 otherwise. |
 | `quantize_kv_cache` | `true` | Store supported Persona, Qwen3, FireRedTTS3, and VoxCPM2 cache prefixes in INT8 on Ampere or FP8 on `sm89+`; use `false` to keep their native cache dtype. |
 | `voice_bundle` | `default` | CEVOICE/CECHAR name or path. |
 | `log_level` | `info` | `info`, `verbose`, or `debug`. |
@@ -93,10 +93,9 @@ remain unprofiled until measured separately.
 ### TTS quantization
 
 Set `quantize: true` (the default) to reduce supported TTS model VRAM use.
-LuxTTS is excluded because its runtime is not eligible for TorchAO weight-only
-conversion. Celune selects TorchAO
-weight-only INT8 for Ampere devices before native FP8 support and FP8 for
-Ada-class (`sm89`) and newer devices. The model contracts identify the linear
+Ming3 selects its Q8_0 GGUF package when enabled and BF16 when disabled. Celune
+selects TorchAO weight-only INT8 for Ampere devices before native FP8 support
+and FP8 for Ada-class (`sm89`) and newer devices. The model contracts identify the linear
 attention and feed-forward layers eligible for conversion; embeddings, norms,
 output heads, speaker conditioning, and vocoders remain in BF16 or their
 backend-required dtype.
@@ -120,7 +119,7 @@ additional detail is written to the configured runtime logs instead.
 
 In the Textual interface, `/settings` opens the configuration manager. Nested
 YAML values are shown with human-readable labels that preserve names such as
-API, T2S, LuxTTS, and Persona. ENTER writes the edited values to the active
+API, T2S, Ming3, and Persona. ENTER writes the edited values to the active
 `config.yaml`, fades the interface through the normal shutdown transition, and
 then requests a silent launcher-managed restart; the terminal title changes to
 `Restarting`. ESC leaves the file unchanged.
@@ -298,7 +297,7 @@ in the model's compute dtype. Attention uses dequantized values, so model
 compute retains its normal dtype. Qwen3 keeps CUDA-graph decoding enabled and
 stores older graph-cache tokens in the selected quantized format. Unsupported
 cache layouts or unavailable quantized storage use the backend's native cache.
-Mini/Pocket TTS, dots.tts MeanFlow, and LuxTTS do not use autoregressive KV
+Mini/Pocket TTS, dots.tts MeanFlow, and Ming3 do not use autoregressive KV
 caches. Whisper and Needle are not affected.
 `context_size` is an upper bound: input encoding is limited to that bound while
 leaving room for at least one response token, and generation is capped by the

@@ -48,8 +48,8 @@ from celune.typing.backends import (
     BackendGeneration,
     BackendArgumentValue,
 )
-from celune.cedts import remote, worker
 from celune.backends import environment
+from celune.cedts import remote, worker
 from celune.backends.environment import (
     BACKEND_MANIFESTS,
     BackendManifest,
@@ -227,7 +227,7 @@ class TestBackendEnvironment(CeluneTestCase):
             "fireredtts3",
             "dotstts",
             "voxcpm2",
-            "luxtts",
+            "ming3",
             "soulxsinger",
             "seed-vc",
         }
@@ -246,7 +246,7 @@ class TestBackendEnvironment(CeluneTestCase):
                 "fireredtts3",
                 "dotstts",
                 "voxcpm2",
-                "luxtts",
+                "ming3",
                 "soulxsinger",
                 "seed-vc",
             },
@@ -262,7 +262,7 @@ class TestBackendEnvironment(CeluneTestCase):
                 "fireredtts3": "tts",
                 "dotstts": "tts",
                 "voxcpm2": "tts",
-                "luxtts": "tts",
+                "ming3": "tts",
                 "soulxsinger": "tts",
                 "seed-vc": "vc",
             },
@@ -382,28 +382,16 @@ class TestBackendEnvironment(CeluneTestCase):
         assert "flash_attn==2.8.3" not in requirements
         assert "torchcodec==0.16.0" in requirements
 
-    def test_backend_dependency_list_matches_main_backend_normalizers(self) -> None:
-        """Verify the backend dependency list follows the main branch declarations."""
+    def test_ming3_manifest_uses_the_cedts_pytorch_stack(self) -> None:
+        """Verify Ming3 reuses the supported isolated CUDA worker stack."""
+        ming3_manifest = BACKEND_MANIFESTS["ming3"]
+        assert ming3_manifest.backend_module == "celune.backends.tts.ming3"
+        assert ming3_manifest.backend_class == "Ming3"
+        assert "torch==2.11.0+cu128" in ming3_manifest.requirements
+
+    def test_dotstts_manifest_omits_wetextprocessing(self) -> None:
+        """Verify dots.tts keeps its unsupported WeTextProcessing extra omitted."""
         assert "WeTextProcessing" not in BACKEND_MANIFESTS["dotstts"].requirements
-        luxtts_requirements = BACKEND_MANIFESTS["luxtts"].requirements
-        assert "onnxruntime" in luxtts_requirements
-        assert (
-            "zipvoice @ git+https://github.com/ysharma3501/LuxTTS.git"
-            in luxtts_requirements
-        )
-        assert (
-            "linacodec @ git+https://github.com/ysharma3501/LinaCodec.git"
-            in luxtts_requirements
-        )
-        assert {
-            "torch==2.11.0+cu128",
-            "torchaudio==2.11.0+cu128",
-            "torchvision==0.26.0+cu128",
-        }.issubset(luxtts_requirements)
-        assert BACKEND_MANIFESTS["luxtts"].ignore_uv_sources
-        assert BACKEND_MANIFESTS["luxtts"].find_links == (
-            "https://k2-fsa.github.io/icefall/piper_phonemize.html",
-        )
 
     def test_manifest_find_links_are_forwarded_to_uv(self) -> None:
         """Verify a backend can provide wheel links outside package indexes."""

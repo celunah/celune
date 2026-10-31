@@ -3,12 +3,12 @@
 
 import pytest
 from textual.app import App
-from textual.events import Key, MouseMove
 from textual.message import Message
+from textual.events import Key, MouseMove
 from textual.widgets import Button, Static
 
-from celune.ui.app import CeluneUI, SelectMenuOverlay
 from celune.ui.theme import CELUNE_CSS
+from celune.ui.app import CeluneUI, SelectMenuOverlay
 from celune.ui.terminal import SelectMenuOption, SelectMenuWidget
 
 
@@ -36,7 +36,7 @@ def test_select_menu_widget_aligns_values_after_longest_label() -> None:
 def test_configuration_labels_preserve_project_names() -> None:
     """Configuration labels are readable without losing project abbreviations."""
     assert CeluneUI.config_label(("api", "enabled")) == "API enabled"
-    assert CeluneUI.config_label(("luxtts",)) == "LuxTTS"
+    assert CeluneUI.config_label(("ming3",)) == "Ming3"
     assert CeluneUI.config_label(("persona", "memory", "enabled")) == (
         "Persona memory enabled"
     )

@@ -221,7 +221,6 @@ those peaks do not assume quantization savings.
 | Qwen3 TTS only, xhigh | 4.53 GiB | 4.91 GiB | 4.91 GiB |
 | dots.tts TTS only, xhigh | 5.43 GiB | 6.26 GiB | 6.26 GiB |
 | FireRedTTS3 only, xhigh | 6.39 GiB | 6.39 GiB | 6.39 GiB |
-| LuxTTS only, xhigh | 1.62 GiB | 1.62 GiB | 1.64 GiB |
 | Pocket TTS only, xhigh | 0.46 GiB | 0.46 GiB | 0.46 GiB |
 | Qwen3 TTS, 4B Persona, and on-demand Whisper, high | 8.67 GiB | 9.00 GiB | 9.98 GiB |
 
@@ -244,10 +243,10 @@ max-length run used 168 MiB of peak CUDA allocations and 200 MiB reserved. This
 does not establish a complete agent profile; agent configurations remain
 unprofiled until Celune can control the Persona context-prefill peak.
 
-TTS quantization defaults to enabled for supported TorchAO backends; LuxTTS is
-excluded. CUDA out-of-memory errors do not trigger BF16 recovery, which could
-require more memory. The active request fails with a warning while the runtime
-remains usable.
+TTS quantization defaults to enabled for supported TorchAO backends. Ming3
+selects Q8_0 or BF16 GGUF weights directly. CUDA out-of-memory errors do not
+trigger BF16 recovery, which could require more memory. The active request fails
+with a warning while the runtime remains usable.
 
 Validation uses `python scripts/run_ci.py`. GPU profile records require
 sequential measurements of load, warmup, and inference on the target hardware;
