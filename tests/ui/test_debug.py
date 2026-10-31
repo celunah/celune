@@ -6,6 +6,7 @@ import asyncio
 from typing import cast
 from pathlib import Path
 from unittest import mock
+from types import ModuleType
 
 from textual.app import App, ComposeResult
 from textual.widgets import Button, Checkbox, DataTable, Input, Static
@@ -18,6 +19,7 @@ from celune.ui.debug import (
     _is_python_callable,
     _classify_source,
     _module_matches_filters,
+    _snapshot_module_values,
 )
 
 
@@ -73,6 +75,17 @@ def test_source_filters_append_package_names_and_reset() -> None:
 
     assert trace.source_filters == ()
     assert _module_matches_filters("json", trace.source_filters)
+
+
+def test_module_value_snapshot_tolerates_concurrent_module_changes() -> None:
+    """Skip modules whose globals change during an inspector refresh."""
+    module = ModuleType("changing_module")
+    with mock.patch(
+        "celune.ui.debug.vars",
+        side_effect=RuntimeError("dictionary changed size during iteration"),
+        create=True,
+    ):
+        assert _snapshot_module_values(module) is None
 
 
 def test_monitor_scope_skips_its_rendering_framework_by_default() -> None:
@@ -360,8 +373,16 @@ def test_glow_effects_component_validates_inputs_and_runs_actions() -> None:
             self.reset_special_effects = mock.Mock()
 
     glow = FakeGlow()
-    engine = type("FakeEngine", (), {})()
-    engine.glow = glow
+
+    class FakeEngine:
+        """Expose glow through a property, as runtime adapters may."""
+
+        @property
+        def glow(self) -> FakeGlow:
+            """Return the property-backed glow controller."""
+            return glow
+
+    engine = FakeEngine()
     ui = type("DebugUI", (), {})()
     ui.celune = engine
     ui._startup_log_level = "debug"

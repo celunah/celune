@@ -445,7 +445,10 @@ class DebugCallTrace:
                 self._code_modules.pop(code, None)
             codes: set[CodeType] = set()
             visited: set[int] = set()
-            for value in vars(module).values():
+            module_values = _snapshot_module_values(module)
+            if module_values is None:
+                continue
+            for value in module_values:
                 codes.update(_codes_from_value(value, visited, module_name))
             self._module_codes[module_name] = codes
             self._module_identities[module_name] = module_identity
@@ -2237,6 +2240,7 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
             string("debug.component_engine"),
             engine,
         )
+        glow = getattr(engine, "glow", None)
         for name, value in sorted(
             _object_attributes(engine).items(),
             key=lambda item: item[0].casefold(),
@@ -2244,14 +2248,6 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
             if name == "__dict__" or _is_sensitive_name(name):
                 continue
             if name == "glow":
-                if value is not None:
-                    engine_component.children.append(
-                        _InspectorComponent(
-                            path="celune.glow_effects",
-                            label=string("debug.component_glow_effects"),
-                            value=value,
-                        )
-                    )
                 continue
             if not _is_component_object(value):
                 continue
@@ -2261,6 +2257,14 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
                     path=f"celune.{name}",
                     label=child_name or name,
                     value=value,
+                )
+            )
+        if glow is not None:
+            engine_component.children.append(
+                _InspectorComponent(
+                    path="celune.glow_effects",
+                    label=string("debug.component_glow_effects"),
+                    value=glow,
                 )
             )
         for module_name, label_key in _ENGINE_MODULE_COMPONENTS:
@@ -2689,6 +2693,14 @@ def _object_attributes(value: object) -> dict[str, object]:
         for name, attribute in attributes.items()
         if not name.startswith("__")
     }
+
+
+def _snapshot_module_values(module: ModuleType) -> Optional[tuple[object, ...]]:
+    """Return a stable module-global snapshot, or None during concurrent imports."""
+    try:
+        return tuple(vars(module).values())
+    except RuntimeError:
+        return None
 
 
 def _is_component_object(value: object) -> bool:
