@@ -1211,6 +1211,29 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
     #debug-reset-sources {
         min-width: 16;
     }
+    #debug-glow-effects-actions Button:hover,
+    #debug-glow-effects-actions Button:focus,
+    #debug-glow-special-actions Button:hover,
+    #debug-glow-special-actions Button:focus,
+    #debug-live-actions Button:hover,
+    #debug-live-actions Button:focus,
+    #debug-modal-preview-actions Button:hover,
+    #debug-modal-preview-actions Button:focus {
+        border: round $foreground;
+        background: $background;
+        background-tint: transparent;
+        color: $foreground;
+        tint: transparent;
+    }
+    #debug-glow-effects-actions Button.-active,
+    #debug-glow-special-actions Button.-active,
+    #debug-live-actions Button.-active,
+    #debug-modal-preview-actions Button.-active {
+        border: round $primary;
+        background: $primary;
+        color: $background;
+        tint: transparent;
+    }
     #debug-source-status {
         width: 1fr;
         height: 1;
@@ -1430,18 +1453,16 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
                             yield widgets.Button(
                                 string("debug.select_source"),
                                 id="debug-select-source",
-                                compact=True,
                             )
                             yield widgets.Button(
                                 string("debug.reset_sources"),
                                 id="debug-reset-sources",
-                                compact=True,
                             )
                             yield widgets.Button(
-                                string("debug.pause"), id="debug-pause", compact=True
+                                string("debug.pause"), id="debug-pause"
                             )
                             yield widgets.Button(
-                                string("debug.clear"), id="debug-clear", compact=True
+                                string("debug.clear"), id="debug-clear"
                             )
                         with containers.Horizontal(id="debug-source-status-row"):
                             yield widgets.Checkbox(
@@ -1544,6 +1565,16 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
         if event.checkbox.id == "debug-show-special-methods":
             self.trace.set_show_special_methods(event.value)
             self._refresh_live_calls(force=True)
+
+    def on_mouse_down(self, event: events.MouseDown) -> None:
+        """Clear button focus when clicking non-focusable inspector space."""
+        if event.button != 1:
+            return
+        if event.widget is not None and event.widget.can_focus:
+            return
+        focused = self.app.focused
+        if isinstance(focused, widgets.Button):
+            focused.blur()
 
     def on_button_pressed(self, event: widgets.Button.Pressed) -> None:
         """Apply inspector controls and glow-effect actions."""
