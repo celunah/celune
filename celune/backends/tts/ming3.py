@@ -653,15 +653,15 @@ class Ming3(CeluneBackend[MingRuntime]):
         self.model = runtime
         return runtime
 
-    def resolve_generation_language(self, lang: Optional[str]) -> Optional[str]:
-        """Normalize supported language names and locale codes for Ming."""
-        if lang is None:
+    def resolve_generation_language(self, lang: Optional[str]) -> str:
+        """Normalize Ming's language and default unsupported values to English."""
+        if not lang:
             return "en"
         normalized = lang.strip().casefold().replace("_", "-")
         language = _LANGUAGE_ALIASES.get(normalized)
         if language is None and "-" in normalized:
             language = _LANGUAGE_ALIASES.get(normalized.split("-", 1)[0])
-        return language
+        return language or "en"
 
     @staticmethod
     def _maximum_audio_seconds(text: str) -> float:
@@ -702,8 +702,6 @@ class Ming3(CeluneBackend[MingRuntime]):
         else:
             kwargs.pop("lang", None)
         language = self.resolve_generation_language(requested_language)
-        if language is None:
-            raise ValueError(f"Ming3 does not support language '{requested_language}'")
         language_code = "zh" if language == "zh-cn" else language
         max_audio_seconds = self._maximum_audio_seconds(text)
 

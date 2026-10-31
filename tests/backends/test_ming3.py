@@ -55,6 +55,18 @@ def test_ming3_selects_package_from_celune_quantization(
     assert backend.model_contract(MING3_TTS_MODEL_ID).variant == precision
 
 
+@pytest.mark.parametrize(
+    ("language", "expected"),
+    (("Auto", "en"), ("it", "en"), ("ja-JP", "ja")),
+)
+def test_ming3_resolves_auto_and_unsupported_languages_to_english(
+    language: str,
+    expected: str,
+) -> None:
+    """Use a supported detected language or fall back to English."""
+    assert _backend(True).resolve_generation_language(language) == expected
+
+
 def test_ming3_runtime_architecture_falls_back_to_python_platform() -> None:
     """Resolve the bundled platform when the isolated worker omits machine env."""
     with (

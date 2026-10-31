@@ -146,6 +146,11 @@ BF16 weights when quantization is disabled. A load failure does not silently
 switch the selected precision. The model card is MIT-licensed; its usage
 disclaimer does not mark it research-only or non-commercial.
 
+When Celune's language is `Auto`, the submission pipeline uses Lingua to detect
+the text language. Ming receives that detected language when supported and falls
+back to English for unsupported or unrecognized values; it does not use Qwen3's
+`Auto` language token.
+
 | Celune quantization | Package | Download size |
 | --- | --- | ---: |
 | Enabled (`true`) | Q8_0 GGUF | 1.74 GB |

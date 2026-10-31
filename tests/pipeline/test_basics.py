@@ -704,6 +704,31 @@ class TestPipelineAsync(CeluneAsyncTestCase):
             ComponentLockName.MODEL_LOADING,
         )
 
+    def test_queue_speech_uses_lingua_language_for_ming3(self) -> None:
+        """Pass Lingua's detected language to Ming instead of Qwen's Auto token."""
+        engine = make_pipeline_engine()
+        engine.language = "Auto"
+        engine.backend = SimpleNamespace(
+            name="ming3",
+            singing=False,
+            supported_languages=("zh-cn", "en", "ja"),
+        )
+        detection = {
+            "language": "ja",
+            "languages": ["ja"],
+            "supported": True,
+            "probabilities": {"ja": 1.0},
+        }
+
+        with mock.patch(
+            "celune.pipeline.submission.detect_language", return_value=detection
+        ) as detect:
+            assert submission.queue_speech(cast(Celune, engine), "こんにちは")
+
+        detect.assert_called_once_with("こんにちは", ["zh-cn", "en", "ja"])
+        request = engine.text_queue.get_nowait()
+        assert request.language == "ja"
+
     def test_persona_wait_does_not_cross_a_model_reload_boundary(self) -> None:
         """Verify Persona waits for reload completion before changing engine state."""
         engine = make_pipeline_engine()
