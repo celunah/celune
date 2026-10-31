@@ -206,7 +206,9 @@ considering the implementation complete. Do not defer documentation to a later p
 
 Always perform all actions listed in the `Import Ordering` section at the end of a given task.
 
-Make sure to remove all `__pycache__` directories. Celune code is compiled and does not use said cache files.
+Remove project-owned `__pycache__` directories after validation, but exclude virtual environments such as
+`.venv`, `venv`, and backend-specific environments from cleanup. Celune code is compiled and does not use
+source cache files.
 
 ## Testing Discipline
 
