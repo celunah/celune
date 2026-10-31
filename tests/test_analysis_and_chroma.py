@@ -1,11 +1,12 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for pure analysis helpers and RGB glow math."""
 
+import datetime
 from pathlib import Path
 from unittest import mock
 
-import pytest
 import torch
+import pytest
 import numpy as np
 
 from celune import i18n, analysis
@@ -344,6 +345,7 @@ class TestChroma(CeluneTestCase):
     def test_set_color_updates_the_base_color_and_glow_target(self) -> None:
         """Update pack glow colors without connecting to RGB devices."""
         glow = AudioRGBGlow(celune=None, color="#ffffff")
+        glow._special_effect = None
         glow._state = "normal"
 
         glow._set_color("#d8751c")
@@ -353,6 +355,145 @@ class TestChroma(CeluneTestCase):
         )
         assert np.array_equal(glow.base_color, expected)
         assert np.array_equal(glow._target_color, expected)
+
+    def test_special_effects_match_the_configured_calendar_dates(self) -> None:
+        """Select each built-in glow effect on its configured dates."""
+        assert AudioRGBGlow._select_special_effect(datetime.date(2026, 6, 2)) == "june"
+        assert (
+            AudioRGBGlow._select_special_effect(datetime.date(2026, 10, 31))
+            == "halloween"
+        )
+        for day in (24, 25, 26):
+            assert (
+                AudioRGBGlow._select_special_effect(datetime.date(2026, 12, day))
+                == "christmas"
+            )
+        assert AudioRGBGlow._select_special_effect(datetime.date(2026, 6, 3)) is None
+
+    def test_calendar_brightness_uses_lunar_base_and_effect_ranges(self) -> None:
+        """Keep seasonal modulation proportional to the lunar idle level."""
+        glow = AudioRGBGlow(celune=None, color="#ffffff")
+        glow._base_idle_brightness = 0.2
+        glow._special_effect = "june"
+
+        assert glow._brightness_multiplier() == 0.75
+        glow._brightness_effect_elapsed = 3.0
+        assert glow._brightness_multiplier() == 1.0
+        glow._brightness_effect_elapsed = 9.0
+        assert glow._brightness_multiplier() == 0.5
+
+        glow._special_effect = "halloween"
+        glow._brightness_effect_elapsed = 0.0
+        assert glow._brightness_multiplier() == 0.5
+        glow._brightness_effect_elapsed = glow.HALLOWEEN_PULSE_SECONDS
+        assert glow._brightness_multiplier() == 1.0
+        glow._brightness_effect_elapsed += glow.HALLOWEEN_FADE_SECONDS / 2.0
+        assert glow._brightness_multiplier() == 0.75
+
+        glow._refresh_idle_brightness()
+        assert round(glow.idle_brightness, 7) == 0.15
+
+    def test_speaking_resets_to_seasonal_baseline_and_resumes_idle_effects(
+        self,
+    ) -> None:
+        """Pause idle brightness animation while speech controls its envelope."""
+        glow = AudioRGBGlow(celune=None, color="#ffffff")
+        glow.start = mock.Mock(return_value=True)
+        glow._worker = mock.Mock()
+        glow._worker.is_alive.return_value = True
+        glow._state = "normal"
+        glow._special_effect = "halloween"
+        glow._base_idle_brightness = 0.2
+        glow.idle_brightness = 0.2
+        glow._current_brightness = 0.8
+
+        glow.begin_speaking()
+
+        assert glow._speaking
+        assert glow._current_brightness == 0.1
+        assert glow._target_brightness == 0.1
+        glow._advance_idle_brightness(1.0, "normal")
+        assert glow._brightness_effect_elapsed == 0.0
+
+        glow.process_glow_chunk(np.ones((64, 2), dtype=np.float32), 0.0)
+        assert glow._target_brightness > 0.1
+
+        glow.reset_audio_reactivity()
+
+        assert not glow._speaking
+        assert glow._target_brightness == glow.idle_brightness
+        glow._advance_idle_brightness(1.0, "normal")
+        assert glow._brightness_effect_elapsed == 1.0
+
+    def test_christmas_color_fades_and_holds_before_switching(self) -> None:
+        """Fade to a randomized Christmas color, hold, then choose another."""
+        glow = AudioRGBGlow(celune=None, color="#ffffff")
+        glow._special_effect = "christmas"
+        with (
+            mock.patch(
+                "celune.chroma.random.choice", side_effect=lambda values: values[0]
+            ),
+            mock.patch("celune.chroma.random.uniform", side_effect=[0.5, 1.0, 2.0]),
+        ):
+            glow._apply_special_effect_color()
+            first_color = glow._last_christmas_color
+            assert glow._christmas_transition_seconds == 0.5
+
+            glow._advance_christmas_color(0.5)
+            assert glow._christmas_hold_seconds == 1.0
+            assert np.array_equal(glow._current_color, glow._christmas_color_target)
+
+            glow._advance_christmas_color(1.0)
+
+        assert glow._last_christmas_color != first_color
+
+    def test_custom_color_transition_uses_the_requested_duration(self) -> None:
+        """Fade to custom colors over the supplied duration."""
+        glow = AudioRGBGlow(celune=None, color="#000000")
+        glow._special_effect = "christmas"
+        glow._current_color = np.zeros(3, dtype=np.float32)
+
+        glow.set_color("#ffffff", 2.0)
+
+        target = np.array(
+            AudioRGBGlow.fix_color_rendering((255, 255, 255)), dtype=np.float32
+        )
+        assert glow._custom_color_override
+        assert glow._custom_color_transition_active
+        assert np.array_equal(glow._target_color, target)
+
+        glow._advance_custom_color(1.0)
+        assert np.allclose(glow._current_color, target * 0.5)
+
+        glow._advance_custom_color(1.0)
+        assert not glow._custom_color_transition_active
+        assert np.array_equal(glow._current_color, target)
+
+    def test_reset_special_effects_restores_default_and_suppresses_current_date(
+        self,
+    ) -> None:
+        """Cancel a selected effect and restore the pack color and lunar base."""
+        glow = AudioRGBGlow(celune=None, color="#cebaff")
+        current_date = datetime.date.today()
+        glow._effect_date = current_date
+        glow._special_effect = "halloween"
+        glow._brightness_effect_elapsed = 3.0
+
+        glow.activate_special_effect("june")
+
+        assert glow._special_effect == "june"
+        assert glow._manual_special_effect
+
+        glow.reset_special_effects()
+
+        assert glow._special_effect is None
+        assert not glow._manual_special_effect
+        assert glow._suppressed_effect_date == current_date
+        assert glow.idle_brightness == glow._base_idle_brightness
+        assert np.array_equal(glow._target_color, glow.base_color)
+
+        glow._sync_special_effect(current_date)
+        assert glow._special_effect is None
 
     def test_glow_worker_signals_completion(self) -> None:
         """Verify shutdown can observe a glow worker that exits promptly."""
@@ -430,6 +571,7 @@ class TestChroma(CeluneTestCase):
         """Verify the normal glow branch follows audio target directly."""
         glow = AudioRGBGlow(celune=None, color="#ffffff")
         glow._state = "normal"
+        glow._audio_reactivity_active = True
         glow._current_brightness = glow.idle_brightness
         glow._target_brightness = min(glow.max_brightness, glow.idle_brightness + 0.4)
         glow._current_color = glow.base_color.copy()

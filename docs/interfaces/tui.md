@@ -41,6 +41,15 @@ inert examples otherwise. Preview modal responses are discarded, and closing a
 preview returns to the debug inspector without applying a selection, saving
 settings, or loading a model.
 
+Under `Components > Engine`, select `Glow Effects` to enter a six-digit hex
+color and a positive transition duration in seconds, then choose `Set` to fade
+to that color. The three seasonal buttons preview their matching effects on any
+date; a custom color overrides the seasonal palette while its brightness effect
+continues. `Reset Special Effects` restores the pack's default color and lunar
+idle brightness, and suppresses the current date's seasonal effect until the
+local date changes. Invalid color or duration feedback appears in red, then
+fades away and releases its space.
+
 The bottom `LIVE CALLS` pane keeps a rolling buffer of up to 100 calls while the
 inspector is open. Closing the inspector stops tracing; opening it again resumes
 tracing and retains the buffer. The table displays the latest 25 entries and
@@ -345,6 +354,20 @@ The built-in dark and light themes can be overridden by the active pack's
 `theme` metadata. If OpenRGB is available, the `AudioRGBGlow` integration can
 connect, start, sleep, wake, react to audio, and enter a fatal state. Lighting
 failure does not make speech unavailable.
+
+The glow controller also selects calendar effects using the computer's local
+date. These effects scale the existing lunar-adjusted idle brightness:
+
+- June 2 keeps the glow at `#cebaff` and slowly cycles brightness between 50%
+  and 100% of its base level over 12 seconds.
+- October 31 uses `#9d1017`, stays at 50% of base brightness, and pulses to
+  100% every 4.12 seconds before fading back over one second.
+- December 24–26 cycles through `#baceff`, `#ffbace`, and `#ceffba`. Each color
+  fades in over 0.5–2 seconds and stays for 1–3 seconds; brightness is unchanged.
+
+When speech starts, the controller resets brightness to the active effect's
+baseline and pauses its idle brightness animation while audio-reactive speech
+brightness runs. Idle modulation resumes after playback finishes.
 
 ## Headless mode
 

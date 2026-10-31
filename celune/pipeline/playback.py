@@ -2,6 +2,7 @@
 """Shared playback worker, mixing, and audio stream lifecycle."""
 
 from __future__ import annotations
+
 import os
 import time
 import queue
@@ -27,28 +28,6 @@ from .timing import (
     PLAYBACK_BUFFER_STARTUP_GRACE_SECONDS,
     monotonic_time,
 )
-
-from ..i18n import string
-from ..typing.aliases import AudioChunk
-from ..config import resolve_audio_device
-from ..constants import BASE_SR, APP_NAME
-from ..exceptions import NotAvailableError
-from ..core.concurrency import run_in_daemon_thread
-from ..analysis import schedule_voice_analysis
-from ..utils import discard, clear_queue, format_number, format_error_message
-from ..dataclasses.pipeline import SpeechTiming, PlaybackChunk, PlaybackSourceDone
-from ..audio.dsp import error_signal, working_signal, sleeping_signal, readiness_signal
-
-from .buffering import (
-    PlaybackContentionMonitor,
-    acquire_pipeline,
-    release_pipeline,
-    pipeline_cpu_config,
-    queue_playback_done,
-    queue_playback_chunk,
-    dequeue_playback_item,
-    should_apply_contention_buffering,
-)
 from .captions import (
     playback_source_meta,
     next_playback_source_id,
@@ -60,6 +39,27 @@ from .captions import (
     clear_playback_source_status,
     notify_speech_playback_finished,
 )
+from .buffering import (
+    PlaybackContentionMonitor,
+    acquire_pipeline,
+    release_pipeline,
+    pipeline_cpu_config,
+    queue_playback_done,
+    queue_playback_chunk,
+    dequeue_playback_item,
+    should_apply_contention_buffering,
+)
+
+from ..i18n import string
+from ..typing.aliases import AudioChunk
+from ..config import resolve_audio_device
+from ..constants import BASE_SR, APP_NAME
+from ..exceptions import NotAvailableError
+from ..analysis import schedule_voice_analysis
+from ..core.concurrency import run_in_daemon_thread
+from ..utils import discard, clear_queue, format_number, format_error_message
+from ..dataclasses.pipeline import SpeechTiming, PlaybackChunk, PlaybackSourceDone
+from ..audio.dsp import error_signal, working_signal, sleeping_signal, readiness_signal
 
 if TYPE_CHECKING:
     from ..celune import Celune
@@ -528,6 +528,13 @@ def _reset_glow_audio_reactivity(engine: Celune) -> None:
     reset_audio_reactivity = getattr(engine.glow, "reset_audio_reactivity", None)
     if callable(reset_audio_reactivity):
         reset_audio_reactivity()
+
+
+def _begin_glow_speaking(engine: Celune) -> None:
+    """Reset seasonal brightness before speech-driven glow begins."""
+    begin_speaking = getattr(engine.glow, "begin_speaking", None)
+    if callable(begin_speaking):
+        begin_speaking()
 
 
 def force_stop_speech(engine: Celune) -> bool:
@@ -1006,6 +1013,7 @@ async def playback_worker_job(engine: Celune) -> None:
         playback_source_meta(engine).clear()
         playback_caption_states(engine).clear()
         engine._caption_source_id = None
+        _reset_glow_audio_reactivity(engine)
         engine.playback_done.set()
         release_pipeline(engine)
 
@@ -1291,6 +1299,8 @@ async def playback_worker_job(engine: Celune) -> None:
                     await force_stop_playback()
                     break
                 log_first_playback(engine, timing_to_log)
+                if speech_active:
+                    _begin_glow_speaking(engine)
                 engine.glow.schedule(mixed)
                 writer.submit(mixed, tuple(ready_ids))
                 update_playback_progress(engine, source_buffers)

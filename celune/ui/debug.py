@@ -1,9 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Read-only runtime inspector for the Textual debug view."""
+"""Live runtime inspector and debug controls for the Textual interface."""
 
 from __future__ import annotations
 
 import sys
+import math
 import site
 import time
 import types
@@ -13,20 +14,21 @@ import sysconfig
 import threading
 import contextlib
 from enum import Enum
-from types import CodeType, FrameType, ModuleType
-from typing import Literal, ClassVar, Optional, cast
 from pathlib import Path
 from datetime import datetime
 from collections import abc, deque
-from dataclasses import field, dataclass
+from dataclasses import dataclass, field
+from types import CodeType, FrameType, ModuleType
+from typing import ClassVar, Literal, Optional, cast
 
+from rich.text import Text
+from textual.validation import Regex
 from textual import app as textual_app
 from textual import events, screen, binding, widgets, containers
-from rich.text import Text
 
 from ..i18n import string
-from ..paths import running_compiled
 from ..constants import APP_NAME
+from ..paths import running_compiled
 
 ComposeResult = textual_app.ComposeResult
 
@@ -949,7 +951,7 @@ class _DebugResizeHandle(widgets.Static):
 
 
 class DebugInspectorScreen(screen.ModalScreen[None]):
-    """Show live Celune and UI state in a debug-only modal."""
+    """Show live runtime details and controls in the debug-only modal."""
 
     BINDINGS: ClassVar[list[binding.BindingType]] = [
         ("escape", "close_inspector", "Close inspector"),
@@ -958,6 +960,8 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
     _CALL_TABLE_LIMIT: ClassVar[int] = 25
     _LIVE_CALL_REFRESH_SECONDS: ClassVar[float] = 1.0
     _SNAPSHOT_REFRESH_SECONDS: ClassVar[float] = 1.0
+    _GLOW_VALIDATION_VISIBLE_SECONDS: ClassVar[float] = 2.5
+    _GLOW_VALIDATION_FADE_SECONDS: ClassVar[float] = 0.35
     DEFAULT_CSS = """
     DebugInspectorScreen {
         align: center middle;
@@ -1055,6 +1059,54 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
     #debug-attributes-table {
         height: 1fr;
         min-height: 3;
+    }
+    #debug-glow-effects {
+        display: none;
+        width: 1fr;
+        height: 1fr;
+    }
+    #debug-glow-color-row,
+    #debug-glow-duration-row,
+    #debug-glow-effects-actions,
+    #debug-glow-special-actions {
+        width: 1fr;
+        height: 3;
+        align: left middle;
+    }
+    #debug-glow-color-row Static,
+    #debug-glow-duration-row Static {
+        width: 25;
+        height: 1;
+        content-align: left middle;
+    }
+    #debug-glow-color-row Input,
+    #debug-glow-duration-row Input {
+        width: 1fr;
+        height: 3;
+        border: round $secondary;
+    }
+    #debug-glow-effects-actions Button,
+    #debug-glow-special-actions Button {
+        min-width: 12;
+        height: 3;
+        padding: 0 1;
+        border: round $primary;
+        background: $surface;
+        color: $primary;
+        margin-right: 1;
+    }
+    #debug-glow-effects-validation {
+        display: none;
+        height: auto;
+        color: $error;
+        opacity: 0;
+        transition: opacity 300ms;
+    }
+    #debug-glow-effects-special-title {
+        height: 1;
+        color: $primary;
+        text-style: bold;
+        margin-top: 2;
     }
     #debug-modal-preview {
         display: none;
@@ -1205,6 +1257,7 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
         self._rendered_table_components: dict[str, str] = {}
         self._rendered_state_table_height = 1
         self._component_tree: Optional[widgets.Tree[_InspectorComponent]] = None
+        self._glow_validation_generation = 0
 
     def compose(self) -> ComposeResult:
         """Build the component selector, snapshot, and call trace panes."""
@@ -1252,6 +1305,70 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
                         show_row_labels=False,
                         id="debug-attributes-table",
                     )
+                    with containers.Vertical(id="debug-glow-effects"):
+                        with containers.Horizontal(id="debug-glow-color-row"):
+                            yield widgets.Static(string("debug.glow_color_label"))
+                            yield widgets.Input(
+                                placeholder=string("debug.glow_color_placeholder"),
+                                validators=(
+                                    Regex(
+                                        r"^#[0-9A-Fa-f]{6}$",
+                                        failure_description=string(
+                                            "debug.glow_invalid_color"
+                                        ),
+                                    ),
+                                ),
+                                validate_on=("changed", "submitted"),
+                                valid_empty=True,
+                                max_length=7,
+                                id="debug-glow-color",
+                            )
+                        with containers.Horizontal(id="debug-glow-duration-row"):
+                            yield widgets.Static(string("debug.glow_duration_label"))
+                            yield widgets.Input(
+                                placeholder=string("debug.glow_duration_placeholder"),
+                                validators=(
+                                    Regex(
+                                        r"^\s*(?=.*[1-9])(?:\d+(?:\.\d*)?|\.\d+)\s*[sS]?\s*$",
+                                        failure_description=string(
+                                            "debug.glow_invalid_duration"
+                                        ),
+                                    ),
+                                ),
+                                validate_on=("changed", "submitted"),
+                                valid_empty=True,
+                                max_length=32,
+                                id="debug-glow-duration",
+                            )
+                        with containers.Horizontal(id="debug-glow-effects-actions"):
+                            yield widgets.Button(
+                                string("debug.glow_set"), id="debug-glow-set"
+                            )
+                            yield widgets.Button(
+                                string("debug.glow_reset_special_effects"),
+                                id="debug-glow-reset-special-effects",
+                            )
+                        yield widgets.Static(
+                            "",
+                            id="debug-glow-effects-validation",
+                        )
+                        yield widgets.Static(
+                            string("debug.glow_special_effects"),
+                            id="debug-glow-effects-special-title",
+                        )
+                        with containers.Horizontal(id="debug-glow-special-actions"):
+                            yield widgets.Button(
+                                string("debug.glow_effect_halloween"),
+                                id="debug-glow-effect-halloween",
+                            )
+                            yield widgets.Button(
+                                string("debug.glow_effect_christmas"),
+                                id="debug-glow-effect-christmas",
+                            )
+                            yield widgets.Button(
+                                string("debug.glow_effect_june"),
+                                id="debug-glow-effect-june",
+                            )
                     with containers.Vertical(id="debug-modal-preview"):
                         yield widgets.Static(
                             string("debug.component_ui_modals"),
@@ -1386,11 +1503,27 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
         """Filter component names while preserving the selected path."""
         if event.input.id == "debug-filter":
             self._populate_tree(event.value)
+        elif event.input.id == "debug-glow-color":
+            validation = event.input.validate(event.value)
+            if event.value and (validation is None or not validation.is_valid):
+                self._show_glow_validation_message(string("debug.glow_invalid_color"))
+            elif validation is not None and validation.is_valid:
+                self._clear_glow_validation_message()
+        elif event.input.id == "debug-glow-duration":
+            validation = event.input.validate(event.value)
+            if event.value and (validation is None or not validation.is_valid):
+                self._show_glow_validation_message(
+                    string("debug.glow_invalid_duration")
+                )
+            elif validation is not None and validation.is_valid:
+                self._clear_glow_validation_message()
 
     def on_input_submitted(self, event: widgets.Input.Submitted) -> None:
         """Apply a package or module filter submitted from its input."""
         if event.input.id == "debug-source-filter":
             self._select_source_filter()
+        elif event.input.id in {"debug-glow-color", "debug-glow-duration"}:
+            self._set_glow_color()
 
     def on_checkbox_changed(self, event: widgets.Checkbox.Changed) -> None:
         """Update whether special methods are shown in the call trace."""
@@ -1399,7 +1532,7 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
             self._refresh_live_calls(force=True)
 
     def on_button_pressed(self, event: widgets.Button.Pressed) -> None:
-        """Apply the live-trace controls."""
+        """Apply inspector controls and glow-effect actions."""
         if event.button.id == "debug-pause":
             self.trace.set_paused(not self.trace.paused)
             self._update_pause_button()
@@ -1420,6 +1553,131 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
             self._open_menu_preview("settings")
         elif event.button.id == "debug-modal-preview-license":
             self._open_license_preview()
+        elif event.button.id == "debug-glow-set":
+            self._set_glow_color()
+        elif event.button.id == "debug-glow-reset-special-effects":
+            self._reset_glow_special_effects()
+        elif event.button.id == "debug-glow-effect-halloween":
+            self._activate_glow_special_effect("halloween")
+        elif event.button.id == "debug-glow-effect-christmas":
+            self._activate_glow_special_effect("christmas")
+        elif event.button.id == "debug-glow-effect-june":
+            self._activate_glow_special_effect("june")
+
+    def _set_glow_color(self) -> None:
+        """Validate the glow inputs and start a custom color transition."""
+        color_input = self.query_one("#debug-glow-color", widgets.Input)
+        duration_input = self.query_one("#debug-glow-duration", widgets.Input)
+        color = color_input.value.strip()
+        duration_text = duration_input.value.strip()
+
+        color_validation = color_input.validate(color)
+        if not color or color_validation is None or not color_validation.is_valid:
+            color_input.focus()
+            self._show_glow_validation_message(string("debug.glow_invalid_color"))
+            return
+
+        duration_validation = duration_input.validate(duration_text)
+        if (
+            not duration_text
+            or duration_validation is None
+            or not duration_validation.is_valid
+        ):
+            duration_input.focus()
+            self._show_glow_validation_message(string("debug.glow_invalid_duration"))
+            return
+
+        duration_value = duration_text.casefold()
+        if duration_value.endswith("s"):
+            duration_value = duration_value[:-1].strip()
+        try:
+            transition_seconds = float(duration_value)
+        except ValueError:
+            duration_input.focus()
+            self._show_glow_validation_message(string("debug.glow_invalid_duration"))
+            return
+        if not math.isfinite(transition_seconds) or transition_seconds <= 0.0:
+            duration_input.focus()
+            self._show_glow_validation_message(string("debug.glow_invalid_duration"))
+            return
+
+        component = self._selected_component
+        set_color = (
+            getattr(component.value, "set_color", None)
+            if component is not None and component.path == "celune.glow_effects"
+            else None
+        )
+        if callable(set_color):
+            try:
+                set_color(color, transition_seconds)
+            except ValueError:
+                self._show_glow_validation_message(string("debug.glow_invalid_color"))
+                return
+        self._clear_glow_validation_message()
+
+    def _activate_glow_special_effect(self, name: str) -> None:
+        """Start the selected seasonal effect from the glow component."""
+        component = self._selected_component
+        activate = (
+            getattr(component.value, "activate_special_effect", None)
+            if component is not None and component.path == "celune.glow_effects"
+            else None
+        )
+        if callable(activate):
+            activate(name)
+
+    def _reset_glow_special_effects(self) -> None:
+        """Reset the glow to its default color and idle brightness."""
+        component = self._selected_component
+        reset = (
+            getattr(component.value, "reset_special_effects", None)
+            if component is not None and component.path == "celune.glow_effects"
+            else None
+        )
+        if callable(reset):
+            reset()
+        self._clear_glow_validation_message()
+
+    def _show_glow_validation_message(self, message: str) -> None:
+        """Show a red input error and release its row after a short fade."""
+        self._glow_validation_generation += 1
+        generation = self._glow_validation_generation
+        label = self.query_one("#debug-glow-effects-validation", widgets.Static)
+        label.update(message)
+        label.display = True
+        label.styles.opacity = 1.0
+        self.set_timer(
+            self._GLOW_VALIDATION_VISIBLE_SECONDS,
+            lambda: self._fade_glow_validation_message(generation),
+        )
+
+    def _fade_glow_validation_message(self, generation: int) -> None:
+        """Fade the current glow validation message out."""
+        if generation != self._glow_validation_generation:
+            return
+        label = self.query_one("#debug-glow-effects-validation", widgets.Static)
+        label.styles.opacity = 0.0
+        self.set_timer(
+            self._GLOW_VALIDATION_FADE_SECONDS,
+            lambda: self._hide_glow_validation_message(generation),
+        )
+
+    def _hide_glow_validation_message(self, generation: int) -> None:
+        """Hide the faded message so it no longer reserves layout space."""
+        if generation != self._glow_validation_generation:
+            return
+        label = self.query_one("#debug-glow-effects-validation", widgets.Static)
+        label.update("")
+        label.display = False
+        label.styles.opacity = 1.0
+
+    def _clear_glow_validation_message(self) -> None:
+        """Dismiss stale validation feedback after a valid action."""
+        self._glow_validation_generation += 1
+        label = self.query_one("#debug-glow-effects-validation", widgets.Static)
+        label.update("")
+        label.display = False
+        label.styles.opacity = 1.0
 
     def _ignore_modal_preview_result(self, result: object) -> None:
         """Consume a preview modal result without changing application state."""
@@ -1985,6 +2243,16 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
         ):
             if name == "__dict__" or _is_sensitive_name(name):
                 continue
+            if name == "glow":
+                if value is not None:
+                    engine_component.children.append(
+                        _InspectorComponent(
+                            path="celune.glow_effects",
+                            label=string("debug.component_glow_effects"),
+                            value=value,
+                        )
+                    )
+                continue
             if not _is_component_object(value):
                 continue
             child_name = _component_label(name)
@@ -2079,15 +2347,20 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
     def _render_component(self) -> None:
         component = self._selected_component
         is_modal_catalog = component is not None and component.path == "ui.modals"
+        is_glow_effects = (
+            component is not None and component.path == "celune.glow_effects"
+        )
+        show_generic_details = not (is_modal_catalog or is_glow_effects)
         self.query_one("#debug-modal-preview").display = is_modal_catalog
+        self.query_one("#debug-glow-effects").display = is_glow_effects
         self.query_one("#debug-selected-component").display = not is_modal_catalog
-        self.query_one("#debug-state-title").display = not is_modal_catalog
-        self.query_one("#debug-state-table").display = not is_modal_catalog
-        self.query_one("#debug-attributes-title").display = not is_modal_catalog
-        self.query_one("#debug-attributes-table").display = not is_modal_catalog
+        self.query_one("#debug-state-title").display = show_generic_details
+        self.query_one("#debug-state-table").display = show_generic_details
+        self.query_one("#debug-attributes-title").display = show_generic_details
+        self.query_one("#debug-attributes-table").display = show_generic_details
         if component is None:
             return
-        if is_modal_catalog:
+        if is_modal_catalog or is_glow_effects:
             return
         self.query_one("#debug-selected-component", widgets.Static).update(
             Text(component.label)

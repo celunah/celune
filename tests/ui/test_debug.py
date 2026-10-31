@@ -3,6 +3,7 @@
 
 import time
 import asyncio
+from typing import cast
 from pathlib import Path
 from unittest import mock
 
@@ -344,4 +345,106 @@ def test_inspector_remains_usable_without_an_attached_core() -> None:
             trace.set_paused(False)
 
     asyncio.run(inspect_screen())
+    assert not trace.available
+
+
+def test_glow_effects_component_validates_inputs_and_runs_actions() -> None:
+    """Render custom glow controls and validate each button action."""
+
+    class FakeGlow:
+        """Record the public glow actions invoked by the inspector."""
+
+        def __init__(self) -> None:
+            self.set_color = mock.Mock()
+            self.activate_special_effect = mock.Mock()
+            self.reset_special_effects = mock.Mock()
+
+    glow = FakeGlow()
+    engine = type("FakeEngine", (), {})()
+    engine.glow = glow
+    ui = type("DebugUI", (), {})()
+    ui.celune = engine
+    ui._startup_log_level = "debug"
+    trace = DebugCallTrace(ui)
+    trace.set_enabled(True)
+    trace.set_paused(True)
+    host = _InspectorHost(ui, trace)
+
+    async def inspect_glow() -> None:
+        async with host.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            screen = cast(DebugInspectorScreen, host.screen)
+            roots = screen._build_component_roots()
+            engine_component = next(root for root in roots if root.path == "celune")
+            glow_component = next(
+                child
+                for child in engine_component.children
+                if child.path == "celune.glow_effects"
+            )
+            assert glow_component.label == "Glow Effects"
+
+            screen._selected_component = glow_component
+            screen._render_component()
+            await pilot.pause()
+
+            assert screen.query_one("#debug-glow-effects").display
+            assert not screen.query_one("#debug-state-table").display
+            assert not screen.query_one("#debug-attributes-table").display
+
+            color_input = screen.query_one("#debug-glow-color", Input)
+            duration_input = screen.query_one("#debug-glow-duration", Input)
+            validation = screen.query_one("#debug-glow-effects-validation", Static)
+            color_input.value = "#12"
+            duration_input.value = "2.06 s"
+            await pilot.pause()
+            await pilot.click("#debug-glow-set")
+            await pilot.pause()
+            assert "Invalid color" in str(validation.content)
+            glow.set_color.assert_not_called()
+
+            color_input.value = "#abcdef"
+            duration_input.value = "0 s"
+            await pilot.pause()
+            await pilot.click("#debug-glow-set")
+            await pilot.pause()
+            assert "Invalid duration" in str(validation.content)
+            glow.set_color.assert_not_called()
+
+            color_input.value = "#baceff"
+            duration_input.value = "2.06 s"
+            await pilot.pause()
+            await pilot.click("#debug-glow-set")
+            await pilot.pause()
+            glow.set_color.assert_called_once_with("#baceff", 2.06)
+            assert not validation.display
+
+            await pilot.click("#debug-glow-effect-halloween")
+            await pilot.click("#debug-glow-effect-christmas")
+            await pilot.click("#debug-glow-effect-june")
+            await pilot.click("#debug-glow-reset-special-effects")
+            assert [
+                call.args[0] for call in glow.activate_special_effect.call_args_list
+            ] == [
+                "halloween",
+                "christmas",
+                "june",
+            ]
+            glow.reset_special_effects.assert_called_once_with()
+
+            with (
+                mock.patch.object(
+                    DebugInspectorScreen, "_GLOW_VALIDATION_VISIBLE_SECONDS", 0.02
+                ),
+                mock.patch.object(
+                    DebugInspectorScreen, "_GLOW_VALIDATION_FADE_SECONDS", 0.02
+                ),
+            ):
+                screen._show_glow_validation_message(
+                    "Invalid color. Must be a hex color."
+                )
+                await asyncio.sleep(0.12)
+            assert not validation.display
+            assert str(validation.content) == ""
+
+    asyncio.run(inspect_glow())
     assert not trace.available
