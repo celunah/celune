@@ -14,8 +14,9 @@ class CeluneButton(TextualButton):
         """Remove Textual's default horizontal line padding."""
         self.styles.line_pad = 0
 
-    def get_content_width(self, _container: Size, _viewport: Size) -> int:
+    def get_content_width(self, container: Size, viewport: Size) -> int:
         """Return the rendered label width without extra horizontal cells."""
+        del container, viewport
         assert isinstance(self.label, Content)
         lines = self.label.plain.splitlines()
         if not lines:

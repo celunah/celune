@@ -9,6 +9,7 @@ from unittest import mock
 from types import ModuleType
 
 from rich.cells import cell_len
+from textual.content import Content
 from textual.app import App, ComposeResult
 from textual.widgets import Button, Checkbox, DataTable, Input, Static
 
@@ -216,7 +217,9 @@ def test_inspector_remains_usable_without_an_attached_core() -> None:
             assert calls.max_scroll_x == 0
             assert pause_button.label == "Resume"
             for button in live_buttons:
-                assert button.content_region.width == cell_len(button.label.plain)
+                label = button.label
+                assert isinstance(label, Content)
+                assert button.content_region.width == cell_len(label.plain)
             assert trace.source_filters == ()
             assert 16 <= source_input.region.width <= 34
             inspector = host.screen
@@ -440,7 +443,9 @@ def test_glow_effects_component_validates_inputs_and_runs_actions() -> None:
                 "debug-glow-effect-june",
             ):
                 button = screen.query_one(f"#{button_id}", Button)
-                assert button.content_region.width == cell_len(button.label.plain)
+                label = button.label
+                assert isinstance(label, Content)
+                assert button.content_region.width == cell_len(label.plain)
 
             color_input.value = "#12"
             duration_input.value = "2.06 s"
