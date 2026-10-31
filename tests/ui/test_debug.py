@@ -3,11 +3,12 @@
 
 import time
 import asyncio
-from typing import cast
 from pathlib import Path
+from typing import cast
 from unittest import mock
 from types import ModuleType
 
+from rich.cells import cell_len
 from textual.app import App, ComposeResult
 from textual.widgets import Button, Checkbox, DataTable, Input, Static
 
@@ -197,8 +198,12 @@ def test_inspector_remains_usable_without_an_attached_core() -> None:
             special_methods = host.screen.query_one(
                 "#debug-show-special-methods", Checkbox
             )
-            host.screen.query_one("#debug-select-source", Button)
-            host.screen.query_one("#debug-reset-sources", Button)
+            live_buttons = (
+                pause_button,
+                host.screen.query_one("#debug-clear", Button),
+                host.screen.query_one("#debug-select-source", Button),
+                host.screen.query_one("#debug-reset-sources", Button),
+            )
             assert "not attached" in str(status.content)
             assert str(sources.content) == "Tracing all function calls"
             assert sources.region.y == title.region.y + 1
@@ -210,7 +215,8 @@ def test_inspector_remains_usable_without_an_attached_core() -> None:
             assert calls.ordered_columns[3].width == 18
             assert calls.max_scroll_x == 0
             assert pause_button.label == "Resume"
-            assert pause_button.content_region.width >= len("Resume")
+            for button in live_buttons:
+                assert button.content_region.width == cell_len(button.label.plain)
             assert trace.source_filters == ()
             assert 16 <= source_input.region.width <= 34
             inspector = host.screen
@@ -434,7 +440,7 @@ def test_glow_effects_component_validates_inputs_and_runs_actions() -> None:
                 "debug-glow-effect-june",
             ):
                 button = screen.query_one(f"#{button_id}", Button)
-                assert button.region.width % 2 == 1
+                assert button.content_region.width == cell_len(button.label.plain)
 
             color_input.value = "#12"
             duration_input.value = "2.06 s"

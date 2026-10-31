@@ -64,9 +64,11 @@ durations update without repainting still-running rows on each refresh. Details
 remain available for the selected call as the rolling trace advances. The
 source input and actions share the `LIVE CALLS` title row, with trace status
 directly underneath. Inspector buttons show hover, keyboard-focus, and press
-feedback; clicking non-focusable space clears a button's focus highlight. Drag
-the separators to resize the component and details panes, the upper section and
-`LIVE CALLS`, or the call list and call details.
+feedback; clicking non-focusable space clears a button's focus highlight.
+Celune buttons size to their rendered labels without interior padding. Controls
+with explicit layout widths keep those widths. Drag the separators to resize
+the component and details panes, the upper section and `LIVE CALLS`, or the call
+list and call details.
 Monitoring is enabled per loaded code object rather than process-wide. Newly
 imported modules are discovered during the once-per-second snapshot refresh.
 This avoids callback traffic from unrelated interpreter code.

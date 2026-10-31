@@ -181,6 +181,10 @@ CELUNE_CSS = """
         border: round $primary;
     }
 
+    Button {
+        min-width: 0;
+    }
+
     #style, #vc-mode, #model-consent-actions Button {
         width: 14;
         height: 3;

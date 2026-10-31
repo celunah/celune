@@ -9,8 +9,8 @@ import site
 import time
 import types
 import inspect
-import functools
 import sysconfig
+import functools
 import threading
 import contextlib
 from enum import Enum
@@ -28,6 +28,7 @@ from textual import events, screen, binding, widgets, containers
 
 from ..i18n import string
 from ..constants import APP_NAME
+from .buttons import CeluneButton
 from ..paths import running_compiled
 
 ComposeResult = textual_app.ComposeResult
@@ -1093,24 +1094,14 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
     }
     #debug-glow-effects-actions Button,
     #debug-glow-special-actions Button {
-        min-width: 11;
+        width: auto;
+        min-width: 0;
         height: 3;
-        padding: 0 1;
+        padding: 0;
         border: round $primary;
         background: $surface;
         color: $primary;
         margin-right: 1;
-    }
-    #debug-glow-set {
-        width: 11;
-    }
-    #debug-glow-reset-special-effects {
-        width: 27;
-    }
-    #debug-glow-effect-halloween,
-    #debug-glow-effect-christmas,
-    #debug-glow-effect-june {
-        width: 15;
     }
     #debug-glow-effects-validation {
         display: none;
@@ -1188,9 +1179,10 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
     #debug-clear,
     #debug-select-source,
     #debug-reset-sources {
-        min-width: 10;
+        width: auto;
+        min-width: 0;
         height: 3;
-        padding: 0 1;
+        padding: 0;
         border: round $primary;
         background: $surface;
         color: $primary;
@@ -1209,13 +1201,6 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
         border: round $secondary;
         margin-left: 1;
         margin-right: 1;
-    }
-    #debug-select-source,
-    #debug-reset-sources {
-        min-width: 16;
-    }
-    #debug-pause {
-        min-width: 12;
     }
     #debug-glow-effects-actions Button:hover,
     #debug-glow-effects-actions Button:focus,
@@ -1378,10 +1363,10 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
                                 id="debug-glow-duration",
                             )
                         with containers.Horizontal(id="debug-glow-effects-actions"):
-                            yield widgets.Button(
+                            yield CeluneButton(
                                 string("debug.glow_set"), id="debug-glow-set"
                             )
-                            yield widgets.Button(
+                            yield CeluneButton(
                                 string("debug.glow_reset_special_effects"),
                                 id="debug-glow-reset-special-effects",
                             )
@@ -1394,15 +1379,15 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
                             id="debug-glow-effects-special-title",
                         )
                         with containers.Horizontal(id="debug-glow-special-actions"):
-                            yield widgets.Button(
+                            yield CeluneButton(
                                 string("debug.glow_effect_halloween"),
                                 id="debug-glow-effect-halloween",
                             )
-                            yield widgets.Button(
+                            yield CeluneButton(
                                 string("debug.glow_effect_christmas"),
                                 id="debug-glow-effect-christmas",
                             )
-                            yield widgets.Button(
+                            yield CeluneButton(
                                 string("debug.glow_effect_june"),
                                 id="debug-glow-effect-june",
                             )
@@ -1420,15 +1405,15 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
                             id="debug-modal-preview-result",
                         )
                         with containers.Vertical(id="debug-modal-preview-actions"):
-                            yield widgets.Button(
+                            yield CeluneButton(
                                 string("debug.modal_preview_voice"),
                                 id="debug-modal-preview-voice",
                             )
-                            yield widgets.Button(
+                            yield CeluneButton(
                                 string("debug.modal_preview_settings"),
                                 id="debug-modal-preview-settings",
                             )
-                            yield widgets.Button(
+                            yield CeluneButton(
                                 string("debug.modal_preview_license"),
                                 id="debug-modal-preview-license",
                             )
@@ -1450,20 +1435,16 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
                                 placeholder=string("debug.package_module_placeholder"),
                                 id="debug-source-filter",
                             )
-                            yield widgets.Button(
+                            yield CeluneButton(
                                 string("debug.select_source"),
                                 id="debug-select-source",
                             )
-                            yield widgets.Button(
+                            yield CeluneButton(
                                 string("debug.reset_sources"),
                                 id="debug-reset-sources",
                             )
-                            yield widgets.Button(
-                                string("debug.pause"), id="debug-pause"
-                            )
-                            yield widgets.Button(
-                                string("debug.clear"), id="debug-clear"
-                            )
+                            yield CeluneButton(string("debug.pause"), id="debug-pause")
+                            yield CeluneButton(string("debug.clear"), id="debug-clear")
                         with containers.Horizontal(id="debug-source-status-row"):
                             yield widgets.Checkbox(
                                 string("debug.show_special_methods"),

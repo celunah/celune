@@ -8,7 +8,6 @@ import asyncio
 import logging
 import itertools
 import threading
-import queue as queue_module
 from typing import (
     TYPE_CHECKING,
     Never,
@@ -22,8 +21,9 @@ from typing import (
     final,
 )
 from pathlib import Path
-from types import ModuleType
 from io import TextIOWrapper
+import queue as queue_module
+from types import ModuleType
 from dataclasses import field, dataclass
 from collections.abc import Callable, Iterator, Awaitable
 
@@ -50,24 +50,25 @@ from . import (
     runtime as _runtime,
     interaction as _interaction,
 )
-from .loading import CeluneLoadingScreen
-from .compat import install_textual_timer_sleep
-from .terminal import SelectMenuOption, SelectMenuWidget
-from .theme import CELUNE_CSS, severity_color, with_brightness
 from ..typing.locks import (
     ComponentLockName,
     ComponentLockOwner,
     ComponentLockRequirement,
 )
+from .buttons import CeluneButton
+from .loading import CeluneLoadingScreen
 from ..i18n import string, tagged_string
 from ..typing.agent import AgentTaskState
-from ..registry.types import ModelMetadata
 from ..typing.modes import OperationState
+from ..registry.types import ModelMetadata
 from ..typing.common import JSONSerializable
 from ..watchdog import launcher_loss_requested
-from ..typing.config import AudioDeviceInfoValue
+from .compat import install_textual_timer_sleep
 from ..core.concurrency import run_in_daemon_thread
+from ..typing.config import AudioDeviceInfoValue
+from .terminal import SelectMenuOption, SelectMenuWidget
 from ..constants import BASE_SR, SIGTSTP, APP_NAME, ExitCodes
+from .theme import CELUNE_CSS, severity_color, with_brightness
 from ..theme.defaults import default_theme_family, default_error_theme_family
 
 App = app.App
@@ -332,7 +333,7 @@ class ButtonActions:
     hold: bool = False
 
 
-class Button(TextualButton):
+class Button(CeluneButton):
     """Native-looking button with independently gated press and hold actions."""
 
     class Held(Message):
