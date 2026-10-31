@@ -1033,6 +1033,9 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
         border: round $secondary;
         margin: 0 0 1 0;
     }
+    #debug-panel Input .input--placeholder {
+        color: $secondary;
+    }
     #debug-components {
         height: 1fr;
         padding: 0;
