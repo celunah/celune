@@ -2,6 +2,7 @@
 """Tests for Ming 3.0 package selection and native streaming integration."""
 
 import io
+import sys
 import json
 import base64
 import threading
@@ -78,7 +79,12 @@ def test_ming3_runtime_architecture_falls_back_to_python_platform() -> None:
     ):
         assets = Ming3._runtime_assets()
 
-    assert assets[0][0] == "audio-v0.9.3-bin-windows-x64-cuda13.3.zip"
+    expected_archive = (
+        "audio-v0.9.3-bin-windows-x64-cuda13.3.zip"
+        if sys.platform == "win32"
+        else "audio-v0.9.3-bin-ubuntu-x64-cuda12.8-colab.tar.gz"
+    )
+    assert assets[0][0] == expected_archive
 
 
 def test_ming3_preserves_gguf_filename_with_a_hard_link(tmp_path: Path) -> None:
