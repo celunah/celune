@@ -362,8 +362,9 @@ date. These effects scale the existing lunar-adjusted idle brightness:
   and 100% of its base level over 12 seconds.
 - October 31 uses `#9d1017`, stays at 50% of base brightness, and pulses to
   100% every 4.12 seconds before fading back over one second.
-- December 24–26 cycles through `#baceff`, `#ffbace`, and `#ceffba`. Each color
-  fades in over 0.5–2 seconds and stays for 1–3 seconds; brightness is unchanged.
+- December 24–26 cycles through the pastel blue `#9fcfff`, pink `#ff9fcc`, and
+  green `#b0f5b4` colors. Each fades in over 0.5–2 seconds and stays for 1–3
+  seconds; brightness is unchanged.
 
 When speech starts, the controller resets brightness to the active effect's
 baseline and pauses its idle brightness animation while audio-reactive speech

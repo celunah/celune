@@ -37,7 +37,7 @@ class AudioRGBGlow:
         ("halloween", frozenset({(10, 31)})),
         ("christmas", frozenset({(12, 24), (12, 25), (12, 26)})),
     )
-    CHRISTMAS_COLORS = ("#baceff", "#ffbace", "#ceffba")
+    CHRISTMAS_COLORS = ("#9fcfff", "#ff9fcc", "#b0f5b4")
     JUNE_CYCLE_SECONDS = 12.0
     HALLOWEEN_PULSE_SECONDS = 4.12
     HALLOWEEN_FADE_SECONDS = 1.0
@@ -212,7 +212,7 @@ class AudioRGBGlow:
         self._last_christmas_color = None
 
     def _choose_christmas_color(self) -> None:
-        """Start a randomized fade to a different Christmas color."""
+        """Fade to a random Christmas palette color without hue compensation."""
         choices = [
             color
             for color in self.CHRISTMAS_COLORS
@@ -221,9 +221,7 @@ class AudioRGBGlow:
         color = random.choice(choices)
         self._last_christmas_color = color
         self._christmas_color_start = self._current_color.copy()
-        self._christmas_color_target = np.array(
-            self._fix_color_rendering(to_rgb(color)), dtype=np.float32
-        )
+        self._christmas_color_target = np.array(to_rgb(color), dtype=np.float32)
         self._target_color = self._christmas_color_target.copy()
         self._christmas_transition_elapsed = 0.0
         self._christmas_transition_seconds = random.uniform(0.5, 2.0)
