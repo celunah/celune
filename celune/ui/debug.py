@@ -1079,7 +1079,7 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
     #debug-glow-color-row Static,
     #debug-glow-duration-row Static {
         width: 25;
-        height: 1;
+        height: 3;
         content-align: left middle;
     }
     #debug-glow-color-row Input,
@@ -1090,13 +1090,24 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
     }
     #debug-glow-effects-actions Button,
     #debug-glow-special-actions Button {
-        min-width: 12;
+        min-width: 11;
         height: 3;
         padding: 0 1;
         border: round $primary;
         background: $surface;
         color: $primary;
         margin-right: 1;
+    }
+    #debug-glow-set {
+        width: 11;
+    }
+    #debug-glow-reset-special-effects {
+        width: 27;
+    }
+    #debug-glow-effect-halloween,
+    #debug-glow-effect-christmas,
+    #debug-glow-effect-june {
+        width: 15;
     }
     #debug-glow-effects-validation {
         display: none;

@@ -415,6 +415,23 @@ def test_glow_effects_component_validates_inputs_and_runs_actions() -> None:
             color_input = screen.query_one("#debug-glow-color", Input)
             duration_input = screen.query_one("#debug-glow-duration", Input)
             validation = screen.query_one("#debug-glow-effects-validation", Static)
+            for row_id, input_widget in (
+                ("debug-glow-color-row", color_input),
+                ("debug-glow-duration-row", duration_input),
+            ):
+                label = screen.query_one(f"#{row_id} Static", Static)
+                assert label.region.y == input_widget.region.y
+                assert label.region.height == input_widget.region.height
+            for button_id in (
+                "debug-glow-set",
+                "debug-glow-reset-special-effects",
+                "debug-glow-effect-halloween",
+                "debug-glow-effect-christmas",
+                "debug-glow-effect-june",
+            ):
+                button = screen.query_one(f"#{button_id}", Button)
+                assert button.region.width % 2 == 1
+
             color_input.value = "#12"
             duration_input.value = "2.06 s"
             await pilot.pause()
