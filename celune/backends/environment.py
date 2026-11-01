@@ -73,6 +73,7 @@ _PYTORCH_INDEX_URLS = (
     "https://pypi.org/simple",
     "https://download.pytorch.org/whl/cu128",
 )
+_UV_HTTP_TIMEOUT_SECONDS = 300
 _UV_OPERATION_TIMEOUT_SECONDS = 900.0
 _DEFAULT_BACKEND_PYTHON = "3.13"
 
@@ -478,6 +479,7 @@ class BackendEnvironmentManager:
         for variable in tuple(environment):
             if variable.startswith(("PIP_", "UV_")):
                 environment.pop(variable, None)
+        environment["UV_HTTP_TIMEOUT"] = str(_UV_HTTP_TIMEOUT_SECONDS)
         for variable in (
             "PYTHONHOME",
             "PYTHONPATH",

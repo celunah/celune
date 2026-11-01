@@ -757,6 +757,7 @@ class TestBackendEnvironment(CeluneTestCase):
                     "TMP": "system-temp",
                     "PIP_CONSTRAINT": "C:/core/constraints.txt",
                     "UV_INDEX_URL": "https://core.example/simple",
+                    "UV_HTTP_TIMEOUT": "30",
                     "PYTHONHOME": "C:/Python314",
                     "PYTHONPATH": "C:/core/site-packages",
                     "PYTHONUSERBASE": "C:/core/userbase",
@@ -770,7 +771,12 @@ class TestBackendEnvironment(CeluneTestCase):
             manager._run_uv("venv")
 
         child_environment = run.call_args.kwargs["env"]
-        assert not any(name.startswith(("PIP_", "UV_")) for name in child_environment)
+        assert not any(name.startswith("PIP_") for name in child_environment)
+        assert not any(
+            name.startswith("UV_") and name != "UV_HTTP_TIMEOUT"
+            for name in child_environment
+        )
+        assert child_environment["UV_HTTP_TIMEOUT"] == "300"
         for variable in ("TMPDIR", "TEMP", "TMP"):
             assert child_environment[variable] == temp_directory
         for variable in (

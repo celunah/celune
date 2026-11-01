@@ -14,6 +14,8 @@ manager; normal application configuration does not select that path.
 worker environment under its backend and manifest fingerprint. After the
 current environment is ready, it removes older fingerprinted environments for
 that backend. If installation fails, the prior environment remains available.
+Worker setup gives uv a 300-second HTTP read timeout for package downloads and
+a separate 900-second timeout for the full uv operation.
 `tests/backends/test_environment.py` covers this cleanup behavior.
 
 If a CEDTS worker exits before its first handshake frame, Celune reports the
