@@ -88,6 +88,18 @@ The call table keeps its columns within the inspector pane, shows the complete
 duration status, and truncates long call names; selecting a call still shows
 its full name in the details pane. Each refresh updates new and completed calls
 while preserving the selected call and the visible call by their entry IDs.
+
+Enable `Invoke Mode` to replace the trace controls with a function or method
+call expression and a `Call` button. Expressions support imported dotted names,
+the active Celune instance as `engine`, built-ins, Python literals, nested
+containers, and nested calls with positional and keyword arguments. For
+example, `celune.audio.pad_note([65.4], duration=1.0)` invokes the imported
+function. The inspector parses a restricted expression tree and does not use
+`eval`; imported code and called functions still run with normal Python
+permissions and may have side effects. The return value or a parse, resolution,
+or call error appears in Call details. Calls run on a worker thread so the
+inspector remains responsive; calls already running continue if Invoke Mode is
+turned off.
 This keeps the details open as calls arrive and lets the table continue
 scrolling while tracing is active. If the visible call leaves the rolling
 buffer, the viewport moves to the next retained call.

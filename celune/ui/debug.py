@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import sys
 import math
 import site
@@ -30,6 +31,12 @@ from ..i18n import string
 from ..constants import APP_NAME
 from .buttons import CeluneButton
 from ..paths import running_compiled
+from .invoke import (
+    InvokeCallError,
+    InvokeParseError,
+    InvokeResolutionError,
+    invoke_expression,
+)
 
 ComposeResult = textual_app.ComposeResult
 
@@ -1171,6 +1178,15 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
         width: 1fr;
         align: right middle;
     }
+    #debug-live-trace-controls,
+    #debug-live-invoke-controls {
+        height: 3;
+        width: 1fr;
+        align: right middle;
+    }
+    #debug-live-invoke-controls {
+        display: none;
+    }
     #debug-live-title {
         width: auto;
         min-width: 12;
@@ -1178,7 +1194,8 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
     #debug-pause,
     #debug-clear,
     #debug-select-source,
-    #debug-reset-sources {
+    #debug-reset-sources,
+    #debug-invoke-call {
         width: auto;
         min-width: 0;
         height: 3;
@@ -1197,6 +1214,15 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
         width: 1fr;
         min-width: 16;
         max-width: 34;
+        height: 3;
+        border: round $secondary;
+        margin-left: 1;
+        margin-right: 1;
+    }
+    #debug-invoke-expression {
+        width: 1fr;
+        min-width: 20;
+        max-width: 70;
         height: 3;
         border: round $secondary;
         margin-left: 1;
@@ -1280,6 +1306,10 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
         self._rendered_state_table_height = 1
         self._component_tree: Optional[widgets.Tree[_InspectorComponent]] = None
         self._glow_validation_generation = 0
+        self._invoke_mode = False
+        self._invoke_generation = 0
+        self._invoke_running = False
+        self._invoke_detail: Optional[str] = None
 
     def compose(self) -> ComposeResult:
         """Build the component selector, snapshot, and call trace panes."""
@@ -1431,20 +1461,42 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
                         yield widgets.Static("", id="debug-source-status")
                     with containers.Vertical(id="debug-live-controls"):
                         with containers.Horizontal(id="debug-live-actions"):
-                            yield widgets.Input(
-                                placeholder=string("debug.package_module_placeholder"),
-                                id="debug-source-filter",
+                            yield widgets.Checkbox(
+                                string("debug.invoke_mode"),
+                                id="debug-invoke-mode",
                             )
-                            yield CeluneButton(
-                                string("debug.select_source"),
-                                id="debug-select-source",
-                            )
-                            yield CeluneButton(
-                                string("debug.reset_sources"),
-                                id="debug-reset-sources",
-                            )
-                            yield CeluneButton(string("debug.pause"), id="debug-pause")
-                            yield CeluneButton(string("debug.clear"), id="debug-clear")
+                            with containers.Horizontal(id="debug-live-trace-controls"):
+                                yield widgets.Input(
+                                    placeholder=string(
+                                        "debug.package_module_placeholder"
+                                    ),
+                                    id="debug-source-filter",
+                                )
+                                yield CeluneButton(
+                                    string("debug.select_source"),
+                                    id="debug-select-source",
+                                )
+                                yield CeluneButton(
+                                    string("debug.reset_sources"),
+                                    id="debug-reset-sources",
+                                )
+                                yield CeluneButton(
+                                    string("debug.pause"), id="debug-pause"
+                                )
+                                yield CeluneButton(
+                                    string("debug.clear"), id="debug-clear"
+                                )
+                            with containers.Horizontal(id="debug-live-invoke-controls"):
+                                yield widgets.Input(
+                                    placeholder=string(
+                                        "debug.invoke_expression_placeholder"
+                                    ),
+                                    id="debug-invoke-expression",
+                                )
+                                yield CeluneButton(
+                                    string("debug.invoke_call"),
+                                    id="debug-invoke-call",
+                                )
                         with containers.Horizontal(id="debug-source-status-row"):
                             yield widgets.Checkbox(
                                 string("debug.show_special_methods"),
@@ -1539,12 +1591,16 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
         """Apply a package or module filter submitted from its input."""
         if event.input.id == "debug-source-filter":
             self._select_source_filter()
+        elif event.input.id == "debug-invoke-expression":
+            self._start_invocation()
         elif event.input.id in {"debug-glow-color", "debug-glow-duration"}:
             self._set_glow_color()
 
     def on_checkbox_changed(self, event: widgets.Checkbox.Changed) -> None:
         """Update whether special methods are shown in the call trace."""
-        if event.checkbox.id == "debug-show-special-methods":
+        if event.checkbox.id == "debug-invoke-mode":
+            self._set_invoke_mode(event.value)
+        elif event.checkbox.id == "debug-show-special-methods":
             self.trace.set_show_special_methods(event.value)
             self._refresh_live_calls(force=True)
 
@@ -1574,6 +1630,8 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
             self.trace.reset_source_filters()
             self._refresh_source_status()
             self._refresh_live_calls(force=True)
+        elif event.button.id == "debug-invoke-call":
+            self._start_invocation()
         elif event.button.id == "debug-modal-preview-voice":
             self._open_menu_preview("voice")
         elif event.button.id == "debug-modal-preview-settings":
@@ -1590,6 +1648,91 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
             self._activate_glow_special_effect("christmas")
         elif event.button.id == "debug-glow-effect-june":
             self._activate_glow_special_effect("june")
+
+    def _set_invoke_mode(self, enabled: bool) -> None:
+        """Swap between call tracing controls and the expression invoker."""
+        self._invoke_mode = enabled
+        self.query_one("#debug-live-trace-controls").display = not enabled
+        self.query_one("#debug-live-invoke-controls").display = enabled
+        self.query_one("#debug-source-status-row").display = not enabled
+        self.query_one("#debug-source-status", widgets.Static).display = not enabled
+        self._shown_call_detail = None
+        if enabled and self._invoke_detail is None:
+            self._invoke_detail = string("debug.invoke_ready")
+        self._render_call_detail()
+
+    def _start_invocation(self) -> None:
+        """Start one parsed call on a daemon worker thread."""
+        if self._invoke_running:
+            return
+        expression = self.query_one("#debug-invoke-expression", widgets.Input).value
+        engine = getattr(self.ui, "celune", None)
+        self._invoke_generation += 1
+        generation = self._invoke_generation
+        self._invoke_running = True
+        self._invoke_detail = string("debug.invoke_running")
+        self.query_one("#debug-invoke-call", widgets.Button).disabled = True
+        self._shown_call_detail = None
+        self._render_call_detail()
+        worker = threading.Thread(
+            target=self._invoke_worker,
+            args=(expression, engine, generation),
+            name="celune-debug-invoke",
+            daemon=True,
+        )
+        worker.start()
+
+    def _invoke_worker(
+        self,
+        expression: str,
+        engine: object,
+        generation: int,
+    ) -> None:
+        """Invoke one expression and return its categorized result to the UI."""
+        try:
+            result = asyncio.run(invoke_expression(expression, engine))
+        except InvokeCallError as exc:
+            error = exc.error
+            detail = string(
+                "debug.invoke_call_error",
+                error_type=f"{type(error).__module__}.{type(error).__qualname__}",
+                message=str(error),
+            )
+        except InvokeParseError as exc:
+            detail = f"{string('debug.invoke_parse_error')}\n{exc}"
+        except InvokeResolutionError as exc:
+            detail = f"{string('debug.invoke_resolution_error')}\n{exc}"
+        except Exception as exc:
+            detail = string(
+                "debug.invoke_call_error",
+                error_type=f"{type(exc).__module__}.{type(exc).__qualname__}",
+                message=str(exc),
+            )
+        else:
+            try:
+                rendered_result = repr(result)
+            except Exception as exc:
+                rendered_result = string(
+                    "debug.invoke_result_repr_error",
+                    error_type=f"{type(exc).__module__}.{type(exc).__qualname__}",
+                )
+            detail = f"{string('debug.invoke_result')}\n{rendered_result}"
+
+        try:
+            self.app.call_from_thread(self._finish_invocation, generation, detail)
+        except RuntimeError:
+            pass
+
+    def _finish_invocation(self, generation: int, detail: str) -> None:
+        """Display an invocation result if it belongs to the current request."""
+        if generation != self._invoke_generation or not self.is_mounted:
+            return
+        self._invoke_running = False
+        self.query_one("#debug-invoke-call", widgets.Button).disabled = False
+        self._invoke_detail = detail
+        if self._invoke_mode:
+            self._shown_call_detail = None
+            self._render_call_detail()
 
     def _set_glow_color(self) -> None:
         """Validate the glow inputs and start a custom color transition."""
@@ -1826,7 +1969,7 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
 
     def _select_call(self, row_key: Optional[str]) -> None:
         """Keep a stable detail snapshot for the selected trace entry."""
-        if row_key is None:
+        if row_key is None or self._invoke_mode:
             return
         try:
             entry_id = int(row_key)
@@ -2159,6 +2302,13 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
 
     def _render_call_detail(self) -> None:
         body = self.query_one("#debug-call-detail-body", widgets.Static)
+        if self._invoke_mode:
+            content = self._invoke_detail or string("debug.invoke_ready")
+            if content != self._shown_call_detail:
+                body.update(Text(content))
+                self._shown_call_detail = content
+            self._shown_call_detail_id = None
+            return
         entry = self._selected_call_entry
         if entry is None and self._selected_call_id is not None:
             entry = self._displayed_call_entries.get(self._selected_call_id)

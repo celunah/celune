@@ -3,10 +3,11 @@
 
 import time
 import asyncio
+import threading
 from pathlib import Path
 from typing import cast
 from unittest import mock
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 
 from rich.cells import cell_len
 from textual.content import Content
@@ -378,7 +379,94 @@ def test_inspector_remains_usable_without_an_attached_core() -> None:
             trace.set_paused(False)
 
     asyncio.run(inspect_screen())
-    assert not trace.available
+
+
+def test_invoke_mode_runs_calls_off_thread_and_restores_trace_controls() -> None:
+    """Keep the inspector responsive and preserve hidden trace filter values."""
+    started = threading.Event()
+    release = threading.Event()
+
+    def slow_call() -> str:
+        started.set()
+        release.wait(timeout=3.0)
+        return "invoke complete"
+
+    def fail() -> None:
+        raise ValueError("call failed")
+
+    ui = SimpleNamespace(
+        celune=SimpleNamespace(slow_call=slow_call, fail=fail),
+        _startup_log_level="debug",
+    )
+    trace = DebugCallTrace(ui)
+    trace.set_enabled(True)
+    trace.set_paused(True)
+    host = _InspectorHost(ui, trace)
+
+    async def inspect_invoke_mode() -> None:
+        async with host.run_test(size=(110, 32)) as pilot:
+            await pilot.pause()
+            inspector = cast(DebugInspectorScreen, host.screen)
+            trace_controls = host.screen.query_one("#debug-live-trace-controls")
+            invoke_controls = host.screen.query_one("#debug-live-invoke-controls")
+            source_input = host.screen.query_one("#debug-source-filter", Input)
+            invoke_input = host.screen.query_one("#debug-invoke-expression", Input)
+            invoke_toggle = host.screen.query_one("#debug-invoke-mode", Checkbox)
+
+            source_input.value = "celune.audio"
+            await pilot.click("#debug-invoke-mode")
+            assert not trace_controls.display
+            assert invoke_controls.display
+            invoke_input.value = "engine.slow_call()"
+            await pilot.click("#debug-invoke-call")
+            for _ in range(20):
+                await pilot.pause(0.01)
+                if started.is_set():
+                    break
+            assert started.is_set()
+            assert host.screen.query_one("#debug-invoke-call", Button).disabled
+
+            await pilot.click("#debug-invoke-mode")
+            assert trace_controls.display
+            assert not invoke_controls.display
+            assert source_input.value == "celune.audio"
+            release.set()
+            for _ in range(30):
+                await pilot.pause(0.01)
+                if not inspector._invoke_running:
+                    break
+            assert not inspector._invoke_running
+
+            await pilot.click(invoke_toggle)
+            inspector._refresh_live_calls(force=True)
+            await pilot.pause()
+            detail = host.screen.query_one("#debug-call-detail-body", Static)
+            assert "invoke complete" in str(detail.content)
+
+            async def invoke_and_read(expression: str) -> str:
+                invoke_input.value = expression
+                await pilot.pause()
+                previous_generation = inspector._invoke_generation
+                inspector._start_invocation()
+                assert inspector._invoke_generation == previous_generation + 1
+                for _ in range(300):
+                    await pilot.pause(0.01)
+                    if not inspector._invoke_running:
+                        break
+                assert not inspector._invoke_running
+                return str(detail.content)
+
+            parse_error = await invoke_and_read("abs(")
+            assert "Parse error" in parse_error
+            resolution_error = await invoke_and_read("math.missing_attribute()")
+            assert "Resolution error" in resolution_error
+            call_error = await invoke_and_read("engine.fail()")
+            assert "Call raised builtins.ValueError: call failed" in call_error
+
+    try:
+        asyncio.run(inspect_invoke_mode())
+    finally:
+        release.set()
 
 
 def test_glow_effects_component_validates_inputs_and_runs_actions() -> None:

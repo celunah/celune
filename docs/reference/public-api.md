@@ -398,7 +398,7 @@ scales, section boundaries, and recovery behavior.
 | --- | --- |
 | `celune.audio.resampling` | `resample_audio()` for declared-rate conversion. |
 | `celune.audio.server` | `restart_audio_server()` for device/stream recovery. |
-| `celune.audio.dsp` | `pitch_shift_audio()`, readiness/sleep/working/error signals, `is_silent_utterance()`, and `StreamingPedalboardReverb`. |
+| `celune.audio.dsp` | `pad_note()`, `pitch_shift_audio()`, readiness/sleep/working/error signals, `is_silent_utterance()`, and `StreamingPedalboardReverb`. `pad_note()` is also lazily available as `celune.audio.pad_note`. |
 | `celune.vc` | Pitch clamping, RMS/VAD helpers, frame calculations, and `LiveVoiceActivityDetector`. |
 | `celune.analysis` | Audio metrics, reference similarity, trait computation, radar plots, reports, and `analyze_voice_audio()`. |
 | `celune.paths` | App-data, runtime, Hugging Face cache, voice, backend-environment, config, output, and migration paths. |
