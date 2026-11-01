@@ -32,7 +32,7 @@ from . import __version__
 from .exceptions import UpdateError
 from .constants import APP_NAME, CELUNE_UA
 from .typing.common import JSONSerializable
-from .paths import project_root, running_compiled
+from .paths import project_root, running_compiled, temp_data_dir
 from .signature import SIGNATURE_NAME, load_signature, verify_manifest_signature
 
 REMOTE_URL = f"{UPSTREAM_REPOSITORY_URL}.git"
@@ -525,7 +525,10 @@ def _manifest_from_zip(
 def _read_remote_bundle_manifest(release: ReleaseInfo) -> Optional[BundleManifest]:
     """Download a release ZIP and read its bundled update metadata."""
     artifact = _platform_artifact_name()
-    with tempfile.TemporaryDirectory(prefix="celune-update-check-") as temp_dir:
+    with tempfile.TemporaryDirectory(
+        prefix="celune-update-check-",
+        dir=temp_data_dir(create=True),
+    ) as temp_dir:
         zip_path = Path(temp_dir) / f"{artifact}.zip"
         try:
             _download_release_zip(release, zip_path)
@@ -837,7 +840,10 @@ def _apply_compiled_update(install_dir: Optional[Path] = None) -> None:
     if release is None or not release.asset_url:
         raise UpdateError(_UPDATE_NO_PLATFORM_ZIP_MESSAGE)
 
-    with tempfile.TemporaryDirectory(prefix="celune-update-") as temp_dir:
+    with tempfile.TemporaryDirectory(
+        prefix="celune-update-",
+        dir=temp_data_dir(create=True),
+    ) as temp_dir:
         temp_root = Path(temp_dir)
         zip_path = temp_root / f"{artifact}.zip"
         try:

@@ -24,6 +24,7 @@ from celune.exceptions import (
     CEDTSProtocolError,
     BackendEnvironmentError,
 )
+from celune.paths import temp_data_dir
 from celune.typing.worker import (
     WorkerValue,
     WorkerRequest,
@@ -669,6 +670,35 @@ class TestBackendEnvironment(CeluneTestCase):
                         "4",
                     )
 
+    def test_worker_environment_uses_celune_temp_directory(self) -> None:
+        """Keep isolated backend workers on Celune's managed temp directory."""
+        temp_directory = str(temp_data_dir())
+        backend_environment = environment.BackendEnvironment(
+            manifest=BackendManifest("mini", "tts", (), "module", "Backend"),
+            root=Path("backend"),
+        )
+        with (
+            mock.patch.object(
+                remote, "huggingface_home_dir", return_value=Path(temp_directory)
+            ),
+            mock.patch.object(
+                remote, "huggingface_hub_cache_dir", return_value=Path(temp_directory)
+            ),
+            mock.patch.object(
+                remote, "configure_numba_cache", return_value=Path(temp_directory)
+            ),
+            mock.patch.object(remote, "project_root", return_value=Path.cwd()),
+            mock.patch.dict(
+                os.environ,
+                {variable: "system-temp" for variable in ("TMPDIR", "TEMP", "TMP")},
+                clear=True,
+            ),
+        ):
+            worker_environment = remote._worker_environment(backend_environment)
+
+        for variable in ("TMPDIR", "TEMP", "TMP"):
+            assert worker_environment[variable] == temp_directory
+
     def testexclusive_lock_times_out_while_another_handle_owns_it(self) -> None:
         """Verify the operating-system lock blocks a second installer."""
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -717,10 +747,14 @@ class TestBackendEnvironment(CeluneTestCase):
     def test_uv_does_not_inherit_core_package_manager_settings(self) -> None:
         """Verify uv cannot inherit core environment resolution constraints."""
         manager = BackendEnvironmentManager(uv_executable="uv")
+        temp_directory = str(temp_data_dir())
         with (
             mock.patch.dict(
                 environment.os.environ,
                 {
+                    "TMPDIR": "system-temp",
+                    "TEMP": "system-temp",
+                    "TMP": "system-temp",
                     "PIP_CONSTRAINT": "C:/core/constraints.txt",
                     "UV_INDEX_URL": "https://core.example/simple",
                     "PYTHONHOME": "C:/Python314",
@@ -737,6 +771,8 @@ class TestBackendEnvironment(CeluneTestCase):
 
         child_environment = run.call_args.kwargs["env"]
         assert not any(name.startswith(("PIP_", "UV_")) for name in child_environment)
+        for variable in ("TMPDIR", "TEMP", "TMP"):
+            assert child_environment[variable] == temp_directory
         for variable in (
             "PYTHONHOME",
             "PYTHONPATH",

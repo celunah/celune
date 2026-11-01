@@ -6,6 +6,7 @@ import sys
 import time
 import shutil
 import sysconfig
+import tempfile
 import contextlib
 import threading
 import importlib
@@ -285,6 +286,19 @@ def temp_data_dir(create: bool = False) -> Path:
     if create:
         path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def temp_directory_environment() -> dict[str, str]:
+    """Return environment variables that route child temp files into Celune data."""
+    directory = str(temp_data_dir(create=True))
+    return {variable: directory for variable in ("TMPDIR", "TEMP", "TMP")}
+
+
+def configure_temp_environment() -> None:
+    """Route Python and child-process temporary files into Celune's temp directory."""
+    environment = temp_directory_environment()
+    os.environ.update(environment)
+    tempfile.tempdir = environment["TMPDIR"]
 
 
 def voices_data_dir(create: bool = False) -> Path:

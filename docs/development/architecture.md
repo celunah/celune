@@ -60,7 +60,10 @@ larger cohesive file when splitting it would create artificial boundaries.
 
 ## Startup and lazy imports
 
-`celune.__init__` configures cache defaults and exposes lazy root symbols. A
+`celune.__init__` configures Celune's managed temporary directory and cache
+defaults, then exposes lazy root symbols. Python temporary-file APIs and child
+processes such as `uv` use `%LOCALAPPDATA%\Celune\temp` on Windows and
+`~/.local/share/Celune/temp` on Linux. A
 Celune binary registers the default Celune palette and mounts the loading screen
 before importing or initializing the engine, Persona, agent runtime, backend
 environments, audio backends, or model libraries. The first-frame path is

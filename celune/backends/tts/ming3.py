@@ -33,6 +33,7 @@ from ...paths import (
     huggingface_hub_cache_dir,
     huggingface_progress,
     temp_data_dir,
+    temp_directory_environment,
 )
 from ...i18n import string
 from ...registry.tts import (
@@ -470,6 +471,7 @@ class Ming3(CeluneBackend[MingRuntime]):
     def _native_environment(server_path: Path) -> dict[str, str]:
         """Expose PyTorch's CUDA runtime libraries to audio.cpp's child process."""
         environment = os.environ.copy()
+        environment.update(temp_directory_environment())
         torch_root = Path(torch.__file__).resolve().parent
         site_packages = torch_root.parent
         library_paths = [server_path.parent, torch_root / "lib"]

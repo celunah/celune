@@ -16,7 +16,7 @@ from collections.abc import Generator
 from dataclasses import asdict, dataclass
 from contextlib import suppress, contextmanager
 
-from ..paths import backend_environments_dir
+from ..paths import backend_environments_dir, temp_directory_environment
 from ..exceptions import BackendEnvironmentError as _BackendEnvironmentError
 
 __all__ = [
@@ -473,6 +473,7 @@ class BackendEnvironmentManager:
         """Run one uv operation and convert failures into backend errors."""
         assert self.uv_executable is not None
         environment = os.environ.copy()
+        environment.update(temp_directory_environment())
 
         for variable in tuple(environment):
             if variable.startswith(("PIP_", "UV_")):

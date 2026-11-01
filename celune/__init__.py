@@ -25,8 +25,12 @@ from .constants import APP_NAME
 from ._version import REVISION, __version__
 
 try:
-    from .paths import configure_huggingface_cache_environment
+    from .paths import (
+        configure_temp_environment,
+        configure_huggingface_cache_environment,
+    )
 
+    configure_temp_environment()
     configure_huggingface_cache_environment()
 except ModuleNotFoundError as package:
     if package.name != "platformdirs":

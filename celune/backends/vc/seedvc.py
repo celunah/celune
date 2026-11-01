@@ -24,6 +24,7 @@ from ...paths import (
     huggingface_progress,
     configure_numba_cache,
     huggingface_hub_cache_dir,
+    temp_data_dir,
 )
 from ...i18n import string
 from ...utils import available
@@ -65,7 +66,11 @@ class _TemporaryWaveFile:
     def __init__(self, audio: AudioChunk, sample_rate: int) -> None:
         self.path: Optional[Path] = None
         try:
-            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_file:
+            with tempfile.NamedTemporaryFile(
+                suffix=".wav",
+                delete=False,
+                dir=temp_data_dir(create=True),
+            ) as temp_file:
                 self.path = Path(temp_file.name)
             sf.write(self.path, audio, sample_rate)
         except Exception:

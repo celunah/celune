@@ -35,6 +35,7 @@ from ...paths import (
     huggingface_progress,
     backend_environments_dir,
     huggingface_hub_cache_dir,
+    temp_data_dir,
 )
 from ...cevoice import (
     V5_VERSION,
@@ -1489,7 +1490,10 @@ class SoulXSinger(CeluneBackend[_SoulXRuntime]):
             )
         import soundfile as sf
 
-        with tempfile.TemporaryDirectory(prefix="celune-soulx-f0-") as directory:
+        with tempfile.TemporaryDirectory(
+            prefix="celune-soulx-f0-",
+            dir=temp_data_dir(create=True),
+        ) as directory:
             audio_path = Path(directory) / "performance.wav"
             sf.write(audio_path, audio, runtime.sample_rate, subtype="FLOAT")
             return runtime.f0_extractor.process(str(audio_path), verbose=False)

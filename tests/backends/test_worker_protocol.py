@@ -19,6 +19,7 @@ from collections import OrderedDict, deque
 import numpy as np
 
 from celune.utils import format_error
+from celune.paths import temp_data_dir
 from celune.cedts import remote, worker
 from celune.cesn import format_cesn_error
 from celune.backends.tts import resolve_backend
@@ -1605,7 +1606,12 @@ raise SystemExit(worker.main())
                 (str(backend_environment.python.resolve().parent), "C:/system")
             ),
         )
-        self.assertEqual(popen.call_args.kwargs["env"]["TEMP"], "C:/temp")
+        expected_temp_directory = str(temp_data_dir())
+        for variable in ("TMPDIR", "TEMP", "TMP"):
+            self.assertEqual(
+                popen.call_args.kwargs["env"][variable],
+                expected_temp_directory,
+            )
         self.assertEqual(
             popen.call_args.kwargs["env"]["NUMBA_CACHE_DIR"],
             str(Path("C:/celune/temp/numba")),

@@ -76,7 +76,7 @@ jobs:
 
       - name: Install appimagetool
         run: |
-          python3 ./scripts/ci_warnings.py -- bash -c "wget -O /tmp/appimagetool https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage && chmod +x /tmp/appimagetool && sudo mv /tmp/appimagetool /usr/local/bin/appimagetool"
+          python3 ./scripts/ci_warnings.py -- bash -c 'wget -O "$RUNNER_TEMP/appimagetool" https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage && chmod +x "$RUNNER_TEMP/appimagetool" && sudo mv "$RUNNER_TEMP/appimagetool" /usr/local/bin/appimagetool'
 
       - name: Build Linux launcher artifacts
         run: |

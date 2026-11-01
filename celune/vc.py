@@ -20,7 +20,7 @@ import soundfile as sf
 from scipy import signal
 
 from .i18n import string
-from .paths import app_data_dir
+from .paths import temp_data_dir
 from .typing.aliases import AudioChunk
 from .typing.backends import StreamingSpeechModel
 from .dataclasses.pipeline import AudioOutput, AudioInputRequest
@@ -481,7 +481,7 @@ class VCDebugCapture:
 
     def __init__(self) -> None:
         """Create a temporary capture directory and start its disk writer."""
-        temporary_root = app_data_dir(create=True)
+        temporary_root = temp_data_dir(create=True)
         self.directory = Path(tempfile.mkdtemp(prefix="vc-debug-", dir=temporary_root))
         self._queue: queue_module.Queue[Optional[_CaptureItem]] = queue_module.Queue()
         self._lock = threading.Lock()

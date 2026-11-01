@@ -11,6 +11,8 @@ from typing import Union, Literal, Optional
 
 import pytest
 
+_PYTEST_TEMP_DIRECTORY = tempfile.gettempdir()
+
 pytest_plugins = ("tests.celtest",)
 
 
@@ -53,6 +55,13 @@ def pytest_configure(config: pytest.Config) -> None:
     """Configure process-local state before test modules are collected."""
     del config
     _configure_worker_data_root()
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_collection_finish(session: pytest.Session) -> None:
+    """Keep Pytest fixtures outside Celune's runtime-cleaned temp directory."""
+    del session
+    tempfile.tempdir = _PYTEST_TEMP_DIRECTORY
 
 
 @pytest.fixture(autouse=True)

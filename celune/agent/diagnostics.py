@@ -15,6 +15,7 @@ from unittest.mock import Mock, patch
 from collections.abc import Mapping, Callable
 
 from ..i18n import string
+from ..paths import temp_data_dir
 from .tools import production_agent_tools, production_agent_tool_schemas
 from .routing import AgentInputRouter
 from .runtime import AgentRuntime, DefaultAgentPermissionPolicy
@@ -1251,7 +1252,10 @@ def _run_tool_checks(
         engine.agent_tools = tools
         engine.agent_tool_schemas = schemas
         engine.mode = "agent"
-        with tempfile.TemporaryDirectory(prefix="celune-agent-test-") as directory:
+        with tempfile.TemporaryDirectory(
+            prefix="celune-agent-test-",
+            dir=temp_data_dir(create=True),
+        ) as directory:
             root = Path(directory).resolve()
             for tool in tools:
                 name = tool.name

@@ -27,6 +27,7 @@ from celune.paths import (
     huggingface_hub_cache_dir,
     configure_huggingface_runtime,
     configure_huggingface_cache_environment,
+    configure_temp_environment,
 )
 from celune.constants import APP_SLUG
 from celune.utils import discard, format_error
@@ -134,6 +135,32 @@ class TestRuntimePath(CeluneTestCase):
             assert os.environ["HF_HUB_CACHE"] == str(
                 expected_root / "huggingface" / "hub"
             )
+
+    def test_temp_environment_uses_the_celune_temp_directory(self) -> None:
+        """Route Python's temp APIs and child-process environment to app data."""
+        with tempfile.TemporaryDirectory() as directory:
+            expected = Path(directory) / "temp"
+            with (
+                mock.patch("celune.paths.user_data_dir", return_value=directory),
+                mock.patch.dict(
+                    os.environ,
+                    {
+                        "TMPDIR": "system-temp",
+                        "TEMP": "system-temp",
+                        "TMP": "system-temp",
+                    },
+                    clear=True,
+                ),
+                mock.patch.object(tempfile, "tempdir", None),
+            ):
+                configure_temp_environment()
+
+                assert tempfile.gettempdir() == str(expected)
+                assert all(
+                    os.environ[name] == str(expected)
+                    for name in ("TMPDIR", "TEMP", "TMP")
+                )
+                assert expected.is_dir()
 
     def test_huggingface_cache_environment_respects_existing_overrides(self) -> None:
         """Verify explicit cache env vars are preserved."""
