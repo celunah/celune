@@ -2083,10 +2083,7 @@ class TestApiWebUI(CeluneTestCase):
         celune.glow.fatal()
 
         assert api.server_session.bound_celune is None
-        current_server = cast(
-            api.StartedServer,
-            api.server_session.current_api_server,
-        )
+        current_server = api.server_session.current_api_server
         assert current_server.should_exit
         assert not current_server.force_exit
 

@@ -418,7 +418,9 @@ def _read_windows_default_positions() -> Optional[tuple[str, ...]]:
         if instance:
             method(instance, 2, wintypes.ULONG)(instance)
 
-    ole32 = ctypes.WinDLL("ole32", use_last_error=True)
+    loader_name = "WinDLL"
+    dll_loader = cast(Callable[..., ctypes.CDLL], getattr(ctypes, loader_name))
+    ole32 = dll_loader("ole32", use_last_error=True)
     ole32.CoInitializeEx.argtypes = [ctypes.c_void_p, wintypes.DWORD]
     ole32.CoInitializeEx.restype = ctypes.c_long
     ole32.CoUninitialize.argtypes = []
