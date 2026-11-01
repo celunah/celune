@@ -319,6 +319,8 @@ visible instead of returning to the shell over the traceback.
 ## Slash commands
 
 Commands are entered in the input box and start with `/`.
+Fatal and stopped states still allow text editors to be used for composing a
+draft, but reject submitted text and commands.
 
 | Command | Arguments and behavior |
 | --- | --- |
@@ -332,7 +334,7 @@ Commands are entered in the input box and start with `/`.
 | `/reverb VALUE` | Set 0–100% reverb strength. |
 | `/backend NAME` | Switch TTS/VC backend and wait for the reload worker. |
 | <code>/cevoice NAME&#124;PATH</code> | Load a CEVOICE/CECHAR pack. |
-| `/settings` | Open the configuration manager in normal operation or after a recoverable configuration failure. During configuration recovery it is the only command available. ENTER saves nested YAML values and requests a silent launcher restart; ESC discards changes. Fatal and stopped states reject input. |
+| `/settings` | Open the configuration manager in normal operation or after a recoverable configuration failure. During configuration recovery it is the only command available. ENTER saves nested YAML values and requests a silent launcher restart; ESC discards changes. |
 | `/vc FILE` | Submit a file for voice conversion; VC mode is required. |
 | <code>/vcmode talk&#124;sing</code> | Select ordinary speech or F0-conditioned singing. |
 | <code>/vcdebug on&#124;off</code> | Save raw microphone and converted VC audio to temporary AppData files. |

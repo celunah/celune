@@ -79,8 +79,9 @@ fatal failures as `OperationState.FATAL`. Set `semi_fatal=True` when calling
 `fatal()` for a configuration failure that leaves the settings manager useful;
 this records `OperationState.SEMI_FATAL`. The `/settings` command is accepted in
 `NORMAL` and `SEMI_FATAL`; during `SEMI_FATAL`, other commands and speech input
-are unavailable. Fatal and stopped states reject input and commands. Import the
-enum from `celune.typing.modes`.
+are unavailable. Fatal and stopped states reject submitted text and commands;
+the TUI still permits editing a draft. Import the enum from
+`celune.typing.modes`.
 
 ```python
 from celune import Celune

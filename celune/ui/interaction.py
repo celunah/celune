@@ -23,6 +23,18 @@ from . import app as _app
 from ..constants import SIGTSTP, APP_NAME
 from ..typing.modes import OPERATION_MODES, OperationState
 
+_FATAL_TEXT_EDITOR_BLOCKED_KEYS = frozenset(
+    {
+        "ctrl+b",
+        "ctrl+enter",
+        "ctrl+j",
+        "ctrl+q",
+        "ctrl+r",
+        "ctrl+t",
+        "escape",
+    }
+)
+
 if TYPE_CHECKING:
     from ..vc import VCDebugSaveResult
 
@@ -1422,6 +1434,13 @@ def on_key(self, event: _app.events.Key) -> None:
             OperationState.NORMAL,
         )
         if operation_state in {OperationState.FATAL, OperationState.STOPPED}:
+            focused = self.focused
+            if (
+                isinstance(focused, (_app.Input, _app.TextArea))
+                and event.key not in _FATAL_TEXT_EDITOR_BLOCKED_KEYS
+                and not (event.key == "enter" and isinstance(focused, _app.Input))
+            ):
+                return
             event.prevent_default()
             event.stop()
             return
