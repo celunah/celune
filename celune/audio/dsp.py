@@ -223,6 +223,32 @@ def pad_note(
     )
 
 
+def _generate_test_tone(
+    frequency: float,
+    duration: float,
+    sample_rate: int = BASE_SR,
+) -> AudioChunk:
+    """Generate an unfiltered sine tone with short fades for speaker testing."""
+    if frequency <= 0 or frequency >= sample_rate / 2:
+        raise BadAudioError("tone frequency must be between zero and the Nyquist rate")
+    if duration <= 0:
+        raise BadAudioError("tone duration must be positive")
+    if sample_rate <= 0:
+        raise BadAudioError("sample rate must be positive")
+
+    sample_count = max(1, int(duration * sample_rate))
+    time = np.arange(sample_count, dtype=np.float32) / np.float32(sample_rate)
+    mono = np.sin(np.float32(2 * np.pi * frequency) * time) * np.float32(0.22)
+    fade_samples = min(int(0.02 * sample_rate), sample_count // 2)
+    if fade_samples:
+        fade_in = np.linspace(0.0, 1.0, fade_samples, dtype=np.float32)
+        mono[:fade_samples] *= fade_in
+        mono[-fade_samples:] *= fade_in[::-1]
+
+    stereo = np.column_stack((mono, mono))
+    return np.ascontiguousarray(stereo, dtype=np.float32)
+
+
 def _load_readiness_signal() -> AudioChunk:
     """Generate Celune's startup readiness sound."""
     return pad_note(_READINESS_FREQUENCIES)

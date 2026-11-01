@@ -10,18 +10,7 @@ import sounddevice as sd
 from transformers.modeling_utils import PreTrainedModel
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 
-from ..chroma import AudioRGBGlow
 from ..config import Config
-from ..cevoice import CEVoicePersona
-from .pipeline import CaptionPlaybackState
-from ..audio.dsp import StreamingPedalboardReverb
-from ..constants import PipelineStates
-from .properties import ConstantPropertySpec, ForwardedPropertySpec
-from ..backends.vc import CeluneVCBackend
-from ..backends.tts import CeluneBackend
-from ..persona.impl import PersonaClient
-from ..typing.locks import ComponentLockOwner, ComponentBusyResult
-from ..typing.modes import BackendMode, OperationState
 from ..typing.celune import (
     IdleCallback,
     ErrorCallback,
@@ -36,10 +25,21 @@ from ..typing.celune import (
     VoiceLockStateCallback,
     CaptionProgressCallback,
 )
-from ..typing.common import JSON, JSONSerializable
-from ..typing.aliases import LogLevel, AudioChunks
+from ..chroma import AudioRGBGlow
+from ..cevoice import CEVoicePersona
+from ..constants import PipelineStates
+from ..backends.tts import CeluneBackend
+from ..persona.impl import PersonaClient
+from ..backends.vc import CeluneVCBackend
 from ..typing.backends import BackendModel
+from .pipeline import CaptionPlaybackState
+from ..audio.dsp import StreamingPedalboardReverb
+from ..typing.aliases import LogLevel, AudioChunks
+from ..typing.common import JSON, JSONSerializable
+from ..typing.modes import BackendMode, OperationState
 from ..extensions.manager import CeluneExtensionManager
+from ..typing.locks import ComponentLockOwner, ComponentBusyResult
+from .properties import ConstantPropertySpec, ForwardedPropertySpec
 from ..core.concurrency import ComponentLockManager, PriorityInferenceScheduler
 
 
@@ -157,6 +157,7 @@ class CeluneAudioState:
 
     stream: Optional[sd.OutputStream] = None
     current_sr: Optional[int] = None
+    audio_test_route: Optional[tuple[int, int]] = None
     stream_lock: threading.RLock = field(default_factory=threading.RLock)
     audio_unavailable: bool = False
     can_use_rubberband: bool = True
@@ -404,6 +405,7 @@ CELUNE_FORWARDED_PROPERTIES = (
     ForwardedPropertySpec("_exit_requested", "_pipeline_state", "exit_requested"),
     ForwardedPropertySpec("_stream", "_audio_state", "stream"),
     ForwardedPropertySpec("_current_sr", "_audio_state", "current_sr"),
+    ForwardedPropertySpec("_audio_test_route", "_audio_state", "audio_test_route"),
     ForwardedPropertySpec("_audio_unavailable", "_audio_state", "audio_unavailable"),
     ForwardedPropertySpec("can_use_rubberband", "_audio_state", "can_use_rubberband"),
     ForwardedPropertySpec("speed", "_audio_state", "speed"),

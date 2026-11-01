@@ -40,15 +40,16 @@ from celune.dataclasses.pipeline import (
 )
 from celune.typing.aliases import AudioChunk
 from celune.utils import discard, clear_queue
+from celune.audio.speakers import SpeakerChannel
 from celune.agent import routing as agent_routing
 from celune.typing.locks import ComponentLockName
 from celune.constants import BASE_SR, PipelineStates
 from celune.typing.common import JSON, JSONSerializable
 from celune.core.concurrency import run_in_daemon_thread
-from celune.core import conversation as core_conversation
 from celune.dataclasses import pipeline as pipeline_types
 from celune.persona.capabilities import PersonaCapabilities
 from celune.persona import conversation as persona_conversation
+from celune.core import conversation as core_conversation, speech as core_speech
 
 from .helpers import (
     reload_callback,
@@ -524,6 +525,68 @@ class TestPipeline(CeluneTestCase):
             48000,
             generation=old_generation,
         )
+
+    def test_playback_writer_sends_audio_only_to_selected_test_channel(self) -> None:
+        """Route a mono mix to one multichannel output slot during a test."""
+        engine = make_pipeline_engine()
+        stream = FakeStream()
+        engine.stream = stream
+        engine._audio_test_route = (6, 4)
+        stereo = np.ones((4, 2), dtype=np.float32)
+
+        playback._write_playback_block_unlocked(cast(Celune, engine), stereo)
+
+        written = stream.written[0]
+        assert written.shape == (4, 6)
+        assert np.all(written[:, 4] == 1.0)
+        assert np.count_nonzero(written[:, :4]) == 0
+        assert np.count_nonzero(written[:, 5]) == 0
+
+    def test_audio_test_speaks_positions_and_uses_tone_for_lfe(self) -> None:
+        """Use localized speech for speaker positions and a sine for the LFE."""
+        engine = make_pipeline_engine()
+        engine.wait_until_idle = mock.Mock(return_value=True)
+        queued_channels: list[tuple[tuple[int, int], str]] = []
+
+        def queue_speech(text: str, *, save: bool) -> bool:
+            assert not save
+            queued_channels.append((engine._audio_test_route, text))
+            return True
+
+        def queue_tone(
+            audio: np.ndarray,
+            sample_rate: int,
+            *,
+            label: str,
+        ) -> bool:
+            assert sample_rate == BASE_SR
+            assert audio.shape[1] == 2
+            queued_channels.append((engine._audio_test_route, label))
+            return True
+
+        engine.say = queue_speech
+        engine.play_audio = queue_tone
+        speakers = (
+            SpeakerChannel("front_left", "Left"),
+            SpeakerChannel("lfe", "Subwoofer"),
+        )
+        with (
+            mock.patch(
+                "celune.core.speech.detect_speaker_channels",
+                return_value=speakers,
+            ),
+            mock.patch(
+                "celune.core.speech._generate_test_tone",
+                return_value=np.zeros((8, 2), dtype=np.float32),
+            ) as generate_tone,
+            mock.patch("celune.core.speech.close_stream") as close_stream,
+        ):
+            assert core_speech.test_audio(cast(Celune, engine))
+
+        assert queued_channels == [((2, 0), "Left"), ((2, 1), "Subwoofer")]
+        generate_tone.assert_called_once_with(60.0, duration=1.5, sample_rate=BASE_SR)
+        assert engine._audio_test_route is None
+        assert close_stream.call_count == 2
 
     def test_working_signal_completion_does_not_notify_idle(self) -> None:
         """Verify the transitional working cue is not treated as a readiness idle event."""

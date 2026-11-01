@@ -2,34 +2,33 @@
 """Slash command handling for the Textual UI."""
 
 from __future__ import annotations
-
 import os
 import asyncio
 import threading
-from typing import TYPE_CHECKING, Optional, cast
 from pathlib import Path
 from urllib.parse import urlparse
 from collections.abc import Callable, Awaitable
+from typing import TYPE_CHECKING, Optional, cast
 
 import soundfile as sf
 
-from ..i18n import string, tagged_string
-from ..vram import vram_report_int, format_vram_bytes, runtime_vram_report
 from ..utils import (
     available,
     replace_ipa,
     format_number,
     format_error_message,
 )
-from ..cevoice import active_bundle_path, resolve_bundle_path
 from ..constants import APP_NAME
+from ..i18n import string, tagged_string
+from ..typing.modes import OperationState
+from ..pipeline.playback import close_stream
 from ..exceptions import InvalidExtensionError
 from ..audio.server import restart_audio_server
-from ..typing.modes import OperationState
-from ..core.lifecycle import active_runtime_backend_name
 from ..core.concurrency import run_in_daemon_thread
-from ..pipeline.playback import close_stream
 from ..persona.capabilities import PersonaCapabilities
+from ..core.lifecycle import active_runtime_backend_name
+from ..cevoice import active_bundle_path, resolve_bundle_path
+from ..vram import vram_report_int, format_vram_bytes, runtime_vram_report
 
 if TYPE_CHECKING:
     from .app import CeluneUI
@@ -447,12 +446,28 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
                 return
 
             celune = getattr(ui, "celune", None)
+            audio_test_succeeded = False
             if celune is not None:
                 close_stream(celune, abort=True)
+                try:
+                    test_audio = getattr(celune, "test_audio", None)
+                    audio_test_succeeded = callable(test_audio) and bool(test_audio())
+                except Exception:
+                    audio_test_succeeded = False
+                finally:
+                    close_stream(celune, abort=True)
 
             try_play_signal = getattr(celune, "try_play_signal", None)
-            if not callable(try_play_signal) or not try_play_signal("readiness"):
+            if not audio_test_succeeded:
+                ui.safe_log(string("commands.audio_restart_test_failed"), "warning")
+
+            signal_succeeded = callable(try_play_signal) and try_play_signal(
+                "readiness"
+            )
+            if not signal_succeeded:
                 ui.safe_log(string("commands.audio_restart_signal_failed"), "warning")
+                return
+            if not audio_test_succeeded:
                 return
 
             ui.safe_log(string("commands.audio_restart_success"))

@@ -5,33 +5,33 @@
 # pylint: disable=ungrouped-imports
 
 import tempfile
-from types import SimpleNamespace
-from typing import Optional, cast
 from pathlib import Path
 from unittest import mock
+from types import SimpleNamespace
+from typing import Optional, cast
 
 import numpy as np
 from textual import events
 from textual.widgets import TextArea
 
-from celune.i18n import string
-from celune.agent import AgentTaskState
-from celune.celune import Celune
 from celune.ui.app import (
     CeluneUI,
     VoiceButton,
     ButtonActions,
 )
-from celune.ui.commands import process_command, attachment_source
+from celune.i18n import string
+from celune.celune import Celune
 from celune.typing.locks import (
     ComponentLockName,
     ComponentLockOwner,
     ComponentBusyResult,
 )
+from celune.agent import AgentTaskState
 from celune.typing.modes import OperationState
+from celune.ui.commands import process_command, attachment_source
 
-from ..support import FakeBackend, FakeVCBackend, CeluneTestCase
 from ..platform import WINDOWS_ONLY
+from ..support import FakeBackend, FakeVCBackend, CeluneTestCase
 
 
 class TestUICommand(CeluneTestCase):
@@ -75,6 +75,7 @@ class TestUICommand(CeluneTestCase):
             reverb=SimpleNamespace(strength=0.0),
             say=mock.Mock(return_value=True),
             play=mock.Mock(return_value=True),
+            test_audio=mock.Mock(return_value=True),
             try_play_signal=mock.Mock(return_value=True),
             vision=SimpleNamespace(enabled=True, talkback=True),
             dev=False,
@@ -125,11 +126,37 @@ class TestUICommand(CeluneTestCase):
             self._process_command("restartaudio", [])
 
         restart.assert_called_once_with()
-        close_stream.assert_called_once_with(self.ui.celune, abort=True)
+        assert close_stream.call_count == 2
+        close_stream.assert_has_calls(
+            [
+                mock.call(self.ui.celune, abort=True),
+                mock.call(self.ui.celune, abort=True),
+            ]
+        )
+        self.ui.celune.test_audio.assert_called_once_with()
         self.ui.celune.try_play_signal.assert_called_once_with("readiness")
         assert self.logs[-1] == (
             "Host audio server restarted.",
             "info",
+        )
+
+    def test_restartaudio_plays_readiness_after_a_failed_channel_test(self) -> None:
+        """Play the readiness signal even if a speaker channel test fails."""
+        self.ui.celune.test_audio.return_value = False
+        with (
+            mock.patch("celune.ui.commands.restart_audio_server"),
+            mock.patch("celune.ui.commands.close_stream"),
+            mock.patch(
+                "celune.ui.commands.threading.Thread",
+                side_effect=self._thread_runs_immediately,
+            ),
+        ):
+            self._process_command("restartaudio", [])
+
+        self.ui.celune.try_play_signal.assert_called_once_with("readiness")
+        assert self.logs[-1] == (
+            string("commands.audio_restart_test_failed"),
+            "warning",
         )
 
     def test_settings_command_is_available_only_in_operable_states(self) -> None:

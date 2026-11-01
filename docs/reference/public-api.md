@@ -204,6 +204,7 @@ Most integrations should assign `engine.cur_state`, which performs both steps.
 | `stop_live_audio() -> None` | Reset live VC backend state. |
 | `play(sound_path, keep=False, volume=1.0) -> bool` | Queue an SFX file, optionally prepending it to the next saved utterance. |
 | `play_audio(audio, sample_rate, label="uploaded SFX", keep=False) -> bool` | Queue decoded SFX data. |
+| `test_audio() -> bool` | Speak each detected speaker position on its own output channel; use an unfiltered 60 Hz tone for the subwoofer. |
 | `speed` | Get/set playback speed. |
 | `reverb.strength` | Get/set DSP reverb strength from 0 through 1. |
 | `playback_buffer_seconds` | Read the application-side seconds currently reserved for output. |
@@ -220,6 +221,20 @@ Most integrations should assign `engine.cur_state`, which performs both steps.
 Arrays passed to audio calls should be numeric mono/stereo data; Celune converts
 them to normalized float32. The returned `AudioOutput` includes the actual
 sample rate and channel data.
+
+`test_audio()` waits for active playback, then uses the operating system's
+speaker map when available to route each localized position label to one output
+channel at a time. It uses a standard layout for the detected channel count when
+the system does not expose position names. It sends an unfiltered low tone to
+the LFE channel and closes the temporary multichannel stream when the test
+ends. It returns `False` when the active mode cannot synthesize speech, no
+output channels are available, or a channel test does not complete. An
+ambiguous configured output device raises `ValueError`. The `/restartaudio`
+command runs this test and then attempts the readiness signal.
+
+```python
+channel_test_completed = engine.test_audio()
+```
 
 ## Events and extensions
 

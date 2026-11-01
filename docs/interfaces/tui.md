@@ -311,7 +311,7 @@ Commands are entered in the input box and start with `/`.
 | Command | Arguments and behavior |
 | --- | --- |
 | `/help` | Show commands available for the current backend, mode, and Persona capability. |
-| `/restartaudio` | Recreate the audio server and play a readiness signal. |
+| `/restartaudio` | Recreate the audio server, test each detected speaker channel, then play a readiness signal. |
 | <code>/consumebuffer true&#124;false</code> | Toggle boundary consumption of live input. |
 | `/invoke NAME [ARGS...]` | Invoke a registered extension. |
 | `/extensions` | List loaded extensions. |

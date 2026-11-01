@@ -23,8 +23,10 @@ CUDA 12.8 compatibility stack by manually installing packages into both.
 
 Use `/restartaudio`, verify `audio_api`, `input_device`, and `output_device`,
 and check PortAudio permissions. On Windows, disconnect/reconnect invalidated
-devices before restarting the stream. A backend readiness signal distinguishes
-an audio-server problem from a model-load problem.
+devices before restarting the stream. In text-to-speech mode, the restart test
+speaks each detected speaker position through its own channel, plays a low tone
+through the subwoofer channel, and then plays the readiness signal. A failed
+channel test or readiness signal is reported separately from model loading.
 
 ## Distorted audio
 

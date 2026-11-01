@@ -128,6 +128,19 @@ class TestDsp(CeluneTestCase):
         with pytest.raises(BadAudioError):
             dsp.pad_note((), duration=0.25, sample_rate=sample_rate)
 
+    def test_test_tone_preserves_very_low_frequency(self) -> None:
+        """Generate an unfiltered low tone for the subwoofer channel check."""
+        sample_rate = 48000
+        audio = dsp._generate_test_tone(20.0, duration=1.0, sample_rate=sample_rate)
+
+        assert audio.shape == (sample_rate, 2)
+        assert audio.dtype == np.float32
+        frequencies = np.fft.rfftfreq(sample_rate, 1 / sample_rate)
+        spectrum = np.abs(np.fft.rfft(audio[:, 0]))
+        dominant_frequency = frequencies[1 + np.argmax(spectrum[1:])]
+        assert dominant_frequency == pytest.approx(20.0)
+        assert float(np.max(np.abs(audio))) > 0.2
+
     def test_transpose_frequencies_uses_equal_tempered_intervals(self) -> None:
         """Verify semitone transposition without waveform pitch shifting."""
         assert dsp._transpose_frequencies((440.0,), 0) == (440.0,)

@@ -4,18 +4,17 @@
 # pylint: disable=unused-argument,unnecessary-ellipsis
 
 from __future__ import annotations
-
-from typing import TYPE_CHECKING, Union, Optional, Protocol
 from pathlib import Path
 from collections.abc import Callable, Iterator
+from typing import TYPE_CHECKING, Union, Optional, Protocol
 
 import torch
 from transformers.modeling_utils import PreTrainedModel
 from transformers.tokenization_utils_base import BatchEncoding, PreTrainedTokenizerBase
 
-from .modes import BackendMode, OperationMode, OperationState
-from .common import JSON, Config, JSONSerializable
 from .aliases import LogLevel
+from .common import JSON, Config, JSONSerializable
+from .modes import BackendMode, OperationMode, OperationState
 
 if TYPE_CHECKING:
     import queue
@@ -337,6 +336,7 @@ class CeluneStateAccessors:
     _exit_requested: bool
     _stream: Optional[sd.OutputStream]
     _current_sr: Optional[int]
+    _audio_test_route: Optional[tuple[int, int]]
     _audio_unavailable: bool
     can_use_rubberband: bool
     speed: float

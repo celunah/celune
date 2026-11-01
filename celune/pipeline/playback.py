@@ -2,7 +2,6 @@
 """Shared playback worker, mixing, and audio stream lifecycle."""
 
 from __future__ import annotations
-
 import os
 import time
 import queue
@@ -49,7 +48,6 @@ from .buffering import (
     dequeue_playback_item,
     should_apply_contention_buffering,
 )
-
 from ..i18n import string
 from ..typing.aliases import AudioChunk
 from ..config import resolve_audio_device
@@ -520,6 +518,16 @@ def _write_playback_block_unlocked(
     stream = engine.stream
     if stream is None:
         raise NotAvailableError("audio stream is not available")
+    route = cast(
+        Optional[tuple[int, int]],
+        getattr(engine, "_audio_test_route", None),
+    )
+    if route is not None:
+        channel_count, channel_index = route
+        mono = np.mean(np.asarray(audio, dtype=np.float32), axis=1)
+        routed_audio = np.zeros((len(mono), channel_count), dtype=np.float32)
+        routed_audio[:, channel_index] = mono
+        audio = routed_audio
     return stream.write(audio)
 
 
@@ -715,6 +723,11 @@ def _ensure_playback_stream_unlocked(engine: Celune, sample_rate: int) -> bool:
             output_device_key,
             "output",
         )
+        route = cast(
+            Optional[tuple[int, int]],
+            getattr(engine, "_audio_test_route", None),
+        )
+        output_channels = route[0] if route is not None else 2
         engine.log(
             "[PLAY] resolved "
             f"{output_device_key}={engine.config.get(output_device_key)!r} "
@@ -724,7 +737,7 @@ def _ensure_playback_stream_unlocked(engine: Celune, sample_rate: int) -> bool:
         engine.current_sr = sample_rate
         engine.stream = sd.OutputStream(
             samplerate=sample_rate,
-            channels=2,
+            channels=output_channels,
             dtype="float32",
             blocksize=0,
             latency="high",

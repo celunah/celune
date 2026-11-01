@@ -7,11 +7,19 @@ from typing import TYPE_CHECKING, Optional
 
 import numpy as np
 
+from ..i18n import string
+from ..constants import BASE_SR
+from ..audio.dsp import _generate_test_tone
 from ..pipeline import buffering, submission
+from ..pipeline.playback import close_stream
 from ..typing.pipeline import SpeechStreamQueue
+from ..audio.speakers import detect_speaker_channels
 
 if TYPE_CHECKING:
     from ..celune import Celune
+
+_AUDIO_TEST_TIMEOUT = 90.0
+_SUBWOOFER_TEST_FREQUENCY = 60.0
 
 
 def say(
@@ -127,3 +135,49 @@ def play_audio(
         label,
         keep=keep,
     )
+
+
+def test_audio(engine: Celune) -> bool:
+    """Speak or play a test tone through each configured speaker channel.
+
+    Returns:
+        bool: Whether every detected speaker channel completed its test.
+
+    Raises:
+        ValueError: A configured output device name matches multiple devices.
+    """
+    if engine.input_mode != "text_to_speech":
+        return False
+    if not engine.wait_until_idle(timeout=_AUDIO_TEST_TIMEOUT, wait_for_speech=True):
+        return False
+
+    speakers = detect_speaker_channels(engine.config)
+    if not speakers:
+        return False
+
+    close_stream(engine, abort=True)
+    try:
+        for channel_index, speaker in enumerate(speakers):
+            engine._audio_test_route = (len(speakers), channel_index)
+            if speaker.position == "lfe":
+                audio = _generate_test_tone(
+                    _SUBWOOFER_TEST_FREQUENCY,
+                    duration=1.5,
+                    sample_rate=BASE_SR,
+                )
+                queued = engine.play_audio(
+                    audio,
+                    BASE_SR,
+                    label=string("commands.audio_test_subwoofer"),
+                )
+            else:
+                queued = engine.say(speaker.name, save=False)
+            if not queued or not engine.wait_until_idle(
+                timeout=_AUDIO_TEST_TIMEOUT,
+                wait_for_speech=True,
+            ):
+                return False
+        return True
+    finally:
+        engine._audio_test_route = None
+        close_stream(engine, abort=True)

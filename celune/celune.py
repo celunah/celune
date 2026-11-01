@@ -472,6 +472,17 @@ class Celune(CeluneStateAccessors):
         """
         return core_speech.play_audio(self, audio, sample_rate, label, keep=keep)
 
+    def test_audio(self) -> bool:
+        """Test the configured output by naming each detected speaker channel.
+
+        Returns:
+            bool: Whether every speaker channel completed its test.
+
+        Raises:
+            ValueError: A configured output device name matches multiple devices.
+        """
+        return core_speech.test_audio(self)
+
     def close(self) -> None:
         """Shut off Celune and release loaded runtime state."""
         return core_lifecycle.close(self)
