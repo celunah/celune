@@ -153,6 +153,7 @@ class TestCeluneRuntime(CeluneCoreTestSupport):
             mock.patch(
                 "celune.core.lifecycle.persona_is_available", return_value=False
             ),
+            mock.patch("celune.runtime.validate_runtime", return_value=True),
             mock.patch(
                 "celune.core.reload.resolve_backend",
                 return_value=FakeBackend(),
@@ -184,6 +185,7 @@ class TestCeluneRuntime(CeluneCoreTestSupport):
                 "celune.core.lifecycle.resolve_backend_name",
                 return_value="soulxsinger",
             ),
+            mock.patch("celune.runtime.validate_runtime", return_value=True),
             mock.patch(
                 "celune.core.reload.resolve_backend",
                 return_value=FakeBackend(),
@@ -236,6 +238,7 @@ class TestCeluneRuntime(CeluneCoreTestSupport):
             mock.patch(
                 "celune.core.lifecycle.persona_is_available", return_value=False
             ),
+            mock.patch("celune.runtime.validate_runtime", return_value=True),
             mock.patch(
                 "celune.core.reload.resolve_backend",
                 return_value=FakeBackend(),
@@ -1599,6 +1602,7 @@ class TestCeluneRuntime(CeluneCoreTestSupport):
             mock.patch(
                 "celune.core.lifecycle.persona_is_available", return_value=False
             ),
+            mock.patch("celune.runtime.validate_runtime", return_value=True),
             mock.patch(
                 "celune.core.reload.resolve_vc_backend",
                 return_value=FakeVCBackend(

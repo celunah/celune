@@ -5,11 +5,13 @@ text-to-speech and voice-conversion backends.
 
 ## Application environment
 
-Normal backend dependencies belong to Celune's configured application
-environment. The resolver imports the selected backend lazily, so
-backend-specific packages must not be imported by core modules at startup.
-Explicit CEDTS worker callers may still use the manifest-backed environment
-manager; normal application configuration does not select that path.
+Registered backends run through CEDTS worker environments. Core modules must
+not import backend-specific packages at startup. Before resolving the selected
+backend and configuring its worker environment, Celune validates the active
+runtime's hardware requirements. GPU backends fail before dependency setup on
+unsupported systems; Mini remains usable on CPU-only systems and bypasses the
+GPU requirement.
+
 `BackendEnvironmentManager` in `celune/backends/environment.py` stores each
 worker environment under its backend and manifest fingerprint. After the
 current environment is ready, it removes older fingerprinted environments for

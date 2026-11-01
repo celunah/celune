@@ -82,7 +82,7 @@ from ..dataclasses.celune import (
     CeluneCallbackState,
     CelunePipelineState,
 )
-from ..exceptions import BackendError
+from ..exceptions import BackendError, RuntimeCheckError
 from ..typing.aliases import LogLevel
 from ..agent.runtime import AgentRuntime
 from ..modes import resolve_operation_mode
@@ -100,7 +100,7 @@ from ..persona.emotion import PersonaEmotionAnalyzer
 from ..backends.vc import VC_BACKENDS, CeluneVCBackend
 from ..typing.modes import BackendMode, OperationState
 from ..i18n import string, set_locale, get_system_locale
-from ..utils import discard, available, clear_queue, format_error_message
+from ..utils import discard, available, clear_queue, format_error, format_error_message
 from ..vram import backend_allowed, resolve_vram_preset, resolve_backend_name
 from ..typing.agent import AgentTaskConfig, AgentToolSelector, AgentCancellationReason
 
@@ -246,23 +246,6 @@ def initialize(
         task_config=agent_task_config(config),
     )
     self.agent_router = AgentInputRouter(self, self.agent_runtime)
-    glow_color = "#cebaff"
-    loader = default_loader()
-    if loader is not None:
-        theme = loader.bundle.metadata.get("theme")
-        if isinstance(theme, dict):
-            accent = theme.get("accent")
-            if isinstance(accent, str):
-                glow_color = accent
-
-            configured_glow = theme.get("glow_color")
-            if isinstance(configured_glow, str):
-                glow_color = configured_glow
-
-    self.glow = AudioRGBGlow(celune=self, color=glow_color)
-    _wrap_fatal_glow(self)
-    self.glow.start()
-
     tts_backend, vc_backend = _resolve_core_backend_specs(
         self.log_callback,
         self.input_mode,
@@ -276,6 +259,13 @@ def initialize(
 
     if tts_backend is None:
         tts_backend = preset.default_backend
+
+    if vc_backend is None and self.input_mode == "voice_conversion":
+        vc_backend = config_str(
+            config_value(config, "voice_conversion_backend")
+        ) or config_str(config_value(config, "vc_backend"))
+        if vc_backend is None:
+            vc_backend = "seed-vc"
 
     backend_kwargs: dict[str, JSONSerializable] = {
         "quantize": tts_quantization_enabled(config, tts_backend),
@@ -331,6 +321,57 @@ def initialize(
         backend_kwargs["clone_model_id"] = preset.qwen3_clone_model_id
     backend_kwargs.update(config_backend_options(config, backend_name))
 
+    runtime_backend_spec = vc_backend if vc_backend is not None else tts_backend
+    runtime_backend_name = (
+        runtime_backend_spec.strip().lower()
+        if isinstance(runtime_backend_spec, str)
+        else getattr(runtime_backend_spec, "name", "")
+    )
+    runtime_backend_is_registered = not isinstance(runtime_backend_spec, str) or (
+        runtime_backend_name in BACKENDS or runtime_backend_name in VC_BACKENDS
+    )
+    self._runtime_preflight_done = False
+    if (
+        backend_mode != "ui_test"
+        and runtime_backend_is_registered
+        and not getattr(runtime_backend_spec, "is_fake", False)
+    ):
+        from ..runtime import validate_runtime
+
+        if not validate_runtime(
+            log=self.log,
+            error=self.error_callback,
+            set_state=lambda state: setattr(self, "cur_state", state),
+            glow_connect_failed=False,
+            format_error=format_error,
+            log_level=log_level,
+            backend_name=str(runtime_backend_name),
+        ):
+            from .callbacks import _flush_startup_logs
+
+            _flush_startup_logs(self)
+            raise RuntimeCheckError("runtime check failed")
+        self._runtime_preflight_done = True
+
+    glow_color = "#cebaff"
+    loader = default_loader()
+    if loader is not None:
+        theme = loader.bundle.metadata.get("theme")
+        if isinstance(theme, dict):
+            accent = theme.get("accent")
+            if isinstance(accent, str):
+                glow_color = accent
+
+            configured_glow = theme.get("glow_color")
+            if isinstance(configured_glow, str):
+                glow_color = configured_glow
+
+    self.glow = AudioRGBGlow(celune=self, color=glow_color)
+    _wrap_fatal_glow(self)
+    self.glow.start()
+    if self.glow.connect_failed:
+        self.log(string("runtime.openrgb_unavailable"), "warning")
+
     try:
         resolved_tts_backend = cast(TTSBackendSpec, tts_backend)
         if not isinstance(tts_backend, CeluneBackend):
@@ -371,13 +412,6 @@ def initialize(
                 log_level,
             )
         ) from e
-
-    if vc_backend is None and self.input_mode == "voice_conversion":
-        vc_backend = config_str(
-            config_value(config, "voice_conversion_backend")
-        ) or config_str(config_value(config, "vc_backend"))
-        if vc_backend is None:
-            vc_backend = "seed-vc"
 
     try:
         if vc_backend is not None:

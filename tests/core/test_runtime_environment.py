@@ -13,10 +13,11 @@ from celune.ui.app import (
     CeluneUI,
 )
 from celune.celune import Celune
+from celune.exceptions import RuntimeCheckError
 from celune.typing.aliases import LogLevel
 from celune.ui.headless import CeluneHeadlessUI
 
-from ..support import CeluneTestCase
+from ..support import CeluneTestCase, FakeBackend, FakeGlow
 
 
 class TestRuntimeEnvironment(CeluneTestCase):
@@ -151,3 +152,51 @@ class TestRuntimeEnvironment(CeluneTestCase):
 
         assert not errors
         assert not states
+
+    def test_gpu_runtime_preflight_precedes_backend_resolution(self) -> None:
+        """Reject a GPU backend before resolving or configuring it."""
+        Celune._instance = None
+
+        with (
+            mock.patch("celune.core.lifecycle.AudioRGBGlow", FakeGlow),
+            mock.patch("celune.core.lifecycle.default_loader", return_value=None),
+            mock.patch(
+                "celune.core.lifecycle.persona_is_available", return_value=False
+            ),
+            mock.patch(
+                "celune.core.lifecycle.resolve_backend_name", return_value="qwen3"
+            ),
+            mock.patch("celune.runtime.validate_runtime", return_value=False) as check,
+            mock.patch("celune.core.reload.resolve_backend") as resolve_backend,
+            pytest.raises(RuntimeCheckError, match="runtime check failed"),
+        ):
+            Celune(config={"vram": "high"}, tts_backend="qwen3")
+
+        check.assert_called_once()
+        resolve_backend.assert_not_called()
+
+    def test_cpu_backend_preflight_skips_cuda_compute_check(self) -> None:
+        """Allow Mini on CPU without running CUDA device or compute checks."""
+        Celune._instance = None
+
+        with (
+            mock.patch("celune.core.lifecycle.AudioRGBGlow", FakeGlow),
+            mock.patch("celune.core.lifecycle.default_loader", return_value=None),
+            mock.patch(
+                "celune.core.lifecycle.persona_is_available", return_value=False
+            ),
+            mock.patch(
+                "celune.runtime.check_supported_backends", return_value=("CPU", False)
+            ),
+            mock.patch("celune.runtime._run_compute_test") as compute_test,
+            mock.patch(
+                "celune.core.reload.resolve_backend", return_value=FakeBackend()
+            ),
+        ):
+            celune = Celune(config={"vram": "low"}, tts_backend="mini")
+
+        try:
+            compute_test.assert_not_called()
+        finally:
+            celune.close()
+            Celune._instance = None

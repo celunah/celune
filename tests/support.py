@@ -352,6 +352,7 @@ class FakeVCBackend(CeluneVCBackend):
     """Tiny VC backend implementation used by tests without model work."""
 
     name = "fake-vc"
+    is_fake = True
 
     def convert(self, request: VoiceConversionRequest) -> AudioOutput:
         """Return the source audio unchanged for one voice-conversion request.

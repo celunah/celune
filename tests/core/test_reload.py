@@ -825,6 +825,7 @@ class TestCeluneReload(CeluneCoreTestSupport):
             mock.patch(
                 "celune.core.lifecycle.persona_is_available", return_value=False
             ),
+            mock.patch("celune.runtime.validate_runtime", return_value=True),
             mock.patch(
                 "celune.core.reload.resolve_vc_backend",
                 return_value=FakeVCBackend(

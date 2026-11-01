@@ -27,7 +27,7 @@ from ..utils import (
     format_error_message,
 )
 from ..cevoice import default_loader, bundle_display_name, announce_default_bundle
-from ..runtime import validate_runtime, log_runtime_banner
+from ..runtime import log_runtime_banner, validate_runtime
 from ..modeling import normalizer_device, load_normalizer_components
 from ..constants import APP_NAME
 from ..exceptions import (
@@ -244,14 +244,18 @@ def load(self, raise_on_error: bool = False, skip_runtime_check: bool = False) -
     self._playback_thread = pipeline_thread
     pipeline_thread.start()
 
-    if not skip_runtime_check and not validate_runtime(
-        log=self.log,
-        error=self.error_callback,
-        set_state=lambda state: setattr(self, "cur_state", state),
-        glow_connect_failed=self.glow.connect_failed,
-        format_error=format_error,
-        log_level=self.log_level,
-        backend_name=lifecycle.active_runtime_backend_name(self),
+    if (
+        not skip_runtime_check
+        and not getattr(self, "_runtime_preflight_done", False)
+        and not validate_runtime(
+            log=self.log,
+            error=self.error_callback,
+            set_state=lambda state: setattr(self, "cur_state", state),
+            glow_connect_failed=self.glow.connect_failed,
+            format_error=format_error,
+            log_level=self.log_level,
+            backend_name=lifecycle.active_runtime_backend_name(self),
+        )
     ):
         self.fatal()
         lifecycle.stop_pipeline_jobs(self)
