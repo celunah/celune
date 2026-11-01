@@ -220,6 +220,13 @@ def test_inspector_remains_usable_without_an_attached_core() -> None:
                 label = button.label
                 assert isinstance(label, Content)
                 assert button.content_region.width == cell_len(label.plain)
+
+            pause_button.label = Content.from_text("Pause")
+            await pilot.pause()
+            pause_button.label = Content.from_text("Resume")
+            await pilot.pause()
+            assert pause_button.content_region.width == cell_len("Resume")
+
             assert trace.source_filters == ()
             assert 16 <= source_input.region.width <= 34
             inspector = host.screen
