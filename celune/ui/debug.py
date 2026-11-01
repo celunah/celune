@@ -1250,7 +1250,8 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
         height: 1;
         color: $secondary;
     }
-    #debug-show-special-methods {
+    #debug-show-special-methods,
+    #debug-invoke-mode {
         width: auto;
         height: 1;
         padding: 0 1;
@@ -1461,10 +1462,6 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
                         yield widgets.Static("", id="debug-source-status")
                     with containers.Vertical(id="debug-live-controls"):
                         with containers.Horizontal(id="debug-live-actions"):
-                            yield widgets.Checkbox(
-                                string("debug.invoke_mode"),
-                                id="debug-invoke-mode",
-                            )
                             with containers.Horizontal(id="debug-live-trace-controls"):
                                 yield widgets.Input(
                                     placeholder=string(
@@ -1498,6 +1495,10 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
                                     id="debug-invoke-call",
                                 )
                         with containers.Horizontal(id="debug-source-status-row"):
+                            yield widgets.Checkbox(
+                                string("debug.invoke_mode"),
+                                id="debug-invoke-mode",
+                            )
                             yield widgets.Checkbox(
                                 string("debug.show_special_methods"),
                                 id="debug-show-special-methods",
@@ -1654,8 +1655,6 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
         self._invoke_mode = enabled
         self.query_one("#debug-live-trace-controls").display = not enabled
         self.query_one("#debug-live-invoke-controls").display = enabled
-        self.query_one("#debug-source-status-row").display = not enabled
-        self.query_one("#debug-source-status", widgets.Static).display = not enabled
         self._shown_call_detail = None
         if enabled and self._invoke_detail is None:
             self._invoke_detail = string("debug.invoke_ready")

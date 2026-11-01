@@ -412,11 +412,20 @@ def test_invoke_mode_runs_calls_off_thread_and_restores_trace_controls() -> None
             source_input = host.screen.query_one("#debug-source-filter", Input)
             invoke_input = host.screen.query_one("#debug-invoke-expression", Input)
             invoke_toggle = host.screen.query_one("#debug-invoke-mode", Checkbox)
+            trace_status = host.screen.query_one("#debug-source-status", Static)
+            special_methods = host.screen.query_one(
+                "#debug-show-special-methods", Checkbox
+            )
+            mode_row = host.screen.query_one("#debug-source-status-row")
+            assert invoke_toggle.region.y == special_methods.region.y
+            assert invoke_toggle.region.x < special_methods.region.x
 
             source_input.value = "celune.audio"
             await pilot.click("#debug-invoke-mode")
             assert not trace_controls.display
             assert invoke_controls.display
+            assert mode_row.display
+            assert trace_status.display
             invoke_input.value = "engine.slow_call()"
             await pilot.click("#debug-invoke-call")
             for _ in range(20):
