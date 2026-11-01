@@ -22,7 +22,6 @@ class ApiServerControl(Protocol):
     """Minimal server lifecycle surface required by shared runtime state."""
 
     should_exit: bool
-    force_exit: bool
 
 
 @dataclass

@@ -2083,8 +2083,12 @@ class TestApiWebUI(CeluneTestCase):
         celune.glow.fatal()
 
         assert api.server_session.bound_celune is None
-        assert api.server_session.current_api_server.should_exit
-        assert api.server_session.current_api_server.force_exit
+        current_server = cast(
+            api.StartedServer,
+            api.server_session.current_api_server,
+        )
+        assert current_server.should_exit
+        assert not current_server.force_exit
 
     @staticmethod
     def test_start_api_reports_when_port_is_already_in_use() -> None:

@@ -270,4 +270,5 @@ waits use cancellable event-loop sleeps instead of blocking default-executor
 threads. These paths let UI shutdown finish without waiting for abandoned
 startup work or timer threads. CEDTS backends receive an abort/shutdown request
 before their daemon caller is abandoned. A fatal state can stop generation
-without pretending that the engine is healthy.
+without pretending that the engine is healthy. The fatal WebUI hook requests a
+normal Uvicorn shutdown so the ASGI lifespan can complete its cleanup.

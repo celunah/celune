@@ -49,8 +49,7 @@ def invoke_message_callback(
 
 
 def shutdown_api_for_fatal_error(session: ServerSession = server_session) -> None:
-    """Stop the API and browser UI after a fatal Celune runtime failure."""
+    """Gracefully stop the API and browser UI after a fatal runtime failure."""
     session.bound_celune = None
     if session.current_api_server is not None:
         session.current_api_server.should_exit = True
-        session.current_api_server.force_exit = True
