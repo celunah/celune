@@ -1,7 +1,7 @@
 [project]
 name = "celune"
 version = "5.1.1"
-description = "Real-time AI TTS character engine for all use cases"
+description = "\"Your voice, your way.\""
 readme = "README.md"
 requires-python = ">=3.12,<3.15"
 authors = [
@@ -63,6 +63,7 @@ dependencies = [
     "iso639-lang>=2.0.0,<3.0.0",
     # She can also play literal [music].
     "yt-dlp[default]>=2026.08.19",
+    # Lua runtime for running Celune extensions
     "lupa>=2.8,<3.0",
 ]
 
@@ -170,9 +171,11 @@ cechar4-openzl = [
 #     "pocket-tts>=3.2.0",
 # ]
 
-# LuxTTS is isolated in its CUDA-capable CEDTS environment and falls back to
-# ONNX CPU inference when no CUDA runtime exists; see
-# celune/backends/environment.py for its VCS and runtime dependencies.
+# Ming3 is a backend which provides a good amount of expression.
+# Lighter on memory, and it supports a variety of languages.
+# ming3 = [
+#    "unknown-package==1.0.0",
+# ]
 
 # A voice conversion backend allowing you to speak in your character voices directly. It does not use TTS, using it
 # will disable TTS features.
@@ -182,7 +185,14 @@ cechar4-openzl = [
 #     "seed-vc @ git+https://github.com/celunah/seed-vc.git",
 # ]
 
-# Optional AI VAD for live voice conversion capture.
+# SoulX-Singer is a singing backend which allows Celune to sing.
+# Light on memory, but only works in English. Chinese singing inputs are not available.
+# TTS text input is disabled while active. CESN is the only input method. Functions that require TTS are not available.
+# soulxsinger = [
+#    "unknown-package==1.0.0",
+# ]
+
+# VAD gate for live voice conversion capture.
 live-vc-ai = [
     "silero-vad",
 ]
