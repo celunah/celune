@@ -13,7 +13,15 @@ from ._version import VERSION
 APP_NAME = "Celune"
 APP_SLUG = "".join(char if char.isalnum() else "_" for char in APP_NAME.lower())
 DEFAULT_TARGET_CHUNK_LENGTH_SECONDS = 0.64
-SUPPORTED_CUDA_VERSIONS = ("12.8", "13.0")
+SUPPORTED_CUDA_VERSIONS = (
+    "12.8",
+    "12.9",
+    "13.0",
+    "13.1",
+    "13.2",
+    "13.3",
+    "13.4",
+)
 NVIDIA_DEVICE_KEYWORDS = (
     "nvidia",
     "geforce",

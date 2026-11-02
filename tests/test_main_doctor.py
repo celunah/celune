@@ -495,7 +495,7 @@ class TestDoctorCommand(CeluneTestCase):
 
     @pytest.mark.parametrize(
         ("cuda_version", "expected_ok"),
-        (("12.8", True), ("13.0", True), ("12.9", False)),
+        (("12.8", True), ("13.4", True), ("12.9", True)),
     )
     def test_doctor_accepts_runtime_supported_cuda_versions(
         self, cuda_version: str, expected_ok: bool
@@ -519,4 +519,6 @@ class TestDoctorCommand(CeluneTestCase):
 
         by_label = {check.label: check for check in checks}
         assert by_label["CUDA runtime"].ok is expected_ok
-        assert "12.8 or 13.0" in (by_label["CUDA runtime"].hint or "")
+        assert "12.8 or 12.9 or 13.0 or 13.1 or 13.2 or 13.3 or 13.4" in (
+            by_label["CUDA runtime"].hint or ""
+        )
