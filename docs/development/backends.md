@@ -57,10 +57,10 @@ replace third-party model terms.
 FireRedTTS3 is intentionally separate from that Hugging Face portion: its
 manifest uses `huggingface-hub>=1.5.0,<2.0.0` and `transformers==5.6.2`, which
 cannot be resolved alongside the shared Hub-below-1 and Transformers-below-5
-constraints. The core project pins its own CUDA 13.0 stack, and the core and
+constraints. The core project pins PyTorch 2.15 with CUDA 13.2, and the core and
 backend environments are intentionally not the same lockfile. Its `pyproject.toml`
 declares explicit PyTorch indexes for CUDA 12.8, 13.0, 13.2, and 13.4; the
-current `tool.uv.sources` entries select CUDA 13.0. An index declaration does
+current `tool.uv.sources` entries select CUDA 13.2. An index declaration does
 not widen the exact version pins. When evaluating another release, update the
 `torch`, `torchaudio`, and `torchvision` pins and source entries together to
 use matching CUDA suffixes. PyTorch does not publish every release for every

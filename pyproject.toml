@@ -11,12 +11,12 @@ authors = [
 dependencies = [
     # AI stack
     # Wow, up to date!
-    "torch==2.13.0+cu130",
+    "torch==2.15.0+cu132",
     "torchao==0.18.0",
-    "torchaudio==2.11.0+cu130",
+    "torchaudio==2.11.1+cu132",
     # This package is not required if you want to use Persona in text-only mode,
     # or Celune operates in speech-only mode.
-    "torchvision==0.28.0+cu130",
+    "torchvision==0.29.2+cu132",
     # If not installed, Hugging Face falls back to the older Git LFS way of downloading models.
     "hf-xet",
     "accelerate",
@@ -79,9 +79,9 @@ celune = ["lang/*.json", "assets/*", "release_keyring.json"]
 voices = ["voices/*.cevoice"]
 
 [tool.uv.sources]
-torch = [{ index = "pytorch-cu130" }]
-torchaudio = [{ index = "pytorch-cu130" }]
-torchvision = [{ index = "pytorch-cu130" }]
+torch = [{ index = "pytorch-cu132" }]
+torchaudio = [{ index = "pytorch-cu132" }]
+torchvision = [{ index = "pytorch-cu132" }]
 
 [[tool.uv.index]]
 name = "pytorch-cu128"
