@@ -16,7 +16,7 @@ dependencies = [
     "torchaudio==2.11.0+cu130",
     # This package is not required if you want to use Persona in text-only mode,
     # or Celune operates in speech-only mode.
-    "torchvision==0.28.0+cu130",
+    "torchvision==0.29.2",
     # If not installed, Hugging Face falls back to the older Git LFS way of downloading models.
     "hf-xet",
     "accelerate",
