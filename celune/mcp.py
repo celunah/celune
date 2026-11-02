@@ -134,19 +134,19 @@ async def _generate_audio(content: str, save: bool, *, singing: bool) -> Audio:
     backend_is_singing = bool(getattr(engine.backend, "singing", False))
     if singing:
         if not backend_is_singing:
-            raise ToolError("An active singing backend is required.")
+            raise ToolError("an active singing backend is required")
         notation_error = validate_singing_notation(engine, content)
         if notation_error is not None:
             raise ToolError(notation_error)
     elif backend_is_singing:
-        raise ToolError("A singing backend is active. Use sing with CESN notation.")
+        raise ToolError("a singing backend is active, use `sing` with CESN notation")
 
     chunks = await engine.say_stream_async(content, save=save)
     if chunks is None:
-        raise ToolError("The request could not be accepted right now.")
+        raise ToolError("no chunks were returned")
     audio_data = await run_in_daemon_thread(_audio_bytes, chunks)
     if not audio_data:
-        raise ToolError("The request could not be accepted right now.")
+        raise ToolError("there was no audio data")
     await run_in_daemon_thread(engine.playback_done.wait)
     return Audio(data=audio_data, format="flac")
 
@@ -204,9 +204,9 @@ async def run_persona(content: str) -> str:
     """Submit text to Persona and report whether Celune accepted it."""
     engine = _require_celune()
     if getattr(getattr(engine, "backend", None), "singing", False):
-        raise ToolError(string("celune.persona_unavailable_singing"))
+        raise ToolError("can't use Persona while singing")
     if not await engine.think_async(content):
-        raise ToolError("The request could not be accepted right now.")
+        raise ToolError("asynchronous Persona call failed")
     return string("mcp.persona_accepted")
 
 
@@ -216,30 +216,34 @@ async def change_voice(
 ) -> str:
     """Select an active-pack voice or switch to an installed voice pack."""
     if (voice_name is None) == (pack_name is None):
-        raise ToolError("Provide exactly one of voice_name or pack_name.")
+        raise ToolError("must provide exactly one of `voice_name` or `pack_name`")
 
     engine = _require_celune()
     if voice_name is not None:
         if voice_name not in engine.voices:
-            raise ToolError("I don't know how to speak in that voice.")
+            raise ToolError(f"voice {voice_name} not found")
         if not await engine.set_voice_async(voice_name):
-            raise ToolError("I can't change my voice right now.")
+            raise ToolError("asynchronous voice change call failed")
         return string("mcp.voice_changed", voice=voice_name)
 
     selected_pack = _find_installed_pack(pack_name or "")
     if selected_pack is None:
-        raise ToolError(f"No installed voice pack named {pack_name or ''}.")
+        raise ToolError(f"character {pack_name or ''} does not exist")
 
     if getattr(engine.backend, "singing", False):
         try:
             bundle = CEVoice.open(selected_pack)
-        except (OSError, CEVoiceError) as error:
-            raise ToolError("The selected voice pack is invalid.") from error
+        except OSError as error:
+            raise ToolError("could not open this voice pack") from error
+        except CEVoiceError as error:
+            raise ToolError(
+                "CEVOICE validation failed, not a valid voice pack"
+            ) from error
         if bundle.singing_voice is None:
-            raise ToolError("The selected voice pack has no singing entry.")
+            raise ToolError("this character does not sing")
 
     if not await engine.set_cevoice_async(selected_pack.name):
-        raise ToolError("I can't change my voice right now.")
+        raise ToolError("can't change voices at this time")
     return string("mcp.voice_pack_changed", pack=selected_pack.stem)
 
 
@@ -254,7 +258,7 @@ async def change_backend(backend_name: str) -> str:
 
     engine = _require_celune()
     if not await engine.set_backend_async(normalized_backend):
-        raise ToolError("The request could not be accepted right now.")
+        raise ToolError("asynchronous backend change call failed")
     return string("mcp.backend_changed", backend=normalized_backend)
 
 

@@ -181,7 +181,7 @@ class TestMcpServer(CeluneTestCase):
 
         with (
             mock.patch.object(mcp, "_require_celune", return_value=engine),
-            pytest.raises(ToolError, match="request could not be accepted"),
+            pytest.raises(ToolError, match="there was no"),
         ):
             asyncio.run(
                 mcp.mcp_server.call_tool(
@@ -252,7 +252,7 @@ class TestMcpServer(CeluneTestCase):
         )
         with (
             mock.patch.object(mcp, "_require_celune", return_value=engine),
-            pytest.raises(ToolError, match="Persona replies are unavailable"),
+            pytest.raises(ToolError, match="can't use Persona while"),
         ):
             asyncio.run(mcp.run_persona("say hello"))
 
