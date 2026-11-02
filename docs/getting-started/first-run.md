@@ -21,11 +21,14 @@ creating a backend environment and downloading models before the ready state.
 
 ## Select a backend
 
-Set `backend` in the active config or pass `CELUNE_BACKEND` for a one-process
-override. The backend name is one of `mini`, `qwen3`, `dotstts`, `voxcpm2`,
-`ming3`, `fireredtts3`, or a voice-conversion backend such as `seed-vc`. See
-[Backends](../development/backends.md) for capability and
-dependency details.
+When `backend` is `null`, the first interactive launch shows a terminal picker
+before the Textual UI starts. Celune saves the selected TTS backend to the
+active configuration. The picker lists the registered TTS backends: `mini`,
+`qwen3`, `fireredtts3`, `dotstts`, `voxcpm2`, `ming3`, and `soulxsinger`.
+Headless launches do not prompt and continue using the preset default. Set
+`backend` in the active config to choose it directly, or pass `CELUNE_BACKEND`
+for a one-process override. See [Backends](../development/backends.md) for
+capability and dependency details.
 
 The backend controls language support, reference-audio requirements, model
 size, chunk rate, and whether the active voice pack can be used. An unknown

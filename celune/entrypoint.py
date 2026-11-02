@@ -8,8 +8,8 @@ import time
 import random
 import shutil
 import datetime
-import platform
 import warnings
+import platform
 import contextlib
 import subprocess
 from dataclasses import dataclass
@@ -19,26 +19,26 @@ from types import ModuleType, SimpleNamespace
 from typing import TYPE_CHECKING, NoReturn, Optional
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
-from celune.paths import (
+from .paths import (
     project_root,
     running_compiled,
     migrate_legacy_app_data,
     configure_huggingface_runtime,
 )
-from celune.constants import (
+from .constants import (
     APP_NAME,
     APP_SLUG,
     NVIDIA_DEVICE_KEYWORDS,
     SUPPORTED_CUDA_VERSIONS,
     ExitCodes,
 )
-from celune.i18n import string
-from celune.typing.common import Config
-from celune.terminal import set_terminal_title
-from celune import REVISION, __tagline__, __version__
-from celune.vcs import is_git_checkout, git_checkout_hint
-from celune.exceptions import CEVoiceDependencyUnavailableError
-from celune.config import config_log_level, normalize_log_level
+from .i18n import string
+from .typing.common import Config
+from .terminal import set_terminal_title
+from . import REVISION, __tagline__, __version__
+from .vcs import is_git_checkout, git_checkout_hint
+from .exceptions import CEVoiceDependencyUnavailableError
+from .config import config_log_level, normalize_log_level
 
 if TYPE_CHECKING:
     from celune.celune import Celune
@@ -101,6 +101,15 @@ def _resolve_headless_mode(runtime: SimpleNamespace, config: Config) -> bool:
 INITIAL_LOG_LEVEL = normalize_log_level(os.getenv("CELUNE_LOG_LEVEL", "info"))
 INITIAL_HEADLESS = _env_flag("CELUNE_HEADLESS")
 INITIAL_BACKEND = os.getenv("CELUNE_BACKEND")
+_INITIAL_BACKEND_LABEL_KEYS = {
+    "mini": "cli.backend_mini",
+    "qwen3": "cli.backend_qwen3",
+    "fireredtts3": "cli.backend_fireredtts3",
+    "dotstts": "cli.backend_dotstts",
+    "voxcpm2": "cli.backend_voxcpm2",
+    "ming3": "cli.backend_ming3",
+    "soulxsinger": "cli.backend_soulxsinger",
+}
 
 # these parameters are used by the app CLI and its commands, e.g. 'celune doctor'
 LAUNCHED_VIA_LAUNCHER = _env_flag("CELUNE_LAUNCHER")
@@ -258,22 +267,23 @@ def _load_runtime() -> SimpleNamespace:
         import yaml
         import psutil
 
-        from celune.ui import SelectMenu
-        from celune.paths import (
+        from .paths import (
             config_path,
             ensure_config_path,
             default_config_path,
         )
-        from celune.utils import indent, title_case, detected_ide, supports_ansi
-        from celune.config import (
+        from .config import (
             env_bool,
             config_bool,
             config_value,
             merge_missing_defaults,
         )
-        from celune.updater import check_for_update, update_to_latest
-        from celune.namedays import has_name_day
-        from celune.exceptions import No, UpdateError
+        from .ui import SelectMenu
+        from .namedays import has_name_day
+        from .exceptions import No, UpdateError
+        from .backends.environment import BACKEND_MANIFESTS
+        from .updater import check_for_update, update_to_latest
+        from .utils import indent, title_case, detected_ide, supports_ansi
 
         config_path()
     except ModuleNotFoundError as package:
@@ -291,6 +301,17 @@ def _load_runtime() -> SimpleNamespace:
         has_name_day=has_name_day,
         check_for_update=check_for_update,
         update_to_latest=update_to_latest,
+        backend_choices=tuple(
+            (
+                backend_id,
+                _INITIAL_BACKEND_LABEL_KEYS.get(
+                    backend_id,
+                    "cli.backend_choice_name",
+                ),
+            )
+            for backend_id, manifest in BACKEND_MANIFESTS.items()
+            if manifest.kind == "tts"
+        ),
         SelectMenu=SelectMenu,
         config_bool=config_bool,
         config_value=config_value,
@@ -306,6 +327,51 @@ def _load_runtime() -> SimpleNamespace:
         ExitCodes=ExitCodes,
     )
     return _RUNTIME
+
+
+def _select_initial_backend(
+    runtime: SimpleNamespace,
+    config: Config,
+    active_config_path: Path,
+    backend: Optional[str],
+    headless: bool,
+) -> Optional[str]:
+    """Prompt for and persist the first interactive TTS backend choice.
+
+    Args:
+        runtime: Lightweight CLI services and registered backend choices.
+        config: Active Celune configuration mapping.
+        active_config_path: Path to the active configuration file.
+        backend: Backend selected by the environment or configuration.
+        headless: Whether Celune is starting without an interactive UI.
+
+    Returns:
+        Optional[str]: The selected backend, or the existing unset value.
+    """
+    if backend or headless or not runtime.supports_ansi():
+        return backend
+
+    backend_choices = tuple(runtime.backend_choices)
+    if not backend_choices:
+        return backend
+
+    backend_ids = [backend_id for backend_id, _label_key in backend_choices]
+    labels = [
+        string(label_key, backend=backend_id)
+        for backend_id, label_key in backend_choices
+    ]
+    selected_backend = runtime.SelectMenu(
+        labels,
+        backend_ids,
+        string("cli.backend_picker_prompt"),
+    ).start()
+    if not isinstance(selected_backend, str) or selected_backend not in backend_ids:
+        return backend
+
+    config["backend"] = selected_backend
+    with open(active_config_path, "w", encoding="utf-8") as config_file:
+        runtime.yaml.safe_dump(config, config_file, sort_keys=False)
+    return selected_backend
 
 
 def _handle_missing_dependency(package: ModuleNotFoundError) -> NoReturn:
@@ -1549,6 +1615,13 @@ def start(
         headless = _resolve_headless_mode(runtime, config)
         configured_backend = INITIAL_BACKEND or runtime.config_value(config, "backend")
         backend = configured_backend if isinstance(configured_backend, str) else None
+        backend = _select_initial_backend(
+            runtime,
+            config,
+            active_config_path,
+            backend,
+            headless,
+        )
 
         if not headless and runtime.supports_ansi():
             update = runtime.check_for_update()
