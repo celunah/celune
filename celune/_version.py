@@ -14,7 +14,7 @@ from .vcs import (
 )
 
 REVISION = _get_revision(Path(__file__).resolve().parent.parent)
-VERSION = "5.1.1"
+VERSION = "5.1.2"
 EXTRA_IDENTIFIER: str = ""
 
 
