@@ -37,6 +37,10 @@ Nuitka's C compiler is also capped at two jobs.
 The dependency chain enforces libsodium → C launcher and native signature
 verification → Python core (Nuitka) → release packaging. `uv run poe build`
 builds the unsigned preset; `uv run poe build_signed` builds the signed preset.
+The CI workflow also builds both platform archives for pushed tags matching
+`v*`. These workflow artifacts are unsigned validation builds. Publish the
+original ZIPs with their signed counterparts, following the signature steps
+below.
 
 ## Python build target
 
