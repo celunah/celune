@@ -12,7 +12,7 @@ dependencies = [
     # AI stack
     # Wow, up to date!
     "torch==2.13.0+cu130",
-    "torchao==0.17.0",
+    "torchao==0.18.0",
     "torchaudio==2.11.0+cu130",
     # This package is not required if you want to use Persona in text-only mode,
     # or Celune operates in speech-only mode.
@@ -22,7 +22,7 @@ dependencies = [
     "accelerate",
     "bitsandbytes",
     "qwen-vl-utils",
-    "huggingface-hub>=1.31.0,<2.0.0",
+    "huggingface-hub>=1.31.0,<3.0.0",
     "safetensors",
     "sentencepiece",
     "transformers>=5.21.0,<6.0.0",
