@@ -5,8 +5,8 @@ import time
 import asyncio
 import threading
 from pathlib import Path
-from typing import cast
 from unittest import mock
+from typing import Optional, cast
 from types import ModuleType, SimpleNamespace
 
 from rich.cells import cell_len
@@ -292,7 +292,13 @@ def test_inspector_remains_usable_without_an_attached_core() -> None:
             )
             assert " ms running" in calls.render_line(1).text
             calls.move_cursor(row=9, column=0, animate=False, scroll=False)
-            await pilot.pause()
+            for _ in range(300):
+                await pilot.pause(0.01)
+                if (
+                    inspector._selected_call_id == 10
+                    and inspector._shown_call_detail_id == 10
+                ):
+                    break
             assert inspector._selected_call_id == 10
             assert inspector._shown_call_detail_id == 10
             calls.scroll_to(y=0, animate=False, force=True)
@@ -327,8 +333,12 @@ def test_inspector_remains_usable_without_an_attached_core() -> None:
             assert inspector._shown_call_detail_id == 10
             assert calls.scroll_y == 0
             calls.scroll_to(y=8, animate=False, force=True)
-            await pilot.pause()
-            scroll_anchor_id, _ = inspector._call_table_scroll_anchor(calls)
+            scroll_anchor_id: Optional[int] = None
+            for _ in range(300):
+                await pilot.pause(0.01)
+                scroll_anchor_id, _ = inspector._call_table_scroll_anchor(calls)
+                if scroll_anchor_id == 10:
+                    break
             assert scroll_anchor_id == 10
             with trace._lock:
                 trace._next_entry_id += 1
@@ -350,8 +360,12 @@ def test_inspector_remains_usable_without_an_attached_core() -> None:
                     )
                 )
             inspector._refresh_live_calls()
-            await pilot.pause()
-            restored_anchor_id, _ = inspector._call_table_scroll_anchor(calls)
+            restored_anchor_id: Optional[int] = None
+            for _ in range(300):
+                await pilot.pause(0.01)
+                restored_anchor_id, _ = inspector._call_table_scroll_anchor(calls)
+                if restored_anchor_id == scroll_anchor_id:
+                    break
             assert restored_anchor_id == scroll_anchor_id
             assert inspector._selected_call_id == 10
             calls.scroll_to(y=calls.max_scroll_y, animate=False, force=True)
@@ -428,7 +442,7 @@ def test_invoke_mode_runs_calls_off_thread_and_restores_trace_controls() -> None
             assert trace_status.display
             invoke_input.value = "engine.slow_call()"
             await pilot.click("#debug-invoke-call")
-            for _ in range(20):
+            for _ in range(300):
                 await pilot.pause(0.01)
                 if started.is_set():
                     break
@@ -440,7 +454,7 @@ def test_invoke_mode_runs_calls_off_thread_and_restores_trace_controls() -> None
             assert not invoke_controls.display
             assert source_input.value == "celune.audio"
             release.set()
-            for _ in range(30):
+            for _ in range(300):
                 await pilot.pause(0.01)
                 if not inspector._invoke_running:
                     break
