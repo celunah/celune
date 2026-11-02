@@ -7,11 +7,7 @@ from typing import Union, Optional, cast
 import torch
 from torch import nn
 
-from celune.backends.tts.voxcpm_cache import (
-    QuantizedStaticKVCache,
-    VoxCPMModel,
-    install_voxcpm_quantized_cache,
-)
+from .support import mock_voxcpm_backend
 
 
 def apply_rotary_pos_emb(
@@ -130,6 +126,9 @@ class _ToyModel:
 
 def test_voxcpm_cache_quantizes_old_prefix_and_keeps_recent_tail() -> None:
     """Store older prompt tokens compactly and retain the newest tokens."""
+    with mock_voxcpm_backend():
+        from celune.backends.tts.voxcpm2 import QuantizedStaticKVCache
+
     cache = QuantizedStaticKVCache(
         shape=torch.Size((2, 1, 1, 1, 5, 2)),
         device=torch.device("cpu"),
@@ -171,9 +170,16 @@ def test_voxcpm_cache_quantizes_old_prefix_and_keeps_recent_tail() -> None:
 
 def test_voxcpm_adapter_patches_both_cache_backed_language_models() -> None:
     """Use the compact cache for base and residual decoding paths."""
+    with mock_voxcpm_backend():
+        from celune.backends.tts.voxcpm2 import (
+            QuantizedStaticKVCache,
+            VoxCPMModel,
+            install_voxcpm_quantized_cache,
+        )
+
     model = _ToyModel()
     with patch(
-        "celune.backends.tts.voxcpm_cache.quantized_kv_cache_mode",
+        "celune.backends.tts.voxcpm2.quantized_kv_cache_mode",
         return_value="int8",
     ):
         assert install_voxcpm_quantized_cache(cast(VoxCPMModel, model), enabled=True)
@@ -198,6 +204,12 @@ def test_voxcpm_adapter_patches_both_cache_backed_language_models() -> None:
 
 def test_voxcpm_adapter_leaves_native_caches_when_disabled() -> None:
     """Keep both original caches when cache quantization is disabled."""
+    with mock_voxcpm_backend():
+        from celune.backends.tts.voxcpm2 import (
+            VoxCPMModel,
+            install_voxcpm_quantized_cache,
+        )
+
     model = _ToyModel()
     original_caches = (
         model.tts_model.base_lm.kv_cache,
@@ -205,7 +217,7 @@ def test_voxcpm_adapter_leaves_native_caches_when_disabled() -> None:
     )
 
     with patch(
-        "celune.backends.tts.voxcpm_cache.quantized_kv_cache_mode",
+        "celune.backends.tts.voxcpm2.quantized_kv_cache_mode",
         return_value=None,
     ):
         assert not install_voxcpm_quantized_cache(
