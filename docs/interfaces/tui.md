@@ -325,6 +325,12 @@ Commands are entered in the input box and start with `/`.
 Fatal and stopped states still allow text editors to be used for composing a
 draft, but reject submitted text and commands.
 
+Built-in commands register their handler and localized help entry in the UI
+command registry. The dispatcher looks up the command by name, and `/help`
+builds an alphabetized list from the same registry, showing only commands
+available for the active backend, mode, and Persona capabilities. Each handler
+continues to validate its own arguments and report command-specific errors.
+
 | Command | Arguments and behavior |
 | --- | --- |
 | `/help` | Show commands available for the current backend, mode, and Persona capability. |
