@@ -73,9 +73,10 @@ pack-derived colors. This keeps startup responsive and lets `CTRL+C` use the UI
 shutdown path even while runtime loading fails.
 
 The GPU runtime preflight runs from `Celune.load()` after the UI callbacks are
-attached and startup logs are flushed, but before voice discovery or backend
-model loading. It uses the live logging callbacks, and a failed check carries
-its diagnostic messages into the startup error report.
+attached, startup logs are flushed, character compatibility is checked, and
+voices are discovered. It runs before extension setup and backend model
+loading, uses the live logging callbacks, and carries failure diagnostics into
+the startup error report.
 
 `Celune`, `CeluneUI`, and `CeluneHeadlessUI` are marked `@final` and reject
 runtime subclass creation. Integrations should use their callbacks, protocols,

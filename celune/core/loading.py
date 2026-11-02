@@ -8,16 +8,13 @@ import os
 import time
 import threading
 import contextlib
-from typing import Optional, cast
 from functools import partial
+from typing import Optional, cast
 
 import torch
 from transformers.modeling_utils import PreTrainedModel
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 
-from . import lifecycle
-from ..i18n import string, tagged_string
-from ..vram import vram_profile_fits, resolve_vram_preset, validate_vram_preset
 from ..utils import (
     discard,
     format_error,
@@ -26,10 +23,6 @@ from ..utils import (
     is_port_usable,
     format_error_message,
 )
-from ..cevoice import default_loader, bundle_display_name, announce_default_bundle
-from ..runtime import log_runtime_banner, validate_runtime
-from ..modeling import normalizer_device, load_normalizer_components
-from ..constants import APP_NAME
 from ..exceptions import (
     WarmupError,
     BackendError,
@@ -38,15 +31,23 @@ from ..exceptions import (
     ModelConsentRequired,
     InvalidCharacterError,
 )
-from .concurrency import run_in_daemon_thread
+from ..constants import APP_NAME
+from ..typing.aliases import LogLevel
 from ..backends.tts import CeluneBackend
+from ..i18n import string, tagged_string
 from ..persona.impl import persona_enabled
-from ..typing.celune import Generative, NormalizerTokenizer
+from ..dataclasses.events import ReadyEvent
 from ..registry.other import NORMALIZER_MODEL_ID
 from ..pipeline.output import saved_output_speech_seconds
+from ..runtime import log_runtime_banner, validate_runtime
+from ..typing.celune import Generative, NormalizerTokenizer
+from ..modeling import normalizer_device, load_normalizer_components
 from ..pipeline.playback import force_stop_speech as force_stop_pipeline
-from ..dataclasses.events import ReadyEvent
-from ..typing.aliases import LogLevel
+from ..vram import vram_profile_fits, resolve_vram_preset, validate_vram_preset
+from ..cevoice import default_loader, bundle_display_name, announce_default_bundle
+
+from . import lifecycle
+from .concurrency import run_in_daemon_thread
 
 
 async def force_stop_speech_async(self) -> bool:
@@ -119,58 +120,6 @@ def load(self, raise_on_error: bool = False, skip_runtime_check: bool = False) -
         self.log(string("celune.test_mode_active", app_name=APP_NAME))
         return True
 
-    if not skip_runtime_check and not getattr(self, "_runtime_preflight_done", False):
-        runtime_diagnostics: list[tuple[str, str]] = []
-        runtime_errors: list[str] = []
-
-        def log_runtime(
-            msg: str,
-            severity: str = "info",
-            *,
-            loglevel: LogLevel = "info",
-        ) -> None:
-            """Capture startup diagnostics and forward them to the live logger."""
-            if severity in {"warning", "error"}:
-                runtime_diagnostics.append((severity, msg))
-            self.log(msg, severity, loglevel=loglevel)
-
-        def report_runtime_error(message: str) -> None:
-            """Retain the validator's concise error for the final report."""
-            runtime_errors.append(message)
-
-        if not validate_runtime(
-            log=log_runtime,
-            error=report_runtime_error,
-            set_state=lambda state: setattr(self, "cur_state", state),
-            glow_connect_failed=self.glow.connect_failed,
-            format_error=format_error,
-            log_level=self.log_level,
-            backend_name=lifecycle.active_runtime_backend_name(self),
-        ):
-            failure_details = list(runtime_errors)
-            diagnostics = (
-                [
-                    message
-                    for severity, message in runtime_diagnostics
-                    if severity == "error"
-                ]
-                if runtime_errors
-                else [message for _, message in runtime_diagnostics]
-            )
-            failure_details.extend(
-                message for message in diagnostics if message not in failure_details
-            )
-            failure_message = "\n".join(failure_details) or string(
-                "runtime.no_supported_backend"
-            )
-            self.error_callback(failure_message)
-            self.fatal()
-            if raise_on_error:
-                raise RuntimeCheckError(failure_message)
-            return False
-
-        self._runtime_preflight_done = True
-
     from .voice import _reject_singing_backend
 
     if _reject_singing_backend(self, self.backend):
@@ -221,6 +170,67 @@ def load(self, raise_on_error: bool = False, skip_runtime_check: bool = False) -
             bundle_display_name(loader.bundle) if loader is not None else character
         )
         self.log(string("celune.current_character", character=display_character))
+
+    active_backend = (
+        self.vc_backend
+        if lifecycle.is_voice_conversion_mode(self) and self.vc_backend is not None
+        else self.backend
+    )
+    if (
+        not skip_runtime_check
+        and not getattr(self, "_runtime_preflight_done", False)
+        and not getattr(active_backend, "is_fake", False)
+    ):
+        runtime_diagnostics: list[tuple[str, str]] = []
+        runtime_errors: list[str] = []
+
+        def log_runtime(
+            msg: str,
+            severity: str = "info",
+            *,
+            loglevel: LogLevel = "info",
+        ) -> None:
+            """Capture startup diagnostics and forward them to the live logger."""
+            if severity in {"warning", "error"}:
+                runtime_diagnostics.append((severity, msg))
+            self.log(msg, severity, loglevel=loglevel)
+
+        def report_runtime_error(message: str) -> None:
+            """Retain the validator's concise error for the final report."""
+            runtime_errors.append(message)
+
+        if not validate_runtime(
+            log=log_runtime,
+            error=report_runtime_error,
+            set_state=lambda state: setattr(self, "cur_state", state),
+            glow_connect_failed=self.glow.connect_failed,
+            format_error=format_error,
+            log_level=self.log_level,
+            backend_name=lifecycle.active_runtime_backend_name(self),
+        ):
+            failure_details = list(runtime_errors)
+            diagnostics = (
+                [
+                    message
+                    for severity, message in runtime_diagnostics
+                    if severity == "error"
+                ]
+                if runtime_errors
+                else [message for _, message in runtime_diagnostics]
+            )
+            failure_details.extend(
+                message for message in diagnostics if message not in failure_details
+            )
+            failure_message = "\n".join(failure_details) or string(
+                "runtime.no_supported_backend"
+            )
+            self.error_callback(failure_message)
+            self.fatal()
+            if raise_on_error:
+                raise RuntimeCheckError(failure_message)
+            return False
+
+        self._runtime_preflight_done = True
 
     if self.backend_mode == "normal":
         self.setup_extensions()
