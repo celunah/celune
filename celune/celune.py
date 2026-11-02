@@ -798,7 +798,7 @@ class Celune(CeluneStateAccessors):
         Raises:
             NotAvailableError: If no usable voice or backend is available.
             Exception: If an unexpected loading failure occurs and `raise_on_error` is enabled.
-            RuntimeCheckError: If the runtime environment is unsupported.
+            RuntimeCheckError: If runtime validation fails; the message contains its diagnostics.
             BackendError: If backend initialization fails.
         """
         return core_loading.load(self, raise_on_error, skip_runtime_check)

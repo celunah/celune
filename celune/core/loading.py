@@ -46,6 +46,7 @@ from ..registry.other import NORMALIZER_MODEL_ID
 from ..pipeline.output import saved_output_speech_seconds
 from ..pipeline.playback import force_stop_speech as force_stop_pipeline
 from ..dataclasses.events import ReadyEvent
+from ..typing.aliases import LogLevel
 
 
 async def force_stop_speech_async(self) -> bool:
@@ -96,7 +97,7 @@ def load(self, raise_on_error: bool = False, skip_runtime_check: bool = False) -
     Raises:
         NotAvailableError: If no usable voice or backend is available.
         Exception: If an unexpected loading failure occurs and `raise_on_error` is enabled.
-        RuntimeCheckError: If the runtime environment is unsupported.
+        RuntimeCheckError: If runtime validation fails; the message contains its diagnostics.
         BackendError: If backend initialization fails.
     """
     if self._startup_callback is not None:
@@ -117,6 +118,58 @@ def load(self, raise_on_error: bool = False, skip_runtime_check: bool = False) -
     if self.backend_mode == "ui_test" and self.backend.is_fake:
         self.log(string("celune.test_mode_active", app_name=APP_NAME))
         return True
+
+    if not skip_runtime_check and not getattr(self, "_runtime_preflight_done", False):
+        runtime_diagnostics: list[tuple[str, str]] = []
+        runtime_errors: list[str] = []
+
+        def log_runtime(
+            msg: str,
+            severity: str = "info",
+            *,
+            loglevel: LogLevel = "info",
+        ) -> None:
+            """Capture startup diagnostics and forward them to the live logger."""
+            if severity in {"warning", "error"}:
+                runtime_diagnostics.append((severity, msg))
+            self.log(msg, severity, loglevel=loglevel)
+
+        def report_runtime_error(message: str) -> None:
+            """Retain the validator's concise error for the final report."""
+            runtime_errors.append(message)
+
+        if not validate_runtime(
+            log=log_runtime,
+            error=report_runtime_error,
+            set_state=lambda state: setattr(self, "cur_state", state),
+            glow_connect_failed=self.glow.connect_failed,
+            format_error=format_error,
+            log_level=self.log_level,
+            backend_name=lifecycle.active_runtime_backend_name(self),
+        ):
+            failure_details = list(runtime_errors)
+            diagnostics = (
+                [
+                    message
+                    for severity, message in runtime_diagnostics
+                    if severity == "error"
+                ]
+                if runtime_errors
+                else [message for _, message in runtime_diagnostics]
+            )
+            failure_details.extend(
+                message for message in diagnostics if message not in failure_details
+            )
+            failure_message = "\n".join(failure_details) or string(
+                "runtime.no_supported_backend"
+            )
+            self.error_callback(failure_message)
+            self.fatal()
+            if raise_on_error:
+                raise RuntimeCheckError(failure_message)
+            return False
+
+        self._runtime_preflight_done = True
 
     from .voice import _reject_singing_backend
 
@@ -243,25 +296,6 @@ def load(self, raise_on_error: bool = False, skip_runtime_check: bool = False) -
     self._generation_thread = None
     self._playback_thread = pipeline_thread
     pipeline_thread.start()
-
-    if (
-        not skip_runtime_check
-        and not getattr(self, "_runtime_preflight_done", False)
-        and not validate_runtime(
-            log=self.log,
-            error=self.error_callback,
-            set_state=lambda state: setattr(self, "cur_state", state),
-            glow_connect_failed=self.glow.connect_failed,
-            format_error=format_error,
-            log_level=self.log_level,
-            backend_name=lifecycle.active_runtime_backend_name(self),
-        )
-    ):
-        self.fatal()
-        lifecycle.stop_pipeline_jobs(self)
-        if raise_on_error:
-            raise RuntimeCheckError("runtime check failed")
-        return False
 
     warmup_ok = True
     if not self.is_voice_conversion_mode():

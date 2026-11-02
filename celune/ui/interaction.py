@@ -1672,13 +1672,16 @@ def tts_queue_avail(self) -> None:
 
 
 def error(self, message: str) -> None:
-    """Set the UI status to the error message.
+    """Show an error status and retain full startup failure details.
 
     Args:
         message: The error text to display.
     """
     if self.cur_state == "exiting":
         return
+    if not self.celune_ready:
+        self._latest_startup_error = message
+        message = message.partition("\n")[0]
     self._hide_caption_widgets()
     self.safe_status(message, "error")
     celune = self.celune

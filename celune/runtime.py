@@ -146,9 +146,24 @@ def validate_runtime(
     cuda_version = torch.version.cuda
     _, separator, torch_variant = torch.__version__.partition("+")
 
-    def format_runtime_error(message: str, error: Exception) -> str:
-        """Attach the configured runtime exception detail to one message."""
+    def format_runtime_error(
+        message: str,
+        error: Exception,
+        include_cause: bool = False,
+    ) -> str:
+        """Attach runtime exception details to one diagnostic.
+
+        Args:
+            message: The diagnostic prefix.
+            error: The exception raised by the runtime check.
+            include_cause: Whether to include a concise cause at info log level.
+
+        Returns:
+            str: The prefix with any available exception details.
+        """
         details = format_error(error, log_level)
+        if not details and include_cause:
+            details = f"{type(error).__name__}: {error}"
         if not details:
             return message
         separator = "\n" if log_level == "debug" else ": "
@@ -246,7 +261,9 @@ def validate_runtime(
             major, minor = torch.cuda.get_device_capability(i)
         except Exception as exc:
             log(
-                format_runtime_error(f"Could not query GPU {i} capability", exc),
+                format_runtime_error(
+                    f"Could not query GPU {i} capability", exc, include_cause=True
+                ),
                 "error",
             )
             set_state("error")
@@ -288,7 +305,9 @@ def validate_runtime(
                 log(f"Compute test for GPU {i} succeeded", "info")
         except Exception as e:
             log(
-                format_runtime_error(f"Compute test for GPU {i} failed", e),
+                format_runtime_error(
+                    f"Compute test for GPU {i} failed", e, include_cause=True
+                ),
                 "warning",
             )
 

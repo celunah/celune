@@ -312,6 +312,9 @@ Press `CTRL+Q` on this screen to close the application; a missing-dependency
 failure then returns exit code `4` to the launcher, while other early startup
 failures return the general failure code. After core attachment, press `ESC` to
 reveal the main UI and inspect its log if a later initialization step fails.
+The GPU preflight runs after core attachment and before backend model loading;
+its GPU check diagnostics appear in the main log and in the startup error
+report.
 Fatal Textual callback failures also set a nonzero UI return code, which the
 entrypoint passes to the outer launcher so its failure diagnostics remain
 visible instead of returning to the shell over the traceback.

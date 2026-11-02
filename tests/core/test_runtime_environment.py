@@ -14,7 +14,7 @@ from celune.ui.app import (
 )
 from celune.celune import Celune
 from celune.exceptions import RuntimeCheckError
-from celune.typing.aliases import LogLevel
+from celune.typing.aliases import LogCallback, LogLevel
 from celune.ui.headless import CeluneHeadlessUI
 
 from ..support import CeluneTestCase, FakeBackend, FakeGlow
@@ -153,9 +153,24 @@ class TestRuntimeEnvironment(CeluneTestCase):
         assert not errors
         assert not states
 
-    def test_gpu_runtime_preflight_precedes_backend_resolution(self) -> None:
-        """Reject a GPU backend before resolving or configuring it."""
+    def test_gpu_runtime_preflight_precedes_backend_model_loading(self) -> None:
+        """Reject a GPU backend before model loading and preserve diagnostics."""
         Celune._instance = None
+        backend = FakeBackend()
+        backend.is_fake = False
+        errors: list[str] = []
+
+        def fail_runtime_check(log: LogCallback, **kwargs: object) -> bool:
+            del kwargs
+            log(
+                "Compute test for GPU 0 failed: RuntimeError: synthetic CUDA failure",
+                "warning",
+            )
+            log(
+                "GPU tests reported that all GPUs have failed their runtime checks.",
+                "error",
+            )
+            return False
 
         with (
             mock.patch("celune.core.lifecycle.AudioRGBGlow", FakeGlow),
@@ -166,14 +181,31 @@ class TestRuntimeEnvironment(CeluneTestCase):
             mock.patch(
                 "celune.core.lifecycle.resolve_backend_name", return_value="qwen3"
             ),
-            mock.patch("celune.runtime.validate_runtime", return_value=False) as check,
-            mock.patch("celune.core.reload.resolve_backend") as resolve_backend,
-            pytest.raises(RuntimeCheckError, match="runtime check failed"),
+            mock.patch(
+                "celune.core.loading.validate_runtime",
+                side_effect=fail_runtime_check,
+            ) as check,
+            mock.patch(
+                "celune.core.reload.resolve_backend", return_value=backend
+            ) as resolve_backend,
+            mock.patch.object(backend, "preload_models") as preload_models,
         ):
-            Celune(config={"vram": "high"}, tts_backend="qwen3")
+            engine = Celune(
+                config={"vram": "high"},
+                tts_backend="qwen3",
+                error_callback=errors.append,
+            )
+            self.addCleanup(setattr, Celune, "_instance", None)
+            self.addCleanup(engine.close)
+            check.assert_not_called()
+            with pytest.raises(RuntimeCheckError, match="synthetic CUDA failure"):
+                engine.load(raise_on_error=True)
 
         check.assert_called_once()
-        resolve_backend.assert_not_called()
+        resolve_backend.assert_called_once()
+        preload_models.assert_not_called()
+        assert len(errors) == 1
+        assert "synthetic CUDA failure" in errors[0]
 
     def test_cpu_backend_preflight_skips_cuda_compute_check(self) -> None:
         """Allow Mini on CPU without running CUDA device or compute checks."""
@@ -194,9 +226,9 @@ class TestRuntimeEnvironment(CeluneTestCase):
             ),
         ):
             celune = Celune(config={"vram": "low"}, tts_backend="mini")
+            self.addCleanup(setattr, Celune, "_instance", None)
+            self.addCleanup(celune.close)
+            with mock.patch("celune.core.voice.play_signal", return_value=False):
+                assert celune.load()
 
-        try:
-            compute_test.assert_not_called()
-        finally:
-            celune.close()
-            Celune._instance = None
+        compute_test.assert_not_called()
