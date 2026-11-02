@@ -7,17 +7,19 @@ import os
 import sys
 import math
 import time
-import asyncio
 import signal
 import inspect
+import asyncio
 import logging
+import contextlib
 import datetime
 import itertools
 import threading
-import contextlib
 from io import TextIOWrapper
 from collections.abc import Callable
 from typing import Union, Optional, cast
+
+from rich.cells import cell_len
 
 from . import app as _app
 
@@ -822,6 +824,21 @@ def on_resize(self, _event: _app.events.Resize) -> None:
     """
     if self.status is not None:
         self._update_status_label()
+    if self.caption is not None and self._caption_active:
+
+        def refresh_caption() -> None:
+            if not self._caption_active or self.caption is None:
+                return
+            visible_words, _ = self._caption_words_for_progress(
+                self._caption_progress,
+                self._caption_visible_words,
+            )
+            rendered_text = " ".join(visible_words)
+            if rendered_text != self._caption_rendered_text:
+                self._caption_rendered_text = rendered_text
+                self.caption.update(rendered_text)
+
+        self.call_after_refresh(refresh_caption)
 
 
 def _refresh_logs(self, *, recolor: bool = False) -> None:
@@ -1856,35 +1873,59 @@ def _caption_words_for_progress(
     fraction: float,
     visible_words: Optional[int] = None,
 ) -> tuple[tuple[str, ...], int]:
-    """Return the current sentence words and total revealed word count."""
+    """Return the visible caption window and total revealed word count."""
     if visible_words is not None:
         revealed_words = min(
             len(self._caption_words),
             max(self._caption_visible_words, visible_words),
         )
-        remaining_words = revealed_words
-        for sentence in self._caption_sentences:
-            if remaining_words <= len(sentence):
-                return sentence[:remaining_words], revealed_words
-            remaining_words -= len(sentence)
-        return (
-            self._caption_sentences[-1] if self._caption_sentences else (),
-            revealed_words,
+    else:
+        revealed_words = min(
+            len(self._caption_words),
+            math.ceil(fraction * len(self._caption_words)),
         )
+        revealed_words = max(self._caption_visible_words, revealed_words)
 
-    visible_words = min(
-        len(self._caption_words),
-        math.ceil(fraction * len(self._caption_words)),
+    caption_width = 0
+    if self.caption is not None:
+        widget_size = getattr(self.caption, "size", None)
+        caption_width = int(getattr(widget_size, "width", 0))
+
+    visible_caption = _fit_caption_words(
+        self._caption_words[:revealed_words],
+        caption_width,
     )
-    visible_words = max(self._caption_visible_words, visible_words)
-    remaining_words = visible_words
-    visible_sentence: tuple[str, ...] = ()
-    for sentence in self._caption_sentences:
-        if remaining_words <= len(sentence):
-            visible_sentence = sentence[:remaining_words]
+    return visible_caption, revealed_words
+
+
+def _fit_caption_words(words: tuple[str, ...], width: int) -> tuple[str, ...]:
+    """Keep the longest newest word sequence that fits the caption line."""
+    if width <= 0:
+        return words
+
+    visible_reversed: list[str] = []
+    used_width = 0
+    for word in reversed(words):
+        word_width = cell_len(word)
+        separator_width = 1 if visible_reversed else 0
+        if used_width + separator_width + word_width > width:
             break
-        remaining_words -= len(sentence)
-    return visible_sentence, visible_words
+        visible_reversed.append(word)
+        used_width += separator_width + word_width
+
+    if visible_reversed:
+        return tuple(reversed(visible_reversed))
+    if not words:
+        return ()
+
+    newest_word = words[-1]
+    suffix = ""
+    for character in reversed(newest_word):
+        candidate = character + suffix
+        if cell_len(candidate) > width:
+            break
+        suffix = candidate
+    return (suffix or newest_word,)
 
 
 def safe_progress(

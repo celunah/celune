@@ -22,6 +22,8 @@ __all__ = [
 _TORCHAO_IMPORT_LOCK = threading.RLock()
 _PYTREE_REGISTER_CONSTANT_NAME = "register_constant"
 _TORCHAO_DECORATOR_NAME = "register_as_pytree_constant"
+_CUSTOM_CLASS_PREDICATE_NAME = "is_custom_class"
+_OPAQUE_TYPE_PREDICATE_NAME = "is_opaque_type"
 
 
 def _is_native_opaque_enum(value: type) -> bool:
@@ -33,10 +35,12 @@ def _is_native_opaque_enum(value: type) -> bool:
         opaque_object = importlib.import_module("torch._library.opaque_object")
     except ImportError:
         return False
-    is_opaque_type = getattr(opaque_object, "is_opaque_type", None)
-    if not callable(is_opaque_type):
+    is_custom_class = getattr(opaque_object, _CUSTOM_CLASS_PREDICATE_NAME, None)
+    if not callable(is_custom_class):
+        is_custom_class = getattr(opaque_object, _OPAQUE_TYPE_PREDICATE_NAME, None)
+    if not callable(is_custom_class):
         return False
-    return cast(Callable[[type], bool], is_opaque_type)(value)
+    return cast(Callable[[type], bool], is_custom_class)(value)
 
 
 def _register_torchao_constant(value: type) -> type:

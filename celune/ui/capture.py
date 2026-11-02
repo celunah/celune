@@ -5,8 +5,8 @@ from __future__ import annotations
 
 import re
 import time
-import threading
 import contextlib
+import threading
 from uuid import uuid4
 import queue as queue_module
 from collections.abc import Callable
@@ -339,13 +339,15 @@ def tts_caption(self, caption: Optional[str]) -> None:
             self._caption_text = caption
             self._caption_words = words
             self._caption_sentences = sentences
-            self._caption_rendered_text = caption.strip()
             self._caption_visible_words = len(words)
             self._caption_progress = 0.0
             self._caption_segmented_progress = True
             self._caption_transitioning = False
+            visible_words, _ = self._caption_words_for_progress(0.0, len(words))
+            rendered_text = " ".join(visible_words)
+            self._caption_rendered_text = rendered_text
             if self.caption is not None:
-                self.caption.update(caption.strip())
+                self.caption.update(rendered_text)
             return
 
         self._clear_caption_timers()
@@ -359,8 +361,14 @@ def tts_caption(self, caption: Optional[str]) -> None:
         self._caption_segmented_progress = singing_caption
         self._caption_active = True
         self._caption_transitioning = False
+        visible_words, _ = self._caption_words_for_progress(
+            0.0,
+            len(words) if singing_caption else 0,
+        )
+        rendered_text = " ".join(visible_words)
+        self._caption_rendered_text = rendered_text
         if self.caption is not None:
-            self.caption.update(caption.strip() if singing_caption else "")
+            self.caption.update(rendered_text)
         self._show_caption_widgets()
 
     self._run_on_ui_thread(update)

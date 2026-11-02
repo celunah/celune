@@ -206,6 +206,11 @@ share one reserved line, so the bar is not restored until the caption transition
 completes; the normal bar/readout state is also restored immediately when wake
 begins.
 
+The caption keeps the newest words that fit its line and releases older words
+only as space is needed. When one word is wider than the available line, the UI
+shows its trailing characters where terminal cell widths permit. Resizing the
+terminal recalculates the visible caption window.
+
 ## Value-aware selection menus
 
 `celune.ui.terminal.SelectMenuWidget` is a reusable Textual widget for compact
