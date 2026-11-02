@@ -19,26 +19,26 @@ from types import ModuleType, SimpleNamespace
 from typing import TYPE_CHECKING, NoReturn, Optional
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
-from .paths import (
+from celune.paths import (
     project_root,
     running_compiled,
     migrate_legacy_app_data,
     configure_huggingface_runtime,
 )
-from .constants import (
+from celune.constants import (
     APP_NAME,
     APP_SLUG,
     NVIDIA_DEVICE_KEYWORDS,
     SUPPORTED_CUDA_VERSIONS,
     ExitCodes,
 )
-from .i18n import string
-from .typing.common import Config
-from .terminal import set_terminal_title
-from . import REVISION, __tagline__, __version__
-from .vcs import is_git_checkout, git_checkout_hint
-from .exceptions import CEVoiceDependencyUnavailableError
-from .config import config_log_level, normalize_log_level
+from celune.i18n import string
+from celune.typing.common import Config
+from celune.terminal import set_terminal_title
+from celune import REVISION, __tagline__, __version__
+from celune.vcs import is_git_checkout, git_checkout_hint
+from celune.exceptions import CEVoiceDependencyUnavailableError
+from celune.config import config_log_level, normalize_log_level
 
 if TYPE_CHECKING:
     from celune.celune import Celune
@@ -267,23 +267,23 @@ def _load_runtime() -> SimpleNamespace:
         import yaml
         import psutil
 
-        from .paths import (
+        from celune.paths import (
             config_path,
             ensure_config_path,
             default_config_path,
         )
-        from .config import (
+        from celune.config import (
             env_bool,
             config_bool,
             config_value,
             merge_missing_defaults,
         )
-        from .ui import SelectMenu
-        from .namedays import has_name_day
-        from .exceptions import No, UpdateError
-        from .backends.environment import BACKEND_MANIFESTS
-        from .updater import check_for_update, update_to_latest
-        from .utils import indent, title_case, detected_ide, supports_ansi
+        from celune.ui import SelectMenu
+        from celune.namedays import has_name_day
+        from celune.exceptions import No, UpdateError
+        from celune.backends.environment import BACKEND_MANIFESTS
+        from celune.updater import check_for_update, update_to_latest
+        from celune.utils import indent, title_case, detected_ide, supports_ansi
 
         config_path()
     except ModuleNotFoundError as package:
