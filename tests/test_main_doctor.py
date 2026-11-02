@@ -519,6 +519,4 @@ class TestDoctorCommand(CeluneTestCase):
 
         by_label = {check.label: check for check in checks}
         assert by_label["CUDA runtime"].ok is expected_ok
-        assert "12.8 or 12.9 or 13.0 or 13.1 or 13.2 or 13.3 or 13.4" in (
-            by_label["CUDA runtime"].hint or ""
-        )
+        assert "12.8 to 13.4" in (by_label["CUDA runtime"].hint or "")

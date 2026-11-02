@@ -727,7 +727,8 @@ def _doctor_torch_details() -> list[DoctorCheck]:
             hint=string(
                 "cli.doctor_cuda_runtime_hint",
                 app_name=APP_NAME,
-                versions=" or ".join(SUPPORTED_CUDA_VERSIONS),
+                minimum=SUPPORTED_CUDA_VERSIONS[0],
+                maximum=SUPPORTED_CUDA_VERSIONS[-1],
             ),
         )
 

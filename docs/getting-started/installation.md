@@ -36,7 +36,7 @@ Install these before using the corresponding features:
 - OpenRGB, plus a compatible device, for audio-reactive lighting.
 - A C/C++ compiler for VoxCPM2 and any backend that builds native extensions.
 - A driver that supports the installed PyTorch CUDA build. Celune's runtime
-  check accepts CUDA 12.8 through 13.4; the core project currently pins CUDA
+  check accepts CUDA 12.8 to 13.4; the core project currently pins CUDA
   13.0, and CEDTS workers use a separate CUDA 12.8 stack.
 - Symbolic-link support on Windows when developing or using workflows that
   create links.

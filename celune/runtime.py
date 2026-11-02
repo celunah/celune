@@ -235,7 +235,8 @@ def validate_runtime(
             string(
                 "runtime.incompatible_cuda_detail",
                 app_name=APP_NAME,
-                versions=" or ".join(SUPPORTED_CUDA_VERSIONS),
+                minimum=SUPPORTED_CUDA_VERSIONS[0],
+                maximum=SUPPORTED_CUDA_VERSIONS[-1],
                 version=cuda_version,
             ),
             "error",
