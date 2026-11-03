@@ -247,7 +247,7 @@ def _open_binary_streams(args: argparse.Namespace) -> tuple[IO[bytes], IO[bytes]
             if descriptor is not None:
                 with suppress(OSError):
                     os.close(descriptor)
-        if isinstance(error, OSError) and error.errno == errno.EBADF:
+        if isinstance(error, OSError) and getattr(error, "errno", None) == errno.EBADF:
             raise CEDTSStreamError(f"not connected to {APP_NAME}") from error
         raise
     assert binary_input is not None
