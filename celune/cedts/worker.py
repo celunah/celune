@@ -6,9 +6,12 @@ import sys
 import json
 import math
 import time
+import errno
+import queue
 import argparse
 import threading
 import traceback
+
 from contextlib import suppress
 from typing import IO, Optional, cast
 from collections import OrderedDict, abc
@@ -53,9 +56,10 @@ from ..typing.backends import (
     BackendArguments,
     BackendDescription,
 )
+from ..constants import APP_NAME
 from ..typing.aliases import LogLevel
-from ..cevoice import select_voice_bundle
 from ..paths import configure_numba_cache
+from ..cevoice import select_voice_bundle
 from ..typing.common import JSONSerializable
 from ..dataclasses.pipeline import VoiceConversionRequest
 from ..vram import is_cuda_out_of_memory, release_cuda_after_oom
@@ -69,6 +73,26 @@ _MAX_BACKEND_ARGUMENT_FIELDS = 128
 _MAX_ARGUMENT_NAME_LENGTH = 128
 _SHUTDOWN_FINISH_TIMEOUT_SECONDS = 5.0
 _SHUTDOWN_CANCEL_TIMEOUT_SECONDS = 5.0
+_INITIAL_HANDSHAKE_TIMEOUT_SECONDS = 10.0
+
+
+class _HandshakeInputStream:
+    """Track worker handshake bytes without sharing Python's stdin buffer lock."""
+
+    def __init__(self, stream: IO[bytes]) -> None:
+        self._stream = os.fdopen(os.dup(stream.fileno()), "rb", buffering=0)
+        self.received_data = threading.Event()
+
+    def read(self, size: int = -1) -> bytes:
+        """Read raw handshake bytes and remember whether any client data arrived."""
+        data = self._stream.read(size)
+        if data:
+            self.received_data.set()
+        return data
+
+    def close(self) -> None:
+        """Close the duplicated control input after a completed handshake read."""
+        self._stream.close()
 
 
 def _worker_protocol_error(key: str, **kwargs: str) -> CEDTSError:
@@ -214,7 +238,7 @@ def _open_binary_streams(args: argparse.Namespace) -> tuple[IO[bytes], IO[bytes]
         binary_input_fd = None
         binary_output = os.fdopen(binary_output_fd, "wb", buffering=0)
         binary_output_fd = None
-    except Exception:
+    except Exception as error:
         for stream in (binary_input, binary_output):
             if stream is not None:
                 with suppress(OSError, ValueError):
@@ -223,6 +247,8 @@ def _open_binary_streams(args: argparse.Namespace) -> tuple[IO[bytes], IO[bytes]
             if descriptor is not None:
                 with suppress(OSError):
                     os.close(descriptor)
+        if isinstance(error, OSError) and error.errno == errno.EBADF:
+            raise CEDTSStreamError(f"not connected to {APP_NAME}") from error
         raise
     assert binary_input is not None
     assert binary_output is not None
@@ -299,6 +325,12 @@ def _worker_log(
     """Write backend logs away from the binary protocol stream."""
     prefix = f"[{severity}]" if loglevel == "info" else f"[{loglevel}][{severity}]"
     print(f"{prefix} {message}", file=_WORKER_STDERR, flush=True)
+
+
+def _report_initial_handshake_error(message: str) -> None:
+    """Write a typed startup stream failure for the core-side proxy to restore."""
+    error = CEDTSStreamError(message)
+    print(f"{type(error).__name__}: {error}", file=_WORKER_STDERR, flush=True)
 
 
 def _is_cesn_input_error(error: Exception) -> bool:
@@ -869,12 +901,19 @@ def main() -> int:
             limits=effective_limits,
         )
 
-    def _receive_packet() -> tuple[WorkerMessage, dict[str, WorkerValue]]:
+    def _receive_packet(
+        control_stream: Optional[IO[bytes]] = None,
+        *,
+        reject_payloads: bool = False,
+    ) -> tuple[WorkerMessage, dict[str, WorkerValue]]:
         """Receive one CEDTS packet and its validated binary payloads."""
-        control = receive_message(sys.stdin.buffer, limits=effective_limits)
+        input_stream = sys.stdin.buffer if control_stream is None else control_stream
+        control = receive_message(input_stream, limits=effective_limits)
         descriptors = control.get("payloads", [])
         if not isinstance(descriptors, list):
             raise _worker_protocol_error("worker_payload_descriptors_are_invalid")
+        if reject_payloads and descriptors:
+            raise _worker_protocol_error("worker_handshake_payloads_are_invalid")
         typed_descriptors = cast(list[WorkerPayloadDescriptor], descriptors)
         payloads = receive_payloads(
             binary_input,
@@ -887,28 +926,64 @@ def main() -> int:
             limits=effective_limits,
         )
 
-    hello: WorkerMessage = {}
+    handshake_input = _HandshakeInputStream(sys.stdin.buffer)
+    handshake_results: queue.Queue[
+        tuple[
+            Optional[tuple[str, dict[str, JSONSerializable]]],
+            Optional[Exception],
+        ]
+    ] = queue.Queue(maxsize=1)
+
+    def _receive_initial_handshake() -> None:
+        """Read and negotiate the first hello on a bounded daemon thread."""
+        try:
+            hello, _ = _receive_packet(
+                cast(IO[bytes], handshake_input),
+                reject_payloads=True,
+            )
+            hello_id = hello.get("message_id")
+            if not isinstance(hello_id, str):
+                raise CEDTSStreamError("invalid client")
+            negotiated = _negotiate_hello(hello)
+        except Exception as error:
+            handshake_results.put((None, error))
+        else:
+            handshake_results.put(((hello_id, negotiated), None))
+        finally:
+            with suppress(OSError, ValueError):
+                handshake_input.close()
+
+    threading.Thread(
+        target=_receive_initial_handshake,
+        name="CEDTSInitialHandshake",
+        daemon=True,
+    ).start()
     try:
-        hello, _ = _receive_packet()
-        hello_id = cast(str, hello["message_id"])
-        negotiated_capabilities = _negotiate_hello(hello)
-        effective_limits = limits_from_capabilities(negotiated_capabilities)
-    except (CEDTSEOFError, CEDTSStreamError, BrokenPipeError):
-        return 0
-    except Exception as error:
-        _send_error(
-            protocol_stream,
-            binary_output,
-            "handshake",
-            error,
-            reply_to=(
-                cast(str, hello.get("message_id"))
-                if isinstance(hello.get("message_id"), str)
-                else None
-            ),
-            send_lock=send_lock,
+        initial_handshake, handshake_error = handshake_results.get(
+            timeout=_INITIAL_HANDSHAKE_TIMEOUT_SECONDS
         )
+    except queue.Empty:
+        message = (
+            "invalid client"
+            if handshake_input.received_data.is_set()
+            else "timed out waiting for handshake"
+        )
+        _report_initial_handshake_error(message)
         return 1
+
+    if handshake_error is not None:
+        message = (
+            "invalid client"
+            if handshake_input.received_data.is_set()
+            else "timed out waiting for handshake"
+        )
+        _report_initial_handshake_error(message)
+        return 1
+    if initial_handshake is None:
+        _report_initial_handshake_error("invalid client")
+        return 1
+    hello_id, negotiated_capabilities = initial_handshake
+    effective_limits = limits_from_capabilities(negotiated_capabilities)
 
     _send_message(
         protocol_stream,

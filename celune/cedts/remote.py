@@ -8,11 +8,12 @@ import time
 import select
 import threading
 import subprocess
+
 from uuid import uuid4
-from typing import IO, Optional, cast
 from contextlib import suppress
-from collections import OrderedDict, abc, deque
 from dataclasses import dataclass
+from typing import IO, Optional, cast
+from collections import OrderedDict, abc, deque
 
 from ..paths import (
     project_root,
@@ -21,8 +22,6 @@ from ..paths import (
     huggingface_hub_cache_dir,
     temp_directory_environment,
 )
-from ..utils import format_error_message
-from ..cevoice import active_bundle_path
 from .protocol import (
     CEDTS_VERSION,
     CORE_CAPABILITIES,
@@ -52,27 +51,29 @@ from ..exceptions import (
     CEDTSProtocolError,
     CESNValidationError,
 )
-from ..typing.common import JSON
 from ..typing.worker import (
     WorkerValue,
     WorkerMessage,
     WorkerResponse,
     WorkerPayloadDescriptor,
 )
-from ..typing.aliases import LogLevel, LogCallback
 from ..typing.backends import (
     BackendArguments,
     BackendGeneration,
     BackendDescription,
     BackendArgumentValue,
 )
-from ..backends.vc.base import CeluneVCBackend
-from ..backends.tts.base import CeluneBackend
+from ..typing.common import JSON
 from ..backends.environment import (
     BackendManifest,
     BackendEnvironment,
     BackendEnvironmentManager,
 )
+from ..cevoice import active_bundle_path
+from ..utils import format_error_message
+from ..backends.tts.base import CeluneBackend
+from ..backends.vc.base import CeluneVCBackend
+from ..typing.aliases import LogLevel, LogCallback
 from ..dataclasses.pipeline import AudioOutput, VoiceConversionRequest
 
 __all__ = ["RemoteBackendProxy", "RemoteModelHandle", "RemoteVCBackendProxy"]
@@ -627,6 +628,12 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
         worker_error = self._worker_exit_message()
         if not worker_error:
             return error
+        error_type, separator, error_message = worker_error.partition(": ")
+        if separator and error_type in {
+            CEDTSStreamError.__name__,
+            f"{CEDTSStreamError.__module__}.{CEDTSStreamError.__qualname__}",
+        }:
+            return CEDTSStreamError(error_message)
         return CEDTSEOFError(
             f"{error}: {worker_error}",
             packet_name=error.packet_name,

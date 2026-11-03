@@ -20,11 +20,9 @@ Worker setup gives uv a 300-second HTTP read timeout for package downloads and
 a separate 900-second timeout for the full uv operation.
 `tests/backends/test_environment.py` covers this cleanup behavior.
 
-If a CEDTS worker exits before its first handshake frame, Celune reports the
-unexpected end of the protocol stream. When worker stderr contains an
-exception, the early-startup error also includes its final exception line;
-traceback frames remain in the worker diagnostics rather than the error
-screen.
+CEDTS worker startup distinguishes a missing initial handshake from invalid
+client input and reports the typed stream error. See [CEDTS transport](../formats/cedts.md#handshake)
+for the timeout and invalid-client conditions.
 
 ## Registered manifests
 

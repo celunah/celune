@@ -86,17 +86,27 @@ not expose a second public socket or permit arbitrary frontend commands.
 
 ## Handshake
 
-The worker sends `hello` with `versions: [[1, 2]]`, its supported operations,
-supported media types, a `describe` result, and capability flags. The peer
+The core sends `hello` with `versions: [[1, 2]]`, its supported operations,
+supported media types, a `describe` result, and capability flags. The worker
 replies with `hello_ack` containing the selected `[1, 2]` version and the
-negotiated capability intersection. Limits are negotiated by taking the smaller
-peer limit. Current capability flags cover streaming, cancellation, and
-callbacks; the core callback capability is currently false. Version selection
-currently requires an exact major/minor pair match. Version 1.2 adds optional
-`source_start` and `source_end` integer fields to error response data. They are
-zero-based, half-open CESN source offsets and must appear together; other error
-responses may omit them. Since peers require an exact version match, a 1.1 peer
-cannot exchange packets with a 1.2 peer.
+negotiated capability intersection, then sends `ready` after backend setup.
+Limits are negotiated by taking the smaller peer limit. Current capability
+flags cover streaming, cancellation, and callbacks; the core callback
+capability is currently false. Version selection currently requires an exact
+major/minor pair match. Version 1.2 adds optional `source_start` and
+`source_end` integer fields to error response data. They are zero-based,
+half-open CESN source offsets and must appear together; other error responses
+may omit them. Since peers require an exact version match, a 1.1 peer cannot
+exchange packets with a 1.2 peer.
+
+Before reading the initial hello, the worker waits up to ten seconds for the
+complete control packet and its empty binary boundary. If no control bytes
+arrive, it exits with `CEDTSStreamError: timed out waiting for handshake`. If
+bytes arrive but the packet, handshake, or binary boundary is invalid, it exits
+with `CEDTSStreamError: invalid client`. The worker writes these early errors to
+stderr, and the core proxy restores their `CEDTSStreamError` type when reporting
+the worker's exit. If either inherited binary channel descriptor is invalid,
+the worker exits with `CEDTSStreamError: not connected to Celune`.
 
 The supported operation names are:
 
