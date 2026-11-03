@@ -9,7 +9,7 @@ import queue
 import threading
 import contextlib
 import collections.abc
-from typing import TYPE_CHECKING, Union, Optional, cast
+from typing import TYPE_CHECKING, Optional, Union, cast
 
 import psutil
 import numpy as np
@@ -353,6 +353,8 @@ def queue_playback_chunk(
         )
     )
     enqueued_at = monotonic_time()
+    if timing is not None:
+        timing.mark_first_audio_queued(enqueued_at)
     queue_wait_seconds = max(0.0, enqueued_at - queue_wait_started_at)
     with engine.queue_lock:
         last_queued_by_source = engine.playback_chunk_last_queued_at

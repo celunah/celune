@@ -167,11 +167,15 @@ guide](https://github.com/yt-dlp/yt-dlp/wiki/PO-Token-Guide).
 Smart buffering starts playback after a minimum amount of audio, adapts the
 playback speed while generation catches up, and protects already-buffered audio
 from aggressive changes. Playback also uses a persistent output writer and an
-adaptive reserve. The reserve starts at 2 seconds and can grow to 30 seconds
+adaptive reserve. Its target starts at 2 seconds and can grow to 30 seconds
 when Celune detects high system/process CPU usage, delayed scheduling, slow
-output writes, or a PortAudio underflow. The output stream requests high
-latency device buffering to add a second hardware-side reserve; this may add
-latency but prevents short CPU spikes from becoming audible gaps.
+output writes, or a PortAudio underflow. Playback no longer waits up to 250 ms
+to build a startup reserve before dispatching the first ready block; the
+contention monitor can still delay output when it needs to rebuild reserve.
+Celune requests sounddevice's device low-latency setting for input and output
+streams. The actual latency depends on the device and host API. This reduces
+device buffering but leaves less margin for scheduling spikes. The adaptive
+reserve still reacts to observed contention and underflows.
 Live microphone voice conversion bypasses the adaptive reserve so its output
 does not wait for seconds of buffered audio.
 

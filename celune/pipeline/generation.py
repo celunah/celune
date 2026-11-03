@@ -7,6 +7,7 @@ import queue
 import pathlib
 import datetime
 import collections.abc
+
 from dataclasses import replace
 from typing import TYPE_CHECKING, Optional, cast
 
@@ -14,20 +15,10 @@ import torch
 import numpy as np
 import pyrubberband as rb
 
-from ..paths import (
-    outputs_dir,
-)
-from ..utils import (
-    format_number,
-    format_error_message,
-)
 from .output import (
     format_stat_duration,
     _output_filename_prefix,
     _output_filename_fragment,
-)
-from .timing import (
-    monotonic_time,
 )
 from .captions import (
     playback_source_meta,
@@ -41,10 +32,6 @@ from .captions import (
     build_caption_alignment_sections,
     record_caption_playback_audio_chunk,
 )
-from ..metadata import (
-    write_celune_flac,
-    celune_metadata_payload,
-)
 from .buffering import (
     release_pipeline,
     queue_playback_done,
@@ -53,30 +40,24 @@ from .buffering import (
     smart_buffer_target_seconds,
     flush_buffered_speech_chunks,
 )
-from ..audio.dsp import (
-    soften,
-    to_48khz,
-    is_silent_utterance,
-)
-from ..constants import (
-    BASE_SR,
-    APP_NAME,
-)
 from .submission import (
     split_text,
     play_prepared_speech,
     finish_tutorial_audio_capture,
 )
-from ..dataclasses.pipeline import (
-    SpeechTiming,
-    SpeechRequest,
-)
+from .timing import monotonic_time
+from ..paths import outputs_dir
 from ..i18n import string, tagged_string
+from ..constants import BASE_SR, APP_NAME
 from ..typing.common import JSONSerializable
 from ..typing.aliases import AudioChunk, AudioChunks
+from ..utils import format_number, format_error_message
 from ..persona.conversation import effective_voice_prompt
+from ..audio.dsp import soften, to_48khz, is_silent_utterance
+from ..dataclasses.pipeline import SpeechTiming, SpeechRequest
 from ..cesn import format_cesn_error, prepare_synthesis_chunks
 from ..vram import is_cuda_out_of_memory, release_cuda_after_oom
+from ..metadata import write_celune_flac, celune_metadata_payload
 from ..exceptions import CESNError, BackendError, NotAvailableError
 from ..core.concurrency import InferencePriority, run_in_daemon_thread
 
@@ -210,6 +191,7 @@ def _process_generation_request(
             )
             engine.smart_buffer_target_seconds = buffer_target_seconds
             speech_timing = SpeechTiming(item.submitted_at)
+            speech_timing.worker_started_time = generation_start_time
             pushed_audio = False
             stream_frame_count = 0
             accepted_stream_frame_count = 0
@@ -227,6 +209,7 @@ def _process_generation_request(
                 "repetition_penalty": 1.1,
             }
 
+            preparation_started_at = monotonic_time()
             if capture_tutorial_audio:
                 chunks = list(item.synthesis_sections)
             elif getattr(
@@ -246,6 +229,9 @@ def _process_generation_request(
                 break
             else:
                 chunks = prepare_synthesis_chunks(engine, text, split_text)
+            speech_timing.preparation_duration_ms = (
+                monotonic_time() - preparation_started_at
+            ) * 1000
             if not chunks:
                 engine.progress_callback(0, 1)
                 engine.error_callback(string("pipeline.nothing_to_say"))
@@ -301,6 +287,7 @@ def _process_generation_request(
                     ),
                 )
 
+                normalization_started_at = monotonic_time()
                 if item.normalize and not getattr(engine.backend, "singing", False):
                     engine.status_callback(string("status.normalizing"))
                     engine.progress_callback(None, None)
@@ -319,16 +306,26 @@ def _process_generation_request(
 
                             if differences > max(5, int(len(chunk_text) * 0.05)):
                                 chunk_text = normalized
+                if chunk_index == 0:
+                    speech_timing.normalization_duration_ms = (
+                        monotonic_time() - normalization_started_at
+                    ) * 1000
 
                 if not getattr(engine.backend, "singing", False):
                     generated_text_parts.append(chunk_text)
                 is_first_chunk = chunk_index == 0
                 last_timing: Optional[dict] = None
 
+                inference_wait_started_at = monotonic_time()
                 with (
                     engine.model_lock,
                     engine._inference_scheduler.inference(InferencePriority.SPEECH),
                 ):
+                    if chunk_index == 0:
+                        speech_timing.inference_wait_duration_ms = (
+                            monotonic_time() - inference_wait_started_at
+                        ) * 1000
+                    language_resolution_started_at = monotonic_time()
                     resolve_generation_language = getattr(
                         engine.backend,
                         "resolve_generation_language",
@@ -338,16 +335,28 @@ def _process_generation_request(
                         target_language = resolve_generation_language(request_language)
                     else:
                         target_language = request_language
+                    if chunk_index == 0:
+                        speech_timing.language_resolution_duration_ms = (
+                            monotonic_time() - language_resolution_started_at
+                        ) * 1000
                     caption_language = (
                         target_language if isinstance(target_language, str) else None
                     )
 
+                    language_reload_started_at = monotonic_time()
                     try:
                         reload_language_model(caption_language)
                     except Exception:
                         fatal_model_reload = engine.model is None
                         raise
+                    finally:
+                        if chunk_index == 0:
+                            speech_timing.language_reload_duration_ms = (
+                                monotonic_time() - language_reload_started_at
+                            ) * 1000
 
+                    if chunk_index == 0:
+                        speech_timing.backend_started_time = monotonic_time()
                     for (
                         audio_chunk,
                         sr,  # 24 kHz if Qwen3 or Celune Mini, 48 kHz if VoxCPM2
@@ -365,6 +374,11 @@ def _process_generation_request(
                         repetition_penalty=generation_params["repetition_penalty"],
                     ):
                         stream_frame_count += 1
+                        if (
+                            chunk_index == 0
+                            and speech_timing.backend_first_frame_time is None
+                        ):
+                            speech_timing.backend_first_frame_time = monotonic_time()
                         if timing is not None:
                             last_timing = timing
                         if engine.exit_requested:
@@ -633,7 +647,8 @@ def _process_generation_request(
             engine.log(
                 f"{format_stat_duration(speech_len)}, "
                 f"{format_number(generation_time, 2)}s, "
-                f"{format_number(generation_speed, 2)}x"
+                f"{format_number(generation_speed, 2)}x",
+                loglevel="debug",
             )
             remember_smart_buffer_speed(engine, generation_speed)
             engine.smart_buffer_target_seconds = smart_buffer_target_seconds(

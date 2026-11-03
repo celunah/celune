@@ -5,10 +5,10 @@ from __future__ import annotations
 
 import re
 import time
-import contextlib
 import threading
-from uuid import uuid4
+import contextlib
 import queue as queue_module
+from uuid import uuid4
 from collections.abc import Callable
 from typing import Union, Optional, cast
 
@@ -1182,6 +1182,7 @@ def _start_persona_recording(self) -> bool:
             samplerate=sample_rate,
             channels=channel_count,
             dtype="float32",
+            latency="low",
             callback=callback,
             device=input_device,
         )

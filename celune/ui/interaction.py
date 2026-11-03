@@ -12,10 +12,10 @@ import ctypes
 import asyncio
 import threading
 import contextlib
+import queue as queue_module
 from uuid import uuid4
 from pathlib import Path
 from copy import deepcopy
-import queue as queue_module
 from collections.abc import Callable, Iterator
 from typing import TYPE_CHECKING, Optional, cast
 
@@ -415,6 +415,7 @@ def _start_vc_recording(self) -> bool:
             samplerate=sample_rate,
             channels=channel_count,
             dtype="float32",
+            latency="low",
             callback=callback,
             device=input_device,
             blocksize=live_chunk_frames,

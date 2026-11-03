@@ -5,9 +5,10 @@ from __future__ import annotations
 
 import time
 import queue
+
 from pathlib import Path
-from typing import Union, Optional
-from dataclasses import field, dataclass
+from typing import Optional, Union
+from dataclasses import dataclass, field
 
 import numpy as np
 import numpy.typing as npt
@@ -163,16 +164,35 @@ class SpeechTiming:
     start_time: float
     first_chunk_time: Optional[float] = None
     first_playback_time: Optional[float] = None
+    worker_started_time: Optional[float] = None
+    preparation_duration_ms: Optional[float] = None
+    normalization_duration_ms: Optional[float] = None
+    inference_wait_duration_ms: Optional[float] = None
+    language_resolution_duration_ms: Optional[float] = None
+    language_reload_duration_ms: Optional[float] = None
+    backend_started_time: Optional[float] = None
+    backend_first_frame_time: Optional[float] = None
+    first_audio_queued_time: Optional[float] = None
+    writer_submitted_time: Optional[float] = None
 
     def mark_first_chunk(self) -> None:
         """Record when the pipeline has its first usable audio chunk."""
         if self.first_chunk_time is None:
             self.first_chunk_time = time.monotonic()
 
-    def mark_first_playback(self) -> None:
+    def mark_first_playback(self, timestamp: Optional[float] = None) -> None:
         """Record when the first audio chunk is sent to the output stream."""
         if self.first_playback_time is None:
-            self.first_playback_time = time.monotonic()
+            self.first_playback_time = (
+                time.monotonic() if timestamp is None else timestamp
+            )
+
+    def mark_first_audio_queued(self, timestamp: Optional[float] = None) -> None:
+        """Record when the first audio chunk enters Celune's playback queue."""
+        if self.first_audio_queued_time is None:
+            self.first_audio_queued_time = (
+                time.monotonic() if timestamp is None else timestamp
+            )
 
     def ttfc_ms(self) -> float:
         """Return time to the first usable pipeline audio chunk in milliseconds.

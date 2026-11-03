@@ -2,6 +2,7 @@
 """Shared playback worker, mixing, and audio stream lifecycle."""
 
 from __future__ import annotations
+
 import os
 import time
 import queue
@@ -12,9 +13,10 @@ import pathlib
 import threading
 import contextlib
 import collections.abc
+
 from collections import deque
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Union, Optional, cast
+from typing import TYPE_CHECKING, Optional, Union, cast
 
 import torch
 import numpy as np
@@ -24,7 +26,6 @@ from .timing import (
     SFX_DUCK_GAIN,
     SFX_DUCK_FADE_SECONDS,
     PIPELINE_CPU_YIELD_SECONDS,
-    PLAYBACK_BUFFER_STARTUP_GRACE_SECONDS,
     monotonic_time,
 )
 from .captions import (
@@ -139,6 +140,7 @@ class _PlaybackWriteItem:
     source_ids: tuple[int, ...]
     duration_seconds: float
     submitted_at: float
+    timings: tuple[SpeechTiming, ...] = ()
 
 
 class _PlaybackWriter:
@@ -232,6 +234,8 @@ class _PlaybackWriter:
             failed: Optional[BaseException] = None
             try:
                 underflowed = bool(_write_playback_block(self._engine, item.audio))
+                for timing in item.timings:
+                    log_first_playback(self._engine, timing, started_at)
                 self._record_played_frames(item)
             except BaseException as error:  # pylint: disable=broad-exception-caught
                 failed = error
@@ -258,9 +262,13 @@ class _PlaybackWriter:
                 self._discard_pending()
                 return
 
-    def submit(self, audio: AudioChunk, source_ids: tuple[int, ...]) -> None:
+    def submit(
+        self,
+        audio: AudioChunk,
+        source_ids: tuple[int, ...],
+        timings: tuple[SpeechTiming, ...] = (),
+    ) -> None:
         """Queue one mixed block and account for its playback reserve."""
-        submitted_at = time.monotonic()
         with self._lock:
             if self._error is not None:
                 raise self._error
@@ -270,12 +278,17 @@ class _PlaybackWriter:
                 self._pending_sources[source_id] = (
                     self._pending_sources.get(source_id, 0) + 1
                 )
+        submitted_at = time.monotonic()
+        for timing in timings:
+            if timing.writer_submitted_time is None:
+                timing.writer_submitted_time = submitted_at
         self._queue.put(
             _PlaybackWriteItem(
                 audio=np.asarray(audio, dtype=np.float32),
                 source_ids=source_ids,
                 duration_seconds=duration_seconds,
                 submitted_at=submitted_at,
+                timings=timings,
             )
         )
 
@@ -438,12 +451,16 @@ class _PlaybackInputReader:
             self._thread = None
 
 
-def log_first_playback(engine: Celune, timing: Optional[SpeechTiming]) -> None:
-    """Log time to first playback for a queued speech timing object.
+def log_first_playback(
+    engine: Celune,
+    timing: Optional[SpeechTiming],
+    timestamp: Optional[float] = None,
+) -> None:
+    """Log time to first playback and debug-only stage timings once.
 
     Args:
         engine: The instance of Celune to log back into.
-        timing: The JSON-formatted timing data.
+        timing: Timing data attached to the first output block.
     """
     start_time = getattr(timing, "start_time", None)
     if not isinstance(start_time, float):
@@ -451,7 +468,9 @@ def log_first_playback(engine: Celune, timing: Optional[SpeechTiming]) -> None:
 
     mark_first_playback = getattr(timing, "mark_first_playback", None)
     if callable(mark_first_playback):
-        mark_first_playback()
+        if getattr(timing, "first_playback_time", None) is not None:
+            return
+        mark_first_playback(timestamp)
     elif getattr(timing, "first_playback_time", None) is None:
         return
 
@@ -464,6 +483,75 @@ def log_first_playback(engine: Celune, timing: Optional[SpeechTiming]) -> None:
         elapsed = monotonic_time() - start_time
 
     engine.log(f"TTFP {format_number(elapsed, 2)}s")
+    if isinstance(timing, SpeechTiming) and timing.worker_started_time is not None:
+        latency_report = (
+            string(
+                "pipeline.latency_request",
+                request_wait=_format_latency_interval(
+                    timing.start_time,
+                    timing.worker_started_time,
+                ),
+                preparation=_format_latency_duration(timing.preparation_duration_ms),
+                normalization=_format_latency_duration(
+                    timing.normalization_duration_ms
+                ),
+            ),
+            string(
+                "pipeline.latency_model",
+                inference_wait=_format_latency_duration(
+                    timing.inference_wait_duration_ms
+                ),
+                language_resolve=_format_latency_duration(
+                    timing.language_resolution_duration_ms
+                ),
+                reload=_format_latency_duration(timing.language_reload_duration_ms),
+            ),
+            string(
+                "pipeline.latency_backend",
+                first_frame=_format_latency_interval(
+                    timing.backend_started_time,
+                    timing.backend_first_frame_time,
+                ),
+                audio_processing=_format_latency_interval(
+                    timing.backend_first_frame_time,
+                    timing.first_chunk_time,
+                ),
+            ),
+            string(
+                "pipeline.latency_playback",
+                adaptive_buffer=_format_latency_interval(
+                    timing.first_chunk_time,
+                    timing.first_audio_queued_time,
+                ),
+                playback_dispatch=_format_latency_interval(
+                    timing.first_audio_queued_time,
+                    timing.writer_submitted_time,
+                ),
+            ),
+            string(
+                "pipeline.latency_output",
+                output_queue_wait=_format_latency_interval(
+                    timing.writer_submitted_time,
+                    timing.first_playback_time,
+                ),
+            ),
+        )
+        for message in latency_report:
+            engine.log(message, loglevel="debug")
+
+
+def _format_latency_interval(start: Optional[float], end: Optional[float]) -> str:
+    """Format a monotonic timestamp interval as diagnostic milliseconds."""
+    if start is None or end is None:
+        return "n/a"
+    return f"{format_number(max(0.0, end - start) * 1000, 1)}ms"
+
+
+def _format_latency_duration(duration_ms: Optional[float]) -> str:
+    """Format one optional duration as diagnostic milliseconds."""
+    if duration_ms is None:
+        return "n/a"
+    return f"{format_number(max(0.0, duration_ms), 1)}ms"
 
 
 def close_stream(engine: Celune, abort: bool = False) -> None:
@@ -740,7 +828,7 @@ def _ensure_playback_stream_unlocked(engine: Celune, sample_rate: int) -> bool:
             channels=output_channels,
             dtype="float32",
             blocksize=0,
-            latency="high",
+            latency="low",
             device=output_device,
         )
         if engine.stream is None:
@@ -906,7 +994,6 @@ async def playback_worker_job(engine: Celune) -> None:
     writer = _PlaybackWriter(engine, contention, on_error=input_reader.wake)
     input_reader.start()
     last_monitor_at = monotonic_time()
-    buffering_started_at: Optional[float] = None
     rebuffer_wait_started_at: Optional[float] = None
     pending_idle_marker: Optional[PlaybackSourceDone] = None
     last_idle_wait_state: Optional[tuple[int, bool, int, int, int, int, int, bool]] = (
@@ -998,7 +1085,7 @@ async def playback_worker_job(engine: Celune) -> None:
 
     async def handle_playback_error(error: BaseException) -> None:
         """Report an output failure and clear the playback pipeline."""
-        nonlocal buffered_seconds, buffering_started_at, pending_idle_marker
+        nonlocal buffered_seconds, pending_idle_marker
         pending_idle_marker = None
         finish_rebuffer_wait()
         engine.log(
@@ -1018,7 +1105,6 @@ async def playback_worker_job(engine: Celune) -> None:
         source_done.clear()
         input_reader.clear()
         buffered_seconds = 0.0
-        buffering_started_at = None
         publish_buffered_seconds()
         for source_id in tuple(playback_source_meta(engine)):
             notify_speech_playback_finished(engine, source_id)
@@ -1031,7 +1117,7 @@ async def playback_worker_job(engine: Celune) -> None:
         release_pipeline(engine)
 
     async def force_stop_playback() -> None:
-        nonlocal buffered_seconds, buffering_started_at, stop_cleanup_generation
+        nonlocal buffered_seconds, stop_cleanup_generation
         nonlocal pending_idle_marker
         pending_idle_marker = None
         finish_rebuffer_wait()
@@ -1042,7 +1128,6 @@ async def playback_worker_job(engine: Celune) -> None:
         source_buffers.clear()
         source_done.clear()
         buffered_seconds = 0.0
-        buffering_started_at = None
         await run_in_daemon_thread(lambda: writer.stop(clear=True))
         publish_buffered_seconds()
         playback_source_statuses(engine).clear()
@@ -1061,7 +1146,7 @@ async def playback_worker_job(engine: Celune) -> None:
             engine.idle_callback()
 
     async def drain_pending_items() -> bool:
-        nonlocal buffered_seconds, buffering_started_at, last_monitor_at, stop_requested
+        nonlocal buffered_seconds, last_monitor_at, stop_requested
 
         now = monotonic_time()
         contention.sample_cpu(now)
@@ -1110,8 +1195,6 @@ async def playback_worker_job(engine: Celune) -> None:
                         blocking
                     )
                     buffered_seconds += len(pending.audio) / max(1, pending.sample_rate)
-                    if buffering_started_at is None:
-                        buffering_started_at = monotonic_time()
             elif isinstance(pending, PlaybackSourceDone):
                 if pending.generation != getattr(engine, "_playback_generation", 0):
                     continue
@@ -1178,8 +1261,6 @@ async def playback_worker_job(engine: Celune) -> None:
             if blocks:
                 source_buffers.setdefault(item.source_id, deque()).extend(blocks)
                 buffered_seconds += len(item.audio) / max(1, item.sample_rate)
-                if buffering_started_at is None:
-                    buffering_started_at = monotonic_time()
         elif isinstance(item, PlaybackSourceDone):
             if item.generation != getattr(engine, "_playback_generation", 0):
                 continue
@@ -1224,19 +1305,6 @@ async def playback_worker_job(engine: Celune) -> None:
 
             finish_rebuffer_wait(now)
 
-            if (
-                apply_contention_buffering
-                and buffered_seconds + writer.pending_seconds
-                < contention.target_seconds()
-                and buffering_started_at is not None
-                and monotonic_time() - buffering_started_at
-                < PLAYBACK_BUFFER_STARTUP_GRACE_SECONDS
-            ):
-                await asyncio.sleep(0.005)
-                continue
-
-            buffering_started_at = None
-
             if not await run_in_daemon_thread(
                 lambda: _ensure_playback_stream(engine, BASE_SR)
             ):
@@ -1272,7 +1340,7 @@ async def playback_worker_job(engine: Celune) -> None:
                 len(source_buffers[source_id][0][0]) for source_id in ready_ids
             )
             mixed = np.zeros((block_len, 2), dtype=np.float32)
-            timing_to_log: Optional[SpeechTiming] = None
+            timings_to_log: list[SpeechTiming] = []
 
             for source_id in ready_ids:
                 block, timing = source_buffers[source_id][0]
@@ -1285,8 +1353,15 @@ async def playback_worker_job(engine: Celune) -> None:
                     source_meta=playback_meta.get(source_id),
                 )
                 mixed += block_audio
-                if timing_to_log is None and timing is not None:
-                    timing_to_log = timing
+                if (
+                    timing is not None
+                    and timing.first_playback_time is None
+                    and all(
+                        pending_timing is not timing
+                        for pending_timing in timings_to_log
+                    )
+                ):
+                    timings_to_log.append(timing)
 
                 if len(block) == block_len:
                     source_buffers[source_id].popleft()
@@ -1311,11 +1386,10 @@ async def playback_worker_job(engine: Celune) -> None:
                 if engine.utterance_force_stop.is_set():
                     await force_stop_playback()
                     break
-                log_first_playback(engine, timing_to_log)
                 if speech_active:
                     _begin_glow_speaking(engine)
                 engine.glow.schedule(mixed)
-                writer.submit(mixed, tuple(ready_ids))
+                writer.submit(mixed, tuple(ready_ids), tuple(timings_to_log))
                 update_playback_progress(engine, source_buffers)
                 if yield_seconds > 0.0:
                     await asyncio.sleep(yield_seconds)

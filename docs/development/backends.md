@@ -259,6 +259,22 @@ request-queue delay does not make model throughput appear slower. `TTFC`
 measures audio ready for the playback buffer; it does not measure when playback
 becomes audible.
 
+`TTFP` records when the output writer begins writing the first mixed block.
+Device playback and audible onset follow that marker.
+
+At the debug log level, Celune also reports request wait, text preparation,
+normalization, inference wait, language resolution and reload, backend first
+frame, core audio processing, adaptive buffering, playback dispatch, and output
+queue wait. Request wait runs from submission until generation starts, including
+any wait for model readiness. Backend first-frame time includes backend and
+worker transport latency. Core audio processing runs from that frame until
+Celune has the first usable chunk. Adaptive buffering then runs until the audio
+enters the playback queue. Playback dispatch runs from there until the mixed
+block is queued for output, and output queue wait measures until the writer
+starts writing it. These breakdown lines and the generation duration/speed
+summary are hidden at info and verbose levels; `TTFC` and `TTFP` remain the
+latency summaries there.
+
 Streaming adapters retain their configured chunk batches and final-chunk
 metadata. Once the first batch is ready, they release it when the next
 nonempty backend chunk arrives instead of waiting for a complete second batch.
