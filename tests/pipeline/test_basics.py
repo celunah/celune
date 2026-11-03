@@ -1746,7 +1746,7 @@ class TestPipelineAsync(CeluneAsyncTestCase):
             await run_playback_worker(cast(Celune, engine))
 
         assert mock_stream.call_args.kwargs["device"] == "VB-Cable Output"
-        assert mock_stream.call_args.kwargs["latency"] == "high"
+        assert mock_stream.call_args.kwargs["latency"] == "low"
 
     async def test_playback_worker_records_output_underflow(self) -> None:
         """Verify PortAudio underflows raise the adaptive reserve target."""

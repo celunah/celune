@@ -235,7 +235,8 @@ class _PlaybackWriter:
             try:
                 underflowed = bool(_write_playback_block(self._engine, item.audio))
                 for timing in item.timings:
-                    log_first_playback(self._engine, timing, started_at)
+                    if timing.first_playback_time is None:
+                        log_first_playback(self._engine, timing, started_at)
                 self._record_played_frames(item)
             except BaseException as error:  # pylint: disable=broad-exception-caught
                 failed = error
@@ -379,21 +380,30 @@ class _PlaybackInputReader:
             except queue.Empty:
                 continue
 
-            while not self._stop.is_set():
+            available_slots = max(1, self._queue.maxsize - self._queue.qsize())
+            pending_items = [item]
+            while len(pending_items) < available_slots:
                 try:
-                    self._queue.put(item, True, 0.1)
+                    pending_items.append(self._engine.audio_queue.get_nowait())
+                except queue.Empty:
                     break
-                except queue.Full:
-                    continue
-            else:
-                return
+
+            for pending_item in pending_items:
+                while not self._stop.is_set():
+                    try:
+                        self._queue.put(pending_item, True, 0.1)
+                        break
+                    except queue.Full:
+                        continue
+                else:
+                    return
 
             loop = self._loop
             if loop is not None:
                 with contextlib.suppress(RuntimeError):
                     loop.call_soon_threadsafe(self._notify)
 
-            if item is self._engine.sentinel:
+            if any(pending is self._engine.sentinel for pending in pending_items):
                 return
 
     async def get(self) -> object:
@@ -468,9 +478,8 @@ def log_first_playback(
 
     mark_first_playback = getattr(timing, "mark_first_playback", None)
     if callable(mark_first_playback):
-        if getattr(timing, "first_playback_time", None) is not None:
-            return
-        mark_first_playback(timestamp)
+        if getattr(timing, "first_playback_time", None) is None:
+            mark_first_playback(timestamp)
     elif getattr(timing, "first_playback_time", None) is None:
         return
 
