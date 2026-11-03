@@ -2,7 +2,6 @@
 """Caption alignment and playback progress tracking."""
 
 from __future__ import annotations
-from collections import abc, deque
 
 import re
 import json
@@ -15,20 +14,26 @@ import threading
 import subprocess
 import unicodedata
 import string as string_module
+
 from pathlib import Path
+from collections import abc, deque
 from difflib import SequenceMatcher
-from typing import TYPE_CHECKING, Union, Optional, Protocol, cast
+from typing import TYPE_CHECKING, Optional, Protocol, Union, cast
 
 import numpy as np
 from iso639.exceptions import InvalidLanguageValue, DeprecatedLanguageValue
 
-from .timing import (
-    monotonic_time,
-)
-
+from .timing import monotonic_time
 from ..i18n import string
 from ..constants import BASE_SR
 from ..typing.common import JSON
+from ..dataclasses.pipeline import (
+    SpeechTiming,
+    CaptionPlaybackState,
+    CaptionPlaybackSection,
+    CaptionPlaybackSegment,
+    CaptionAlignmentSection,
+)
 from ..utils import format_error_message
 from ..audio.resampling import resample_audio
 from ..typing.pipeline import SpeechStreamQueue
@@ -37,13 +42,6 @@ from ..registry.consent import require_model_consent
 from ..registry.other import CAPTION_ALIGNMENT_MODEL_ID
 from ..typing.aliases import LogLevel, AudioChunk, AudioChunks
 from ..exceptions import OnnxRuntimeNotFound, EspeakExecutableNotFound
-from ..dataclasses.pipeline import (
-    SpeechTiming,
-    CaptionPlaybackState,
-    CaptionPlaybackSection,
-    CaptionPlaybackSegment,
-    CaptionAlignmentSection,
-)
 
 if TYPE_CHECKING:
     from ..celune import Celune
@@ -744,12 +742,14 @@ def _phonemize(transcript: str, voice: str) -> tuple[tuple[str, ...], ...]:
 
 
 def _split_ipa_phones(ipa: str) -> tuple[str, ...]:
-    """Group combining and modifier characters with their IPA base phone."""
+    """Group IPA modifiers with base phones and ignore punctuation markers."""
     phones: list[str] = []
     for character in ipa:
         if character.isspace():
             continue
         category = unicodedata.category(character)
+        if category.startswith("P"):
+            continue
         joins_previous = phones and (
             category in {"Mn", "Lm"} or phones[-1].endswith(_IPA_TIE)
         )
@@ -875,6 +875,45 @@ class CaptionAlignmentWorker:
                 timing_words,
                 alignment_failed,
                 pushed_audio,
+                sample_rate,
+                alignment_sections,
+            )
+        )
+
+    def submit_alignment(
+        self,
+        engine: Celune,
+        source_id: int,
+        audio_chunks: AudioChunks,
+        caption_text: str,
+        transcript: str,
+        display_words: tuple[str, ...],
+        language: Optional[str],
+        word_start: int,
+        word_end: int,
+        timing_words: tuple[str, ...],
+        alignment_failed: list[bool],
+        audio_start_frame: int,
+        audio_end_frame: int,
+        sample_rate: int = BASE_SR,
+        alignment_sections: tuple[CaptionAlignmentSection, ...] = (),
+    ) -> None:
+        """Align already queued speech without holding its playback."""
+        self.submit_task(
+            lambda: self._align_and_record_chunk(
+                engine,
+                source_id,
+                audio_chunks,
+                caption_text,
+                transcript,
+                display_words,
+                language,
+                word_start,
+                word_end,
+                timing_words,
+                alignment_failed,
+                audio_start_frame,
+                audio_end_frame,
                 sample_rate,
                 alignment_sections,
             )
@@ -1056,6 +1095,75 @@ class CaptionAlignmentWorker:
                     timing_words,
                     word_start_frames,
                 )
+
+    def _align_and_record_chunk(
+        self,
+        engine: Celune,
+        source_id: int,
+        audio_chunks: AudioChunks,
+        caption_text: str,
+        transcript: str,
+        display_words: tuple[str, ...],
+        language: Optional[str],
+        word_start: int,
+        word_end: int,
+        timing_words: tuple[str, ...],
+        alignment_failed: list[bool],
+        audio_start_frame: int,
+        audio_end_frame: int,
+        sample_rate: int,
+        alignment_sections: tuple[CaptionAlignmentSection, ...],
+    ) -> None:
+        """Align already queued audio and attach its caption timings."""
+        with self._state_lock:
+            if source_id in self._cancelled_sources:
+                audio_chunks.clear()
+                return
+        with engine.queue_lock:
+            if source_id not in playback_source_meta(engine):
+                audio_chunks.clear()
+                return
+
+        if alignment_failed[0]:
+            audio_chunks.clear()
+            return
+        word_start_frames = align_chunk_word_start_frames(
+            audio_chunks,
+            sample_rate,
+            transcript,
+            display_words,
+            language,
+            self._logger,
+            self._log_level,
+            alignment_sections,
+        )
+        if word_start_frames is None:
+            alignment_failed[0] = True
+            callback = getattr(engine, "caption_callback", None)
+            if callable(callback):
+                callback(None)
+            audio_chunks.clear()
+            return
+
+        with self._state_lock:
+            if source_id in self._cancelled_sources:
+                audio_chunks.clear()
+                return
+            record_caption_playback_segment(
+                engine,
+                source_id,
+                audio_start_frame,
+                audio_end_frame,
+                word_start,
+                word_end,
+                timing_words,
+                word_start_frames,
+            )
+            engine._caption_source_id = source_id
+            callback = getattr(engine, "caption_callback", None)
+            if callable(callback):
+                callback(caption_text)
+        audio_chunks.clear()
 
     def _flush_audio(
         self,

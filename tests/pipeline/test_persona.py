@@ -4,6 +4,7 @@
 import tempfile
 import threading
 import json as _json
+
 from pathlib import Path
 from unittest import mock
 from types import SimpleNamespace
@@ -1487,7 +1488,7 @@ class TestPipelineAsync(CeluneAsyncTestCase):
         self.assertTrue(generated_during_alignment)
         self.assertFalse(alignment_timed_out)
         self.assertIn(
-            "align:normalized first normalized second:flushes=0",
+            "align:normalized first normalized second:flushes=2",
             events,
         )
         self.assertEqual(

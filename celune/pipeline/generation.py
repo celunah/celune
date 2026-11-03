@@ -215,7 +215,6 @@ def _process_generation_request(
             accepted_stream_frame_count = 0
             caption_language: Optional[str] = None
             caption_alignment_failed: list[bool] = [False]
-            pushed_audio_state: list[bool] = [False]
             caption_audio_frames = 0
             caption_audio_sections: list[tuple[int, int, str]] = []
 
@@ -460,14 +459,10 @@ def _process_generation_request(
                         )
                         engine.smart_buffer_target_seconds = buffer_target_seconds
 
-                        if (
-                            not capture_tutorial_audio
-                            and not caption_alignment_enabled
-                            and (
-                                buffer_target_seconds <= 0.0
-                                or buffered_speech_len >= buffer_target_seconds
-                                or (singing_caption_enabled and section_final)
-                            )
+                        if not capture_tutorial_audio and (
+                            buffer_target_seconds <= 0.0
+                            or buffered_speech_len >= buffer_target_seconds
+                            or (singing_caption_enabled and section_final)
                         ):
                             pushed_audio = flush_buffered_speech_chunks(
                                 engine,
@@ -527,6 +522,15 @@ def _process_generation_request(
                             caption_audio_sections.append(
                                 (chunk_start_frames, caption_audio_frames, chunk_text)
                             )
+                        pushed_audio = flush_buffered_speech_chunks(
+                            engine,
+                            source_id,
+                            buffer,
+                            speech_timing,
+                            pushed_audio,
+                            stream_queue,
+                            caption_text=None,
+                        )
                     else:
                         pushed_audio = flush_buffered_speech_chunks(
                             engine,
@@ -639,8 +643,8 @@ def _process_generation_request(
             )
             engine.log(f"TTFC {format_number(speech_timing.ttfc_ms(), 1)}ms")
 
-            if buffer and not capture_tutorial_audio and not caption_alignment_enabled:
-                flush_buffered_speech_chunks(
+            if buffer and not capture_tutorial_audio:
+                pushed_audio = flush_buffered_speech_chunks(
                     engine,
                     source_id,
                     buffer,
@@ -682,6 +686,15 @@ def _process_generation_request(
                             buffer.append(np.asarray(tail, dtype=np.float32))
                             full_audio.append(tail)
                             caption_audio_frames += len(tail)
+                            pushed_audio = flush_buffered_speech_chunks(
+                                engine,
+                                source_id,
+                                buffer,
+                                speech_timing,
+                                pushed_audio,
+                                stream_queue,
+                                caption_text=None,
+                            )
                         else:
                             queued_tail = queue_playback_chunk(
                                 engine,
@@ -701,6 +714,8 @@ def _process_generation_request(
                 full_audio_array = np.concatenate(full_audio) if full_audio else None
                 if full_audio_array is not None:
                     is_silent, silence_tier = is_silent_utterance(full_audio_array)
+                if caption_alignment_enabled and caption_worker is not None:
+                    full_audio.clear()
 
                 if is_silent and silence_tier == 2:
                     if item.silent_retry_count < _MAX_SILENT_UTTERANCE_RETRIES:
@@ -744,45 +759,33 @@ def _process_generation_request(
                 if is_silent and silence_tier == 1:
                     engine.log(string("pipeline.may_be_silent"), "warning")
 
-                if caption_alignment_enabled and caption_worker is not None and buffer:
-                    if full_audio_array is not None:
-                        buffer.clear()
-                        buffer.append(full_audio_array)
-                        full_audio.clear()
-                    if caption_audio_sections:
-                        transcript, alignment_sections = (
-                            build_caption_alignment_sections(
-                                display_text,
-                                tuple(caption_audio_sections),
-                            )
-                        )
-                        caption_worker.submit_chunk(
-                            engine,
-                            source_id,
-                            buffer,
-                            speech_timing,
-                            stream_queue,
-                            display_text,
-                            transcript,
-                            tuple(display_text.split()),
-                            caption_language,
-                            0,
-                            caption_word_total,
-                            tuple(transcript.split()),
-                            caption_alignment_failed,
-                            pushed_audio_state,
-                            BASE_SR,
-                            alignment_sections,
-                        )
-                    else:
-                        caption_worker.submit_audio(
-                            engine,
-                            source_id,
-                            buffer,
-                            speech_timing,
-                            stream_queue,
-                            pushed_audio_state,
-                        )
+                if (
+                    caption_alignment_enabled
+                    and caption_worker is not None
+                    and full_audio_array is not None
+                    and caption_audio_sections
+                ):
+                    transcript, alignment_sections = build_caption_alignment_sections(
+                        display_text,
+                        tuple(caption_audio_sections),
+                    )
+                    caption_worker.submit_alignment(
+                        engine,
+                        source_id,
+                        [full_audio_array],
+                        display_text,
+                        transcript,
+                        tuple(display_text.split()),
+                        caption_language,
+                        0,
+                        caption_word_total,
+                        tuple(transcript.split()),
+                        caption_alignment_failed,
+                        0,
+                        caption_audio_frames,
+                        BASE_SR,
+                        alignment_sections,
+                    )
 
                 engine.total_generated_speech_seconds += speech_len
 

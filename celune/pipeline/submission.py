@@ -8,31 +8,19 @@ import re
 import time
 import queue
 import pathlib
-from typing import TYPE_CHECKING, Union, Optional, cast
 from collections.abc import Callable
+from typing import TYPE_CHECKING, Union, Optional, cast
 
 import numpy as np
 import soundfile as sf
 from iso639 import Lang
 from iso639.exceptions import InvalidLanguageValue, DeprecatedLanguageValue
 
-from ..vc import VC_PLAYBACK_GAIN, normalize_vc_audio
-from ..cesn import contains_cesn_note_event
-from ..i18n import string, tagged_string
-from ..utils import (
-    rng_replace,
-    cesn_to_text,
-    is_april_fools,
-    detect_language,
-    format_error_message,
-    normalize_special_characters,
-)
 from .output import (
     is_youtube_sfx_url,
     download_youtube_sfx,
     format_stat_duration,
 )
-from ..cevoice import default_loader
 from .captions import (
     playback_source_meta,
     next_playback_source_id,
@@ -49,12 +37,15 @@ from .buffering import (
     acquire_pipeline_result,
     flush_buffered_speech_chunks,
 )
-from ..audio.dsp import split, resample_audio, is_silent_utterance
-from ..constants import BASE_SR, APP_NAME
-from ..exceptions import NotAvailableError
-from ..typing.aliases import AudioChunk, AudioChunks
-from ..typing.pipeline import SpeechStreamQueue
-from ..core.concurrency import run_in_daemon_thread
+from ..utils import (
+    rng_replace,
+    cesn_to_text,
+    is_april_fools,
+    detect_language,
+    format_error_message,
+    normalize_special_characters,
+)
+from ..cevoice import default_loader
 from ..dataclasses.pipeline import (
     AudioOutput,
     SpeechTiming,
@@ -64,6 +55,15 @@ from ..dataclasses.pipeline import (
     VoiceConversionRequest,
     CaptionAlignmentSection,
 )
+from ..i18n import string, tagged_string
+from ..constants import BASE_SR, APP_NAME
+from ..exceptions import NotAvailableError
+from ..cesn import contains_cesn_note_event
+from ..typing.pipeline import SpeechStreamQueue
+from ..core.concurrency import run_in_daemon_thread
+from ..typing.aliases import AudioChunk, AudioChunks
+from ..vc import VC_PLAYBACK_GAIN, normalize_vc_audio
+from ..audio.dsp import split, resample_audio, is_silent_utterance
 
 if TYPE_CHECKING:
     from ..celune import Celune
@@ -1234,24 +1234,33 @@ def play_prepared_speech(
                 if callable(language_resolver)
                 else item.language
             )
-            caption_worker.submit_chunk(
+            playback_audio = [audio]
+            audio_queued = flush_buffered_speech_chunks(
                 engine,
                 source_id,
-                [audio],
+                playback_audio,
                 speech_timing,
+                False,
                 item.stream_queue,
-                item.display_text,
-                item.text,
-                words,
-                language if isinstance(language, str) else None,
-                0,
-                len(words),
-                tuple(item.text.split()),
-                [False],
-                [False],
-                BASE_SR,
-                item.caption_alignment_sections,
             )
+            if audio_queued:
+                caption_worker.submit_alignment(
+                    engine,
+                    source_id,
+                    [audio],
+                    item.display_text,
+                    item.text,
+                    words,
+                    language if isinstance(language, str) else None,
+                    0,
+                    len(words),
+                    tuple(item.text.split()),
+                    [False],
+                    0,
+                    len(audio),
+                    BASE_SR,
+                    item.caption_alignment_sections,
+                )
             caption_worker.submit_done(
                 engine,
                 source_id,
