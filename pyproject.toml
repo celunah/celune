@@ -31,7 +31,7 @@ dependencies = [
     "numpy",
     "scipy",
     # Pedalboard 0.9.20 and above require AVX-512
-    "pedalboard==0.9.19",
+    "pedalboard==0.9.26",
     "pyrubberband",
     "soundfile",
     "sounddevice",
