@@ -450,11 +450,15 @@ def test_prepared_tutorial_playback_aligns_combined_transcript(monkeypatch) -> N
     monkeypatch.setattr(
         "celune.pipeline.submission.register_playback_source", mock.Mock()
     )
+    monkeypatch.setattr(
+        "celune.pipeline.submission.flush_buffered_speech_chunks",
+        lambda *_args, **_kwargs: True,
+    )
     monkeypatch.setattr("celune.pipeline.submission.release_pipeline", mock.Mock())
     monkeypatch.setattr("celune.pipeline.submission.string", lambda key, **_kwargs: key)
 
     play_prepared_speech(cast(Celune, engine), request, caption_worker)
 
-    assert caption_worker.submit_chunk.call_args.args[6] == transcript
-    assert caption_worker.submit_chunk.call_args.args[15] == alignment_sections
+    assert caption_worker.submit_alignment.call_args.args[4] == transcript
+    assert caption_worker.submit_alignment.call_args.args[14] == alignment_sections
     assert source_queue.get_nowait() == 5

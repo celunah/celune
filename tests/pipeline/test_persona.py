@@ -1920,7 +1920,7 @@ class TestPipelineAsync(CeluneAsyncTestCase):
             ),
             mock.patch(
                 "celune.pipeline.generation.monotonic_time",
-                side_effect=[0.0, 0.1, 0.2, 2.8, 5.6, 8.4] + [8.4] * 16,
+                side_effect=[0.0] * 13 + [0.1, 0.2, 2.8, 5.6, 8.4] + [8.4] * 16,
             ),
         ):
             await run_generation_worker(cast(Celune, engine))
@@ -1987,7 +1987,7 @@ class TestPipelineAsync(CeluneAsyncTestCase):
             ),
             mock.patch(
                 "celune.pipeline.generation.monotonic_time",
-                side_effect=[0.0, 0.5, 2.0, 4.0, 6.0, 6.0] + [6.0] * 16,
+                side_effect=[0.0] * 13 + [0.5, 2.0, 4.0, 6.0, 6.0] + [6.0] * 16,
             ),
         ):
             await run_generation_worker(cast(Celune, engine))
