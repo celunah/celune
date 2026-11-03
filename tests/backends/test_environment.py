@@ -371,6 +371,13 @@ class TestBackendEnvironment(CeluneTestCase):
             in BACKEND_MANIFESTS["dotstts"].requirements
         )
 
+    def test_voxcpm2_uses_the_celune_latent_consistency_branch(self) -> None:
+        """Verify VoxCPM2 is installed from Celune's maintained branch."""
+        assert (
+            "voxcpm @ git+https://github.com/celunah/VoxCPM.git@fix/latent-consistency"
+            in BACKEND_MANIFESTS["voxcpm2"].requirements
+        )
+
     def test_fireredtts3_uses_its_isolated_huggingface_contract(self) -> None:
         """Verify FireRedTTS3 gets an isolated Transformers 5 worker contract."""
         requirements = BACKEND_MANIFESTS["fireredtts3"].requirements

@@ -34,7 +34,7 @@ screen.
 | `qwen3` | TTS | `celune.backends.tts.qwen3:Qwen3` | `faster-qwen3-tts>=0.2.4` |
 | `fireredtts3` | TTS | `celune.backends.tts.fireredtts3:FireRedTTS3` | FireRedTTS3 source, Transformers 5.6.2, and TorchCodec 0.16.0; BF16 transformer path with PyTorch SDPA and latent streaming. |
 | `dotstts` | TTS | `celune.backends.tts.dotstts:DotsTtsMF` | Celune's `dots.tts` fork; Python 3.12. |
-| `voxcpm2` | TTS | `celune.backends.tts.voxcpm2:VoxCPM2` | `voxcpm>=2.0.0`; Python 3.12. |
+| `voxcpm2` | TTS | `celune.backends.tts.voxcpm2:VoxCPM2` | Celune's VoxCPM `fix/latent-consistency` branch; Python 3.12. |
 | `ming3` | TTS | `celune.backends.tts.ming3:Ming3` | Multilingual Ming 3.0 voice cloning through audio.cpp v0.9.3's native streaming CUDA server. |
 | `soulxsinger` | TTS | `celune.backends.tts.soulxsinger:SoulXSinger` | Score-conditioned singing; Python 3.12, pinned upstream source and Transformers 4.41.2, `iso639-lang` for CESN, explicit English IPA, CUDA. |
 | `seed-vc` | VC | `celune.backends.vc.seedvc:CeluneSeedVCBackend` | Celune's Seed-VC fork. |
@@ -132,7 +132,9 @@ remain visible.
 implemented by the adapter, including Polish, English, Chinese, Japanese,
 Korean, and many European and Southeast Asian languages. It uses reference WAV
 plus a positive per-voice `cfg_scale`. Native build tooling may be required by
-its dependencies.
+its dependencies. The isolated backend environment installs Celune's
+`fix/latent-consistency` branch, which provides the streaming and voice-anchor
+interfaces used by the adapter.
 
 ### dots.tts MF
 

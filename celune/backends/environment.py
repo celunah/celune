@@ -197,7 +197,7 @@ BACKEND_MANIFESTS = {
         requirements=(
             *_TTS_PYTORCH_REQUIREMENTS,
             *_WORKER_HUGGINGFACE_REQUIREMENTS,
-            "voxcpm>=2.0.0",
+            "voxcpm @ git+https://github.com/celunah/VoxCPM.git@fix/latent-consistency",
         ),
         backend_module="celune.backends.tts.voxcpm2",
         backend_class="VoxCPM2",
