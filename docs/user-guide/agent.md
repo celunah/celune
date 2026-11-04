@@ -27,9 +27,10 @@ The production limits are:
 - Compaction pressure around 6,144 tokens by default.
 - A stuck-task threshold of three repeated non-progress outcomes.
 
-The agent can speak its final result through the standard `say()` path. It can
-also be paused, resumed, cancelled, or queried by the runtime and extension
-events.
+The agent can speak its final result through the standard `say()` path. The
+`speak` tool waits for playback to finish before returning, so later agent
+utterances and terminal failure replies do not overlap it. Tasks can also be
+paused, resumed, cancelled, or queried by the runtime and extension events.
 
 Agent prompts do not include Persona's automatically retrieved long-term
 memories, conversation summary, or ordinary chat history. Memory tools remain

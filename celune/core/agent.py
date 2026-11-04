@@ -2,21 +2,20 @@
 """Agent routing and tool execution methods."""
 
 from __future__ import annotations
-from collections.abc import Sequence
-from typing import Optional, cast
-from typing import Union
 
-from .conversation import deliver_persona_response
+from typing import Union, Optional, cast
+from collections.abc import Sequence
 
 from ..i18n import string
 from ..paths import huggingface_progress
 from ..utils import format_error_message
-from ..agent.needle import NeedleToolSelector
 from ..exceptions import (
     ModelConsentDeclined,
     ModelConsentRequired,
     NeedleSelectionError,
 )
+from .conversation import deliver_persona_response, wait_for_persona_playback
+from ..agent.needle import NeedleToolSelector
 from ..typing.agent import (
     ToolCall,
     AgentOutput,
@@ -238,6 +237,9 @@ def run_agent_route(self, route: AgentClassificationResult) -> bool:
         if terminal is not None:
             if terminal.state == AgentTaskState.COMPLETED:
                 return
+            if not wait_for_persona_playback(self):
+                delivery_failed = True
+                return
             if task_id is None:
                 delivery_failed = True
                 raise RuntimeError("agent terminal output has no task context")
@@ -277,12 +279,12 @@ def run_agent_route(self, route: AgentClassificationResult) -> bool:
         response = output.get("response")
         if not isinstance(response, str) or not response.strip():
             return
-        if self.cur_state in {"generating", "speaking"}:
-            from .conversation import wait_for_persona_playback
-
-            if not wait_for_persona_playback(self):
-                delivery_failed = True
-                raise RuntimeError("agent response speech was interrupted")
+        if self.cur_state in {
+            "generating",
+            "speaking",
+        } and not wait_for_persona_playback(self):
+            delivery_failed = True
+            raise RuntimeError("agent response speech was interrupted")
         if not deliver_persona_response(self, request.request, response):
             delivery_failed = True
             raise RuntimeError("agent response speech could not be queued")

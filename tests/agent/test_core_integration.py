@@ -2,32 +2,13 @@
 """Offline integration coverage for Celune's core-owned agent workflow."""
 
 from __future__ import annotations
-from unittest import mock
+
 from typing import Optional, cast
+from unittest import mock
 from contextlib import nullcontext
 from collections.abc import Mapping, Sequence
 
-from celune.celune import Celune
-from celune.typing.aliases import LogLevel
 from celune.core import agent as core_agent
-from celune.persona.impl import PersonaClient
-from celune.typing.common import JSONSerializable
-from celune.typing.persona import PersonaClientResponse
-from celune.registry.llm import PERSONA_DEFAULT_MODEL_ID
-from celune.typing.agent import NeedleToolCall, NeedleToolCatalog
-from celune.agent.tools import AgentStatusTool, production_agent_tool_schemas
-from celune.agent.needle.impl import (
-    NeedleHandler,
-    NeedleToolSelector,
-)
-from celune.core.conversation import (
-    deliver_persona_response as celune_deliver_persona_response,
-)
-from celune.dataclasses.events import (
-    AgentTaskFinishedEvent,
-    AgentTaskStateChangedEvent,
-    AgentApprovalRequestedEvent,
-)
 from celune.agent import (
     ToolCall,
     AgentTool,
@@ -53,6 +34,26 @@ from celune.agent import (
     AgentClassificationResult,
     AgentClassificationFailure,
     AgentClassificationFailureKind,
+)
+from celune.celune import Celune
+from celune.agent.tools import AgentStatusTool, production_agent_tool_schemas
+from celune.persona.impl import PersonaClient
+from celune.registry.llm import PERSONA_DEFAULT_MODEL_ID
+from celune.typing.agent import NeedleToolCall, NeedleToolCatalog
+from celune.typing.common import JSONSerializable
+from celune.typing.aliases import LogLevel
+from celune.typing.persona import PersonaClientResponse
+from celune.agent.needle.impl import (
+    NeedleHandler,
+    NeedleToolSelector,
+)
+from celune.core.conversation import (
+    deliver_persona_response as celune_deliver_persona_response,
+)
+from celune.dataclasses.events import (
+    AgentTaskFinishedEvent,
+    AgentTaskStateChangedEvent,
+    AgentApprovalRequestedEvent,
 )
 
 from ..support import FakeGlow, FakeBackend, CeluneTestCase
@@ -655,15 +656,29 @@ class TestAgentCoreIntegration(CeluneTestCase):
         ]
         core.vision = cast(PersonaClient, persona)
         delivered: list[str] = []
+        delivery_order: list[str] = []
 
         def record_delivery(_engine: Celune, _request: str, response: str) -> bool:
             """Capture the character-generated terminal response."""
             delivered.append(response)
+            delivery_order.append("delivered")
+            return True
+
+        def wait_for_playback(_engine: Celune) -> bool:
+            """Record the serialization barrier before terminal speech."""
+            delivery_order.append("waited")
             return True
 
         route = core.route_input("Inspect the unavailable thing.", persona_ready=True)
-        with mock.patch(
-            "celune.core.agent.deliver_persona_response", side_effect=record_delivery
+        with (
+            mock.patch(
+                "celune.core.agent.deliver_persona_response",
+                side_effect=record_delivery,
+            ),
+            mock.patch(
+                "celune.core.agent.wait_for_persona_playback",
+                side_effect=wait_for_playback,
+            ),
         ):
             assert core.run_agent_route(route)
 
@@ -678,6 +693,7 @@ class TestAgentCoreIntegration(CeluneTestCase):
         assert delivered[-1:] == [
             "I could not find a suitable way to do that just now."
         ]
+        assert delivery_order[-2:] == ["waited", "delivered"]
         failure_prompt = persona.requests[-1]["system"]
         assert isinstance(failure_prompt, str)
         assert "Failure response instruction" in failure_prompt
@@ -821,6 +837,12 @@ class TestAgentCoreIntegration(CeluneTestCase):
             "celune.core.agent.deliver_persona_response",
             wraps=celune_deliver_persona_response,
         )
+        playback_wait = mock.patch(
+            "celune.core.conversation.wait_for_persona_playback",
+            return_value=True,
+        )
+        playback_wait_mock = playback_wait.start()
+        self.addCleanup(playback_wait.stop)
         for speech_patch in speech_patches:
             speech_patch.start()
             self.addCleanup(speech_patch.stop)
@@ -851,6 +873,8 @@ class TestAgentCoreIntegration(CeluneTestCase):
         assert result["status"] == AgentToolExecutionStatus.SUCCEEDED
         assert result["end_task"] is True
         assert delivery_mock.call_count == 1
+        assert playback_wait_mock.call_count == 1
+        assert playback_wait_mock.call_args.args == (core,)
         assert speech_mock.call_count == 2
         assert [call.args[1] for call in speech_mock.call_args_list] == [
             "I will say hello.",

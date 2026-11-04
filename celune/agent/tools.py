@@ -352,11 +352,14 @@ def _health(engine: Celune, _call: ToolCall, _context: AgentContext) -> JSON:
 
 
 def _speak(engine: Celune, call: ToolCall, _context: AgentContext) -> JSON:
-    """Queue speech through the normal Celune pipeline."""
+    """Queue speech and wait for playback before another agent utterance."""
     queued = engine.say(_string(call, "text"))
     if not queued:
         raise RuntimeError("speech could not be queued")
-    return {"queued": True}
+    from ..core.conversation import wait_for_persona_playback
+
+    played = wait_for_persona_playback(engine)
+    return {"queued": True, "played": played}
 
 
 def _stop_speech(engine: Celune, _call: ToolCall, _context: AgentContext) -> JSON:
