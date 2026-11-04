@@ -2,20 +2,21 @@
 """Focused tests for Celune's opt-in local-management agent registry."""
 
 from __future__ import annotations
+
 from typing import cast
 from pathlib import Path
 from unittest import mock
 from contextlib import nullcontext
 
 from celune.celune import Celune
-from celune.typing.modes import OperationMode
-from celune.persona.capabilities import PersonaCapabilities
-from celune.typing.agent import AgentContext, AgentRequest, AgentToolExecutionStatus
 from celune.agent.tools import (
     OfflineAgentTool,
     local_management_tools,
     local_management_tool_schemas,
 )
+from celune.typing.agent import AgentContext, AgentRequest, AgentToolExecutionStatus
+from celune.typing.modes import OperationMode
+from celune.persona.capabilities import PersonaCapabilities
 
 from ..support import CeluneTestCase
 
@@ -92,10 +93,12 @@ class TestLocalManagementTools(CeluneTestCase):
         output = cast(dict[str, object], result["output"])
         assert output["path"] == str(directory)
 
-    def test_local_filesystem_operations_use_exact_absolute_paths(self) -> None:
-        """Read and write operations report exact targets and reject ambiguous paths."""
+    def test_local_reads_resolve_relative_paths_but_writes_require_absolute_paths(
+        self,
+    ) -> None:
+        """Resolve relative read paths against CWD and keep mutations explicit."""
         with nullcontext():
-            root = Path.cwd() / ".agent-local-management-test"
+            root = (Path.cwd() / ".agent-local-management-test").resolve()
             root.mkdir(exist_ok=True)
             path = root / "sample.txt"
 
@@ -126,11 +129,33 @@ class TestLocalManagementTools(CeluneTestCase):
             assert read["status"] == AgentToolExecutionStatus.SUCCEEDED
             assert cast(dict[str, object], read["output"])["text"] == "hello"
 
-        invalid = self._tool("local_read_text").execute(
+            with mock.patch("celune.agent.tools.Path.cwd", return_value=root):
+                listing = self._tool("local_list_directory").execute(
+                    {
+                        "id": "list-relative",
+                        "name": "local_list_directory",
+                        "arguments": {"path": "."},
+                    },
+                    self._context(),
+                )
+                relative_read = self._tool("local_read_text").execute(
+                    {
+                        "id": "read-relative",
+                        "name": "local_read_text",
+                        "arguments": {"path": "sample.txt"},
+                    },
+                    self._context(),
+                )
+            assert listing["status"] == AgentToolExecutionStatus.SUCCEEDED
+            assert cast(dict[str, object], listing["output"])["path"] == str(root)
+            assert relative_read["status"] == AgentToolExecutionStatus.SUCCEEDED
+            assert cast(dict[str, object], relative_read["output"])["text"] == "hello"
+
+        invalid = self._tool("local_write_text").execute(
             {
                 "id": "invalid",
-                "name": "local_read_text",
-                "arguments": {"path": "relative.txt"},
+                "name": "local_write_text",
+                "arguments": {"path": "relative.txt", "text": "hello"},
             },
             self._context(),
         )

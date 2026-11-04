@@ -70,16 +70,18 @@ runtime emits a warning when it is enabled.
 
 | Tool family | Calls | Policy |
 | --- | --- | --- |
-| Filesystem read | `local_current_working_directory`, `local_list_directory`, `local_file_metadata`, `local_read_text` | Absolute paths; directory listing is non-recursive; text is bounded to 1 MiB. |
+| Filesystem read | `local_current_working_directory`, `local_list_directory`, `local_file_metadata`, `local_read_text` | Absolute or working-directory-relative paths; non-recursive listing; text bounded to 1 MiB. |
 | Filesystem mutation | `local_write_text`, `local_make_directory`, `local_copy` | Medium danger and approval required. |
 | Filesystem destructive | `local_move`, `local_delete` | High danger; exact absolute target; recursive delete must be explicitly enabled. |
 | Process diagnostics | `local_list_processes`, `local_inspect_process`, `local_system_info` | Read-only, bounded diagnostics. |
 | Process control | `local_launch_process`, `local_terminate_process` | High danger; structured arguments, no shell, and identity checks. |
 | Application discovery/control | `local_discover_application`, `local_running_applications`, `local_launch_application`, `local_close_application` | High-danger launch/close operations; no GUI automation. |
 
-Local paths must be absolute and are resolved before execution. Process and
-application termination requires an expected name so a stale PID cannot be
-used blindly. The agent never turns a free-form prompt into a shell command.
+Read-only filesystem paths may be absolute or relative to Celune's process
+working directory; Celune resolves them before access. Filesystem mutation
+paths must remain absolute so approval identifies the exact target. Process
+and application termination requires an expected name so a stale PID cannot
+be used blindly. The agent never turns a free-form prompt into a shell command.
 
 ## Needle tool selection
 

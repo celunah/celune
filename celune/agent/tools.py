@@ -545,15 +545,35 @@ _MAX_LOCAL_READ_BYTES = 1_048_576
 _MAX_LOCAL_ITEMS = 1_000
 
 
-def _local_path(call: ToolCall, name: str) -> Path:
-    """Validate and normalize one absolute local-management path."""
+def _local_path(
+    call: ToolCall,
+    name: str,
+    *,
+    allow_relative: bool = False,
+) -> Path:
+    """Resolve a local target, optionally anchoring relative paths to the CWD.
+
+    Args:
+        call: Structured tool arguments containing the path value.
+        name: Argument name that contains the path.
+        allow_relative: Whether to resolve relative paths against the process CWD.
+
+    Returns:
+        Path: The normalized target path.
+
+    Raises:
+        LocalManagementError: If the path is invalid or relative paths are
+            disallowed.
+    """
     raw = _string(call, name)
     path = Path(raw).expanduser()
     if not path.is_absolute():
-        raise _LocalManagementError(
-            "invalid_path",
-            "local-management paths must be absolute",
-        )
+        if not allow_relative:
+            raise _LocalManagementError(
+                "invalid_path",
+                "local-management paths must be absolute",
+            )
+        path = Path.cwd() / path
     try:
         return path.resolve(strict=False)
     except OSError as exc:
@@ -582,7 +602,7 @@ def _local_list_directory(
     _engine: Celune, call: ToolCall, _context: AgentContext
 ) -> JSON:
     """List one exact directory without recursive traversal."""
-    path = _local_path(call, "path")
+    path = _local_path(call, "path", allow_relative=True)
     limit = _local_limit(call, "limit", 100, _MAX_LOCAL_ITEMS)
     if not path.exists():
         raise _local_missing(path)
@@ -612,7 +632,7 @@ def _local_file_metadata(
     _engine: Celune, call: ToolCall, _context: AgentContext
 ) -> JSON:
     """Return metadata for one exact local filesystem target."""
-    path = _local_path(call, "path")
+    path = _local_path(call, "path", allow_relative=True)
     if not path.exists():
         raise _local_missing(path)
     try:
@@ -630,7 +650,7 @@ def _local_file_metadata(
 
 def _local_read_text(_engine: Celune, call: ToolCall, _context: AgentContext) -> JSON:
     """Read a bounded UTF-8 text file from one exact path."""
-    path = _local_path(call, "path")
+    path = _local_path(call, "path", allow_relative=True)
     limit = _local_limit(
         call, "max_bytes", _MAX_LOCAL_READ_BYTES, _MAX_LOCAL_READ_BYTES
     )
@@ -1261,7 +1281,11 @@ _LOCAL_SPECS = (
         "List entries in one exact local directory.",
         _local_list_directory,
         arguments=(
-            _arg("path", AgentToolValueType.STRING, "Absolute directory path."),
+            _arg(
+                "path",
+                AgentToolValueType.STRING,
+                "Absolute path or path relative to Celune's working directory.",
+            ),
             _arg(
                 "limit", AgentToolValueType.INTEGER, "Maximum entries.", required=False
             ),
@@ -1272,7 +1296,13 @@ _LOCAL_SPECS = (
         "File metadata",
         "Read metadata for one exact local path.",
         _local_file_metadata,
-        arguments=(_arg("path", AgentToolValueType.STRING, "Absolute file path."),),
+        arguments=(
+            _arg(
+                "path",
+                AgentToolValueType.STRING,
+                "Absolute path or path relative to Celune's working directory.",
+            ),
+        ),
     ),
     _spec(
         "local_read_text",
@@ -1280,7 +1310,11 @@ _LOCAL_SPECS = (
         "Read a bounded UTF-8 text file from one exact local path.",
         _local_read_text,
         arguments=(
-            _arg("path", AgentToolValueType.STRING, "Absolute file path."),
+            _arg(
+                "path",
+                AgentToolValueType.STRING,
+                "Absolute path or path relative to Celune's working directory.",
+            ),
             _arg(
                 "max_bytes",
                 AgentToolValueType.INTEGER,
