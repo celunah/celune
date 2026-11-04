@@ -5,11 +5,11 @@ import os
 import sys
 import json
 import ctypes
-import contextlib
-from pathlib import Path
-from typing import Optional
-from types import SimpleNamespace
 import locale as _locale  # else it gets shadowed
+import contextlib
+from types import SimpleNamespace
+from typing import Optional
+from pathlib import Path
 
 DEFAULT_LOCALE = "en"
 _LANG_DIR = Path(__file__).resolve().parent / "lang"
@@ -45,14 +45,20 @@ def _lang_file(locale_name: str) -> Path:
 
 
 def _load_locale_strings(locale_name: str) -> dict[str, str]:
-    """Load one locale file from disk, returning an empty table when absent."""
+    """Load a locale file, returning empty when absent and exiting on invalid JSON."""
     normalized = _normalize_locale_name(locale_name)
     path = _lang_file(normalized)
 
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
-    except (FileNotFoundError, OSError, json.JSONDecodeError):
+    except (FileNotFoundError, OSError):
         return {}
+    except json.JSONDecodeError:
+        # hardcoded because localization is not possible if the database is malformed
+        print(f"error: malformed localization database {path}")
+        # equivalent to EXIT_CODES.EXIT_FAILURE.value from `celune.constants`
+        # we cannot use this object here due to Celune's import chain causing a circular import if used
+        sys.exit(1)
 
     if not isinstance(payload, dict):
         return {}
