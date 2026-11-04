@@ -7,13 +7,13 @@ from unittest import mock
 from types import SimpleNamespace
 
 from celune.celune import Celune
-from celune.typing.common import JSON
-from celune.typing.agent import AgentToolSchema, AgentToolBehavior
-from celune.agent.tools import production_agent_tools, production_agent_tool_schemas
 from celune.agent.diagnostics import (
     run_agent_feature_checks,
     run_agent_interaction_checks,
 )
+from celune.typing.common import JSON
+from celune.typing.agent import AgentToolSchema, AgentToolBehavior
+from celune.agent.tools import production_agent_tools, production_agent_tool_schemas
 
 from ..support import FakeGlow, FakeBackend, CeluneTestCase
 
@@ -45,6 +45,11 @@ class TestAgentDiagnostics(CeluneTestCase):
         core.model_ready.set()
         core.persona_ready = True
         core.mode = "agent"
+        playback_wait = mock.patch(
+            "celune.core.conversation.wait_for_persona_playback", return_value=True
+        )
+        playback_wait.start()
+        self.addCleanup(playback_wait.stop)
         self.addCleanup(core.close)
         return core
 

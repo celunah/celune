@@ -3,12 +3,11 @@
 
 from __future__ import annotations
 
-from typing import Optional, cast
 from unittest import mock
+from typing import Optional, cast
 from contextlib import nullcontext
 from collections.abc import Mapping, Sequence
 
-from celune.core import agent as core_agent
 from celune.agent import (
     ToolCall,
     AgentTool,
@@ -36,13 +35,6 @@ from celune.agent import (
     AgentClassificationFailureKind,
 )
 from celune.celune import Celune
-from celune.agent.tools import AgentStatusTool, production_agent_tool_schemas
-from celune.persona.impl import PersonaClient
-from celune.registry.llm import PERSONA_DEFAULT_MODEL_ID
-from celune.typing.agent import NeedleToolCall, NeedleToolCatalog
-from celune.typing.common import JSONSerializable
-from celune.typing.aliases import LogLevel
-from celune.typing.persona import PersonaClientResponse
 from celune.agent.needle.impl import (
     NeedleHandler,
     NeedleToolSelector,
@@ -55,6 +47,14 @@ from celune.dataclasses.events import (
     AgentTaskStateChangedEvent,
     AgentApprovalRequestedEvent,
 )
+from celune.typing.aliases import LogLevel
+from celune.core import agent as core_agent
+from celune.persona.impl import PersonaClient
+from celune.typing.common import JSONSerializable
+from celune.registry.llm import PERSONA_DEFAULT_MODEL_ID
+from celune.typing.persona import PersonaClientResponse
+from celune.typing.agent import NeedleToolCall, NeedleToolCatalog
+from celune.agent.tools import AgentStatusTool, production_agent_tool_schemas
 
 from ..support import FakeGlow, FakeBackend, CeluneTestCase
 
@@ -762,8 +762,15 @@ class TestAgentCoreIntegration(CeluneTestCase):
             delivered.append(response)
             return True
 
-        with mock.patch(
-            "celune.core.agent.deliver_persona_response", side_effect=record_delivery
+        playback_wait = mock.patch(
+            "celune.core.agent.wait_for_persona_playback", return_value=True
+        )
+        with (
+            mock.patch(
+                "celune.core.agent.deliver_persona_response",
+                side_effect=record_delivery,
+            ),
+            playback_wait as wait_for_playback,
         ):
             for label, reason in (
                 ("permission", AgentFailureReason.PERMISSION_DENIED),
@@ -811,6 +818,7 @@ class TestAgentCoreIntegration(CeluneTestCase):
             assert core.run_agent_route(route)
 
         assert list(responses.values()) == delivered
+        assert wait_for_playback.call_count == len(responses)
         for request, label in zip(persona.requests, responses):
             prompt = request["system"]
             assert isinstance(prompt, str)
@@ -889,6 +897,9 @@ class TestAgentCoreIntegration(CeluneTestCase):
             mock.patch("celune.core.lifecycle.default_loader", return_value=None),
             mock.patch(
                 "celune.core.lifecycle.persona_is_available", return_value=False
+            ),
+            mock.patch(
+                "celune.core.agent.wait_for_persona_playback", return_value=True
             ),
             mock.patch("celune.core.conversation.queue_speech", return_value=True),
             mock.patch("celune.vram.torch.cuda.is_available", return_value=False),

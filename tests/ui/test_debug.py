@@ -614,7 +614,7 @@ def test_glow_effects_component_validates_inputs_and_runs_actions() -> None:
                 screen._show_glow_validation_message(
                     "Invalid color. Must be a hex color."
                 )
-                await asyncio.sleep(0.12)
+                await pilot.pause(0.12)
             assert not validation.display
             assert str(validation.content) == ""
 
