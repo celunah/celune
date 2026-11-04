@@ -103,8 +103,15 @@ message while initialization is in progress.
 
 The terminal title follows the same startup and runtime transitions using the
 format `Celune ・ state ・ action`. The state and action portion is limited to
-20 characters, so titles remain visible in narrow terminal tabs; detailed
-status and diagnostic text stays in the loading screen or main log.
+20 characters, so titles remain visible in narrow terminal tabs. ANSI-capable
+terminals also receive [OSC 9;4 progress updates](https://docs.otty.sh/vt/osc/osc-9-4)
+and [OSC 7501 program status](https://docs.otty.sh/vt/osc/osc-7501):
+Celune shows an indeterminate progress spinner while working, clears it while
+idle or blocked, and marks errors. OSC 7501 carries `app=Celune`, the protocol
+state (`working`, `idle`, `blocked`, `done`, or `error`), and the current status
+message as base64-encoded UTF-8 in `msg`. OSC 7501 support is experimental and
+terminals that do not recognize it ignore the sequence. Detailed diagnostics
+remain in the loading screen or main log.
 
 ## Speech pipeline
 

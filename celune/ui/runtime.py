@@ -8,16 +8,16 @@ import sys
 import math
 import time
 import signal
-import inspect
 import asyncio
+import inspect
 import logging
-import contextlib
 import datetime
 import itertools
 import threading
+import contextlib
 from io import TextIOWrapper
-from collections.abc import Callable
 from typing import Union, Optional, cast
+from collections.abc import Callable
 
 from rich.cells import cell_len
 
@@ -1075,6 +1075,7 @@ def on_mount(self) -> None:
     if self._startup_messages:
         terminal_status = self._startup_terminal_status_for(self._startup_messages[-1])
         if terminal_status is not None:
+            self._pending_terminal_status_message = self._startup_messages[-1]
             self._set_terminal_status(*terminal_status)
         else:
             self._set_terminal_status(
@@ -1128,6 +1129,7 @@ def receive_startup_diagnostic(self, message: str) -> None:
     self._startup_messages.append(message)
     terminal_status = self._startup_terminal_status_for(message)
     if terminal_status is not None:
+        self._pending_terminal_status_message = message
         self._set_terminal_status(*terminal_status)
 
     def update() -> None:
@@ -1145,6 +1147,7 @@ def _emit_startup_diagnostic(self, message: str) -> None:
     """
     terminal_status = self._startup_terminal_status_for(message)
     if terminal_status is not None:
+        self._pending_terminal_status_message = message
         self._set_terminal_status(*terminal_status)
     if self._startup_log_level != "info":
         self.receive_startup_diagnostic(message)
@@ -1204,6 +1207,8 @@ def _handle_deferred_runtime_error(self, error: BaseException) -> None:
         _app.string("osc.state_error"),
         terminal_action,
     )
+    self._terminal_status_message = failure_status
+    self._terminal_program_state = "error"
     self._write_terminal_title(self._terminal_status)
     message = _app.format_error_message(
         _app.tagged_string("ui.init_error", "INIT ERROR"),
@@ -1305,27 +1310,61 @@ def _write_terminal_escape(self, escape: str) -> None:
         self._old_stdout.flush()
 
 
-def _write_terminal_title(self, status: tuple[str, str, str]) -> None:
-    """Write one structured state title to the real terminal."""
+def _write_terminal_title(
+    self,
+    status: tuple[str, str, str],
+    *,
+    program_state: Optional[str] = None,
+    message: Optional[str] = None,
+) -> None:
+    """Write the title and structured program status to the real terminal."""
+    if message is None:
+        message = (
+            self._terminal_status_message
+            if status == getattr(self, "_terminal_status", None)
+            else status[2]
+        )
+    if program_state is None and status == getattr(self, "_terminal_status", None):
+        program_state = self._terminal_program_state
+    escape = _app.terminal_status_escape(
+        status,
+        program_state=program_state,
+        message=message,
+    )
     if self._log_stdout is not None:
-        self._log_stdout.ansi(_app.terminal_title_escape(status))
+        self._log_stdout.ansi(escape)
         return
 
     if self._old_stdout is not None:
-        _app.set_terminal_title(status, self._old_stdout)
+        self._old_stdout.write(escape)
+        self._old_stdout.flush()
 
 
 def _set_terminal_status(self, state: str, action: str) -> None:
-    """Publish a stable state and action in the terminal title."""
+    """Publish a stable state, action, and current status to the terminal."""
     status = (_app.APP_NAME, _app.string(f"osc.state_{state}"), action)
-    if getattr(self, "_terminal_status", None) == status:
+    message = getattr(self, "_pending_terminal_status_message", None)
+    self._pending_terminal_status_message = None
+    if message is None:
+        message = action
+    if (
+        getattr(self, "_terminal_status", None) == status
+        and getattr(self, "_terminal_status_message", None) == message
+        and getattr(self, "_terminal_program_state", None) == state
+    ):
         return
 
     self._terminal_status = status
+    self._terminal_status_message = message
+    self._terminal_program_state = state
 
     def update() -> None:
         if _app.supports_ansi(self._old_stdout):
-            self._write_terminal_title(status)
+            self._write_terminal_title(
+                status,
+                program_state=state,
+                message=message,
+            )
 
     self._run_on_ui_thread(update)
 
@@ -2297,9 +2336,20 @@ class RuntimeHooks:
         """Delegate to the runtime implementation."""
         return _write_terminal_escape(self, escape)
 
-    def _write_terminal_title(self, status: tuple[str, str, str]) -> None:
+    def _write_terminal_title(
+        self,
+        status: tuple[str, str, str],
+        *,
+        program_state: Optional[str] = None,
+        message: Optional[str] = None,
+    ) -> None:
         """Delegate to the runtime implementation."""
-        return _write_terminal_title(self, status)
+        return _write_terminal_title(
+            self,
+            status,
+            program_state=program_state,
+            message=message,
+        )
 
     def advance_resources(self) -> None:
         """Delegate to the runtime implementation."""

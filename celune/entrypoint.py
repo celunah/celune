@@ -8,23 +8,28 @@ import time
 import random
 import shutil
 import datetime
-import warnings
 import platform
+import warnings
 import contextlib
 import subprocess
-from dataclasses import dataclass
-from collections.abc import Callable
-from importlib import util, import_module
 from types import ModuleType, SimpleNamespace
 from typing import TYPE_CHECKING, NoReturn, Optional
 from pathlib import Path, PurePosixPath, PureWindowsPath
+from importlib import util, import_module
+from dataclasses import dataclass
+from collections.abc import Callable
 
+from celune import REVISION, __tagline__, __version__
+from celune.vcs import is_git_checkout, git_checkout_hint
+from celune.i18n import string
 from celune.paths import (
     project_root,
     running_compiled,
     migrate_legacy_app_data,
     configure_huggingface_runtime,
 )
+from celune.config import config_log_level, normalize_log_level
+from celune.terminal import set_terminal_status
 from celune.constants import (
     APP_NAME,
     APP_SLUG,
@@ -32,13 +37,8 @@ from celune.constants import (
     SUPPORTED_CUDA_VERSIONS,
     ExitCodes,
 )
-from celune.i18n import string
-from celune.typing.common import Config
-from celune.terminal import set_terminal_title
-from celune import REVISION, __tagline__, __version__
-from celune.vcs import is_git_checkout, git_checkout_hint
 from celune.exceptions import CEVoiceDependencyUnavailableError
-from celune.config import config_log_level, normalize_log_level
+from celune.typing.common import Config
 
 if TYPE_CHECKING:
     from celune.celune import Celune
@@ -267,23 +267,23 @@ def _load_runtime() -> SimpleNamespace:
         import yaml
         import psutil
 
+        from celune.ui import SelectMenu
         from celune.paths import (
             config_path,
             ensure_config_path,
             default_config_path,
         )
+        from celune.utils import indent, title_case, detected_ide, supports_ansi
         from celune.config import (
             env_bool,
             config_bool,
             config_value,
             merge_missing_defaults,
         )
-        from celune.ui import SelectMenu
+        from celune.updater import check_for_update, update_to_latest
         from celune.namedays import has_name_day
         from celune.exceptions import No, UpdateError
         from celune.backends.environment import BACKEND_MANIFESTS
-        from celune.updater import check_for_update, update_to_latest
-        from celune.utils import indent, title_case, detected_ide, supports_ansi
 
         config_path()
     except ModuleNotFoundError as package:
@@ -1565,12 +1565,14 @@ def start(
             return
         migrate_legacy_app_data()
         if runtime.supports_ansi():
-            set_terminal_title(
+            set_terminal_status(
                 (
                     APP_NAME,
                     string("osc.state_initializing"),
                     string("osc.action_starting"),
-                )
+                ),
+                program_state="initializing",
+                message=string("osc.action_starting"),
             )
         date = datetime.datetime.now(datetime.UTC)
         if runtime.has_name_day("Celine", date) and not runtime.env_bool(

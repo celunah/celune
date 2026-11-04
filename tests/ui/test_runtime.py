@@ -8,25 +8,25 @@ import sys
 import asyncio
 import textwrap
 import subprocess
+from types import SimpleNamespace
 from typing import cast
 from pathlib import Path
 from unittest import mock
-from types import SimpleNamespace
 from collections.abc import Callable, Awaitable, Coroutine
 
 from textual import events
 from textual.widget import Widget
 
-from celune.i18n import string
 from celune.ui import app as ui_app
-from celune.constants import APP_NAME
-from celune.terminal import set_terminal_title
-from celune.typing.common import JSONSerializable
+from celune.i18n import string
 from celune.ui.app import (
     CeluneUI,
     VoiceButton,
     ButtonActions,
 )
+from celune.terminal import set_terminal_title, terminal_status_escape
+from celune.constants import APP_NAME
+from celune.typing.common import JSONSerializable
 
 from ..support import CeluneTestCase
 
@@ -514,6 +514,27 @@ class TestUIRuntime(CeluneTestCase):
             f"\x1b]0;{APP_NAME} ・ Ready ・ Idle\x07"
         )
         terminal.flush.assert_called_once_with()
+
+    def test_terminal_status_escapes_report_working_and_error_states(self) -> None:
+        """Verify OSC progress and encoded status use the supported protocol fields."""
+        working = terminal_status_escape(
+            (APP_NAME, "Think", "Generate"),
+            program_state="thinking",
+            message="Working",
+        )
+        assert working == (
+            f"\x1b]0;{APP_NAME} ・ Think ・ Generate\x07"
+            f"\x1b]9;4;3\x07"
+            f"\x1b]7501;state=working:app={APP_NAME}:msg=V29ya2luZw==\x1b\\"
+        )
+
+        error = terminal_status_escape(
+            (APP_NAME, "Error", "Failed"),
+            program_state="error",
+            message="Failed",
+        )
+        assert "\x1b]9;4;2\x07" in error
+        assert "state=error:app=Celune:" in error
 
     def test_terminal_title_caps_long_dynamic_actions(self) -> None:
         """Verify long terminal actions cannot crowd out the state glossary."""

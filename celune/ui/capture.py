@@ -5,19 +5,19 @@ from __future__ import annotations
 
 import re
 import time
+import queue as queue_module
 import threading
 import contextlib
-import queue as queue_module
 from uuid import uuid4
-from collections.abc import Callable
 from typing import Union, Optional, cast
+from collections.abc import Callable
 
 from textual.color import Color
 
 from . import app as _app
 from .theme import with_brightness
-from ..typing.modes import OperationState
 from .constants import CAPTION_FADE_SECONDS
+from ..typing.modes import OperationState
 
 __all__ = (
     "_acquire_recording_component_lease",
@@ -638,6 +638,7 @@ def safe_status(self, msg: str, severity: str = "info") -> None:
         self._update_status_label()
         if self._loading_screen is not None:
             self._loading_screen.set_status_message(msg)
+        self._pending_terminal_status_message = msg
         self._set_terminal_status(terminal_state, terminal_action)
         self.update_resources()
         if not ui_test_mode:

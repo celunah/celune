@@ -11,19 +11,28 @@ import asyncio
 import tempfile
 import warnings
 import threading
-from pathlib import Path
-from unittest import mock
 from types import SimpleNamespace
 from typing import Optional, cast
+from pathlib import Path
+from unittest import mock
 from collections.abc import Callable
 
-import pytest
 import numpy as np
+import pytest
 from textual import events
 from textual.app import App
-from textual.containers import Vertical
 from textual.widgets import Label, Static, RichLog, TextArea, ProgressBar
+from textual.containers import Vertical
 
+from celune.ui import app as ui_app
+from celune.ui import compat as ui_compat
+from celune.ui import terminal as ui_terminal
+from celune.ui import resources as ui_resources
+from celune.core import lifecycle as core_lifecycle
+from celune.i18n import string, tagged_string
+from celune.theme import colors
+from celune.utils import discard
+from celune.celune import Celune
 from celune.ui.app import (
     Button,
     CeluneUI,
@@ -33,22 +42,14 @@ from celune.ui.app import (
     ProgressLabel,
     CeluneLoadingScreen,
 )
-from celune.theme import colors
-from celune.celune import Celune
-from celune.utils import discard
-from celune.ui import app as ui_app
-from celune.ui import compat as ui_compat
-from celune.ui import resources as ui_resources
-from celune.ui import terminal as ui_terminal
-from celune.i18n import string, tagged_string
-from celune.typing.modes import OperationState
+from celune.constants import APP_NAME, COST_EQUIVALENTS, ExitCodes
 from celune.ui.headless import CeluneHeadlessUI
-from celune.core import lifecycle as core_lifecycle
+from celune.typing.modes import OperationState
 from celune.extensions.events import EventDispatcher
 from celune.dataclasses.events import CharacterChangedEvent
-from celune.constants import APP_NAME, COST_EQUIVALENTS, ExitCodes
-from .fixtures import reset_ui_singletons
+
 from ..support import FakeBackend, CeluneTestCase
+from .fixtures import reset_ui_singletons
 
 
 class TestUIStartup(CeluneTestCase):
@@ -1591,7 +1592,11 @@ class TestUIStartup(CeluneTestCase):
             ):
                 ui._load_tts()
 
-            terminal.write.assert_called_with(f"\x1b]0;{APP_NAME} ・ Ready ・ Idle\x07")
+            terminal.write.assert_called_with(
+                f"\x1b]0;{APP_NAME} ・ Ready ・ Idle\x07"
+                f"\x1b]9;4;0\x07"
+                f"\x1b]7501;state=idle:app={APP_NAME}:msg=SWRsZQ==\x1b\\"
+            )
             terminal.flush.assert_called()
             ui.safe_progress.assert_called_once_with(1, 1)
         finally:

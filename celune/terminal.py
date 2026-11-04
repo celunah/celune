@@ -3,6 +3,7 @@
 
 import re
 import sys
+import base64
 import ctypes
 
 # noinspection PyProtectedMember
@@ -17,6 +18,9 @@ _TERMINAL_TITLE_CONTROL_RE = re.compile(
     r"\x1b(?:\[[0-?]*[ -/]*[@-~]|][^\x07\x1b]*(?:\x07|\x1b\\)|[@-Z\\-_])"
     r"|[\x00-\x1f\x7f\x80-\x9f\r\n]"
 )
+_OSC_7501_STATES = frozenset({"idle", "working", "done", "blocked", "error"})
+_OSC_7501_APP_RE = re.compile(r"[^A-Za-z0-9_.+/-]")
+_OSC_7501_MESSAGE_MAX_BYTES = 2048
 
 RUNTIME_LOG_FILTER_MESSAGES = frozenset(
     {
@@ -168,6 +172,81 @@ def terminal_title_escape(status: tuple[str, str, str]) -> str:
     return f"\x1b]0;{title}\x07"
 
 
+def _program_status_state(state: str) -> str:
+    """Map Celune's runtime state name to the OSC 7501 state vocabulary."""
+    if state in _OSC_7501_STATES:
+        return state
+    if state == "awaiting":
+        return "blocked"
+    if state == "exiting":
+        return "done"
+    if state in {"ready", "sleeping", "stopped", "paused", "warning"}:
+        return "idle"
+    return "working"
+
+
+def _program_status_state_from_title(state: str) -> str:
+    """Infer the OSC 7501 state from a localized title label."""
+    state_by_label = {
+        string("osc.state_awaiting").casefold(): "blocked",
+        string("osc.state_error").casefold(): "error",
+        string("osc.state_exiting").casefold(): "done",
+        string("osc.state_ready").casefold(): "idle",
+        string("osc.state_sleeping").casefold(): "idle",
+        string("osc.state_stopped").casefold(): "idle",
+        string("osc.state_paused").casefold(): "idle",
+    }
+    return state_by_label.get(state.casefold(), "working")
+
+
+def terminal_status_escape(
+    status: tuple[str, str, str],
+    *,
+    program_state: Optional[str] = None,
+    message: Optional[str] = None,
+) -> str:
+    """Build terminal title, progress, and OSC 7501 program-status escapes.
+
+    Args:
+        status: Application name, visible state label, and concise action label.
+        program_state: Celune state name, mapped to the OSC 7501 vocabulary.
+        message: Full current status text to include as base64 UTF-8 in ``msg``.
+
+    Returns:
+        str: The combined OSC 0, OSC 9;4, and OSC 7501 escape sequences.
+    """
+    app_name = _TERMINAL_TITLE_CONTROL_RE.sub("", status[0]).strip()
+    visible_state = _TERMINAL_TITLE_CONTROL_RE.sub("", status[1]).strip()
+    action = _TERMINAL_TITLE_CONTROL_RE.sub("", status[2]).strip()
+    osc_state = (
+        _program_status_state(program_state)
+        if program_state is not None
+        else _program_status_state_from_title(visible_state)
+    )
+    if osc_state not in _OSC_7501_STATES:
+        osc_state = "working"
+
+    app_value = _OSC_7501_APP_RE.sub("", app_name)[:32]
+    status_message = action if message is None else message
+    status_message = _TERMINAL_TITLE_CONTROL_RE.sub("", status_message).strip()
+    message_bytes = status_message.encode("utf-8")[:_OSC_7501_MESSAGE_MAX_BYTES]
+    status_message = message_bytes.decode("utf-8", errors="ignore")
+    encoded_message = base64.b64encode(status_message.encode("utf-8")).decode("ascii")
+
+    if osc_state == "working":
+        progress = "3"
+    elif osc_state == "error":
+        progress = "2"
+    else:
+        progress = "0"
+
+    return (
+        f"{terminal_title_escape((app_name, visible_state, action))}"
+        f"\x1b]9;4;{progress}\x07"
+        f"\x1b]7501;state={osc_state}:app={app_value}:msg={encoded_message}\x1b\\"
+    )
+
+
 def set_terminal_title(
     status: tuple[str, str, str],
     output: Optional[IO[str]] = None,
@@ -180,4 +259,30 @@ def set_terminal_title(
     """
     target = sys.stdout if output is None else output
     target.write(terminal_title_escape(status))
+    target.flush()
+
+
+def set_terminal_status(
+    status: tuple[str, str, str],
+    output: Optional[IO[str]] = None,
+    *,
+    program_state: Optional[str] = None,
+    message: Optional[str] = None,
+) -> None:
+    """Publish Celune's title, progress indicator, and detailed program status.
+
+    Args:
+        status: Application name, visible state label, and concise action label.
+        output: Terminal stream to receive the escape sequences.
+        program_state: Celune state name, mapped to the OSC 7501 vocabulary.
+        message: Full current status text to include as base64 UTF-8 in ``msg``.
+    """
+    target = sys.stdout if output is None else output
+    target.write(
+        terminal_status_escape(
+            status,
+            program_state=program_state,
+            message=message,
+        )
+    )
     target.flush()

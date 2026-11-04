@@ -4,10 +4,13 @@
 from __future__ import annotations
 
 import sys
+import queue as queue_module
 import asyncio
 import logging
 import itertools
 import threading
+from io import TextIOWrapper
+from types import ModuleType
 from typing import (
     TYPE_CHECKING,
     Never,
@@ -21,9 +24,6 @@ from typing import (
     final,
 )
 from pathlib import Path
-from io import TextIOWrapper
-import queue as queue_module
-from types import ModuleType
 from dataclasses import field, dataclass
 from collections.abc import Callable, Iterator, Awaitable
 
@@ -37,39 +37,53 @@ from textual import (
     binding,
     widgets,
     containers,
+)
+from textual import (
     color as textual_color,
+)
+from textual import (
     screen as textual_screen,
+)
+from textual import (
     widget as textual_widget,
+)
+from textual import (
     message as textual_message,
 )
 from rich.text import Text
 
 from . import (
     debug as _debug,
+)
+from . import (
     capture as _capture,
+)
+from . import (
     runtime as _runtime,
+)
+from . import (
     interaction as _interaction,
 )
+from ..i18n import string, tagged_string
+from .theme import CELUNE_CSS, severity_color, with_brightness
+from .compat import install_textual_timer_sleep
+from .buttons import CeluneButton
+from .loading import CeluneLoadingScreen
+from .terminal import SelectMenuOption, SelectMenuWidget
+from ..watchdog import launcher_loss_requested
+from ..constants import BASE_SR, SIGTSTP, APP_NAME, ExitCodes
+from ..typing.agent import AgentTaskState
 from ..typing.locks import (
     ComponentLockName,
     ComponentLockOwner,
     ComponentLockRequirement,
 )
-from .buttons import CeluneButton
-from .loading import CeluneLoadingScreen
-from ..i18n import string, tagged_string
-from ..typing.agent import AgentTaskState
 from ..typing.modes import OperationState
-from ..registry.types import ModelMetadata
 from ..typing.common import JSONSerializable
-from ..watchdog import launcher_loss_requested
-from .compat import install_textual_timer_sleep
-from ..core.concurrency import run_in_daemon_thread
 from ..typing.config import AudioDeviceInfoValue
-from .terminal import SelectMenuOption, SelectMenuWidget
-from ..constants import BASE_SR, SIGTSTP, APP_NAME, ExitCodes
-from .theme import CELUNE_CSS, severity_color, with_brightness
+from ..registry.types import ModelMetadata
 from ..theme.defaults import default_theme_family, default_error_theme_family
+from ..core.concurrency import run_in_daemon_thread
 
 App = app.App
 ReturnType = app.ReturnType
@@ -657,6 +671,22 @@ def terminal_title_escape(status: tuple[str, str, str]) -> str:
     return build_terminal_title(status)
 
 
+def terminal_status_escape(
+    status: tuple[str, str, str],
+    *,
+    program_state: Optional[str] = None,
+    message: Optional[str] = None,
+) -> str:
+    """Build terminal status escapes without loading runtime UI dependencies."""
+    from ..terminal import terminal_status_escape as build_terminal_status
+
+    return build_terminal_status(
+        status,
+        program_state=program_state,
+        message=message,
+    )
+
+
 def set_terminal_title(
     status: tuple[str, str, str],
     output: Optional[TextIO] = None,
@@ -667,6 +697,24 @@ def set_terminal_title(
     write_terminal_title(status, output)
 
 
+def set_terminal_status(
+    status: tuple[str, str, str],
+    output: Optional[TextIO] = None,
+    *,
+    program_state: Optional[str] = None,
+    message: Optional[str] = None,
+) -> None:
+    """Publish terminal status escapes without loading runtime UI dependencies."""
+    from ..terminal import set_terminal_status as write_terminal_status
+
+    write_terminal_status(
+        status,
+        output,
+        program_state=program_state,
+        message=message,
+    )
+
+
 def ensure_ui_runtime_dependencies() -> None:
     """Load optional UI integrations after the first loading frame is visible."""
     global _RUNTIME_DEPENDENCIES_LOADED
@@ -674,8 +722,10 @@ def ensure_ui_runtime_dependencies() -> None:
     global default_loader
     global indent
     global set_terminal_title
+    global set_terminal_status
     global supports_ansi
     global terminal_title_escape
+    global terminal_status_escape
     if _RUNTIME_DEPENDENCIES_LOADED:
         return
 
@@ -764,7 +814,13 @@ def ensure_ui_runtime_dependencies() -> None:
         set_terminal_title as loaded_set_terminal_title,
     )
     from ..terminal import (
+        set_terminal_status as loaded_set_terminal_status,
+    )
+    from ..terminal import (
         terminal_title_escape as loaded_terminal_title_escape,
+    )
+    from ..terminal import (
+        terminal_status_escape as loaded_terminal_status_escape,
     )
     from ..watchdog import launcher_loss_requested as loaded_launcher_loss_requested
     from .resources import FOOTER_ROTATE_SECONDS
@@ -792,8 +848,10 @@ def ensure_ui_runtime_dependencies() -> None:
     default_loader = loaded_default_loader
     indent = loaded_indent
     set_terminal_title = loaded_set_terminal_title
+    set_terminal_status = loaded_set_terminal_status
     supports_ansi = loaded_supports_ansi
     terminal_title_escape = loaded_terminal_title_escape
+    terminal_status_escape = loaded_terminal_status_escape
     launcher_loss_requested = loaded_launcher_loss_requested
     _RUNTIME_LOG_REDIRECT_FILTER_MESSAGES = RUNTIME_LOG_FILTER_MESSAGES
     _RUNTIME_DEPENDENCIES_LOADED = True
@@ -1128,6 +1186,9 @@ class CeluneUI(
             None
         )
         self._terminal_status: Optional[tuple[str, str, str]] = None
+        self._terminal_status_message: Optional[str] = None
+        self._terminal_program_state: Optional[str] = None
+        self._pending_terminal_status_message: Optional[str] = None
         self._loading_screen: Optional[CeluneLoadingScreen] = None
         self._startup_loader = startup_loader
         self._startup_messages = list(startup_messages or [])
