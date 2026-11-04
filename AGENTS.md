@@ -163,14 +163,11 @@ Skip all platform-specific tests that do not match the current platform.
 
 Before CI, format the repository with `uv run ruff format .`.
 
-Expected CI runtime is approximately 10 minutes.
-
 Prefer running the faster `poe test` during CI, unless there are not enough resources on the development host,
 then fall back to the simplified `poe test_basic` for reduced resource usage.
 
-If CI runtime exceeds 10 minutes:
+If any part of CI stalls for too long:
 
-* Assume it may have stalled.
 * Stop it from running any further.
 * Check the potential causes of the CI stall.
 * After resolving the potential causes, run only the tests that did not complete
