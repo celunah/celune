@@ -94,6 +94,7 @@
     "celune.backend_switch_timeout": "Timed out while switching backends.",
     "celune.backend_vram_fallback": "Backend '{backend}' is not available for VRAM tier '{tier}', using '{fallback}' instead.",
     "celune.cannot_check_updates": "warning: can't check for updates",
+    "celune.cannot_select_backend": "error: no backend was selected and the backend selection picker could not be displayed",
     "celune.cannot_sing_with_character": "Cannot sing with this character.",
     "celune.character_has_no_usable_singing_voice": "{character} has no usable singing voice.",
     "celune.character_not_a_singer": "{character} is not a singer.",

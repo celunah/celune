@@ -360,11 +360,15 @@ def _select_initial_backend(
         string(label_key, backend=backend_id)
         for backend_id, label_key in backend_choices
     ]
-    selected_backend = runtime.SelectMenu(
-        labels,
-        backend_ids,
-        string("cli.backend_picker_prompt"),
-    ).start()
+    try:
+        selected_backend = runtime.SelectMenu(
+            labels,
+            backend_ids,
+            string("cli.backend_picker_prompt"),
+        ).start()
+    except ModuleNotFoundError:
+        print(string("celune.cannot_select_backend"))
+        sys.exit(EXIT_CODES.EXIT_FAILURE.value)
     if not isinstance(selected_backend, str) or selected_backend not in backend_ids:
         return backend
 
