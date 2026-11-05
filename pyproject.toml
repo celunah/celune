@@ -1,6 +1,6 @@
 [project]
 name = "celune"
-version = "5.1.2"
+version = "5.2.0"
 description = "\"Your voice, your way.\""
 readme = "README.md"
 requires-python = ">=3.12,<3.15"
@@ -26,12 +26,14 @@ dependencies = [
     "safetensors",
     "sentencepiece",
     "transformers>=5.21.0,<6.0.0",
+    # Some models are ONNX models rather than PyTorch ones, so this package allows them to run.
+    "onnxruntime>=1.22.0",
 
     # Audio processing
     "numpy",
     "scipy",
-    # Pedalboard 0.9.20 and above require AVX-512
-    "pedalboard==0.9.19",
+    # Pedalboard 0.9.20-0.9.25 may fail with `Illegal instruction` errors on some systems.
+    "pedalboard!=0.9.20,!=0.9.21,!=0.9.22,!=0.9.23,!=0.9.24,!=0.9.25",
     "pyrubberband",
     "soundfile",
     "sounddevice",
@@ -42,29 +44,33 @@ dependencies = [
     # UX & UI
     "textual",
     "rich",
+    # Early terminal selectors need this library.
     "readchar",
     # "You do want me to glow, do you?" - she says.
     # Install this package and set up OpenRGB. You'll thank me later, or rather, her.
     "openrgb-python",
-    # Celune uses this to plot the voice graph. If developer mode is disabled, this isn't needed.
+    # For voice assessment graphs
     "matplotlib",
 
     # Others
     "psutil",
     "platformdirs",
     "pyyaml",
-    "cryptography>=46",
+    # For signature verification.
+    "cryptography",
     # Used to get repository information.
     # The Celune repository is used to update the software in place as needed.
-    "GitPython>=3.1.59,<4.0",
-    "httpx>=0.27.0,<0.29.0",
+    "GitPython",
+    "httpx",
     # Used to detect language of input.
-    "lingua-language-detector>=2.2.0,<3.0.0",
-    "iso639-lang>=2.0.0,<3.0.0",
+    "lingua-language-detector",
+    "iso639-lang",
     # She can also play literal [music].
-    "yt-dlp[default]>=2026.08.19",
+    "yt-dlp[default]",
     # Lua runtime for running Celune extensions
-    "lupa>=2.8,<3.0",
+    "lupa",
+    # Needed for live voice capture to tell when you're speaking.
+    "silero-vad",
 ]
 
 [project.urls]
@@ -104,48 +110,53 @@ url = "https://download.pytorch.org/whl/cu134"
 explicit = true
 
 [dependency-groups]
-# Install to run CI workflows.
+# Please install in order to not SLOP her up.
 dev = [
-    # Pytest plus opt-in parallel and incremental test execution.
+	# Linters
+    "ruff==0.17.3",
+    # PLEASE, someone make a faster Pylint alternative! She's standing here for so long cuz Pylint holds her hostage!
+    "pylint",
+    # Type checker
+    "pyrefly",
+    # Test suite
     "pytest",
+    # Installing these permits parallel test execution.
+    # Parallel tests consume lots of memory. If your system is weaker, run the basic test suite instead.
     "pytest-testmon",
     "pytest-xdist",
-    # "I really hate pyright." - she says.
-    "pyrefly>=1.2.0",
-    "pylint",
-    # Docstrings matter, so everyone can read the code more easily.
+    # Extra CI tools
+    # Docstring stats
     "docstr-coverage",
-    "ruff==0.17.0",
-    # How many useless functions do we have?
+    # Dead code detection
     "vulture",
-    # How many lines do we have?
+    # LOC counting
     "pygount",
     "loguru",
-    # This package is required to compile Celune into a properly packaged binary, bypassing the need to run Python.
-    # Canonically pinned, I know. 412 is her number, Nuitka happened to be on that version.
-    "nuitka==4.1.2",
-    # If not installed, type checkers may complain.
+	# Compiler
+    # We used to run off of canonical 4.1.2, but that version is experimental on Python 3.14.
+    # She caved in, and upgraded.
+    "nuitka",
+    # Third-party types
     "types-pyyaml",
     "types-psutil",
     "types-tqdm",
-    # Gives Celune "npm run"-like commands.
-    "poethepoet>=0.48.0",
+    # CI commands
+    # `uv run poe [...]`
+    "poethepoet",
 ]
 
 [project.optional-dependencies]
-# Install to run the Celune API.
+# Install to run Celune's web integrations, such as the API, web interface and MCP servers.
 api = [
+    # API packages
 	"uvicorn",
 	"fastapi",
     "python-multipart",
     "pydantic",
+    # Web interface
     "gradio",
-    "mcp>=2.2.0,<3.0.0",
-]
-
-# Install to support caption display with forced-alignment.
-captions = [
-    "onnxruntime>=1.22",
+    # MCP server
+    "mcp",
 ]
 
 # Install to use OpenZL-compressed CECHAR v4 packages in Celune.
@@ -156,60 +167,32 @@ cechar4-openzl = [
 # These dependency groups are currently handled internally by Celune backends and the Celune core no longer
 # depends on them. Explicit installation is not required anymore, so the groups have been commented out.
 #
+# Qwen3
 # The original Qwen-based classic Celune backend. Balanced sound quality and speed.
-# qwen3 = [
-#     # Celune sounds best with faster-qwen3-tts 0.2.6.
-#     # To match this version's behavior in newer releases, you may need to set non_streaming_mode=True.
-#     # This parameter is ambiguously named, it doesn't actually disable streaming mode.
-#     # If it did, Celune would have a problem operating.
-#     "faster-qwen3-tts==0.2.6",
-# ]
 
+# VoxCPM2
 # A high-end diffusion based Celune backend with high fidelity and expressiveness. Slower, but way more expressive.
-# voxcpm2 = [
-#     # Celune uses its maintained branch for streaming and voice-anchor support.
-#     "voxcpm @ git+https://github.com/celunah/VoxCPM.git@fix/latent-consistency",
-# ]
 
+# dots.tts
 # An alternative diffusion based Celune backend with high fidelity and speaker similarity.
 # Slowest, but very speaker accurate.
-# dotstts = [
-#     # Celune's dots.tts backend uses a forked version that removes an unnecessary requirement that may
-#     # fail to build on Windows systems. Do not try to use the upstream package.
-#     "dots.tts @ git+https://github.com/celunah/dots.tts",
-# ]
 
+# Pocket TTS (AKA Celune Mini)
 # A cheap on compute Celune backend providing an exceptional sound quality. Fastest, with an exceptional sound quality
 # to size ratio.
-# mini = [
-#     "pocket-tts>=3.2.0",
-# ]
 
-# Ming3 is a backend which provides a good amount of expression.
+# Ming3
+# A fast and low-latency Celune backend which provides a good amount of expression.
 # Lighter on memory, and it supports a variety of languages.
-# ming3 = [
-#    "unknown-package==1.0.0",
-# ]
 
+# SeedVC
 # A voice conversion backend allowing you to speak in your character voices directly. It does not use TTS, using it
 # will disable TTS features.
-# seed-vc = [
-#     # Celune's SeedVC backend uses a forked version that turns hard pins into "this or newer", allowing Celune
-#     # to resolve it under NumPy v2. Do not try to use the upstream package, it uses an unsupported version of NumPy.
-#     "seed-vc @ git+https://github.com/celunah/seed-vc.git",
-# ]
 
-# SoulX-Singer is a singing backend which allows Celune to sing.
-# Light on memory, but only works in English. Chinese singing inputs are not available.
-# TTS text input is disabled while active. CESN is the only input method. Functions that require TTS are not available.
-# soulxsinger = [
-#    "unknown-package==1.0.0",
-# ]
-
-# VAD gate for live voice conversion capture.
-live-vc-ai = [
-    "silero-vad",
-]
+# SoulX-Singer
+# A singing backend which allows Celune to sing. Light on memory, but only works in English. Chinese singing inputs
+# are not available. Text input is disabled while active. CESN is the only supported input method.
+# Functions that require TTS are not available.
 
 # CI specific options
 # Don't touch it, unless you want SLOP!
