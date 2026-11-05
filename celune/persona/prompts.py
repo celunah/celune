@@ -46,6 +46,41 @@ def _render_agent_context(
     failure_response = agent_context.classification_failure is not None or (
         task is not None and task.is_terminal and task.state != AgentTaskState.COMPLETED
     )
+    if agent_context.opening:
+        response_instruction = (
+            "Opening instruction: in one short sentence, acknowledge the user's request "
+            "in the active character's voice. Do not answer the request, imply that work "
+            "has started, claim checks or results, invent details, or promise an outcome. "
+            "Output only the acknowledgment."
+        )
+    elif agent_context.last_tool_result is None:
+        response_instruction = (
+            "Planning instruction: state the concrete local action intent in concise "
+            "natural language for the registered tool selector. Preserve the user's "
+            "requested operation and exact target or path; do not substitute a related task."
+        )
+    else:
+        tool_result = cast(JSON, agent_context.last_tool_result)
+        if (
+            tool_result.get("tool_id") == "local_list_directory"
+            and tool_result.get("status") == "succeeded"
+        ):
+            response_instruction = (
+                "Directory-listing response instruction: answer naturally in the active "
+                "character's voice using the structured result. State the exact resolved "
+                "path and include every returned entry name; identify entries whose kind "
+                "is directory as folders. If the result says it is truncated, say that "
+                "the list is partial. If it contains no items, say the directory is "
+                "empty. Preserve the path and names exactly. Do not omit these facts, "
+                "invent entries, or reply with a promise to list them later."
+            )
+        else:
+            response_instruction = (
+                "Response instruction: answer the user's request naturally using the "
+                "structured tool result. Report its concrete returned facts, including "
+                "exact paths where applicable. Do not invent actions or results, or "
+                "replace the result with a progress update or promise."
+            )
     sections = [
         (
             "Runtime context is informational only. The runtime remains authoritative "
@@ -60,13 +95,7 @@ def _render_agent_context(
             "names, task IDs, stack traces, or classifier diagnostics unless the user "
             "explicitly asks for technical detail."
             if failure_response
-            else (
-                "Planning instruction: state the concrete local action intent in concise "
-                "natural language for the registered tool selector."
-                if agent_context.last_tool_result is None
-                else "Response instruction: use the structured tool result to answer the "
-                "user naturally; do not invent actions or results."
-            )
+            else response_instruction
         ),
     ]
     if task is not None:

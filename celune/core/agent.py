@@ -3,19 +3,16 @@
 
 from __future__ import annotations
 
-from typing import Union, Optional, cast
+from random import choice
 from collections.abc import Sequence
+from typing import Union, Optional, cast
 
 from ..i18n import string
-from ..paths import huggingface_progress
-from ..utils import format_error_message
 from ..exceptions import (
     ModelConsentDeclined,
     ModelConsentRequired,
     NeedleSelectionError,
 )
-from .conversation import deliver_persona_response, wait_for_persona_playback
-from ..agent.needle import NeedleToolSelector
 from ..typing.agent import (
     ToolCall,
     AgentOutput,
@@ -33,6 +30,10 @@ from ..typing.agent import (
     AgentClassificationResult,
     AgentClassificationFailure,
 )
+from ..paths import huggingface_progress
+from ..utils import format_error_message
+from ..agent.needle import NeedleToolSelector
+from .conversation import deliver_persona_response, wait_for_persona_playback
 
 
 def interrupt_active_agent_for_input(self, text: str) -> bool:
@@ -227,13 +228,73 @@ def run_agent_route(self, route: AgentClassificationResult) -> bool:
         active_task = self.agent_runtime.get_active_task(request.session.session_id)
         task_id = active_task.task_id if active_task is not None else None
     delivery_failed = False
+    initial_task = (
+        self.agent_runtime.get_task(task_id) if isinstance(task_id, str) else None
+    )
+    if initial_task is None:
+        initial_task = self.agent_runtime.create_task(request)
+        task_id = initial_task.task_id
+    opening_pending = initial_task.state == AgentTaskState.IDLE
+    suppress_initial_plan = opening_pending
+    if opening_pending:
+        try:
+            self.agent_runtime.start_task(initial_task.task_id)
+        except ValueError:
+            opening_pending = False
+    if opening_pending:
+        opening_preamble = choice(
+            (
+                string("agent.opening_preamble_1"),
+                string("agent.opening_preamble_2"),
+                string("agent.opening_preamble_3"),
+                string("agent.opening_preamble_4"),
+            )
+        )
+        if isinstance(task_id, str):
+            try:
+                opening = self._agent_persona_bridge.opening(
+                    self.agent_runtime.get_context(task_id)
+                )
+                generated_preamble = opening.get("response")
+                if (
+                    not isinstance(generated_preamble, str)
+                    or not generated_preamble.strip()
+                ):
+                    raise RuntimeError("agent opening response was empty")
+                opening_preamble = generated_preamble
+            except Exception as exc:
+                self.log(
+                    format_error_message(
+                        "[AGENT] opening_response_generation_failed",
+                        exc,
+                        self.log_level,
+                    ),
+                    "warning",
+                    loglevel="verbose",
+                )
+        try:
+            if self.say(opening_preamble):
+                wait_for_persona_playback(self)
+        except Exception as exc:
+            self.log(
+                format_error_message(
+                    "[AGENT] opening_speech_failed",
+                    exc,
+                    self.log_level,
+                ),
+                "warning",
+                loglevel="verbose",
+            )
 
     def deliver_output(output: AgentOutput) -> None:
         """Deliver generated agent responses through the shared speech path."""
-        nonlocal delivery_failed
+        nonlocal delivery_failed, suppress_initial_plan
+        terminal = output.get("terminal")
+        if suppress_initial_plan and terminal is None:
+            suppress_initial_plan = False
+            return
         if output.get("tool_call") is not None:
             return
-        terminal = output.get("terminal")
         if terminal is not None:
             if terminal.state == AgentTaskState.COMPLETED:
                 return

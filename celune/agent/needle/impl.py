@@ -21,10 +21,6 @@ from safetensors.torch import load_file
 from huggingface_hub import hf_hub_download
 from sentencepiece import SentencePieceProcessor
 
-from .models import NeedleModel, NeedleConfig
-from ...typing.common import JSONSerializable
-from ...paths import huggingface_hub_cache_dir
-from ...exceptions import NeedleSelectionError
 from .checkpoints import (
     NEEDLE_MODEL_ID,
     NEEDLE_CONFIG_FILE,
@@ -52,9 +48,43 @@ from ...typing.agent import (
     AgentToolArgumentSchema,
     NeedleToolParameterSpec,
 )
+from ...typing.common import JSONSerializable
+from .models import NeedleModel, NeedleConfig
+from ...exceptions import NeedleSelectionError
+from ...paths import huggingface_hub_cache_dir
 
 NEEDLE_TOOL_CALL_TOKEN_ID = 4
 NEEDLE_TOOLS_TOKEN_ID = 5
+_NEEDLE_MAX_NEW_TOKENS = 256
+_NEEDLE_CANDIDATE_TOOL_LIMIT = 8
+_NEEDLE_CLEAR_MATCH_SCORE = 8
+_NEEDLE_CLEAR_MATCH_MARGIN = 4
+_NEEDLE_WORD_RE = re.compile(r"[a-z0-9]+")
+_NEEDLE_QUERY_STOP_WORDS = frozenset(
+    {
+        "a",
+        "an",
+        "and",
+        "can",
+        "could",
+        "for",
+        "give",
+        "i",
+        "in",
+        "is",
+        "it",
+        "me",
+        "my",
+        "of",
+        "on",
+        "please",
+        "the",
+        "to",
+        "want",
+        "what",
+        "would",
+    }
+)
 
 __all__ = [
     "NEEDLE_CONFIG_FILE",
@@ -116,6 +146,84 @@ def _normalized_tools(
         normalized.append(cast(NeedleToolDefinition, copy))
         original_names[normalized_name] = name
     return normalized, original_names
+
+
+def _tool_relevance_score(query: str, tool: NeedleToolDefinition) -> int:
+    """Score catalog overlap with the intent, weighting names most heavily."""
+    query_words = {
+        word
+        for word in _NEEDLE_WORD_RE.findall(query.casefold())
+        if len(word) > 1 and word not in _NEEDLE_QUERY_STOP_WORDS
+    }
+    if not query_words:
+        return 0
+
+    name_words = set(_NEEDLE_WORD_RE.findall(tool["name"].casefold()))
+    description = tool.get("description", "")
+    description_words = set(_NEEDLE_WORD_RE.findall(description.casefold()))
+    parameter_words: set[str] = set()
+    for name, parameter in tool["parameters"].items():
+        parameter_words.update(_NEEDLE_WORD_RE.findall(name.casefold()))
+        if isinstance(parameter, str):
+            parameter_words.update(_NEEDLE_WORD_RE.findall(parameter.casefold()))
+        else:
+            parameter_description = parameter.get("description", "")
+            parameter_words.update(
+                _NEEDLE_WORD_RE.findall(parameter_description.casefold())
+            )
+
+    return (
+        3 * len(query_words & name_words)
+        + 2 * len(query_words & description_words)
+        + len(query_words & parameter_words)
+    )
+
+
+def _rank_tool_indexes(
+    query: str,
+    tools: NeedleToolCatalog,
+) -> list[int]:
+    """Order tools by intent overlap while keeping registration order for ties."""
+    return sorted(
+        range(len(tools)),
+        key=lambda index: (-_tool_relevance_score(query, tools[index]), index),
+    )
+
+
+def _compact_tool_catalog(
+    tools: NeedleToolCatalog,
+    *,
+    tool_description_indexes: set[int],
+    argument_description_indexes: set[int],
+) -> NeedleToolCatalog:
+    """Drop lower-priority descriptions while preserving every tool schema."""
+    compacted: NeedleToolCatalog = []
+    for index, tool in enumerate(tools):
+        compact_tool: NeedleToolDefinition = {
+            "name": tool["name"],
+            "parameters": {},
+        }
+        description = tool.get("description")
+        if description and index in tool_description_indexes:
+            compact_tool["description"] = description
+
+        parameters: dict[str, NeedleToolParameter] = {}
+        for name, parameter in tool["parameters"].items():
+            if isinstance(parameter, str):
+                parameters[name] = parameter
+                continue
+            parameter_spec = dict(parameter)
+            if index not in argument_description_indexes:
+                parameter_spec.pop("description", None)
+            parameters[name] = cast(NeedleToolParameter, parameter_spec)
+        compact_tool["parameters"] = parameters
+        compacted.append(compact_tool)
+    return compacted
+
+
+def _serialize_tool_catalog(tools: NeedleToolCatalog) -> str:
+    """Serialize a stable compact catalog payload for Needle's encoder."""
+    return json.dumps(tools, ensure_ascii=False, separators=(",", ":"))
 
 
 def parse_single_selection(
@@ -344,15 +452,69 @@ class NeedleHandler:
         """Build the documented query-separator-tools encoder sequence."""
         model = self._require_model()
         normalized_tools, original_names = _normalized_tools(tools)
-        tools_json = json.dumps(
-            normalized_tools,
-            ensure_ascii=False,
-            separators=(",", ":"),
-        )
         query_tokens = self.tokenizer.encode(query)
-        query_tokens = query_tokens[: model.config.max_seq_len - 2]
-        remaining = model.config.max_seq_len - len(query_tokens) - 1
-        tool_tokens = self.tokenizer.encode(tools_json)[: max(0, remaining)]
+        max_seq_len = model.config.max_seq_len
+        query_budget = max(0, min(max_seq_len - 2, max_seq_len // 2))
+        query_tokens = query_tokens[:query_budget]
+        remaining = max(0, max_seq_len - len(query_tokens) - 1)
+        tool_tokens = self.tokenizer.encode(_serialize_tool_catalog(normalized_tools))
+        if len(tool_tokens) > remaining:
+            ranked_indexes = _rank_tool_indexes(query, normalized_tools)
+            description_limits = (
+                (len(normalized_tools), min(8, len(normalized_tools))),
+                (min(8, len(normalized_tools)), min(8, len(normalized_tools))),
+                (min(4, len(normalized_tools)), min(4, len(normalized_tools))),
+                (0, 0),
+            )
+            tool_tokens = []
+            fitted_catalog = False
+            for (
+                tool_description_count,
+                argument_description_count,
+            ) in description_limits:
+                compacted_tools = _compact_tool_catalog(
+                    normalized_tools,
+                    tool_description_indexes=set(
+                        ranked_indexes[:tool_description_count]
+                    ),
+                    argument_description_indexes=set(
+                        ranked_indexes[:argument_description_count]
+                    ),
+                )
+                candidate_tokens = self.tokenizer.encode(
+                    _serialize_tool_catalog(compacted_tools)
+                )
+                if len(candidate_tokens) <= remaining:
+                    tool_tokens = candidate_tokens
+                    fitted_catalog = True
+                    break
+
+            if not fitted_catalog:
+                compacted_tools = _compact_tool_catalog(
+                    normalized_tools,
+                    tool_description_indexes=set(),
+                    argument_description_indexes=set(),
+                )
+                selected_tools: NeedleToolCatalog = []
+                for index in ranked_indexes:
+                    candidate_tools = [*selected_tools, compacted_tools[index]]
+                    candidate_tokens = self.tokenizer.encode(
+                        _serialize_tool_catalog(candidate_tools)
+                    )
+                    if len(candidate_tokens) > remaining:
+                        continue
+                    selected_tools = candidate_tools
+                    tool_tokens = candidate_tokens
+                if not selected_tools:
+                    raise NeedleSelectionError(
+                        "Needle cannot fit any registered tool into its input limit"
+                    )
+                included_names = {tool["name"] for tool in selected_tools}
+                original_names = {
+                    name: original
+                    for name, original in original_names.items()
+                    if name in included_names
+                }
         values = query_tokens + [NEEDLE_TOOLS_TOKEN_ID] + tool_tokens
         return (
             torch.tensor([values], dtype=torch.long, device=self.device),
@@ -364,7 +526,7 @@ class NeedleHandler:
         self,
         query: str,
         tools: NeedleToolCatalog,
-        max_new_tokens: int = 96,
+        max_new_tokens: int = _NEEDLE_MAX_NEW_TOKENS,
     ) -> NeedleToolSelection:
         """Return validated-looking tool calls selected by Needle."""
         input_ids, original_names = self.build_encoder_input(query, tools)
@@ -380,7 +542,7 @@ class NeedleHandler:
         self,
         query: str,
         tools: NeedleToolCatalog,
-        max_new_tokens: int = 96,
+        max_new_tokens: int = _NEEDLE_MAX_NEW_TOKENS,
     ) -> NeedleToolCall:
         """Return exactly one strictly parsed Needle tool call."""
         input_ids, original_names = self.build_encoder_input(query, tools)
@@ -395,7 +557,7 @@ class NeedleHandler:
         self,
         query: str,
         tools: Sequence[AgentTool],
-        max_new_tokens: int = 96,
+        max_new_tokens: int = _NEEDLE_MAX_NEW_TOKENS,
     ) -> NeedleToolSelection:
         """Select calls from Celune's registered local tools."""
         return self.select_tools(
@@ -421,7 +583,7 @@ class NeedleToolSelector:
         tools: Sequence[AgentTool],
         *,
         schemas: Optional[Mapping[str, AgentToolSchema]] = None,
-        max_new_tokens: int = 96,
+        max_new_tokens: int = _NEEDLE_MAX_NEW_TOKENS,
     ) -> None:
         """Create a selector that validates Needle output against registered tools."""
         if max_new_tokens <= 0:
@@ -473,7 +635,7 @@ class NeedleToolSelector:
         revision: str = NEEDLE_MODEL_REVISION,
         source_filename: str = NEEDLE_WEIGHTS_FILE,
         pickle_converter: Optional[NeedlePickleConverter] = None,
-        max_new_tokens: int = 96,
+        max_new_tokens: int = _NEEDLE_MAX_NEW_TOKENS,
     ) -> NeedleToolSelector:
         """Load the verified Needle handler and build one typed selector adapter."""
         handler = NeedleHandler.from_pretrained(
@@ -503,22 +665,174 @@ class NeedleToolSelector:
             raise NeedleSelectionError(
                 "Needle requires a non-empty natural-language action intent"
             )
+        request = context.request.request.strip()
+        intent = intent.strip()
+        query = intent
+        if request and request.casefold() not in intent.casefold():
+            query = f"{request}\n{intent}"
         catalog = self.handler.catalog_for_tools(
             self.tools,
             schemas=self.schemas,
             available_only=True,
         )
-        selection = self.handler.select_tools(
-            intent,
+        if not catalog:
+            raise NeedleSelectionError("Needle has no available registered tools")
+        candidate_catalog = self._candidate_catalog(catalog, request, intent)
+        queries = [query]
+        if request and request.casefold() != query.casefold():
+            queries.append(request)
+        selection: NeedleToolSelection = []
+        catalogs = [candidate_catalog]
+        if candidate_catalog != catalog:
+            catalogs.append(catalog)
+        for candidate_tools in catalogs:
+            for candidate_query in queries:
+                selection = self.handler.select_tools(
+                    candidate_query,
+                    candidate_tools,
+                    max_new_tokens=self.max_new_tokens,
+                )
+                if context.task is not None and context.task.is_terminal:
+                    return None
+                if selection:
+                    break
+            if selection:
+                break
+        if not selection:
+            raise NeedleSelectionError(
+                "Needle returned no valid tool calls for the action intent or original request"
+            )
+        validated: list[ValidatedToolCall] = []
+        for call in selection:
+            try:
+                validated.append(self._validate_selection(call))
+            except NeedleSelectionError as exc:
+                missing = self._missing_required_arguments(call)
+                if not missing or not str(exc).startswith(
+                    "Needle omitted required arguments for "
+                ):
+                    raise
+                repaired = self._retry_tool_selection(
+                    context,
+                    request=request,
+                    intent=intent,
+                    missing=missing,
+                    catalog=candidate_catalog,
+                )
+                if context.task is not None and context.task.is_terminal:
+                    return None
+                if not repaired and candidate_catalog != catalog:
+                    repaired = self._retry_tool_selection(
+                        context,
+                        request=request,
+                        intent=intent,
+                        missing=missing,
+                        catalog=catalog,
+                    )
+                    if context.task is not None and context.task.is_terminal:
+                        return None
+                if not repaired:
+                    raise NeedleSelectionError(
+                        "Needle returned no tool calls after reconsidering "
+                        + call["name"]
+                        + " with missing required arguments: "
+                        + ", ".join(missing)
+                    ) from exc
+                repaired_validated = [
+                    self._validate_selection(repaired_call)
+                    for repaired_call in repaired
+                ]
+                return (
+                    repaired_validated[0]
+                    if len(repaired_validated) == 1
+                    else repaired_validated
+                )
+        return validated[0] if len(validated) == 1 else validated
+
+    @staticmethod
+    def _candidate_catalog(
+        catalog: NeedleToolCatalog,
+        request: str,
+        intent: str,
+    ) -> NeedleToolCatalog:
+        """Reduce model choice to request-relevant tools when wording is clear."""
+        if len(catalog) <= _NEEDLE_CANDIDATE_TOOL_LIMIT:
+            return catalog
+
+        request_scores = [_tool_relevance_score(request, tool) for tool in catalog]
+        ranked_request = sorted(
+            range(len(catalog)),
+            key=lambda index: (-request_scores[index], index),
+        )
+        best_request_score = request_scores[ranked_request[0]]
+        next_request_score = request_scores[ranked_request[1]]
+        if (
+            best_request_score >= _NEEDLE_CLEAR_MATCH_SCORE
+            and best_request_score - next_request_score >= _NEEDLE_CLEAR_MATCH_MARGIN
+        ):
+            return [catalog[ranked_request[0]]]
+
+        ranking_query = f"{request}\n{intent}".strip()
+        ranked = _rank_tool_indexes(ranking_query, catalog)
+        if not ranked or _tool_relevance_score(ranking_query, catalog[ranked[0]]) == 0:
+            return catalog
+        return [catalog[index] for index in ranked[:_NEEDLE_CANDIDATE_TOOL_LIMIT]]
+
+    def _retry_tool_selection(
+        self,
+        context: AgentContext,
+        *,
+        request: str,
+        intent: str,
+        missing: Sequence[str],
+        catalog: NeedleToolCatalog,
+    ) -> NeedleToolSelection:
+        """Reconsider an incomplete call against a relevant candidate catalog."""
+        if not catalog:
+            return []
+
+        sections = [
+            (
+                "Reconsider tool selection because the previous call omitted required arguments. "
+                "Choose the registered tool that best matches the original request; the previous "
+                "tool may be wrong. Do not repeat an incomplete call. Use only values supported "
+                "by the request, action intent, or previous tool result; never invent arguments."
+            ),
+            f"Original user request: {request}",
+            f"Persona action intent: {intent}",
+            "The previous call omitted required arguments: " + ", ".join(missing),
+        ]
+        if context.last_tool_result is not None:
+            result_output = context.last_tool_result.get("output")
+            if result_output is not None:
+                serialized_result = json.dumps(
+                    result_output,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                )
+                if len(serialized_result) > 1024:
+                    serialized_result = serialized_result[:1024] + "…"
+                sections.append("Previous tool result: " + serialized_result)
+        return self.handler.select_tools(
+            "\n".join(sections),
             catalog,
             max_new_tokens=self.max_new_tokens,
         )
-        if context.task is not None and context.task.is_terminal:
-            return None
-        if not selection:
-            raise NeedleSelectionError("Needle returned no valid tool calls")
-        validated = [self._validate_selection(call) for call in selection]
-        return validated[0] if len(validated) == 1 else validated
+
+    def _missing_required_arguments(
+        self,
+        selection: NeedleToolCall,
+    ) -> list[str]:
+        """Return required schema fields absent from one selected call."""
+        schema = self.schemas.get(selection["name"])
+        if schema is None:
+            return []
+        arguments = selection["arguments"]
+        return sorted(
+            argument.name
+            for argument in schema.arguments
+            if argument.required and argument.name not in arguments
+        )
 
     def _validate_selection(self, selection: NeedleToolCall) -> ValidatedToolCall:
         """Validate one restored canonical call against registered schemas."""
@@ -538,11 +852,11 @@ class NeedleToolSelector:
             raise NeedleSelectionError(
                 f"Needle selected an unavailable tool: {selection['name']}"
             )
-        self._validate_arguments(selection["arguments"], schema)
+        arguments = self._validate_arguments(selection["arguments"], schema)
         return {
             "id": f"needle-{uuid4().hex}",
             "name": tool.name,
-            "arguments": selection["arguments"],
+            "arguments": arguments,
             "tool_id": schema.tool_id,
             "behavior": schema.behavior,
             "danger": schema.danger,
@@ -553,8 +867,8 @@ class NeedleToolSelector:
     def _validate_arguments(
         arguments: Mapping[str, JSONSerializable],
         schema: AgentToolSchema,
-    ) -> None:
-        """Reject unknown, missing, or type-invalid registered arguments."""
+    ) -> dict[str, JSONSerializable]:
+        """Validate arguments and normalize lossless integer representations."""
         declared = {argument.name: argument for argument in schema.arguments}
         unknown = sorted(set(arguments) - set(declared))
         if unknown:
@@ -568,14 +882,42 @@ class NeedleToolSelector:
         )
         if missing:
             raise NeedleSelectionError(
-                "Needle omitted required arguments: " + ", ".join(missing)
+                f"Needle omitted required arguments for {schema.tool_id}: "
+                + ", ".join(missing)
             )
+        normalized: dict[str, JSONSerializable] = {}
         for name, value in arguments.items():
             argument = declared[name]
+            if value is None and not argument.required:
+                continue
+            if argument.value_type == AgentToolValueType.INTEGER:
+                integer_value = NeedleToolSelector._normalize_integer(value)
+                if integer_value is not None:
+                    value = integer_value
             if not NeedleToolSelector._matches_type(value, argument):
                 raise NeedleSelectionError(
                     f"Needle argument '{name}' does not match its registered schema"
                 )
+            normalized[name] = value
+        return normalized
+
+    @staticmethod
+    def _normalize_integer(value: JSONSerializable) -> Optional[int]:
+        """Convert an exact integer representation to an integer value."""
+        if isinstance(value, bool):
+            return None
+        if isinstance(value, int):
+            return value
+        if isinstance(value, float) and value.is_integer():
+            return int(value)
+        if isinstance(value, str):
+            stripped = value.strip()
+            if re.fullmatch(r"[+-]?\d+", stripped):
+                try:
+                    return int(stripped)
+                except ValueError:
+                    return None
+        return None
 
     @staticmethod
     def _matches_type(

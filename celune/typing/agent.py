@@ -3,9 +3,6 @@
 
 from __future__ import annotations
 
-from enum import Enum
-from collections.abc import Sequence
-from dataclasses import field, dataclass
 from typing import (
     TYPE_CHECKING,
     Union,
@@ -15,6 +12,9 @@ from typing import (
     NotRequired,
     cast,
 )
+from enum import Enum
+from collections.abc import Sequence
+from dataclasses import field, dataclass
 
 from .modes import OperationMode
 from .locks import ComponentBusyResult
@@ -524,6 +524,7 @@ class AgentContext:
     task: Optional[AgentTask] = None
     last_tool_result: Optional[ToolResult] = None
     classification_failure: Optional[AgentClassificationFailure] = None
+    opening: bool = False
 
 
 @dataclass(frozen=True)

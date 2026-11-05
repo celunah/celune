@@ -2,14 +2,12 @@
 """Adapters between the existing Persona boundary and AgentRuntime."""
 
 from __future__ import annotations
+
 from uuid import uuid4
 from dataclasses import replace
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, cast
 
-from ..typing.persona import PersonaClientResponse
-from ..persona.impl import compact_persona_history, persona_history_messages
-from ..persona.conversation import extract_persona_text, build_persona_request
 from ..typing.agent import (
     ToolResult,
     AgentOutput,
@@ -21,6 +19,9 @@ from ..typing.locks import (
     ComponentLockOwner,
     ComponentLockRequirement,
 )
+from ..typing.persona import PersonaClientResponse
+from ..persona.impl import compact_persona_history, persona_history_messages
+from ..persona.conversation import extract_persona_text, build_persona_request
 
 if TYPE_CHECKING:
     from ..celune import Celune
@@ -45,6 +46,10 @@ class PersonaAgentBridge:
     def respond(self, context: AgentContext) -> AgentOutput:
         """Ask Persona for the final response when no tool is selected."""
         return self._generate(context, terminal=True)
+
+    def opening(self, context: AgentContext) -> AgentOutput:
+        """Generate a short character-voiced acknowledgment before planning."""
+        return self._generate(replace(context, opening=True), terminal=True)
 
     def handle_tool_result(
         self,

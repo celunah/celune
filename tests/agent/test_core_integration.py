@@ -83,6 +83,7 @@ class _PersonaFixture:
                 '{"classification":"task","route":"task",'
                 '"confidence":0.98,"task_request":"Check the current agent status."}'
             ),
+            _PersonaResponse("One moment."),
             _PersonaResponse("Read the current agent status."),
             _PersonaResponse("The agent task completed successfully."),
         ]
@@ -117,6 +118,7 @@ class _SpeakPersonaFixture:
                 '"confidence":0.98,"task_request":"Say hello."}'
             ),
             _PersonaResponse("I will say hello."),
+            _PersonaResponse("Say hello."),
             _PersonaResponse(
                 '{"classification":"task","route":"approval_response",'
                 '"confidence":0.99,"approval_decision":"approved"}'
@@ -208,6 +210,12 @@ class TestAgentCoreIntegration(CeluneTestCase):
                 tts_backend=FakeBackend,
                 agent_tool_selector=agent_tool_selector,
             )
+        playback_wait = mock.patch(
+            "celune.core.agent.wait_for_persona_playback",
+            return_value=True,
+        )
+        playback_wait.start()
+        self.addCleanup(playback_wait.stop)
         self.addCleanup(core.close)
         return core
 
@@ -453,6 +461,7 @@ class TestAgentCoreIntegration(CeluneTestCase):
         core._agent_router = AgentInputRouter(core, runtime)
         core.vision = _RoutingFixture(
             '{"classification":"task","route":"task","confidence":0.98}',
+            "I will review that request.",
             '{"classification":"task","route":"approval_response",'
             '"confidence":0.99,"approval_decision":"approved"}',
         )
@@ -529,6 +538,12 @@ class TestAgentCoreIntegration(CeluneTestCase):
             self.addCleanup(speech_patch.stop)
         delivery_mock = delivery.start()
         self.addCleanup(delivery.stop)
+        playback_wait = mock.patch(
+            "celune.core.agent.wait_for_persona_playback",
+            return_value=True,
+        )
+        playback_wait_mock = playback_wait.start()
+        self.addCleanup(playback_wait.stop)
         core.vision = cast(PersonaClient, persona)
 
         assert core.agent_runtime._planner is not None
@@ -581,13 +596,14 @@ class TestAgentCoreIntegration(CeluneTestCase):
         assert task.state == AgentTaskState.COMPLETED
         assert task.iterations == 1
         assert selector.intents == ["Read the current agent status."]
-        assert len(persona.requests) == 3
-        second_system = persona.requests[2]["system"]
+        assert len(persona.requests) == 4
+        second_system = persona.requests[3]["system"]
         assert isinstance(second_system, str)
         assert "Last tool result" in second_system
         assert "succeeded" in second_system
         assert execute.call_count == 1
-        assert delivery_mock.call_count == 2
+        assert delivery_mock.call_count == 1
+        assert playback_wait_mock.call_count == 1
         assert speech_mock.call_count == 2
         assert (
             speech_mock.call_args.kwargs["display_text"]
@@ -651,6 +667,7 @@ class TestAgentCoreIntegration(CeluneTestCase):
                 '{"classification":"task","route":"task",'
                 '"confidence":0.98,"task_request":"Inspect the unavailable thing."}'
             ),
+            _PersonaResponse("I will check that now."),
             _PersonaResponse("Inspect the unavailable thing."),
             _PersonaResponse("I could not find a suitable way to do that just now."),
         ]
@@ -679,6 +696,7 @@ class TestAgentCoreIntegration(CeluneTestCase):
                 "celune.core.agent.wait_for_persona_playback",
                 side_effect=wait_for_playback,
             ),
+            mock.patch.object(core, "say", side_effect=RuntimeError("queue failed")),
         ):
             assert core.run_agent_route(route)
 
@@ -880,7 +898,7 @@ class TestAgentCoreIntegration(CeluneTestCase):
         assert result["tool_id"] == "speak"
         assert result["status"] == AgentToolExecutionStatus.SUCCEEDED
         assert result["end_task"] is True
-        assert delivery_mock.call_count == 1
+        assert delivery_mock.call_count == 0
         assert playback_wait_mock.call_count == 1
         assert playback_wait_mock.call_args.args == (core,)
         assert speech_mock.call_count == 2
@@ -888,7 +906,7 @@ class TestAgentCoreIntegration(CeluneTestCase):
             "I will say hello.",
             "hello",
         ]
-        assert len(persona.requests) == 3
+        assert len(persona.requests) == 4
 
     def test_needle_loading_failure_is_recorded_and_task_fails_safely(self) -> None:
         """Expose a typed terminal failure when production Needle cannot load."""
@@ -915,6 +933,7 @@ class TestAgentCoreIntegration(CeluneTestCase):
             self.addCleanup(core.close)
             core.vision = _RoutingFixture(
                 '{"classification":"task","route":"task","confidence":0.98}',
+                "I will check that now.",
                 "Check the current agent status.",
             )
             route = core.route_input(

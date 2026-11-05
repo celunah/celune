@@ -164,7 +164,9 @@ class TestNeedleSelector:
         result = selector(_context(), _output())
 
         assert result is not None
-        assert selection.query == "Set a timer for five minutes"
+        assert (
+            selection.query == "Set the requested timer.\nSet a timer for five minutes"
+        )
         assert [item["name"] for item in selection.catalog] == ["SetTimer"]
         minutes = cast(
             NeedleToolParameterSpec,
@@ -293,7 +295,7 @@ class TestNeedleSelector:
                 max_new_tokens: int,
             ) -> torch.Tensor:
                 """Return deterministic generated token IDs."""
-                if max_new_tokens != 96 or input_ids.shape[0] != 1:
+                if max_new_tokens != 256 or input_ids.shape[0] != 1:
                     raise AssertionError("unexpected Needle generation request")
                 return torch.tensor([[1, 2]])
 
