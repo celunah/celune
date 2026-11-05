@@ -36,12 +36,12 @@ except ModuleNotFoundError as module:
     )
     _LANGUAGE_DETECTOR = None
 
+from .vcs import get_revision as _get_repository_revision
 from .paths import traceback_path
-from .typing.aliases import LogLevel
+from .terminal import supports_ansi as terminal_supports_ansi
 from .constants import REFERENCE_NEW_MOON
 from .typing.utils import CallerInfo, LanguageResult
-from .vcs import get_revision as _get_repository_revision
-from .terminal import supports_ansi as terminal_supports_ansi
+from .typing.aliases import LogLevel
 
 
 def clear_queue(q: queue.Queue) -> None:
@@ -830,6 +830,7 @@ def normalize_special_characters(text: str, *, for_tts: bool = False) -> str:
 
     normalized = text.translate(special_char_mappings).replace("\x00", ": ")
     normalized = re.sub(r"\s{2,}", " ", normalized)
+    normalized = re.sub(r"[ \t]+:", ":", normalized)
     if not for_tts:
         return normalized
 

@@ -31,10 +31,11 @@ In `performance` mode, `say()` and `/say` queue the supplied text literally. A n
 request does not implicitly stop an utterance that is already playing; a direct
 request is reported as busy until the shared speech pipeline is available. Use
 `/stop` or `force_stop_speech()` when interruption is intentional. Celune
-normalizes special characters, segments long input, asks the active backend for
-streaming chunks, applies the smart buffer and DSP, then sends normalized audio
-to the playback worker. A request can save the final result, expose chunks to a
-Python queue, or stream the result through the REST API.
+normalizes special characters, removes horizontal whitespace before colons,
+segments long input, asks the active backend for streaming chunks, applies the
+smart buffer and DSP, then sends normalized audio to the playback worker. A
+request can save the final result, expose chunks to a Python queue, or stream
+the result through the REST API.
 
 ## Button actions
 
