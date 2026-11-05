@@ -794,6 +794,7 @@ def _queue_speech_after_ready(
             engine.progress_callback(0, 1)
             return False
 
+        restore_status = engine.cur_state if maintain_status else None
         engine.cur_state = "generating"
         request_rejected = False
         with engine.queue_lock:
@@ -823,7 +824,7 @@ def _queue_speech_after_ready(
                         prepared_audio=prepared_audio,
                         playback_source_queue=playback_source_queue,
                         caption_alignment_sections=caption_alignment_sections,
-                        restore_status=(engine.cur_state if maintain_status else None),
+                        restore_status=restore_status,
                     )
                 )
                 engine.log(
