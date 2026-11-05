@@ -675,8 +675,14 @@ class TestAgentCoreIntegration(CeluneTestCase):
         delivered: list[str] = []
         delivery_order: list[str] = []
 
-        def record_delivery(_engine: Celune, _request: str, response: str) -> bool:
+        def record_delivery(
+            _engine: Celune,
+            _request: str,
+            response: str,
+            maintain_status: bool = False,
+        ) -> bool:
             """Capture the character-generated terminal response."""
+            del maintain_status
             delivered.append(response)
             delivery_order.append("delivered")
             return True
@@ -739,7 +745,7 @@ class TestAgentCoreIntegration(CeluneTestCase):
         delivered: list[str] = []
         with mock.patch(
             "celune.core.agent.deliver_persona_response",
-            side_effect=lambda _engine, _request, response: (
+            side_effect=lambda _engine, _request, response, maintain_status=False: (
                 delivered.append(response) or True
             ),
         ):
@@ -775,8 +781,14 @@ class TestAgentCoreIntegration(CeluneTestCase):
         core.vision = cast(PersonaClient, persona)
         delivered: list[str] = []
 
-        def record_delivery(_engine: Celune, _request: str, response: str) -> bool:
+        def record_delivery(
+            _engine: Celune,
+            _request: str,
+            response: str,
+            maintain_status: bool = False,
+        ) -> bool:
             """Capture one character-generated terminal response."""
+            del maintain_status
             delivered.append(response)
             return True
 

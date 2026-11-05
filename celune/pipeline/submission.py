@@ -75,6 +75,7 @@ def say(
     text: str,
     save: bool = True,
     display_text: Optional[str] = None,
+    maintain_status: bool = False,
 ) -> bool:
     """Queue text for Celune to say.
 
@@ -103,6 +104,15 @@ def say(
         engine.progress_callback(0, 1)
         return False
 
+    if maintain_status:
+        return queue_speech(
+            engine,
+            text,
+            save=save,
+            stream_queue=None,
+            display_text=display_text,
+            maintain_status=True,
+        )
     return queue_speech(
         engine,
         text,
@@ -519,6 +529,7 @@ def queue_speech(
     save: bool = True,
     stream_queue: Optional[SpeechStreamQueue] = None,
     display_text: Optional[str] = None,
+    maintain_status: bool = False,
 ) -> bool:
     """Queue text for Celune to say and optionally mirror audio chunks.
 
@@ -541,6 +552,7 @@ def queue_speech(
         save=save,
         stream_queue=stream_queue,
         display_text=display_text,
+        maintain_status=maintain_status,
         allow_tutorial=False,
     )
 
@@ -551,6 +563,7 @@ def _queue_speech_request(
     save: bool = True,
     stream_queue: Optional[SpeechStreamQueue] = None,
     display_text: Optional[str] = None,
+    maintain_status: bool = False,
     *,
     allow_tutorial: bool,
     normalize: Optional[bool] = None,
@@ -596,6 +609,7 @@ def _queue_speech_request(
         save=save,
         stream_queue=stream_queue,
         display_text=display_text,
+        maintain_status=maintain_status,
         normalize=normalize,
         synthesis_sections=synthesis_sections,
         audio_capture_queue=audio_capture_queue,
@@ -690,6 +704,7 @@ def _queue_speech_after_ready(
     save: bool = True,
     stream_queue: Optional[SpeechStreamQueue] = None,
     display_text: Optional[str] = None,
+    maintain_status: bool = False,
     *,
     normalize: Optional[bool] = None,
     synthesis_sections: tuple[str, ...] = (),
@@ -808,6 +823,7 @@ def _queue_speech_after_ready(
                         prepared_audio=prepared_audio,
                         playback_source_queue=playback_source_queue,
                         caption_alignment_sections=caption_alignment_sections,
+                        restore_status=(engine.cur_state if maintain_status else None),
                     )
                 )
                 engine.log(

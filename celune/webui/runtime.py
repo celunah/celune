@@ -310,6 +310,7 @@ def _webui_agent_task_state_changed(
     session: ServerSession = server_session,
 ) -> None:
     """Mirror agent task state changes into the browser UI."""
+    session.webui_agent_task_id = event.task_id
     state = getattr(event.new_state, "value", str(event.new_state))
     _publish_webui_agent_status(event.task_id, state, session=session)
 
@@ -319,6 +320,7 @@ def _webui_agent_approval_requested(
     session: ServerSession = server_session,
 ) -> None:
     """Mirror agent approval pauses into the browser UI."""
+    session.webui_agent_task_id = event.task_id
     _publish_webui_agent_status(
         event.task_id,
         "awaiting_approval",
@@ -332,6 +334,7 @@ def _webui_agent_choice_requested(
     session: ServerSession = server_session,
 ) -> None:
     """Mirror agent choice pauses into the browser UI."""
+    session.webui_agent_task_id = event.task_id
     _publish_webui_agent_status(
         event.task_id,
         "awaiting_choice",
@@ -345,6 +348,7 @@ def _webui_agent_task_finished(
     session: ServerSession = server_session,
 ) -> None:
     """Mirror terminal agent task states into the browser UI."""
+    session.webui_agent_task_id = event.task_id
     state = getattr(event.state, "value", str(event.state))
     _publish_webui_agent_status(event.task_id, state, session=session)
 
@@ -701,6 +705,11 @@ def wrap_celune_callbacks(
 
     def wrapped_idle() -> None:
         original_idle()
+        maintain_agent_status = bool(
+            getattr(celune, "_maintain_status_after_playback", False)
+        )
+        if maintain_agent_status:
+            celune._maintain_status_after_playback = False
         session.webui_caption_active = False
         session.webui_caption_text = ""
         session.webui_caption_progress = 0.0
@@ -718,7 +727,13 @@ def wrap_celune_callbacks(
                 source="callback",
                 session=session,
             )
-        elif getattr(celune, "cur_state", "") not in {"reloading", "waking"}:
+        elif maintain_agent_status and session.webui_agent_task_id is not None:
+            _publish_webui_agent_status(
+                session.webui_agent_task_id,
+                "idle",
+                session=session,
+            )
+        elif getattr(celune, "cur_state", "") == "idle":
             set_webui_status(string("status.idle"), source="callback", session=session)
 
     def wrapped_queue_available() -> None:

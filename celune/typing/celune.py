@@ -317,6 +317,8 @@ class CeluneStateAccessors:
     _playback_generation: int
     _next_playback_source_id: int
     _playback_source_statuses: dict[int, str]
+    _speech_status_restore: dict[int, str]
+    _maintain_status_after_playback: bool
     _playback_source_meta: dict[int, dict[str, Union[str, float]]]
     _playback_caption_states: dict[int, CaptionPlaybackState]
     _caption_source_id: Optional[int]

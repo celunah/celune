@@ -2401,6 +2401,20 @@ class TestPipelineAsync(CeluneAsyncTestCase):
         assert engine.cur_state == "idle"
         engine.idle_callback.assert_called_once_with()
 
+    def test_finalize_playback_idle_restores_maintained_status(self) -> None:
+        """Keep an action status after its speech playback completes."""
+        engine = make_pipeline_engine()
+        engine.locked = False
+        engine.cur_state = "classifying"
+        engine._speech_status_restore = {42: "classifying"}
+
+        playback._finalize_playback_idle(cast(Celune, engine), source_id=42)
+
+        assert engine.cur_state == "classifying"
+        assert engine._speech_status_restore == {}
+        assert not engine._maintain_status_after_playback
+        engine.idle_callback.assert_called_once_with()
+
     def test_finalize_playback_idle_does_not_announce_readiness_while_reloading(
         self,
     ) -> None:

@@ -44,6 +44,7 @@ class ServerSession:
     speech_job_worker: Optional[threading.Thread] = None
     speech_job_ttl_seconds: int = 15 * 60
     active_speech_task_id: Optional[str] = None
+    webui_agent_task_id: Optional[str] = None
     webui_log_lines: deque[tuple[str, str]] = field(
         default_factory=lambda: deque(maxlen=240)
     )

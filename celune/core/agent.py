@@ -273,7 +273,7 @@ def run_agent_route(self, route: AgentClassificationResult) -> bool:
                     loglevel="verbose",
                 )
         try:
-            if self.say(opening_preamble):
+            if self.say(opening_preamble, maintain_status=True):
                 wait_for_persona_playback(self)
         except Exception as exc:
             self.log(
@@ -310,7 +310,9 @@ def run_agent_route(self, route: AgentClassificationResult) -> bool:
                 response = response_output.get("response")
                 if not isinstance(response, str) or not response.strip():
                     raise RuntimeError("agent failure response was empty")
-                if not deliver_persona_response(self, request.request, response):
+                if not deliver_persona_response(
+                    self, request.request, response, maintain_status=True
+                ):
                     raise RuntimeError("agent failure response could not be queued")
             except Exception as exc:
                 self.log(
@@ -332,7 +334,7 @@ def run_agent_route(self, route: AgentClassificationResult) -> bool:
                     fallback = string("agent.stuck_final")
                 elif terminal.state == AgentTaskState.ABORTED:
                     fallback = string("agent.limit_final")
-                if not self.say(fallback):
+                if not self.say(fallback, maintain_status=True):
                     delivery_failed = True
             return
         if self.backend_mode == "agent_test" and not output.get("end"):
@@ -346,7 +348,9 @@ def run_agent_route(self, route: AgentClassificationResult) -> bool:
         } and not wait_for_persona_playback(self):
             delivery_failed = True
             raise RuntimeError("agent response speech was interrupted")
-        if not deliver_persona_response(self, request.request, response):
+        if not deliver_persona_response(
+            self, request.request, response, maintain_status=True
+        ):
             delivery_failed = True
             raise RuntimeError("agent response speech could not be queued")
 
@@ -382,7 +386,9 @@ def speak_agent_classification_failure(
         output = self._agent_persona_bridge.respond(context)
         response = output.get("response")
         if isinstance(response, str) and response.strip():
-            return deliver_persona_response(self, request, response)
+            return deliver_persona_response(
+                self, request, response, maintain_status=True
+            )
     except Exception as exc:
         self.log(
             format_error_message(
@@ -393,4 +399,4 @@ def speak_agent_classification_failure(
             "warning",
             loglevel="verbose",
         )
-    return self.say(string("agent.classifier_unavailable"))
+    return self.say(string("agent.classifier_unavailable"), maintain_status=True)

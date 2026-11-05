@@ -870,6 +870,7 @@ def _ensure_playback_stream_unlocked(engine: Celune, sample_rate: int) -> bool:
 
 def _finalize_playback_idle(
     engine: Celune,
+    source_id: Optional[int] = None,
     saved_path: Optional[str] = None,
     analysis_audio: Optional[AudioChunk] = None,
 ) -> None:
@@ -884,8 +885,16 @@ def _finalize_playback_idle(
     if getattr(engine, "locked", False):
         return
 
-    engine.cur_state = "idle"
-    engine.idle_callback()
+    status_restore = getattr(engine, "_speech_status_restore", {})
+    restored_status = (
+        status_restore.pop(source_id, None) if source_id is not None else None
+    )
+    engine.cur_state = restored_status if restored_status is not None else "idle"
+    engine._maintain_status_after_playback = restored_status is not None
+    try:
+        engine.idle_callback()
+    finally:
+        engine._maintain_status_after_playback = False
 
     if getattr(engine, "backend_mode", None) == "agent_test":
         engine._ready_announced = True
@@ -1088,6 +1097,7 @@ async def playback_worker_job(engine: Celune) -> None:
         )
         _finalize_playback_idle(
             engine,
+            source_id=marker.source_id,
             saved_path=marker.saved_path,
             analysis_audio=marker.analysis_audio,
         )

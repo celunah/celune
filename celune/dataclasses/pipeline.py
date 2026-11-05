@@ -55,6 +55,7 @@ class SpeechRequest:
     prepared_audio: Optional[AudioChunk] = None
     playback_source_queue: Optional[queue.Queue[Union[int, Exception]]] = None
     caption_alignment_sections: tuple[CaptionAlignmentSection, ...] = ()
+    restore_status: Optional[str] = None
     submitted_at: float = field(default_factory=time.monotonic)
 
 

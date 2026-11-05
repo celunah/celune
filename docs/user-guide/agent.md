@@ -39,6 +39,9 @@ runtime uses a randomly selected localized fallback. The first planning message
 is not spoken before tool selection. The task enters its classification state
 before the opener is spoken, keeping the agent status active during speech.
 Tool results and the final response continue through the normal speech path.
+Speech delivered as part of an ongoing agent action preserves the active status
+when playback completes, so an intermediate response does not make the agent
+appear idle before its task ends.
 
 Agent prompts do not include Persona's automatically retrieved long-term
 memories, conversation summary, or ordinary chat history. Memory tools remain

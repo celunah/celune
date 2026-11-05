@@ -163,7 +163,7 @@ async form.
 
 | Call | Contract |
 | --- | --- |
-| `say(text, save=True, display_text=None) -> bool` | Queue literal text for TTS. `display_text` changes only logs/captions. |
+| `say(text, save=True, display_text=None, maintain_status=False) -> bool` | Queue literal text for TTS. `display_text` changes only logs/captions. When `maintain_status=True`, playback completion restores the status active when speech was queued. |
 | `say_async(text, save=True, display_text=None) -> bool` | Non-blocking async form of `say`. |
 | `say_stream(text, save=True) -> SpeechStreamQueue` | Queue speech and mirror generated audio chunks to a bounded queue. |
 | `say_stream_async(text, save=True) -> SpeechStreamQueue` | Async form of streaming speech. |

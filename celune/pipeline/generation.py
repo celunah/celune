@@ -156,6 +156,12 @@ def _process_generation_request(
     fatal_model_reload = False
     while True:
         source_id = next_playback_source_id(engine)
+        if item.restore_status is not None:
+            status_restore = getattr(engine, "_speech_status_restore", None)
+            if not isinstance(status_restore, dict):
+                status_restore = {}
+                engine._speech_status_restore = status_restore
+            status_restore[source_id] = item.restore_status
         prepared_sections: list[AudioChunk] = []
         try:
             engine.model_ready.wait()

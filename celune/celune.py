@@ -928,6 +928,7 @@ class Celune(CeluneStateAccessors):
         text: "str",
         save: "bool" = True,
         display_text: "Optional[str]" = None,
+        maintain_status: "bool" = False,
     ) -> "bool":
         """
         Queue text for Celune to say.
@@ -936,6 +937,7 @@ class Celune(CeluneStateAccessors):
             text: The input text to queue for synthesis.
             save: Whether to save generated output artifacts.
             display_text: Optional text to show in logs instead of the synthesis text.
+            maintain_status: Restore the current status after playback instead of setting it to idle.
 
         Returns:
             bool: ``True`` when the text was queued successfully, otherwise ``False``.
@@ -943,6 +945,10 @@ class Celune(CeluneStateAccessors):
         Raises:
             Exception: Re-raised after releasing the pipeline if queueing fails.
         """
+        if maintain_status:
+            return core_speech.say(
+                self, text, save, display_text, maintain_status=True
+            )
         return core_speech.say(self, text, save, display_text)
 
     async def say_async(

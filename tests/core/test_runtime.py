@@ -1204,7 +1204,9 @@ class TestCeluneRuntime(CeluneCoreTestSupport):
             persona_thread.join(timeout=2)
 
         think_pipeline.assert_not_called()
-        say.assert_called_once_with(i18n.string("agent.classifier_unavailable"))
+        say.assert_called_once_with(
+            i18n.string("agent.classifier_unavailable"), maintain_status=True
+        )
         self.assertIsNone(celune.agent_runtime.get_active_task("default"))
 
     def test_think_interrupts_active_agent_without_stopping_speech(

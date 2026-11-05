@@ -75,8 +75,23 @@ async def think_async(engine: Celune, text: str) -> bool:
     return await run_in_daemon_thread(think, engine, text)
 
 
-def deliver_persona_response(engine: Celune, request: str, response: str) -> bool:
-    """Record and queue one response generated through the agent Persona bridge."""
+def deliver_persona_response(
+    engine: Celune,
+    request: str,
+    response: str,
+    maintain_status: bool = False,
+) -> bool:
+    """Record and queue one response generated through the agent Persona bridge.
+
+    Args:
+        engine: Runtime that owns the Persona response.
+        request: User request associated with the response.
+        response: Generated text to queue for speech.
+        maintain_status: Preserve the action status through playback completion.
+
+    Returns:
+        bool: ``True`` when response speech was queued.
+    """
     if getattr(engine.backend, "singing", False):
         engine.log(string("celune.persona_unavailable_singing"), "warning")
         return False
@@ -100,6 +115,7 @@ def deliver_persona_response(engine: Celune, request: str, response: str) -> boo
         spoken_text,
         save=False,
         display_text=spoken_text,
+        maintain_status=maintain_status,
     )
     if isinstance(history, list):
         compact_persona_history(engine)

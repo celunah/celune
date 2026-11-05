@@ -27,8 +27,13 @@ def say(
     text: str,
     save: bool = True,
     display_text: Optional[str] = None,
+    maintain_status: bool = False,
 ) -> bool:
     """Submit text for ordinary buffered speech generation."""
+    if maintain_status:
+        return submission.say(
+            engine, text, save, display_text, maintain_status=True
+        )
     return submission.say(engine, text, save, display_text)
 
 
