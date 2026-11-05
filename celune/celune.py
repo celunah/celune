@@ -946,9 +946,7 @@ class Celune(CeluneStateAccessors):
             Exception: Re-raised after releasing the pipeline if queueing fails.
         """
         if maintain_status:
-            return core_speech.say(
-                self, text, save, display_text, maintain_status=True
-            )
+            return core_speech.say(self, text, save, display_text, maintain_status=True)
         return core_speech.say(self, text, save, display_text)
 
     async def say_async(
