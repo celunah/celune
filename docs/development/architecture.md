@@ -285,3 +285,5 @@ startup work or timer threads. CEDTS backends receive an abort/shutdown request
 before their daemon caller is abandoned. A fatal state can stop generation
 without pretending that the engine is healthy. The fatal WebUI hook requests a
 normal Uvicorn shutdown so the ASGI lifespan can complete its cleanup.
+The TUI and API await cancellation of the GPU usage sampler so an active
+`nvidia-smi` subprocess and its pipes are drained before their event loop stops.

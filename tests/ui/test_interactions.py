@@ -8,8 +8,8 @@ import tempfile
 import threading
 from pathlib import Path
 from unittest import mock
-from typing import Optional, cast
 from types import SimpleNamespace
+from typing import Optional, cast
 from collections.abc import Callable
 
 import pytest
@@ -18,23 +18,21 @@ from textual import events
 from textual.widget import Widget
 from textual.widgets import Label, RichLog, TextArea, ProgressBar
 
-from celune.ui.app import (
-    Button,
-    CeluneUI,
-    VoiceButton,
-    ButtonActions,
-    ProgressLabel,
-)
-from celune.i18n import string
-from celune.theme import colors
 from celune.celune import Celune
 from celune.config import Config
-from celune.utils import discard
-from celune.ui import app as ui_app
-from celune.ui.theme import severity_color
-from celune.ui import resources as ui_resources
+from celune.i18n import string
+from celune.theme import colors
 from celune.typing.common import JSONSerializable
-
+from celune.ui import app as ui_app, resources as ui_resources
+from celune.ui.app import (
+    Button,
+    ButtonActions,
+    CeluneUI,
+    ProgressLabel,
+    VoiceButton,
+)
+from celune.ui.theme import severity_color
+from celune.utils import discard
 from .fixtures import reset_ui_singletons
 from ..support import FakeBackend, CeluneTestCase
 
@@ -910,7 +908,7 @@ class TestUIInteractions(CeluneTestCase):
         )
         ui._report_shutdown_error = mock.Mock()
 
-        ui.on_unmount()
+        asyncio.run(ui.on_unmount())
 
         ui._report_shutdown_error.assert_called_once()
 
@@ -923,7 +921,7 @@ class TestUIInteractions(CeluneTestCase):
         ui.exit = mock.Mock()
 
         ui._graceful_exit()
-        ui.on_unmount()
+        asyncio.run(ui.on_unmount())
 
         ui._shutdown_live_vc_recording.assert_called_once_with()
         cast(mock.Mock, ui.celune.close).assert_called_once_with()
@@ -1007,7 +1005,7 @@ class TestUIInteractions(CeluneTestCase):
                     )
                     assert isinstance(task, asyncio.Task)
                     assert task.get_loop() is asyncio.get_running_loop()
-                    ui_resources.stop_gpu_usage_worker()
+                    await ui_resources.stop_gpu_usage_worker()
                     await asyncio.sleep(0)
             finally:
                 ui_resources._NVIDIA_SMI_TASKS.clear()

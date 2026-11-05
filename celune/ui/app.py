@@ -4,13 +4,10 @@
 from __future__ import annotations
 
 import sys
-import queue as queue_module
 import asyncio
 import logging
 import itertools
 import threading
-from io import TextIOWrapper
-from types import ModuleType
 from typing import (
     TYPE_CHECKING,
     Never,
@@ -24,6 +21,9 @@ from typing import (
     final,
 )
 from pathlib import Path
+from io import TextIOWrapper
+from types import ModuleType
+import queue as queue_module
 from dataclasses import field, dataclass
 from collections.abc import Callable, Iterator, Awaitable
 
@@ -37,53 +37,39 @@ from textual import (
     binding,
     widgets,
     containers,
-)
-from textual import (
     color as textual_color,
-)
-from textual import (
     screen as textual_screen,
-)
-from textual import (
     widget as textual_widget,
-)
-from textual import (
     message as textual_message,
 )
 from rich.text import Text
 
 from . import (
     debug as _debug,
-)
-from . import (
     capture as _capture,
-)
-from . import (
     runtime as _runtime,
-)
-from . import (
     interaction as _interaction,
 )
-from ..i18n import string, tagged_string
-from .theme import CELUNE_CSS, severity_color, with_brightness
-from .compat import install_textual_timer_sleep
-from .buttons import CeluneButton
-from .loading import CeluneLoadingScreen
-from .terminal import SelectMenuOption, SelectMenuWidget
-from ..watchdog import launcher_loss_requested
-from ..constants import BASE_SR, SIGTSTP, APP_NAME, ExitCodes
-from ..typing.agent import AgentTaskState
 from ..typing.locks import (
     ComponentLockName,
     ComponentLockOwner,
     ComponentLockRequirement,
 )
+from .buttons import CeluneButton
+from ..i18n import string, tagged_string
+from .loading import CeluneLoadingScreen
+from ..typing.agent import AgentTaskState
 from ..typing.modes import OperationState
-from ..typing.common import JSONSerializable
-from ..typing.config import AudioDeviceInfoValue
 from ..registry.types import ModelMetadata
-from ..theme.defaults import default_theme_family, default_error_theme_family
+from ..typing.common import JSONSerializable
+from ..watchdog import launcher_loss_requested
+from .compat import install_textual_timer_sleep
+from ..typing.config import AudioDeviceInfoValue
 from ..core.concurrency import run_in_daemon_thread
+from .terminal import SelectMenuOption, SelectMenuWidget
+from ..constants import BASE_SR, SIGTSTP, APP_NAME, ExitCodes
+from .theme import CELUNE_CSS, severity_color, with_brightness
+from ..theme.defaults import default_theme_family, default_error_theme_family
 
 App = app.App
 ReturnType = app.ReturnType
@@ -188,8 +174,8 @@ if TYPE_CHECKING:
         def start_gpu_usage_worker(self) -> None:
             """Start native async GPU usage polling."""
 
-        def stop_gpu_usage_worker(self) -> None:
-            """Stop native async GPU usage polling."""
+        async def stop_gpu_usage_worker(self) -> None:
+            """Stop and await native async GPU usage polling."""
 
         def resource_pages(
             self,

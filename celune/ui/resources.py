@@ -9,8 +9,8 @@ import asyncio
 import datetime
 import contextlib
 import subprocess
-from typing import TYPE_CHECKING, Optional
 from decimal import ROUND_HALF_UP, Decimal
+from typing import TYPE_CHECKING, Optional
 
 import torch
 import psutil
@@ -224,16 +224,13 @@ def start_gpu_usage_worker() -> None:
     task.add_done_callback(clear_task)
 
 
-def stop_gpu_usage_worker() -> None:
-    """Cancel the native async GPU sampler on the current event loop."""
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        return
-
+async def stop_gpu_usage_worker() -> None:
+    """Cancel and await the native async GPU sampler on the current event loop."""
+    loop = asyncio.get_running_loop()
     task = _NVIDIA_SMI_TASKS.pop(loop, None)
     if task is not None:
         task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
 
 
 def gpu_usage() -> Optional[int]:

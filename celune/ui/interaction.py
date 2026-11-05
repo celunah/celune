@@ -12,10 +12,10 @@ import ctypes
 import asyncio
 import threading
 import contextlib
-import queue as queue_module
 from uuid import uuid4
 from pathlib import Path
 from copy import deepcopy
+import queue as queue_module
 from collections.abc import Callable, Iterator
 from typing import TYPE_CHECKING, Optional, cast
 
@@ -1573,7 +1573,7 @@ def on_button_pressed(self, event: _app.Button.Pressed) -> None:
     ).start()
 
 
-def on_unmount(self) -> None:
+async def on_unmount(self) -> None:
     """Unload Celune."""
     if not self._is_ui_test_mode():
         from ..registry.consent import set_model_consent_handler
@@ -1599,7 +1599,10 @@ def on_unmount(self) -> None:
         )
     )
     if _app.ui_resources is not None and not self._is_ui_test_mode():
-        self._run_shutdown_step(_app.ui_resources.stop_gpu_usage_worker)
+        try:
+            await _app.ui_resources.stop_gpu_usage_worker()
+        except Exception as exc:
+            self._report_shutdown_error(exc)
     self._run_shutdown_step(self._shutdown_runtime)
 
     if self._runtime_log_capture_enabled:
@@ -2142,9 +2145,9 @@ class InteractionHooks:
         """Delegate to the interaction implementation."""
         return on_text_area_changed(self, event)
 
-    def on_unmount(self) -> None:
+    async def on_unmount(self) -> None:
         """Delegate to the interaction implementation."""
-        return on_unmount(self)
+        await on_unmount(self)
 
     def on_voice_button_held(self, event: _app.VoiceButton.Held) -> None:
         """Delegate to the interaction implementation."""
