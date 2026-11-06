@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import cast
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -217,3 +218,31 @@ class TestLocalManagementTools(CeluneTestCase):
         assert output["result"] == "success"
         assert "platform" in output
         assert "cuda" in output
+        assert "devices" in cast(dict[str, object], output["gpu"])
+
+    def test_local_system_info_reports_detected_cuda_devices(self) -> None:
+        """Include CUDA device identity and memory when PyTorch detects a GPU."""
+        properties = SimpleNamespace(name="Fixture GPU", total_memory=8_000_000_000)
+        with (
+            mock.patch("torch.cuda.is_available", return_value=True),
+            mock.patch("torch.cuda.device_count", return_value=1),
+            mock.patch("torch.cuda.get_device_capability", return_value=(8, 6)),
+            mock.patch("torch.cuda.get_device_properties", return_value=properties),
+        ):
+            result = self._tool("local_system_info").execute(
+                {"id": "system", "name": "local_system_info", "arguments": {}},
+                self._context(),
+            )
+
+        output = cast(dict[str, object], result["output"])
+        gpu = cast(dict[str, object], output["gpu"])
+        devices = cast(list[dict[str, object]], gpu["devices"])
+        assert gpu["cuda_available"] is True
+        assert devices == [
+            {
+                "index": 0,
+                "name": "Fixture GPU",
+                "total_memory": 8_000_000_000,
+                "compute_capability": "8.6",
+            }
+        ]

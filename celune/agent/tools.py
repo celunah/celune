@@ -976,11 +976,42 @@ def _local_system_info(
         "cpu_count": os.cpu_count(),
         "memory": {"total": memory.total, "available": memory.available},
         "disk": {"path": root, "total": disk.total, "free": disk.free},
-        "gpu": {"cuda_visible_devices": os.environ.get("CUDA_VISIBLE_DEVICES")},
+        "gpu": {
+            **_local_gpu_info(),
+            "cuda_visible_devices": os.environ.get("CUDA_VISIBLE_DEVICES"),
+        },
         "cuda": {"path": os.environ.get("CUDA_PATH")},
         "uptime_seconds": max(0.0, time.time() - psutil.boot_time()),
         "local_time": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
     }
+
+
+def _local_gpu_info() -> JSON:
+    """Return detected CUDA devices without failing system diagnostics."""
+    try:
+        import torch
+
+        cuda_available = torch.cuda.is_available()
+        device_count = torch.cuda.device_count() if cuda_available else 0
+        devices: list[JSONSerializable] = []
+        for index in range(device_count):
+            major, minor = torch.cuda.get_device_capability(index)
+            properties = torch.cuda.get_device_properties(index)
+            devices.append(
+                {
+                    "index": index,
+                    "name": str(properties.name),
+                    "total_memory": int(properties.total_memory),
+                    "compute_capability": f"{major}.{minor}",
+                }
+            )
+        return {
+            "cuda_available": cuda_available,
+            "device_count": device_count,
+            "devices": devices,
+        }
+    except Exception:
+        return {"cuda_available": False, "device_count": 0, "devices": []}
 
 
 def _local_current_working_directory(
