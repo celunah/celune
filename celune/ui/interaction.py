@@ -1654,8 +1654,9 @@ def tts_idle(self) -> None:
                 self._agent_status_signature = None
     if getattr(celune, "_maintain_status_after_playback", False):
         celune._maintain_status_after_playback = False
-        self._refresh_agent_status()
-        return
+        if active_task is not None:
+            self._refresh_agent_status()
+            return
     celune.cur_state = "idle"
     if celune.is_in_tutorial:
         self.input_box.placeholder = _app.string("ui.tutorial_placeholder")

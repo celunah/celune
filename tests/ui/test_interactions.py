@@ -131,6 +131,7 @@ class TestUIInteractions(CeluneTestCase):
             test_finished=False,
             agent_runtime=runtime,
             playback_done=playback_done,
+            _maintain_status_after_playback=True,
             cur_state="idle",
             locked=True,
             sleeping=False,
@@ -160,7 +161,52 @@ class TestUIInteractions(CeluneTestCase):
 
         assert ui._agent_task_id is None
         assert ui._agent_status_signature is None
+        assert celune.cur_state == "idle"
+        assert not celune._maintain_status_after_playback
         safe_status.assert_called_once_with(string("status.idle"))
+
+    def test_agent_status_stays_visible_when_playback_ends_during_active_task(
+        self,
+    ) -> None:
+        """Preserve the running task status when one agent utterance finishes."""
+        active_task = SimpleNamespace(task_id="active-task")
+        celune = SimpleNamespace(
+            test_finished=False,
+            agent_runtime=SimpleNamespace(
+                get_active_task=mock.Mock(return_value=active_task)
+            ),
+            _maintain_status_after_playback=True,
+            cur_state="speaking",
+            locked=True,
+            sleeping=False,
+            is_in_tutorial=False,
+            voices=("balanced",),
+        )
+        refresh_status = mock.Mock()
+        safe_status = mock.Mock()
+        ui = cast(
+            CeluneUI,
+            SimpleNamespace(
+                celune=celune,
+                cur_state="idle",
+                celune_ready=True,
+                _agent_task_id="active-task",
+                _hide_caption_widgets=mock.Mock(),
+                _is_agent_test_mode=mock.Mock(return_value=False),
+                _refresh_agent_status=refresh_status,
+                change_input_state=mock.Mock(),
+                change_voice_lock_state=mock.Mock(),
+                safe_status=safe_status,
+                _schedule_sleep_timer=mock.Mock(),
+            ),
+        )
+
+        CeluneUI.tts_idle(ui)
+
+        assert not celune._maintain_status_after_playback
+        assert celune.cur_state == "speaking"
+        refresh_status.assert_called_once()
+        safe_status.assert_not_called()
 
     def test_finished_task_event_does_not_restore_terminal_status_after_idle(
         self,

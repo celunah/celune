@@ -711,10 +711,10 @@ def wrap_celune_callbacks(
         original_progress(progress, total)
 
     def wrapped_idle() -> None:
-        original_idle()
         maintain_agent_status = bool(
             getattr(celune, "_maintain_status_after_playback", False)
         )
+        original_idle()
         if maintain_agent_status:
             celune._maintain_status_after_playback = False
         session.webui_caption_active = False
@@ -740,10 +740,11 @@ def wrap_celune_callbacks(
                 source="callback",
                 session=session,
             )
-        elif maintain_agent_status and session.webui_agent_task_id is not None:
+        elif active_task is not None:
+            session.webui_agent_task_id = active_task.task_id
             _publish_webui_agent_status(
-                session.webui_agent_task_id,
-                "idle",
+                active_task.task_id,
+                getattr(active_task.state, "value", str(active_task.state)),
                 session=session,
             )
         elif getattr(celune, "cur_state", "") == "idle":

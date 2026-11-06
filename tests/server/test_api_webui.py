@@ -5,33 +5,34 @@ import re
 import shutil
 import asyncio
 import tempfile
+from queue import Queue
+from types import SimpleNamespace
 from typing import (
     Optional,
     cast,
 )
-from queue import Queue
 from pathlib import Path
 from unittest import mock
-from types import SimpleNamespace
 from collections import abc, deque
 
 import numpy as np
 import fastapi.testclient
+from starlette.types import Send, Scope, Message, Receive
 from starlette.requests import Request
 from starlette.responses import Response
-from starlette.types import Send, Scope, Message, Receive
 
 from celune import api
 from celune.i18n import string
 from celune.theme import colors
-from celune.celune import Celune
-from celune.webui import runtime as webui
-from celune.server import auth as server_auth
-from celune.server.session import ServerSession
 from celune.webui import actions as webui_actions
-from celune.typing.pipeline import SpeechStreamQueue
+from celune.webui import runtime as webui
+from celune.celune import Celune
+from celune.server import auth as server_auth
 from celune.server import constants as server_constants
+from celune.typing.agent import AgentTaskState
 from celune.typing.celune import ChunkCaptionProgressCallback
+from celune.server.session import ServerSession
+from celune.typing.pipeline import SpeechStreamQueue
 
 from ..support import CeluneTestCase
 
@@ -995,6 +996,63 @@ class TestApiWebUI(CeluneTestCase):
         celune.idle_callback()
         assert api.server_session.webui_caption_text == ""
         assert api.server_session.webui_progress_total is None
+
+    def test_webui_idle_keeps_active_agent_status_after_speech(self) -> None:
+        """Keep task progress visible when the wrapped idle callback consumes its flag."""
+        task = SimpleNamespace(
+            task_id="active-task",
+            state=AgentTaskState.WORKING,
+            iterations=2,
+            config=SimpleNamespace(max_loops=20),
+            needs_context_compaction=False,
+        )
+        session = ServerSession()
+        celune = cast(
+            Celune,
+            SimpleNamespace(
+                current_voice="balanced",
+                voices=("balanced",),
+                backend=SimpleNamespace(singing=False),
+                is_in_tutorial=False,
+                locked=False,
+                sleeping=False,
+                cur_state="speaking",
+                _maintain_status_after_playback=True,
+                agent_runtime=SimpleNamespace(
+                    get_active_task=mock.Mock(return_value=task),
+                    get_task=mock.Mock(return_value=task),
+                ),
+                log_callback=lambda *_args, **_kwargs: None,
+                status_callback=lambda *_args, **_kwargs: None,
+                error_callback=lambda _message: None,
+                idle_callback=lambda: setattr(
+                    celune, "_maintain_status_after_playback", False
+                ),
+                queue_avail_callback=lambda: None,
+                progress_callback=lambda *_args: None,
+                caption_progress_callback=lambda *_args: None,
+                caption_callback=lambda _caption: None,
+                voice_changed_callback=lambda _name: None,
+                change_input_state_callback=lambda _locked: None,
+                change_voice_lock_state_callback=lambda _locked: None,
+            ),
+        )
+        session.bound_celune = celune
+
+        with mock.patch(
+            "celune.webui.runtime.main_window_log_path",
+            return_value=mock.Mock(exists=lambda: False),
+        ):
+            webui.wrap_celune_callbacks(celune, session)
+
+        celune.idle_callback()
+
+        assert session.webui_status_text == string(
+            "agent.status.working",
+            iteration=2,
+            maximum=20,
+        )
+        assert session.webui_agent_task_id == "active-task"
 
     def test_webui_caption_progress_preserves_legacy_callback_signature(self) -> None:
         """Forward aligned progress without breaking two-argument callbacks."""
