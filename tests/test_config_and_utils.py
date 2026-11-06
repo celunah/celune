@@ -3,18 +3,18 @@
 
 import math
 import datetime
-from unittest import mock
 from types import SimpleNamespace
-from collections.abc import Mapping
 from typing import Literal, Optional, cast
+from unittest import mock
+from collections.abc import Mapping
 
 import pytest
 
 from celune import utils, config
 from celune.typing.common import JSON, JSONSerializable
 
-from .platform import WINDOWS_ONLY
 from .support import CeluneTestCase
+from .platform import WINDOWS_ONLY
 
 
 class TestConfig(CeluneTestCase):
@@ -512,6 +512,10 @@ class TestUtils(CeluneTestCase):
         self.assertEqual(
             utils.normalize_special_characters('{status: "ok"}', for_tts=True),
             "status, ok",
+        )
+        self.assertEqual(
+            utils.normalize_special_characters("Status\u00a0: ready", for_tts=True),
+            "Status, ready",
         )
         self.assertEqual(
             utils.normalize_special_characters(

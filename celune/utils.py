@@ -14,9 +14,9 @@ import platform
 import traceback
 import importlib.util
 import multiprocessing
+from typing import Any, Union, TextIO, Literal, Optional, overload
 from pathlib import Path
 from collections.abc import Callable, Iterator, Container
-from typing import Any, Union, TextIO, Literal, Optional, overload
 
 import psutil
 
@@ -830,7 +830,7 @@ def normalize_special_characters(text: str, *, for_tts: bool = False) -> str:
 
     normalized = text.translate(special_char_mappings).replace("\x00", ": ")
     normalized = re.sub(r"\s{2,}", " ", normalized)
-    normalized = re.sub(r"[ \t]+:", ":", normalized)
+    normalized = re.sub(r"\s+:", ":", normalized)
     if not for_tts:
         return normalized
 
