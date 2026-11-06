@@ -56,7 +56,7 @@ The normal production catalog is always local and explicitly registered:
 | Tool family | Calls |
 | --- | --- |
 | Status | `read_agent_status`, `query_status`, `query_capabilities`, `query_models`, `query_locks`, `query_audio_state`, `query_agent_task`, `run_health_check` |
-| Speech | `speak`, `pause_speech` (unavailable), `resume_speech` (unavailable), `clear_speech_queue` |
+| Speech | `speak`, `clear_speech_queue` |
 | Voice and character | `set_voice`, `set_voice_prompt`, `set_playback_speed`, `set_reverb`, `set_character`, `query_character` |
 | Routing and lifecycle | `set_conversation_mode`, `set_agent_mode`, `sleep`, `wake` |
 | Persona memory | `remember`, `recall`, `forget`, `clear_recent_context`, `summarize_context` |

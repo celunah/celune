@@ -69,8 +69,6 @@ _AGENT_TOOL_ARGUMENTS: dict[str, JSON] = {
     "query_agent_task": {},
     "run_health_check": {},
     "speak": {"text": "Agent diagnostic speech"},
-    "pause_speech": {},
-    "resume_speech": {"text": "Agent diagnostic speech"},
     "set_voice": {"voice": "diagnostic"},
     "set_voice_prompt": {"prompt": "Agent diagnostic"},
     "set_playback_speed": {"speed": 1.0},

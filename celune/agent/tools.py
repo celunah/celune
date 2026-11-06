@@ -363,13 +363,6 @@ def _speak(engine: Celune, call: ToolCall, _context: AgentContext) -> JSON:
     return {"queued": True, "played": played}
 
 
-def _unsupported_speech_control(
-    _engine: Celune, _call: ToolCall, _context: AgentContext
-) -> JSON:
-    """Reject speech controls that are intentionally unavailable."""
-    raise RuntimeError("speech control is unavailable")
-
-
 def _set_voice(engine: Celune, call: ToolCall, _context: AgentContext) -> JSON:
     """Switch voice through the synchronized reload path."""
     voice = _string(call, "voice")
@@ -1142,23 +1135,6 @@ _SPECS = (
         arguments=(_arg("text", AgentToolValueType.STRING, "Text to speak."),),
         behavior=AgentToolBehavior.MUTATING,
         end_task_on_success=True,
-    ),
-    _spec(
-        "pause_speech",
-        "Pause speech",
-        "Pause speech when supported.",
-        _unsupported_speech_control,
-        behavior=AgentToolBehavior.MUTATING,
-        available=False,
-    ),
-    _spec(
-        "resume_speech",
-        "Resume speech",
-        "Resume paused speech when supported.",
-        _unsupported_speech_control,
-        arguments=(_arg("text", AgentToolValueType.STRING, "Text to resume."),),
-        behavior=AgentToolBehavior.MUTATING,
-        available=False,
     ),
     _spec(
         "set_voice",

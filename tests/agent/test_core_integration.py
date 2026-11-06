@@ -249,8 +249,6 @@ class TestAgentCoreIntegration(CeluneTestCase):
             "query_agent_task",
             "run_health_check",
             "speak",
-            "pause_speech",
-            "resume_speech",
             "set_voice",
             "set_voice_prompt",
             "set_playback_speed",

@@ -78,17 +78,6 @@ class TestAgentDiagnostics(CeluneTestCase):
         failed = [check for check in checks if check["status"] == "failed"]
         assert actual_tools == expected_tools
         assert not failed
-        unavailable = {
-            _check_name(check): check
-            for check in checks
-            if _check_name(check) in {"pause_speech", "resume_speech"}
-        }
-        assert set(unavailable) == {"pause_speech", "resume_speech"}
-        assert all(check["status"] == "passed" for check in unavailable.values())
-        assert all(
-            check["detail"] == "The tool is unavailable as expected."
-            for check in unavailable.values()
-        )
         assert {
             "runtime.lifecycle.pause_resume",
             "runtime.lifecycle.interruption",
