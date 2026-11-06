@@ -228,6 +228,25 @@ class TestAgentRouting:  # pylint: disable=attribute-defined-outside-init
         assert result.intent == "inspect_process"
         assert result.to_json()["intent"] == "inspect_process"
 
+    def test_task_summary_preserves_the_original_user_request(self) -> None:
+        """Keep exact user wording available after Persona rewrites task intent."""
+        original_request = r"List the directory C:\Games\XSanity\Program64"
+        self._set_classifier(
+            {
+                "classification": "task",
+                "route": "task",
+                "confidence": 0.96,
+                "task_request": "List the requested directory.",
+            }
+        )
+
+        result = self.router.route(original_request, persona_ready=True)
+
+        assert result.task_request is not None
+        assert result.task_request.request == "List the requested directory."
+        assert result.task_request.original_request == original_request
+        assert result.task_request.to_json()["original_request"] == original_request
+
     def test_valid_low_confidence_task_is_not_downgraded_to_conversation(
         self,
     ) -> None:

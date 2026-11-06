@@ -604,7 +604,7 @@ def _local_missing(path: Path) -> _LocalManagementError:
 
 def _requested_local_path(context: AgentContext) -> Optional[Path]:
     """Find one unambiguous absolute local path in the task request."""
-    request = context.request.request
+    request = context.request.original_request or context.request.request
     quoted_matches = list(_QUOTED_LOCAL_PATH_RE.finditer(request))
     quoted_spans = [match.span(1) for match in quoted_matches]
     requested_paths = [match.group(1) for match in quoted_matches]

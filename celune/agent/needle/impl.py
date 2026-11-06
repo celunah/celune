@@ -669,7 +669,8 @@ class NeedleToolSelector:
             raise NeedleSelectionError(
                 "Needle requires a non-empty natural-language action intent"
             )
-        request = context.request.request.strip()
+        task_request = context.request.request.strip()
+        request = (context.request.original_request or task_request).strip()
         intent = intent.strip()
         query = intent
         if request and request.casefold() not in intent.casefold():
@@ -681,7 +682,9 @@ class NeedleToolSelector:
         )
         if not catalog:
             raise NeedleSelectionError("Needle has no available registered tools")
-        explicit_match = _EXPLICIT_TOOL_REQUEST_RE.match(request)
+        explicit_match = _EXPLICIT_TOOL_REQUEST_RE.match(
+            request
+        ) or _EXPLICIT_TOOL_REQUEST_RE.match(task_request)
         explicit_name = explicit_match.group(1).casefold() if explicit_match else None
         explicit_catalog = (
             [tool for tool in catalog if tool["name"].casefold() == explicit_name]
@@ -689,7 +692,9 @@ class NeedleToolSelector:
             else []
         )
         candidate_catalog = explicit_catalog or self._candidate_catalog(
-            catalog, request, intent
+            catalog,
+            f"{request}\n{task_request}",
+            intent,
         )
         queries = [query]
         if request and request.casefold() != query.casefold():

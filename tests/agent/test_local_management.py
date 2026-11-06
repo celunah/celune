@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
-from typing import cast
+from typing import Optional, cast
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import mock
@@ -26,10 +26,14 @@ from ..support import CeluneTestCase
 class TestLocalManagementTools(CeluneTestCase):
     """Verify typed local filesystem and diagnostic behavior without a shell."""
 
-    def _context(self, request: str = "inspect local state") -> AgentContext:
+    def _context(
+        self,
+        request: str = "inspect local state",
+        original_request: Optional[str] = None,
+    ) -> AgentContext:
         """Build the smallest valid context accepted by a local tool."""
         return AgentContext(
-            request=AgentRequest(request),
+            request=AgentRequest(request, original_request=original_request),
             mode=cast(OperationMode, "agent"),
             persona_capabilities=PersonaCapabilities(),
         )
@@ -177,7 +181,10 @@ class TestLocalManagementTools(CeluneTestCase):
                     "name": "local_list_directory",
                     "arguments": {"path": selected_path},
                 },
-                self._context(f'List the directory "{root}".'),
+                self._context(
+                    "List the requested directory.",
+                    f'List the directory "{root}".',
+                ),
             )
 
         assert result["status"] == AgentToolExecutionStatus.SUCCEEDED
@@ -200,7 +207,10 @@ class TestLocalManagementTools(CeluneTestCase):
                     "name": "local_list_directory",
                     "arguments": {"path": str(selected)},
                 },
-                self._context(f'List the directory "{requested}".'),
+                self._context(
+                    "List the requested directory.",
+                    f'List the directory "{requested}".',
+                ),
             )
 
         assert result["status"] == AgentToolExecutionStatus.SUCCEEDED
@@ -218,7 +228,10 @@ class TestLocalManagementTools(CeluneTestCase):
                     "name": "local_make_directory",
                     "arguments": {"path": str(root / "missing-parent" / "created")},
                 },
-                self._context(f'Create the directory "{target}".'),
+                self._context(
+                    "Create the requested directory.",
+                    f'Create the directory "{target}".',
+                ),
             )
             exists = target.is_dir()
 

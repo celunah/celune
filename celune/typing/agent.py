@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from enum import Enum
 from typing import (
     TYPE_CHECKING,
     Union,
@@ -12,12 +13,11 @@ from typing import (
     NotRequired,
     cast,
 )
-from enum import Enum
-from collections.abc import Sequence
 from dataclasses import field, dataclass
+from collections.abc import Sequence
 
-from .modes import OperationMode
 from .locks import ComponentBusyResult
+from .modes import OperationMode
 from .common import JSON, JSONSerializable
 from ..constants import AGENT_MAX_LOOPS, AGENT_COMPACT_AT, AGENT_CONTEXT_SPACE
 
@@ -386,26 +386,32 @@ class AgentSession:
 
 @dataclass(frozen=True)
 class AgentRequest:
-    """Input supplied to a future agent run."""
+    """Input and source text supplied to one agent run."""
 
     request: str
     history: tuple[JSON, ...] = ()
     session: AgentSession = field(
         default_factory=lambda: AgentSession(session_id="default")
     )
+    original_request: Optional[str] = None
 
     def __post_init__(self) -> None:
         """Reject empty agent requests while preserving conversation history."""
         if not self.request.strip():
             raise ValueError("agent request must not be empty")
+        if self.original_request is not None and not self.original_request.strip():
+            raise ValueError("original agent request must not be empty")
 
     def to_json(self) -> JSON:
         """Serialize the request and its session into JSON-compatible data."""
-        return {
+        payload: JSON = {
             "request": self.request,
             "history": cast(JSONSerializable, list(self.history)),
             "session": self.session.to_json(),
         }
+        if self.original_request is not None:
+            payload["original_request"] = self.original_request
+        return payload
 
 
 @dataclass(frozen=True)

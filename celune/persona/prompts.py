@@ -125,6 +125,12 @@ def _render_agent_context(
             else response_instruction
         ),
     ]
+    original_request = agent_context.request.original_request
+    if (
+        original_request is not None
+        and original_request != agent_context.request.request
+    ):
+        sections.append("Original user request:\n" + original_request)
     if task is not None:
         sections.append(
             "Task:\n"

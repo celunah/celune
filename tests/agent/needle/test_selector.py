@@ -88,12 +88,16 @@ def _schemas() -> dict[str, AgentToolSchema]:
     }
 
 
-def _context(request: str = "Set the requested timer.") -> AgentContext:
+def _context(
+    request: str = "Set the requested timer.",
+    original_request: Optional[str] = None,
+) -> AgentContext:
     """Build one selector context without a running task."""
     return AgentContext(
         request=AgentRequest(
             request=request,
             session=AgentSession(session_id="session-1"),
+            original_request=original_request,
         ),
         mode="agent",
         persona_capabilities=PersonaCapabilities(),
@@ -269,13 +273,17 @@ class TestNeedleSelector:
         )
 
         result = selector(
-            _context("Use local_make_directory to create C:/tmp."),
+            _context(
+                "Create the requested directory.",
+                "Use local_make_directory to create C:/tmp.",
+            ),
             _output("Create the requested directory."),
         )
 
         assert isinstance(result, dict)
         assert result["name"] == "local_make_directory"
         assert [tool["name"] for tool in handler.catalog] == ["local_make_directory"]
+        assert "Use local_make_directory to create C:/tmp." in cast(str, handler.query)
 
     def test_empty_needle_selection_retries_with_compact_registered_tool_prompt(
         self,

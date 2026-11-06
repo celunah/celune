@@ -522,7 +522,7 @@ class AgentInputRouter:
         raw_request = payload.get("task_request")
         task_text = raw_request.strip() if isinstance(raw_request, str) else text
         task_request = (
-            self._make_request(task_text)
+            self._make_request(task_text, original_request=text)
             if task is None
             and classification == AgentInputClassification.TASK
             and not requires_clarification
@@ -684,7 +684,12 @@ class AgentInputRouter:
             interruption_kind=interruption_kind,
         )
 
-    def _make_request(self, text: str) -> AgentRequest:
+    def _make_request(
+        self,
+        text: str,
+        *,
+        original_request: Optional[str] = None,
+    ) -> AgentRequest:
         """Build a typed task request with the current conversation context."""
         raw_history = getattr(self.engine, "persona_history", ())
         history = tuple(
@@ -696,6 +701,7 @@ class AgentInputRouter:
             request=text,
             history=history,
             session=AgentSession(session_id=self.session_id),
+            original_request=original_request if original_request is not None else text,
         )
 
     def _explicit_tool_name(self, text: str) -> Optional[str]:

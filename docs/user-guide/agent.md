@@ -97,10 +97,12 @@ paths must remain absolute so approval identifies the exact target. Process
 and application termination requires an expected name so a stale PID cannot
 be used blindly. The agent never turns a free-form prompt into a shell command.
 Routing and tool-selection prompts instruct Persona and Needle to preserve
-explicit paths from the task request. When a request contains one unambiguous
-absolute path, directory listing and creation use that exact path even if
-Needle supplies a corrupted or different path. Requests naming multiple paths
-remain ambiguous and are not rewritten.
+explicit paths from the task request. Celune also retains the original user
+request when Persona produces a shorter task summary, so the selector and local
+filesystem tools can still use the exact requested operation and path. When a
+request contains one unambiguous absolute path, directory listing and creation
+use that exact path even if Needle supplies a corrupted or different path.
+Requests naming multiple paths remain ambiguous and are not rewritten.
 For a successful directory listing, Persona is instructed to include the
 resolved path and returned entries in its final answer. It is also instructed
 to identify empty and truncated listings and preserve entry names exactly.
@@ -136,9 +138,10 @@ candidate schema; when the set was narrowed, it then retries once with the full
 catalog.
 Oversized catalogs have their lower-ranked argument and tool descriptions
 removed first; lower-ranked definitions are omitted only if the remaining typed
-schemas still do not fit. Needle receives the original
-request with Persona's action intent, then retries with the original request
-alone if needed. The selector allows up to 256 generated tokens. If no available
+schemas still do not fit. Needle receives the original user request with
+Persona's action intent, even when task classification produced a shorter
+summary. It retries with the original request alone if needed. The selector
+allows up to 256 generated tokens. If no available
 tool exists or even one minimized definition cannot fit, selection fails before
 asking Needle to choose from an empty catalog.
 If a selected call omits required arguments, the selector reconsiders the choice

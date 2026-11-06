@@ -660,6 +660,41 @@ class TestPipelineAsync(CeluneAsyncTestCase):
         assert "The action has not run yet" in approval
         assert '"strength": 0.1' in approval
 
+    def test_agent_prompt_keeps_original_request_after_task_summarization(self) -> None:
+        """Expose the user's exact path to Persona when the task request is summarized."""
+        engine = make_pipeline_engine()
+        engine.config = {}
+        engine.current_character = "Fixture"
+        engine.current_voice = "balanced"
+        engine.voice_bundle_is_default = False
+        original_request = r"List the directory C:\Games\XSanity\Program64"
+        request = AgentRequest(
+            "List the requested directory.",
+            original_request=original_request,
+        )
+        task = AgentTask(
+            task_id="summarized-request",
+            session_id="default",
+            request=request,
+        )
+        context = AgentContext(
+            request=request,
+            mode="agent",
+            persona_capabilities=PersonaCapabilities(),
+            task=task,
+        )
+
+        prompt = PersonaPromptBuilder.build(
+            persona_conversation.build_persona_context(
+                cast(Celune, engine),
+                request.request,
+                agent_context=context,
+            )
+        )
+
+        assert "Original user request:" in prompt
+        assert original_request in prompt
+
     def test_agent_file_results_must_ground_dates_and_directory_paths(self) -> None:
         """Keep file summaries tied to the returned text and exact path."""
         engine = make_pipeline_engine()
