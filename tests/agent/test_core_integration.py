@@ -119,6 +119,7 @@ class _SpeakPersonaFixture:
             ),
             _PersonaResponse("I will say hello."),
             _PersonaResponse("Say hello."),
+            _PersonaResponse("May I speak the line 'hello' now?"),
             _PersonaResponse(
                 '{"classification":"task","route":"approval_response",'
                 '"confidence":0.99,"approval_decision":"approved"}'
@@ -186,6 +187,16 @@ class _SpeakNeedleHandler:
 
 class TestAgentCoreIntegration(CeluneTestCase):
     """Run a complete routed task through a real lightweight Celune core."""
+
+    def test_generated_agent_preambles_must_be_plain_acknowledgments(self) -> None:
+        """Reject opening text that claims progress or current status."""
+        assert core_agent._is_plain_agent_preamble("One moment.")
+        assert core_agent._is_plain_agent_preamble("I hear you.")
+        assert not core_agent._is_plain_agent_preamble('"')
+        assert not core_agent._is_plain_agent_preamble("Ready to assist.")
+        assert not core_agent._is_plain_agent_preamble(
+            "I'm checking that directory now. I'll return the contents."
+        )
 
     def _make_core(
         self,
@@ -462,6 +473,7 @@ class TestAgentCoreIntegration(CeluneTestCase):
         core.vision = _RoutingFixture(
             '{"classification":"task","route":"task","confidence":0.98}',
             "I will review that request.",
+            "May I delete the fixture item?",
             '{"classification":"task","route":"approval_response",'
             '"confidence":0.99,"approval_decision":"approved"}',
         )
@@ -919,15 +931,17 @@ class TestAgentCoreIntegration(CeluneTestCase):
         assert result["tool_id"] == "speak"
         assert result["status"] == AgentToolExecutionStatus.SUCCEEDED
         assert result["end_task"] is True
-        assert delivery_mock.call_count == 0
+        assert delivery_mock.call_count == 1
+        assert delivery_mock.call_args.args[2] == ("May I speak the line 'hello' now?")
         assert core.cur_state == "idle"
         assert playback_wait_mock.call_count == 1
         assert playback_wait_mock.call_args.args == (core,)
-        assert speech_mock.call_count == 2
-        assert [call.args[1] for call in speech_mock.call_args_list] == [
-            "I will say hello.",
-            "hello",
-        ]
+        assert speech_mock.call_count == 3
+        assert speech_mock.call_args_list[-2].args[1] == (
+            "May I speak the line 'hello' now?"
+        )
+        assert speech_mock.call_args_list[-1].args[1] == "hello"
+        assert speech_mock.call_args_list[0].args[1] != "I will say hello."
         assert len(persona.requests) == 4
 
     def test_needle_loading_failure_is_recorded_and_task_fails_safely(self) -> None:

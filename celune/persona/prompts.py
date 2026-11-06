@@ -5,12 +5,12 @@ import re
 import json
 import contextlib
 from typing import Optional, cast
-from collections.abc import Sequence
 from dataclasses import field, dataclass
+from collections.abc import Sequence
 
-from ..typing.common import JSON
 from ..paths import temp_data_dir
 from ..typing.agent import ToolCall, AgentContext, AgentTaskState, AgentToolSchema
+from ..typing.common import JSON
 
 _MARKDOWN_HEADING = re.compile(r"^\s{0,3}#{1,6}(?:\s|$)")
 
@@ -46,11 +46,25 @@ def _render_agent_context(
     failure_response = agent_context.classification_failure is not None or (
         task is not None and task.is_terminal and task.state != AgentTaskState.COMPLETED
     )
-    if agent_context.opening:
+    if (
+        task is not None
+        and task.state == AgentTaskState.AWAITING_APPROVAL
+        and pending_tool_call is not None
+    ):
+        response_instruction = (
+            "Approval request instruction: in one concise sentence, explain the exact "
+            "pending action and its supplied argument values in the active character's "
+            "voice, then ask the user to approve or deny it. Use only the registered "
+            "tool and arguments shown below. The action has not run yet; do not imply "
+            "that it has started or succeeded."
+        )
+    elif agent_context.opening:
         response_instruction = (
             "Opening instruction: in one short sentence, acknowledge the user's request "
             "in the active character's voice. Do not answer the request, imply that work "
             "has started, claim checks or results, invent details, or promise an outcome. "
+            "Do not say that you are ready, available, or standing by, and do not state "
+            "the current runtime status. "
             "Output only the acknowledgment."
         )
     elif agent_context.last_tool_result is None:
@@ -67,19 +81,32 @@ def _render_agent_context(
         ):
             response_instruction = (
                 "Directory-listing response instruction: answer naturally in the active "
-                "character's voice using the structured result. State the exact resolved "
+                "character's voice using the structured result. Begin by stating the exact resolved "
                 "path and include every returned entry name; identify entries whose kind "
                 "is directory as folders. If the result says it is truncated, say that "
                 "the list is partial. If it contains no items, say the directory is "
                 "empty. Preserve the path and names exactly. Do not omit these facts, "
                 "invent entries, or reply with a promise to list them later."
             )
+        elif (
+            tool_result.get("tool_id") == "local_read_text"
+            and tool_result.get("status") == "succeeded"
+        ):
+            response_instruction = (
+                "File-reading response instruction: answer from the returned file text "
+                "only. Report a requested date, name, or other fact only if that exact "
+                "fact appears in the text. If it is absent, say that it is absent. Do not "
+                "add dates, metadata, or information from memory or general knowledge. "
+                "Preserve exact paths and quoted file text."
+            )
         else:
             response_instruction = (
                 "Response instruction: answer the user's request naturally using the "
-                "structured tool result. Report its concrete returned facts, including "
-                "exact paths where applicable. Do not invent actions or results, or "
-                "replace the result with a progress update or promise."
+                "structured tool result. Report only concrete facts directly present in "
+                "the returned data, including exact paths where applicable. If a requested "
+                "fact is absent, say that the result does not contain it. Never invent "
+                "dates, names, file contents, actions, or results, and do not replace the "
+                "result with a progress update or promise."
             )
     sections = [
         (

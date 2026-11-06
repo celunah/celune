@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import re
 from random import choice
 from typing import Union, Optional, cast
 from collections.abc import Sequence
@@ -34,6 +35,31 @@ from ..typing.agent import (
     AgentClassificationResult,
     AgentClassificationFailure,
 )
+
+_UNSAFE_AGENT_PREAMBLE_RE = re.compile(
+    r"\b(?:i\s+will|i['’]ll|i\s+can|let\s+me|ready|available|standing|"
+    r"start(?:ed|ing)?|begin(?:ning)?|check(?:ed|ing)?|"
+    r"look|found|verif(?:y|ied|ying)|confirm(?:ed|ing)?|result|work(?:ing|ed)?|"
+    r"access(?:ible)?|permission|exist(?:s|ed)?|directory|file|path|list)\b",
+    re.IGNORECASE,
+)
+
+
+def _is_plain_agent_preamble(text: str) -> bool:
+    """Reject generated openings that claim status, facts, or task progress."""
+    normalized = " ".join(text.split())
+    sentence_count = len(re.findall(r"[.!?](?:[\"'”’)]*)?(?=\s|$)", normalized))
+    return (
+        bool(normalized)
+        and any(character.isalnum() for character in normalized)
+        and len(normalized) <= 100
+        and len(normalized.split()) <= 12
+        and sentence_count <= 1
+        and not any(
+            character.isdigit() or character in "\\/:" for character in normalized
+        )
+        and _UNSAFE_AGENT_PREAMBLE_RE.search(normalized) is None
+    )
 
 
 def interrupt_active_agent_for_input(self, text: str) -> bool:
@@ -256,11 +282,12 @@ def run_agent_route(self, route: AgentClassificationResult) -> bool:
                     self.agent_runtime.get_context(task_id)
                 )
                 generated_preamble = opening.get("response")
-                if (
-                    not isinstance(generated_preamble, str)
-                    or not generated_preamble.strip()
-                ):
-                    raise RuntimeError("agent opening response was empty")
+                if not isinstance(
+                    generated_preamble, str
+                ) or not _is_plain_agent_preamble(generated_preamble):
+                    raise RuntimeError(
+                        "agent opening response was not a plain preamble"
+                    )
                 opening_preamble = generated_preamble
             except Exception as exc:
                 self.log(
@@ -355,6 +382,41 @@ def run_agent_route(self, route: AgentClassificationResult) -> bool:
             raise RuntimeError("agent response speech could not be queued")
 
     output = self.agent_runtime.run(request, callback=deliver_output)
+    if output["paused"] and isinstance(task_id, str):
+        task = self.agent_runtime.get_task(task_id)
+        if task.state == AgentTaskState.AWAITING_APPROVAL:
+            approval = self.agent_runtime.get_pending_approval(task_id)
+            if approval is not None:
+                approval_text = approval.prompt
+                try:
+                    approval_output = self._agent_persona_bridge.approval(
+                        self.agent_runtime.get_context(task_id),
+                        approval,
+                    )
+                    generated_text = approval_output.get("response")
+                    if isinstance(generated_text, str) and generated_text.strip():
+                        approval_text = generated_text
+                except Exception as exc:
+                    self.log(
+                        format_error_message(
+                            "[AGENT] approval_response_generation_failed",
+                            exc,
+                            self.log_level,
+                        ),
+                        "warning",
+                        loglevel="verbose",
+                    )
+                if not deliver_persona_response(
+                    self,
+                    request.request,
+                    approval_text,
+                    maintain_status=True,
+                ):
+                    self.log(
+                        "[AGENT] approval_response_speech_failed",
+                        "warning",
+                        loglevel="verbose",
+                    )
     if output["end"] and isinstance(task_id, str):
         task = self.agent_runtime.get_task(task_id)
         if (

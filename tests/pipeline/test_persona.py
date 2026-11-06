@@ -1,19 +1,22 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for pipeline helpers that do not perform real synthesis."""
 
+import json as _json
 import tempfile
 import threading
-import json as _json
-
-from pathlib import Path
-from unittest import mock
 from types import SimpleNamespace
 from typing import Optional, cast
+from pathlib import Path
+from unittest import mock
 from collections.abc import Iterator
 
-import pytest
 import numpy as np
+import pytest
 
+from celune.core import conversation as core_conversation
+from celune.i18n import string
+from celune.utils import discard
+from celune.celune import Celune
 from celune.cevoice import (
     CEVoice,
     CEVoiceLoader,
@@ -22,31 +25,29 @@ from celune.cevoice import (
     PersonaStyleValues,
     persona_files_from_bundle,
 )
-from celune.i18n import string
-from celune.celune import Celune
-from celune.utils import discard
+from celune.persona import conversation as persona_conversation
+from celune.pipeline import captions, playback, buffering
+from celune.constants import PipelineStates
+from celune.dataclasses import pipeline as pipeline_types
+from celune.persona.impl import compact_persona_history
 from celune.typing.agent import (
     ToolCall,
     AgentTask,
+    ToolResult,
     AgentContext,
     AgentRequest,
+    AgentTaskState,
     AgentToolSchema,
     AgentToolBehavior,
     AgentToolValueType,
     AgentToolDangerLevel,
     AgentToolArgumentSchema,
 )
-from celune.constants import PipelineStates
-from celune.typing.aliases import AudioChunk
-from celune.persona.impl import compact_persona_history
 from celune.typing.common import JSON, JSONSerializable
-from celune.core import conversation as core_conversation
-from celune.dataclasses import pipeline as pipeline_types
-from celune.pipeline import captions, playback, buffering
-from celune.persona.capabilities import PersonaCapabilities
-from celune.dataclasses.pipeline import CaptionAlignmentSection
-from celune.persona import conversation as persona_conversation
+from celune.typing.aliases import AudioChunk
 from celune.persona.prompts import PersonaPromptBuilder, render_markdown_subsection
+from celune.dataclasses.pipeline import CaptionAlignmentSection
+from celune.persona.capabilities import PersonaCapabilities
 
 from .helpers import (
     LanguageAwareBackend,
@@ -55,8 +56,8 @@ from .helpers import (
     wait_for_persona_worker,
     prepare_persona_conversation_engine,
 )
-from ..platform import LINUX_ONLY, WINDOWS_ONLY
 from ..support import CeluneAsyncTestCase, make_pipeline_engine
+from ..platform import LINUX_ONLY, WINDOWS_ONLY
 
 
 @pytest.mark.anyio
@@ -608,6 +609,126 @@ class TestPipelineAsync(CeluneAsyncTestCase):
         self.assertEqual(len(messages), 2)
         self.assertNotIn("Old conversation detail", str(messages))
         self.assertNotIn("Stale assistant claim", str(messages))
+
+    def test_agent_opening_and_approval_prompts_use_restricted_instructions(
+        self,
+    ) -> None:
+        """Constrain generated preambles and explain pending actions before approval."""
+        engine = make_pipeline_engine()
+        engine.config = {}
+        engine.current_character = "Fixture"
+        engine.current_voice = "balanced"
+        engine.voice_bundle_is_default = False
+        request = AgentRequest("Use set_reverb to set reverb strength to 0.1.")
+        task = AgentTask(
+            task_id="approval-prompt", session_id="default", request=request
+        )
+        task.state = AgentTaskState.AWAITING_APPROVAL
+        agent_context = AgentContext(
+            request=request,
+            mode="agent",
+            persona_capabilities=PersonaCapabilities(),
+            task=task,
+            opening=True,
+        )
+        task.state = AgentTaskState.WORKING
+        opening = PersonaPromptBuilder.build(
+            persona_conversation.build_persona_context(
+                cast(Celune, engine),
+                request.request,
+                agent_context=agent_context,
+            )
+        )
+        assert "Do not say that you are ready" in opening
+        assert "do not state the current runtime status" in opening.lower()
+
+        pending_call: ToolCall = {
+            "id": "call-reverb",
+            "name": "set_reverb",
+            "arguments": {"strength": 0.1},
+        }
+        task.state = AgentTaskState.AWAITING_APPROVAL
+        approval = PersonaPromptBuilder.build(
+            persona_conversation.build_persona_context(
+                cast(Celune, engine),
+                request.request,
+                agent_context=agent_context,
+                pending_tool_call=pending_call,
+            )
+        )
+        assert "explain the exact pending action" in approval
+        assert "The action has not run yet" in approval
+        assert '"strength": 0.1' in approval
+
+    def test_agent_file_results_must_ground_dates_and_directory_paths(self) -> None:
+        """Keep file summaries tied to the returned text and exact path."""
+        engine = make_pipeline_engine()
+        engine.config = {}
+        engine.current_character = "Fixture"
+        engine.current_voice = "balanced"
+        engine.voice_bundle_is_default = False
+
+        read_request = AgentRequest("Find the date in README.md.")
+        read_task = AgentTask(
+            task_id="read-result",
+            session_id="default",
+            request=read_request,
+        )
+        read_context = AgentContext(
+            request=read_request,
+            mode="agent",
+            persona_capabilities=PersonaCapabilities(),
+            task=read_task,
+            last_tool_result=cast(
+                ToolResult,
+                {
+                    "tool_id": "local_read_text",
+                    "status": "succeeded",
+                    "output": {
+                        "path": "C:/project/README.md",
+                        "text": "The README contains no date.",
+                    },
+                },
+            ),
+        )
+        read_prompt = PersonaPromptBuilder.build(
+            persona_conversation.build_persona_context(
+                cast(Celune, engine),
+                read_request.request,
+                agent_context=read_context,
+            )
+        )
+        assert "Report a requested date" in read_prompt
+        assert "If it is absent" in read_prompt
+
+        list_request = AgentRequest("List this directory.")
+        list_task = AgentTask(
+            task_id="list-result",
+            session_id="default",
+            request=list_request,
+        )
+        list_context = AgentContext(
+            request=list_request,
+            mode="agent",
+            persona_capabilities=PersonaCapabilities(),
+            task=list_task,
+            last_tool_result=cast(
+                ToolResult,
+                {
+                    "tool_id": "local_list_directory",
+                    "status": "succeeded",
+                    "output": {"path": "C:/Games/XSanity/Program64", "items": []},
+                },
+            ),
+        )
+        list_prompt = PersonaPromptBuilder.build(
+            persona_conversation.build_persona_context(
+                cast(Celune, engine),
+                list_request.request,
+                agent_context=list_context,
+            )
+        )
+        assert "Begin by stating the exact resolved path" in list_prompt
 
     def test_named_celune_custom_pack_does_not_use_default_identity(self) -> None:
         """Verify custom packs named Celune do not inherit default identity fields."""
