@@ -56,11 +56,15 @@ The normal production catalog is always local and explicitly registered:
 | Tool family | Calls |
 | --- | --- |
 | Status | `read_agent_status`, `query_status`, `query_capabilities`, `query_models`, `query_locks`, `query_audio_state`, `query_agent_task`, `run_health_check` |
-| Speech | `speak`, `stop_speech`, `pause_speech` (unavailable), `resume_speech` (unavailable), `clear_speech_queue` |
+| Speech | `speak`, `pause_speech` (unavailable), `resume_speech` (unavailable), `clear_speech_queue` |
 | Voice and character | `set_voice`, `set_voice_prompt`, `set_playback_speed`, `set_reverb`, `set_character`, `query_character` |
 | Routing and lifecycle | `set_conversation_mode`, `set_agent_mode`, `sleep`, `wake` |
 | Persona memory | `remember`, `recall`, `forget`, `clear_recent_context`, `summarize_context` |
-| Task control | `pause_task`, `resume_task`, `cancel_task`, `query_task`, `query_task_history` |
+| Task status | `query_task`, `query_task_history` |
+
+The agent cannot interrupt active speech or pause, resume, or cancel its task.
+Runtime and extension controls own those lifecycle transitions so a tool call
+cannot interrupt its task's control flow.
 
 Important argument constraints include:
 

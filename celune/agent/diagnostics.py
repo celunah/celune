@@ -6,20 +6,22 @@ from __future__ import annotations
 import os
 import sys
 import tempfile
-from types import SimpleNamespace
-from typing import TYPE_CHECKING, Optional, cast
 from pathlib import Path
 from contextlib import ExitStack
+from types import SimpleNamespace
 from dataclasses import dataclass
 from unittest.mock import Mock, patch
 from collections.abc import Mapping, Callable
+from typing import cast, Optional, TYPE_CHECKING
 
 from ..i18n import string
+from ..typing.common import JSON
 from ..paths import temp_data_dir
-from .tools import production_agent_tools, production_agent_tool_schemas
 from .routing import AgentInputRouter
-from .runtime import AgentRuntime, DefaultAgentPermissionPolicy
 from ..exceptions import NeedleSelectionError
+from ..extensions.events import EventDispatcher
+from .runtime import AgentRuntime, DefaultAgentPermissionPolicy
+from .tools import production_agent_tools, production_agent_tool_schemas
 from ..typing.agent import (
     ToolCall,
     AgentTask,
@@ -52,8 +54,6 @@ from ..typing.agent import (
     AgentCancellationReason,
     AgentPermissionDecision,
 )
-from ..typing.common import JSON
-from ..extensions.events import EventDispatcher
 
 if TYPE_CHECKING:
     from ..celune import Celune
@@ -69,7 +69,6 @@ _AGENT_TOOL_ARGUMENTS: dict[str, JSON] = {
     "query_agent_task": {},
     "run_health_check": {},
     "speak": {"text": "Agent diagnostic speech"},
-    "stop_speech": {},
     "pause_speech": {},
     "resume_speech": {"text": "Agent diagnostic speech"},
     "set_voice": {"voice": "diagnostic"},
@@ -88,9 +87,6 @@ _AGENT_TOOL_ARGUMENTS: dict[str, JSON] = {
     "forget": {"record_id": "agent-diagnostic-memory"},
     "clear_recent_context": {},
     "summarize_context": {},
-    "pause_task": {},
-    "resume_task": {},
-    "cancel_task": {},
     "query_task": {},
     "query_task_history": {},
     "local_current_working_directory": {},
@@ -1298,8 +1294,6 @@ def _run_tool_checks(
                         )
                     arguments = _tool_arguments(tool_root, engine)[name]
                     context_task = _working_task(runtime, name)
-                    if name == "resume_task":
-                        runtime.pause_task(context_task.task_id)
                     context = runtime.get_context(context_task.task_id)
                     call = {
                         "id": f"agent-diagnostic-{name}",
@@ -1487,10 +1481,6 @@ def _patch_tool_side_effects(
     effects = _ExternalEffects()
     if name == "speak":
         stack.enter_context(patch.object(engine, "say", return_value=True))
-    elif name == "stop_speech":
-        stack.enter_context(
-            patch.object(engine, "force_stop_speech", return_value=True)
-        )
     elif name == "set_voice":
         stack.enter_context(
             patch.object(engine, "set_voice_and_wait", return_value=True)

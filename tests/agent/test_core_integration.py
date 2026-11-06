@@ -3,12 +3,32 @@
 
 from __future__ import annotations
 
-from typing import Optional, cast
 from unittest import mock
+from typing import cast, Optional
 from contextlib import nullcontext
 from collections.abc import Mapping, Sequence
 
+from celune.celune import Celune
+from celune.typing.aliases import LogLevel
 from celune.core import agent as core_agent
+from celune.persona.impl import PersonaClient
+from celune.typing.common import JSONSerializable
+from celune.typing.persona import PersonaClientResponse
+from celune.registry.llm import PERSONA_DEFAULT_MODEL_ID
+from celune.typing.agent import NeedleToolCall, NeedleToolCatalog
+from celune.agent.tools import AgentStatusTool, production_agent_tool_schemas
+from celune.agent.needle.impl import (
+    NeedleHandler,
+    NeedleToolSelector,
+)
+from celune.core.conversation import (
+    deliver_persona_response as celune_deliver_persona_response,
+)
+from celune.dataclasses.events import (
+    AgentTaskFinishedEvent,
+    AgentTaskStateChangedEvent,
+    AgentApprovalRequestedEvent,
+)
 from celune.agent import (
     ToolCall,
     AgentTool,
@@ -34,26 +54,6 @@ from celune.agent import (
     AgentClassificationResult,
     AgentClassificationFailure,
     AgentClassificationFailureKind,
-)
-from celune.celune import Celune
-from celune.agent.tools import AgentStatusTool, production_agent_tool_schemas
-from celune.persona.impl import PersonaClient
-from celune.registry.llm import PERSONA_DEFAULT_MODEL_ID
-from celune.typing.agent import NeedleToolCall, NeedleToolCatalog
-from celune.typing.common import JSONSerializable
-from celune.typing.aliases import LogLevel
-from celune.typing.persona import PersonaClientResponse
-from celune.agent.needle.impl import (
-    NeedleHandler,
-    NeedleToolSelector,
-)
-from celune.core.conversation import (
-    deliver_persona_response as celune_deliver_persona_response,
-)
-from celune.dataclasses.events import (
-    AgentTaskFinishedEvent,
-    AgentTaskStateChangedEvent,
-    AgentApprovalRequestedEvent,
 )
 
 from ..support import FakeGlow, FakeBackend, CeluneTestCase
@@ -237,7 +237,7 @@ class TestAgentCoreIntegration(CeluneTestCase):
         return core
 
     def test_production_catalog_contains_typed_offline_tools(self) -> None:
-        """Expose the complete Appendix B catalog with permission metadata."""
+        """Keep the production catalog limited to stable typed tools."""
         schemas = production_agent_tool_schemas()
         expected = {
             "read_agent_status",
@@ -249,7 +249,6 @@ class TestAgentCoreIntegration(CeluneTestCase):
             "query_agent_task",
             "run_health_check",
             "speak",
-            "stop_speech",
             "pause_speech",
             "resume_speech",
             "set_voice",
@@ -268,9 +267,6 @@ class TestAgentCoreIntegration(CeluneTestCase):
             "forget",
             "clear_recent_context",
             "summarize_context",
-            "pause_task",
-            "resume_task",
-            "cancel_task",
             "query_task",
             "query_task_history",
         }

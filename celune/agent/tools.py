@@ -10,13 +10,15 @@ import time
 import shutil
 import platform
 import subprocess
-from typing import TYPE_CHECKING, Optional, cast
 from pathlib import Path
 from dataclasses import dataclass
 from collections.abc import Mapping, Callable
+from typing import cast, Optional, TYPE_CHECKING
 
 import psutil
 
+from ..typing.modes import OperationMode
+from ..typing.common import JSON, JSONSerializable
 from ..utils import clear_queue, format_error_message
 from ..exceptions import LocalManagementError as _LocalManagementError
 from ..typing.agent import (
@@ -31,8 +33,6 @@ from ..typing.agent import (
     AgentToolArgumentSchema,
     AgentToolExecutionStatus,
 )
-from ..typing.modes import OperationMode
-from ..typing.common import JSON, JSONSerializable
 
 if TYPE_CHECKING:
     from ..celune import Celune
@@ -363,9 +363,11 @@ def _speak(engine: Celune, call: ToolCall, _context: AgentContext) -> JSON:
     return {"queued": True, "played": played}
 
 
-def _stop_speech(engine: Celune, _call: ToolCall, _context: AgentContext) -> JSON:
-    """Stop speech through the normal interruption path."""
-    return {"stopped": engine.force_stop_speech()}
+def _unsupported_speech_control(
+    _engine: Celune, _call: ToolCall, _context: AgentContext
+) -> JSON:
+    """Reject speech controls that are intentionally unavailable."""
+    raise RuntimeError("speech control is unavailable")
 
 
 def _set_voice(engine: Celune, call: ToolCall, _context: AgentContext) -> JSON:
@@ -508,27 +510,6 @@ def _summarize(engine: Celune, _call: ToolCall, _context: AgentContext) -> JSON:
         "summary": engine.persona_session_summary,
         "message_count": len(engine.persona_history),
     }
-
-
-def _pause_task(engine: Celune, _call: ToolCall, context: AgentContext) -> JSON:
-    """Pause the current task through AgentRuntime."""
-    task = _task(context)
-    engine.agent_runtime.pause_task(task.task_id)
-    return {"task": task.to_json()}
-
-
-def _resume_task(engine: Celune, _call: ToolCall, context: AgentContext) -> JSON:
-    """Resume the current task through AgentRuntime."""
-    task = _task(context)
-    engine.agent_runtime.resume(task.session_id)
-    return {"task": task.to_json()}
-
-
-def _cancel_task(engine: Celune, _call: ToolCall, context: AgentContext) -> JSON:
-    """Cancel the current task through AgentRuntime."""
-    task = _task(context)
-    engine.agent_runtime.cancel_task(task.task_id)
-    return {"task": task.to_json()}
 
 
 def _query_task(_engine: Celune, _call: ToolCall, context: AgentContext) -> JSON:
@@ -1163,17 +1144,10 @@ _SPECS = (
         end_task_on_success=True,
     ),
     _spec(
-        "stop_speech",
-        "Stop speech",
-        "Stop active speech playback.",
-        _stop_speech,
-        behavior=AgentToolBehavior.MUTATING,
-    ),
-    _spec(
         "pause_speech",
         "Pause speech",
         "Pause speech when supported.",
-        _stop_speech,
+        _unsupported_speech_control,
         behavior=AgentToolBehavior.MUTATING,
         available=False,
     ),
@@ -1181,7 +1155,7 @@ _SPECS = (
         "resume_speech",
         "Resume speech",
         "Resume paused speech when supported.",
-        _speak,
+        _unsupported_speech_control,
         arguments=(_arg("text", AgentToolValueType.STRING, "Text to resume."),),
         behavior=AgentToolBehavior.MUTATING,
         available=False,
@@ -1319,27 +1293,6 @@ _SPECS = (
         "Summarize context",
         "Read the current context summary.",
         _summarize,
-    ),
-    _spec(
-        "pause_task",
-        "Pause task",
-        "Pause the current agent task.",
-        _pause_task,
-        behavior=AgentToolBehavior.MUTATING,
-    ),
-    _spec(
-        "resume_task",
-        "Resume task",
-        "Resume the current agent task.",
-        _resume_task,
-        behavior=AgentToolBehavior.MUTATING,
-    ),
-    _spec(
-        "cancel_task",
-        "Cancel task",
-        "Cancel the current agent task.",
-        _cancel_task,
-        behavior=AgentToolBehavior.MUTATING,
     ),
     _spec("query_task", "Query task", "Read the current agent task.", _query_task),
     _spec(
