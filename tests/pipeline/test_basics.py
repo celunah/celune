@@ -6,20 +6,26 @@ import queue
 import asyncio
 import tempfile
 import threading
+from types import TracebackType, SimpleNamespace
+from typing import Self, Optional, cast
 from pathlib import Path
 from unittest import mock
-from typing import Self, Optional, cast
-from types import TracebackType, SimpleNamespace
 
-import pytest
 import numpy as np
 import numpy.typing as npt
+import pytest
 
+from celune.core import speech as core_speech
+from celune.core import conversation as core_conversation
+from celune.agent import routing as agent_routing
+from celune.utils import discard, clear_queue
+from celune.celune import Celune
 from celune.cevoice import (
     CEVoicePersona,
     PersonaIdentity,
     PersonaStyleValues,
 )
+from celune.persona import conversation as persona_conversation
 from celune.pipeline import (
     output,
     captions,
@@ -28,28 +34,23 @@ from celune.pipeline import (
     generation,
     submission,
 )
-from celune.celune import Celune
+from celune.constants import BASE_SR, PipelineStates
+from celune.dataclasses import pipeline as pipeline_types
 from celune.typing.agent import (
     AgentTask,
     AgentContext,
     AgentRequest,
 )
+from celune.typing.locks import ComponentLockName
+from celune.typing.common import JSON, JSONSerializable
+from celune.audio.speakers import SpeakerChannel
+from celune.typing.aliases import AudioChunk
+from celune.core.concurrency import run_in_daemon_thread
 from celune.dataclasses.pipeline import (
     SpeechRequest,
     AudioInputRequest,
 )
-from celune.typing.aliases import AudioChunk
-from celune.utils import discard, clear_queue
-from celune.audio.speakers import SpeakerChannel
-from celune.agent import routing as agent_routing
-from celune.typing.locks import ComponentLockName
-from celune.constants import BASE_SR, PipelineStates
-from celune.typing.common import JSON, JSONSerializable
-from celune.core.concurrency import run_in_daemon_thread
-from celune.dataclasses import pipeline as pipeline_types
 from celune.persona.capabilities import PersonaCapabilities
-from celune.persona import conversation as persona_conversation
-from celune.core import conversation as core_conversation, speech as core_speech
 
 from .helpers import (
     reload_callback,
@@ -2402,15 +2403,42 @@ class TestPipelineAsync(CeluneAsyncTestCase):
         engine.idle_callback.assert_called_once_with()
 
     def test_finalize_playback_idle_restores_maintained_status(self) -> None:
-        """Keep an action status after its speech playback completes."""
+        """Keep the active agent task status after its speech finishes."""
         engine = make_pipeline_engine()
         engine.locked = False
         engine.cur_state = "classifying"
         engine._speech_status_restore = {42: "classifying"}
+        engine.agent_runtime = SimpleNamespace(
+            get_active_task=mock.Mock(return_value=SimpleNamespace(is_terminal=False))
+        )
+        maintained: list[bool] = []
+        engine.idle_callback.side_effect = lambda: maintained.append(
+            engine._maintain_status_after_playback
+        )
 
         playback._finalize_playback_idle(cast(Celune, engine), source_id=42)
 
         assert engine.cur_state == "classifying"
+        assert engine._speech_status_restore == {}
+        assert not engine._maintain_status_after_playback
+        assert maintained == [True]
+        engine.idle_callback.assert_called_once_with()
+
+    def test_finalize_playback_idle_clears_maintained_status_without_active_task(
+        self,
+    ) -> None:
+        """Return to idle when maintained speech outlives its agent task."""
+        engine = make_pipeline_engine()
+        engine.locked = False
+        engine.cur_state = "speaking"
+        engine._speech_status_restore = {42: "speaking"}
+        engine.agent_runtime = SimpleNamespace(
+            get_active_task=mock.Mock(return_value=None)
+        )
+
+        playback._finalize_playback_idle(cast(Celune, engine), source_id=42)
+
+        assert engine.cur_state == "idle"
         assert engine._speech_status_restore == {}
         assert not engine._maintain_status_after_playback
         engine.idle_callback.assert_called_once_with()

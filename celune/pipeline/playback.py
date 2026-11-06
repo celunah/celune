@@ -13,21 +13,23 @@ import pathlib
 import threading
 import contextlib
 import collections.abc
-
+from typing import TYPE_CHECKING, Union, Optional, cast
 from collections import deque
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Optional, Union, cast
 
-import torch
 import numpy as np
+import torch
 import sounddevice as sd
 
+from ..i18n import string
+from ..utils import discard, clear_queue, format_number, format_error_message
 from .timing import (
     SFX_DUCK_GAIN,
     SFX_DUCK_FADE_SECONDS,
     PIPELINE_CPU_YIELD_SECONDS,
     monotonic_time,
 )
+from ..config import resolve_audio_device
 from .captions import (
     playback_source_meta,
     next_playback_source_id,
@@ -39,6 +41,7 @@ from .captions import (
     clear_playback_source_status,
     notify_speech_playback_finished,
 )
+from ..analysis import schedule_voice_analysis
 from .buffering import (
     PlaybackContentionMonitor,
     acquire_pipeline,
@@ -49,16 +52,12 @@ from .buffering import (
     dequeue_playback_item,
     should_apply_contention_buffering,
 )
-from ..i18n import string
-from ..typing.aliases import AudioChunk
-from ..config import resolve_audio_device
+from ..audio.dsp import error_signal, working_signal, sleeping_signal, readiness_signal
 from ..constants import BASE_SR, APP_NAME
 from ..exceptions import NotAvailableError
-from ..analysis import schedule_voice_analysis
+from ..typing.aliases import AudioChunk
 from ..core.concurrency import run_in_daemon_thread
-from ..utils import discard, clear_queue, format_number, format_error_message
 from ..dataclasses.pipeline import SpeechTiming, PlaybackChunk, PlaybackSourceDone
-from ..audio.dsp import error_signal, working_signal, sleeping_signal, readiness_signal
 
 if TYPE_CHECKING:
     from ..celune import Celune
@@ -889,6 +888,15 @@ def _finalize_playback_idle(
     restored_status = (
         status_restore.pop(source_id, None) if source_id is not None else None
     )
+    if restored_status is not None:
+        runtime = getattr(engine, "agent_runtime", None)
+        get_active_task = getattr(runtime, "get_active_task", None)
+        active_task = get_active_task("default") if callable(get_active_task) else None
+        if (
+            active_task is None
+            or getattr(active_task, "is_terminal", True) is not False
+        ):
+            restored_status = None
     engine.cur_state = restored_status if restored_status is not None else "idle"
     engine._maintain_status_after_playback = restored_status is not None
     try:

@@ -3,11 +3,12 @@
 
 from __future__ import annotations
 
-from unittest import mock
 from typing import Optional, cast
+from unittest import mock
 from contextlib import nullcontext
 from collections.abc import Mapping, Sequence
 
+from celune.core import agent as core_agent
 from celune.agent import (
     ToolCall,
     AgentTool,
@@ -35,6 +36,13 @@ from celune.agent import (
     AgentClassificationFailureKind,
 )
 from celune.celune import Celune
+from celune.agent.tools import AgentStatusTool, production_agent_tool_schemas
+from celune.persona.impl import PersonaClient
+from celune.registry.llm import PERSONA_DEFAULT_MODEL_ID
+from celune.typing.agent import NeedleToolCall, NeedleToolCatalog
+from celune.typing.common import JSONSerializable
+from celune.typing.aliases import LogLevel
+from celune.typing.persona import PersonaClientResponse
 from celune.agent.needle.impl import (
     NeedleHandler,
     NeedleToolSelector,
@@ -47,14 +55,6 @@ from celune.dataclasses.events import (
     AgentTaskStateChangedEvent,
     AgentApprovalRequestedEvent,
 )
-from celune.typing.aliases import LogLevel
-from celune.core import agent as core_agent
-from celune.persona.impl import PersonaClient
-from celune.typing.common import JSONSerializable
-from celune.registry.llm import PERSONA_DEFAULT_MODEL_ID
-from celune.typing.persona import PersonaClientResponse
-from celune.typing.agent import NeedleToolCall, NeedleToolCatalog
-from celune.agent.tools import AgentStatusTool, production_agent_tool_schemas
 
 from ..support import FakeGlow, FakeBackend, CeluneTestCase
 
@@ -877,9 +877,15 @@ class TestAgentCoreIntegration(CeluneTestCase):
         )
         playback_wait = mock.patch(
             "celune.core.conversation.wait_for_persona_playback",
-            return_value=True,
         )
         playback_wait_mock = playback_wait.start()
+
+        def finish_playback(*_args: object, **_kwargs: object) -> bool:
+            """Model playback completing after a speak tool queues its audio."""
+            core.playback_done.set()
+            return True
+
+        playback_wait_mock.side_effect = finish_playback
         self.addCleanup(playback_wait.stop)
         for speech_patch in speech_patches:
             speech_patch.start()
@@ -899,6 +905,9 @@ class TestAgentCoreIntegration(CeluneTestCase):
 
         approval_route = core.route_input("Approved.", persona_ready=True)
         assert approval_route.route.value == "approval_response"
+        core.playback_done.clear()
+        core.cur_state = "speaking"
+        core.locked = False
         assert core.run_agent_route(approval_route)
 
         assert task.state == AgentTaskState.COMPLETED
@@ -911,6 +920,7 @@ class TestAgentCoreIntegration(CeluneTestCase):
         assert result["status"] == AgentToolExecutionStatus.SUCCEEDED
         assert result["end_task"] is True
         assert delivery_mock.call_count == 0
+        assert core.cur_state == "idle"
         assert playback_wait_mock.call_count == 1
         assert playback_wait_mock.call_args.args == (core,)
         assert speech_mock.call_count == 2

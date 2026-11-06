@@ -4,15 +4,19 @@
 from __future__ import annotations
 
 from random import choice
-from collections.abc import Sequence
 from typing import Union, Optional, cast
+from collections.abc import Sequence
 
 from ..i18n import string
+from ..paths import huggingface_progress
+from ..utils import format_error_message
 from ..exceptions import (
     ModelConsentDeclined,
     ModelConsentRequired,
     NeedleSelectionError,
 )
+from .conversation import deliver_persona_response, wait_for_persona_playback
+from ..agent.needle import NeedleToolSelector
 from ..typing.agent import (
     ToolCall,
     AgentOutput,
@@ -30,10 +34,6 @@ from ..typing.agent import (
     AgentClassificationResult,
     AgentClassificationFailure,
 )
-from ..paths import huggingface_progress
-from ..utils import format_error_message
-from ..agent.needle import NeedleToolSelector
-from .conversation import deliver_persona_response, wait_for_persona_playback
 
 
 def interrupt_active_agent_for_input(self, text: str) -> bool:
@@ -355,6 +355,25 @@ def run_agent_route(self, route: AgentClassificationResult) -> bool:
             raise RuntimeError("agent response speech could not be queued")
 
     output = self.agent_runtime.run(request, callback=deliver_output)
+    if output["end"] and isinstance(task_id, str):
+        task = self.agent_runtime.get_task(task_id)
+        if (
+            task.is_terminal
+            and self.playback_done.is_set()
+            and not self.locked
+            and self.cur_state
+            not in {
+                "idle",
+                "error",
+                "reloading",
+                "exiting",
+                "sleeping",
+                "stopped",
+                "waking",
+            }
+        ):
+            self.cur_state = "idle"
+            self.idle_callback()
     return output["end"] and not delivery_failed
 
 

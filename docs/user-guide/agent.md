@@ -42,6 +42,8 @@ Tool results and the final response continue through the normal speech path.
 Speech delivered as part of an ongoing agent action preserves the active status
 when playback completes, so an intermediate response does not make the agent
 appear idle before its task ends.
+When a task ends after its final playback, the engine returns the status to
+Idle.
 
 Agent prompts do not include Persona's automatically retrieved long-term
 memories, conversation summary, or ordinary chat history. Memory tools remain
