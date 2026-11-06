@@ -117,7 +117,7 @@ class _SpeakPersonaFixture:
                 '{"classification":"task","route":"task",'
                 '"confidence":0.98,"task_request":"Say hello."}'
             ),
-            _PersonaResponse("I will say hello."),
+            _PersonaResponse("I hear you."),
             _PersonaResponse("Say hello."),
             _PersonaResponse("May I speak the line 'hello' now?"),
             _PersonaResponse(
@@ -192,8 +192,14 @@ class TestAgentCoreIntegration(CeluneTestCase):
         """Reject opening text that claims progress or current status."""
         assert core_agent._is_plain_agent_preamble("One moment.")
         assert core_agent._is_plain_agent_preamble("I hear you.")
+        assert core_agent._is_plain_agent_preamble(
+            "I understand you want the directory listed."
+        )
+        assert core_agent._is_plain_agent_preamble("I can help with that.")
         assert not core_agent._is_plain_agent_preamble('"')
         assert not core_agent._is_plain_agent_preamble("Ready to assist.")
+        assert not core_agent._is_plain_agent_preamble("The directory exists.")
+        assert not core_agent._is_plain_agent_preamble("I found the folder.")
         assert not core_agent._is_plain_agent_preamble(
             "I'm checking that directory now. I'll return the contents."
         )
@@ -472,7 +478,7 @@ class TestAgentCoreIntegration(CeluneTestCase):
         core._agent_router = AgentInputRouter(core, runtime)
         core.vision = _RoutingFixture(
             '{"classification":"task","route":"task","confidence":0.98}',
-            "I will review that request.",
+            "I hear you.",
             "May I delete the fixture item?",
             '{"classification":"task","route":"approval_response",'
             '"confidence":0.99,"approval_decision":"approved"}',
@@ -523,6 +529,16 @@ class TestAgentCoreIntegration(CeluneTestCase):
         self.addCleanup(cuda_patch.stop)
         selector = _NeedleFixture()
         persona = _PersonaFixture()
+        persona.responses = [
+            _PersonaResponse(
+                '{"classification":"task","route":"task",'
+                '"confidence":0.98,"task_request":"Check the current agent status."}'
+            ),
+            _PersonaResponse("I'm checking that now."),
+            _PersonaResponse("I hear you."),
+            _PersonaResponse("Read the current agent status."),
+            _PersonaResponse("The agent task completed successfully."),
+        ]
         with (
             mock.patch("celune.core.lifecycle.AudioRGBGlow", FakeGlow),
             mock.patch("celune.core.lifecycle.default_loader", return_value=None),
@@ -608,8 +624,8 @@ class TestAgentCoreIntegration(CeluneTestCase):
         assert task.state == AgentTaskState.COMPLETED
         assert task.iterations == 1
         assert selector.intents == ["Read the current agent status."]
-        assert len(persona.requests) == 4
-        second_system = persona.requests[3]["system"]
+        assert len(persona.requests) == 5
+        second_system = persona.requests[4]["system"]
         assert isinstance(second_system, str)
         assert "Last tool result" in second_system
         assert "succeeded" in second_system
@@ -617,6 +633,7 @@ class TestAgentCoreIntegration(CeluneTestCase):
         assert delivery_mock.call_count == 1
         assert playback_wait_mock.call_count == 1
         assert speech_mock.call_count == 2
+        assert speech_mock.call_args_list[0].args[1] == "I hear you."
         assert (
             speech_mock.call_args.kwargs["display_text"]
             == "The agent task completed successfully."
@@ -679,7 +696,7 @@ class TestAgentCoreIntegration(CeluneTestCase):
                 '{"classification":"task","route":"task",'
                 '"confidence":0.98,"task_request":"Inspect the unavailable thing."}'
             ),
-            _PersonaResponse("I will check that now."),
+            _PersonaResponse("I hear you."),
             _PersonaResponse("Inspect the unavailable thing."),
             _PersonaResponse("I could not find a suitable way to do that just now."),
         ]
@@ -969,7 +986,7 @@ class TestAgentCoreIntegration(CeluneTestCase):
             self.addCleanup(core.close)
             core.vision = _RoutingFixture(
                 '{"classification":"task","route":"task","confidence":0.98}',
-                "I will check that now.",
+                "I hear you.",
                 "Check the current agent status.",
             )
             route = core.route_input(

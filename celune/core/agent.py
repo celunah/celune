@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import re
-from random import choice
 from typing import Union, Optional, cast
 from collections.abc import Sequence
 
@@ -37,10 +36,10 @@ from ..typing.agent import (
 )
 
 _UNSAFE_AGENT_PREAMBLE_RE = re.compile(
-    r"\b(?:i\s+will|i['’]ll|i\s+can|let\s+me|ready|available|standing|"
+    r"\b(?:i\s+will|i['’]ll|let\s+me|ready|available|standing|"
     r"start(?:ed|ing)?|begin(?:ning)?|check(?:ed|ing)?|"
     r"look|found|verif(?:y|ied|ying)|confirm(?:ed|ing)?|result|work(?:ing|ed)?|"
-    r"access(?:ible)?|permission|exist(?:s|ed)?|directory|file|path|list)\b",
+    r"access(?:ible)?|permission|exist(?:s|ed)?)\b",
     re.IGNORECASE,
 )
 
@@ -268,27 +267,25 @@ def run_agent_route(self, route: AgentClassificationResult) -> bool:
         except ValueError:
             opening_pending = False
     if opening_pending:
-        opening_preamble = choice(
-            (
-                string("agent.opening_preamble_1"),
-                string("agent.opening_preamble_2"),
-                string("agent.opening_preamble_3"),
-                string("agent.opening_preamble_4"),
-            )
-        )
+        opening_preamble = None
         if isinstance(task_id, str):
             try:
-                opening = self._agent_persona_bridge.opening(
-                    self.agent_runtime.get_context(task_id)
-                )
+                opening_context = self.agent_runtime.get_context(task_id)
+                opening = self._agent_persona_bridge.opening(opening_context)
                 generated_preamble = opening.get("response")
-                if not isinstance(
-                    generated_preamble, str
-                ) or not _is_plain_agent_preamble(generated_preamble):
-                    raise RuntimeError(
-                        "agent opening response was not a plain preamble"
+                if (
+                    not isinstance(generated_preamble, str)
+                    or not _is_plain_agent_preamble(generated_preamble)
+                ) and not opening.get("paused"):
+                    opening = self._agent_persona_bridge.opening(
+                        opening_context,
+                        retry=True,
                     )
-                opening_preamble = generated_preamble
+                    generated_preamble = opening.get("response")
+                if isinstance(generated_preamble, str) and _is_plain_agent_preamble(
+                    generated_preamble
+                ):
+                    opening_preamble = generated_preamble
             except Exception as exc:
                 self.log(
                     format_error_message(
@@ -299,19 +296,20 @@ def run_agent_route(self, route: AgentClassificationResult) -> bool:
                     "warning",
                     loglevel="verbose",
                 )
-        try:
-            if self.say(opening_preamble, maintain_status=True):
-                wait_for_persona_playback(self)
-        except Exception as exc:
-            self.log(
-                format_error_message(
-                    "[AGENT] opening_speech_failed",
-                    exc,
-                    self.log_level,
-                ),
-                "warning",
-                loglevel="verbose",
-            )
+        if opening_preamble is not None:
+            try:
+                if self.say(opening_preamble, maintain_status=True):
+                    wait_for_persona_playback(self)
+            except Exception as exc:
+                self.log(
+                    format_error_message(
+                        "[AGENT] opening_speech_failed",
+                        exc,
+                        self.log_level,
+                    ),
+                    "warning",
+                    loglevel="verbose",
+                )
 
     def deliver_output(output: AgentOutput) -> None:
         """Deliver generated agent responses through the shared speech path."""

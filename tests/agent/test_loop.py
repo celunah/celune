@@ -440,6 +440,41 @@ class TestAgentLoop:
             in cast(str, repaired_request["system"]).casefold()
         )
 
+    def test_persona_opening_retry_requests_a_grounded_character_acknowledgment(
+        self,
+    ) -> None:
+        """Keep retries VLM-generated while correcting unsupported opening claims."""
+        response = PersonaClientResponse({"response": "I hear you."})
+        post = mock.Mock(return_value=response)
+        engine = SimpleNamespace(
+            vision=SimpleNamespace(post=post),
+            component_locks=None,
+        )
+        runtime = AgentRuntime()
+        task = runtime.create_task(_request(), task_id="opening-retry-task")
+        bridge = PersonaAgentBridge(cast(Celune, engine), {})
+        payload = {
+            "system": "Return one short acknowledgment.",
+            "messages": [
+                {"role": "system", "content": "Return one short acknowledgment."},
+                {"role": "user", "content": "List this directory."},
+            ],
+        }
+
+        with mock.patch(
+            "celune.agent.persona.build_persona_request",
+            return_value=payload,
+        ):
+            output = bridge.opening(runtime.get_context(task.task_id), retry=True)
+
+        assert output["response"] == "I hear you."
+        retry_request = cast(dict[str, object], post.call_args.kwargs["json"])
+        system = cast(str, retry_request["system"])
+        assert (
+            "previous opening included a progress, status, or factual claim" in system
+        )
+        assert "active character's voice" in system
+
     def test_approval_pause_does_not_consume_iteration_or_lose_call(self) -> None:
         """Resume an approved pending call without repeating the planner cycle."""
         planner_calls = 0
