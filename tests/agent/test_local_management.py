@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from typing import cast
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest import mock
 from contextlib import nullcontext
 
@@ -24,10 +25,10 @@ from ..support import CeluneTestCase
 class TestLocalManagementTools(CeluneTestCase):
     """Verify typed local filesystem and diagnostic behavior without a shell."""
 
-    def _context(self) -> AgentContext:
+    def _context(self, request: str = "inspect local state") -> AgentContext:
         """Build the smallest valid context accepted by a local tool."""
         return AgentContext(
-            request=AgentRequest("inspect local state"),
+            request=AgentRequest(request),
             mode=cast(OperationMode, "agent"),
             persona_capabilities=PersonaCapabilities(),
         )
@@ -161,6 +162,49 @@ class TestLocalManagementTools(CeluneTestCase):
         )
         assert invalid["status"] == AgentToolExecutionStatus.FAILED
         assert cast(dict[str, object], invalid["output"])["result"] == "invalid_path"
+
+    def test_directory_listing_recovers_one_existing_path_from_the_request(
+        self,
+    ) -> None:
+        """Use the user's exact directory when Needle corrupts its path argument."""
+        with TemporaryDirectory(prefix="celune agent ") as directory:
+            root = Path(directory).resolve()
+            selected_path = str(root).replace("\\", "").replace("/", "")
+            result = self._tool("local_list_directory").execute(
+                {
+                    "id": "list-recovered-path",
+                    "name": "local_list_directory",
+                    "arguments": {"path": selected_path},
+                },
+                self._context(f'List the directory "{root}".'),
+            )
+
+        assert result["status"] == AgentToolExecutionStatus.SUCCEEDED
+        output = cast(dict[str, object], result["output"])
+        assert output["path"] == str(root)
+
+    def test_directory_listing_does_not_choose_between_requested_directories(
+        self,
+    ) -> None:
+        """Leave a missing target unchanged when the request names two directories."""
+        with TemporaryDirectory(prefix="celune agent ") as directory:
+            root = Path(directory)
+            first = root / "first"
+            second = root / "second"
+            first.mkdir()
+            second.mkdir()
+            result = self._tool("local_list_directory").execute(
+                {
+                    "id": "list-ambiguous-path",
+                    "name": "local_list_directory",
+                    "arguments": {"path": str(root / "missing")},
+                },
+                self._context(f'Compare "{first}" with "{second}".'),
+            )
+
+        assert result["status"] == AgentToolExecutionStatus.FAILED
+        output = cast(dict[str, object], result["output"])
+        assert output["result"] == "missing"
 
     def test_local_system_info_is_a_safe_registered_operation(self) -> None:
         """The diagnostic operation returns bounded structured local state."""

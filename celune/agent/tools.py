@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import os
+import re
 import sys
 import time
 import shutil
@@ -546,6 +547,11 @@ def _query_history(_engine: Celune, _call: ToolCall, context: AgentContext) -> J
 
 _MAX_LOCAL_READ_BYTES = 1_048_576
 _MAX_LOCAL_ITEMS = 1_000
+_QUOTED_LOCAL_PATH_RE = re.compile(
+    r"(?i)[\"'`]((?:[a-z]:[\\/]|\\\\|/)[^\"'`<>\r\n|?*]+)[\"'`]"
+)
+_WINDOWS_LOCAL_PATH_RE = re.compile(r"(?i)(?:[a-z]:[\\/]|\\\\)[^\s\"'`<>|?*]*")
+_POSIX_LOCAL_PATH_RE = re.compile(r"(?<![\w/:])/(?:[^\s\"'`<>|?*]+/)*[^\s\"'`<>|?*]*")
 
 
 def _local_path(
@@ -596,19 +602,48 @@ def _local_missing(path: Path) -> _LocalManagementError:
     return _LocalManagementError("missing", "target does not exist", path)
 
 
+def _requested_existing_directory(context: AgentContext) -> Optional[Path]:
+    """Find one unambiguous existing absolute directory in the task request."""
+    request = context.request.request
+    requested_paths = [
+        match.group(1) for match in _QUOTED_LOCAL_PATH_RE.finditer(request)
+    ]
+    requested_paths.extend(
+        match.group(0) for match in _WINDOWS_LOCAL_PATH_RE.finditer(request)
+    )
+    requested_paths.extend(
+        match.group(0) for match in _POSIX_LOCAL_PATH_RE.finditer(request)
+    )
+
+    existing: dict[str, Path] = {}
+    for raw_path in requested_paths:
+        for candidate in (raw_path, raw_path.rstrip(".,;:!?)]}")):
+            if not candidate:
+                continue
+            try:
+                path = Path(candidate).expanduser().resolve(strict=False)
+            except OSError:
+                continue
+            if path.is_dir():
+                existing[os.path.normcase(str(path))] = path
+    return next(iter(existing.values())) if len(existing) == 1 else None
+
+
 def _local_access(path: Path, error: OSError) -> _LocalManagementError:
     """Build a consistent access-denied error."""
     return _LocalManagementError("access_denied", str(error), path)
 
 
 def _local_list_directory(
-    _engine: Celune, call: ToolCall, _context: AgentContext
+    _engine: Celune, call: ToolCall, context: AgentContext
 ) -> JSON:
     """List one exact directory without recursive traversal."""
     path = _local_path(call, "path", allow_relative=True)
     limit = _local_limit(call, "limit", 100, _MAX_LOCAL_ITEMS)
     if not path.exists():
-        raise _local_missing(path)
+        path = _requested_existing_directory(context) or path
+        if not path.exists():
+            raise _local_missing(path)
     if not path.is_dir():
         raise _LocalManagementError("invalid_target", "target is not a directory", path)
     try:
@@ -1287,7 +1322,7 @@ _LOCAL_SPECS = (
             _arg(
                 "path",
                 AgentToolValueType.STRING,
-                "Absolute path or path relative to Celune's working directory.",
+                "Exact absolute path or path relative to Celune's working directory.",
             ),
             _arg(
                 "limit", AgentToolValueType.INTEGER, "Maximum entries.", required=False

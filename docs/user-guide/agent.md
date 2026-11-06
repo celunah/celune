@@ -94,6 +94,10 @@ working directory; Celune resolves them before access. Filesystem mutation
 paths must remain absolute so approval identifies the exact target. Process
 and application termination requires an expected name so a stale PID cannot
 be used blindly. The agent never turns a free-form prompt into a shell command.
+Routing and tool-selection prompts instruct Persona and Needle to preserve
+explicit paths from the task request. If Needle supplies a directory path that
+does not exist, the listing tool can recover it only when one existing absolute
+directory is unambiguous in that request.
 For a successful directory listing, Persona is instructed to include the
 resolved path and returned entries in its final answer. It is also instructed
 to identify empty and truncated listings and preserve entry names exactly.
