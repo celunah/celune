@@ -6,35 +6,39 @@ import asyncio
 import logging
 import tempfile
 import threading
-from pathlib import Path
-from unittest import mock
 from types import SimpleNamespace
 from typing import Optional, cast
+from pathlib import Path
+from unittest import mock
 from collections.abc import Callable
 
-import pytest
 import numpy as np
+import pytest
 from textual import events
 from textual.widget import Widget
 from textual.widgets import Label, RichLog, TextArea, ProgressBar
 
-from celune.celune import Celune
-from celune.config import Config
+from celune.ui import app as ui_app
+from celune.ui import runtime as ui_runtime
+from celune.ui import resources as ui_resources
 from celune.i18n import string
 from celune.theme import colors
-from celune.typing.common import JSONSerializable
-from celune.ui import app as ui_app, resources as ui_resources
+from celune.utils import discard
+from celune.celune import Celune
+from celune.config import Config
 from celune.ui.app import (
     Button,
-    ButtonActions,
     CeluneUI,
-    ProgressLabel,
     VoiceButton,
+    ButtonActions,
+    ProgressLabel,
 )
 from celune.ui.theme import severity_color
-from celune.utils import discard
-from .fixtures import reset_ui_singletons
+from celune.typing.common import JSONSerializable
+from celune.dataclasses.events import AgentTaskFinishedEvent
+
 from ..support import FakeBackend, CeluneTestCase
+from .fixtures import reset_ui_singletons
 
 
 class TestUIInteractions(CeluneTestCase):
@@ -77,6 +81,116 @@ class TestUIInteractions(CeluneTestCase):
         change_input_state.assert_called_once_with(locked=True)
         change_voice_lock_state.assert_called_once_with(locked=True)
         assert ui.input_box.placeholder == string("ui.tutorial_placeholder")
+
+    def test_tts_queue_status_keeps_active_agent_state_visible(self) -> None:
+        """Keep the agent task state visible while an agent utterance plays."""
+        active_task = SimpleNamespace(task_id="active-task")
+        celune = SimpleNamespace(
+            test_finished=False,
+            locked=True,
+            is_in_tutorial=False,
+            voices=("balanced", "bold"),
+            agent_runtime=SimpleNamespace(
+                get_active_task=mock.Mock(return_value=active_task)
+            ),
+        )
+        safe_status = mock.Mock()
+        refresh_status = mock.Mock()
+        ui = cast(
+            CeluneUI,
+            SimpleNamespace(
+                celune=celune,
+                cur_state="idle",
+                celune_ready=True,
+                _is_agent_test_mode=mock.Mock(return_value=False),
+                _cancel_sleep_timer=mock.Mock(),
+                safe_status=safe_status,
+                _refresh_agent_status=refresh_status,
+                input_box=SimpleNamespace(placeholder=""),
+                change_input_state=mock.Mock(),
+                change_voice_lock_state=mock.Mock(),
+            ),
+        )
+
+        CeluneUI.tts_queue_avail(ui)
+
+        assert ui._agent_task_id == "active-task"
+        refresh_status.assert_called_once()
+        safe_status.assert_not_called()
+
+    def test_finished_agent_status_returns_to_idle_after_playback(self) -> None:
+        """Clear the last terminal task from the TUI once its speech is done."""
+        playback_done = threading.Event()
+        playback_done.set()
+        terminal_task = SimpleNamespace(is_terminal=True)
+        runtime = SimpleNamespace(
+            get_active_task=mock.Mock(return_value=None),
+            get_task=mock.Mock(return_value=terminal_task),
+        )
+        celune = SimpleNamespace(
+            test_finished=False,
+            agent_runtime=runtime,
+            playback_done=playback_done,
+            cur_state="idle",
+            locked=True,
+            sleeping=False,
+            is_in_tutorial=False,
+            voices=("balanced",),
+        )
+        safe_status = mock.Mock()
+        ui = cast(
+            CeluneUI,
+            SimpleNamespace(
+                celune=celune,
+                cur_state="idle",
+                celune_ready=True,
+                _agent_task_id="finished-task",
+                _agent_status_signature=("finished-task",),
+                _hide_caption_widgets=mock.Mock(),
+                _is_agent_test_mode=mock.Mock(return_value=False),
+                change_input_state=mock.Mock(),
+                change_voice_lock_state=mock.Mock(),
+                safe_status=safe_status,
+                _schedule_sleep_timer=mock.Mock(),
+                input_box=SimpleNamespace(placeholder=""),
+            ),
+        )
+
+        CeluneUI.tts_idle(ui)
+
+        assert ui._agent_task_id is None
+        assert ui._agent_status_signature is None
+        safe_status.assert_called_once_with(string("status.idle"))
+
+    def test_finished_task_event_does_not_restore_terminal_status_after_idle(
+        self,
+    ) -> None:
+        """Ignore delayed finish events after playback already returned to idle."""
+        playback_done = threading.Event()
+        playback_done.set()
+        safe_status = mock.Mock()
+        ui = cast(
+            CeluneUI,
+            SimpleNamespace(
+                celune=SimpleNamespace(
+                    agent_runtime=SimpleNamespace(
+                        get_active_task=mock.Mock(return_value=None)
+                    ),
+                    playback_done=playback_done,
+                ),
+                _run_on_ui_thread=lambda callback: callback(),
+                safe_status=safe_status,
+                _agent_task_id="old-task",
+            ),
+        )
+
+        ui_runtime._on_agent_task_finished(
+            ui,
+            cast(AgentTaskFinishedEvent, SimpleNamespace(task_id="old-task")),
+        )
+
+        assert ui._agent_task_id is None
+        safe_status.assert_called_once_with(string("status.idle"))
 
     def test_vc_recording_vad_plays_leading_silence(self) -> None:
         """Verify live VC converts and plays silence while its VAD gate is closed."""
@@ -1014,42 +1128,43 @@ class TestUIInteractions(CeluneTestCase):
         asyncio.run(start_and_stop())
 
     def test_gpu_usage_query_times_out(self) -> None:
-        """Verify a stuck nvidia-smi query becomes an unavailable sample."""
+        """Keep timed-out GPU polling bounded without asyncio pipe transports."""
+        process = SimpleNamespace(
+            returncode=None,
+            wait=mock.AsyncMock(side_effect=[TimeoutError, 0]),
+            kill=mock.Mock(),
+        )
 
-        class FakeProcess:
-            """Minimal async subprocess fake for timeout cleanup."""
+        with (
+            mock.patch("celune.ui.resources._NVIDIA_SMI", "nvidia-smi"),
+            mock.patch(
+                "celune.ui.resources.asyncio.create_subprocess_exec",
+                new=mock.AsyncMock(return_value=process),
+            ) as create_process,
+        ):
+            assert asyncio.run(ui_resources._query_gpu_usage()) is None
 
-            returncode: Optional[int] = None
-            killed = False
+        assert create_process.call_args.args[0] == "nvidia-smi"
+        assert create_process.call_args.kwargs["stdout"].closed
+        process.kill.assert_called_once_with()
+        assert process.wait.await_count == 2
 
-            def kill(self) -> None:
-                """Record process termination."""
-                self.killed = True
-                self.returncode = -9
+    def test_gpu_usage_query_parses_one_device_sample(self) -> None:
+        """Parse nvidia-smi output redirected to a temporary file."""
+        process = SimpleNamespace(returncode=0, wait=mock.AsyncMock(return_value=0))
 
-            async def communicate(self) -> tuple[bytes, bytes]:
-                """Raise until the timeout handler terminates the process."""
-                if not self.killed:
-                    raise TimeoutError
-                return b"", b""
-
-        process = FakeProcess()
-
-        async def create_process(*_args: object, **_kwargs: object) -> FakeProcess:
-            """Return the fake GPU query process."""
+        async def spawn_process(*_args, stdout, **_kwargs):
+            stdout.write(b"42\n")
             return process
 
         with (
             mock.patch("celune.ui.resources._NVIDIA_SMI", "nvidia-smi"),
             mock.patch(
                 "celune.ui.resources.asyncio.create_subprocess_exec",
-                side_effect=create_process,
-            ) as create,
+                new=mock.AsyncMock(side_effect=spawn_process),
+            ),
         ):
-            assert asyncio.run(ui_resources._query_gpu_usage()) is None
-
-        create.assert_called()
-        assert process.killed
+            assert asyncio.run(ui_resources._query_gpu_usage()) == 42
 
     def test_textual_input_lock_update_with_persona_on_ui_thread(self) -> None:
         """Verify input state updates update with Persona."""

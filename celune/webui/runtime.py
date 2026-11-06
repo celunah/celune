@@ -11,19 +11,26 @@ import inspect
 import datetime
 import contextlib
 from html import escape
+from typing import TYPE_CHECKING, Union, Optional, cast
 from pathlib import Path
 from functools import partial
-from importlib.resources import files
-from typing import TYPE_CHECKING, Union, Optional, cast
 from collections.abc import Mapping, Callable, Iterator, Sequence
+from importlib.resources import files
 
 import numpy as np
 import gradio as gr
 import soundfile as sf
 from fastapi import HTTPException
 
+from ..ui import resources as ui_resources
 from ..i18n import string
+from ..paths import project_root, main_window_log_path
 from ..theme import colors
+from ..utils import available, format_error_message
+from ..ui.app import CeluneUI
+from ..cevoice import default_loader
+from ..cedts.ui import UiTimedUpdate, ui_timed_update_channel
+from ..constants import BASE_SR, APP_NAME
 from ..typing.api import (
     WEBUI_UNSET as _WEBUI_UNSET,
 )
@@ -43,33 +50,26 @@ from ..server.jobs import (
     publish_active_task_log,
     publish_active_task_progress,
 )
-from ..ui.app import CeluneUI
+from ..persona.impl import persona_enabled, persona_talkback_enabled
+from ..typing.events import EventName, EventCallback
+from ..server.runtime import invoke_message_callback, shutdown_api_for_fatal_error
+from ..server.session import ServerSession, server_session
+from ..typing.aliases import LogLevel, AudioChunks
+from ..typing.pipeline import SpeechStreamQueue
 from ..server.constants import (
     WEBUI_GENERATION_API_NAMES,
     WEBUI_RESOURCE_ROTATE_SECONDS,
     WEBUI_TIMED_UPDATE_STALE_SECONDS,
     WEBUI_STATUS_PROBE_DEBOUNCE_SECONDS,
 )
+from ..extensions.events import EventDispatcher
+from ..pipeline.captions import current_playback_status
 from ..dataclasses.events import (
     AgentTaskFinishedEvent,
     AgentChoiceRequestedEvent,
     AgentTaskStateChangedEvent,
     AgentApprovalRequestedEvent,
 )
-from ..cevoice import default_loader
-from ..constants import BASE_SR, APP_NAME
-from ..ui import resources as ui_resources
-from ..typing.pipeline import SpeechStreamQueue
-from ..extensions.events import EventDispatcher
-from ..typing.aliases import LogLevel, AudioChunks
-from ..utils import available, format_error_message
-from ..typing.events import EventName, EventCallback
-from ..paths import project_root, main_window_log_path
-from ..pipeline.captions import current_playback_status
-from ..server.session import ServerSession, server_session
-from ..cedts.ui import UiTimedUpdate, ui_timed_update_channel
-from ..persona.impl import persona_enabled, persona_talkback_enabled
-from ..server.runtime import invoke_message_callback, shutdown_api_for_fatal_error
 
 npt = np.typing
 
@@ -348,6 +348,13 @@ def _webui_agent_task_finished(
     session: ServerSession = server_session,
 ) -> None:
     """Mirror terminal agent task states into the browser UI."""
+    celune = session.bound_celune
+    runtime = getattr(celune, "agent_runtime", None)
+    active_task = runtime.get_active_task("default") if runtime is not None else None
+    if celune is not None and active_task is None and celune.playback_done.is_set():
+        session.webui_agent_task_id = None
+        set_webui_status(string("status.idle"), source="agent", session=session)
+        return
     session.webui_agent_task_id = event.task_id
     state = getattr(event.state, "value", str(event.state))
     _publish_webui_agent_status(event.task_id, state, session=session)
@@ -720,6 +727,12 @@ def wrap_celune_callbacks(
             locked=getattr(celune, "locked", False),
             session=session,
         )
+        runtime = getattr(celune, "agent_runtime", None)
+        active_task = (
+            runtime.get_active_task("default") if runtime is not None else None
+        )
+        if active_task is None:
+            session.webui_agent_task_id = None
         if getattr(celune, "sleeping", False):
             set_webui_status(
                 string("status.sleeping"),
@@ -745,11 +758,24 @@ def wrap_celune_callbacks(
             in {"generating", "reloading", "speaking", "waking"}
         )
         _sync_webui_runtime_locks(celune, locked=locked, session=session)
-        set_webui_status(
-            string("status.speaking"),
-            source="callback",
-            session=session,
+        runtime = getattr(celune, "agent_runtime", None)
+        active_task = (
+            runtime.get_active_task("default") if runtime is not None else None
         )
+        if active_task is not None:
+            session.webui_agent_task_id = active_task.task_id
+            state = getattr(active_task.state, "value", str(active_task.state))
+            _publish_webui_agent_status(
+                active_task.task_id,
+                state,
+                session=session,
+            )
+        else:
+            set_webui_status(
+                string("status.speaking"),
+                source="callback",
+                session=session,
+            )
 
     def wrapped_caption_progress(
         progress: Optional[float],

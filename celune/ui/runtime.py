@@ -599,6 +599,15 @@ def _on_agent_choice_requested(
 
 def _on_agent_task_finished(self, event: _app.AgentTaskFinishedEvent) -> None:
     """Refresh the UI once a task reaches its terminal lifecycle state."""
+    celune = self.celune
+    runtime = getattr(celune, "agent_runtime", None)
+    active_task = runtime.get_active_task("default") if runtime is not None else None
+    playback_done = getattr(celune, "playback_done", None)
+    playback_done_check = getattr(playback_done, "is_set", None)
+    if active_task is None and callable(playback_done_check) and playback_done_check():
+        self._agent_task_id = None
+        self._run_on_ui_thread(lambda: self.safe_status(_app.string("status.idle")))
+        return
     self._agent_task_id = event.task_id
     self._run_on_ui_thread(self._refresh_agent_status)
 

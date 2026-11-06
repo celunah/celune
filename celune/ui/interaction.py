@@ -6,18 +6,18 @@ from __future__ import annotations
 import os
 import re
 import sys
+import queue as queue_module
 import shlex
 import types
 import ctypes
 import asyncio
 import threading
 import contextlib
-from uuid import uuid4
-from pathlib import Path
 from copy import deepcopy
-import queue as queue_module
-from collections.abc import Callable, Iterator
+from uuid import uuid4
 from typing import TYPE_CHECKING, Optional, cast
+from pathlib import Path
+from collections.abc import Callable, Iterator
 
 from . import app as _app
 from ..constants import SIGTSTP, APP_NAME
@@ -1644,6 +1644,14 @@ def tts_idle(self) -> None:
     if celune.sleeping:
         self.safe_status(_app.string("status.sleeping"), "sleeping")
         return
+    runtime = getattr(celune, "agent_runtime", None)
+    active_task = runtime.get_active_task("default") if runtime is not None else None
+    if runtime is not None and active_task is None and self._agent_task_id is not None:
+        with contextlib.suppress(ValueError):
+            previous_task = runtime.get_task(self._agent_task_id)
+            if previous_task.is_terminal:
+                self._agent_task_id = None
+                self._agent_status_signature = None
     if getattr(celune, "_maintain_status_after_playback", False):
         celune._maintain_status_after_playback = False
         self._refresh_agent_status()
@@ -1672,7 +1680,13 @@ def tts_queue_avail(self) -> None:
         return
     celune.locked = False
     self._cancel_sleep_timer()
-    self.safe_status(_app.string("status.speaking"))
+    runtime = getattr(celune, "agent_runtime", None)
+    active_task = runtime.get_active_task("default") if runtime is not None else None
+    if active_task is not None:
+        self._agent_task_id = active_task.task_id
+        self._refresh_agent_status()
+    else:
+        self.safe_status(_app.string("status.speaking"))
     self.change_input_state(locked=True)
     self.change_voice_lock_state(locked=True)
     if celune.is_in_tutorial:
