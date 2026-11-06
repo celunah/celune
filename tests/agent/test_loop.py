@@ -2,15 +2,14 @@
 """Focused tests for the bounded Phase 4 agent execution loop."""
 
 from __future__ import annotations
-from unittest import mock
+
 from types import SimpleNamespace
 from typing import Optional, cast
+from unittest import mock
 from contextlib import nullcontext
 
-from celune.celune import Celune
-from celune.agent.persona import PersonaAgentBridge
-from celune.extensions.events import EventDispatcher
-from celune.typing.persona import PersonaClientResponse
+import pytest
+
 from celune.agent import (
     ToolCall,
     AgentTool,
@@ -38,6 +37,11 @@ from celune.agent import (
     AgentToolArgumentSchema,
     AgentToolExecutionStatus,
 )
+from celune.celune import Celune
+from celune.agent.persona import PersonaAgentBridge
+from celune.typing.persona import PersonaClientResponse
+from celune.extensions.events import EventDispatcher
+from celune.dataclasses.events import AgentTaskStateChangedEvent
 
 
 def _request(session_id: str = "session-1") -> AgentRequest:
@@ -103,6 +107,30 @@ def _validated_call(call: ToolCall) -> ValidatedToolCall:
 
 class TestAgentLoop:
     """Verify bounded orchestration with replaceable dependencies."""
+
+    def test_iteration_accounting_emits_a_status_refresh_event(self) -> None:
+        """Notify status subscribers after an iteration counter is incremented."""
+        events: list[tuple[AgentTaskStateChangedEvent, int]] = []
+        dispatcher = EventDispatcher(log_warning=lambda _message, _severity: None)
+        runtime = AgentRuntime(
+            event_dispatcher=dispatcher,
+            planner=lambda _context: _output(response="Done.", end=True),
+        )
+        task = runtime.create_task(_request(), task_id="progress-task")
+        dispatcher.subscribe(
+            "agent_task_state_changed",
+            lambda event: events.append((event, task.iterations)),
+        )
+
+        runtime.run(task.request)
+
+        assert task.iterations == 1
+        assert any(
+            event.old_state == AgentTaskState.PLANNING
+            and event.new_state == AgentTaskState.RESPONDING
+            and iterations == 1
+            for event, iterations in events
+        )
 
     def test_one_step_completion_consumes_phase_three_task(self) -> None:
         """Reuse a routed idle task and complete it without creating another task."""
@@ -349,6 +377,68 @@ class TestAgentLoop:
             bridge.plan(runtime.get_context(task.task_id))
 
         assert task.context_tokens == 126
+
+    def test_persona_agent_rejects_punctuation_only_speech(self) -> None:
+        """Do not pass a compaction artifact such as a lone quote to TTS."""
+        response = PersonaClientResponse(
+            {"response": '"'},
+            prompt_tokens=10,
+            completion_tokens=2,
+        )
+        engine = SimpleNamespace(
+            vision=SimpleNamespace(post=mock.Mock(side_effect=[response, response])),
+            component_locks=None,
+        )
+        runtime = AgentRuntime()
+        task = runtime.create_task(_request(), task_id="punctuation-task")
+        bridge = PersonaAgentBridge(cast(Celune, engine), {})
+
+        with (
+            mock.patch(
+                "celune.agent.persona.build_persona_request",
+                return_value={},
+            ),
+            pytest.raises(RuntimeError, match="empty agent response"),
+        ):
+            bridge.respond(runtime.get_context(task.task_id))
+        assert engine.vision.post.call_count == 2
+        assert task.context_tokens == 24
+
+    def test_persona_agent_repairs_punctuation_only_speech_once(self) -> None:
+        """Recover a usable response after Persona emits punctuation alone."""
+        responses = [
+            PersonaClientResponse({"response": '"'}),
+            PersonaClientResponse({"response": "Understood."}),
+        ]
+        post = mock.Mock(side_effect=responses)
+        engine = SimpleNamespace(
+            vision=SimpleNamespace(post=post),
+            component_locks=None,
+        )
+        runtime = AgentRuntime()
+        task = runtime.create_task(_request(), task_id="recovered-speech-task")
+        bridge = PersonaAgentBridge(cast(Celune, engine), {})
+        payload = {
+            "system": "Return one short acknowledgment.",
+            "messages": [
+                {"role": "system", "content": "Return one short acknowledgment."},
+                {"role": "user", "content": "Check this."},
+            ],
+        }
+
+        with mock.patch(
+            "celune.agent.persona.build_persona_request",
+            return_value=payload,
+        ):
+            output = bridge.respond(runtime.get_context(task.task_id))
+
+        assert output["response"] == "Understood."
+        assert post.call_count == 2
+        repaired_request = cast(dict[str, object], post.call_args.kwargs["json"])
+        assert (
+            "previous response contained no spoken content"
+            in cast(str, repaired_request["system"]).casefold()
+        )
 
     def test_approval_pause_does_not_consume_iteration_or_lose_call(self) -> None:
         """Resume an approved pending call without repeating the planner cycle."""

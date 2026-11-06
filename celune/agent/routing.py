@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import re
 import json
 from uuid import uuid4
 from typing import TYPE_CHECKING, Optional, cast
@@ -101,6 +102,18 @@ class AgentInputRouter:
         if active_task is not None:
             return self._route_active_task(active_task, clean_text, persona_ready)
 
+        explicit_tool = self._explicit_tool_name(clean_text)
+        if explicit_tool is not None:
+            request = self._make_request(clean_text)
+            return AgentClassificationResult(
+                classification=AgentInputClassification.TASK,
+                confidence=1.0,
+                intent="explicit_registered_tool",
+                task_request=request,
+                reason="explicit_registered_tool",
+                route=AgentRoute.TASK,
+            )
+
         result = self.classify(clean_text, persona_ready=persona_ready)
         if result.route != AgentRoute.TASK or result.task_request is None:
             return result
@@ -131,6 +144,25 @@ class AgentInputRouter:
         persona_ready: bool,
     ) -> AgentClassificationResult:
         """Route semantic control answers and steering to an active task."""
+        if task.state == AgentTaskState.AWAITING_APPROVAL:
+            decision = self._approval_decision_from_text(text)
+            if decision is not None:
+                pending = self.runtime.get_pending_approval(task.task_id)
+                if pending is not None:
+                    self.runtime.respond_to_approval(
+                        task.task_id,
+                        AgentApprovalResponse(pending.request_id, decision),
+                    )
+                    return self._active_result(
+                        task,
+                        AgentRoute.APPROVAL_RESPONSE,
+                        "approval_response",
+                        approval_decision=decision,
+                        intent="direct_approval_response",
+                    )
+            if not persona_ready:
+                return self._clarification(string("agent.approval_clarification"))
+
         if not persona_ready:
             return self._classifier_failure(
                 AgentClassificationFailureKind.PERSONA_UNAVAILABLE,
@@ -143,6 +175,16 @@ class AgentInputRouter:
             task=task,
         )
         if result.failure is not None:
+            if task.state in {
+                AgentTaskState.AWAITING_APPROVAL,
+                AgentTaskState.AWAITING_CHOICE,
+            }:
+                prompt_key = (
+                    "agent.approval_clarification"
+                    if task.state == AgentTaskState.AWAITING_APPROVAL
+                    else "agent.choice_clarification"
+                )
+                return self._clarification(string(prompt_key))
             if task.state != AgentTaskState.CANCELLING:
                 self.runtime.fail_task(
                     task.task_id,
@@ -655,6 +697,74 @@ class AgentInputRouter:
             history=history,
             session=AgentSession(session_id=self.session_id),
         )
+
+    def _explicit_tool_name(self, text: str) -> Optional[str]:
+        """Return a registered tool name explicitly named in a use command."""
+        match = re.match(
+            r"^\s*(?:please\s+)?(?:use|call|run|invoke)\s+([A-Za-z_][A-Za-z0-9_]*)\b",
+            text,
+            re.IGNORECASE,
+        )
+        if match is None:
+            return None
+        requested = match.group(1).casefold()
+        registered = {tool.name.casefold() for tool in self.runtime.tools}
+        registered.update(name.casefold() for name in self.runtime._tool_schemas)
+        return requested if requested in registered else None
+
+    @staticmethod
+    def _approval_decision_from_text(
+        text: str,
+    ) -> Optional[AgentApprovalDecision]:
+        """Recognize a concise approval or denial without a VLM round trip."""
+        normalized = text.casefold().replace("’", "'")
+        normalized = re.sub(r"[\s,.;:!?]+", " ", normalized).strip()
+        approved = {
+            "yes",
+            "yes please",
+            "yes do it",
+            "yes proceed",
+            "yeah",
+            "yep",
+            "sure",
+            "sure go ahead",
+            "ok",
+            "okay",
+            "please approve",
+            "approve",
+            "approved",
+            "confirm",
+            "confirmed",
+            "allow",
+            "allowed",
+            "do it",
+            "go ahead",
+            "go ahead and do it",
+            "proceed",
+            "that is fine",
+            "that is fine proceed",
+            "that's fine",
+        }
+        denied = {
+            "no",
+            "nope",
+            "no thanks",
+            "nah",
+            "deny",
+            "denied",
+            "reject",
+            "rejected",
+            "cancel",
+            "don't",
+            "do not",
+            "not now",
+            "do not proceed",
+        }
+        if normalized in approved:
+            return AgentApprovalDecision.APPROVED
+        if normalized in denied:
+            return AgentApprovalDecision.DENIED
+        return None
 
     @staticmethod
     def _clean_text(text: str) -> str:

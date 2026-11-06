@@ -2,15 +2,16 @@
 """Focused tests for Celune's conversation-first agent routing boundary."""
 
 from __future__ import annotations
+
 import json
-from unittest import mock
 from types import SimpleNamespace
-from contextlib import nullcontext
 from typing import TYPE_CHECKING, cast
+from unittest import mock
+from contextlib import nullcontext
 
 from celune.i18n import string
-from celune.typing.common import JSONSerializable
 from celune.agent import (
+    AgentTool,
     AgentRoute,
     AgentRuntime,
     AgentTaskState,
@@ -28,6 +29,7 @@ from celune.agent import (
     AgentInputClassification,
     AgentClassificationFailureKind,
 )
+from celune.typing.common import JSONSerializable
 
 if TYPE_CHECKING:
     from celune.celune import Celune
@@ -94,6 +96,68 @@ class TestAgentRouting:  # pylint: disable=attribute-defined-outside-init
                 assert result.classification == AgentInputClassification.CONVERSATION
                 assert result.route == AgentRoute.CONVERSATION
         assert self.runtime.get_active_task("default") is None
+
+    def test_explicit_registered_tool_request_skips_persona_classification(
+        self,
+    ) -> None:
+        """Route an exact registered-tool command directly to agent execution."""
+        self.runtime.tools = (cast(AgentTool, SimpleNamespace(name="query_character")),)
+        self.engine.vision = SimpleNamespace(post=mock.Mock())
+
+        result = self.router.route(
+            "Use query_character to report the current character and voice.",
+            persona_ready=True,
+        )
+
+        self.engine.vision.post.assert_not_called()
+        assert result.route == AgentRoute.TASK
+        assert result.task_request is not None
+        assert result.task_request.request == (
+            "Use query_character to report the current character and voice."
+        )
+
+    def test_short_approval_answer_resumes_without_classifier(self) -> None:
+        """Accept a direct yes while keeping the approval task active."""
+        task = self.runtime.create_task(
+            self.router._make_request("Change the setting."),
+            task_id="task-approval",
+        )
+        self.runtime.start_task(task.task_id)
+        self.runtime.classify_task(task.task_id)
+        self.runtime.request_approval(
+            task.task_id,
+            AgentApprovalRequest("approval-yes", task.task_id, _call(), "Allow?"),
+        )
+        self.engine.vision = SimpleNamespace(post=mock.Mock())
+
+        result = self.router.route("Yes.", persona_ready=False)
+
+        self.engine.vision.post.assert_not_called()
+        assert result.route == AgentRoute.APPROVAL_RESPONSE
+        assert result.approval_decision == AgentApprovalDecision.APPROVED
+        assert task.state == AgentTaskState.WORKING
+
+    def test_classifier_failure_keeps_pending_approval_answerable(self) -> None:
+        """Preserve an approval pause when Persona cannot classify an answer."""
+        task = self.runtime.create_task(
+            self.router._make_request("Change the setting."),
+            task_id="task-approval-failure",
+        )
+        self.runtime.start_task(task.task_id)
+        self.runtime.classify_task(task.task_id)
+        self.runtime.request_approval(
+            task.task_id,
+            AgentApprovalRequest("approval-failure", task.task_id, _call(), "Allow?"),
+        )
+        self.engine.vision = SimpleNamespace(
+            post=mock.Mock(side_effect=RuntimeError("classifier unavailable"))
+        )
+
+        result = self.router.route("Maybe later.", persona_ready=True)
+
+        assert result.route == AgentRoute.CLARIFICATION
+        assert task.state == AgentTaskState.AWAITING_APPROVAL
+        assert self.runtime.get_pending_approval(task.task_id) is not None
 
     def test_classifier_failure_logging_is_generic_only_at_normal_level(self) -> None:
         """Keep diagnostics detailed only when verbose or debug logs are enabled."""
@@ -455,12 +519,6 @@ class TestAgentRouting:  # pylint: disable=attribute-defined-outside-init
         )
 
         self._set_classifier(
-            {
-                "classification": "task",
-                "route": "approval_response",
-                "confidence": 0.99,
-                "approval_decision": "approved",
-            },
             {
                 "classification": "task",
                 "route": "choice_response",

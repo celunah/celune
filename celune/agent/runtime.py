@@ -74,8 +74,8 @@ from ..dataclasses.events import (
 from ..persona.capabilities import PersonaCapabilities
 
 if TYPE_CHECKING:
-    from ..core.concurrency import ComponentLockLease, ComponentLockManager
     from ..celune import Celune
+    from ..core.concurrency import ComponentLockLease, ComponentLockManager
 
 
 def _default_token_counter(text: str) -> int:
@@ -1053,6 +1053,8 @@ class AgentRuntime:
                         return _paused_output()
 
                 failure_reason = AgentFailureReason.TOOL_ERROR
+                if not self._consume_iteration(task):
+                    return self._terminal_output(task, callback)
                 self._transition(task, AgentTaskState.EXECUTING_TOOL)
                 self._log(
                     f"[AGENT] tool_execute task={task.task_id} "
@@ -1092,6 +1094,7 @@ class AgentRuntime:
                         task,
                         _empty_output(),
                         callback,
+                        consume_iteration=False,
                     )
                 handled = self._validate_output(
                     self._invoke_handle_result(task, result)
@@ -1108,9 +1111,12 @@ class AgentRuntime:
                         self._transition(task, AgentTaskState.PAUSED)
                     return handled
                 if handled["end"]:
-                    return self._complete_with_output(task, handled, callback)
-                if not self._consume_iteration(task):
-                    return self._terminal_output(task, callback)
+                    return self._complete_with_output(
+                        task,
+                        handled,
+                        callback,
+                        consume_iteration=False,
+                    )
                 last_output = handled
 
             return self._terminal_output(task, callback, last_output)
@@ -1441,7 +1447,7 @@ class AgentRuntime:
         return True
 
     def _consume_iteration(self, task: AgentTask) -> bool:
-        """Account one completed decision cycle and publish limit termination."""
+        """Account one started execution cycle."""
         old_state = task.state
         consumed = task.consume_iteration()
         if consumed:
@@ -1683,14 +1689,16 @@ class AgentRuntime:
         task: AgentTask,
         output: AgentOutput,
         callback: Optional[AgentResponseCallback],
+        *,
+        consume_iteration: bool = True,
     ) -> AgentOutput:
         """Complete after an already-published final output."""
+        if task.state not in {AgentTaskState.PLANNING, AgentTaskState.RESPONDING}:
+            raise ValueError("agent task cannot complete from its current state")
+        if consume_iteration and not self._consume_iteration(task):
+            return self._terminal_output(task, callback)
         if task.state == AgentTaskState.PLANNING:
             self._transition(task, AgentTaskState.RESPONDING)
-        if task.state != AgentTaskState.RESPONDING:
-            raise ValueError("agent task cannot complete from its current state")
-        if not self._consume_iteration(task):
-            return self._terminal_output(task, callback)
         metadata: JSON = {
             "iterations": task.iterations,
             "generated_tokens": task.generated_tokens,
@@ -1824,7 +1832,7 @@ class AgentRuntime:
             self._after_transition(task, old_state)
 
     def _after_transition(self, task: AgentTask, old_state: AgentTaskState) -> None:
-        """Synchronize session compatibility flags and emit one state change."""
+        """Synchronize session flags and emit one task status update."""
         self._sync_session(task)
         self._emit(
             "agent_task_state_changed",
