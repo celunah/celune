@@ -184,6 +184,49 @@ class TestLocalManagementTools(CeluneTestCase):
         output = cast(dict[str, object], result["output"])
         assert output["path"] == str(root)
 
+    def test_directory_listing_uses_requested_path_over_an_existing_wrong_path(
+        self,
+    ) -> None:
+        """Honor the user's unique directory even when Needle chose another one."""
+        with TemporaryDirectory(prefix="celune agent ") as directory:
+            root = Path(directory).resolve()
+            requested = root / "requested"
+            selected = root / "selected"
+            requested.mkdir()
+            selected.mkdir()
+            result = self._tool("local_list_directory").execute(
+                {
+                    "id": "list-exact-requested-path",
+                    "name": "local_list_directory",
+                    "arguments": {"path": str(selected)},
+                },
+                self._context(f'List the directory "{requested}".'),
+            )
+
+        assert result["status"] == AgentToolExecutionStatus.SUCCEEDED
+        output = cast(dict[str, object], result["output"])
+        assert output["path"] == str(requested)
+
+    def test_make_directory_recovers_the_requested_target_path(self) -> None:
+        """Use the exact requested target when Needle corrupts its parent path."""
+        with TemporaryDirectory(prefix="celune agent ") as directory:
+            root = Path(directory).resolve()
+            target = root / "created"
+            result = self._tool("local_make_directory").execute(
+                {
+                    "id": "make-recovered-path",
+                    "name": "local_make_directory",
+                    "arguments": {"path": str(root / "missing-parent" / "created")},
+                },
+                self._context(f'Create the directory "{target}".'),
+            )
+            exists = target.is_dir()
+
+        assert exists
+        assert result["status"] == AgentToolExecutionStatus.SUCCEEDED
+        output = cast(dict[str, object], result["output"])
+        assert output["path"] == str(target)
+
     def test_directory_listing_does_not_choose_between_requested_directories(
         self,
     ) -> None:
@@ -200,7 +243,7 @@ class TestLocalManagementTools(CeluneTestCase):
                     "name": "local_list_directory",
                     "arguments": {"path": str(root / "missing")},
                 },
-                self._context(f'Compare "{first}" with "{second}".'),
+                self._context(f'Compare "{first}" with {second}.'),
             )
 
         assert result["status"] == AgentToolExecutionStatus.FAILED

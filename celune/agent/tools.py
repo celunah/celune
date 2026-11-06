@@ -602,31 +602,45 @@ def _local_missing(path: Path) -> _LocalManagementError:
     return _LocalManagementError("missing", "target does not exist", path)
 
 
-def _requested_existing_directory(context: AgentContext) -> Optional[Path]:
-    """Find one unambiguous existing absolute directory in the task request."""
+def _requested_local_path(context: AgentContext) -> Optional[Path]:
+    """Find one unambiguous absolute local path in the task request."""
     request = context.request.request
-    requested_paths = [
-        match.group(1) for match in _QUOTED_LOCAL_PATH_RE.finditer(request)
+    quoted_matches = list(_QUOTED_LOCAL_PATH_RE.finditer(request))
+    quoted_spans = [match.span(1) for match in quoted_matches]
+    requested_paths = [match.group(1) for match in quoted_matches]
+    unquoted_matches = [
+        *_WINDOWS_LOCAL_PATH_RE.finditer(request),
+        *_POSIX_LOCAL_PATH_RE.finditer(request),
     ]
     requested_paths.extend(
-        match.group(0) for match in _WINDOWS_LOCAL_PATH_RE.finditer(request)
-    )
-    requested_paths.extend(
-        match.group(0) for match in _POSIX_LOCAL_PATH_RE.finditer(request)
+        match.group(0)
+        for match in unquoted_matches
+        if not any(
+            start <= match.start() and match.end() <= end for start, end in quoted_spans
+        )
     )
 
-    existing: dict[str, Path] = {}
+    requested: dict[str, Path] = {}
     for raw_path in requested_paths:
-        for candidate in (raw_path, raw_path.rstrip(".,;:!?)]}")):
+        is_quoted = any(raw_path == match.group(1) for match in quoted_matches)
+        candidates = (
+            (raw_path,)
+            if is_quoted
+            else (
+                raw_path,
+                raw_path.rstrip(".,;:!?)]}"),
+            )
+        )
+        for candidate in candidates:
             if not candidate:
                 continue
             try:
                 path = Path(candidate).expanduser().resolve(strict=False)
             except OSError:
                 continue
-            if path.is_dir():
-                existing[os.path.normcase(str(path))] = path
-    return next(iter(existing.values())) if len(existing) == 1 else None
+            if path.is_absolute():
+                requested[os.path.normcase(str(path))] = path
+    return next(iter(requested.values())) if len(requested) == 1 else None
 
 
 def _local_access(path: Path, error: OSError) -> _LocalManagementError:
@@ -638,12 +652,12 @@ def _local_list_directory(
     _engine: Celune, call: ToolCall, context: AgentContext
 ) -> JSON:
     """List one exact directory without recursive traversal."""
-    path = _local_path(call, "path", allow_relative=True)
+    path = _requested_local_path(context) or _local_path(
+        call, "path", allow_relative=True
+    )
     limit = _local_limit(call, "limit", 100, _MAX_LOCAL_ITEMS)
     if not path.exists():
-        path = _requested_existing_directory(context) or path
-        if not path.exists():
-            raise _local_missing(path)
+        raise _local_missing(path)
     if not path.is_dir():
         raise _LocalManagementError("invalid_target", "target is not a directory", path)
     try:
@@ -727,10 +741,10 @@ def _local_write_text(_engine: Celune, call: ToolCall, _context: AgentContext) -
 
 
 def _local_make_directory(
-    _engine: Celune, call: ToolCall, _context: AgentContext
+    _engine: Celune, call: ToolCall, context: AgentContext
 ) -> JSON:
     """Create one exact directory path without implicit parent creation."""
-    path = _local_path(call, "path")
+    path = _requested_local_path(context) or _local_path(call, "path")
     if path.exists():
         if path.is_dir():
             return {"result": "success", "path": str(path), "created": False}
