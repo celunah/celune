@@ -277,6 +277,46 @@ class TestNeedleSelector:
         assert result["name"] == "local_make_directory"
         assert [tool["name"] for tool in handler.catalog] == ["local_make_directory"]
 
+    def test_empty_needle_selection_retries_with_compact_registered_tool_prompt(
+        self,
+    ) -> None:
+        """Retry empty model output using the already narrowed tool registry."""
+        handler = _FakeNeedleHandler([])
+        make_directory = _tool("local_make_directory")
+        schema = AgentToolSchema(
+            tool_id="local_make_directory",
+            display_name="Make directory",
+            description="Create one directory.",
+            arguments=(AgentToolArgumentSchema("path", AgentToolValueType.STRING),),
+            behavior=AgentToolBehavior.MUTATING,
+        )
+        selector = NeedleToolSelector(
+            cast(NeedleHandler, handler),
+            (make_directory,),
+            schemas={make_directory.name: schema},
+        )
+        selected = {
+            "name": "local_make_directory",
+            "arguments": {"path": "C:/tmp/new"},
+        }
+
+        with mock.patch.object(
+            handler,
+            "select_tools",
+            side_effect=[[], [], [selected]],
+        ) as select_tools:
+            result = selector(
+                _context("Use local_make_directory to create C:/tmp/new."),
+                _output("Create the requested directory."),
+            )
+
+        assert isinstance(result, dict)
+        assert result["name"] == "local_make_directory"
+        assert select_tools.call_count == 3
+        retry_query = select_tools.call_args.args[0]
+        assert "Return exactly one valid call" in retry_query
+        assert "C:/tmp/new" in retry_query
+
     def test_invalid_optional_integer_argument_is_omitted(self) -> None:
         """Use registered defaults when Needle invents an optional value type."""
         schema = AgentToolSchema(

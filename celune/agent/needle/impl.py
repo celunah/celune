@@ -712,6 +712,22 @@ class NeedleToolSelector:
             if selection:
                 break
         if not selection:
+            selection = self._retry_empty_tool_selection(
+                request=request,
+                intent=intent,
+                catalog=candidate_catalog,
+            )
+            if context.task is not None and context.task.is_terminal:
+                return None
+        if not selection and candidate_catalog != catalog and not explicit_catalog:
+            selection = self._retry_empty_tool_selection(
+                request=request,
+                intent=intent,
+                catalog=catalog,
+            )
+            if context.task is not None and context.task.is_terminal:
+                return None
+        if not selection:
             raise NeedleSelectionError(
                 "Needle returned no valid tool calls for the action intent or original request"
             )
@@ -848,6 +864,30 @@ class NeedleToolSelector:
                 sections.append("Previous tool result: " + serialized_result)
         return self.handler.select_tools(
             "\n".join(sections),
+            catalog,
+            max_new_tokens=self.max_new_tokens,
+        )
+
+    def _retry_empty_tool_selection(
+        self,
+        *,
+        request: str,
+        intent: str,
+        catalog: NeedleToolCatalog,
+    ) -> NeedleToolSelection:
+        """Retry once with a compact instruction when Needle emits no calls."""
+        if not catalog:
+            return []
+        query = "\n".join(
+            (
+                "Return exactly one valid call from the registered tools.",
+                "Include every required argument and use only supplied facts.",
+                f"User request: {request}",
+                f"Action intent: {intent}",
+            )
+        )
+        return self.handler.select_tools(
+            query,
             catalog,
             max_new_tokens=self.max_new_tokens,
         )
