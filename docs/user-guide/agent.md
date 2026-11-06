@@ -87,7 +87,7 @@ runtime emits a warning when it is enabled.
 | Filesystem read | `local_current_working_directory`, `local_list_directory`, `local_file_metadata`, `local_read_text` | Absolute or working-directory-relative paths; non-recursive listing; text bounded to 1 MiB. |
 | Filesystem mutation | `local_write_text`, `local_make_directory`, `local_copy` | Medium danger and approval required. |
 | Filesystem destructive | `local_move`, `local_delete` | High danger; exact absolute target; recursive delete must be explicitly enabled. |
-| Process diagnostics | `local_list_processes`, `local_inspect_process`, `local_system_info` | Read-only, bounded diagnostics. |
+| Process diagnostics | `local_list_processes`, `local_inspect_process`, `local_system_info` | Read-only, bounded diagnostics; system information includes detected CUDA device names, capability, and memory. |
 | Process control | `local_launch_process`, `local_terminate_process` | High danger; structured arguments, no shell, and identity checks. |
 | Application discovery/control | `local_discover_application`, `local_running_applications`, `local_launch_application`, `local_close_application` | High-danger launch/close operations; no GUI automation. |
 
@@ -109,9 +109,14 @@ to identify empty and truncated listings and preserve entry names exactly.
 Production agent mode uses the Needle selector when its verified checkpoint is
 available. The checkpoint is validated and prepared in an isolated cache; a
 legacy JAX/Flax `needle.pkl` is not accepted as a normal production artifact.
+An input beginning with `Use`, `Call`, `Run`, or `Invoke` followed by a
+registered tool ID routes directly to that exact tool request.
 Needle may select only registered schemas, and the runtime validates names,
 argument types, approval state, and availability before execution.
-If Needle returns multiple valid calls, Celune pauses and asks which one to run.
+An explicit `Use <registered_tool_id> ...` request restricts selection to that
+registered tool. Otherwise, request-to-tool relevance narrows the catalog before
+selection. Identical returned calls collapse to one call. Celune asks the user
+only when Needle returns multiple distinct calls that remain ambiguous.
 The numbered options show each tool and its arguments in speakable form: empty
 objects are described as having no arguments, and populated JSON is rendered
 as named values instead of reading braces and quotes aloud. The user can
@@ -119,15 +124,16 @@ identify an option in their response. Celune executes only the selected call,
 then applies the normal availability and approval checks. The choice pause does
 not consume an iteration or trigger another planning step.
 Needle integer arguments normalize exact whole-number values and numeric strings
-to integers; `null` optional arguments are treated as omitted. Other type
-mismatches remain invalid. Before selection, the selector uses request-to-tool
-keyword overlap to form a candidate set. A clear match leaves Needle one tool
-choice; otherwise it includes up to eight ranked tools. If the request and
-action intent have no lexical overlap with the catalog, all available tools
-remain candidates. If the narrowed set produces no call, the selector retries
-with the full catalog. Oversized catalogs have their lower-ranked argument and
-tool descriptions removed first; lower-ranked definitions are omitted only if
-the remaining typed schemas still do not fit. Needle receives the original
+to integers; `null` optional arguments and optional values with the wrong type
+are omitted so the registered default applies. Invalid required values remain
+errors. Before selection, the selector uses request-to-tool keyword overlap to
+form a candidate set. A clear match leaves Needle one tool choice; otherwise it
+includes up to eight ranked tools. If the request and action intent have no
+lexical overlap with the catalog, all available tools remain candidates. If the
+narrowed set produces no call, the selector retries with the full catalog.
+Oversized catalogs have their lower-ranked argument and tool descriptions
+removed first; lower-ranked definitions are omitted only if the remaining typed
+schemas still do not fit. Needle receives the original
 request with Persona's action intent, then retries with the original request
 alone if needed. The selector allows up to 256 generated tokens. If no available
 tool exists or even one minimized definition cannot fit, selection fails before
@@ -146,8 +152,18 @@ request. Rotary values are computed for the prompt or decode step in use;
 
 ## User steering and approvals
 
-The UI displays approval and choice requests as task states. A user can answer
-the request, provide a clarification, pause, resume, or cancel the task.
+The UI displays approval and choice requests as task states. Persona speaks a
+character-voiced explanation of the exact pending action before asking for
+approval. Short answers such as `yes`, `approve`, `go ahead`, `no`, and `deny`
+are handled directly; unclear answers leave the request pending and ask again.
+Iteration and task status refresh as the runtime advances, including while
+agent speech is playing and after the task returns to idle. Opening acknowledgments
+use Persona's character guidance, but are discarded if they claim status, progress,
+or facts about the request. Punctuation-only responses are retried once and never
+sent to speech. Tool-result replies are prompted to report only facts present in
+the structured result. Approval pauses do not increment the iteration;
+the counter advances when the approved tool begins execution.
+The user can also provide a clarification, pause, resume, or cancel the task.
 Extensions can subscribe to `agent_approval_requested`,
 `agent_choice_requested`, `agent_task_state_changed`, and
 `agent_task_finished`. See [Extensions](../interfaces/extensions.md) for the
