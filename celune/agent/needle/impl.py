@@ -12,15 +12,17 @@ import os
 import re
 import json
 from uuid import uuid4
-from pathlib import Path
 from typing import Union, Optional, cast
+from pathlib import Path
 from collections.abc import Mapping, Sequence
 
 import torch
-from safetensors.torch import load_file
-from huggingface_hub import hf_hub_download
 from sentencepiece import SentencePieceProcessor
+from huggingface_hub import hf_hub_download
+from safetensors.torch import load_file
 
+from .models import NeedleModel, NeedleConfig
+from ...paths import huggingface_hub_cache_dir
 from .checkpoints import (
     NEEDLE_MODEL_ID,
     NEEDLE_CONFIG_FILE,
@@ -33,6 +35,7 @@ from .checkpoints import (
     resolve_expected_dtype,
     prepare_needle_checkpoint,
 )
+from ...exceptions import NeedleSelectionError
 from ...typing.agent import (
     AgentTool,
     AgentOutput,
@@ -49,9 +52,6 @@ from ...typing.agent import (
     NeedleToolParameterSpec,
 )
 from ...typing.common import JSONSerializable
-from .models import NeedleModel, NeedleConfig
-from ...exceptions import NeedleSelectionError
-from ...paths import huggingface_hub_cache_dir
 
 NEEDLE_TOOL_CALL_TOKEN_ID = 4
 NEEDLE_TOOLS_TOKEN_ID = 5
@@ -60,6 +60,10 @@ _NEEDLE_CANDIDATE_TOOL_LIMIT = 8
 _NEEDLE_CLEAR_MATCH_SCORE = 8
 _NEEDLE_CLEAR_MATCH_MARGIN = 4
 _NEEDLE_WORD_RE = re.compile(r"[a-z0-9]+")
+_EXPLICIT_TOOL_REQUEST_RE = re.compile(
+    r"^\s*(?:please\s+)?(?:use|call|run|invoke)\s+([A-Za-z_][A-Za-z0-9_]*)\b",
+    re.IGNORECASE,
+)
 _NEEDLE_QUERY_STOP_WORDS = frozenset(
     {
         "a",
@@ -677,13 +681,22 @@ class NeedleToolSelector:
         )
         if not catalog:
             raise NeedleSelectionError("Needle has no available registered tools")
-        candidate_catalog = self._candidate_catalog(catalog, request, intent)
+        explicit_match = _EXPLICIT_TOOL_REQUEST_RE.match(request)
+        explicit_name = explicit_match.group(1).casefold() if explicit_match else None
+        explicit_catalog = (
+            [tool for tool in catalog if tool["name"].casefold() == explicit_name]
+            if explicit_name is not None
+            else []
+        )
+        candidate_catalog = explicit_catalog or self._candidate_catalog(
+            catalog, request, intent
+        )
         queries = [query]
         if request and request.casefold() != query.casefold():
             queries.append(request)
         selection: NeedleToolSelection = []
         catalogs = [candidate_catalog]
-        if candidate_catalog != catalog:
+        if candidate_catalog != catalog and not explicit_catalog:
             catalogs.append(catalog)
         for candidate_tools in catalogs:
             for candidate_query in queries:
@@ -704,6 +717,11 @@ class NeedleToolSelector:
             )
         validated: list[ValidatedToolCall] = []
         for call in selection:
+            if call["name"] not in self._tools_by_name and explicit_catalog:
+                call = NeedleToolCall(
+                    name=candidate_catalog[0]["name"],
+                    arguments=call["arguments"],
+                )
             try:
                 validated.append(self._validate_selection(call))
             except NeedleSelectionError as exc:
@@ -747,7 +765,22 @@ class NeedleToolSelector:
                     if len(repaired_validated) == 1
                     else repaired_validated
                 )
-        return validated[0] if len(validated) == 1 else validated
+        unique_calls: list[ValidatedToolCall] = []
+        seen_calls: set[tuple[str, str]] = set()
+        for call in validated:
+            key = (
+                call["name"],
+                json.dumps(
+                    call["arguments"],
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ),
+            )
+            if key not in seen_calls:
+                seen_calls.add(key)
+                unique_calls.append(call)
+        return unique_calls[0] if len(unique_calls) == 1 else unique_calls
 
     @staticmethod
     def _candidate_catalog(
@@ -756,7 +789,7 @@ class NeedleToolSelector:
         intent: str,
     ) -> NeedleToolCatalog:
         """Reduce model choice to request-relevant tools when wording is clear."""
-        if len(catalog) <= _NEEDLE_CANDIDATE_TOOL_LIMIT:
+        if len(catalog) <= 1:
             return catalog
 
         request_scores = [_tool_relevance_score(request, tool) for tool in catalog]
@@ -895,6 +928,8 @@ class NeedleToolSelector:
                 if integer_value is not None:
                     value = integer_value
             if not NeedleToolSelector._matches_type(value, argument):
+                if not argument.required:
+                    continue
                 raise NeedleSelectionError(
                     f"Needle argument '{name}' does not match its registered schema"
                 )
