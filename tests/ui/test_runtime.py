@@ -492,6 +492,7 @@ class TestUIRuntime(CeluneTestCase):
             entrypoint.migrate_legacy_app_data = lambda: (_ for _ in ()).throw(AssertionError())
             entrypoint.start(testing=True, test_mode="ui")
             assert blocked.isdisjoint(sys.modules), sorted(blocked.intersection(sys.modules))
+            assert "celune.agent.diagnostics" not in sys.modules
             """
         )
         check = subprocess.run(

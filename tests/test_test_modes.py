@@ -382,7 +382,9 @@ class TestFinishedLifecycleTests(CeluneTestCase):
             schemas=core.agent_tool_schemas,
         )
         with (
-            mock.patch("celune.test.run_agent_feature_checks", return_value=[]),
+            mock.patch(
+                "celune.agent.diagnostics.run_agent_feature_checks", return_value=[]
+            ),
             mock.patch.object(
                 NeedleToolSelector,
                 "from_pretrained",
@@ -446,11 +448,11 @@ class TestFinishedLifecycleTests(CeluneTestCase):
         with (
             mock.patch("celune.test._run_live_checks", return_value=([], None)),
             mock.patch(
-                "celune.test.run_agent_feature_checks",
+                "celune.agent.diagnostics.run_agent_feature_checks",
                 side_effect=feature_checks,
             ),
             mock.patch(
-                "celune.test.run_agent_interaction_checks",
+                "celune.agent.diagnostics.run_agent_interaction_checks",
                 side_effect=interaction_checks,
             ),
             mock.patch(
@@ -534,7 +536,9 @@ class TestFinishedLifecycleTests(CeluneTestCase):
         with (
             mock.patch("celune.test._wait_for_persona"),
             mock.patch("celune.test._start_agent_test_pipeline"),
-            mock.patch("celune.test.run_agent_feature_checks", return_value=[]),
+            mock.patch(
+                "celune.agent.diagnostics.run_agent_feature_checks", return_value=[]
+            ),
             mock.patch.object(core, "stop_live_audio"),
             mock.patch.object(core, "route_input", return_value=route),
         ):
@@ -560,7 +564,9 @@ class TestFinishedLifecycleTests(CeluneTestCase):
         with (
             mock.patch("celune.test._wait_for_persona"),
             mock.patch("celune.test._start_agent_test_pipeline"),
-            mock.patch("celune.test.run_agent_feature_checks", return_value=[]),
+            mock.patch(
+                "celune.agent.diagnostics.run_agent_feature_checks", return_value=[]
+            ),
             mock.patch.object(core, "stop_live_audio"),
             mock.patch.object(core, "route_input", return_value=route),
         ):
@@ -586,7 +592,9 @@ class TestFinishedLifecycleTests(CeluneTestCase):
         with (
             mock.patch("celune.test._wait_for_persona"),
             mock.patch("celune.test._start_agent_test_pipeline"),
-            mock.patch("celune.test.run_agent_feature_checks", return_value=[]),
+            mock.patch(
+                "celune.agent.diagnostics.run_agent_feature_checks", return_value=[]
+            ),
             mock.patch.object(core, "stop_live_audio"),
             mock.patch.object(core, "route_input", return_value=route),
         ):

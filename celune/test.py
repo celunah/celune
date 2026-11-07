@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Explicit test-mode workflows for the Celune engine."""
+"""Lightweight UI and live agent test-mode workflows for Celune."""
 
 from __future__ import annotations
 
@@ -11,15 +11,9 @@ from typing import TYPE_CHECKING, Optional
 from collections.abc import Callable
 
 from .i18n import string
-from .utils import format_error
-from .typing.agent import (
-    AgentRoute,
-    AgentTaskState,
-    AgentToolExecutionStatus,
-    AgentClassificationResult,
-)
-from .typing.common import JSON
-from .agent.diagnostics import run_agent_feature_checks, run_agent_interaction_checks
+from .constants import APP_NAME
+from .typing.modes import BackendMode, OperationState
+from .typing.common import JSON, Config
 
 _AGENT_TEST_REQUEST = "Check the current working directory and report the result."
 _LIVE_CHECKS = (
@@ -31,6 +25,94 @@ _LIVE_CHECKS = (
 
 if TYPE_CHECKING:
     from .celune import Celune
+    from .typing.agent import AgentClassificationResult
+
+
+class _UITestBackend:
+    """Identify the UI test runtime without importing a TTS backend."""
+
+    is_fake = True
+    singing = False
+
+
+class UITestRuntime:
+    """Provide the lightweight state and lifecycle used by UI test mode."""
+
+    backend_mode: BackendMode = "ui_test"
+    backend = _UITestBackend()
+    voices: tuple[str, ...] = ()
+    current_voice: Optional[str] = None
+    use_normalization = False
+    log_callback: Optional[Callable[[str, str], None]] = None
+
+    def __init__(
+        self,
+        config: Config,
+        backend_mode: BackendMode,
+        log_level: str,
+        startup_callback: Optional[Callable[[str], None]] = None,
+    ) -> None:
+        if backend_mode != "ui_test":
+            raise ValueError(
+                f"unknown backend mode for UI test runtime: {backend_mode}"
+            )
+
+        self.config = config
+        self.log_level = log_level
+        self._startup_callback = startup_callback
+        self.cur_state = "idle"
+        self.operation_state = OperationState.NORMAL
+        self.test_finished = False
+        self.test_result: Optional[JSON] = None
+        self.locked = False
+        self._closed = False
+
+    def load(self) -> bool:
+        """Complete lightweight startup without loading models or audio devices."""
+        if self._startup_callback is not None:
+            self._startup_callback(string("ui.startup_initializing_core"))
+        self.log(string("celune.test_mode_active", app_name=APP_NAME))
+        return not self._closed
+
+    def log(self, message: str, severity: str = "info") -> None:
+        """Send a runtime message to the attached UI when one is available."""
+        if self.log_callback is not None:
+            self.log_callback(message, severity)
+
+    def finish_test_mode(
+        self,
+        mode: str,
+        success: bool,
+        *,
+        detail: Optional[str] = None,
+    ) -> JSON:
+        """Record the UI test result and stop accepting runtime actions."""
+        if self.test_result is not None:
+            return self.test_result
+
+        result: JSON = {
+            "mode": mode,
+            "success": success,
+            "engine_state": "stopped",
+            "task_state": None,
+            "detail": detail,
+        }
+        self.test_result = result
+        self.test_finished = True
+        self.operation_state = OperationState.STOPPED
+        self.cur_state = "stopped"
+        self.locked = True
+        return result
+
+    def fatal(self) -> None:
+        """Mark lightweight startup as failed."""
+        self.operation_state = OperationState.FATAL
+        self.cur_state = "error"
+
+    def close(self) -> None:
+        """Release the lightweight test runtime."""
+        self._closed = True
+        self.cur_state = "stopped"
 
 
 def _task_state(engine: Celune, task_id: Optional[str]) -> Optional[str]:
@@ -67,6 +149,8 @@ def _agent_test_route_failure(
     route: AgentClassificationResult, task_id: Optional[str]
 ) -> Optional[str]:
     """Describe why the controlled agent input did not start a task."""
+    from .typing.agent import AgentRoute
+
     if route.failure is not None:
         return (
             f"{string('test.agent_classification_failed')}: {route.failure.kind.value}"
@@ -91,6 +175,8 @@ def _wait_for_persona(engine: Celune, timeout_seconds: float) -> None:
 
 def _detail_for_error(engine: Celune, exc: Exception) -> str:
     """Return the normal or debug diagnostic for one live check failure."""
+    from .utils import format_error
+
     detail = str(exc) or string("test.agent_failed")
     if getattr(engine, "log_level", "info") == "debug":
         return format_error(exc, "debug")
@@ -153,6 +239,8 @@ def _run_live_checks(
     startup_detail: Optional[str],
 ) -> tuple[list[JSON], Optional[str]]:
     """Run the configured Persona, Needle, tool, response, and speech path."""
+    from .typing.agent import AgentTaskState, AgentToolExecutionStatus
+
     checks: list[JSON] = []
     task_id: Optional[str] = None
     if not startup_success:
@@ -309,6 +397,11 @@ def run_agent_test(
     """
     if timeout_seconds <= 0:
         raise ValueError("agent test timeout_seconds must be positive")
+
+    from .agent.diagnostics import (
+        run_agent_feature_checks,
+        run_agent_interaction_checks,
+    )
 
     checks: list[JSON] = []
     live_checks, task_id = _run_live_checks(

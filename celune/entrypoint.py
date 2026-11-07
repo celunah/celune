@@ -130,7 +130,7 @@ _CELUNE_PROCESS_NAMES = frozenset(
 
 def _load_ui_test_runtime() -> SimpleNamespace:
     """Load only the runtime boundary needed to render the UI test screen."""
-    from celune.testmode import UITestRuntime
+    from celune.test import UITestRuntime
 
     return SimpleNamespace(Celune=UITestRuntime, ExitCodes=ExitCodes)
 

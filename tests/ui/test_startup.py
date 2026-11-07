@@ -24,10 +24,12 @@ from textual.app import App
 from textual.widgets import Label, Static, RichLog, TextArea, ProgressBar
 from textual.containers import Vertical
 
-from celune.ui import app as ui_app
-from celune.ui import compat as ui_compat
-from celune.ui import terminal as ui_terminal
-from celune.ui import resources as ui_resources
+from celune.ui import (
+    app as ui_app,
+    compat as ui_compat,
+    terminal as ui_terminal,
+    resources as ui_resources,
+)
 from celune.core import lifecycle as core_lifecycle
 from celune.i18n import string, tagged_string
 from celune.theme import colors
@@ -1041,7 +1043,7 @@ class TestUIStartup(CeluneTestCase):
 
     def test_ui_test_runtime_skips_optional_startup_integrations(self) -> None:
         """Keep test-screen startup independent of audio and resource modules."""
-        from celune.testmode import UITestRuntime
+        from celune.test import UITestRuntime
 
         ui = CeluneUI()
         runtime = UITestRuntime(
@@ -1067,7 +1069,7 @@ class TestUIStartup(CeluneTestCase):
         self,
     ) -> None:
         """Report UI test mode and finish startup without loading integrations."""
-        from celune.testmode import UITestRuntime
+        from celune.test import UITestRuntime
 
         statuses: list[str] = []
 
