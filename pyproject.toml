@@ -32,8 +32,8 @@ dependencies = [
     # Audio processing
     "numpy",
     "scipy",
-    # Pedalboard 0.9.20-0.9.25 may fail with `Illegal instruction` errors on some systems.
-    "pedalboard!=0.9.20,!=0.9.21,!=0.9.22,!=0.9.23,!=0.9.24,!=0.9.25",
+    # Pedalboard 0.9.20 and above require AVX-512
+    "pedalboard==0.9.26",
     "pyrubberband",
     "soundfile",
     "sounddevice",
@@ -132,11 +132,10 @@ dev = [
     # LOC counting
     "pygount",
     "loguru",
-	# Compiler
-    # We used to run off of canonical 4.1.2, but that version is experimental on Python 3.14.
-    # She caved in, and upgraded.
-    "nuitka",
-    # Third-party types
+    # This package is required to compile Celune into a properly packaged binary, bypassing the need to run Python.
+    # Canonically pinned, I know. 412 is her number, Nuitka happened to be on that version.
+    "nuitka==4.3.4",
+    # If not installed, type checkers may complain.
     "types-pyyaml",
     "types-psutil",
     "types-tqdm",
