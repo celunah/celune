@@ -123,7 +123,7 @@ dev = [
     "loguru",
     # This package is required to compile Celune into a properly packaged binary, bypassing the need to run Python.
     # Canonically pinned, I know. 412 is her number, Nuitka happened to be on that version.
-    "nuitka==4.1.2",
+    "nuitka==4.3.4",
     # If not installed, type checkers may complain.
     "types-pyyaml",
     "types-psutil",
