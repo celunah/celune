@@ -191,6 +191,108 @@ class TestLocalManagementTools(CeluneTestCase):
         output = cast(dict[str, object], result["output"])
         assert output["path"] == str(root)
 
+    def test_single_path_file_tools_recover_the_requested_path(self) -> None:
+        """Recover exact paths for metadata, read, write, and delete operations."""
+        with TemporaryDirectory(prefix="celune agent ") as directory:
+            root = Path(directory).resolve()
+            source = root / "source.txt"
+            source.write_text("source contents", encoding="utf-8")
+            metadata = self._tool("local_file_metadata").execute(
+                {
+                    "id": "metadata-recovered-path",
+                    "name": "local_file_metadata",
+                    "arguments": {"path": "relative/source.txt"},
+                },
+                self._context("Inspect the requested file.", f'Inspect "{source}".'),
+            )
+            read = self._tool("local_read_text").execute(
+                {
+                    "id": "read-recovered-path",
+                    "name": "local_read_text",
+                    "arguments": {"path": "relative/source.txt"},
+                },
+                self._context("Read the requested file.", f'Read "{source}".'),
+            )
+
+            target = root / "written.txt"
+            write = self._tool("local_write_text").execute(
+                {
+                    "id": "write-recovered-path",
+                    "name": "local_write_text",
+                    "arguments": {"path": "relative/written.txt", "text": "saved"},
+                },
+                self._context(
+                    "Write the requested file.",
+                    f'Write the requested file "{target}".',
+                ),
+            )
+            deleted = root / "deleted.txt"
+            deleted.write_text("remove me", encoding="utf-8")
+            delete = self._tool("local_delete").execute(
+                {
+                    "id": "delete-recovered-path",
+                    "name": "local_delete",
+                    "arguments": {"path": "relative/deleted.txt"},
+                },
+                self._context(
+                    "Delete the requested file.",
+                    f'Delete the file "{deleted}".',
+                ),
+            )
+
+            assert target.read_text(encoding="utf-8") == "saved"
+            assert not deleted.exists()
+
+        assert metadata["status"] == AgentToolExecutionStatus.SUCCEEDED
+        assert cast(dict[str, object], metadata["output"])["path"] == str(source)
+        assert read["status"] == AgentToolExecutionStatus.SUCCEEDED
+        assert cast(dict[str, object], read["output"])["text"] == "source contents"
+        assert write["status"] == AgentToolExecutionStatus.SUCCEEDED
+        assert delete["status"] == AgentToolExecutionStatus.SUCCEEDED
+
+    def test_copy_and_move_recover_source_and_destination_paths(self) -> None:
+        """Use two requested paths in order when Needle mangles a copy or move."""
+        with TemporaryDirectory(prefix="celune agent ") as directory:
+            root = Path(directory).resolve()
+            source = root / "source.txt"
+            copied = root / "copied.txt"
+            moved = root / "moved.txt"
+            source.write_text("file contents", encoding="utf-8")
+
+            copy = self._tool("local_copy").execute(
+                {
+                    "id": "copy-recovered-paths",
+                    "name": "local_copy",
+                    "arguments": {
+                        "source": "relative/source.txt",
+                        "destination": "relative/copied.txt",
+                    },
+                },
+                self._context(
+                    "Copy the requested file.", f'Copy "{source}" to "{copied}".'
+                ),
+            )
+            move = self._tool("local_move").execute(
+                {
+                    "id": "move-recovered-paths",
+                    "name": "local_move",
+                    "arguments": {
+                        "source": "relative/copied.txt",
+                        "destination": "relative/moved.txt",
+                    },
+                },
+                self._context(
+                    "Move the requested file.", f'Move "{copied}" to "{moved}".'
+                ),
+            )
+
+            assert source.read_text(encoding="utf-8") == "file contents"
+            assert not copied.exists()
+            assert moved.read_text(encoding="utf-8") == "file contents"
+
+        assert copy["status"] == AgentToolExecutionStatus.SUCCEEDED
+        assert move["status"] == AgentToolExecutionStatus.SUCCEEDED
+
     def test_directory_listing_uses_requested_path_over_an_existing_wrong_path(
         self,
     ) -> None:

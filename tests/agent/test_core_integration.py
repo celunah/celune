@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import threading
+from pathlib import Path
 from unittest import mock
 from typing import cast, Optional
 from contextlib import nullcontext
@@ -209,6 +210,49 @@ class TestAgentCoreIntegration(CeluneTestCase):
         assert not core_agent._is_plain_agent_preamble(
             "I'm checking that directory now. I'll return the contents."
         )
+
+    def test_selected_file_paths_are_recovered_before_approval(self) -> None:
+        """Pass exact requested paths to approval before running a local tool."""
+        core = self._make_core()
+        source = Path.cwd() / "source.txt"
+        destination = Path.cwd() / "destination.txt"
+        request = AgentRequest(
+            "Copy the requested file.",
+            original_request=f'Copy "{source}" to "{destination}".',
+        )
+        context = core.agent_runtime.create_context(request)
+        output: AgentOutput = {
+            "tool_call": None,
+            "response": "Copy the requested file.",
+            "end": False,
+            "paused": False,
+        }
+        call: ToolCall = {
+            "id": "needle-copy-call",
+            "name": "local_copy",
+            "arguments": {
+                "source": "relative/source.txt",
+                "destination": "relative/destination.txt",
+            },
+        }
+
+        def select_call(
+            _context: AgentContext,
+            _output: AgentOutput,
+        ) -> ToolCall:
+            """Return a file call with the same malformed paths as Needle."""
+            return call
+
+        with mock.patch.object(
+            core_agent, "_load_agent_tool_selector", return_value=select_call
+        ):
+            selected = core_agent.select_agent_tool(core, context, output)
+
+        assert isinstance(selected, dict)
+        assert selected["arguments"] == {
+            "source": str(source.resolve()),
+            "destination": str(destination.resolve()),
+        }
 
     def test_new_agent_task_waits_for_persona_initialization(self) -> None:
         """Hold an initial task idle until Persona releases its VLM lock."""

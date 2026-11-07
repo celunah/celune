@@ -526,6 +526,16 @@ _QUOTED_LOCAL_PATH_RE = re.compile(
 )
 _WINDOWS_LOCAL_PATH_RE = re.compile(r"(?i)(?:[a-z]:[\\/]|\\\\)[^\s\"'`<>|?*]*")
 _POSIX_LOCAL_PATH_RE = re.compile(r"(?<![\w/:])/(?:[^\s\"'`<>|?*]+/)*[^\s\"'`<>|?*]*")
+_LOCAL_PATH_ARGUMENTS = {
+    "local_list_directory": ("path",),
+    "local_file_metadata": ("path",),
+    "local_read_text": ("path",),
+    "local_write_text": ("path",),
+    "local_make_directory": ("path",),
+    "local_copy": ("source", "destination"),
+    "local_move": ("source", "destination"),
+    "local_delete": ("path",),
+}
 
 
 def _local_path(
@@ -576,27 +586,24 @@ def _local_missing(path: Path) -> _LocalManagementError:
     return _LocalManagementError("missing", "target does not exist", path)
 
 
-def _requested_local_path(context: AgentContext) -> Optional[Path]:
-    """Find one unambiguous absolute local path in the task request."""
+def _requested_local_paths(context: AgentContext) -> tuple[Path, ...]:
+    """Find unique absolute local paths in the order they appear in the request."""
     request = context.request.original_request or context.request.request
     quoted_matches = list(_QUOTED_LOCAL_PATH_RE.finditer(request))
     quoted_spans = [match.span(1) for match in quoted_matches]
-    requested_paths = [match.group(1) for match in quoted_matches]
-    unquoted_matches = [
-        *_WINDOWS_LOCAL_PATH_RE.finditer(request),
-        *_POSIX_LOCAL_PATH_RE.finditer(request),
-    ]
-    requested_paths.extend(
-        match.group(0)
-        for match in unquoted_matches
-        if not any(
-            start <= match.start() and match.end() <= end for start, end in quoted_spans
+    matches = [(match.start(1), match.group(1), True) for match in quoted_matches]
+    for pattern in (_WINDOWS_LOCAL_PATH_RE, _POSIX_LOCAL_PATH_RE):
+        matches.extend(
+            (match.start(), match.group(0), False)
+            for match in pattern.finditer(request)
+            if not any(
+                start <= match.start() and match.end() <= end
+                for start, end in quoted_spans
+            )
         )
-    )
 
     requested: dict[str, Path] = {}
-    for raw_path in requested_paths:
-        is_quoted = any(raw_path == match.group(1) for match in quoted_matches)
+    for _, raw_path, is_quoted in sorted(matches, key=lambda match: match[0]):
         candidates = (raw_path,) if is_quoted else (raw_path.rstrip(".,;:!?)]}"),)
         for candidate in candidates:
             if not candidate:
@@ -606,8 +613,45 @@ def _requested_local_path(context: AgentContext) -> Optional[Path]:
             except OSError:
                 continue
             if path.is_absolute():
-                requested[os.path.normcase(str(path))] = path
-    return next(iter(requested.values())) if len(requested) == 1 else None
+                requested.setdefault(os.path.normcase(str(path)), path)
+    return tuple(requested.values())
+
+
+def _requested_local_path(context: AgentContext) -> Optional[Path]:
+    """Find one unambiguous absolute local path in the task request."""
+    paths = _requested_local_paths(context)
+    return paths[0] if len(paths) == 1 else None
+
+
+def _requested_local_path_pair(
+    context: AgentContext,
+) -> Optional[tuple[Path, Path]]:
+    """Find exactly two absolute paths in source-to-destination request order."""
+    paths = _requested_local_paths(context)
+    return (paths[0], paths[1]) if len(paths) == 2 else None
+
+
+def recover_local_tool_call(call: ToolCall, context: AgentContext) -> ToolCall:
+    """Replace selected filesystem paths with the exact paths in the request."""
+    path_arguments = _LOCAL_PATH_ARGUMENTS.get(call["name"])
+    if path_arguments is None:
+        return call
+
+    if len(path_arguments) == 1:
+        requested_path = _requested_local_path(context)
+        if requested_path is None:
+            return call
+        recovered_paths = (requested_path,)
+    else:
+        requested_pair = _requested_local_path_pair(context)
+        if requested_pair is None:
+            return call
+        recovered_paths = requested_pair
+
+    arguments = dict(call["arguments"])
+    for name, path in zip(path_arguments, recovered_paths, strict=True):
+        arguments[name] = str(path)
+    return {**call, "arguments": arguments}
 
 
 def _local_access(path: Path, error: OSError) -> _LocalManagementError:
@@ -619,9 +663,8 @@ def _local_list_directory(
     _engine: Celune, call: ToolCall, context: AgentContext
 ) -> JSON:
     """List one exact directory without recursive traversal."""
-    path = _requested_local_path(context) or _local_path(
-        call, "path", allow_relative=True
-    )
+    call = recover_local_tool_call(call, context)
+    path = _local_path(call, "path", allow_relative=True)
     limit = _local_limit(call, "limit", 100, _MAX_LOCAL_ITEMS)
     if not path.exists():
         raise _local_missing(path)
@@ -648,9 +691,10 @@ def _local_list_directory(
 
 
 def _local_file_metadata(
-    _engine: Celune, call: ToolCall, _context: AgentContext
+    _engine: Celune, call: ToolCall, context: AgentContext
 ) -> JSON:
     """Return metadata for one exact local filesystem target."""
+    call = recover_local_tool_call(call, context)
     path = _local_path(call, "path", allow_relative=True)
     if not path.exists():
         raise _local_missing(path)
@@ -667,8 +711,9 @@ def _local_file_metadata(
     }
 
 
-def _local_read_text(_engine: Celune, call: ToolCall, _context: AgentContext) -> JSON:
+def _local_read_text(_engine: Celune, call: ToolCall, context: AgentContext) -> JSON:
     """Read a bounded UTF-8 text file from one exact path."""
+    call = recover_local_tool_call(call, context)
     path = _local_path(call, "path", allow_relative=True)
     limit = _local_limit(
         call, "max_bytes", _MAX_LOCAL_READ_BYTES, _MAX_LOCAL_READ_BYTES
@@ -686,8 +731,9 @@ def _local_read_text(_engine: Celune, call: ToolCall, _context: AgentContext) ->
     return {"result": "success", "path": str(path), "text": text}
 
 
-def _local_write_text(_engine: Celune, call: ToolCall, _context: AgentContext) -> JSON:
+def _local_write_text(_engine: Celune, call: ToolCall, context: AgentContext) -> JSON:
     """Write bounded UTF-8 text to one exact existing-parent path."""
+    call = recover_local_tool_call(call, context)
     path = _local_path(call, "path")
     text = _text(call, "text")
     if len(text.encode("utf-8")) > _MAX_LOCAL_READ_BYTES:
@@ -711,7 +757,8 @@ def _local_make_directory(
     _engine: Celune, call: ToolCall, context: AgentContext
 ) -> JSON:
     """Create one exact directory path without implicit parent creation."""
-    path = _requested_local_path(context) or _local_path(call, "path")
+    call = recover_local_tool_call(call, context)
+    path = _local_path(call, "path")
     if path.exists():
         if path.is_dir():
             return {"result": "success", "path": str(path), "created": False}
@@ -729,8 +776,9 @@ def _local_make_directory(
     return {"result": "success", "path": str(path), "created": True}
 
 
-def _local_copy(_engine: Celune, call: ToolCall, _context: AgentContext) -> JSON:
+def _local_copy(_engine: Celune, call: ToolCall, context: AgentContext) -> JSON:
     """Copy one exact file to one exact non-existing destination."""
+    call = recover_local_tool_call(call, context)
     source = _local_path(call, "source")
     destination = _local_path(call, "destination")
     if not source.exists():
@@ -752,8 +800,9 @@ def _local_copy(_engine: Celune, call: ToolCall, _context: AgentContext) -> JSON
     return {"result": "success", "source": str(source), "destination": str(destination)}
 
 
-def _local_move(_engine: Celune, call: ToolCall, _context: AgentContext) -> JSON:
+def _local_move(_engine: Celune, call: ToolCall, context: AgentContext) -> JSON:
     """Move one exact file to one exact non-existing destination."""
+    call = recover_local_tool_call(call, context)
     source = _local_path(call, "source")
     destination = _local_path(call, "destination")
     if not source.exists():
@@ -773,8 +822,9 @@ def _local_move(_engine: Celune, call: ToolCall, _context: AgentContext) -> JSON
     return {"result": "success", "source": str(source), "destination": str(destination)}
 
 
-def _local_delete(_engine: Celune, call: ToolCall, _context: AgentContext) -> JSON:
+def _local_delete(_engine: Celune, call: ToolCall, context: AgentContext) -> JSON:
     """Delete one exact file or empty directory, never recursively by default."""
+    call = recover_local_tool_call(call, context)
     path = _local_path(call, "path")
     recursive = call["arguments"].get("recursive", False)
     if not isinstance(recursive, bool):

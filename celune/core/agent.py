@@ -8,7 +8,6 @@ import threading
 from collections.abc import Sequence
 from typing import Union, Optional, cast
 
-from .conversation import deliver_persona_response, wait_for_persona_playback
 from ..i18n import string
 from ..exceptions import (
     ModelConsentDeclined,
@@ -36,6 +35,7 @@ from ..paths import huggingface_progress
 from ..utils import format_error_message
 from ..agent.needle import NeedleToolSelector
 from ..typing.locks import ComponentLockName
+from .conversation import deliver_persona_response, wait_for_persona_playback
 
 _UNSAFE_AGENT_PREAMBLE_RE = re.compile(
     r"\b(?:i\s+will|i['’]ll|let\s+me|ready|available|standing|"
@@ -223,7 +223,14 @@ def select_agent_tool(
     output: AgentOutput,
 ) -> Optional[Union[ToolCall, Sequence[ToolCall]]]:
     """Select and validate one registered tool through the Needle boundary."""
-    return _load_agent_tool_selector(self)(context, output)
+    from ..agent.tools import recover_local_tool_call
+
+    selection = _load_agent_tool_selector(self)(context, output)
+    if isinstance(selection, Sequence):
+        return [recover_local_tool_call(call, context) for call in selection]
+    return (
+        recover_local_tool_call(selection, context) if selection is not None else None
+    )
 
 
 def execute_agent_tool(
