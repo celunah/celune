@@ -38,6 +38,8 @@ claims that work has started or results are known. If generation fails, the
 runtime uses a randomly selected localized fallback. The first planning message
 is not spoken before tool selection. The task enters its classification state
 before the opener is spoken, keeping the agent status active during speech.
+If Persona is still initializing, a new task stays idle until Persona finishes
+loading and releases its VLM lock. Planning starts afterward.
 Tool results and the final response continue through the normal speech path.
 Speech delivered as part of an ongoing agent action preserves the active status
 when playback completes, so an intermediate response does not make the agent

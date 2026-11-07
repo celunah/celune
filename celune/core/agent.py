@@ -4,19 +4,17 @@
 from __future__ import annotations
 
 import re
-from typing import Union, Optional, cast
+import threading
 from collections.abc import Sequence
+from typing import Union, Optional, cast
 
+from .conversation import deliver_persona_response, wait_for_persona_playback
 from ..i18n import string
-from ..paths import huggingface_progress
-from ..utils import format_error_message
 from ..exceptions import (
     ModelConsentDeclined,
     ModelConsentRequired,
     NeedleSelectionError,
 )
-from .conversation import deliver_persona_response, wait_for_persona_playback
-from ..agent.needle import NeedleToolSelector
 from ..typing.agent import (
     ToolCall,
     AgentOutput,
@@ -34,6 +32,10 @@ from ..typing.agent import (
     AgentClassificationResult,
     AgentClassificationFailure,
 )
+from ..paths import huggingface_progress
+from ..utils import format_error_message
+from ..agent.needle import NeedleToolSelector
+from ..typing.locks import ComponentLockName
 
 _UNSAFE_AGENT_PREAMBLE_RE = re.compile(
     r"\b(?:i\s+will|i['’]ll|let\s+me|ready|available|standing|"
@@ -59,6 +61,32 @@ def _is_plain_agent_preamble(text: str) -> bool:
         )
         and _UNSAFE_AGENT_PREAMBLE_RE.search(normalized) is None
     )
+
+
+def _wait_for_persona_initialization(self) -> bool:
+    """Wait for Persona initialization and VLM ownership to settle."""
+    from .lifecycle import start_persona_background_load
+
+    waiter = threading.Event()
+    while not self.exit_requested:
+        with self._model_lock:
+            persona_ready = self.persona_ready
+            persona_loading = self.persona_loading
+            vision = self.vision
+        component_locks = self.component_locks
+        persona_busy = (
+            component_locks is not None
+            and component_locks.owner_for(ComponentLockName.VLM) is not None
+        )
+        if persona_ready and not persona_busy:
+            return True
+        if not persona_loading and not persona_busy:
+            if self.loaded and vision is not None and not persona_ready:
+                start_persona_background_load(self)
+            else:
+                return True
+        waiter.wait(0.05)
+    return False
 
 
 def interrupt_active_agent_for_input(self, text: str) -> bool:
@@ -262,6 +290,8 @@ def run_agent_route(self, route: AgentClassificationResult) -> bool:
     opening_pending = initial_task.state == AgentTaskState.IDLE
     suppress_initial_plan = opening_pending
     if opening_pending:
+        if not _wait_for_persona_initialization(self):
+            return False
         try:
             self.agent_runtime.start_task(initial_task.task_id)
         except ValueError:

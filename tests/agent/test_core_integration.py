@@ -3,32 +3,12 @@
 
 from __future__ import annotations
 
+import threading
 from unittest import mock
 from typing import cast, Optional
 from contextlib import nullcontext
 from collections.abc import Mapping, Sequence
 
-from celune.celune import Celune
-from celune.typing.aliases import LogLevel
-from celune.core import agent as core_agent
-from celune.persona.impl import PersonaClient
-from celune.typing.common import JSONSerializable
-from celune.typing.persona import PersonaClientResponse
-from celune.registry.llm import PERSONA_DEFAULT_MODEL_ID
-from celune.typing.agent import NeedleToolCall, NeedleToolCatalog
-from celune.agent.tools import AgentStatusTool, production_agent_tool_schemas
-from celune.agent.needle.impl import (
-    NeedleHandler,
-    NeedleToolSelector,
-)
-from celune.core.conversation import (
-    deliver_persona_response as celune_deliver_persona_response,
-)
-from celune.dataclasses.events import (
-    AgentTaskFinishedEvent,
-    AgentTaskStateChangedEvent,
-    AgentApprovalRequestedEvent,
-)
 from celune.agent import (
     ToolCall,
     AgentTool,
@@ -55,6 +35,32 @@ from celune.agent import (
     AgentClassificationFailure,
     AgentClassificationFailureKind,
 )
+from celune.celune import Celune
+from celune.typing.locks import (
+    ComponentLockName,
+    ComponentLockOwner,
+    ComponentLockRequirement,
+)
+from celune.agent.needle.impl import (
+    NeedleHandler,
+    NeedleToolSelector,
+)
+from celune.core.conversation import (
+    deliver_persona_response as celune_deliver_persona_response,
+)
+from celune.dataclasses.events import (
+    AgentTaskFinishedEvent,
+    AgentTaskStateChangedEvent,
+    AgentApprovalRequestedEvent,
+)
+from celune.typing.aliases import LogLevel
+from celune.core import agent as core_agent
+from celune.persona.impl import PersonaClient
+from celune.typing.common import JSONSerializable
+from celune.typing.persona import PersonaClientResponse
+from celune.registry.llm import PERSONA_DEFAULT_MODEL_ID
+from celune.typing.agent import NeedleToolCall, NeedleToolCatalog
+from celune.agent.tools import AgentStatusTool, production_agent_tool_schemas
 
 from ..support import FakeGlow, FakeBackend, CeluneTestCase
 
@@ -203,6 +209,83 @@ class TestAgentCoreIntegration(CeluneTestCase):
         assert not core_agent._is_plain_agent_preamble(
             "I'm checking that directory now. I'll return the contents."
         )
+
+    def test_new_agent_task_waits_for_persona_initialization(self) -> None:
+        """Hold an initial task idle until Persona releases its VLM lock."""
+        core = self._make_core(agent_tool_selector=_NeedleFixture())
+        persona = _PersonaFixture()
+        persona.responses = [
+            _PersonaResponse("I hear you."),
+            _PersonaResponse("Read the current agent status."),
+            _PersonaResponse("The agent task completed successfully."),
+        ]
+        core.vision = cast(PersonaClient, persona)
+        core.persona_loading = True
+        core.persona_ready = False
+        acquired, lease = core.component_locks.try_acquire_lease(
+            (ComponentLockRequirement(ComponentLockName.VLM),),
+            ComponentLockOwner(operation_id="persona-load:fixture"),
+        )
+        assert acquired.acquired
+        assert lease is not None
+        route = core.route_input(
+            "Use read_agent_status to report the current task state."
+        )
+        waiting = threading.Event()
+        finished = threading.Event()
+        result: list[bool] = []
+        errors: list[Exception] = []
+        wait_for_initialization = core_agent._wait_for_persona_initialization
+
+        def run_task() -> None:
+            """Run the task on a worker so Persona initialization can finish."""
+            try:
+                result.append(core.run_agent_route(route))
+            except Exception as error:
+                errors.append(error)
+            finally:
+                finished.set()
+
+        def signal_waiting(engine: Celune) -> bool:
+            """Expose that task startup reached the initialization barrier."""
+            waiting.set()
+            return wait_for_initialization(engine)
+
+        worker = threading.Thread(target=run_task)
+        try:
+            with (
+                mock.patch.object(
+                    core_agent,
+                    "_wait_for_persona_initialization",
+                    side_effect=signal_waiting,
+                ),
+                mock.patch(
+                    "celune.core.agent.deliver_persona_response", return_value=True
+                ),
+                mock.patch.object(core, "say", return_value=True),
+            ):
+                worker.start()
+                assert waiting.wait(timeout=1)
+                task = core.agent_runtime.get_active_task("default")
+                assert task is not None
+                assert task.state == AgentTaskState.IDLE
+                assert not finished.is_set()
+                with core._model_lock:
+                    core.persona_loading = False
+                    core.persona_ready = True
+                lease.release()
+                worker.join(timeout=2)
+        finally:
+            with core._model_lock:
+                core.persona_loading = False
+                core.persona_ready = True
+            lease.release()
+            worker.join(timeout=2)
+
+        assert not worker.is_alive()
+        assert not errors
+        assert result == [True]
+        assert task.state == AgentTaskState.COMPLETED
 
     def _make_core(
         self,
