@@ -57,7 +57,7 @@ NEEDLE_TOOL_CALL_TOKEN_ID = 4
 NEEDLE_TOOLS_TOKEN_ID = 5
 _NEEDLE_MAX_NEW_TOKENS = 256
 _NEEDLE_CANDIDATE_TOOL_LIMIT = 8
-_NEEDLE_CLEAR_MATCH_SCORE = 8
+_NEEDLE_CLEAR_MATCH_SCORE = 7
 _NEEDLE_CLEAR_MATCH_MARGIN = 4
 _NEEDLE_WORD_RE = re.compile(r"[a-z0-9]+")
 _EXPLICIT_TOOL_REQUEST_RE = re.compile(
@@ -177,7 +177,7 @@ def _tool_relevance_score(query: str, tool: NeedleToolDefinition) -> int:
             )
 
     return (
-        3 * len(query_words & name_words)
+        5 * len(query_words & name_words)
         + 2 * len(query_words & description_words)
         + len(query_words & parameter_words)
     )

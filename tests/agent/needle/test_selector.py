@@ -3,10 +3,10 @@
 
 from __future__ import annotations
 
-from types import SimpleNamespace
-from typing import Union, Optional, cast
 from unittest import mock
+from types import SimpleNamespace
 from contextlib import nullcontext
+from typing import Union, Optional, cast
 
 import torch
 import pytest
@@ -35,6 +35,10 @@ from celune.agent import (
     NeedleToolParameterSpec,
     AgentToolExecutionStatus,
 )
+from celune.agent.tools import (
+    production_agent_tools,
+    production_agent_tool_schemas,
+)
 from celune.typing.agent import (
     ToolCall,
     AgentOutput,
@@ -44,8 +48,8 @@ from celune.typing.agent import (
     ToolExecutionResult,
 )
 from celune.typing.common import JSONSerializable
-from celune.agent.needle.impl import parse_single_selection
 from celune.agent.needle.models import NeedleModel
+from celune.agent.needle.impl import parse_single_selection
 from celune.persona.capabilities import PersonaCapabilities
 
 
@@ -153,6 +157,47 @@ class _FakeNeedleHandler:
 
 class TestNeedleSelector:
     """Verify strict selection, schema validation, and metadata preservation."""
+
+    def test_filesystem_requests_narrow_to_the_matching_operation(self) -> None:
+        """Keep similar filesystem tools out of a clear operation's catalog."""
+        tools = production_agent_tools(include_local_management=True)
+        schemas = production_agent_tool_schemas(include_local_management=True)
+        catalog = NeedleHandler.catalog_for_tools(
+            tools,
+            schemas=schemas,
+            available_only=True,
+        )
+        cases = (
+            (
+                "List the directory of C:/Games/XSanity/Program64.",
+                "List the requested directory.",
+                "local_list_directory",
+            ),
+            (
+                "Get file metadata for C:/Games/XSanity/game.exe.",
+                "Read metadata for the requested file.",
+                "local_file_metadata",
+            ),
+            (
+                "Copy C:/Games/XSanity/game.exe to C:/Games/Backup/game.exe.",
+                "Copy the requested file to the destination.",
+                "local_copy",
+            ),
+            (
+                "Move C:/Games/XSanity/game.exe to C:/Games/Backup/game.exe.",
+                "Move the requested file to the destination.",
+                "local_move",
+            ),
+        )
+
+        for request, intent, expected_name in cases:
+            candidates = NeedleToolSelector._candidate_catalog(
+                catalog,
+                request,
+                intent,
+            )
+
+            assert [tool["name"] for tool in candidates] == [expected_name]
 
     def test_action_intent_and_available_schema_reach_needle(self) -> None:
         """Pass the planner intent and current available catalog to Needle."""

@@ -106,6 +106,9 @@ Routing and tool-selection prompts instruct Persona and Needle to preserve
 explicit paths from the task request. Celune also retains the original user
 request when Persona produces a shorter task summary, so the selector and local
 filesystem tools can still use the exact requested operation and path. When a
+request clearly names an operation, Needle gives tool-name matches more weight
+than generic description or argument matches, reducing confusion between
+similar tools such as directory listing and creation. When a
 request contains the number of unambiguous absolute paths expected by a
 filesystem tool, Celune uses those exact paths even if Needle supplies
 corrupted or different paths. Copy and move use exactly two requested paths in
