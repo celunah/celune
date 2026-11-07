@@ -7,8 +7,8 @@ from typing import TYPE_CHECKING, Union, Literal, Optional, Protocol, TypedDict
 from collections.abc import Mapping, Iterator, Sequence
 
 import numpy as np
-import torch
 import numpy.typing as npt
+import torch
 from transformers import StoppingCriteriaList
 from transformers.cache_utils import Cache
 from transformers.tokenization_utils_base import BatchEncoding

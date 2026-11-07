@@ -12,8 +12,8 @@ from pathlib import Path
 from unittest import mock
 
 import numpy as np
-import pytest
 import numpy.typing as npt
+import pytest
 
 from celune.core import speech as core_speech, conversation as core_conversation
 from celune.agent import routing as agent_routing
