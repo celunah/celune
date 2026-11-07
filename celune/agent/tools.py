@@ -13,14 +13,10 @@ import subprocess
 from pathlib import Path
 from dataclasses import dataclass
 from collections.abc import Mapping, Callable
-from typing import cast, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional, cast
 
 import psutil
 
-from ..typing.modes import OperationMode
-from ..typing.common import JSON, JSONSerializable
-from ..utils import clear_queue, format_error_message
-from ..exceptions import LocalManagementError as _LocalManagementError
 from ..typing.agent import (
     ToolCall,
     AgentTool,
@@ -33,6 +29,10 @@ from ..typing.agent import (
     AgentToolArgumentSchema,
     AgentToolExecutionStatus,
 )
+from ..typing.modes import OperationMode
+from ..typing.common import JSON, JSONSerializable
+from ..utils import clear_queue, format_error_message
+from ..exceptions import LocalManagementError as _LocalManagementError
 
 if TYPE_CHECKING:
     from ..celune import Celune
@@ -597,14 +597,7 @@ def _requested_local_path(context: AgentContext) -> Optional[Path]:
     requested: dict[str, Path] = {}
     for raw_path in requested_paths:
         is_quoted = any(raw_path == match.group(1) for match in quoted_matches)
-        candidates = (
-            (raw_path,)
-            if is_quoted
-            else (
-                raw_path,
-                raw_path.rstrip(".,;:!?)]}"),
-            )
-        )
+        candidates = (raw_path,) if is_quoted else (raw_path.rstrip(".,;:!?)]}"),)
         for candidate in candidates:
             if not candidate:
                 continue

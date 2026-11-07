@@ -106,7 +106,9 @@ request when Persona produces a shorter task summary, so the selector and local
 filesystem tools can still use the exact requested operation and path. When a
 request contains one unambiguous absolute path, directory listing and creation
 use that exact path even if Needle supplies a corrupted or different path.
-Requests naming multiple paths remain ambiguous and are not rewritten.
+Sentence punctuation after an unquoted path is ignored; quote paths when punctuation
+is part of the target name. Requests naming multiple paths remain ambiguous and are
+not rewritten.
 For a successful directory listing, Persona is instructed to include the
 resolved path and returned entries in its final answer. It is also instructed
 to identify empty and truncated listings and preserve entry names exactly.

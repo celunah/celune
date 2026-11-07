@@ -3,22 +3,22 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+from unittest import mock
 from types import SimpleNamespace
 from typing import Optional, cast
-from pathlib import Path
-from tempfile import TemporaryDirectory
-from unittest import mock
 from contextlib import nullcontext
+from tempfile import TemporaryDirectory
 
-from celune.celune import Celune
 from celune.agent.tools import (
     OfflineAgentTool,
     local_management_tools,
     local_management_tool_schemas,
 )
-from celune.typing.agent import AgentContext, AgentRequest, AgentToolExecutionStatus
+from celune.celune import Celune
 from celune.typing.modes import OperationMode
 from celune.persona.capabilities import PersonaCapabilities
+from celune.typing.agent import AgentContext, AgentRequest, AgentToolExecutionStatus
 
 from ..support import CeluneTestCase
 
@@ -236,6 +236,29 @@ class TestLocalManagementTools(CeluneTestCase):
             exists = target.is_dir()
 
         assert exists
+        assert result["status"] == AgentToolExecutionStatus.SUCCEEDED
+        output = cast(dict[str, object], result["output"])
+        assert output["path"] == str(target)
+
+    def test_make_directory_recovers_unquoted_path_before_sentence_punctuation(
+        self,
+    ) -> None:
+        """Ignore sentence punctuation after an unquoted requested path."""
+        with TemporaryDirectory(prefix="celune-agent-") as directory:
+            root = Path(directory).resolve()
+            target = root / "created"
+            result = self._tool("local_make_directory").execute(
+                {
+                    "id": "make-unquoted-path",
+                    "name": "local_make_directory",
+                    "arguments": {"path": "relative/created"},
+                },
+                self._context(
+                    "Create the requested directory.",
+                    f"Create the directory {target}.",
+                ),
+            )
+
         assert result["status"] == AgentToolExecutionStatus.SUCCEEDED
         output = cast(dict[str, object], result["output"])
         assert output["path"] == str(target)
