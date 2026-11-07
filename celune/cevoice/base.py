@@ -23,6 +23,11 @@ from ..paths import project_root, temp_data_dir, voices_data_dir
 from .registry import KNOWN_DEFAULT_CEVOICE_PACKS, OFFICIAL_CEVOICE_PACK_SHA256S
 from ..exceptions import CEVoiceError
 from ..typing.cevoice import Manifest, ManifestValue, VoiceManifest
+from ..dataclasses.cevoice import (
+    CEVoicePersona as _CEVoicePersona,
+    PersonaIdentity as _PersonaIdentity,
+    PersonaStyleValues as _PersonaStyleValues,
+)
 
 HEADER = struct.Struct("<8sHI")
 ALLOWED_ASSET_KINDS = {"wav", "pt"}
@@ -422,40 +427,6 @@ class CEVoice:
         with self.path.open("rb") as stream:
             stream.seek(self.payload_offset + asset.offset)
             return stream.read(asset.length)
-
-
-@dataclass(frozen=True, slots=True)
-class PersonaIdentity:
-    """Identity details supplied by a CEVOICE/CECHAR pack."""
-
-    name: str = ""
-    age: str = ""
-    gender: str = ""
-    profile: str = ""
-
-
-@dataclass(frozen=True, slots=True)
-class PersonaStyleValues:
-    """Baseline speaking-style values supplied by a CEVOICE/CECHAR pack."""
-
-    warmth: str = ""
-    directness: str = ""
-    humor: str = ""
-    detail: str = ""
-    formality: str = ""
-    enthusiasm: str = ""
-
-
-@dataclass(frozen=True, slots=True)
-class CEVoicePersona:
-    """Persona metadata supplied by a CEVOICE/CECHAR pack."""
-
-    identity: PersonaIdentity = field(default_factory=PersonaIdentity)
-    speaking_style: str = ""
-    boundaries: tuple[str, ...] = ()
-    prompt_rules: tuple[str, ...] = ()
-    example_dialogue: tuple[str, ...] = ()
-    style: PersonaStyleValues = field(default_factory=PersonaStyleValues)
 
 
 class CEVoiceLoader:
@@ -1244,7 +1215,7 @@ def _text_tuple(value: ManifestValue) -> tuple[str, ...]:
 
 def persona_metadata_from_manifest(
     metadata: Mapping[str, ManifestValue],
-) -> Optional[CEVoicePersona]:
+) -> Optional[_CEVoicePersona]:
     """Return typed persona metadata from a CEVOICE manifest when present.
 
     Args:
@@ -1263,7 +1234,7 @@ def persona_metadata_from_manifest(
 def persona_metadata_from_voice(
     bundle: CEVoice,
     voice: Optional[str],
-) -> Optional[CEVoicePersona]:
+) -> Optional[_CEVoicePersona]:
     """Return optional Persona style metadata attached to one voice entry.
 
     Args:
@@ -1285,9 +1256,9 @@ def persona_metadata_from_voice(
 
 
 def merge_persona_metadata(
-    base: Optional[CEVoicePersona],
-    voice_override: Optional[CEVoicePersona],
-) -> Optional[CEVoicePersona]:
+    base: Optional[_CEVoicePersona],
+    voice_override: Optional[_CEVoicePersona],
+) -> Optional[_CEVoicePersona]:
     """Layer one voice's Persona style metadata on top of the base persona.
 
     Args:
@@ -1307,7 +1278,7 @@ def merge_persona_metadata(
 
     base_style = base.style
     voice_style = voice_override.style
-    return CEVoicePersona(
+    return _CEVoicePersona(
         identity=base.identity,
         speaking_style="\n\n".join(
             value
@@ -1323,7 +1294,7 @@ def merge_persona_metadata(
             base.example_dialogue,
             voice_override.example_dialogue,
         ),
-        style=PersonaStyleValues(
+        style=_PersonaStyleValues(
             warmth=voice_style.warmth or base_style.warmth,
             directness=voice_style.directness or base_style.directness,
             humor=voice_style.humor or base_style.humor,
@@ -1334,7 +1305,7 @@ def merge_persona_metadata(
     )
 
 
-def _persona_from_manifest(raw_persona: Manifest) -> CEVoicePersona:
+def _persona_from_manifest(raw_persona: Manifest) -> _CEVoicePersona:
     """Build typed Persona metadata from one validated manifest object."""
 
     raw_identity = raw_persona.get("identity")
@@ -1344,8 +1315,8 @@ def _persona_from_manifest(raw_persona: Manifest) -> CEVoicePersona:
 
     profile = raw_persona.get("profile")
     identity_profile = identity.get("profile")
-    return CEVoicePersona(
-        identity=PersonaIdentity(
+    return _CEVoicePersona(
+        identity=_PersonaIdentity(
             name=_manifest_text(identity.get("name")),
             age=_manifest_text(identity.get("age")),
             gender=_manifest_text(identity.get("gender")),
@@ -1355,7 +1326,7 @@ def _persona_from_manifest(raw_persona: Manifest) -> CEVoicePersona:
         boundaries=_text_tuple(raw_persona.get("boundaries")),
         prompt_rules=_text_tuple(raw_persona.get("prompt_rules")),
         example_dialogue=_text_tuple(raw_persona.get("example_dialogue")),
-        style=PersonaStyleValues(
+        style=_PersonaStyleValues(
             warmth=_manifest_text(style.get("warmth")),
             directness=_manifest_text(style.get("directness")),
             humor=_manifest_text(style.get("humor")),

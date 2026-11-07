@@ -24,13 +24,12 @@ from starlette.responses import Response
 from celune import api
 from celune.i18n import string
 from celune.theme import colors
-from celune.webui import actions as webui_actions
-from celune.webui import runtime as webui
+from celune.webui import runtime as webui, actions as webui_actions
 from celune.celune import Celune
-from celune.server import auth as server_auth
-from celune.server import constants as server_constants
+from celune.server import auth as server_auth, constants as server_constants
 from celune.typing.agent import AgentTaskState
 from celune.typing.celune import ChunkCaptionProgressCallback
+from celune.dataclasses.ui import UiTimedUpdate
 from celune.server.session import ServerSession
 from celune.typing.pipeline import SpeechStreamQueue
 
@@ -1171,7 +1170,7 @@ class TestApiWebUI(CeluneTestCase):
             ),
         )
         api.server_session.bound_celune = celune
-        update = api.UiTimedUpdate(
+        update = UiTimedUpdate(
             runtime_id=str(id(celune)),
             sequence=4,
             emitted_at=1.0,

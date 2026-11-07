@@ -20,9 +20,6 @@ from celune.celune import Celune
 from celune.cevoice import (
     CEVoice,
     CEVoiceLoader,
-    CEVoicePersona,
-    PersonaIdentity,
-    PersonaStyleValues,
     persona_files_from_bundle,
 )
 from celune.persona import conversation as persona_conversation
@@ -46,6 +43,11 @@ from celune.typing.agent import (
 from celune.typing.common import JSON, JSONSerializable
 from celune.typing.aliases import AudioChunk
 from celune.persona.prompts import PersonaPromptBuilder, render_markdown_subsection
+from celune.dataclasses.cevoice import (
+    CEVoicePersona,
+    PersonaIdentity,
+    PersonaStyleValues,
+)
 from celune.dataclasses.pipeline import CaptionAlignmentSection
 from celune.persona.capabilities import PersonaCapabilities
 

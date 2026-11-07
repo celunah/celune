@@ -1,9 +1,11 @@
 # SPDX-License-Identifier: Apache-2.0
 """Public CEVOICE and CECHAR APIs."""
 
-from .v1 import MAGIC as LEGACY_MAGIC
-from .v1 import VERSION as LEGACY_VERSION
-from .v1 import FORMAT_NAME as LEGACY_FORMAT_NAME
+from .v1 import (
+    MAGIC as LEGACY_MAGIC,
+    VERSION as LEGACY_VERSION,
+    FORMAT_NAME as LEGACY_FORMAT_NAME,
+)
 from .v3 import (
     MAGIC,
     VERSION,
@@ -30,14 +32,6 @@ from .v5 import (
     SINGING_VOICE_NAME,
     write_cechar_v5,
 )
-from .registry import (
-    CLASSIC_CEVOICE_PACK_SHA256,
-    DEFAULT_CEVOICE_PACK_SHA256,
-    KNOWN_DEFAULT_CEVOICE_PACKS,
-    LEGACY_DEFAULT_CEVOICE_PACK_SHA256,
-    OFFICIAL_CEVOICE_PACK_SHA256S,
-    PREVIOUS_DEFAULT_CEVOICE_PACK_SHA256,
-)
 from .base import (
     HEADER,
     ALLOWED_ASSET_KINDS,
@@ -47,9 +41,6 @@ from .base import (
     CEVoiceAsset,
     CEVoiceEntry,
     CEVoiceLoader,
-    CEVoicePersona,
-    PersonaIdentity,
-    PersonaStyleValues,
     bundle_sha256,
     default_loader,
     active_bundle_path,
@@ -72,6 +63,14 @@ from .base import (
     persona_metadata_from_manifest,
     unregister_protected_temp_path,
     bundle_matches_default_pack_checksum,
+)
+from .registry import (
+    CLASSIC_CEVOICE_PACK_SHA256,
+    DEFAULT_CEVOICE_PACK_SHA256,
+    KNOWN_DEFAULT_CEVOICE_PACKS,
+    OFFICIAL_CEVOICE_PACK_SHA256S,
+    LEGACY_DEFAULT_CEVOICE_PACK_SHA256,
+    PREVIOUS_DEFAULT_CEVOICE_PACK_SHA256,
 )
 from ..exceptions import CEVoiceError
 from ..typing.cevoice import Manifest, ManifestValue, VoiceManifest
@@ -117,11 +116,8 @@ __all__ = [
     "CEVoiceEntry",
     "CEVoiceError",
     "CEVoiceLoader",
-    "CEVoicePersona",
     "Manifest",
     "ManifestValue",
-    "PersonaIdentity",
-    "PersonaStyleValues",
     "VoiceManifest",
     "active_bundle_path",
     "add_cevoice_entries",

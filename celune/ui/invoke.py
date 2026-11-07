@@ -2,28 +2,17 @@
 """Parse and invoke explicit Python-style call expressions for the debug UI."""
 
 import ast
+import inspect
 import builtins
 import importlib
-import inspect
+from typing import Optional, cast
 from collections.abc import Awaitable
-from typing import Optional
-from typing import cast
 
-
-class InvokeParseError(ValueError):
-    """Raised when an invoke expression is malformed or uses unsupported syntax."""
-
-
-class InvokeResolutionError(LookupError):
-    """Raised when an invoke expression name cannot be imported or resolved."""
-
-
-class InvokeCallError(Exception):
-    """Wrap an exception raised while executing a nested or outer call."""
-
-    def __init__(self, error: Exception) -> None:
-        super().__init__(str(error))
-        self.error = error
+from ..exceptions import (
+    InvokeCallError as _InvokeCallError,
+    InvokeParseError as _InvokeParseError,
+    InvokeResolutionError as _InvokeResolutionError,
+)
 
 
 async def invoke_expression(expression: str, engine: object) -> object:
@@ -44,10 +33,10 @@ async def invoke_expression(expression: str, engine: object) -> object:
     try:
         parsed = ast.parse(expression, mode="eval")
     except SyntaxError as exc:
-        raise InvokeParseError(str(exc)) from exc
+        raise _InvokeParseError(str(exc)) from exc
 
     if not isinstance(parsed.body, ast.Call):
-        raise InvokeParseError("expression must be a function or method call")
+        raise _InvokeParseError("expression must be a function or method call")
 
     async def resolve(node: ast.AST) -> object:
         """Interpret one permitted expression node recursively."""
@@ -62,13 +51,13 @@ async def invoke_expression(expression: str, engine: object) -> object:
             try:
                 return getattr(value, node.attr)
             except AttributeError as exc:
-                raise InvokeResolutionError(
+                raise _InvokeResolutionError(
                     f"cannot resolve attribute {node.attr!r}"
                 ) from exc
         if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.UAdd, ast.USub)):
             value = await resolve(node.operand)
             if not isinstance(value, (int, float, complex)) or isinstance(value, bool):
-                raise InvokeParseError("signs are supported only for numeric literals")
+                raise _InvokeParseError("signs are supported only for numeric literals")
             return +value if isinstance(node.op, ast.UAdd) else -value
         if isinstance(node, ast.List):
             return [await resolve(item) for item in node.elts]
@@ -81,7 +70,7 @@ async def invoke_expression(expression: str, engine: object) -> object:
             return {await resolve(item) for item in node.elts}
         if isinstance(node, ast.Dict):
             if any(key is None for key in node.keys):
-                raise InvokeParseError("dictionary unpacking is not supported")
+                raise _InvokeParseError("dictionary unpacking is not supported")
             return {
                 await resolve(key): await resolve(value)
                 for key, value in zip(node.keys, node.values)
@@ -90,13 +79,13 @@ async def invoke_expression(expression: str, engine: object) -> object:
         if isinstance(node, ast.Call):
             function = await resolve(node.func)
             if not callable(function):
-                raise InvokeResolutionError(
+                raise _InvokeResolutionError(
                     f"{ast.unparse(node.func)!r} is not callable"
                 )
             if any(isinstance(argument, ast.Starred) for argument in node.args):
-                raise InvokeParseError("argument unpacking is not supported")
+                raise _InvokeParseError("argument unpacking is not supported")
             if any(keyword.arg is None for keyword in node.keywords):
-                raise InvokeParseError("keyword unpacking is not supported")
+                raise _InvokeParseError("keyword unpacking is not supported")
 
             arguments = [await resolve(argument) for argument in node.args]
             keywords = {
@@ -110,9 +99,11 @@ async def invoke_expression(expression: str, engine: object) -> object:
                     return await cast(Awaitable[object], result)
                 return result
             except Exception as exc:
-                raise InvokeCallError(exc) from exc
+                raise _InvokeCallError(exc) from exc
 
-        raise InvokeParseError(f"unsupported expression element: {type(node).__name__}")
+        raise _InvokeParseError(
+            f"unsupported expression element: {type(node).__name__}"
+        )
 
     return await resolve(parsed.body)
 
@@ -123,7 +114,7 @@ def _dotted_name(node: ast.AST) -> str:
         return node.id
     if isinstance(node, ast.Attribute):
         return f"{_dotted_name(node.value)}.{node.attr}"
-    raise InvokeParseError("call target must be a dotted name")
+    raise _InvokeParseError("call target must be a dotted name")
 
 
 def _is_dotted_path(node: ast.AST) -> bool:
@@ -145,11 +136,11 @@ def _resolve_name(name: str, engine: object) -> object:
         try:
             return importlib.import_module(name)
         except ModuleNotFoundError as exc:
-            raise InvokeResolutionError(f"cannot resolve name {name!r}") from exc
+            raise _InvokeResolutionError(f"cannot resolve name {name!r}") from exc
         except ImportError as exc:
-            raise InvokeResolutionError(f"cannot import {name!r}: {exc}") from exc
+            raise _InvokeResolutionError(f"cannot import {name!r}: {exc}") from exc
         except Exception as exc:
-            raise InvokeResolutionError(f"cannot import {name!r}: {exc}") from exc
+            raise _InvokeResolutionError(f"cannot import {name!r}: {exc}") from exc
 
     parts = name.split(".")
     import_error: Optional[ImportError] = None
@@ -161,22 +152,22 @@ def _resolve_name(name: str, engine: object) -> object:
             if exc.name and not (
                 module_name == exc.name or module_name.startswith(f"{exc.name}.")
             ):
-                raise InvokeResolutionError(
+                raise _InvokeResolutionError(
                     f"importing {module_name!r} failed: {exc}"
                 ) from exc
             import_error = exc
             continue
         except ImportError as exc:
-            raise InvokeResolutionError(
+            raise _InvokeResolutionError(
                 f"importing {module_name!r} failed: {exc}"
             ) from exc
         except Exception as exc:
-            raise InvokeResolutionError(
+            raise _InvokeResolutionError(
                 f"importing {module_name!r} failed: {exc}"
             ) from exc
         return _traverse_attributes(module, parts[split_at:], name)
 
-    raise InvokeResolutionError(f"cannot resolve name {name!r}") from import_error
+    raise _InvokeResolutionError(f"cannot resolve name {name!r}") from import_error
 
 
 def _traverse_attributes(value: object, attributes: list[str], name: str) -> object:
@@ -185,7 +176,7 @@ def _traverse_attributes(value: object, attributes: list[str], name: str) -> obj
         try:
             value = getattr(value, attribute)
         except AttributeError as exc:
-            raise InvokeResolutionError(
+            raise _InvokeResolutionError(
                 f"cannot resolve attribute {attribute!r} in {name!r}"
             ) from exc
     return value

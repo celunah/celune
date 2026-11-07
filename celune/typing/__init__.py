@@ -11,6 +11,13 @@ if TYPE_CHECKING:
         CeluneHeadlessBaseUI,
     )
     from .api import WEBUI_UNSET, WebUiUnset
+    from .lua import (
+        LuaTable,
+        LuaValue,
+        LuaScalar,
+        LuaGlobalValue,
+        LuaRuntimeProtocol,
+    )
     from .agent import (
         ToolCall,
         AgentTask,
@@ -256,6 +263,11 @@ _MODULE_EXPORTS = {
     "JSONDict": "persona",
     "JSONSerializable": "common",
     "LanguageResult": "utils",
+    "LuaGlobalValue": "lua",
+    "LuaRuntimeProtocol": "lua",
+    "LuaScalar": "lua",
+    "LuaTable": "lua",
+    "LuaValue": "lua",
     "LogCallable": "extensions",
     "Manifest": "cevoice",
     "ManifestValue": "cevoice",
@@ -417,6 +429,11 @@ __all__ = [
     "JSONSerializable",
     "LanguageResult",
     "LogCallable",
+    "LuaGlobalValue",
+    "LuaRuntimeProtocol",
+    "LuaScalar",
+    "LuaTable",
+    "LuaValue",
     "Manifest",
     "ManifestValue",
     "MessageCallback",

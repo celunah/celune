@@ -5,40 +5,13 @@ from __future__ import annotations
 
 import threading
 from typing import cast
-from dataclasses import dataclass
 from collections.abc import Callable
 
-from ..typing.worker import WorkerValue
 from .protocol import build_packet, decode_message, encode_message
+from ..typing.worker import WorkerValue
+from ..dataclasses.ui import UiTimedUpdate as _UiTimedUpdate
 
-UiTimedUpdateCallback = Callable[["UiTimedUpdate"], None]
-
-
-@dataclass(frozen=True, slots=True)
-class UiTimedUpdate:
-    """One authoritative timed UI update emitted by the TUI runtime."""
-
-    runtime_id: str
-    sequence: int
-    emitted_at: float
-    resource_page: int
-    theme_name: str
-    status_text: str
-    status_severity: str
-    status_marquee_offset: int
-
-    def as_data(self) -> dict[str, object]:
-        """Return the update data carried by its CEDTS event packet."""
-        return {
-            "runtime_id": self.runtime_id,
-            "sequence": self.sequence,
-            "emitted_at": self.emitted_at,
-            "resource_page": self.resource_page,
-            "theme_name": self.theme_name,
-            "status_text": self.status_text,
-            "status_severity": self.status_severity,
-            "status_marquee_offset": self.status_marquee_offset,
-        }
+UiTimedUpdateCallback = Callable[["_UiTimedUpdate"], None]
 
 
 class UiTimedUpdateChannel:
@@ -66,7 +39,7 @@ class UiTimedUpdateChannel:
 
         return unsubscribe
 
-    def publish(self, update: UiTimedUpdate) -> None:
+    def publish(self, update: _UiTimedUpdate) -> None:
         """Frame and deliver one timed update to all current subscribers."""
         packet = build_packet(
             "event",
@@ -79,7 +52,7 @@ class UiTimedUpdateChannel:
             {payload.descriptor["id"]: payload for payload in payloads},
         )
         data = cast(dict[str, object], decoded["data"])
-        framed_update = UiTimedUpdate(
+        framed_update = _UiTimedUpdate(
             runtime_id=cast(str, data["runtime_id"]),
             sequence=cast(int, data["sequence"]),
             emitted_at=cast(float, data["emitted_at"]),

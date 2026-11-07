@@ -5,6 +5,8 @@ from typing import TYPE_CHECKING
 from importlib import import_module
 
 if TYPE_CHECKING:
+    from .ui import UiTimedUpdate
+    from .asr import WhisperWord, WhisperSegment
     from .celune import (
         CELUNE_CONSTANT_PROPERTIES,
         CELUNE_FORWARDED_PROPERTIES,
@@ -16,6 +18,7 @@ if TYPE_CHECKING:
         CeluneCallbackState,
         CelunePipelineState,
     )
+    from .cevoice import CEVoicePersona, PersonaIdentity, PersonaStyleValues
     from .persona import (
         ChatMessage,
         GenerateRequest,
@@ -44,6 +47,11 @@ if TYPE_CHECKING:
     )
 
 _MODULE_EXPORTS = {
+    "WhisperSegment": "asr",
+    "WhisperWord": "asr",
+    "CEVoicePersona": "cevoice",
+    "PersonaIdentity": "cevoice",
+    "PersonaStyleValues": "cevoice",
     "CELUNE_CONSTANT_PROPERTIES": "celune",
     "CELUNE_FORWARDED_PROPERTIES": "celune",
     "CeluneAudioState": "celune",
@@ -68,6 +76,7 @@ _MODULE_EXPORTS = {
     "SpeechDone": "pipeline",
     "SpeechRequest": "pipeline",
     "SpeechTiming": "pipeline",
+    "UiTimedUpdate": "ui",
     "VoiceConversionRequest": "pipeline",
     "bind_constant_properties": "properties",
     "bind_forwarded_properties": "properties",
@@ -80,6 +89,7 @@ __all__ = [
     "CELUNE_FORWARDED_PROPERTIES",
     "AudioInputRequest",
     "AudioOutput",
+    "CEVoicePersona",
     "CaptionPlaybackSegment",
     "CaptionPlaybackState",
     "CeluneAudioState",
@@ -95,12 +105,17 @@ __all__ = [
     "ForwardedPropertySpec",
     "GenerateRequest",
     "GenerateResponse",
+    "PersonaIdentity",
+    "PersonaStyleValues",
     "PlaybackChunk",
     "PlaybackSourceDone",
     "SpeechDone",
     "SpeechRequest",
     "SpeechTiming",
+    "UiTimedUpdate",
     "VoiceConversionRequest",
+    "WhisperSegment",
+    "WhisperWord",
     "bind_constant_properties",
     "bind_forwarded_properties",
     "constant_property",

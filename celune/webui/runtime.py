@@ -29,16 +29,12 @@ from ..theme import colors
 from ..utils import available, format_error_message
 from ..ui.app import CeluneUI
 from ..cevoice import default_loader
-from ..cedts.ui import UiTimedUpdate, ui_timed_update_channel
+from ..cedts.ui import ui_timed_update_channel
 from ..constants import BASE_SR, APP_NAME
 from ..typing.api import (
-    WEBUI_UNSET as _WEBUI_UNSET,
-)
-from ..typing.api import (
-    WebUiUnset as _WebUiUnset,
-)
-from ..typing.api import (
     WebUiUpdate,
+    WebUiUnset as _WebUiUnset,
+    WEBUI_UNSET as _WEBUI_UNSET,
 )
 from ..server.jobs import (
     TaskEvent,
@@ -52,6 +48,7 @@ from ..server.jobs import (
 )
 from ..persona.impl import persona_enabled, persona_talkback_enabled
 from ..typing.events import EventName, EventCallback
+from ..dataclasses.ui import UiTimedUpdate as _UiTimedUpdate
 from ..server.runtime import invoke_message_callback, shutdown_api_for_fatal_error
 from ..server.session import ServerSession, server_session
 from ..typing.aliases import LogLevel, AudioChunks
@@ -229,7 +226,7 @@ def subscribe_webui_timed_updates(session: ServerSession = server_session) -> No
 
 
 def receive_webui_timed_update(
-    update: UiTimedUpdate,
+    update: _UiTimedUpdate,
     session: ServerSession = server_session,
 ) -> None:
     """Apply one newer TUI timed update to browser-owned state."""

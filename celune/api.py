@@ -15,6 +15,7 @@ import asyncio
 import threading
 import contextlib
 import subprocess
+from hmac import compare_digest
 from typing import (
     Union,
     Literal,
@@ -23,23 +24,31 @@ from typing import (
 )
 from pathlib import Path
 from collections import abc
-from hmac import compare_digest
 
-import fastapi
-import uvicorn
 import numpy as np
 import gradio as gr
+import fastapi
+import uvicorn
 from pydantic import Field, BaseModel
 from starlette import types, concurrency, datastructures
 from starlette.middleware import base as middleware_base
 
+from . import __version__
+from .ui import resources as ui_resources
 from .mcp import (
     mcp_app,
     mcp_lifespan,
     configure_mcp_host_allowlist,
 )
+from .cesn import validate_singing_notation
 from .i18n import string
-from . import __version__
+from .paths import project_root
+from .utils import format_error_message
+from .webui import actions as webactions, runtime as webui
+from .celune import Celune
+from .server import auth as server_auth, jobs as server_jobs
+from .audio.dsp import resample_audio
+from .constants import BASE_SR, APP_NAME
 from .exceptions import (
     ModelConsentDeclined,
     ModelConsentRequired,
@@ -49,7 +58,6 @@ from .exceptions import (
 from .typing.api import (
     TaskCommandName,
 )
-from .celune import Celune
 from .server.auth import (
     _clean_token,
     _same_origin,
@@ -67,6 +75,7 @@ from .server.auth import (
     _remember_webui_auth_client,
     _is_webui_generation_request,
 )
+from .server.jobs import SpeechJob, TaskEvent, TaskSubscription
 from .webui.actions import (
     build_webui,
     decode_uploaded_audio,
@@ -87,7 +96,9 @@ from .webui.runtime import (
     get_webui_input_placeholder,
     subscribe_webui_timed_updates,
 )
-from .paths import project_root
+from .registry.types import ModelMetadata
+from .server.session import ServerSession, server_session
+from .typing.pipeline import SpeechStreamQueue
 from .registry.consent import (
     consent_status,
     consent_details,
@@ -104,19 +115,8 @@ from .server.constants import (
     WEBUI_AUTH_PATH,
     MAX_PENDING_SPEECH_JOBS,
 )
-from .audio.dsp import resample_audio
-from .utils import format_error_message
-from .constants import BASE_SR, APP_NAME
-from .registry.types import ModelMetadata
-from .ui import resources as ui_resources
-from .cesn import validate_singing_notation
-from .typing.pipeline import SpeechStreamQueue
-from .pipeline.submission import prepare_playback_audio
 from .pipeline.playback import force_stop_streamed_speech
-from .server.session import ServerSession, server_session
-from .webui import actions as webactions, runtime as webui
-from .server import auth as server_auth, jobs as server_jobs
-from .server.jobs import SpeechJob, TaskEvent, TaskSubscription
+from .pipeline.submission import prepare_playback_audio
 
 Callable = abc.Callable
 Iterator = abc.Iterator
@@ -155,8 +155,6 @@ webui_vc_controls_update = webui.webui_vc_controls_update
 webui_convert_audio = webactions.webui_convert_audio
 webui_cycle_voice = webactions.webui_cycle_voice
 CeluneUI = webui.CeluneUI
-UiTimedUpdate = webui.UiTimedUpdate
-
 api = FastAPI(title=f"{APP_NAME}API", lifespan=mcp_lifespan)
 
 

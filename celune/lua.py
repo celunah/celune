@@ -4,23 +4,27 @@
 from __future__ import annotations
 
 import threading
-from pathlib import Path
-from importlib import import_module
-from collections.abc import Callable
-
-# noinspection PyProtectedMember
-from dataclasses import fields, is_dataclass
 
 # noinspection PyProtectedMember
 from typing import TYPE_CHECKING, Optional, cast
+from pathlib import Path
+from importlib import import_module
+
+# noinspection PyProtectedMember
+from dataclasses import fields, is_dataclass
+from collections.abc import Callable
 
 from .utils import format_error
+from .typing.lua import (
+    LuaTable as _LuaTable,
+    LuaValue as _LuaValue,
+    LuaScalar as _LuaScalar,
+    LuaRuntimeProtocol as _LuaRuntimeProtocol,
+)
 from .typing.common import JSONSerializable
-from .typing.lua import LuaScalar, LuaValue
-from .extensions.base import CeluneExtension
 from .typing.events import EventName, EventPayload
+from .extensions.base import CeluneExtension
 from .extensions.events import RegisteredEventHandler
-from .dataclasses.lua import LuaRuntimeProtocol, LuaTable
 
 if TYPE_CHECKING:
     from .celune import Celune
@@ -46,7 +50,7 @@ _LUA_EVENT_NAMES: tuple[EventName, ...] = (
 )
 
 
-def _lua_event_value(value: LuaScalar) -> JSONSerializable:
+def _lua_event_value(value: _LuaScalar) -> JSONSerializable:
     """Convert one event value into a value safe to pass into Lua."""
     if isinstance(value, Exception):
         return {
@@ -62,18 +66,18 @@ def _lua_event_value(value: LuaScalar) -> JSONSerializable:
 
 def _event_table_data(
     event_name: EventName, event: EventPayload
-) -> dict[str, LuaValue]:
+) -> dict[str, _LuaValue]:
     """Build the serializable event table exposed to Lua callbacks."""
     if not is_dataclass(event):
         return {"name": event_name}
 
-    data: dict[str, LuaValue] = {"name": event_name}
+    data: dict[str, _LuaValue] = {"name": event_name}
     for event_field in fields(event):
         if event_field.name == "celune":
             continue
         data[event_field.name] = cast(
-            LuaValue,
-            _lua_event_value(cast(LuaScalar, getattr(event, event_field.name))),
+            _LuaValue,
+            _lua_event_value(cast(_LuaScalar, getattr(event, event_field.name))),
         )
     return data
 
@@ -95,7 +99,7 @@ class LuaRuntimeManager:
             raise RuntimeError("Lupa is required for Lua extensions") from exc
 
         lua_runtime_factory = cast(
-            Callable[..., LuaRuntimeProtocol],
+            Callable[..., _LuaRuntimeProtocol],
             lupa_module.LuaRuntime,
         )
         self._core = core
@@ -133,7 +137,7 @@ class LuaRuntimeManager:
                 extension_name = path.stem
             return extension_name.strip()
 
-    def invoke(self, *args: LuaValue, **kwargs: LuaValue) -> None:
+    def invoke(self, *args: _LuaValue, **kwargs: _LuaValue) -> None:
         """Invoke the optional global Lua ``invoke`` function.
 
         Args:
@@ -150,7 +154,7 @@ class LuaRuntimeManager:
     def subscribe(
         self,
         event_name: str,
-        callback: Callable[[LuaValue], None],
+        callback: Callable[[_LuaValue], None],
         enabled: bool = True,
     ) -> None:
         """Register one Lua callback with Celune's event dispatcher.
@@ -174,7 +178,7 @@ class LuaRuntimeManager:
             raise TypeError("Lua event callback is not callable")
         if not enabled:
             return
-        lua_callback = cast(Callable[[LuaTable], None], callback)
+        lua_callback = cast(Callable[[_LuaTable], None], callback)
 
         typed_event_name = event_name
 
@@ -276,7 +280,7 @@ class LuaExtension(CeluneExtension):
         """
         return self.EXTENSION_NAME
 
-    def invoke(self, *args: LuaValue, **kwargs: LuaValue) -> None:
+    def invoke(self, *args: _LuaValue, **kwargs: _LuaValue) -> None:
         """Invoke the Lua extension's optional global function.
 
         Args:

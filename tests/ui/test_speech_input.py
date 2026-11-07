@@ -1,17 +1,16 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for Persona microphone speech input."""
 
-from unittest import mock
 from types import SimpleNamespace
 from typing import Optional, cast
+from unittest import mock
 from collections.abc import Callable
 
-import pytest
 import numpy as np
+import pytest
 from textual import events
 
 from celune.ui.app import CeluneUI, ButtonActions
-from celune.typing.persona import WhisperProcessor
 from celune.persona.asr import (
     PERSONA_SPEECH_NO_INPUT_TIMEOUT_SECONDS,
     WhisperTranscriber,
@@ -20,6 +19,7 @@ from celune.registry.asr import (
     DEFAULT_PERSONA_SPEECH_MODEL_ID,
     DEFAULT_PERSONA_SPEECH_MODEL_REVISION,
 )
+from celune.typing.persona import WhisperProcessor
 
 from ..support import CeluneTestCase
 

@@ -30,6 +30,7 @@ own. It is the index to use when a feature needs a precise code entrypoint.
 | `celune/modes.py` | Operation-mode resolution and mode capability predicates. |
 | `celune/paths.py` | User data, cache, runtime, pack, output, config, and migration paths. |
 | `celune/runtime.py` | Lazy runtime imports and shared test/headless runtime assembly. |
+| `celune/test.py` | Lightweight UI test runtime and live agent diagnostics. |
 
 ## Audio and pipeline
 
@@ -71,13 +72,15 @@ own. It is the index to use when a feature needs a precise code entrypoint.
 | `celune/cedts/worker.py` | Worker-side operation dispatch and lifecycle. |
 | `celune/cedts/protocol.py` | CEDTS serialization, framing, negotiation, and limits. |
 | `celune/cedts/ui.py` | CEDTS-framed TUI-to-WebUI timed-update channel. |
+| `celune/dataclasses/ui.py` | Shared timed UI update records. |
 | `celune/cedts/bootstrap.py` | CEDTS worker process bootstrap and isolated import setup. |
 
 ## Character and Persona
 
 | Path | Responsibility |
 | --- | --- |
-| `celune/cevoice/base.py` | Shared CEVOICE/CECHAR API, bundle model, mutations, Persona metadata, lazy assets, and pack selection. |
+| `celune/cevoice/base.py` | Shared CEVOICE/CECHAR API, bundle model, mutations, lazy assets, and pack selection. |
+| `celune/dataclasses/cevoice.py` | Persona metadata records parsed from CEVOICE and CECHAR packs. |
 | `celune/cevoice/v1.py` | CEVOICE v1 compatibility rules. |
 | `celune/cevoice/v2.py` | CECHAR v2 compatibility rules. |
 | `celune/cevoice/v3.py` | CECHAR v3 writer and compatibility rules. |
@@ -89,7 +92,8 @@ own. It is the index to use when a feature needs a precise code entrypoint.
 | `celune/persona/cache.py` | Device-aware INT8/FP8 Persona KV-cache storage and dynamic-cache fallback boundary. |
 | `celune/persona/impl.py` | Configured Persona client and engine integration. |
 | `celune/persona/conversation.py` | Persona prompt construction, context, history, memory extraction, and request helpers. |
-| `celune/persona/asr.py` | Whisper transcription, timestamps, and speech-input lifecycle. |
+| `celune/persona/asr.py` | Whisper transcription and speech-input lifecycle using shared timestamp records. |
+| `celune/dataclasses/asr.py` | Shared timestamped speech-recognition records. |
 | `celune/persona/capabilities.py` | Text/vision/upload/emotion capability detection. |
 | `celune/persona/memory.py` | Character-scoped JSON memory, semantic retrieval, fallback matching, and filtering. |
 | `celune/persona/emotion.py` | Emotion model outputs and response-style cues. |
@@ -114,6 +118,7 @@ own. It is the index to use when a feature needs a precise code entrypoint.
 | `celune/extensions/manager.py` | Discovery, registration, invocation, and teardown. |
 | `celune/extensions/events.py` | Event names, subscription, and dispatch. |
 | `celune/dataclasses/events.py` | Event payload dataclasses. |
+| `celune/typing/lua.py` | Type aliases and runtime protocols for embedded Lua values and tables. |
 | `celune/api.py` | Documented API entrypoints, FastAPI application wiring, endpoints, WebUI mount, and public-tunnel lifecycle. |
 | `celune/server/session.py` | Shared typed API/WebUI session state. |
 | `celune/server/auth.py` | API authentication and rate limiting. |

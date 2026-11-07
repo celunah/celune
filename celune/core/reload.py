@@ -23,7 +23,6 @@ from ..vram import (
 from ..utils import available, format_error_message
 from ..config import config_bool, config_value, config_backend_options
 from ..cevoice import (
-    CEVoicePersona,
     default_loader,
     active_bundle_path,
     select_voice_bundle,
@@ -40,8 +39,6 @@ from ..constants import APP_NAME
 from ..exceptions import WarmupError, BackendError, NotAvailableError
 from ..backends.vc import (
     CeluneVCBackend,
-)
-from ..backends.vc import (
     resolve_vc_backend as create_vc_backend,
 )
 from ..backends.tts import CeluneBackend, resolve_backend
@@ -60,6 +57,7 @@ from ..dataclasses.events import (
     CharacterChangedEvent,
     CharacterUnloadedEvent,
 )
+from ..dataclasses.cevoice import CEVoicePersona
 
 
 @dataclass

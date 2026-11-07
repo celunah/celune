@@ -12,19 +12,13 @@ from pathlib import Path
 from unittest import mock
 
 import numpy as np
-import numpy.typing as npt
 import pytest
+import numpy.typing as npt
 
-from celune.core import speech as core_speech
-from celune.core import conversation as core_conversation
+from celune.core import speech as core_speech, conversation as core_conversation
 from celune.agent import routing as agent_routing
 from celune.utils import discard, clear_queue
 from celune.celune import Celune
-from celune.cevoice import (
-    CEVoicePersona,
-    PersonaIdentity,
-    PersonaStyleValues,
-)
 from celune.persona import conversation as persona_conversation
 from celune.pipeline import (
     output,
@@ -46,6 +40,11 @@ from celune.typing.common import JSON, JSONSerializable
 from celune.audio.speakers import SpeakerChannel
 from celune.typing.aliases import AudioChunk
 from celune.core.concurrency import run_in_daemon_thread
+from celune.dataclasses.cevoice import (
+    CEVoicePersona,
+    PersonaIdentity,
+    PersonaStyleValues,
+)
 from celune.dataclasses.pipeline import (
     SpeechRequest,
     AudioInputRequest,

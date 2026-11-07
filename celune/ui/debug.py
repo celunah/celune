@@ -3,39 +3,51 @@
 
 from __future__ import annotations
 
-import asyncio
 import sys
 import math
 import site
 import time
-import types
+import asyncio
 import inspect
-import sysconfig
 import functools
+import sysconfig
 import threading
 import contextlib
 from enum import Enum
+from types import (
+    CodeType,
+    FrameType,
+    ModuleType,
+    MethodType,
+    FunctionType,
+    BuiltinFunctionType,
+)
+from typing import Literal, ClassVar, Optional, cast
 from pathlib import Path
 from datetime import datetime
 from collections import abc, deque
-from dataclasses import dataclass, field
-from types import CodeType, FrameType, ModuleType
-from typing import ClassVar, Literal, Optional, cast
+from dataclasses import field, dataclass
 
 from rich.text import Text
 from textual.validation import Regex
-from textual import app as textual_app
-from textual import events, screen, binding, widgets, containers
+from textual import (
+    events,
+    screen,
+    binding,
+    widgets,
+    containers,
+    app as textual_app,
+)
 
 from ..i18n import string
-from ..constants import APP_NAME
-from .buttons import CeluneButton
 from ..paths import running_compiled
-from .invoke import (
-    InvokeCallError,
-    InvokeParseError,
-    InvokeResolutionError,
-    invoke_expression,
+from .invoke import invoke_expression
+from .buttons import CeluneButton
+from ..constants import APP_NAME
+from ..exceptions import (
+    InvokeCallError as _InvokeCallError,
+    InvokeParseError as _InvokeParseError,
+    InvokeResolutionError as _InvokeResolutionError,
 )
 
 ComposeResult = textual_app.ComposeResult
@@ -569,7 +581,7 @@ class DebugCallTrace:
         ):
             return
         try:
-            if isinstance(callable_value, types.BuiltinFunctionType):
+            if isinstance(callable_value, BuiltinFunctionType):
                 module_name, name, special_method = _builtin_callable_metadata(
                     callable_value
                 )
@@ -1690,16 +1702,16 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
         """Invoke one expression and return its categorized result to the UI."""
         try:
             result = asyncio.run(invoke_expression(expression, engine))
-        except InvokeCallError as exc:
+        except _InvokeCallError as exc:
             error = exc.error
             detail = string(
                 "debug.invoke_call_error",
                 error_type=f"{type(error).__module__}.{type(error).__qualname__}",
                 message=str(error),
             )
-        except InvokeParseError as exc:
+        except _InvokeParseError as exc:
             detail = f"{string('debug.invoke_parse_error')}\n{exc}"
-        except InvokeResolutionError as exc:
+        except _InvokeResolutionError as exc:
             detail = f"{string('debug.invoke_resolution_error')}\n{exc}"
         except Exception as exc:
             detail = string(
@@ -2685,15 +2697,15 @@ def _codes_from_value(
     if value_id in visited:
         return
     value_type = type(value)
-    if value_type is types.FunctionType:
-        function = cast(types.FunctionType, value)
+    if value_type is FunctionType:
+        function = cast(FunctionType, value)
         visited.add(value_id)
         if function.__module__ != module_name:
             return
         yield from _walk_code(function.__code__, set())
         wrapped = getattr(function, "__wrapped__", None)
         wrapped_type = type(wrapped)
-        if wrapped_type is types.FunctionType:
+        if wrapped_type is FunctionType:
             yield from _codes_from_value(wrapped, visited, module_name)
         return
     if value_type is staticmethod:
@@ -2776,7 +2788,7 @@ def _qualified_callable_name(module_name: Optional[str], callable_value: object)
 
 @functools.lru_cache(maxsize=1024)
 def _builtin_callable_metadata(
-    callable_value: types.BuiltinFunctionType,
+    callable_value: BuiltinFunctionType,
 ) -> tuple[Optional[str], str, bool]:
     """Return cached source and display metadata for a built-in callable."""
     module_name = getattr(callable_value, "__module__", None)
@@ -2790,11 +2802,11 @@ def _builtin_callable_metadata(
 def _has_python_call_method(callable_type: type[object]) -> bool:
     """Return whether instances of this type use a Python ``__call__``."""
     call_method = inspect.getattr_static(callable_type, "__call__", None)
-    return isinstance(call_method, (types.FunctionType, types.MethodType))
+    return isinstance(call_method, (FunctionType, MethodType))
 
 
 def _is_python_callable(callable_value: object) -> bool:
-    if isinstance(callable_value, (types.FunctionType, types.MethodType)):
+    if isinstance(callable_value, (FunctionType, MethodType)):
         return True
     return _has_python_call_method(type(callable_value))
 

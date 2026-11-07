@@ -18,6 +18,23 @@ class ExtensionError(Exception):
     """General extension exception."""
 
 
+class InvokeParseError(ValueError):
+    """A debug invocation expression is malformed or uses unsupported syntax."""
+
+
+class InvokeResolutionError(LookupError):
+    """A debug invocation expression names an unavailable object."""
+
+
+class InvokeCallError(Exception):
+    """Wrap an exception raised while executing a debug invocation."""
+
+    def __init__(self, error: Exception) -> None:
+        """Retain the original exception raised by the invoked function."""
+        super().__init__(str(error))
+        self.error = error
+
+
 class TaskSubscriptionClosed(RuntimeError, CeluneError):
     """A task subscription was closed."""
 

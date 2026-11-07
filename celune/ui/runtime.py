@@ -447,7 +447,8 @@ def _publish_webui_timed_update(self) -> None:
         return
 
     try:
-        from ..cedts.ui import UiTimedUpdate, ui_timed_update_channel
+        from ..cedts.ui import ui_timed_update_channel
+        from ..dataclasses.ui import UiTimedUpdate
     except ImportError:
         return
 

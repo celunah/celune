@@ -4,10 +4,13 @@
 from __future__ import annotations
 
 import sys
+import queue as queue_module
 import asyncio
 import logging
 import itertools
 import threading
+from io import TextIOWrapper
+from types import ModuleType
 from typing import (
     TYPE_CHECKING,
     Never,
@@ -21,9 +24,6 @@ from typing import (
     final,
 )
 from pathlib import Path
-from io import TextIOWrapper
-from types import ModuleType
-import queue as queue_module
 from dataclasses import field, dataclass
 from collections.abc import Callable, Iterator, Awaitable
 
@@ -50,26 +50,26 @@ from . import (
     runtime as _runtime,
     interaction as _interaction,
 )
+from ..i18n import string, tagged_string
+from .theme import CELUNE_CSS, severity_color, with_brightness
+from .compat import install_textual_timer_sleep
+from .buttons import CeluneButton
+from .loading import CeluneLoadingScreen
+from .terminal import SelectMenuOption, SelectMenuWidget
+from ..watchdog import launcher_loss_requested
+from ..constants import BASE_SR, SIGTSTP, APP_NAME, ExitCodes
+from ..typing.agent import AgentTaskState
 from ..typing.locks import (
     ComponentLockName,
     ComponentLockOwner,
     ComponentLockRequirement,
 )
-from .buttons import CeluneButton
-from ..i18n import string, tagged_string
-from .loading import CeluneLoadingScreen
-from ..typing.agent import AgentTaskState
 from ..typing.modes import OperationState
-from ..registry.types import ModelMetadata
 from ..typing.common import JSONSerializable
-from ..watchdog import launcher_loss_requested
-from .compat import install_textual_timer_sleep
 from ..typing.config import AudioDeviceInfoValue
-from ..core.concurrency import run_in_daemon_thread
-from .terminal import SelectMenuOption, SelectMenuWidget
-from ..constants import BASE_SR, SIGTSTP, APP_NAME, ExitCodes
-from .theme import CELUNE_CSS, severity_color, with_brightness
+from ..registry.types import ModelMetadata
 from ..theme.defaults import default_theme_family, default_error_theme_family
+from ..core.concurrency import run_in_daemon_thread
 
 App = app.App
 ReturnType = app.ReturnType
@@ -139,12 +139,12 @@ if TYPE_CHECKING:
         DEFAULT_PERSONA_SPEECH_MODEL_ID,
         PERSONA_SPEECH_END_DELAY_SECONDS,
         PERSONA_SPEECH_NO_INPUT_TIMEOUT_SECONDS,
-        WhisperSegment,
         WhisperTranscriber,
     )
     from ..persona.impl import persona_config, persona_enabled, persona_talkback_enabled
     from ..typing.agent import AgentTask
     from ..typing.aliases import LogLevel, AudioChunk, AudioChunks, VCAudioCallback
+    from ..dataclasses.asr import WhisperSegment
     from ..core.concurrency import ComponentLockLease
     from ..extensions.events import EventDispatcher
     from ..pipeline.captions import current_playback_status
@@ -815,7 +815,6 @@ def ensure_ui_runtime_dependencies() -> None:
         DEFAULT_PERSONA_SPEECH_MODEL_ID,
         PERSONA_SPEECH_END_DELAY_SECONDS,
         PERSONA_SPEECH_NO_INPUT_TIMEOUT_SECONDS,
-        WhisperSegment,
         WhisperTranscriber,
     )
     from ..persona.impl import (
@@ -823,6 +822,7 @@ def ensure_ui_runtime_dependencies() -> None:
         persona_enabled,
         persona_talkback_enabled,
     )
+    from ..dataclasses.asr import WhisperSegment
     from ..pipeline.captions import current_playback_status
     from ..pipeline.submission import (
         queue_streaming_sfx_audio,

@@ -4,27 +4,30 @@
 from __future__ import annotations
 
 import threading
-from dataclasses import dataclass
-from collections.abc import Mapping, Callable, Sequence
 from typing import TYPE_CHECKING, Union, Optional, cast
+from collections.abc import Mapping, Callable, Sequence
 
-import torch
 import numpy as np
+import torch
 
-from ..typing.persona import (
-    WhisperScalar,
-    WhisperSegmentPayload,
-    WhisperGenerationPayload,
-    WhisperModel,
-    WhisperProcessor,
-)
-from ..audio.dsp import resample_audio
-from ..typing.aliases import AudioChunk
 from ..paths import huggingface_progress
 from ..registry import get_model_metadata
-from ..registry.consent import require_model_consent
-from ..registry.asr import DEFAULT_PERSONA_SPEECH_MODEL_ID
+from ..audio.dsp import resample_audio
 from ..exceptions import ModelConsentDeclined, ModelConsentRequired
+from ..registry.asr import DEFAULT_PERSONA_SPEECH_MODEL_ID
+from ..typing.aliases import AudioChunk
+from ..typing.persona import (
+    WhisperModel,
+    WhisperScalar,
+    WhisperProcessor,
+    WhisperSegmentPayload,
+    WhisperGenerationPayload,
+)
+from ..dataclasses.asr import (
+    WhisperWord as _WhisperWord,
+    WhisperSegment as _WhisperSegment,
+)
+from ..registry.consent import require_model_consent
 
 if TYPE_CHECKING:
     # noinspection PyPep8Naming
@@ -36,25 +39,6 @@ if TYPE_CHECKING:
 PERSONA_SPEECH_NO_INPUT_TIMEOUT_SECONDS = 5.0
 PERSONA_SPEECH_END_DELAY_SECONDS = 1.5
 WHISPER_SAMPLE_RATE = 16000
-
-
-@dataclass(frozen=True)
-class WhisperWord:
-    """One Whisper-aligned word with audio-relative timestamps."""
-
-    text: str
-    start: float
-    end: float
-
-
-@dataclass(frozen=True)
-class WhisperSegment:
-    """One timestamped segment returned by Whisper."""
-
-    text: str
-    start: float
-    end: float
-    words: tuple[WhisperWord, ...] = ()
 
 
 class WhisperTranscriber:
@@ -153,7 +137,7 @@ class WhisperTranscriber:
         audio: AudioChunk,
         sample_rate: int,
         return_segments: bool = False,
-    ) -> Union[str, tuple[WhisperSegment, ...]]:
+    ) -> Union[str, tuple[_WhisperSegment, ...]]:
         """Serialize one Whisper inference and decode its result."""
         with self._inference_lock:
             return self._decode_unlocked(audio, sample_rate, return_segments)
@@ -163,7 +147,7 @@ class WhisperTranscriber:
         audio: AudioChunk,
         sample_rate: int,
         return_segments: bool = False,
-    ) -> Union[str, tuple[WhisperSegment, ...]]:
+    ) -> Union[str, tuple[_WhisperSegment, ...]]:
         """Prepare audio, generate Whisper tokens, and decode the transcript."""
         self._load_model()
         processor = self._processor
@@ -217,7 +201,7 @@ class WhisperTranscriber:
     def _decode_segments(
         processor: WhisperProcessor,
         generated: WhisperGenerationPayload,
-    ) -> tuple[WhisperSegment, ...]:
+    ) -> tuple[_WhisperSegment, ...]:
         """Extract timestamped text segments from a Whisper generation result."""
         if not isinstance(generated, Mapping):
             return ()
@@ -232,7 +216,7 @@ class WhisperTranscriber:
                 return ()
             segment_items = first_batch
 
-        segments: list[WhisperSegment] = []
+        segments: list[_WhisperSegment] = []
         for raw_segment in segment_items:
             if not isinstance(raw_segment, Mapping):
                 continue
@@ -266,7 +250,7 @@ class WhisperTranscriber:
                     end_value,
                 )
                 segments.append(
-                    WhisperSegment(
+                    _WhisperSegment(
                         text=text,
                         start=start_value,
                         end=end_value,
@@ -281,7 +265,7 @@ class WhisperTranscriber:
         raw_segment: WhisperSegmentPayload,
         segment_start: float,
         segment_end: float,
-    ) -> tuple[WhisperWord, ...]:
+    ) -> tuple[_WhisperWord, ...]:
         """Group Whisper token timestamps into word-level timing ranges."""
         tokens = raw_segment.get("tokens")
         indexes = raw_segment.get("idxs")
@@ -312,7 +296,7 @@ class WhisperTranscriber:
         if not callable(decode_token):
             return ()
 
-        words: list[WhisperWord] = []
+        words: list[_WhisperWord] = []
         current_text = ""
         current_start: Optional[float] = None
 
@@ -340,7 +324,7 @@ class WhisperTranscriber:
             starts_word = bool(current_text) and token_text[:1].isspace()
             if starts_word:
                 words.append(
-                    WhisperWord(
+                    _WhisperWord(
                         text=current_text.strip(),
                         start=max(segment_start, current_start or segment_start),
                         end=max(
@@ -359,7 +343,7 @@ class WhisperTranscriber:
 
         if current_text.strip():
             words.append(
-                WhisperWord(
+                _WhisperWord(
                     text=current_text.strip(),
                     start=max(segment_start, current_start or segment_start),
                     end=max(segment_start, current_start or segment_start, segment_end),
@@ -423,7 +407,7 @@ class WhisperTranscriber:
         self,
         audio: AudioChunk,
         sample_rate: int,
-    ) -> tuple[WhisperSegment, ...]:
+    ) -> tuple[_WhisperSegment, ...]:
         """Transcribe speech and return timestamped Whisper segments.
 
         Args:
@@ -431,7 +415,7 @@ class WhisperTranscriber:
             sample_rate: Sample rate of the audio in hertz.
 
         Returns:
-            tuple[WhisperSegment, ...]: Timestamped speech segments, or an empty
+            tuple[_WhisperSegment, ...]: Timestamped speech segments, or an empty
                 tuple when Whisper does not provide segment timestamps.
 
         Raises:
