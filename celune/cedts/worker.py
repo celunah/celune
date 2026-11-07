@@ -6,6 +6,7 @@ import sys
 import json
 import math
 import time
+import errno
 import argparse
 import threading
 import traceback
@@ -53,6 +54,7 @@ from ..typing.backends import (
     BackendArguments,
     BackendDescription,
 )
+from ..constants import APP_NAME
 from ..typing.aliases import LogLevel
 from ..cevoice import select_voice_bundle
 from ..paths import configure_numba_cache
@@ -214,6 +216,10 @@ def _open_binary_streams(args: argparse.Namespace) -> tuple[IO[bytes], IO[bytes]
         binary_input_fd = None
         binary_output = os.fdopen(binary_output_fd, "wb", buffering=0)
         binary_output_fd = None
+    except OSError as fderr:
+        if fderr.errno == errno.EBADF:
+            raise CEDTSStreamError(f"not connected to {APP_NAME}") from fderr
+        raise
     except Exception:
         for stream in (binary_input, binary_output):
             if stream is not None:
