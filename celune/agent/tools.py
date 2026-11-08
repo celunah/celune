@@ -11,13 +11,15 @@ import shutil
 import datetime
 import platform
 import subprocess
-from typing import TYPE_CHECKING, Optional, cast
 from pathlib import Path
 from dataclasses import dataclass
 from collections.abc import Mapping, Callable
+from typing import TYPE_CHECKING, Optional, cast
 
 import psutil
 
+from ..typing.modes import OperationMode
+from ..typing.common import JSON, JSONSerializable
 from ..utils import clear_queue, format_error_message
 from ..exceptions import LocalManagementError as _LocalManagementError
 from ..typing.agent import (
@@ -32,8 +34,6 @@ from ..typing.agent import (
     AgentToolArgumentSchema,
     AgentToolExecutionStatus,
 )
-from ..typing.modes import OperationMode
-from ..typing.common import JSON, JSONSerializable
 
 if TYPE_CHECKING:
     from ..celune import Celune
@@ -692,11 +692,12 @@ def _resolve_local_executable(executable: str) -> Optional[str]:
 
     if os.name != "nt" or Path(executable).name != executable:
         return None
-    windows_directory = os.environ.get("WINDIR") or os.environ.get("SystemRoot")
+    windows_directory = os.environ.get("WINDIR") or os.environ.get("SystemRoot") or ""
     if not windows_directory:
         return None
+    windows_root = Path(windows_directory)
     search_path = os.pathsep.join(
-        str(Path(windows_directory) / directory) for directory in ("System32", ".")
+        str(windows_root / directory) for directory in ("System32", ".")
     )
     return shutil.which(executable, path=search_path)
 
