@@ -274,6 +274,27 @@ class TestPersonaMemory(CeluneTestCase):
 
             assert [record.content for record in retrieved] == [memory]
 
+    def test_literal_recall_match_ranks_ahead_of_semantic_only_results(self) -> None:
+        """Prefer a strong literal phrase match over less specific semantic hits."""
+        request = "the Celune agent smoke test memory"
+        literal_match = "Celune agent smoke test 20261106"
+        semantic_match = "The user enjoys memory retrieval preferences"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = StubEmbeddingMemoryStore(
+                storage_dir=temp_dir,
+                embedding_map={
+                    request: (1.0, 0.0, 0.0),
+                    literal_match: (0.8, 0.6, 0.0),
+                    semantic_match: (1.0, 0.0, 0.0),
+                },
+            )
+            store.remember("Celune", literal_match, importance=1, explicit=True)
+            store.remember("Celune", semantic_match, importance=3, explicit=True)
+
+            retrieved = store.retrieve("Celune", request)
+
+            assert retrieved[0].content == literal_match
+
     def test_semantic_retrieval_rejects_unrelated_memory(self) -> None:
         """Verify unrelated memories are ignored when semantic similarity is low."""
         with tempfile.TemporaryDirectory() as temp_dir:

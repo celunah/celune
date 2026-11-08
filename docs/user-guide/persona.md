@@ -90,9 +90,11 @@ The classifier may suggest additional memories when its confidence is above
 the configured threshold and the candidate count is within the configured
 limit. It uses user-authored messages, not Celune's generated replies, as
 evidence. Sensitive-looking secrets, passwords, API keys, payment numbers, and
-similar credentials are rejected rather than stored. Retrieval uses a local
-sentence-transformer embedding when available and falls back to token overlap;
-the configured thresholds control both paths. Inferred memories stop being
+similar credentials are rejected rather than stored. Retrieval combines local
+sentence-transformer similarity with literal token and phrase overlap when
+embeddings are available, and uses token overlap when they are not; configured
+thresholds control candidate eligibility. Explicit `recall` commands preserve
+the search phrase from the original user request. Inferred memories stop being
 retrieved 60 days after their last update by default; explicit memories remain
 available until forgotten. Set `persona.memory.automatic_max_age_days` to
 `null` to disable inferred-memory expiry. Exact duplicates are merged, and
