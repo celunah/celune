@@ -25,8 +25,6 @@ from ..config import (
     config_api_settings,
     normalize_log_level,
     config_backend_options,
-)
-from ..config import (
     config_int as _config_int,
 )
 from ..cevoice import (
@@ -38,7 +36,6 @@ from ..cevoice import (
 from ..constants import (
     APP_NAME,
     AGENT_MAX_LOOPS,
-    AGENT_COMPACT_AT,
     AGENT_CONTEXT_SPACE,
     DEFAULT_TARGET_CHUNK_LENGTH_SECONDS,
 )
@@ -50,11 +47,12 @@ from ..agent.tools import (
 )
 from ..persona.impl import (
     PersonaClient,
-    persona_enabled,
-    persona_model_id,
-    persona_is_available,
-    persona_quantization,
     create_persona_client,
+    persona_compact_at,
+    persona_enabled,
+    persona_is_available,
+    persona_model_id,
+    persona_quantization,
 )
 from ..typing.locks import (
     ComponentLockName,
@@ -894,13 +892,7 @@ def agent_task_config(config: Config) -> AgentTaskConfig:
         context_size=min(
             positive("context_size", AGENT_CONTEXT_SPACE), AGENT_CONTEXT_SPACE
         ),
-        compact_at=(
-            values["compact_at"]
-            if isinstance(values.get("compact_at"), int)
-            and not isinstance(values["compact_at"], bool)
-            and 1 <= values["compact_at"] <= 100
-            else AGENT_COMPACT_AT
-        ),
+        compact_at=persona_compact_at(config),
     )
 
 

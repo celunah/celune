@@ -24,7 +24,8 @@ The production limits are:
 - Up to 8,192 tokens of agent context space.
 - Up to 256 output tokens for input classification, with one repair attempt for
   rejected output.
-- Compaction pressure around 6,144 tokens by default.
+- Compaction pressure around 6,144 tokens by default, controlled by the shared
+  `persona.compact_at` setting.
 - A stuck-task threshold of three repeated non-progress outcomes.
 
 The agent can speak its final result through the standard `say()` path. The

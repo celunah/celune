@@ -31,10 +31,12 @@ boundaries, prompt rules, examples, and per-voice refinements. The shared
 character layer is combined with the selected voice layer; changing voice does
 not discard the character identity.
 
-The default short-term history keeps up to 20 messages. When compaction is
-enabled, the runtime retains the configured recent messages and asks a neutral
-summarizer to produce a bounded summary. Compaction prevents an ever-growing
-conversation from consuming the Persona context window.
+The default short-term history keeps up to 20 messages. The shared
+`persona.compact_at` setting controls when conversation history is compacted in
+both `converse` and `agent` modes. When context summarization is enabled, the
+runtime retains the configured recent messages and asks a neutral summarizer to
+produce a bounded summary. In agent mode, the same percentage is applied to the
+larger agent context window.
 
 ## Text and speech input
 

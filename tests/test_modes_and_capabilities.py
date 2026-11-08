@@ -77,6 +77,16 @@ class TestOperationMode(CeluneTestCase):
         )
         assert agent_task_config({}).context_size == 8192
 
+    def test_agent_compaction_uses_the_shared_persona_setting(self) -> None:
+        """Use Persona's compaction percentage for agent context pressure."""
+        config: Config = {
+            "persona": {"compact_at": 40},
+            "agent": {"compact_at": 25},
+        }
+
+        assert agent_task_config(config).compact_at == 40
+        assert agent_task_config(config).context_compaction_threshold == 3276
+
 
 class TestPersonaCapabilities(CeluneTestCase):
     """Verify Persona capability declarations are explicit and architecture-aware."""

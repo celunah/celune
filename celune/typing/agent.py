@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-from enum import Enum
 from typing import (
     TYPE_CHECKING,
     Union,
@@ -13,13 +12,14 @@ from typing import (
     NotRequired,
     cast,
 )
-from dataclasses import field, dataclass
+from enum import Enum
 from collections.abc import Sequence
+from dataclasses import field, dataclass
 
-from .locks import ComponentBusyResult
 from .modes import OperationMode
+from .locks import ComponentBusyResult
 from .common import JSON, JSONSerializable
-from ..constants import AGENT_MAX_LOOPS, AGENT_COMPACT_AT, AGENT_CONTEXT_SPACE
+from ..constants import AGENT_CONTEXT_SPACE, AGENT_MAX_LOOPS, PERSONA_COMPACT_AT
 
 if TYPE_CHECKING:
     from ..persona.capabilities import PersonaCapabilities
@@ -589,7 +589,7 @@ class AgentTaskConfig:
     max_loops: int = AGENT_MAX_LOOPS
     max_tokens: Optional[int] = None
     context_size: int = AGENT_CONTEXT_SPACE
-    compact_at: int = AGENT_COMPACT_AT
+    compact_at: int = PERSONA_COMPACT_AT
     stuck_task_threshold: int = 3
 
     def __post_init__(self) -> None:

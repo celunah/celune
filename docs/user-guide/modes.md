@@ -71,7 +71,8 @@ accepts a request asynchronously and returns `202` when the turn is accepted.
 Agent mode extends Persona with a typed, allowlisted tool catalog. A task can
 plan, call read-only tools, pause for approval, execute an approved mutating
 tool, and answer through the speech pipeline. The production limits are 20
-loops, up to 8,192 context tokens, and compaction at 75 percent. See
+loops, up to 8,192 context tokens, and the shared Persona compaction threshold
+(75 percent by default). See
 [Agent mode](agent.md) for every built-in tool family and its permissions.
 Persona and standard agent models require at least the `high` VRAM preset.
 Smart 8B-tier Persona models require `xhigh`. An incompatible preset disables

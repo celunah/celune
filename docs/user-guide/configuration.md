@@ -289,10 +289,10 @@ persona:
 
 Persona is available in `converse` and `agent` modes; it is not enabled or
 disabled through a Persona-local switch. `context_size` bounds each ordinary
-Persona request, `compact_at` documents the context percentage at which
-history should be compacted, and `max_turns: null` leaves the turn count
-unbounded unless the memory settings impose a shorter history. Context is
-capped at 2,048 tokens outside agent mode and 8,192 tokens in agent mode.
+Persona request, and `max_turns: null` leaves the turn count unbounded unless
+the memory settings impose a shorter history. The shared `compact_at` setting
+controls compaction in both modes. It is measured against each mode's context
+size, capped at 2,048 tokens outside agent mode and 8,192 tokens in agent mode.
 
 Persona, Qwen3, FireRedTTS3, and VoxCPM2 use the configured
 `quantize_kv_cache` policy for supported CUDA caches. Older keys and values
@@ -322,7 +322,6 @@ agent:
   max_loops: 20
   max_tokens: null
   context_size: 8192
-  compact_at: 75
 ```
 
 `fs_tools` enables the local filesystem and process tool catalog. Agent task
@@ -334,12 +333,13 @@ the current input and active task
 metadata; they do not retain conversational history. Persona generation
 requests use the configured KV-cache policy and release unused CUDA allocator
 blocks after each response. In agent mode, Celune records the actual prompt and
-completion token counts. `compact_at` triggers compaction of older Persona
-history according to the memory settings. Celune updates the task's history
-snapshot and uses a new request-scoped cache for the next generation, releasing
-the previous generation's cache and pruned history references. Compaction is a
-soft threshold; `context_size` remains the hard maximum for the prompt and its
-response.
+completion token counts. The shared `persona.compact_at` setting triggers
+compaction of older Persona history according to the memory settings. In agent
+mode, its percentage is applied to the agent's configured context size. Celune
+updates the task's history snapshot and uses a new request-scoped cache for the
+next generation, releasing the previous generation's cache and pruned history
+references. Compaction is a soft threshold; `context_size` remains the hard
+maximum for the prompt and its response.
 
 Persona is independent of TTS backend selection. The model registry in
 `celune.constants` pins allowed remote-code revisions; changing a model ID does

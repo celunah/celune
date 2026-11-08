@@ -143,7 +143,6 @@ agent:
   max_loops: 20
   max_tokens: null
   context_size: 8192
-  compact_at: 75
 
 # VRAM target settings
 # we recommend choosing medium as a safe baseline for low VRAM users
