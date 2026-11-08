@@ -103,6 +103,9 @@ working directory; Celune resolves them before access. Filesystem mutation
 paths must remain absolute so approval identifies the exact target. Process
 and application termination requires an expected name so a stale PID cannot
 be used blindly. The agent never turns a free-form prompt into a shell command.
+`local_file_metadata` reports `created_at` and `modified_at` as local ISO 8601
+timestamps with an explicit UTC offset; creation time is `null` when the
+operating system does not expose it.
 Process launch resolves executable names through `PATH` and, on Windows, also
 checks the Windows system directories. Arguments are passed as a structured
 list, and shell execution remains disabled.

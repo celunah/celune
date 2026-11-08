@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import os
+import datetime
 from types import SimpleNamespace
 from typing import Optional, cast
 from pathlib import Path
@@ -15,8 +16,8 @@ from celune.celune import Celune
 from celune.agent.tools import (
     OfflineAgentTool,
     local_management_tools,
-    infer_local_tool_arguments,
     recover_local_tool_call,
+    infer_local_tool_arguments,
     local_management_tool_schemas,
 )
 from celune.typing.agent import (
@@ -29,8 +30,8 @@ from celune.typing.agent import (
 from celune.typing.modes import OperationMode
 from celune.persona.capabilities import PersonaCapabilities
 
-from ..platform import WINDOWS_ONLY
 from ..support import CeluneTestCase
+from ..platform import WINDOWS_ONLY
 
 
 class TestLocalManagementTools(CeluneTestCase):
@@ -317,11 +318,20 @@ class TestLocalManagementTools(CeluneTestCase):
         assert output["path"] == str(root)
 
     def test_single_path_file_tools_recover_the_requested_path(self) -> None:
-        """Recover exact paths for metadata, read, write, and delete operations."""
+        """Recover paths and return explicit local ISO timestamps for metadata."""
         with TemporaryDirectory(prefix="celune agent ") as directory:
             root = Path(directory).resolve()
             source = root / "source.txt"
             source.write_text("source contents", encoding="utf-8")
+            modified_timestamp = datetime.datetime(
+                2026,
+                11,
+                8,
+                17,
+                47,
+                tzinfo=datetime.UTC,
+            ).timestamp()
+            os.utime(source, (modified_timestamp, modified_timestamp))
             metadata = self._tool("local_file_metadata").execute(
                 {
                     "id": "metadata-recovered-path",
@@ -330,6 +340,33 @@ class TestLocalManagementTools(CeluneTestCase):
                 },
                 self._context("Inspect the requested file.", f'Inspect "{source}".'),
             )
+            assert metadata["status"] == AgentToolExecutionStatus.SUCCEEDED
+            metadata_output = cast(dict[str, object], metadata["output"])
+            source_stat = source.stat()
+            expected_created_timestamp = getattr(source_stat, "st_birthtime", None)
+            expected_created = (
+                None
+                if expected_created_timestamp is None
+                else datetime.datetime.fromtimestamp(
+                    expected_created_timestamp,
+                    tz=datetime.UTC,
+                )
+                .astimezone()
+                .isoformat(timespec="seconds")
+            )
+            expected_modified = (
+                datetime.datetime.fromtimestamp(
+                    modified_timestamp,
+                    tz=datetime.UTC,
+                )
+                .astimezone()
+                .isoformat(timespec="seconds")
+            )
+            assert metadata_output["path"] == str(source)
+            assert metadata_output["created_at"] == expected_created
+            assert metadata_output["modified_at"] == expected_modified
+            assert "modified" not in metadata_output
+
             read = self._tool("local_read_text").execute(
                 {
                     "id": "read-recovered-path",
@@ -368,8 +405,6 @@ class TestLocalManagementTools(CeluneTestCase):
             assert target.read_text(encoding="utf-8") == "saved"
             assert not deleted.exists()
 
-        assert metadata["status"] == AgentToolExecutionStatus.SUCCEEDED
-        assert cast(dict[str, object], metadata["output"])["path"] == str(source)
         assert read["status"] == AgentToolExecutionStatus.SUCCEEDED
         assert cast(dict[str, object], read["output"])["text"] == "source contents"
         assert write["status"] == AgentToolExecutionStatus.SUCCEEDED

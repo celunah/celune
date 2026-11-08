@@ -8,6 +8,7 @@ import re
 import sys
 import time
 import shutil
+import datetime
 import platform
 import subprocess
 from typing import TYPE_CHECKING, Optional, cast
@@ -856,7 +857,7 @@ def _local_list_directory(
 def _local_file_metadata(
     _engine: Celune, call: ToolCall, context: AgentContext
 ) -> JSON:
-    """Return metadata for one exact local filesystem target."""
+    """Return metadata with explicit local creation and modification timestamps."""
     call = recover_local_tool_call(call, context)
     path = _local_path(call, "path", allow_relative=True)
     if not path.exists():
@@ -865,13 +866,29 @@ def _local_file_metadata(
         stat = path.stat()
     except OSError as exc:
         raise _local_access(path, exc) from exc
+    created_timestamp = getattr(stat, "st_birthtime", None)
     return {
         "result": "success",
         "path": str(path),
         "kind": "directory" if path.is_dir() else "file",
         "size": stat.st_size,
-        "modified": stat.st_mtime,
+        "created_at": _local_iso_timestamp(created_timestamp),
+        "modified_at": _local_iso_timestamp(stat.st_mtime),
     }
+
+
+def _local_iso_timestamp(timestamp: Optional[float]) -> Optional[str]:
+    """Format one file timestamp as local ISO 8601 with its UTC offset."""
+    if timestamp is None:
+        return None
+    return (
+        datetime.datetime.fromtimestamp(
+            timestamp,
+            tz=datetime.UTC,
+        )
+        .astimezone()
+        .isoformat(timespec="seconds")
+    )
 
 
 def _local_read_text(_engine: Celune, call: ToolCall, context: AgentContext) -> JSON:
@@ -1502,7 +1519,7 @@ _LOCAL_SPECS = (
     _spec(
         "local_file_metadata",
         "File metadata",
-        "Read metadata for one exact local path.",
+        "Read size and local ISO creation and modification times for one exact local path.",
         _local_file_metadata,
         arguments=(
             _arg(
