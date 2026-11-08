@@ -766,6 +766,8 @@ class TestPipelineAsync(CeluneAsyncTestCase):
             )
         )
         assert "Begin by stating the exact resolved path" in list_prompt
+        assert "This is a final response" in list_prompt
+        assert "including retrying" in list_prompt
 
     def test_named_celune_custom_pack_does_not_use_default_identity(self) -> None:
         """Verify custom packs named Celune do not inherit default identity fields."""

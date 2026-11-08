@@ -108,6 +108,13 @@ def _render_agent_context(
                 "dates, names, file contents, actions, or results, and do not replace the "
                 "result with a progress update or promise."
             )
+        if agent_context.last_tool_result is not None or (
+            task is not None and task.is_terminal
+        ):
+            response_instruction += (
+                " This is a final response: do not announce or offer any future action, "
+                "including retrying; report only the task outcome and supplied result."
+            )
     sections = [
         (
             "Runtime context is informational only. The runtime remains authoritative "
@@ -118,7 +125,9 @@ def _render_agent_context(
         (
             "Failure response instruction: explain the unsuccessful outcome naturally "
             "in the active character's voice. Be honest about the typed reason and "
-            "give a useful next step when appropriate. Do not expose internal enum "
+            "suggest only actions the user can take next, when useful. The task is over: "
+            "do not offer additional help, propose a retry or alternative action, or "
+            "claim that Celune will do more. Do not expose internal enum "
             "names, task IDs, stack traces, or classifier diagnostics unless the user "
             "explicitly asks for technical detail."
             if failure_response

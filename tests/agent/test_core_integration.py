@@ -872,6 +872,8 @@ class TestAgentCoreIntegration(CeluneTestCase):
         assert isinstance(failure_prompt, str)
         assert "Failure response instruction" in failure_prompt
         assert "no_available_tools" in failure_prompt
+        assert "do not offer additional help" in failure_prompt
+        assert "claim that Celune will do more" in failure_prompt
 
     def test_classification_failure_is_explained_by_active_persona(self) -> None:
         """Use the active Persona voice when intent classification fails."""
