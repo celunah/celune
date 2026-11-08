@@ -118,7 +118,6 @@ def safe_caption_progress(
     ):
         return
 
-    # Keep the callback contract; aligned word counts now drive caption timing.
     del progress
     if visible_words is None:
         self._run_on_ui_thread(self._hide_caption_widgets)

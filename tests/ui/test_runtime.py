@@ -1,9 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for Textual status, command, and runtime presentation behavior."""
 
-# Import groups follow Celune's project-specific Ruff ordering.
-# pylint: disable=ungrouped-imports
-
 import sys
 import asyncio
 import textwrap

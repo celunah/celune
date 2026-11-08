@@ -731,6 +731,7 @@ raise SystemExit(worker.main())
         self, packet_kind: str, operation: str = "preload_models"
     ) -> float:
         """Verify control traffic remains responsive during a blocking request."""
+        # mock Celune backend for testing purposes
         child_code = """
 import os
 import threading
@@ -748,7 +749,6 @@ def signal_operation_started():
 
 
 def wait_for_release():
-    # Keep the fake backend operation blocked until the parent releases it.
     os.read(release_fd, 1)
 
 
@@ -812,7 +812,6 @@ real_send_message = worker._send_message
 def controlled_send_message(
     protocol_stream, binary_output, packet, send_lock, *, limits
 ):
-    # Hold shutdown completion until the released operation has cleaned up.
     real_send_message(
         protocol_stream,
         binary_output,

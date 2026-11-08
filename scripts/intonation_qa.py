@@ -183,7 +183,6 @@ def print_contour(
         else:
             point_rows.append(None)
 
-    # Join neighboring voiced bins into a visible trace, but preserve pauses.
     for column in range(1, len(point_rows)):
         previous = point_rows[column - 1]
         current = point_rows[column]

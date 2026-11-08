@@ -1020,7 +1020,7 @@ def _doctor_checks() -> list[DoctorCheck]:
         hint=f"{APP_NAME} setup uses uv to sync Python dependencies.",
     )
 
-    # CEDTS worker manifests own backend-specific packages; probe core imports here only.
+    # core imports only, Celune automatically sets up her backend environments with CEDTS
     required_imports = [
         ("yaml", "PyYAML", f"{APP_NAME} needs YAML support for config loading."),
         ("psutil", "psutil", f"{APP_NAME} uses psutil for process checks."),

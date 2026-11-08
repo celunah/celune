@@ -1,9 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for runtime and platform environment validation."""
 
-# Import groups follow Celune's project-specific Ruff ordering.
-# pylint: disable=ungrouped-imports
-
 from unittest import mock
 
 import pytest

@@ -984,7 +984,6 @@ def _decode_value(value: object, payloads: Mapping[str, WorkerPayload]) -> Worke
             sample_rate = _typed_int(value.get("sample_rate"), "sample_rate")
             _typed_optional(value.get("target_voice"), str, "target_voice")
             _typed_optional(value.get("target_character"), str, "target_character")
-            # Older clients may still send this retired output pitch control.
             _typed_optional(value.get("pitch_shift"), int, "pitch_shift")
             _typed_optional(value.get("f0_condition"), bool, "f0_condition")
             return VoiceConversionRequest(

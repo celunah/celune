@@ -1,9 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for Textual startup and lightweight runtime initialization."""
 
-# Import groups follow Celune's project-specific ordering.
-# pylint: disable=ungrouped-imports
-
 import sys
 import time
 import queue

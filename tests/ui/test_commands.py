@@ -1,9 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for Textual command routing and agent-status presentation."""
 
-# Import groups follow Celune's project-specific Ruff ordering.
-# pylint: disable=ungrouped-imports
-
 import tempfile
 from pathlib import Path
 from unittest import mock

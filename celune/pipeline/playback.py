@@ -734,7 +734,7 @@ def play_signal(engine: Celune, signal_type: str) -> bool:
 
     # if a pipeline lock is already held or was not initialized this can cause
     # Celune to become deadlocked, or it won't have an effect, so please call
-    # engine.try_play_signal() instead of calling this method directly.
+    # engine.try_play_signal() instead of calling this method directly
     if signal_type == "readiness":
         source_id = next_playback_source_id(engine)
         state_event = register_overlay_playback(engine)
