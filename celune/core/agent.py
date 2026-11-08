@@ -5,15 +5,19 @@ from __future__ import annotations
 
 import re
 import threading
-from collections.abc import Sequence
 from typing import Union, Optional, cast
+from collections.abc import Sequence
 
 from ..i18n import string
+from ..paths import huggingface_progress
+from ..utils import format_error_message
 from ..exceptions import (
     ModelConsentDeclined,
     ModelConsentRequired,
     NeedleSelectionError,
 )
+from .conversation import deliver_persona_response, wait_for_persona_playback
+from ..agent.needle import NeedleToolSelector
 from ..typing.agent import (
     ToolCall,
     AgentOutput,
@@ -31,11 +35,7 @@ from ..typing.agent import (
     AgentClassificationResult,
     AgentClassificationFailure,
 )
-from ..paths import huggingface_progress
-from ..utils import format_error_message
-from ..agent.needle import NeedleToolSelector
 from ..typing.locks import ComponentLockName
-from .conversation import deliver_persona_response, wait_for_persona_playback
 
 _UNSAFE_AGENT_PREAMBLE_RE = re.compile(
     r"\b(?:i\s+will|i['’]ll|let\s+me|ready|available|standing|"
@@ -61,6 +61,17 @@ def _is_plain_agent_preamble(text: str) -> bool:
         )
         and _UNSAFE_AGENT_PREAMBLE_RE.search(normalized) is None
     )
+
+
+def _include_approval_choices(text: str) -> str:
+    """Ensure spoken approval requests name both recognized reply words."""
+    choices = {
+        match.group(0).casefold()
+        for match in re.finditer(r"\b(?:approve|deny)\b", text, re.IGNORECASE)
+    }
+    if {"approve", "deny"}.issubset(choices):
+        return text
+    return f"{text.rstrip()} {string('agent.approval_reply_hint')}"
 
 
 def _wait_for_persona_initialization(self) -> bool:
@@ -441,6 +452,7 @@ def run_agent_route(self, route: AgentClassificationResult) -> bool:
                         "warning",
                         loglevel="verbose",
                     )
+                approval_text = _include_approval_choices(approval_text)
                 if not deliver_persona_response(
                     self,
                     request.request,

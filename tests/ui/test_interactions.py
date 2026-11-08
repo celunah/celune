@@ -34,6 +34,7 @@ from celune.ui.app import (
     ProgressLabel,
 )
 from celune.ui.theme import severity_color
+from celune.typing.agent import AgentTaskState
 from celune.typing.common import JSONSerializable
 from celune.dataclasses.events import AgentTaskFinishedEvent
 
@@ -84,7 +85,11 @@ class TestUIInteractions(CeluneTestCase):
 
     def test_tts_queue_status_keeps_active_agent_state_visible(self) -> None:
         """Keep the agent task state visible while an agent utterance plays."""
-        active_task = SimpleNamespace(task_id="active-task")
+        active_task = SimpleNamespace(
+            task_id="active-task",
+            state=AgentTaskState.WORKING,
+            is_terminal=False,
+        )
         celune = SimpleNamespace(
             test_finished=False,
             locked=True,
@@ -169,7 +174,7 @@ class TestUIInteractions(CeluneTestCase):
         self,
     ) -> None:
         """Preserve the running task status when one agent utterance finishes."""
-        active_task = SimpleNamespace(task_id="active-task")
+        active_task = SimpleNamespace(task_id="active-task", is_terminal=False)
         celune = SimpleNamespace(
             test_finished=False,
             agent_runtime=SimpleNamespace(
@@ -207,6 +212,109 @@ class TestUIInteractions(CeluneTestCase):
         assert celune.cur_state == "speaking"
         refresh_status.assert_called_once()
         safe_status.assert_not_called()
+
+    def test_approval_status_survives_the_approval_prompt_playback(self) -> None:
+        """Restore the pending approval status after its speech finishes."""
+        pending_task = SimpleNamespace(
+            task_id="approval-task",
+            state=AgentTaskState.AWAITING_APPROVAL,
+            is_terminal=False,
+            iterations=0,
+            needs_context_compaction=False,
+            config=SimpleNamespace(max_loops=20),
+        )
+        runtime = SimpleNamespace(
+            get_active_task=mock.Mock(return_value=None),
+            get_task=mock.Mock(return_value=pending_task),
+        )
+        celune = SimpleNamespace(
+            test_finished=False,
+            agent_runtime=runtime,
+            _maintain_status_after_playback=True,
+            cur_state="speaking",
+            locked=True,
+            sleeping=False,
+            is_in_tutorial=False,
+            voices=("balanced",),
+            last_component_busy=None,
+        )
+        safe_status = mock.Mock()
+        ui = cast(
+            CeluneUI,
+            SimpleNamespace(
+                celune=celune,
+                cur_state="idle",
+                celune_ready=True,
+                _agent_task_id="approval-task",
+                _agent_status_signature=("approval-task", "stale-speaking"),
+                _agent_status_text=ui_runtime._agent_status_text,
+                _agent_task_for_display=lambda: ui_runtime._agent_task_for_display(ui),
+                _refresh_agent_status=lambda: ui_runtime._refresh_agent_status(ui),
+                _hide_caption_widgets=mock.Mock(),
+                _is_agent_test_mode=mock.Mock(return_value=False),
+                change_input_state=mock.Mock(),
+                change_voice_lock_state=mock.Mock(),
+                safe_status=safe_status,
+                _schedule_sleep_timer=mock.Mock(),
+            ),
+        )
+
+        CeluneUI.tts_idle(ui)
+
+        assert not celune._maintain_status_after_playback
+        assert celune.cur_state == "speaking"
+        safe_status.assert_called_once_with(
+            string("agent.status.awaiting_approval"), "info"
+        )
+
+    def test_approval_status_survives_queue_start(self) -> None:
+        """Do not replace a pending approval label with the generic speaking label."""
+        pending_task = SimpleNamespace(
+            task_id="approval-task",
+            state=AgentTaskState.AWAITING_APPROVAL,
+            is_terminal=False,
+            iterations=0,
+            needs_context_compaction=False,
+            config=SimpleNamespace(max_loops=20),
+        )
+        runtime = SimpleNamespace(
+            get_active_task=mock.Mock(return_value=None),
+            get_task=mock.Mock(return_value=pending_task),
+        )
+        celune = SimpleNamespace(
+            test_finished=False,
+            locked=True,
+            is_in_tutorial=False,
+            voices=("balanced",),
+            agent_runtime=runtime,
+            last_component_busy=None,
+        )
+        safe_status = mock.Mock()
+        ui = cast(
+            CeluneUI,
+            SimpleNamespace(
+                celune=celune,
+                cur_state="idle",
+                celune_ready=True,
+                _agent_task_id="approval-task",
+                _agent_status_signature=("approval-task", "stale-speaking"),
+                _agent_status_text=ui_runtime._agent_status_text,
+                _agent_task_for_display=lambda: ui_runtime._agent_task_for_display(ui),
+                _refresh_agent_status=lambda: ui_runtime._refresh_agent_status(ui),
+                _is_agent_test_mode=mock.Mock(return_value=False),
+                _cancel_sleep_timer=mock.Mock(),
+                safe_status=safe_status,
+                input_box=SimpleNamespace(placeholder=""),
+                change_input_state=mock.Mock(),
+                change_voice_lock_state=mock.Mock(),
+            ),
+        )
+
+        CeluneUI.tts_queue_avail(ui)
+
+        safe_status.assert_called_once_with(
+            string("agent.status.awaiting_approval"), "info"
+        )
 
     def test_finished_task_event_does_not_restore_terminal_status_after_idle(
         self,

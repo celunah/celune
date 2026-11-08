@@ -21,6 +21,7 @@ from collections.abc import Callable, Iterator
 
 from . import app as _app
 from ..constants import SIGTSTP, APP_NAME
+from ..typing.agent import AgentTaskState
 from ..typing.modes import OPERATION_MODES, OperationState
 
 _FATAL_TEXT_EDITOR_BLOCKED_KEYS = frozenset(
@@ -1646,15 +1647,19 @@ def tts_idle(self) -> None:
         return
     runtime = getattr(celune, "agent_runtime", None)
     active_task = runtime.get_active_task("default") if runtime is not None else None
+    display_task = active_task
     if runtime is not None and active_task is None and self._agent_task_id is not None:
         with contextlib.suppress(ValueError):
             previous_task = runtime.get_task(self._agent_task_id)
             if previous_task.is_terminal:
                 self._agent_task_id = None
                 self._agent_status_signature = None
+            else:
+                display_task = previous_task
     if getattr(celune, "_maintain_status_after_playback", False):
         celune._maintain_status_after_playback = False
-        if active_task is not None:
+        if display_task is not None and not display_task.is_terminal:
+            self._agent_status_signature = None
             self._refresh_agent_status()
             return
     celune.cur_state = "idle"
@@ -1683,7 +1688,23 @@ def tts_queue_avail(self) -> None:
     self._cancel_sleep_timer()
     runtime = getattr(celune, "agent_runtime", None)
     active_task = runtime.get_active_task("default") if runtime is not None else None
-    if active_task is not None:
+    waiting_task = active_task
+    if waiting_task is None and runtime is not None and self._agent_task_id is not None:
+        with contextlib.suppress(ValueError):
+            previous_task = runtime.get_task(self._agent_task_id)
+            if previous_task.state in {
+                AgentTaskState.AWAITING_APPROVAL,
+                AgentTaskState.AWAITING_CHOICE,
+            }:
+                waiting_task = previous_task
+    if waiting_task is not None and waiting_task.state in {
+        AgentTaskState.AWAITING_APPROVAL,
+        AgentTaskState.AWAITING_CHOICE,
+    }:
+        self._agent_task_id = waiting_task.task_id
+        self._agent_status_signature = None
+        self._refresh_agent_status()
+    elif active_task is not None:
         self._agent_task_id = active_task.task_id
         self._refresh_agent_status()
     else:

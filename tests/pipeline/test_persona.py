@@ -659,6 +659,7 @@ class TestPipelineAsync(CeluneAsyncTestCase):
             )
         )
         assert "explain the exact pending action" in approval
+        assert "say 'approve' to proceed or 'deny' to reject" in approval
         assert "The action has not run yet" in approval
         assert '"strength": 0.1' in approval
 

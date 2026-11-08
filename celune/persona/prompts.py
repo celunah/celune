@@ -54,9 +54,9 @@ def _render_agent_context(
         response_instruction = (
             "Approval request instruction: in one concise sentence, explain the exact "
             "pending action and its supplied argument values in the active character's "
-            "voice, then ask the user to approve or deny it. Use only the registered "
-            "tool and arguments shown below. The action has not run yet; do not imply "
-            "that it has started or succeeded."
+            "voice, then tell the user to say 'approve' to proceed or 'deny' to reject. "
+            "Use only the registered tool and arguments shown below. The action has not "
+            "run yet; do not imply that it has started or succeeded."
         )
     elif agent_context.opening:
         response_instruction = (

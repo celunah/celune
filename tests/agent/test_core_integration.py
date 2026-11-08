@@ -4,12 +4,13 @@
 from __future__ import annotations
 
 import threading
+from typing import Optional, cast
 from pathlib import Path
 from unittest import mock
-from typing import cast, Optional
 from contextlib import nullcontext
 from collections.abc import Mapping, Sequence
 
+from celune.core import agent as core_agent
 from celune.agent import (
     ToolCall,
     AgentTool,
@@ -37,11 +38,19 @@ from celune.agent import (
     AgentClassificationFailureKind,
 )
 from celune.celune import Celune
+from celune.agent.tools import AgentStatusTool, _recall, production_agent_tool_schemas
+from celune.persona.impl import PersonaClient
+from celune.registry.llm import PERSONA_DEFAULT_MODEL_ID
+from celune.typing.agent import NeedleToolCall, NeedleToolCatalog
 from celune.typing.locks import (
     ComponentLockName,
     ComponentLockOwner,
     ComponentLockRequirement,
 )
+from celune.typing.modes import OperationMode
+from celune.typing.common import JSONSerializable
+from celune.typing.aliases import LogLevel
+from celune.typing.persona import PersonaClientResponse
 from celune.agent.needle.impl import (
     NeedleHandler,
     NeedleToolSelector,
@@ -54,16 +63,7 @@ from celune.dataclasses.events import (
     AgentTaskStateChangedEvent,
     AgentApprovalRequestedEvent,
 )
-from celune.typing.aliases import LogLevel
-from celune.core import agent as core_agent
-from celune.persona.impl import PersonaClient
-from celune.typing.common import JSONSerializable
-from celune.typing.persona import PersonaClientResponse
-from celune.registry.llm import PERSONA_DEFAULT_MODEL_ID
-from celune.typing.agent import NeedleToolCall, NeedleToolCatalog
-from celune.agent.tools import AgentStatusTool, _recall, production_agent_tool_schemas
 from celune.persona.capabilities import PersonaCapabilities
-from celune.typing.modes import OperationMode
 
 from ..support import FakeGlow, FakeBackend, CeluneTestCase
 
@@ -648,8 +648,11 @@ class TestAgentCoreIntegration(CeluneTestCase):
 
         with mock.patch(
             "celune.core.agent.deliver_persona_response", return_value=True
-        ):
+        ) as deliver_response:
             core.run_agent_route(route)
+        approval_speech = deliver_response.call_args.args[2]
+        assert "approve" in approval_speech.casefold()
+        assert "deny" in approval_speech.casefold()
         task = runtime.get_active_task("default")
         assert task is not None
         assert task.state == AgentTaskState.AWAITING_APPROVAL
@@ -1107,13 +1110,17 @@ class TestAgentCoreIntegration(CeluneTestCase):
         assert result["status"] == AgentToolExecutionStatus.SUCCEEDED
         assert result["end_task"] is True
         assert delivery_mock.call_count == 1
-        assert delivery_mock.call_args.args[2] == ("May I speak the line 'hello' now?")
+        assert delivery_mock.call_args.args[2] == (
+            "May I speak the line 'hello' now? "
+            'Say "approve" to proceed or "deny" to reject.'
+        )
         assert core.cur_state == "idle"
         assert playback_wait_mock.call_count == 1
         assert playback_wait_mock.call_args.args == (core,)
         assert speech_mock.call_count == 3
         assert speech_mock.call_args_list[-2].args[1] == (
-            "May I speak the line 'hello' now?"
+            "May I speak the line 'hello' now? "
+            'Say "approve" to proceed or "deny" to reject.'
         )
         assert speech_mock.call_args_list[-1].args[1] == "hello"
         assert speech_mock.call_args_list[0].args[1] != "I will say hello."
