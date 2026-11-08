@@ -103,6 +103,9 @@ working directory; Celune resolves them before access. Filesystem mutation
 paths must remain absolute so approval identifies the exact target. Process
 and application termination requires an expected name so a stale PID cannot
 be used blindly. The agent never turns a free-form prompt into a shell command.
+Process launch resolves executable names through `PATH` and, on Windows, also
+checks the Windows system directories. Arguments are passed as a structured
+list, and shell execution remains disabled.
 Routing and tool-selection prompts instruct Persona and Needle to preserve
 explicit paths from the task request. Celune also retains the original user
 request when Persona produces a shorter task summary, so the selector and local

@@ -478,9 +478,8 @@ def _recall(engine: Celune, call: ToolCall, _context: AgentContext) -> JSON:
     limit = _integer(call, "limit", 5)
     if not 1 <= limit <= 20:
         raise ValueError("limit must be between 1 and 20")
-    records = _memory_store(engine).retrieve(
-        _character(engine), _string(call, "request"), limit
-    )
+    request = _recall_search_request(_string(call, "request"), _context)
+    records = _memory_store(engine).retrieve(_character(engine), request, limit)
     return {"memories": [record.to_json() for record in records]}
 
 
@@ -536,6 +535,17 @@ _LOCAL_PATH_ARGUMENTS = {
     "local_move": ("source", "destination"),
     "local_delete": ("path",),
 }
+_LOCAL_LAUNCH_TOOL_NAMES = {"local_launch_process", "local_launch_application"}
+_RECALL_TOOL_REQUEST_RE = re.compile(
+    r"(?i)^\s*(?:please\s+)?use\s+recall\s+(?:to\s+)?"
+    r"(?:find|search(?:\s+for)?|retrieve|look\s+for)\s+(.+?)\s*[.!?]*$"
+)
+_LAUNCH_EXECUTABLE_RE = re.compile(
+    r"(?i)\b(?:launch|run|start)\s+(?:the\s+)?"
+    r"(?:(?:application|app|process|executable)\s+)?"
+    r"(?:\"([^\"]+)\"|'([^']+)'|`([^`]+)`|([^\s,;]+))"
+)
+_NO_LAUNCH_ARGUMENTS_RE = re.compile(r"(?i)\bno\s+(?:command[- ]line\s+)?arguments?\b")
 
 
 def _local_path(
@@ -623,6 +633,73 @@ def _requested_local_path(context: AgentContext) -> Optional[Path]:
     return paths[0] if len(paths) == 1 else None
 
 
+def _recall_search_request(selected_request: str, context: AgentContext) -> str:
+    """Prefer the literal search phrase in an explicit recall command."""
+    requests = (
+        context.request.original_request or "",
+        context.request.request,
+    )
+    for user_request in dict.fromkeys(requests):
+        match = _RECALL_TOOL_REQUEST_RE.match(user_request)
+        if match is None:
+            continue
+        query = match.group(1).strip()
+        if len(query) > 1 and query[0] == query[-1] and query[0] in "\"'`":
+            query = query[1:-1].strip()
+        return query.rstrip(" \t\r\n.!?")
+    return selected_request
+
+
+def _requested_launch_executable(context: AgentContext) -> Optional[str]:
+    """Return the executable named by the original process-launch request."""
+    requests = (
+        context.request.original_request or "",
+        context.request.request,
+    )
+    for user_request in dict.fromkeys(requests):
+        match = _LAUNCH_EXECUTABLE_RE.search(user_request)
+        if match is None:
+            continue
+        executable = next((group for group in match.groups() if group), None)
+        if executable:
+            return executable.strip()
+    return None
+
+
+def _recover_local_launch_call(call: ToolCall, context: AgentContext) -> ToolCall:
+    """Restore the requested executable and explicit empty argument list."""
+    request = context.request.original_request or context.request.request
+    executable = _requested_launch_executable(context)
+    if executable is None:
+        return call
+    arguments = dict(call["arguments"])
+    arguments["executable"] = executable
+    if _NO_LAUNCH_ARGUMENTS_RE.search(request):
+        arguments["arguments"] = []
+    return {**call, "arguments": arguments}
+
+
+def _resolve_local_executable(executable: str) -> Optional[str]:
+    """Resolve an executable through PATH and standard Windows search folders."""
+    resolved = shutil.which(executable)
+    if resolved is not None:
+        return resolved
+
+    candidate = Path(executable).expanduser()
+    if candidate.is_absolute() and candidate.is_file():
+        return str(candidate.resolve(strict=True))
+
+    if os.name != "nt" or Path(executable).name != executable:
+        return None
+    windows_directory = os.environ.get("WINDIR") or os.environ.get("SystemRoot")
+    if not windows_directory:
+        return None
+    search_path = os.pathsep.join(
+        str(Path(windows_directory) / directory) for directory in ("System32", ".")
+    )
+    return shutil.which(executable, path=search_path)
+
+
 def _requested_local_path_pair(
     context: AgentContext,
 ) -> Optional[tuple[Path, Path]]:
@@ -635,6 +712,8 @@ def recover_local_tool_call(call: ToolCall, context: AgentContext) -> ToolCall:
     """Replace selected filesystem paths with the exact paths in the request."""
     if call["name"] == "local_terminate_process":
         return _recover_local_terminate_process(call, context)
+    if call["name"] in _LOCAL_LAUNCH_TOOL_NAMES:
+        return _recover_local_launch_call(call, context)
     path_arguments = _LOCAL_PATH_ARGUMENTS.get(call["name"])
     if path_arguments is None:
         return call
@@ -661,6 +740,12 @@ def infer_local_tool_arguments(
     context: AgentContext,
 ) -> Optional[dict[str, JSONSerializable]]:
     """Recover required path arguments for an unambiguous filesystem action."""
+    if tool_name in _LOCAL_LAUNCH_TOOL_NAMES:
+        request = context.request.original_request or context.request.request
+        executable = _requested_launch_executable(context)
+        if executable and _NO_LAUNCH_ARGUMENTS_RE.search(request):
+            return {"executable": executable, "arguments": []}
+        return None
     path_arguments = {
         "local_list_directory": ("path",),
         "local_file_metadata": ("path",),
@@ -1021,11 +1106,7 @@ def _local_launch_process(
 ) -> JSON:
     """Launch one explicit executable with structured arguments and no shell."""
     executable = _string(call, "executable")
-    resolved = shutil.which(executable)
-    if resolved is None:
-        candidate = Path(executable).expanduser()
-        if candidate.is_absolute() and candidate.exists():
-            resolved = str(candidate.resolve(strict=True))
+    resolved = _resolve_local_executable(executable)
     if resolved is None:
         raise _LocalManagementError("missing", "executable was not found")
     cwd_value = _optional_string(call, "cwd")
@@ -1144,7 +1225,7 @@ def _local_discover_application(
 ) -> JSON:
     """Resolve one application executable without launching it."""
     name = _string(call, "name")
-    executable = shutil.which(name)
+    executable = _resolve_local_executable(name)
     if executable is None:
         raise _LocalManagementError("missing", "application executable was not found")
     return {"result": "success", "name": name, "executable": executable}

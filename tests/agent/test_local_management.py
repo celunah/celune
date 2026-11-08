@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import os
 from types import SimpleNamespace
 from typing import Optional, cast
 from pathlib import Path
@@ -14,6 +15,7 @@ from celune.celune import Celune
 from celune.agent.tools import (
     OfflineAgentTool,
     local_management_tools,
+    infer_local_tool_arguments,
     recover_local_tool_call,
     local_management_tool_schemas,
 )
@@ -27,6 +29,7 @@ from celune.typing.agent import (
 from celune.typing.modes import OperationMode
 from celune.persona.capabilities import PersonaCapabilities
 
+from ..platform import WINDOWS_ONLY
 from ..support import CeluneTestCase
 
 
@@ -146,6 +149,62 @@ class TestLocalManagementTools(CeluneTestCase):
         recovered = recover_local_tool_call(call, context)
 
         assert recovered["arguments"]["pid"] == 1234
+
+    def test_launch_process_recovers_requested_executable_and_empty_arguments(
+        self,
+    ) -> None:
+        """Keep launch arguments aligned with the user's explicit request."""
+        request = (
+            "Use local_launch_process to launch notepad.exe "
+            "with no arguments and no shell."
+        )
+        context = self._context("Launch the requested process.", request)
+        call: ToolCall = {
+            "id": "launch",
+            "name": "local_launch_process",
+            "arguments": {
+                "executable": "notepad.exe with no arguments",
+                "arguments": ["and", "no", "shell"],
+            },
+        }
+
+        recovered = recover_local_tool_call(call, context)
+        inferred = infer_local_tool_arguments("local_launch_process", context)
+
+        assert recovered["arguments"] == {"executable": "notepad.exe", "arguments": []}
+        assert inferred == {"executable": "notepad.exe", "arguments": []}
+
+    @WINDOWS_ONLY
+    def test_launch_process_searches_the_windows_system_directory(self) -> None:
+        """Find a bare executable in Windows system folders outside PATH."""
+        resolved = r"C:\Windows\System32\notepad.exe"
+        call: ToolCall = {
+            "id": "launch",
+            "name": "local_launch_process",
+            "arguments": {"executable": "notepad.exe", "arguments": []},
+        }
+        with (
+            mock.patch.dict(os.environ, {"WINDIR": r"C:\Windows"}),
+            mock.patch(
+                "celune.agent.tools.shutil.which",
+                side_effect=[None, resolved],
+            ) as which,
+            mock.patch("celune.agent.tools.subprocess.Popen") as process,
+        ):
+            process.return_value.pid = 4321
+            result = self._tool("local_launch_process").execute(
+                call,
+                self._context(),
+            )
+
+        assert result["status"] == AgentToolExecutionStatus.SUCCEEDED
+        assert cast(dict[str, object], result["output"])["executable"] == resolved
+        assert process.call_args.args[0] == [resolved]
+        assert process.call_args.kwargs["shell"] is False
+        assert (
+            str(Path(r"C:\Windows") / "System32")
+            in which.call_args_list[1].kwargs["path"]
+        )
 
     def test_current_working_directory_returns_the_resolved_process_directory(
         self,

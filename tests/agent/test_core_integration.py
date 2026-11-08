@@ -61,7 +61,9 @@ from celune.typing.common import JSONSerializable
 from celune.typing.persona import PersonaClientResponse
 from celune.registry.llm import PERSONA_DEFAULT_MODEL_ID
 from celune.typing.agent import NeedleToolCall, NeedleToolCatalog
-from celune.agent.tools import AgentStatusTool, production_agent_tool_schemas
+from celune.agent.tools import AgentStatusTool, _recall, production_agent_tool_schemas
+from celune.persona.capabilities import PersonaCapabilities
+from celune.typing.modes import OperationMode
 
 from ..support import FakeGlow, FakeBackend, CeluneTestCase
 
@@ -401,6 +403,39 @@ class TestAgentCoreIntegration(CeluneTestCase):
             assert schema.display_name
             if schema.behavior == AgentToolBehavior.MUTATING:
                 assert schema.approval_required
+
+    def test_explicit_recall_uses_the_original_literal_search_phrase(self) -> None:
+        """Keep the requested memory phrase when Needle paraphrases its query."""
+        store = mock.Mock()
+        store.retrieve.return_value = []
+        context = AgentContext(
+            request=AgentRequest(
+                "Find the requested memory.",
+                original_request=(
+                    "Use recall to find the Celune agent smoke test memory."
+                ),
+            ),
+            mode=cast(OperationMode, "agent"),
+            persona_capabilities=PersonaCapabilities(),
+        )
+        call: ToolCall = {
+            "id": "recall",
+            "name": "recall",
+            "arguments": {"request": "assistant project smoke test", "limit": 5},
+        }
+
+        with (
+            mock.patch("celune.agent.tools._memory_store", return_value=store),
+            mock.patch("celune.agent.tools._character", return_value="Celune"),
+        ):
+            result = _recall(cast(Celune, object()), call, context)
+
+        assert result == {"memories": []}
+        store.retrieve.assert_called_once_with(
+            "Celune",
+            "the Celune agent smoke test memory",
+            5,
+        )
 
     def test_local_management_registry_is_opt_in_and_warns(self) -> None:
         """Local-management tools appear only when explicitly enabled."""
