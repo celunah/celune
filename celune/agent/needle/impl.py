@@ -21,6 +21,7 @@ from sentencepiece import SentencePieceProcessor
 from huggingface_hub import hf_hub_download
 from safetensors.torch import load_file
 
+from ..tools import infer_local_tool_arguments
 from .models import NeedleModel, NeedleConfig
 from ...paths import huggingface_hub_cache_dir
 from .checkpoints import (
@@ -60,6 +61,12 @@ _NEEDLE_CANDIDATE_TOOL_LIMIT = 8
 _NEEDLE_CLEAR_MATCH_SCORE = 7
 _NEEDLE_CLEAR_MATCH_MARGIN = 4
 _NEEDLE_WORD_RE = re.compile(r"[a-z0-9]+")
+_NEEDLE_QUOTED_PATH_RE = re.compile(
+    r"(?i)[\"'`]((?:[a-z]:[\\/]|\\\\|/)[^\"'`<>|?*]+)[\"'`]"
+)
+_NEEDLE_PATH_RE = re.compile(
+    r"(?i)(?:[a-z]:[\\/]|\\\\)[^\s\"'`<>|?*]+|(?<![\w/:])/(?:[^\s\"'`<>|?*]+)"
+)
 _EXPLICIT_TOOL_REQUEST_RE = re.compile(
     r"^\s*(?:please\s+)?(?:use|call|run|invoke)\s+([A-Za-z_][A-Za-z0-9_]*)\b",
     re.IGNORECASE,
@@ -154,9 +161,11 @@ def _normalized_tools(
 
 def _tool_relevance_score(query: str, tool: NeedleToolDefinition) -> int:
     """Score catalog overlap with the intent, weighting names most heavily."""
+    query_without_paths = _NEEDLE_QUOTED_PATH_RE.sub(" ", query)
+    query_without_paths = _NEEDLE_PATH_RE.sub(" ", query_without_paths)
     query_words = {
         word
-        for word in _NEEDLE_WORD_RE.findall(query.casefold())
+        for word in _NEEDLE_WORD_RE.findall(query_without_paths.casefold())
         if len(word) > 1 and word not in _NEEDLE_QUERY_STOP_WORDS
     }
     if not query_words:
@@ -732,6 +741,19 @@ class NeedleToolSelector:
             )
             if context.task is not None and context.task.is_terminal:
                 return None
+        if not selection and len(candidate_catalog) == 1:
+            candidate_name = candidate_catalog[0]["name"]
+            inferred_arguments = infer_local_tool_arguments(
+                candidate_name,
+                context,
+            )
+            if inferred_arguments is not None:
+                selection = [
+                    NeedleToolCall(
+                        name=candidate_name,
+                        arguments=inferred_arguments,
+                    )
+                ]
         if not selection:
             raise NeedleSelectionError(
                 "Needle returned no valid tool calls for the action intent or original request"
@@ -786,6 +808,8 @@ class NeedleToolSelector:
                     if len(repaired_validated) == 1
                     else repaired_validated
                 )
+        if explicit_catalog and validated:
+            validated = validated[:1]
         unique_calls: list[ValidatedToolCall] = []
         seen_calls: set[tuple[str, str]] = set()
         for call in validated:

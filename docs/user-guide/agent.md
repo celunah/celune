@@ -96,7 +96,7 @@ runtime emits a warning when it is enabled.
 | Filesystem destructive | `local_move`, `local_delete` | High danger; exact absolute target; recursive delete must be explicitly enabled. |
 | Process diagnostics | `local_list_processes`, `local_inspect_process`, `local_system_info` | Read-only, bounded diagnostics; system information includes detected CUDA device names, capability, and memory. |
 | Process control | `local_launch_process`, `local_terminate_process` | High danger; structured arguments, no shell, and identity checks. |
-| Application discovery/control | `local_discover_application`, `local_running_applications`, `local_launch_application`, `local_close_application` | High-danger launch/close operations; no GUI automation. |
+| Application discovery/control | `local_discover_application`, `local_running_applications`, `local_launch_application` | High-danger launch operations; close a verified application with `local_terminate_process`. No GUI automation. |
 
 Read-only filesystem paths may be absolute or relative to Celune's process
 working directory; Celune resolves them before access. Filesystem mutation

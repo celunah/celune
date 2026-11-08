@@ -3,10 +3,11 @@
 
 from __future__ import annotations
 
-from unittest import mock
 from types import SimpleNamespace
-from contextlib import nullcontext
 from typing import Union, Optional, cast
+from pathlib import Path
+from unittest import mock
+from contextlib import nullcontext
 
 import torch
 import pytest
@@ -48,8 +49,8 @@ from celune.typing.agent import (
     ToolExecutionResult,
 )
 from celune.typing.common import JSONSerializable
-from celune.agent.needle.models import NeedleModel
 from celune.agent.needle.impl import parse_single_selection
+from celune.agent.needle.models import NeedleModel
 from celune.persona.capabilities import PersonaCapabilities
 
 
@@ -369,6 +370,54 @@ class TestNeedleSelector:
         retry_query = select_tools.call_args.args[0]
         assert "Return exactly one valid call" in retry_query
         assert "C:/tmp/new" in retry_query
+
+    def test_empty_selection_recovers_one_exact_local_file_path(self) -> None:
+        """Use the unambiguous registered file tool and path after empty output."""
+        tools = production_agent_tools(include_local_management=True)
+        schemas = production_agent_tool_schemas(include_local_management=True)
+        path = (Path.cwd() / "agent-selector-metadata.txt").resolve()
+        handler = _FakeNeedleHandler([])
+        selector = NeedleToolSelector(
+            cast(NeedleHandler, handler),
+            tools,
+            schemas=schemas,
+        )
+
+        with mock.patch.object(handler, "select_tools", return_value=[]):
+            result = selector(
+                _context(f"Get file metadata for {path}."),
+                _output("Read the metadata for the requested file."),
+            )
+
+        assert isinstance(result, dict)
+        assert result["name"] == "local_file_metadata"
+        assert result["arguments"] == {"path": str(path)}
+
+    def test_empty_selection_recovers_exact_local_copy_paths(self) -> None:
+        """Recover ordered source and destination paths when Needle emits no call."""
+        tools = production_agent_tools(include_local_management=True)
+        schemas = production_agent_tool_schemas(include_local_management=True)
+        source = (Path.cwd() / "agent-selector-source.txt").resolve()
+        destination = (Path.cwd() / "agent-selector-destination.txt").resolve()
+        handler = _FakeNeedleHandler([])
+        selector = NeedleToolSelector(
+            cast(NeedleHandler, handler),
+            tools,
+            schemas=schemas,
+        )
+
+        with mock.patch.object(handler, "select_tools", return_value=[]):
+            result = selector(
+                _context(f"Copy {source} to {destination}."),
+                _output("Copy the requested file."),
+            )
+
+        assert isinstance(result, dict)
+        assert result["name"] == "local_copy"
+        assert result["arguments"] == {
+            "source": str(source),
+            "destination": str(destination),
+        }
 
     def test_invalid_optional_integer_argument_is_omitted(self) -> None:
         """Use registered defaults when Needle invents an optional value type."""

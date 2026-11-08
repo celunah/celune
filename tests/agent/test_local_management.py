@@ -3,22 +3,29 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-from unittest import mock
 from types import SimpleNamespace
 from typing import Optional, cast
-from contextlib import nullcontext
+from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest import mock
+from contextlib import nullcontext
 
+from celune.celune import Celune
 from celune.agent.tools import (
     OfflineAgentTool,
     local_management_tools,
+    recover_local_tool_call,
     local_management_tool_schemas,
 )
-from celune.celune import Celune
+from celune.typing.agent import (
+    ToolCall,
+    ToolResult,
+    AgentContext,
+    AgentRequest,
+    AgentToolExecutionStatus,
+)
 from celune.typing.modes import OperationMode
 from celune.persona.capabilities import PersonaCapabilities
-from celune.typing.agent import AgentContext, AgentRequest, AgentToolExecutionStatus
 
 from ..support import CeluneTestCase
 
@@ -69,7 +76,6 @@ class TestLocalManagementTools(CeluneTestCase):
             "local_discover_application",
             "local_running_applications",
             "local_launch_application",
-            "local_close_application",
         }
         assert set(schemas) == expected
         for schema in schemas.values():
@@ -80,6 +86,66 @@ class TestLocalManagementTools(CeluneTestCase):
             assert schema.to_json()["tool_id"] == schema.tool_id
             if schema.behavior.value == "mutating":
                 assert schema.approval_required
+
+    def test_termination_recovers_one_mismatched_pid_from_process_listing(self) -> None:
+        """Use the sole listed process with the exact requested identity."""
+        context = self._context("Close notepad.exe")
+        context = AgentContext(
+            request=context.request,
+            mode=context.mode,
+            persona_capabilities=context.persona_capabilities,
+            last_tool_result=cast(
+                ToolResult,
+                {
+                    "tool_call_id": "list-processes",
+                    "tool_id": "local_list_processes",
+                    "status": AgentToolExecutionStatus.SUCCEEDED,
+                    "output": {
+                        "processes": [{"pid": 4321, "name": "notepad.exe"}],
+                        "truncated": False,
+                    },
+                },
+            ),
+        )
+        call: ToolCall = {
+            "id": "terminate",
+            "name": "local_terminate_process",
+            "arguments": {"pid": 1234, "expected_name": "notepad.exe"},
+        }
+
+        recovered = recover_local_tool_call(call, context)
+
+        assert recovered["arguments"]["pid"] == 4321
+
+    def test_termination_does_not_rewrite_an_explicit_pid(self) -> None:
+        """Keep a user-specified PID intact even if another process was listed."""
+        context = self._context("Close PID 1234 for notepad.exe")
+        context = AgentContext(
+            request=context.request,
+            mode=context.mode,
+            persona_capabilities=context.persona_capabilities,
+            last_tool_result=cast(
+                ToolResult,
+                {
+                    "tool_call_id": "list-processes",
+                    "tool_id": "local_list_processes",
+                    "status": AgentToolExecutionStatus.SUCCEEDED,
+                    "output": {
+                        "processes": [{"pid": 4321, "name": "notepad.exe"}],
+                        "truncated": False,
+                    },
+                },
+            ),
+        )
+        call: ToolCall = {
+            "id": "terminate",
+            "name": "local_terminate_process",
+            "arguments": {"pid": 1234, "expected_name": "notepad.exe"},
+        }
+
+        recovered = recover_local_tool_call(call, context)
+
+        assert recovered["arguments"]["pid"] == 1234
 
     def test_current_working_directory_returns_the_resolved_process_directory(
         self,

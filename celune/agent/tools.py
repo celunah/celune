@@ -10,13 +10,15 @@ import time
 import shutil
 import platform
 import subprocess
+from typing import TYPE_CHECKING, Optional, cast
 from pathlib import Path
 from dataclasses import dataclass
 from collections.abc import Mapping, Callable
-from typing import TYPE_CHECKING, Optional, cast
 
 import psutil
 
+from ..utils import clear_queue, format_error_message
+from ..exceptions import LocalManagementError as _LocalManagementError
 from ..typing.agent import (
     ToolCall,
     AgentTool,
@@ -31,8 +33,6 @@ from ..typing.agent import (
 )
 from ..typing.modes import OperationMode
 from ..typing.common import JSON, JSONSerializable
-from ..utils import clear_queue, format_error_message
-from ..exceptions import LocalManagementError as _LocalManagementError
 
 if TYPE_CHECKING:
     from ..celune import Celune
@@ -633,6 +633,8 @@ def _requested_local_path_pair(
 
 def recover_local_tool_call(call: ToolCall, context: AgentContext) -> ToolCall:
     """Replace selected filesystem paths with the exact paths in the request."""
+    if call["name"] == "local_terminate_process":
+        return _recover_local_terminate_process(call, context)
     path_arguments = _LOCAL_PATH_ARGUMENTS.get(call["name"])
     if path_arguments is None:
         return call
@@ -651,6 +653,82 @@ def recover_local_tool_call(call: ToolCall, context: AgentContext) -> ToolCall:
     arguments = dict(call["arguments"])
     for name, path in zip(path_arguments, recovered_paths, strict=True):
         arguments[name] = str(path)
+    return {**call, "arguments": arguments}
+
+
+def infer_local_tool_arguments(
+    tool_name: str,
+    context: AgentContext,
+) -> Optional[dict[str, JSONSerializable]]:
+    """Recover required path arguments for an unambiguous filesystem action."""
+    path_arguments = {
+        "local_list_directory": ("path",),
+        "local_file_metadata": ("path",),
+        "local_read_text": ("path",),
+        "local_make_directory": ("path",),
+        "local_copy": ("source", "destination"),
+        "local_move": ("source", "destination"),
+    }.get(tool_name)
+    if path_arguments is None:
+        return None
+    paths = _requested_local_paths(context)
+    if len(paths) != len(path_arguments):
+        return None
+    return {name: str(path) for name, path in zip(path_arguments, paths, strict=True)}
+
+
+def _recover_local_terminate_process(
+    call: ToolCall,
+    context: AgentContext,
+) -> ToolCall:
+    """Use one verified listed process when Needle supplied a mismatched PID."""
+    expected_name = call["arguments"].get("expected_name")
+    result = context.last_tool_result
+    if not isinstance(expected_name, str) or result is None:
+        return call
+    if (
+        result.get("tool_id")
+        not in {
+            "local_list_processes",
+            "local_running_applications",
+        }
+        or result.get("status") != "succeeded"
+    ):
+        return call
+    output = result.get("output")
+    processes = output.get("processes") if isinstance(output, dict) else None
+    if (
+        not isinstance(output, dict)
+        or output.get("truncated") is not False
+        or not isinstance(processes, list)
+    ):
+        return call
+
+    request = context.request.original_request or context.request.request
+    if re.search(
+        r"\b(?:pid|process(?:\s+id)?)\s*(?:of|=|:)?\s*\d+\b",
+        request,
+        re.IGNORECASE,
+    ):
+        return call
+
+    matching: list[int] = []
+    current_pid = call["arguments"].get("pid")
+    current_matches = False
+    for process in processes:
+        if not isinstance(process, dict):
+            continue
+        name = process.get("name")
+        pid = process.get("pid")
+        if not isinstance(name, str) or name.casefold() != expected_name.casefold():
+            continue
+        if isinstance(pid, int) and not isinstance(pid, bool) and pid > 0:
+            matching.append(pid)
+            current_matches = current_matches or pid == current_pid
+    if current_matches or len(set(matching)) != 1:
+        return call
+    arguments = dict(call["arguments"])
+    arguments["pid"] = matching[0]
     return {**call, "arguments": arguments}
 
 
@@ -970,9 +1048,10 @@ def _local_launch_process(
 
 
 def _local_terminate_process(
-    _engine: Celune, call: ToolCall, _context: AgentContext
+    _engine: Celune, call: ToolCall, context: AgentContext
 ) -> JSON:
     """Terminate one process only after verifying its requested identity."""
+    call = recover_local_tool_call(call, context)
     pid = _integer(call, "pid", 0)
     if pid <= 0:
         raise ValueError("argument 'pid' must be positive")
@@ -1083,13 +1162,6 @@ def _local_launch_application(
 ) -> JSON:
     """Launch an explicitly named application through the process executor."""
     return _local_launch_process(engine, call, context)
-
-
-def _local_close_application(
-    engine: Celune, call: ToolCall, context: AgentContext
-) -> JSON:
-    """Close an application only after process-name verification."""
-    return _local_terminate_process(engine, call, context)
 
 
 def _arg(
@@ -1574,18 +1646,6 @@ _LOCAL_SPECS = (
                 "Absolute working directory.",
                 required=False,
             ),
-        ),
-        behavior=AgentToolBehavior.MUTATING,
-        danger=AgentToolDangerLevel.HIGH,
-    ),
-    _spec(
-        "local_close_application",
-        "Close application",
-        "Close one application only after process-name verification.",
-        _local_close_application,
-        arguments=(
-            _arg("pid", AgentToolValueType.INTEGER, "Process ID."),
-            _arg("expected_name", AgentToolValueType.STRING, "Expected process name."),
         ),
         behavior=AgentToolBehavior.MUTATING,
         danger=AgentToolDangerLevel.HIGH,

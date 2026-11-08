@@ -91,7 +91,6 @@ class TestAgentDiagnostics(CeluneTestCase):
             "runtime.process_launch_gate",
             "runtime.process_terminate_gate",
             "runtime.application_launch_gate",
-            "runtime.application_close_gate",
             "runtime.approval.approved",
             "runtime.approval.denied",
             "runtime.choice",
@@ -124,7 +123,6 @@ class TestAgentDiagnostics(CeluneTestCase):
             "runtime.process_launch_gate",
             "runtime.process_terminate_gate",
             "runtime.application_launch_gate",
-            "runtime.application_close_gate",
         }.issubset(
             {_check_name(check) for check in checks if check["status"] == "skipped"}
         )

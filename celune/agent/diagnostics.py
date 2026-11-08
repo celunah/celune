@@ -104,7 +104,6 @@ _AGENT_TOOL_ARGUMENTS: dict[str, JSON] = {
     "local_discover_application": {"name": "python"},
     "local_running_applications": {"limit": 1},
     "local_launch_application": {"executable": "python"},
-    "local_close_application": {"pid": 1, "expected_name": "diagnostic"},
 }
 
 _LOCAL_TOOL_NAMES = {
@@ -389,20 +388,6 @@ def _run_runtime_checks(
         if include_local_management
         else _record(
             "runtime.application_launch_gate",
-            "skipped",
-            string("test.agent_local_management_disabled"),
-        ),
-        _run_check(
-            "runtime.application_close_gate",
-            lambda: _check_mutation_gate(
-                engine,
-                schemas,
-                "local_close_application",
-            ),
-        )
-        if include_local_management
-        else _record(
-            "runtime.application_close_gate",
             "skipped",
             string("test.agent_local_management_disabled"),
         ),
@@ -1317,7 +1302,6 @@ def _run_tool_checks(
                             )
                     if name in {
                         "local_terminate_process",
-                        "local_close_application",
                     } and (effects.process is None or not effects.process.terminated):
                         raise RuntimeError(
                             "termination did not use the process test double"
@@ -1460,10 +1444,6 @@ def _tool_arguments(root: Path, engine: Celune) -> dict[str, JSON]:
                 "arguments": [],
                 "cwd": str(root),
             },
-            "local_close_application": {
-                "pid": 1,
-                "expected_name": "diagnostic",
-            },
         }
     )
     return arguments
@@ -1520,7 +1500,6 @@ def _patch_tool_side_effects(
     elif name in {
         "local_inspect_process",
         "local_terminate_process",
-        "local_close_application",
     }:
         effects.process = _DiagnosticProcess()
         stack.enter_context(
