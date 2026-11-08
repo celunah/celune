@@ -758,13 +758,18 @@ class NeedleToolSelector:
             raise NeedleSelectionError(
                 "Needle returned no valid tool calls for the action intent or original request"
             )
+        if explicit_catalog:
+            return self._select_explicit_tool_call(
+                context,
+                selection,
+                tool_name=explicit_catalog[0]["name"],
+                request=request,
+                task_request=task_request,
+                intent=intent,
+                catalog=explicit_catalog,
+            )
         validated: list[ValidatedToolCall] = []
         for call in selection:
-            if call["name"] not in self._tools_by_name and explicit_catalog:
-                call = NeedleToolCall(
-                    name=candidate_catalog[0]["name"],
-                    arguments=call["arguments"],
-                )
             try:
                 validated.append(self._validate_selection(call))
             except NeedleSelectionError as exc:
@@ -808,8 +813,6 @@ class NeedleToolSelector:
                     if len(repaired_validated) == 1
                     else repaired_validated
                 )
-        if explicit_catalog and validated:
-            validated = validated[:1]
         unique_calls: list[ValidatedToolCall] = []
         seen_calls: set[tuple[str, str]] = set()
         for call in validated:
@@ -826,6 +829,114 @@ class NeedleToolSelector:
                 seen_calls.add(key)
                 unique_calls.append(call)
         return unique_calls[0] if len(unique_calls) == 1 else unique_calls
+
+    def _select_explicit_tool_call(
+        self,
+        context: AgentContext,
+        selection: NeedleToolSelection,
+        *,
+        tool_name: str,
+        request: str,
+        task_request: str,
+        intent: str,
+        catalog: NeedleToolCatalog,
+    ) -> Optional[ValidatedToolCall]:
+        """Resolve an explicit tool request to its best valid single call."""
+        requested_voice = self._requested_voice_name(
+            tool_name,
+            f"{request}\n{task_request}",
+        )
+        validated, errors, missing = self._validate_explicit_calls(
+            selection,
+            tool_name=tool_name,
+            requested_voice=requested_voice,
+        )
+        if validated:
+            return max(validated, key=lambda call: len(call["arguments"]))
+
+        if missing:
+            repaired = self._retry_tool_selection(
+                context,
+                request=request,
+                intent=intent,
+                missing=missing,
+                catalog=catalog,
+            )
+            if context.task is not None and context.task.is_terminal:
+                return None
+            repaired_validated, repaired_errors, repaired_missing = (
+                self._validate_explicit_calls(
+                    repaired,
+                    tool_name=tool_name,
+                    requested_voice=requested_voice,
+                )
+            )
+            if repaired_validated:
+                return max(
+                    repaired_validated,
+                    key=lambda call: len(call["arguments"]),
+                )
+            if repaired_errors:
+                raise repaired_errors[0]
+            if repaired_missing:
+                missing = sorted(set(missing).union(repaired_missing))
+            raise NeedleSelectionError(
+                "Needle returned no tool calls after reconsidering "
+                + tool_name
+                + " with missing required arguments: "
+                + ", ".join(missing)
+            ) from (errors[0] if errors else None)
+
+        if errors:
+            raise errors[0]
+        raise NeedleSelectionError("Needle returned no valid explicit tool calls")
+
+    def _validate_explicit_calls(
+        self,
+        selection: NeedleToolSelection,
+        *,
+        tool_name: str,
+        requested_voice: Optional[str],
+    ) -> tuple[list[ValidatedToolCall], list[NeedleSelectionError], list[str]]:
+        """Canonicalize and validate every candidate for one explicit tool."""
+        validated: list[ValidatedToolCall] = []
+        errors: list[NeedleSelectionError] = []
+        missing_arguments: set[str] = set()
+        for call in selection:
+            arguments = dict(call["arguments"])
+            if requested_voice is not None and tool_name.casefold() == "set_voice":
+                arguments["voice"] = requested_voice
+            canonical_call = NeedleToolCall(name=tool_name, arguments=arguments)
+            try:
+                validated.append(self._validate_selection(canonical_call))
+            except NeedleSelectionError as exc:
+                errors.append(exc)
+                if str(exc).startswith("Needle omitted required arguments for "):
+                    missing_arguments.update(
+                        self._missing_required_arguments(canonical_call)
+                    )
+        return validated, errors, sorted(missing_arguments)
+
+    def _requested_voice_name(self, tool_name: str, request: str) -> Optional[str]:
+        """Find an installed voice named exactly in an explicit request."""
+        if tool_name.casefold() != "set_voice":
+            return None
+        tool = self._tools_by_name.get(tool_name)
+        engine = getattr(tool, "_engine", None)
+        voices = getattr(engine, "voices", ())
+        if not isinstance(voices, Sequence) or isinstance(voices, str):
+            return None
+        request_key = request.casefold()
+        matches = {
+            voice
+            for voice in voices
+            if isinstance(voice, str) and voice and voice.casefold() in request_key
+        }
+        if not matches:
+            return None
+        longest = max(len(voice) for voice in matches)
+        best = [voice for voice in matches if len(voice) == longest]
+        return best[0] if len(best) == 1 else None
 
     @staticmethod
     def _candidate_catalog(

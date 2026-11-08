@@ -331,6 +331,92 @@ class TestNeedleSelector:
         assert [tool["name"] for tool in handler.catalog] == ["local_make_directory"]
         assert "Use local_make_directory to create C:/tmp." in cast(str, handler.query)
 
+    def test_explicit_remember_chooses_the_most_complete_valid_call(self) -> None:
+        """Prefer the explicit remember call that includes requested importance."""
+        memory = "Celune agent smoke test 20261106"
+        handler = _FakeNeedleHandler(
+            [
+                {"name": "remember", "arguments": {}},
+                {"name": "remember", "arguments": {"content": memory}},
+                {
+                    "name": "remember",
+                    "arguments": {"content": memory, "importance": 1},
+                },
+            ]
+        )
+        schema = AgentToolSchema(
+            tool_id="remember",
+            display_name="Remember",
+            description="Persist a character-scoped memory.",
+            arguments=(
+                AgentToolArgumentSchema("content", AgentToolValueType.STRING),
+                AgentToolArgumentSchema(
+                    "importance",
+                    AgentToolValueType.INTEGER,
+                    required=False,
+                ),
+            ),
+            behavior=AgentToolBehavior.MUTATING,
+        )
+        selector = NeedleToolSelector(
+            cast(NeedleHandler, handler),
+            (_tool("remember"),),
+            schemas={"remember": schema},
+        )
+
+        result = selector(
+            _context(
+                f'Use remember to save "{memory}" with importance 1.',
+            ),
+            _output("Save the requested memory."),
+        )
+
+        assert isinstance(result, dict)
+        assert result["name"] == "remember"
+        assert result["arguments"] == {"content": memory, "importance": 1}
+
+    def test_explicit_set_voice_uses_the_exact_installed_name(self) -> None:
+        """Remove generated commentary appended to a requested installed voice."""
+        voice = "Easton (en-us)"
+        voice_tool = cast(
+            AgentTool,
+            SimpleNamespace(
+                name="set_voice",
+                description="Switch the active Celune voice.",
+                _engine=SimpleNamespace(voices=(voice,)),
+            ),
+        )
+        handler = _FakeNeedleHandler(
+            [
+                {
+                    "name": "set_voice",
+                    "arguments": {"voice": f"{voice} Ready when you are"},
+                },
+                {"name": "set_voice", "arguments": {"voice": voice}},
+            ]
+        )
+        schema = AgentToolSchema(
+            tool_id="set_voice",
+            display_name="Set voice",
+            description="Switch the active Celune voice.",
+            arguments=(AgentToolArgumentSchema("voice", AgentToolValueType.STRING),),
+            behavior=AgentToolBehavior.MUTATING,
+        )
+        selector = NeedleToolSelector(
+            cast(NeedleHandler, handler),
+            (voice_tool,),
+            schemas={"set_voice": schema},
+        )
+
+        result = selector(
+            _context(f"Use set_voice to switch to {voice}."),
+            _output("Switch to the requested voice."),
+        )
+
+        assert isinstance(result, dict)
+        assert result["name"] == "set_voice"
+        assert result["arguments"] == {"voice": voice}
+
     def test_empty_needle_selection_retries_with_compact_registered_tool_prompt(
         self,
     ) -> None:
