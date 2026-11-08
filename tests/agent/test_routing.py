@@ -116,6 +116,87 @@ class TestAgentRouting:  # pylint: disable=attribute-defined-outside-init
             "Use query_character to report the current character and voice."
         )
 
+    def test_explicit_tool_request_replaces_an_unanswerable_choice(self) -> None:
+        """Let a new explicit task leave a stale pending choice cleanly."""
+        self.runtime.tools = (cast(AgentTool, SimpleNamespace(name="remember")),)
+        task = self.runtime.create_task(
+            self.router._make_request("Choose a tool."),
+            task_id="stale-choice",
+        )
+        self.runtime.start_task(task.task_id)
+        self.runtime.classify_task(task.task_id)
+        self.runtime.request_choice(
+            task.task_id,
+            AgentChoiceRequest(
+                "choice-stale",
+                task.task_id,
+                "Choose an option.",
+                (AgentChoiceOption("tool-1", "1. unrelated tool"),),
+            ),
+        )
+
+        result = self.router.route(
+            'Use remember to save "test" with importance 1.',
+            persona_ready=False,
+        )
+
+        assert task.state == AgentTaskState.CANCELLED
+        assert result.route == AgentRoute.TASK
+        assert result.task_request is not None
+        assert result.task_request.request.startswith("Use remember")
+
+    def test_numbered_choice_answer_does_not_require_persona(self) -> None:
+        """Accept an explicit option number while a task waits for a choice."""
+        task = self.runtime.create_task(
+            self.router._make_request("Choose a tool."),
+            task_id="numbered-choice",
+        )
+        self.runtime.start_task(task.task_id)
+        self.runtime.classify_task(task.task_id)
+        self.runtime.request_choice(
+            task.task_id,
+            AgentChoiceRequest(
+                "choice-numbered",
+                task.task_id,
+                "Choose an option.",
+                (
+                    AgentChoiceOption("tool-1", "1. first tool"),
+                    AgentChoiceOption("tool-2", "2. second tool"),
+                ),
+            ),
+        )
+        self.engine.vision = SimpleNamespace(post=mock.Mock())
+
+        result = self.router.route("option 2", persona_ready=False)
+
+        self.engine.vision.post.assert_not_called()
+        assert result.route == AgentRoute.CHOICE_RESPONSE
+        assert result.choice_id == "tool-2"
+        assert task.state == AgentTaskState.WORKING
+
+    def test_active_task_rejects_impossible_new_task_route_without_value_error(
+        self,
+    ) -> None:
+        """Normalize an invalid new-task route returned for an active task."""
+        task = self.runtime.create_task(
+            self.router._make_request("Check the current state."),
+            task_id="active-route",
+        )
+        self.runtime.start_task(task.task_id)
+        self.runtime.classify_task(task.task_id)
+        self._set_classifier(
+            {
+                "classification": "task",
+                "route": "task",
+                "confidence": 0.9,
+            }
+        )
+
+        result = self.router.route("Keep checking.", persona_ready=True)
+
+        assert result.route == AgentRoute.TASK_INPUT
+        assert task.interruption is not None
+
     def test_short_approval_answer_resumes_without_classifier(self) -> None:
         """Accept a direct yes while keeping the approval task active."""
         task = self.runtime.create_task(

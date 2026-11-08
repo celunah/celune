@@ -99,10 +99,36 @@ class AgentInputRouter:
             agents_enabled = True
         if not agents_enabled:
             return self._conversation_result(1.0, "agent_mode_disabled")
-        if active_task is not None:
-            return self._route_active_task(active_task, clean_text, persona_ready)
 
         explicit_tool = self._explicit_tool_name(clean_text)
+        if active_task is not None:
+            if active_task.state == AgentTaskState.AWAITING_CHOICE:
+                choice_id = self._choice_id_from_text(active_task, clean_text)
+                if choice_id is not None:
+                    pending = self.runtime.get_pending_choice(active_task.task_id)
+                    if pending is not None:
+                        self.runtime.respond_to_choice(
+                            active_task.task_id,
+                            AgentChoiceResponse(
+                                pending.request_id, choice_id=choice_id
+                            ),
+                        )
+                        return self._active_result(
+                            active_task,
+                            AgentRoute.CHOICE_RESPONSE,
+                            "choice_response",
+                            choice_id=choice_id,
+                            intent="direct_choice_response",
+                        )
+            if explicit_tool is not None and active_task.state in {
+                AgentTaskState.AWAITING_APPROVAL,
+                AgentTaskState.AWAITING_CHOICE,
+            }:
+                self.runtime.cancel_task(active_task.task_id)
+                active_task = None
+            else:
+                return self._route_active_task(active_task, clean_text, persona_ready)
+
         if explicit_tool is not None:
             request = self._make_request(clean_text)
             return AgentClassificationResult(
@@ -505,6 +531,8 @@ class AgentInputRouter:
         if requires_clarification and not prompt:
             prompt = string("agent.clarification_prompt")
         route = self._route_from_payload(payload, classification, task)
+        if task is not None and route == AgentRoute.TASK:
+            route = AgentRoute.TASK_INPUT
         if classification == AgentInputClassification.CONVERSATION and route not in {
             AgentRoute.CONVERSATION,
             AgentRoute.CLARIFICATION,
@@ -717,6 +745,39 @@ class AgentInputRouter:
         registered = {tool.name.casefold() for tool in self.runtime.tools}
         registered.update(name.casefold() for name in self.runtime._tool_schemas)
         return requested if requested in registered else None
+
+    def _choice_id_from_text(self, task: AgentTask, text: str) -> Optional[str]:
+        """Resolve explicit numbered or exact-label answers for pending choices."""
+        pending = self.runtime.get_pending_choice(task.task_id)
+        if pending is None:
+            return None
+        normalized = re.sub(r"[^a-z0-9]+", " ", text.casefold()).strip()
+        match = re.fullmatch(
+            r"(?:(?:option|choice|number|tool)\s*)?#?\s*(\d+)", normalized
+        )
+        if match is not None:
+            index = int(match.group(1)) - 1
+            if 0 <= index < len(pending.options):
+                return pending.options[index].choice_id
+        ordinals = {
+            "first": 0,
+            "one": 0,
+            "second": 1,
+            "two": 1,
+            "third": 2,
+            "three": 2,
+        }
+        ordinal = ordinals.get(normalized)
+        if ordinal is not None and ordinal < len(pending.options):
+            return pending.options[ordinal].choice_id
+        for option in pending.options:
+            labels = (option.choice_id, option.label)
+            if any(
+                normalized == re.sub(r"[^a-z0-9]+", " ", label.casefold()).strip()
+                for label in labels
+            ):
+                return option.choice_id
+        return None
 
     @staticmethod
     def _approval_decision_from_text(
