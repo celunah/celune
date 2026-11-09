@@ -1,15 +1,18 @@
 # SPDX-License-Identifier: Apache-2.0
 """Runtime filesystem paths and global Hugging Face runtime setup for Celune."""
 
+from __future__ import annotations
+
 import os
 import sys
 import time
 import shutil
-import sysconfig
 import tempfile
-import contextlib
-import threading
 import importlib
+import sysconfig
+import threading
+import contextlib
+import contextvars
 from pathlib import Path
 from typing import Union, Literal, Optional
 from collections.abc import Callable, Generator
@@ -21,7 +24,157 @@ _HF_HOME_ENV = "HF_HOME"
 _HF_HUB_CACHE_ENV = "HF_HUB_CACHE"
 _HF_HUB_DISABLE_PROGRESS_BARS_ENV = "HF_HUB_DISABLE_PROGRESS_BARS"
 _HF_PROGRESS_PATCH_LOCK = threading.RLock()
+_HF_PROGRESS_REPORTER: contextvars.ContextVar[
+    Optional[_HuggingFaceProgressReporter]
+] = contextvars.ContextVar("celune_huggingface_progress_reporter", default=None)
+_HF_PROGRESS_WRAPPER_CLASS: Optional[type] = None
+_HF_PROGRESS_PATCH_ORIGINALS: Optional[tuple[type, type]] = None
+_HF_PROGRESS_ACTIVE_CONTEXTS = 0
 _LEGACY_APP_DATA_MIGRATIONS = (("backends", ("environments",)),)
+
+
+class _HuggingFaceProgressReporter:
+    """Combine concurrent Hugging Face transfer bars into one progress value."""
+
+    _TRANSFER_BAR = "huggingface_hub.snapshot_download.transfer"
+    _FILE_BAR = "huggingface_hub.http_get"
+
+    def __init__(
+        self,
+        callback: Callable[[Optional[float], Optional[float]], None],
+    ) -> None:
+        self._callback = callback
+        self._bars: dict[int, tuple[str, float, Optional[float]]] = {}
+        self._lock = threading.Lock()
+        self._last_report = 0.0
+        self._active = True
+
+    def deactivate(self) -> None:
+        """Stop forwarding updates from bars that outlive their download scope."""
+        with self._lock:
+            self._active = False
+
+    def report(
+        self,
+        bar_id: int,
+        name: str,
+        progress: float,
+        total: Optional[Union[int, float]],
+        *,
+        force: bool = False,
+    ) -> None:
+        """Record one transfer bar and publish its aggregate state."""
+        if name not in {self._TRANSFER_BAR, self._FILE_BAR}:
+            return
+        normalized_total = (
+            float(total)
+            if isinstance(total, (int, float))
+            and not isinstance(total, bool)
+            and total > 0
+            else None
+        )
+        with self._lock:
+            if not self._active:
+                return
+            normalized_progress = max(0.0, progress)
+            if normalized_total is not None:
+                normalized_progress = min(normalized_progress, normalized_total)
+            self._bars[bar_id] = (
+                name,
+                normalized_progress,
+                normalized_total,
+            )
+            now = time.monotonic()
+            if not force and now - self._last_report < 0.1:
+                return
+            self._last_report = now
+            transfer_bars = [
+                progress_entry
+                for progress_entry in self._bars.values()
+                if progress_entry[0] == self._TRANSFER_BAR
+            ]
+            bars = transfer_bars or [
+                progress_entry
+                for progress_entry in self._bars.values()
+                if progress_entry[0] == self._FILE_BAR
+            ]
+            known_bars = [
+                progress_entry
+                for progress_entry in bars
+                if progress_entry[2] is not None
+            ]
+            if known_bars:
+                reported_total = sum(
+                    progress_entry[2]
+                    for progress_entry in known_bars
+                    if progress_entry[2] is not None
+                )
+                reported_progress = min(
+                    sum(progress_entry[1] for progress_entry in known_bars),
+                    reported_total,
+                )
+            else:
+                reported_progress = None
+                reported_total = None
+        with contextlib.suppress(Exception):
+            self._callback(reported_progress, reported_total)
+
+
+def _make_huggingface_progress_class(base_class: type) -> type:
+    """Build the shared Hugging Face bar wrapper without importing it at startup."""
+
+    class CeluneHuggingFaceTqdm(base_class):
+        """Keep Hub bars quiet and forward aggregate file-transfer progress."""
+
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            initial = kwargs.get("initial", 0)
+            self._celune_downloaded = (
+                float(initial) if isinstance(initial, (int, float)) else 0.0
+            )
+            name = kwargs.get("name")
+            self._celune_progress_name = name if isinstance(name, str) else None
+            self._celune_progress_reporter = _HF_PROGRESS_REPORTER.get()
+            self._celune_progress_lock = threading.Lock()
+            super().__init__(*args, **kwargs)
+            self._report_celune_progress(force=True)
+
+        def update(self, n: Optional[float] = 1) -> Optional[bool]:
+            """Add transferred bytes and report the updated aggregate."""
+            result = super().update(n)
+            if isinstance(n, (int, float)) and not isinstance(n, bool):
+                with self._celune_progress_lock:
+                    self._celune_downloaded = max(
+                        0.0,
+                        self._celune_downloaded + float(n),
+                    )
+            self._report_celune_progress()
+            return result
+
+        def close(self) -> None:
+            """Report the final byte count before closing the quiet bar."""
+            self._report_celune_progress(force=True)
+            super().close()
+
+        def _report_celune_progress(
+            self,
+            force: bool = False,
+        ) -> None:
+            """Send this bar's transfer state to its scoped progress reporter."""
+            reporter = self._celune_progress_reporter
+            name = self._celune_progress_name
+            if reporter is None or name is None:
+                return
+            with self._celune_progress_lock:
+                progress = self._celune_downloaded
+            reporter.report(
+                id(self),
+                name,
+                progress,
+                getattr(self, "total", None),
+                force=force,
+            )
+
+    return CeluneHuggingFaceTqdm
 
 
 def user_data_dir(
@@ -186,11 +339,15 @@ def configure_numba_cache() -> Path:
 def huggingface_progress(
     callback: Optional[Callable[[Optional[float], Optional[float]], None]],
 ) -> Generator[None, None, None]:
-    """Forward Hugging Face transfer progress to one Celune progress callback.
+    """Forward aggregate Hugging Face transfer progress to Celune.
 
     Args:
-        callback: Receiver for downloaded bytes and their total, or ``None`` to leave the Hub unchanged.
+        callback: Receiver for aggregate downloaded bytes and their total, or
+            ``None`` to leave the Hub unchanged.
     """
+    global _HF_PROGRESS_ACTIVE_CONTEXTS
+    global _HF_PROGRESS_PATCH_ORIGINALS
+    global _HF_PROGRESS_WRAPPER_CLASS
     if callback is None:
         yield
         return
@@ -200,62 +357,36 @@ def huggingface_progress(
     progress_module = importlib.import_module("huggingface_hub.utils.tqdm")
     snapshot_download = importlib.import_module("huggingface_hub._snapshot_download")
 
-    class CeluneHuggingFaceTqdm(HuggingFaceTqdm):
-        """Keep Hugging Face bars quiet while forwarding their transfer state."""
-
-        def __init__(self, *args: object, **kwargs: object) -> None:
-            initial = kwargs.get("initial", 0)
-            self._celune_downloaded = (
-                float(initial) if isinstance(initial, (int, float)) else 0.0
-            )
-            self._celune_progress_callback = callback
-            self._celune_progress_lock = threading.Lock()
-            self._celune_last_report = 0.0
-            super().__init__(*args, **kwargs)
-            self._report_celune_progress(force=True)
-
-        def update(self, n: Optional[float] = 1) -> Optional[bool]:
-            if isinstance(n, (int, float)) and not isinstance(n, bool):
-                self._celune_downloaded = max(
-                    0.0,
-                    self._celune_downloaded + float(n),
-                )
-            result = super().update(n)
-            self._report_celune_progress()
-            return result
-
-        def close(self) -> None:
-            self._report_celune_progress(force=True)
-            super().close()
-
-        def _report_celune_progress(self, force: bool = False) -> None:
-            total = getattr(self, "total", None)
-            normalized_total = (
-                float(total)
-                if isinstance(total, (int, float))
-                and not isinstance(total, bool)
-                and total > 0
-                else None
-            )
-            progress = self._celune_downloaded if normalized_total is not None else None
-            now = time.monotonic()
-            with self._celune_progress_lock:
-                if not force and now - self._celune_last_report < 0.1:
-                    return
-                self._celune_last_report = now
-            with contextlib.suppress(Exception):
-                self._celune_progress_callback(progress, normalized_total)
-
+    reporter = _HuggingFaceProgressReporter(callback)
     with _HF_PROGRESS_PATCH_LOCK:
-        previous_progress_tqdm = progress_module.__dict__["tqdm"]
-        previous_snapshot_tqdm = snapshot_download.__dict__["hf_tqdm"]
-        progress_module.__dict__["tqdm"] = CeluneHuggingFaceTqdm
-        snapshot_download.__dict__["hf_tqdm"] = CeluneHuggingFaceTqdm
-        try:
-            yield
-        finally:
-            progress_module.__dict__["tqdm"] = previous_progress_tqdm
-            snapshot_download.__dict__["hf_tqdm"] = previous_snapshot_tqdm
+        if _HF_PROGRESS_PATCH_ORIGINALS is None:
+            previous_progress_tqdm = progress_module.__dict__["tqdm"]
+            previous_snapshot_tqdm = snapshot_download.__dict__["hf_tqdm"]
+            _HF_PROGRESS_PATCH_ORIGINALS = (
+                previous_progress_tqdm,
+                previous_snapshot_tqdm,
+            )
+            _HF_PROGRESS_WRAPPER_CLASS = _make_huggingface_progress_class(
+                HuggingFaceTqdm
+            )
+            progress_module.__dict__["tqdm"] = _HF_PROGRESS_WRAPPER_CLASS
+            snapshot_download.__dict__["hf_tqdm"] = _HF_PROGRESS_WRAPPER_CLASS
+        _HF_PROGRESS_ACTIVE_CONTEXTS += 1
+    context_token = _HF_PROGRESS_REPORTER.set(reporter)
+    try:
+        yield
+    finally:
+        _HF_PROGRESS_REPORTER.reset(context_token)
+        reporter.deactivate()
+        with _HF_PROGRESS_PATCH_LOCK:
+            _HF_PROGRESS_ACTIVE_CONTEXTS -= 1
+            if _HF_PROGRESS_ACTIVE_CONTEXTS == 0:
+                originals = _HF_PROGRESS_PATCH_ORIGINALS
+                if originals is not None:
+                    progress_module.__dict__["tqdm"] = originals[0]
+                    snapshot_download.__dict__["hf_tqdm"] = originals[1]
+                _HF_PROGRESS_PATCH_ORIGINALS = None
+                _HF_PROGRESS_WRAPPER_CLASS = None
 
 
 def memory_data_dir(create: bool = False) -> Path:
