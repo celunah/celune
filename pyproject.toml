@@ -206,6 +206,8 @@ filterwarnings = [
      "ignore:`torch\\.jit\\.load` is deprecated\\. Please switch to `torch\\.export`\\.:DeprecationWarning",
      # Python 3.14 emits this warning.
      "ignore:`torch\\.jit\\.load` is not supported in Python 3\\.14\\+ and may break\\. Please switch to `torch\\.export`\\.:DeprecationWarning",
+     # This is emitted by PyTorch 2.15.
+     "ignore:`torch\\.jit\\.load` is deprecated\\. Please switch to `torch\\.export`\\.:FutureWarning",
 ]
 
 [tool.ruff.lint]
@@ -235,6 +237,7 @@ disable=[
     # Pylint's cyclic import detection files complaints about cyclic imports that Python is able to handle just fine
     "R0401",  # cyclic-import
     # Celune codestyle requires very large classes
+    "R0901",  # too-many-ancestors
     "R0902",  # too-many-instance-attributes
     "R0903",  # too-few-public-methods
     "R0904",  # too-many-public-methods
