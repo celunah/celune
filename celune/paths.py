@@ -14,7 +14,7 @@ import threading
 import contextlib
 import contextvars
 from pathlib import Path
-from typing import Union, Literal, Optional
+from typing import Union, Literal, Optional, cast, NamedTuple
 from collections.abc import Callable, Generator
 
 from .constants import APP_NAME, APP_SLUG
@@ -30,7 +30,18 @@ _HF_PROGRESS_REPORTER: contextvars.ContextVar[
 _HF_PROGRESS_WRAPPER_CLASS: Optional[type] = None
 _HF_PROGRESS_PATCH_ORIGINALS: Optional[tuple[type, type]] = None
 _HF_PROGRESS_ACTIVE_CONTEXTS = 0
+_HF_PROGRESS_ACTIVE_REPORTERS: dict[int, _HuggingFaceProgressReporter] = {}
+_TQDM_PROGRESS_PATCH_CLASS: Optional[type] = None
+_TQDM_PROGRESS_PATCH_ORIGINALS: Optional[_TqdmProgressOriginals] = None
 _LEGACY_APP_DATA_MIGRATIONS = (("backends", ("environments",)),)
+
+
+class _TqdmProgressOriginals(NamedTuple):
+    """Store original tqdm methods for scoped monkeypatch restoration."""
+
+    init: Callable[..., object]
+    update: Callable[..., object]
+    close: Callable[..., object]
 
 
 class _HuggingFaceProgressReporter:
@@ -45,6 +56,10 @@ class _HuggingFaceProgressReporter:
     ) -> None:
         self._callback = callback
         self._bars: dict[int, tuple[str, float, Optional[float]]] = {}
+        self._active_transfer_bars: set[int] = set()
+        self._generic_bars: dict[int, tuple[float, Optional[float], int]] = {}
+        self._generic_primary: Optional[int] = None
+        self._generic_order = 0
         self._lock = threading.Lock()
         self._last_report = 0.0
         self._active = True
@@ -54,6 +69,11 @@ class _HuggingFaceProgressReporter:
         with self._lock:
             self._active = False
 
+    def is_active(self) -> bool:
+        """Return whether this progress scope still forwards callbacks."""
+        with self._lock:
+            return self._active
+
     def report(
         self,
         bar_id: int,
@@ -62,6 +82,7 @@ class _HuggingFaceProgressReporter:
         total: Optional[Union[int, float]],
         *,
         force: bool = False,
+        closed: bool = False,
     ) -> None:
         """Record one transfer bar and publish its aggregate state."""
         if name not in {self._TRANSFER_BAR, self._FILE_BAR}:
@@ -84,6 +105,10 @@ class _HuggingFaceProgressReporter:
                 normalized_progress,
                 normalized_total,
             )
+            if closed:
+                self._active_transfer_bars.discard(bar_id)
+            else:
+                self._active_transfer_bars.add(bar_id)
             now = time.monotonic()
             if not force and now - self._last_report < 0.1:
                 return
@@ -116,6 +141,86 @@ class _HuggingFaceProgressReporter:
             else:
                 reported_progress = None
                 reported_total = None
+        with contextlib.suppress(Exception):
+            self._callback(reported_progress, reported_total)
+
+    def report_generic(
+        self,
+        bar_id: int,
+        progress: Optional[Union[int, float]],
+        total: Optional[Union[int, float]],
+        *,
+        force: bool = False,
+        closed: bool = False,
+    ) -> None:
+        """Forward one primary generic tqdm bar without mixing concurrent units."""
+        normalized_progress = (
+            float(progress)
+            if isinstance(progress, (int, float)) and not isinstance(progress, bool)
+            else 0.0
+        )
+        normalized_total = (
+            float(total)
+            if isinstance(total, (int, float))
+            and not isinstance(total, bool)
+            and total > 0
+            else None
+        )
+        with self._lock:
+            if not self._active:
+                return
+            current = self._generic_bars.get(bar_id)
+            if closed:
+                if current is None:
+                    return
+                if self._generic_primary != bar_id:
+                    self._generic_bars.pop(bar_id, None)
+                    return
+                self._generic_bars.pop(bar_id, None)
+                if self._generic_bars:
+                    next_bar_id = min(
+                        self._generic_bars,
+                        key=lambda candidate: self._generic_bars[candidate][2],
+                    )
+                    self._generic_primary = next_bar_id
+                    selected = self._generic_bars[next_bar_id]
+                    reported_progress = selected[0]
+                    reported_total = selected[1]
+                else:
+                    self._generic_primary = None
+                    reported_progress = normalized_progress
+                    reported_total = normalized_total
+                force = True
+            else:
+                if current is None:
+                    order = self._generic_order
+                    self._generic_order += 1
+                else:
+                    order = current[2]
+                self._generic_bars[bar_id] = (
+                    normalized_progress,
+                    normalized_total,
+                    order,
+                )
+                current_primary = self._generic_primary
+                if current_primary is None or (
+                    self._generic_bars[current_primary][1] is None
+                    and normalized_total is not None
+                ):
+                    self._generic_primary = bar_id
+                if self._generic_primary != bar_id:
+                    return
+                reported_progress = normalized_progress
+                reported_total = normalized_total
+            if any(
+                self._bars[active_bar_id][2] is not None
+                for active_bar_id in self._active_transfer_bars
+            ):
+                return
+            now = time.monotonic()
+            if not force and now - self._last_report < 0.1:
+                return
+            self._last_report = now
         with contextlib.suppress(Exception):
             self._callback(reported_progress, reported_total)
 
@@ -152,12 +257,13 @@ def _make_huggingface_progress_class(base_class: type) -> type:
 
         def close(self) -> None:
             """Report the final byte count before closing the quiet bar."""
-            self._report_celune_progress(force=True)
+            self._report_celune_progress(force=True, closed=True)
             super().close()
 
         def _report_celune_progress(
             self,
             force: bool = False,
+            closed: bool = False,
         ) -> None:
             """Send this bar's transfer state to its scoped progress reporter."""
             reporter = self._celune_progress_reporter
@@ -172,9 +278,111 @@ def _make_huggingface_progress_class(base_class: type) -> type:
                 progress,
                 getattr(self, "total", None),
                 force=force,
+                closed=closed,
             )
 
     return CeluneHuggingFaceTqdm
+
+
+def _current_generic_progress_reporter() -> Optional[_HuggingFaceProgressReporter]:
+    """Resolve the progress scope for generic bars, including worker threads."""
+    reporter = _HF_PROGRESS_REPORTER.get()
+    if reporter is not None:
+        return reporter
+    with _HF_PROGRESS_PATCH_LOCK:
+        if len(_HF_PROGRESS_ACTIVE_REPORTERS) == 1:
+            return next(iter(_HF_PROGRESS_ACTIVE_REPORTERS.values()))
+    return None
+
+
+def _bind_generic_tqdm_bar(
+    progress_bar: object,
+) -> Optional[_HuggingFaceProgressReporter]:
+    """Bind a generic tqdm instance to its active Celune progress scope."""
+    if hasattr(progress_bar, "_celune_progress_reporter"):
+        return None
+    reporter = getattr(progress_bar, "_celune_generic_progress_reporter", None)
+    if isinstance(reporter, _HuggingFaceProgressReporter) and reporter.is_active():
+        return reporter
+    reporter = _current_generic_progress_reporter()
+    if reporter is None:
+        return None
+    object.__setattr__(progress_bar, "_celune_generic_progress_reporter", reporter)
+    reporter.report_generic(
+        id(progress_bar),
+        getattr(progress_bar, "n", None),
+        getattr(progress_bar, "total", None),
+        force=True,
+    )
+    return reporter
+
+
+def _patch_generic_tqdm() -> None:
+    """Observe generic tqdm bars only while a Celune progress scope is active."""
+    global _TQDM_PROGRESS_PATCH_CLASS
+    global _TQDM_PROGRESS_PATCH_ORIGINALS
+    if _TQDM_PROGRESS_PATCH_ORIGINALS is not None:
+        return
+
+    tqdm_std = importlib.import_module("tqdm.std")
+    tqdm_class = cast(type, tqdm_std.__dict__["tqdm"])
+    original_init = cast(Callable[..., object], tqdm_class.__init__)
+    original_update = cast(Callable[..., object], tqdm_class.update)
+    original_close = cast(Callable[..., object], tqdm_class.close)
+
+    def generic_init(self, *args: object, **kwargs: object) -> None:
+        """Bind a new generic tqdm bar after its base state is initialized."""
+        original_init(self, *args, **kwargs)
+        _bind_generic_tqdm_bar(self)
+
+    def generic_update(self, n: Optional[float] = 1) -> object:
+        """Report updates from the active generic primary progress bar."""
+        result = original_update(self, n)
+        reporter = _bind_generic_tqdm_bar(self)
+        if reporter is not None:
+            reporter.report_generic(
+                id(self),
+                getattr(self, "n", None),
+                getattr(self, "total", None),
+            )
+        return result
+
+    def generic_close(self) -> object:
+        """Report the selected generic bar's final state before it closes."""
+        reporter = _bind_generic_tqdm_bar(self)
+        if reporter is not None:
+            reporter.report_generic(
+                id(self),
+                getattr(self, "n", None),
+                getattr(self, "total", None),
+                force=True,
+                closed=True,
+            )
+        return original_close(self)
+
+    _TQDM_PROGRESS_PATCH_CLASS = tqdm_class
+    _TQDM_PROGRESS_PATCH_ORIGINALS = _TqdmProgressOriginals(
+        original_init,
+        original_update,
+        original_close,
+    )
+    type.__setattr__(tqdm_class, "__init__", generic_init)
+    type.__setattr__(tqdm_class, "update", generic_update)
+    type.__setattr__(tqdm_class, "close", generic_close)
+
+
+def _restore_generic_tqdm() -> None:
+    """Restore tqdm's original methods after the last scoped progress hook."""
+    global _TQDM_PROGRESS_PATCH_CLASS
+    global _TQDM_PROGRESS_PATCH_ORIGINALS
+    tqdm_class = _TQDM_PROGRESS_PATCH_CLASS
+    originals = _TQDM_PROGRESS_PATCH_ORIGINALS
+    if tqdm_class is not None and originals is not None:
+        type.__setattr__(tqdm_class, "__init__", originals.init)
+        type.__setattr__(tqdm_class, "update", originals.update)
+        type.__setattr__(tqdm_class, "close", originals.close)
+    _TQDM_PROGRESS_PATCH_CLASS = None
+    _TQDM_PROGRESS_PATCH_ORIGINALS = None
 
 
 def user_data_dir(
@@ -342,8 +550,8 @@ def huggingface_progress(
     """Forward aggregate Hugging Face transfer progress to Celune.
 
     Args:
-        callback: Receiver for aggregate downloaded bytes and their total, or
-            ``None`` to leave the Hub unchanged.
+        callback: Receiver for active model-loading progress, or ``None`` to
+            leave all progress bars unchanged.
     """
     global _HF_PROGRESS_ACTIVE_CONTEXTS
     global _HF_PROGRESS_PATCH_ORIGINALS
@@ -369,17 +577,20 @@ def huggingface_progress(
             _HF_PROGRESS_WRAPPER_CLASS = _make_huggingface_progress_class(
                 HuggingFaceTqdm
             )
+            _patch_generic_tqdm()
             progress_module.__dict__["tqdm"] = _HF_PROGRESS_WRAPPER_CLASS
             snapshot_download.__dict__["hf_tqdm"] = _HF_PROGRESS_WRAPPER_CLASS
         _HF_PROGRESS_ACTIVE_CONTEXTS += 1
+        _HF_PROGRESS_ACTIVE_REPORTERS[id(reporter)] = reporter
     context_token = _HF_PROGRESS_REPORTER.set(reporter)
     try:
         yield
     finally:
         _HF_PROGRESS_REPORTER.reset(context_token)
-        reporter.deactivate()
         with _HF_PROGRESS_PATCH_LOCK:
             _HF_PROGRESS_ACTIVE_CONTEXTS -= 1
+            _HF_PROGRESS_ACTIVE_REPORTERS.pop(id(reporter), None)
+            reporter.deactivate()
             if _HF_PROGRESS_ACTIVE_CONTEXTS == 0:
                 originals = _HF_PROGRESS_PATCH_ORIGINALS
                 if originals is not None:
@@ -387,6 +598,7 @@ def huggingface_progress(
                     snapshot_download.__dict__["hf_tqdm"] = originals[1]
                 _HF_PROGRESS_PATCH_ORIGINALS = None
                 _HF_PROGRESS_WRAPPER_CLASS = None
+                _restore_generic_tqdm()
 
 
 def memory_data_dir(create: bool = False) -> Path:

@@ -320,6 +320,116 @@ class TestRuntimePath(CeluneTestCase):
 
         callback.assert_any_call(75.0, 300.0)
 
+    def test_huggingface_progress_forwards_generic_tqdm_bars(self) -> None:
+        """Forward generic tqdm progress without library-specific integration."""
+        from io import StringIO
+        from tqdm.std import tqdm
+
+        callback = mock.Mock()
+        with huggingface_progress(callback):
+            progress_bar = tqdm(
+                total=100,
+                initial=0,
+                desc="generic model loading",
+                disable=False,
+                file=StringIO(),
+            )
+            progress_bar.update(25)
+            progress_bar.close()
+
+        callback.assert_any_call(25.0, 100.0)
+
+    def test_huggingface_progress_keeps_one_generic_bar_primary(self) -> None:
+        """Keep concurrent generic bars from making progress jump between totals."""
+        from io import StringIO
+        from tqdm.std import tqdm
+
+        callback = mock.Mock()
+        with huggingface_progress(callback):
+            first_bar = tqdm(total=100, initial=0, disable=False, file=StringIO())
+            second_bar = tqdm(total=1000, initial=0, disable=False, file=StringIO())
+            first_bar.update(25)
+            second_bar.update(500)
+
+            assert mock.call(500.0, 1000.0) not in callback.call_args_list
+            first_bar.close()
+
+            callback.assert_any_call(500.0, 1000.0)
+            second_bar.close()
+
+    def test_huggingface_progress_resumes_generic_bars_after_transfers_close(
+        self,
+    ) -> None:
+        """Resume generic progress after active Hub transfers have closed."""
+        import importlib
+        from io import StringIO
+        from tqdm.std import tqdm
+
+        callback = mock.Mock()
+        progress_module = importlib.import_module("huggingface_hub.utils.tqdm")
+        with huggingface_progress(callback):
+            transfer_bar = progress_module.tqdm(
+                total=100,
+                initial=0,
+                desc="transfer.safetensors",
+                disable=True,
+                name="huggingface_hub.http_get",
+            )
+            generic_bar = tqdm(
+                total=1000,
+                initial=0,
+                disable=False,
+                file=StringIO(),
+            )
+            generic_bar.update(500)
+            assert mock.call(500.0, 1000.0) not in callback.call_args_list
+
+            transfer_bar.update(100)
+            transfer_bar.close()
+            generic_bar.update(1)
+            generic_bar.close()
+
+        callback.assert_any_call(501.0, 1000.0)
+
+    def test_huggingface_progress_removes_closed_generic_primary_during_transfer(
+        self,
+    ) -> None:
+        """Do not leave a closed generic primary blocking later progress bars."""
+        import importlib
+        from io import StringIO
+        from tqdm.std import tqdm
+
+        callback = mock.Mock()
+        progress_module = importlib.import_module("huggingface_hub.utils.tqdm")
+        with huggingface_progress(callback):
+            generic_bar = tqdm(
+                total=1000,
+                initial=0,
+                disable=False,
+                file=StringIO(),
+            )
+            transfer_bar = progress_module.tqdm(
+                total=100,
+                initial=0,
+                desc="transfer.safetensors",
+                disable=True,
+                name="huggingface_hub.http_get",
+            )
+            generic_bar.close()
+            transfer_bar.update(100)
+            transfer_bar.close()
+
+            resumed_bar = tqdm(
+                total=20,
+                initial=0,
+                disable=False,
+                file=StringIO(),
+            )
+            resumed_bar.update(10)
+            resumed_bar.close()
+
+        callback.assert_any_call(10.0, 20.0)
+
     def test_huggingface_progress_routes_overlapping_scopes_to_their_callbacks(
         self,
     ) -> None:
