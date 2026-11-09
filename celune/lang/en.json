@@ -674,7 +674,7 @@
     "operation_state.unavailable": "The engine cannot accept input in this state.",
     "osc.action_checking_dependencies": "Check",
     "osc.action_downloading": "Download",
-    "osc.action_early_initialization_failed": "Init failed",
+    "osc.action_early_initialization_failed": "Startup",
     "osc.action_error": "Error",
     "osc.action_exiting": "Exit",
     "osc.action_failed": "Failed",
