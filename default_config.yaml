@@ -1,69 +1,77 @@
-# backend
+# Backend selection
+#
 # you will be asked to choose, but VRAM presets may limit availability
 # of certain backends
 #
-# qwen3 = faster, less expressive
-# luxtts = CPU-capable English voice cloning
-# dotstts = slower, very high quality
-# voxcpm2 = slower, high quality
-# mini = much faster, and just as good
-# seed-vc = VC backend, converts speech rather than generating it
+# `qwen3` = faster, less expressive
+# `ming3` = low latency, inexpensive
+# `dotstts` = slower, very high quality
+# `voxcpm2` = slower, high quality
+# `mini` = much faster, and just as good
+# `soulxsinger` = singing mode
+# `seed-vc` = voice conversion mode
 backend: null
 
-# Model license-use policy
+# Model license usage policy
 #
-# false = allow models after their normal license consent prompt
-# true = allow only models whose reviewed terms confirm commercial use
+# `false` = allow models after their normal license consent prompt
+# `true` = allow only models whose reviewed terms confirm commercial use
 commercial: false
 
 # Runtime TTS weight quantization
 #
-# false = keep loading TTS weights in BF16
-# true = use INT8 on Ampere sm86 and FP8 on Ada sm89 or newer when supported;
-#        loading or warmup failures retry with BF16
+# `false` = keep loading TTS weights in BF16, requires more memory
+# `true` = use INT8 on Ampere (sm86) and FP8 on Ada Lovelace (sm89) or newer when supported,
+# falls over to BF16, and signals fatal if both methods fail
 quantize: true
 
 # Persona and TTS KV-cache quantization
 #
-# true = store supported cache prefixes in INT8 on Ampere or FP8 on sm89+
-# false = keep KV caches in their model compute dtype
+# `true` = store supported cache prefixes in INT8 on Ampere, FP8 on Ada Lovelace or newer
+# `false` = keep KV cache dtypes unmodified
 quantize_kv_cache: true
 
 # Qwen3 TTS settings
 #
-# Full reference conditioning preserves the reference prosody and expression.
-# Set this to true when stronger speaker identity matters more than expression.
+# full reference conditioning preserves the reference prosody and expression
+# set this to `true` when stronger speaker identity matters more than expression
 qwen3_x_vector_only: false
 
-# Options passed to the selected backend only.
+# Backend specific settings
+#
+# these settings will only apply to their target backends
 backend_options:
   soulxsinger:
-    # Use F0 melody conditioning instead of score conditioning.
+    # use two-pass singing generation for improved pitch control and advanced musical features
     high_precision: true
-    # Generate long score sections in shorter chunks for earlier playback.
+    # generate singing in chunks while preserving CESN event behavior across them
     streaming: false
 
-# CEVOICE voice selection
+# Character selection
 #
-# default voices are in the "default" pack and are usable for most
-# check scripts\cac.py to create your own custom voice pack by following
-# step-by-step instructions
+# this selects the character who you will have speak or talk with you
+#
+# use one of the four bundled packs: three variants of Celune in the `default` packs, Nol in `nol`
+# more characters can be generated for use in Celune, check `scripts/cac.py` or use your AI agent with
+# the bundled voice pack creator skill for an automatic workflow
 voice_bundle: default
 
-# logging
+# Log level settings
 #
-# info = normal status information
-# verbose = advanced runtime information
-# debug = low-level engine and IPC diagnostics
+# `info` = only user-facing statuses
+# `verbose` = detailed runtime status
+# `debug` = every event logged + a debug menu (press CTRL+B)
 log_level: info
 
-# locale
+# Locale settings
 #
-# null = auto-detect from the current system locale
-# set a language code like en, en-US, or pl to force a specific locale
+# `null` = auto-detect from the current system locale
+# `...` = use language file for the specified locale
+#
+# non-existing locales will fall back to raw keys
 locale: null
 
-# audio device settings
+# Audio device settings
 #
 # set either key to a sounddevice device name or numeric index
 # null = use the current system default device
@@ -78,83 +86,92 @@ audio_api: null
 input_device: null
 output_device: null
 
-# headless mode / Celune embedded framework
+# Headless mode
 #
-# this will disable the UI and only API/WebUI and extensions can make
+# this will disable the UI and only API, WebUI, MCP servers, or extensions can make
 # Celune perform any actions
-# set this to null to auto-detect desktop, TTY, and non-interactive sessions
+# `null` - auto-detect the session and start in a compatible mode
+# `false` - force full mode
+# `true` - force headless mode
 headless: false
-# don't use ANSI colors in headless interface (defaulting to white)
+# use only VGA white while in headless mode
 headless_nocolor: false
 
-# theme palette
+# Theme preference
 #
-# CEVOICE packs can define how the app theme looks like
-# the default uses #CEBAFF accent and #1D1826 background colors
+# character packs can override the theme colors
+# this selects whether Celune prefers dark or light theme
 theme: dark
 
 # YouTube download settings
 #
-# yt-dlp uses these optional values when playing YouTube URLs as SFX. Keep
-# cookies and PO tokens private; they are passed to yt-dlp but never logged.
+# `yt-dlp` may use these optional values when downloading YouTube URLs before sending them to the pipeline
+# do not post your cookies or PO tokens publicly, Celune does not log or send it anywhere
 youtube:
-  # Netscape-format cookie file. Use either cookies_file or cookies_from_browser.
+  # select a cookie file
   cookies_file: null
-  # Browser selector such as chrome, edge, firefox, or chrome:Profile Name.
+  # obtain a cookie from your browser
   cookies_from_browser: null
-  # One value or a list such as web.gvs+TOKEN and web.player+TOKEN.
+  # one or more values, such as `web.gvs+TOKEN` or `web.player+TOKEN`
   po_token: null
-  # One client or a list such as web_embedded or android_vr.
+  # one or more clients, such as `web_embedded` or `android_vr`
   player_client: null
-  # One runtime or a list such as deno or node:C:/Program Files/nodejs/node.exe.
+  # one or more runtimes by location or from PATH, e.g. `deno` or `node:C:/Program Files/nodejs/node.exe`
   js_runtimes: null
-  # For example ejs:npm when using Deno or Bun.
+  # e.g. `ejs:npm` when using Deno or Bun
   remote_components: null
-  # Additional yt-dlp extractor arguments, each as IE_KEY:ARGS.
+  # extra arguments to provide to `yt-dlp`
   extractor_args: []
 
 # CeluneNorm settings
 #
 # CeluneNorm is Celune's normalizer that cleans up your text to be more TTS friendly
-# it may however lose a letter occasionally or mix up short sequences
+# AI normalizers may occasionally misinterpret your input, set it to `false` if it bothers you
 use_normalizer: false
 
-# IPA forced alignment for word-level speech caption timing.
-# Requires the `captions` optional dependency and the espeak-ng executable.
+# Caption display
+#
+# `espeak-ng` is required to align captions, unaligned captions are refused by the engine
 captions: false
 
 # IPA auto-conversion
 # Celune can auto-convert IPA strings into English-like approximations
 # if you want to try speaking the IPA raw, disable this feature
+# this may break speech with some models
 #
 # false = IPA is converted to English like compounds
 # true = IPA is treated as is
 ipa: false
 
 # Global operation mode:
-# performance - manual voice operation, no Persona, agentic features, or other autonomous actions
-# converse    - Persona conversation without agentic features, singing unavailable
-# agent       - automatic Persona/agent routing, singing unavailable
+# `performance` - manual voice operation, no Persona, agentic features, or other autonomous actions
+# `converse` - Persona conversation without agentic features, singing unavailable
+# `agent` - automatic Persona/agent routing, singing unavailable
 mode: performance
 
 # Agent settings
+# Celune can act autonomously when set to `agent` mode
 agent:
+  # use file management tools
   fs_tools: true
+  # how many agent loops are permitted before the task is aborted
   max_loops: 20
+  # how many tokens are allowed to be consumed before the task is aborted
   max_tokens: null
+  # how many tokens is the agent allowed to use at one time
   context_size: 8192
 
 # VRAM target settings
 # we recommend choosing medium as a safe baseline for low VRAM users
 # the sane choice for users wanting to use Persona is the high preset
 #
-# low (6GB) - 4GB Celune budget + 2GB system reserve
-# medium (8GB) - 6GB Celune budget + 2GB system reserve
-# high (12GB) - 10GB Celune budget + 2GB system reserve; Persona/agent use standard models
-# xhigh (16GB+) - 14GB Celune budget + 2GB system reserve; smart Persona models are available
+# low (6GB) - 4GB reserved
+# medium (8GB) - 6GB reserved
+# high (12GB) - 10GB reserved, Persona standard models
+# xhigh (16GB+) - 14GB reserved, Persona standard and smart models
 vram: medium
 
-# sleep mode behavior
+# Sleep mode behavior
 #
 # Celune can automatically enter sleep mode to save your resources while idle
 sleep:
@@ -164,25 +181,26 @@ sleep:
   timeout: 10
   # what to unload when entering sleep mode?
   unload:
+    # disable Persona's VLM/LLM
     persona: true
+    # disable CeluneNorm
     normalizer: true
-    tts: false
+    # disable the TTS backend
+    tts: true
 
 # Celune API settings
 #
-# Celune API allows users to interact with Celune over the network,
-# and also lets IoT devices use her abilities
+# Celune API allows users to interact with Celune and lets other devices use her abilities
 api:
-  # enabled?
   enabled: true
-  # same_machine = localhost, same_network = all local interfaces,
-  # everyone = localhost plus a temporary cloudflared public tunnel
+  # `same_machine` = localhost, `same_network` = all local interfaces,
+  # `everyone` = localhost over a temporary Cloudflare tunnel
   access: same_machine
   # what network port to bind
   port: 2060
   # what authentication token users must use
-  # leave null to generate and store a key in Celune's app-data directory
-  # the token can also be set with CELUNE_API_TOKEN
+  # `null` will generate and store a key in Celune's app-data directory
+  # the token can also be set with `CELUNE_API_TOKEN`
   token: null
   # how many generations are allowed every minute
   # strongly recommended for public APIs
@@ -192,14 +210,20 @@ api:
 #
 # Persona is Celune's thinking system using RAG (Retrieval Augmented Generation) to let characters
 # keep a conversational context and remember you as you speak with said characters
-# it uses Qwen/Qwen3-VL-4B-Instruct to ensure it can run on consumer hardware
+# it is recommended to use Qwen3-VL or a compatible finetune for best results
 persona:
+  # how many tokens to reserve
+  # more context will use more VRAM
   context_size: 2048
+  # how much of the context space in percent needs to be taken before compaction occurs
+  # compacting too late may harm outputs, compacting too early may cause loss of context
   compact_at: 75
+  # context hard cap
+  # `null` will be unlimited, else the context will limit at N exchanges
   max_turns: null
   # load same-named Persona Markdown files from the Celune app-data character directory
   debug_overrides: false
-  # which Qwen model to use? (in case you want to use an FT or uncensored version)
+  # which model to use? (in case you want to use a different model)
   model_id: Qwen/Qwen3-VL-4B-Instruct
   # model_id: huihui-ai/Huihui-Qwen3-VL-4B-Instruct-abliterated
   # Hugging Face Whisper model used by CTRL+R Persona voice input
