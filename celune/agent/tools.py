@@ -547,6 +547,10 @@ _LAUNCH_EXECUTABLE_RE = re.compile(
     r"(?:\"([^\"]+)\"|'([^']+)'|`([^`]+)`|([^\s,;]+))"
 )
 _NO_LAUNCH_ARGUMENTS_RE = re.compile(r"(?i)\bno\s+(?:command[- ]line\s+)?arguments?\b")
+_LAUNCH_WORKING_DIRECTORY_RE = re.compile(
+    r"(?i)\b(?:working\s+directory|cwd)\s*(?:(?:to|is)\s*)?(?:=|:)?\s*"
+    r"(?:\"([^\"]+)\"|'([^']+)'|`([^`]+)`|((?:[a-z]:[\\/]|\\\\|/)\S+))"
+)
 
 
 def _local_path(
@@ -667,14 +671,30 @@ def _requested_launch_executable(context: AgentContext) -> Optional[str]:
     return None
 
 
+def _requested_launch_working_directory(context: AgentContext) -> Optional[str]:
+    """Return the absolute working directory explicitly named in the request."""
+    request = context.request.original_request or context.request.request
+    match = _LAUNCH_WORKING_DIRECTORY_RE.search(request)
+    if match is None:
+        return None
+    directory = next((group for group in match.groups() if group), None)
+    if directory is None or match.group(4) is None:
+        return directory
+    return directory.rstrip(".,;:!?)]}")
+
+
 def _recover_local_launch_call(call: ToolCall, context: AgentContext) -> ToolCall:
-    """Restore the requested executable and explicit empty argument list."""
+    """Restore launch values from the request and discard invented options."""
     request = context.request.original_request or context.request.request
     executable = _requested_launch_executable(context)
-    if executable is None:
-        return call
     arguments = dict(call["arguments"])
-    arguments["executable"] = executable
+    if executable is not None:
+        arguments["executable"] = executable
+    working_directory = _requested_launch_working_directory(context)
+    if working_directory is None:
+        arguments.pop("cwd", None)
+    else:
+        arguments["cwd"] = working_directory
     if _NO_LAUNCH_ARGUMENTS_RE.search(request):
         arguments["arguments"] = []
     return {**call, "arguments": arguments}
@@ -1120,9 +1140,10 @@ def _argument_list(call: ToolCall, name: str) -> list[str]:
 
 
 def _local_launch_process(
-    _engine: Celune, call: ToolCall, _context: AgentContext
+    _engine: Celune, call: ToolCall, context: AgentContext
 ) -> JSON:
     """Launch one explicit executable with structured arguments and no shell."""
+    call = recover_local_tool_call(call, context)
     executable = _string(call, "executable")
     resolved = _resolve_local_executable(executable)
     if resolved is None:

@@ -166,6 +166,7 @@ class TestLocalManagementTools(CeluneTestCase):
             "arguments": {
                 "executable": "notepad.exe with no arguments",
                 "arguments": ["and", "no", "shell"],
+                "cwd": "no shell",
             },
         }
 
@@ -174,6 +175,58 @@ class TestLocalManagementTools(CeluneTestCase):
 
         assert recovered["arguments"] == {"executable": "notepad.exe", "arguments": []}
         assert inferred == {"executable": "notepad.exe", "arguments": []}
+
+    def test_launch_process_recovers_only_an_explicit_working_directory(self) -> None:
+        """Discard a generated cwd unless the request names its directory."""
+        requested_directory = str(Path.cwd().resolve() / "explicit cwd")
+        request = (
+            "Use local_launch_process to launch notepad.exe with working directory "
+            f'"{requested_directory}", no arguments, and no shell.'
+        )
+        context = self._context("Launch the requested process.", request)
+        call: ToolCall = {
+            "id": "launch",
+            "name": "local_launch_process",
+            "arguments": {
+                "executable": "notepad.exe",
+                "arguments": [],
+                "cwd": "invented directory",
+            },
+        }
+
+        recovered = recover_local_tool_call(call, context)
+
+        assert recovered["arguments"]["cwd"] == requested_directory
+
+    def test_launch_process_ignores_generated_working_directory(self) -> None:
+        """Launch in the inherited process directory when cwd was not requested."""
+        context = self._context(
+            "Launch the requested process.",
+            "Use local_launch_process to launch notepad.exe with no arguments and no shell.",
+        )
+        call: ToolCall = {
+            "id": "launch",
+            "name": "local_launch_process",
+            "arguments": {
+                "executable": "notepad.exe",
+                "arguments": [],
+                "cwd": "no shell",
+            },
+        }
+        with (
+            mock.patch(
+                "celune.agent.tools._resolve_local_executable",
+                return_value="C:/Windows/notepad.exe",
+            ),
+            mock.patch("celune.agent.tools.subprocess.Popen") as process,
+        ):
+            process.return_value.pid = 4321
+            result = self._tool("local_launch_process").execute(call, context)
+
+        assert result["status"] == AgentToolExecutionStatus.SUCCEEDED
+        assert process.call_args.kwargs["cwd"] is None
+        assert process.call_args.kwargs["shell"] is False
+        assert process.call_args.args[0] == ["C:/Windows/notepad.exe"]
 
     @WINDOWS_ONLY
     def test_launch_process_searches_the_windows_system_directory(self) -> None:

@@ -108,7 +108,10 @@ timestamps with an explicit UTC offset; creation time is `null` when the
 operating system does not expose it.
 Process launch resolves executable names through `PATH` and, on Windows, also
 checks the Windows system directories. Arguments are passed as a structured
-list, and shell execution remains disabled.
+list, and shell execution remains disabled. When the task omits a working
+directory, Celune inherits its own process directory and discards any generated
+`cwd`; an explicit `cwd` must be named in the task and resolve to an existing
+directory.
 Routing and tool-selection prompts instruct Persona and Needle to preserve
 explicit paths from the task request. Celune also retains the original user
 request when Persona produces a shorter task summary, so the selector and local
