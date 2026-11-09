@@ -16,45 +16,7 @@ import soundfile as sf
 from iso639 import Lang
 from iso639.exceptions import InvalidLanguageValue, DeprecatedLanguageValue
 
-from .output import (
-    is_youtube_sfx_url,
-    download_youtube_sfx,
-    format_stat_duration,
-)
-from .captions import (
-    playback_source_meta,
-    next_playback_source_id,
-    register_playback_source,
-    set_playback_source_status,
-    clear_playback_source_status,
-    register_overlay_playback_state,
-)
-from .buffering import (
-    acquire_pipeline,
-    release_pipeline,
-    queue_playback_done,
-    queue_playback_chunk,
-    acquire_pipeline_result,
-    flush_buffered_speech_chunks,
-)
-from ..utils import (
-    rng_replace,
-    cesn_to_text,
-    is_april_fools,
-    detect_language,
-    format_error_message,
-    normalize_special_characters,
-)
 from ..cevoice import default_loader
-from ..dataclasses.pipeline import (
-    AudioOutput,
-    SpeechTiming,
-    SpeechRequest,
-    AudioInputRequest,
-    PreparedSpeechAudio,
-    VoiceConversionRequest,
-    CaptionAlignmentSection,
-)
 from ..i18n import string, tagged_string
 from ..constants import BASE_SR, APP_NAME
 from ..exceptions import NotAvailableError
@@ -64,6 +26,46 @@ from ..core.concurrency import run_in_daemon_thread
 from ..typing.aliases import AudioChunk, AudioChunks
 from ..vc import VC_PLAYBACK_GAIN, normalize_vc_audio
 from ..audio.dsp import split, resample_audio, is_silent_utterance
+from .output import (
+    is_youtube_sfx_url,
+    download_youtube_sfx,
+    format_stat_duration,
+)
+from ..utils import (
+    rng_replace,
+    cesn_to_text,
+    is_april_fools,
+    detect_language,
+    format_error_message,
+    normalize_special_characters,
+)
+from .buffering import (
+    acquire_pipeline,
+    release_pipeline,
+    queue_playback_done,
+    queue_playback_chunk,
+    acquire_pipeline_result,
+    flush_buffered_speech_chunks,
+)
+from ..dataclasses.pipeline import (
+    AudioOutput,
+    SpeechTiming,
+    SpeechRequest,
+    AudioInputRequest,
+    PreparedSpeechAudio,
+    VoiceConversionRequest,
+    CaptionAlignmentSection,
+)
+from .captions import (
+    caption_alignment_word_count,
+    merge_empty_caption_alignment_sections,
+    playback_source_meta,
+    next_playback_source_id,
+    register_playback_source,
+    set_playback_source_status,
+    clear_playback_source_status,
+    register_overlay_playback_state,
+)
 
 if TYPE_CHECKING:
     from ..celune import Celune
@@ -249,10 +251,11 @@ def play_tutorial_sections(
     silence = np.zeros(silence_shape, dtype=np.float32)
     for index, section_audio in enumerate(normalized_audio):
         section_starts.append(total_frames)
-        transcript_words = normalize_special_characters(
+        transcript_text = normalize_special_characters(
             sections[index],
             for_tts=True,
-        ).split()
+        )
+        transcript_alignment_words = caption_alignment_word_count(transcript_text)
         display_words = visible_sections[index].split()
         combined_parts.append(section_audio)
         alignment_sections.append(
@@ -260,17 +263,23 @@ def play_tutorial_sections(
                 audio_start_frame=total_frames,
                 audio_end_frame=total_frames + len(section_audio),
                 transcript_word_start=transcript_word_start,
-                transcript_word_end=transcript_word_start + len(transcript_words),
+                transcript_word_end=(
+                    transcript_word_start + transcript_alignment_words
+                ),
                 display_word_start=display_word_start,
                 display_word_end=display_word_start + len(display_words),
             )
         )
-        transcript_word_start += len(transcript_words)
+        transcript_word_start += transcript_alignment_words
         display_word_start += len(display_words)
         total_frames += len(section_audio)
         if index < len(audio_sections) - 1:
             combined_parts.append(silence)
             total_frames += pause_samples
+
+    alignment_sections = list(
+        merge_empty_caption_alignment_sections(alignment_sections)
+    )
 
     transcript = " ".join(sections)
     display_transcript = " ".join(visible_sections)

@@ -13,9 +13,8 @@ import itertools
 import threading
 import subprocess
 import unicodedata
-import string as string_module
-
 from pathlib import Path
+import string as string_module
 from collections import abc, deque
 from difflib import SequenceMatcher
 from typing import TYPE_CHECKING, Optional, Protocol, Union, cast
@@ -23,17 +22,10 @@ from typing import TYPE_CHECKING, Optional, Protocol, Union, cast
 import numpy as np
 from iso639.exceptions import InvalidLanguageValue, DeprecatedLanguageValue
 
-from .timing import monotonic_time
 from ..i18n import string
 from ..constants import BASE_SR
 from ..typing.common import JSON
-from ..dataclasses.pipeline import (
-    SpeechTiming,
-    CaptionPlaybackState,
-    CaptionPlaybackSection,
-    CaptionPlaybackSegment,
-    CaptionAlignmentSection,
-)
+from .timing import monotonic_time
 from ..utils import format_error_message
 from ..audio.resampling import resample_audio
 from ..typing.pipeline import SpeechStreamQueue
@@ -42,6 +34,13 @@ from ..registry.consent import require_model_consent
 from ..registry.other import CAPTION_ALIGNMENT_MODEL_ID
 from ..typing.aliases import LogLevel, AudioChunk, AudioChunks
 from ..exceptions import OnnxRuntimeNotFound, EspeakExecutableNotFound
+from ..dataclasses.pipeline import (
+    SpeechTiming,
+    CaptionPlaybackState,
+    CaptionPlaybackSection,
+    CaptionPlaybackSegment,
+    CaptionAlignmentSection,
+)
 
 if TYPE_CHECKING:
     from ..celune import Celune
@@ -330,12 +329,16 @@ def align_chunk_word_start_frames(
                 language,
                 alignment_sections,
             )
-            aligned_timings = map_section_word_timings(
-                display_words,
-                aligned_words,
-                alignment_sections,
-                len(chunk_audio) / sample_rate,
-                sample_rate,
+            aligned_timings = (
+                map_section_word_timings(
+                    display_words,
+                    aligned_words,
+                    alignment_sections,
+                    len(chunk_audio) / sample_rate,
+                    sample_rate,
+                )
+                if aligned_words
+                else ()
             )
         else:
             aligned_words = get_caption_aligner().align_words(
@@ -381,7 +384,7 @@ def build_caption_alignment_sections(
     spoken_sections = tuple(
         (audio_start, audio_end, text)
         for audio_start, audio_end, text in audio_sections
-        if audio_end > audio_start and text.split()
+        if audio_end > audio_start and caption_alignment_word_count(text) > 0
     )
     if not spoken_sections:
         return "", ()
@@ -395,7 +398,7 @@ def build_caption_alignment_sections(
         display_ranges,
         strict=True,
     ):
-        transcript_word_end = transcript_word_start + len(text.split())
+        transcript_word_end = transcript_word_start + caption_alignment_word_count(text)
         sections.append(
             CaptionAlignmentSection(
                 audio_start,
@@ -408,35 +411,7 @@ def build_caption_alignment_sections(
         )
         transcript_word_start = transcript_word_end
 
-    merged_sections: list[CaptionAlignmentSection] = []
-    pending = sections[0]
-    for section in sections[1:]:
-        if pending.display_word_start == pending.display_word_end or (
-            section.display_word_start == section.display_word_end
-        ):
-            pending = CaptionAlignmentSection(
-                pending.audio_start_frame,
-                section.audio_end_frame,
-                pending.transcript_word_start,
-                section.transcript_word_end,
-                pending.display_word_start,
-                section.display_word_end,
-            )
-        else:
-            merged_sections.append(pending)
-            pending = section
-    if pending.display_word_start == pending.display_word_end and merged_sections:
-        previous = merged_sections[-1]
-        merged_sections[-1] = CaptionAlignmentSection(
-            previous.audio_start_frame,
-            pending.audio_end_frame,
-            previous.transcript_word_start,
-            pending.transcript_word_end,
-            previous.display_word_start,
-            pending.display_word_end,
-        )
-    else:
-        merged_sections.append(pending)
+    merged_sections = list(merge_empty_caption_alignment_sections(sections))
 
     first = merged_sections[0]
     if first.audio_start_frame > 0:
@@ -449,6 +424,54 @@ def build_caption_alignment_sections(
             first.display_word_end,
         )
     return " ".join(transcript_chunks), tuple(merged_sections)
+
+
+def caption_alignment_word_count(text: str) -> int:
+    """Count transcript words using the same edge-punctuation rules as eSpeak."""
+    return len(_caption_alignment_words(text))
+
+
+def merge_empty_caption_alignment_sections(
+    sections: abc.Sequence[CaptionAlignmentSection],
+) -> tuple[CaptionAlignmentSection, ...]:
+    """Merge sections that have no alignable transcript or display words."""
+    if not sections:
+        return ()
+
+    def is_empty(section: CaptionAlignmentSection) -> bool:
+        return (
+            section.transcript_word_start == section.transcript_word_end
+            or section.display_word_start == section.display_word_end
+        )
+
+    merged: list[CaptionAlignmentSection] = []
+    pending = sections[0]
+    for section in sections[1:]:
+        if is_empty(pending) or is_empty(section):
+            pending = CaptionAlignmentSection(
+                pending.audio_start_frame,
+                section.audio_end_frame,
+                pending.transcript_word_start,
+                section.transcript_word_end,
+                pending.display_word_start,
+                section.display_word_end,
+            )
+        else:
+            merged.append(pending)
+            pending = section
+    if is_empty(pending) and merged:
+        previous = merged[-1]
+        merged[-1] = CaptionAlignmentSection(
+            previous.audio_start_frame,
+            pending.audio_end_frame,
+            previous.transcript_word_start,
+            pending.transcript_word_end,
+            previous.display_word_start,
+            pending.display_word_end,
+        )
+    else:
+        merged.append(pending)
+    return tuple(merged)
 
 
 def map_word_timings(
@@ -717,10 +740,7 @@ def _word_frame_spans(
 def _phonemize(transcript: str, voice: str) -> tuple[tuple[str, ...], ...]:
     """Return the eSpeak IPA phones for each whitespace-separated word."""
     words: list[tuple[str, ...]] = []
-    for token in transcript.split():
-        word = token.strip(_EDGE_PUNCTUATION)
-        if not word:
-            continue
+    for word in _caption_alignment_words(transcript):
         try:
             result = subprocess.run(
                 ["espeak-ng", "-q", "--ipa", "-v", voice, word],
@@ -739,6 +759,13 @@ def _phonemize(transcript: str, voice: str) -> tuple[tuple[str, ...], ...]:
             raise ValueError(f"eSpeak produced no IPA phones for {word!r}")
         words.append(phones)
     return tuple(words)
+
+
+def _caption_alignment_words(transcript: str) -> tuple[str, ...]:
+    """Return whitespace-delimited tokens that remain after edge punctuation removal."""
+    return tuple(
+        word for token in transcript.split() if (word := token.strip(_EDGE_PUNCTUATION))
+    )
 
 
 def _split_ipa_phones(ipa: str) -> tuple[str, ...]:

@@ -80,6 +80,36 @@ def test_build_caption_alignment_sections_merges_empty_display_ranges() -> None:
     )
 
 
+def test_build_caption_alignment_sections_ignores_standalone_punctuation_chunks() -> (
+    None
+):
+    """Keep transcript ranges aligned with the words passed to eSpeak."""
+    transcript, sections = captions.build_caption_alignment_sections(
+        "first second",
+        (
+            (0, 48_000, "first"),
+            (48_000, 72_000, ":"),
+            (72_000, 120_000, "second"),
+        ),
+    )
+
+    assert transcript == "first second"
+    assert sections == (
+        captions.CaptionAlignmentSection(0, 48_000, 0, 1, 0, 1),
+        captions.CaptionAlignmentSection(72_000, 120_000, 1, 2, 1, 2),
+    )
+
+
+def test_merge_empty_caption_alignment_sections_into_adjacent_words() -> None:
+    """Keep punctuation-only prepared speech inside a neighboring passage."""
+    assert captions.merge_empty_caption_alignment_sections(
+        (
+            captions.CaptionAlignmentSection(0, 24_000, 0, 0, 0, 1),
+            captions.CaptionAlignmentSection(24_000, 72_000, 0, 2, 1, 3),
+        )
+    ) == (captions.CaptionAlignmentSection(0, 72_000, 0, 2, 0, 3),)
+
+
 def test_caption_aligner_constrains_ctc_to_tutorial_passages() -> None:
     """Align each known tutorial passage inside one full-model inference."""
     vocab = {"<pad>": 0, "a": 1, "b": 2}
