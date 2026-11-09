@@ -13,7 +13,7 @@ import threading
 import traceback
 
 from contextlib import suppress
-from typing import IO, Optional, cast
+from typing import IO, Optional, Never, cast
 from collections import OrderedDict, abc
 
 from .protocol import (
@@ -40,6 +40,7 @@ from ..exceptions import (
     CEDTSStreamError,
     CEDTSPayloadError,
     CEDTSProtocolError,
+    CEDTSBadInvocationError,
     CESNValidationError,
     CESNUnsupportedFeatureError,
 )
@@ -189,9 +190,16 @@ _BACKEND_REGISTRY: abc.Mapping[
 }
 
 
+class RaisingArgumentParser(argparse.ArgumentParser):
+    """An implementation of ``argparse.ArgumentParser()`` that raises instead of displaying a usage notice."""
+
+    def error(self, message: str) -> Never:
+        raise CEDTSBadInvocationError(message)
+
+
 def _parse_args() -> argparse.Namespace:
     """Parse the private worker command line."""
-    parser = argparse.ArgumentParser()
+    parser = RaisingArgumentParser()
     parser.add_argument("--backend", required=True)
     parser.add_argument("--backend-kwargs", default="{}")
     parser.add_argument("--binary-input-fd", type=int)
@@ -879,7 +887,14 @@ def _negotiate_hello(control: abc.Mapping[str, object]) -> dict[str, JSONSeriali
 
 def main() -> int:
     """Run the backend request loop until the core closes the pipe."""
-    args = _parse_args()
+    try:
+        args = _parse_args()
+    except CEDTSBadInvocationError:
+        print("error: you are running the CEDTS worker in the wrong way")
+        print(f"hint: did you mean to have {APP_NAME} run it instead?")
+        print("hint: run `python main.py` or `celune` instead")
+        return 1
+
     protocol_stream = _detach_protocol_stream()
     binary_input, binary_output = _open_binary_streams(args)
     manifest = backend_manifest(args.backend)
