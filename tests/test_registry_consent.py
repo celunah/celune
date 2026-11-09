@@ -298,6 +298,8 @@ def test_missing_consent_uses_http_428_and_decline_uses_http_403() -> None:
     required_payload = json.loads(bytes(required.body).decode("utf-8"))
     assert declined.status_code == 403
     assert required_payload["model"]["model_id"] == metadata.model_id
+    declined_payload = json.loads(bytes(declined.body).decode("utf-8"))
+    assert declined_payload["model"]["model_id"] == metadata.model_id
 
 
 def test_commercial_policy_uses_http_403() -> None:

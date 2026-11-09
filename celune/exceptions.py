@@ -94,7 +94,7 @@ class CEDTSStreamError(OSError, CEDTSError):
     """CEDTS could not read from or write to its transport stream."""
 
 
-class CEDTSEOFError(CEDTSStreamError):
+class CEDTSEOFError(EOFError, CEDTSStreamError):
     """CEDTS reached the end of a stream before a packet was complete."""
 
     def __init__(
@@ -158,6 +158,10 @@ class CEDTSPayloadError(CEDTSError):
         self.packet_name = packet_name
 
 
+class CEDTSBadInvocationError(ValueError, CEDTSError):
+    """A CEDTS worker was invoked incorrectly."""
+
+
 class WarmupError(RuntimeError, CeluneError):
     """Celune cannot warm up at this time."""
 
@@ -194,7 +198,7 @@ class CEVoiceError(RuntimeError, CeluneError):
     """CEVOICE data is malformed or unsupported."""
 
 
-class CEVoiceDependencyUnavailableError(CEVoiceError):
+class CEVoiceDependencyUnavailableError(ModuleNotFoundError, CEVoiceError):
     """A CEVOICE operation needs an unavailable optional dependency."""
 
     def __init__(self, dependency: str) -> None:
@@ -203,7 +207,7 @@ class CEVoiceDependencyUnavailableError(CEVoiceError):
         super().__init__(f"{dependency} is required for this CEVOICE operation")
 
 
-class InvalidCharacterError(CEVoiceError):
+class InvalidCharacterError(ValueError, CEVoiceError):
     """A requested character pack is missing or cannot provide a singing voice."""
 
     def __init__(self, character_name: str) -> None:
@@ -232,8 +236,14 @@ class CESNValidationError(CESNSyntaxError):
     """CESN notation is malformed or violates a notation invariant."""
 
 
-class CESNUnsupportedFeatureError(CESNSyntaxError):
+class CESNUnsupportedFeatureError(NotImplementedError, CESNError):
     """CESN requests a feature unsupported by the parser or selected backend."""
+
+    def __init__(self, message: str) -> None:
+        """Initialize unsupported-feature text and the CESN source-span fields."""
+        super().__init__(message)
+        self.source_start: Optional[int] = None
+        self.source_end: Optional[int] = None
 
 
 class CESNIPAError(CESNUnsupportedFeatureError):
@@ -297,7 +307,7 @@ class CESNRangeError(CESNValidationError):
         )
 
 
-class CESNAlignmentError(CESNValidationError):
+class CESNAlignmentError(SyntaxError, CESNValidationError):
     """The note-event count does not match the lyric syllable count."""
 
     def __init__(self, note_count: int, syllable_count: int) -> None:
@@ -308,9 +318,11 @@ class CESNAlignmentError(CESNValidationError):
             "note and syllable counts do not align: "
             f"{note_count} notes for {syllable_count} syllables"
         )
+        self.source_start: Optional[int] = None
+        self.source_end: Optional[int] = None
 
 
-class CESNMatchError(CESNValidationError):
+class CESNMatchError(SyntaxError, CESNValidationError):
     """A note event has no corresponding lyric syllable."""
 
     def __init__(self, note_index: int, note_event: str, syllable_count: int) -> None:
@@ -322,6 +334,8 @@ class CESNMatchError(CESNValidationError):
             f"note event {note_index} ({note_event!r}) did not match any "
             f"of {syllable_count} syllables"
         )
+        self.source_start: Optional[int] = None
+        self.source_end: Optional[int] = None
 
 
 class CESNNotationWarning(UserWarning):
@@ -348,7 +362,7 @@ class NeedleCheckpointError(RuntimeError, CeluneError):
     """Needle checkpoint provenance, conversion, or validation failed."""
 
 
-class NeedleUnsupportedConverterError(NeedleCheckpointError):
+class NeedleUnsupportedConverterError(NotImplementedError, NeedleCheckpointError):
     """No safe offline converter is available for a Needle checkpoint."""
 
 
@@ -368,8 +382,12 @@ class ModelConsentRequired(RuntimeError, CeluneError):
         super().__init__("model license consent is required")
 
 
-class ModelConsentDeclined(ModelConsentRequired):
+class ModelConsentDeclined(PermissionError, ModelConsentRequired):
     """A model load was rejected because the user declined its terms."""
+
+    def __init__(self, metadata: "ModelMetadata") -> None:
+        """Retain the model metadata while remaining a permission error."""
+        ModelConsentRequired.__init__(self, metadata)
 
 
 class ModelCommercialUseRestricted(PermissionError, CeluneError):
@@ -394,7 +412,7 @@ class _CheckpointDType(Protocol):
         """Return the display name of the dtype."""
 
 
-class InvalidCheckpoint(ModelContractError):
+class InvalidCheckpoint(ValueError, ModelContractError):
     """A checkpoint failed a backend model contract validation."""
 
     def __init__(
@@ -438,13 +456,13 @@ class InvalidCheckpoint(ModelContractError):
         super().__init__(": ".join((details[0], "; ".join(details[1:]))))
 
 
-class EmptyClassifierOutput(ValueError):
+class EmptyClassifierOutput(ValueError, CeluneError):
     """Identify a response that contains an empty structured-output field."""
 
 
-class EspeakExecutableNotFound(FileNotFoundError):
+class EspeakExecutableNotFound(FileNotFoundError, CeluneError):
     """Identify eSpeak-NG launch failures for a concise user warning."""
 
 
-class OnnxRuntimeNotFound(ImportError):
+class OnnxRuntimeNotFound(ModuleNotFoundError, CeluneError):
     """Identify a missing ONNX Runtime installation for a concise user warning."""

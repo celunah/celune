@@ -21,6 +21,7 @@ from celune.cesn import (
     format_cesn_error,
 )
 from celune.exceptions import (
+    CESNError,
     CESNMatchError,
     CESNSyntaxError,
     CESNAlignmentError,
@@ -626,8 +627,8 @@ def test_parse_and_render_cesn_preserves_slurred_ipa_and_note_timing() -> None:
     ),
 )
 def test_parse_cesn_rejects_malformed_notation(text: str) -> None:
-    """Reject malformed directives, note tags, and IPA syllable groups."""
-    with pytest.raises(CESNSyntaxError):
+    """Reject malformed notation and unsupported CESN features."""
+    with pytest.raises(CESNError):
         parse_cesn(text)
 
 
