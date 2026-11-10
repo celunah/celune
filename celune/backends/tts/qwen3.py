@@ -4,31 +4,41 @@
 import time
 import inspect
 import contextlib
-from typing import Optional
+from typing import Optional, Protocol, cast
 from collections.abc import Callable, Iterator
 
 import torch
 from huggingface_hub import snapshot_download
-from faster_qwen3_tts import FasterQwen3TTS, __version__ as qwen3_ver
+from faster_qwen3_tts import FasterQwen3TTS
+from faster_qwen3_tts import __version__ as qwen3_ver
 
 from .base import CeluneBackend, local_hf_offline_mode, cached_hf_snapshot_path
+from ...i18n import string
 from ...paths import (
     huggingface_progress,
     configure_numba_cache,
     huggingface_hub_cache_dir,
 )
-from ...modeling import (
-    GraphQuantizedKVCache,
-    QuantizedKVCache,
-    create_graph_quantized_kv_cache,
-    create_quantized_kv_cache,
-)
-from ...i18n import string
-from ...typing.aliases import AudioChunk
-from ...utils import available, custom_assert
+from ...utils import custom_assert
 from ...cevoice import CEVoiceLoader, default_loader
-from ...registry.consent import require_model_consent
+from ...modeling import (
+    QuantizedKVCache,
+    GraphQuantizedKVCache,
+    create_quantized_kv_cache,
+    create_graph_quantized_kv_cache,
+)
 from ...registry.tts import TTS_DEFAULT_VOICE, QWEN3_DEFAULT_MODEL_ID
+from ...typing.aliases import AudioChunk
+from ...registry.consent import require_model_consent
+
+
+class _Qwen3TalkerGraph(Protocol):
+    """Runtime graph attributes patched by the installed Qwen3 implementation."""
+
+    model: torch.nn.Module
+    max_seq_len: int
+    prefill_kv: Callable[..., object]
+    static_cache: object
 
 
 def _quantized_talker_cache(
@@ -78,13 +88,17 @@ def _install_graph_quantized_cache(
     enabled: bool,
 ) -> bool:
     """Install fixed-capacity quantized storage into Qwen's talker graph."""
-    talker_graph = getattr(model, "talker_graph", None)
+    talker_graph = cast(
+        Optional[_Qwen3TalkerGraph],
+        getattr(model, "talker_graph", None),
+    )
     talker_model = getattr(talker_graph, "model", None)
     config = getattr(talker_model, "config", None)
     max_cache_len = getattr(talker_graph, "max_seq_len", None)
     prefill = getattr(talker_graph, "prefill_kv", None)
     if (
         not enabled
+        or talker_graph is None
         or config is None
         or not isinstance(max_cache_len, int)
         or not callable(prefill)
@@ -359,7 +373,14 @@ class Qwen3(CeluneBackend[FasterQwen3TTS]):
                     getattr(getattr(model, "talker_graph", None), "static_cache", None),
                     GraphQuantizedKVCache,
                 )
-            stream = model.generate_voice_clone_streaming(
+            stream_generator = cast(
+                Callable[
+                    ...,
+                    Iterator[tuple[AudioChunk, int, Optional[dict]]],
+                ],
+                model.generate_voice_clone_streaming,
+            )
+            stream = stream_generator(
                 ref_audio=ref_wav,
                 ref_text=ref_text,
                 non_streaming_mode=False,  # VERY IMPORTANT ON >=0.2.5
@@ -382,8 +403,9 @@ class Qwen3(CeluneBackend[FasterQwen3TTS]):
                     timing = {"first_chunk_time": first_chunk_time}
                 yield audio_chunk, sample_rate, timing
         finally:
-            if stream is not None and available("close", obj=stream):
+            close_stream = getattr(stream, "close", None)
+            if callable(close_stream):
                 with contextlib.suppress(Exception):
-                    stream.close()
+                    close_stream()
             if cache_target is not None and original_talker_forward is not None:
                 cache_target[0].forward = original_talker_forward

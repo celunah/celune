@@ -6,6 +6,7 @@ import sys
 import shutil
 import argparse
 import importlib
+import sysconfig
 import subprocess
 from pathlib import Path
 
@@ -73,9 +74,7 @@ def _check_backend(backend_id: str, environment_root: Path) -> None:
 
     python_version, site_packages = _interpreter_details(backend_environment.python)
     analysis_environment = os.environ.copy()
-    analysis_environment["PYTHONPATH"] = os.pathsep.join(
-        (str(_PROJECT_ROOT), str(site_packages))
-    )
+    analysis_environment.pop("PYTHONPATH", None)
     analysis_environment["PYTHONNOUSERSITE"] = "1"
     for variable in ("PYTHONHOME", "PYTHONUSERBASE", "VIRTUAL_ENV"):
         analysis_environment.pop(variable, None)
@@ -89,20 +88,29 @@ def _check_backend(backend_id: str, environment_root: Path) -> None:
         "--disable=not-callable,no-member",
         "--rcfile",
         str(_PROJECT_ROOT / "pyproject.toml"),
+        "--init-hook",
+        f"import sys; sys.path.append({str(site_packages)!r})",
         "--ignore-paths=^$",
         "--py-version",
         python_version,
-        str(source_path),
     ]
     pyrefly = [
         _command("pyrefly"),
         "check",
         "--python-interpreter-path",
         str(backend_environment.python),
+        "--site-package-path",
+        str(site_packages),
+        "--site-package-path",
+        str(Path(sysconfig.get_paths()["purelib"])),
         "--python-version",
         python_version,
         str(source_path),
     ]
+    if backend_id == "fireredtts3":
+        pylint.extend(("--disable=import-error",))
+        pyrefly.extend(("--ignore-missing-imports", "fireredtts3.*"))
+    pylint.append(str(source_path))
     docstring_coverage = [
         _command("docstr-coverage"),
         "-i",

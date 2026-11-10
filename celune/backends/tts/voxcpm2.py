@@ -8,30 +8,31 @@ from types import MethodType
 from typing import Union, Optional, Protocol, cast
 from collections.abc import Mapping, Callable, Iterator, Generator
 
-import torch
 import numpy as np
+import torch
 from voxcpm import VoxCPM
 from transformers import AutoTokenizer
 from huggingface_hub import snapshot_download
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 
+from . import get_version
 from .base import (
     CeluneBackend,
     local_hf_offline_mode,
     cached_hf_snapshot_path,
+)
+from .base import (
     to_numpy_audio as normalize_streamed_audio,
 )
-from . import get_version
 from ...i18n import string
-from ...constants import BASE_SR
+from ...paths import huggingface_progress, huggingface_hub_cache_dir
 from ...utils import available, custom_assert
 from ...cevoice import CEVoiceLoader, default_loader
-from ...registry.consent import require_model_consent
-from ...typing.aliases import AudioChunk, AudioChunks
-from ...registry.tts import TTS_DEFAULT_VOICE, VOXCPM2_VOICE_MODELS
-from ...paths import huggingface_progress, huggingface_hub_cache_dir
 from ...modeling import QuantizedKVCacheMode, quantized_kv_cache_mode
-
+from ...constants import BASE_SR
+from ...registry.tts import TTS_DEFAULT_VOICE, VOXCPM2_VOICE_MODELS
+from ...typing.aliases import AudioChunk, AudioChunks
+from ...registry.consent import require_model_consent
 
 _VOXCPM_RUNTIME_KV_CACHE_LENGTH = 2048
 
@@ -711,12 +712,9 @@ class VoxCPM2(CeluneBackend[VoxCPM]):
         quantize_on_cpu = getattr(self, "quantization_mode", None) is not None
         optimize = bool(kwargs.get("optimize", False))
         load_optimize = optimize and not quantize_on_cpu
-        load_kwargs: dict[str, Union[bool, str]] = {
-            "load_denoiser": kwargs.get("load_denoiser", False),
-            "optimize": load_optimize,
-        }
-        if quantize_on_cpu:
-            load_kwargs["device"] = "cpu"
+        load_denoiser = kwargs.get("load_denoiser", False)
+        if not isinstance(load_denoiser, bool):
+            raise TypeError("load_denoiser must be a boolean")
 
         # NOTE:
         # this may cause errors in internal ops when switching backends
@@ -740,10 +738,19 @@ class VoxCPM2(CeluneBackend[VoxCPM]):
             huggingface_progress(self.report_progress),
             self._suppress_backend_output(),
         ):
-            self.model = VoxCPM.from_pretrained(
-                path,
-                **load_kwargs,
-            )
+            if quantize_on_cpu:
+                self.model = VoxCPM.from_pretrained(
+                    path,
+                    load_denoiser=load_denoiser,
+                    optimize=load_optimize,
+                    device="cpu",
+                )
+            else:
+                self.model = VoxCPM.from_pretrained(
+                    path,
+                    load_denoiser=load_denoiser,
+                    optimize=load_optimize,
+                )
             self._install_checkpoint_tokenizer(self.model, path)
         self._resize_runtime_caches(self.model)
         self.model = self.apply_runtime_quantization(self.model, model_id)

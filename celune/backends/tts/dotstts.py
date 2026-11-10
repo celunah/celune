@@ -7,26 +7,28 @@ import contextlib
 from typing import Optional, cast
 from collections.abc import Mapping, Callable, Iterator, Generator
 
-import loguru
 import numpy as np
+import loguru
 from transformers import AutoTokenizer
-from dots_tts.runtime import DotsTtsRuntime
 from huggingface_hub import snapshot_download
+from dots_tts.runtime import DotsTtsRuntime
 
 from .base import (
     CeluneBackend,
     local_hf_offline_mode,
     cached_hf_snapshot_path,
+)
+from .base import (
     to_numpy_audio as normalize_streamed_audio,
 )
 from ...i18n import string
-from ...typing.backends import LoguruLogger
-from ...cevoice import CEVoiceLoader, default_loader
-from ...registry.consent import require_model_consent
-from ...typing.aliases import AudioChunk, AudioChunks
-from ...utils import discard, available, custom_assert
 from ...paths import huggingface_progress, huggingface_hub_cache_dir
+from ...utils import discard, custom_assert
+from ...cevoice import CEVoiceLoader, default_loader
 from ...registry.tts import TTS_DEFAULT_VOICE, DOTS_TTS_VOICE_MODELS
+from ...typing.aliases import AudioChunk, AudioChunks
+from ...typing.backends import LoguruLogger
+from ...registry.consent import require_model_consent
 
 
 class DotsTtsMF(CeluneBackend[DotsTtsRuntime]):
@@ -277,7 +279,10 @@ class DotsTtsMF(CeluneBackend[DotsTtsRuntime]):
 
         # noinspection PyProtectedMember
         pretrained_path = DotsTtsRuntime._resolve_pretrained_path(target)
-        loaded_model = DotsTtsModel.from_pretrained(pretrained_path)
+        loaded_model = cast(
+            DotsTtsModel,
+            DotsTtsModel.from_pretrained(pretrained_path),
+        )
         loaded_model.core.to(dtype=torch.bfloat16)
         loaded_model = self.apply_runtime_quantization(loaded_model, model_id)
         return DotsTtsRuntime(
@@ -447,6 +452,7 @@ class DotsTtsMF(CeluneBackend[DotsTtsRuntime]):
                         },
                     )
         finally:
-            if stream is not None and available("close", obj=stream):
+            close_stream = getattr(stream, "close", None)
+            if callable(close_stream):
                 with contextlib.suppress(Exception):
-                    stream.close()
+                    close_stream()

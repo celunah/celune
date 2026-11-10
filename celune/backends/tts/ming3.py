@@ -19,41 +19,43 @@ import contextlib
 import subprocess
 import urllib.error
 import urllib.request
-from pathlib import Path
 from typing import Union, Optional
-from dataclasses import dataclass, field
+from pathlib import Path
+from dataclasses import field, dataclass
 from collections.abc import Callable, Iterator
 
-import torch
 import numpy as np
+import torch
 from huggingface_hub import hf_hub_download, try_to_load_from_cache
 
+from .base import CeluneBackend
+from ...i18n import string
 from ...paths import (
     app_data_dir,
-    huggingface_hub_cache_dir,
-    huggingface_progress,
     temp_data_dir,
+    huggingface_progress,
+    huggingface_hub_cache_dir,
     temp_directory_environment,
 )
-from ...i18n import string
+from ...cevoice import CEVoiceLoader, default_loader
 from ...registry.tts import (
+    MING3_TTS_Q8_FILE,
+    MING3_TTS_Q8_SIZE,
+    TTS_DEFAULT_VOICE,
+    MING3_TTS_MODEL_ID,
     MING3_TTS_BF16_FILE,
-    MING3_TTS_BF16_SHA256,
     MING3_TTS_BF16_SIZE,
     MING3_TTS_GGUF_REPO,
-    MING3_TTS_GGUF_REVISION,
-    MING3_TTS_MODEL_ID,
-    MING3_TTS_Q8_FILE,
     MING3_TTS_Q8_SHA256,
-    MING3_TTS_Q8_SIZE,
+    MING3_TTS_BF16_SHA256,
+    MING3_TTS_GGUF_REVISION,
     ModelContract,
-    model_contract as resolve_model_contract,
-    TTS_DEFAULT_VOICE,
 )
-from .base import CeluneBackend
+from ...registry.tts import (
+    model_contract as resolve_model_contract,
+)
 from ...typing.aliases import AudioChunk
 from ...typing.backends import BackendArgumentValue
-from ...cevoice import CEVoiceLoader, default_loader
 from ...registry.consent import require_model_consent
 
 _AUDIOCPP_RELEASE = "v0.9.3"
@@ -99,6 +101,22 @@ _LANGUAGE_ALIASES = {
     "es": "es",
     "spanish": "es",
 }
+
+
+def _numeric_option(value: BackendArgumentValue, name: str) -> Union[int, float]:
+    """Convert a numeric backend option while rejecting nonnumeric JSON values."""
+    if isinstance(value, (int, float)):
+        return value
+    if isinstance(value, str):
+        return float(value)
+    raise TypeError(f"{name} must be numeric")
+
+
+def _integer_option(value: BackendArgumentValue, name: str) -> int:
+    """Convert an integer backend option while rejecting nonnumeric JSON values."""
+    if isinstance(value, (int, float, str)):
+        return int(value)
+    raise TypeError(f"{name} must be an integer")
 
 
 @dataclass(slots=True)
@@ -698,31 +716,37 @@ class Ming3(CeluneBackend[MingRuntime]):
         if not isinstance(reference_text, str) or not reference_text.strip():
             raise ValueError(f"Ming3 requires reference_text for voice '{voice}'")
 
-        requested_language = kwargs.pop("language", None)
-        if requested_language is None:
-            requested_language = kwargs.pop("lang", None)
+        language_value = kwargs.pop("language", None)
+        if language_value is None:
+            language_value = kwargs.pop("lang", None)
         else:
             kwargs.pop("lang", None)
+        if language_value is not None and not isinstance(language_value, str):
+            raise TypeError("language must be a string")
+        requested_language = language_value
         language = self.resolve_generation_language(requested_language)
         language_code = "zh" if language == "zh-cn" else language
         max_audio_seconds = self._maximum_audio_seconds(text)
 
         self._apply_seed()
+        max_new_tokens = _integer_option(
+            kwargs.pop("max_new_tokens", self.max_new_tokens), "max_new_tokens"
+        )
         options: dict[str, Union[str, int, float]] = {
             "language": language_code,
-            "max_tokens": min(
-                int(kwargs.pop("max_new_tokens", self.max_new_tokens)), _MAX_TOKENS
-            ),
-            "seed": int(self.current_seed or 0),
+            "max_tokens": min(max_new_tokens, _MAX_TOKENS),
+            "seed": self.current_seed or 0,
         }
         for name in ("temperature", "sigma", "guidance_scale"):
             value = kwargs.pop(name, None)
             if value is not None:
-                options[name] = float(value)
+                options[name] = float(_numeric_option(value, name))
         if "guidance_scale" not in options:
             cfg_scale = kwargs.pop("cfg_scale", None)
             if cfg_scale is not None:
-                options["guidance_scale"] = float(cfg_scale)
+                options["guidance_scale"] = float(
+                    _numeric_option(cfg_scale, "cfg_scale")
+                )
         else:
             kwargs.pop("cfg_scale", None)
         instruction = kwargs.pop("instruct", kwargs.pop("instructions", None))
@@ -793,7 +817,7 @@ class Ming3(CeluneBackend[MingRuntime]):
                         audio *= 1.0 / 32768.0
                         if audio.size == 0:
                             continue
-                        total_samples += int(audio.size)
+                        total_samples += audio.size
                         if total_samples / _SAMPLE_RATE > max_audio_seconds:
                             raise RuntimeError(
                                 "Ming generated implausibly long audio for the request "
