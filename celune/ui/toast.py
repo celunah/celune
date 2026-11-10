@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Optional
 
 from textual.events import Resize
@@ -19,8 +20,17 @@ class CeluneToast(Static):
     def __init__(self) -> None:
         super().__init__("", id="celune-toast", markup=False)
         self._hide_timer: Optional[Timer] = None
-        self._dismiss_timer: Optional[Timer] = None
         self._generation = 0
+
+    @property
+    def opacity(self) -> float:
+        """Return the toast opacity used by Textual's animator."""
+        return self.styles.opacity
+
+    @opacity.setter
+    def opacity(self, value: float) -> None:
+        """Set the toast opacity through its CSS styles."""
+        self.styles.opacity = value
 
     def on_mount(self) -> None:
         """Keep the toast hidden until a message is requested."""
@@ -43,7 +53,6 @@ class CeluneToast(Static):
         self._cancel_timers()
         self.update(" ".join(message.split()))
         self.display = True
-        self.styles.opacity = 0.0
         self.call_after_refresh(self._fade_in, generation, max(0.0, duration))
 
     def _fade_in(self, generation: int, duration: float) -> None:
@@ -52,13 +61,13 @@ class CeluneToast(Static):
             return
 
         self._center_toast()
-        self.styles.opacity = 1.0
+        self._animate_opacity(1.0)
         self._hide_timer = self.set_timer(duration, lambda: self._fade_out(generation))
 
     def _center_toast(self) -> None:
         """Place the toast at the horizontal center and terminal bottom."""
         center_x = max(0, (self.screen.size.width - self.size.width) // 2)
-        self.styles.offset = (center_x, "100%")
+        self.styles.offset = (center_x, 0)
 
     def _fade_out(self, generation: int) -> None:
         """Fade the current message before removing its widget."""
@@ -66,17 +75,13 @@ class CeluneToast(Static):
             return
 
         self._hide_timer = None
-        self.styles.opacity = 0.0
-        self._dismiss_timer = self.set_timer(
-            self.FADE_DURATION, lambda: self._dismiss(generation)
-        )
+        self._animate_opacity(0.0, lambda: self._dismiss(generation))
 
     def _dismiss(self, generation: int) -> None:
         """Hide the toast after its fade-out transition finishes."""
         if generation != self._generation:
             return
 
-        self._dismiss_timer = None
         self.update("")
         self.display = False
 
@@ -85,6 +90,21 @@ class CeluneToast(Static):
         if self._hide_timer is not None:
             self._hide_timer.stop()
             self._hide_timer = None
-        if self._dismiss_timer is not None:
-            self._dismiss_timer.stop()
-            self._dismiss_timer = None
+
+    def _animate_opacity(
+        self,
+        opacity: float,
+        on_complete: Optional[Callable[[], None]] = None,
+    ) -> None:
+        """Animate opacity when mounted, or apply it directly before mounting."""
+        if self.is_attached:
+            self.animate(
+                "opacity",
+                opacity,
+                duration=self.FADE_DURATION,
+                on_complete=on_complete,
+            )
+            return
+        self.styles.opacity = opacity
+        if on_complete is not None:
+            on_complete()

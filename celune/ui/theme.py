@@ -45,7 +45,7 @@ CELUNE_CSS = """
 
     #celune-toast {
         layer: toast;
-        position: absolute;
+        dock: bottom;
         width: auto;
         max-width: 1fr;
         height: 3;
@@ -59,8 +59,7 @@ CELUNE_CSS = """
         text-align: center;
         content-align: center middle;
         opacity: 0;
-        transition: opacity 250ms;
-        offset: 0 100%;
+        offset: 0 0;
         constrain: inside;
     }
 
