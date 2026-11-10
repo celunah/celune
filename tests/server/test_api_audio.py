@@ -7,22 +7,23 @@ import time
 import queue
 import asyncio
 import threading
-from unittest import mock
 from types import SimpleNamespace
-from typing import Optional, cast
+from typing import cast
+from unittest import mock
 
-import pytest
 import numpy as np
+import pytest
 import soundfile as sf
 from fastapi import UploadFile
-from fastapi.responses import JSONResponse, StreamingResponse
-from starlette.responses import Response
+from fastapi.responses import JSONResponse
+from fastapi.testclient import TestClient
 
 from celune import api
-from celune.server import jobs
 from celune.celune import Celune
+from celune.server import jobs
 from celune.typing.pipeline import SpeechStreamQueue
 
+from ..celtest import celtest
 from ..support import CeluneTestCase
 
 
@@ -39,51 +40,20 @@ class TestApiAudio(CeluneTestCase):
         sf.write(buffer, audio, sample_rate, format="WAV")
         return buffer.getvalue()
 
-    @staticmethod
-    async def _response_bytes(response: Response) -> bytes:
-        """Collect one response body for direct route-call tests."""
-        if getattr(response, "body", None) is not None:
-            return bytes(response.body)
-
-        chunks: list[bytes] = []
-        async for chunk in cast(StreamingResponse, response).body_iterator:
-            if isinstance(chunk, str):
-                chunks.append(chunk.encode("utf-8"))
-            else:
-                chunks.append(bytes(chunk))
-        return b"".join(chunks)
-
-    def test_audio_bytes_encode_flac_from_stream_chunks(self) -> None:
-        """Verify queued speech audio is returned as PCM24 FLAC."""
-        chunks: SpeechStreamQueue = queue.Queue()
-        chunks.put(np.zeros((2, 8), dtype=np.float32))
-        chunks.put(None)
-
-        payload = b"".join(api.audio_bytes(chunks))
-        audio, sample_rate = sf.read(io.BytesIO(payload), dtype="float32")
-
-        assert payload[:4] == b"fLaC"
-        assert sample_rate == 48000
-        assert audio.shape == (8, 2)
-
-    def test_stream_headers_describe_flac(self) -> None:
-        """Verify API metadata matches the encoded response format."""
-        assert api.stream_headers() == {
-            "X-Audio-Format": "flac-pcm24",
-            "X-Sample-Rate": "48000",
-            "X-Channels": "2",
-        }
-
+    @pytest.mark.e2e
+    @celtest("E2E: API accepts speech and serves the completed audio job")
     def test_async_speak_returns_accepted_job_and_later_audio(self) -> None:
-        """Verify async speech accepts immediately and exposes completed audio."""
+        """Submit speech over HTTP and retrieve its completed FLAC job."""
         chunks: SpeechStreamQueue = queue.Queue()
         chunks.put(np.zeros((2, 8), dtype=np.float32))
         chunks.put(None)
         previous_celune = api.server_session.bound_celune
+        previous_auth_token = api.server_session.auth_token
         model_ready = threading.Event()
         model_ready.set()
 
         try:
+            api.server_session.auth_token = None
             api.server_session.bound_celune = cast(
                 Celune,
                 SimpleNamespace(
@@ -96,28 +66,38 @@ class TestApiAudio(CeluneTestCase):
                     say_stream=lambda content, save=True: chunks,
                 ),
             )
-            response = api.speak_async(api.SpeakRequest(content="hello"))
-            payload = json.loads(bytes(response.body))
+            with TestClient(api.api) as client:
+                response = client.post("/v1/speak/async", json={"content": "hello"})
+                payload = response.json()
 
-            assert response.status_code == 202
-            assert payload["status"] == "accepted"
-            assert response.headers["location"] == payload["location"]
+                assert response.status_code == 202
+                assert payload["status"] == "accepted"
+                assert response.headers["location"] == payload["location"]
 
-            result: Optional[Response]
-            for _ in range(20):
-                result = api.speak_job(payload["job_id"])
-                if result.status_code == 200:
-                    break
-                time.sleep(0.01)
-            else:
-                result = None
-                pytest.fail("async speech job did not complete")
+                deadline = time.monotonic() + 3
+                while True:
+                    result = client.get(payload["location"])
+                    if result.status_code == 200:
+                        break
+                    if time.monotonic() >= deadline:
+                        pytest.fail("async speech job did not complete")
+                    time.sleep(0.01)
 
-            result = cast(Response, result)
-            assert result.status_code == 200
-            assert bytes(result.body)[:4] == b"fLaC"
+                assert result.status_code == 200
+                assert result.content[:4] == b"fLaC"
+                assert result.headers["X-Audio-Format"] == "flac-pcm24"
+                assert result.headers["X-Sample-Rate"] == "48000"
+                assert result.headers["X-Channels"] == "2"
+                assert sf.info(io.BytesIO(result.content)).subtype == "PCM_24"
+                audio, sample_rate = sf.read(
+                    io.BytesIO(result.content),
+                    dtype="float32",
+                )
+                assert sample_rate == 48000
+                assert audio.shape == (8, 2)
         finally:
             api.server_session.bound_celune = previous_celune
+            api.server_session.auth_token = previous_auth_token
             api.server_session.speech_jobs.clear()
 
     def test_speech_routes_reject_active_singing_backend_without_queueing(self) -> None:
@@ -201,13 +181,17 @@ class TestApiAudio(CeluneTestCase):
         payload = json.loads(bytes(cast(JSONResponse, response).body))
         assert "I am not currently able" in payload["message"]
 
+    @pytest.mark.e2e
+    @celtest("E2E: API converts an uploaded WAV into playable FLAC")
     def test_convert_route_returns_converted_audio(self) -> None:
-        """Verify VC conversion uploads return FLAC audio in Celune's playback format."""
+        """Upload audio over HTTP and receive Celune's playable FLAC format."""
         previous_celune = api.server_session.bound_celune
+        previous_auth_token = api.server_session.auth_token
         source_audio = np.zeros((24, 2), dtype=np.float32)
         converted_audio = np.ones((12, 2), dtype=np.float32) * 0.25
 
         try:
+            api.server_session.auth_token = None
             api.server_session.bound_celune = cast(
                 Celune,
                 SimpleNamespace(
@@ -222,22 +206,24 @@ class TestApiAudio(CeluneTestCase):
                     ),
                 ),
             )
-            response = asyncio.run(
-                api.convert_audio(
-                    UploadFile(
-                        file=io.BytesIO(
-                            self._wav_bytes(source_audio, sample_rate=44100)
-                        ),
-                        filename="fixture.wav",
-                    )
+            with TestClient(api.api) as client:
+                response = client.post(
+                    "/v1/convert",
+                    files={
+                        "file": (
+                            "fixture.wav",
+                            self._wav_bytes(source_audio, sample_rate=44100),
+                            "audio/wav",
+                        )
+                    },
                 )
-            )
         finally:
             api.server_session.bound_celune = previous_celune
+            api.server_session.auth_token = previous_auth_token
 
         assert response.status_code == 200
         assert response.headers["x-sample-rate"] == "48000"
-        payload = asyncio.run(self._response_bytes(response))
+        payload = response.content
         assert payload[:4] == b"fLaC"
         decoded_audio, sample_rate = sf.read(
             io.BytesIO(payload),

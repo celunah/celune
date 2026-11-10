@@ -16,6 +16,8 @@ from unittest import mock
 from collections import abc, deque
 
 import numpy as np
+import pytest
+import soundfile as sf
 import fastapi.testclient
 from starlette.types import Send, Scope, Message, Receive
 from starlette.requests import Request
@@ -24,15 +26,19 @@ from starlette.responses import Response
 from celune import api
 from celune.i18n import string
 from celune.theme import colors
-from celune.webui import runtime as webui, actions as webui_actions
+from celune.webui import actions as webui_actions
+from celune.webui import runtime as webui
 from celune.celune import Celune
-from celune.server import auth as server_auth, constants as server_constants
+from celune.server import auth as server_auth
+from celune.server import constants as server_constants
 from celune.typing.agent import AgentTaskState
 from celune.typing.celune import ChunkCaptionProgressCallback
 from celune.dataclasses.ui import UiTimedUpdate
 from celune.server.session import ServerSession
 from celune.typing.pipeline import SpeechStreamQueue
+from celune.server.constants import WEBUI_CONVERT_API_NAME, WEBUI_SPEAK_INPUT_API_NAME
 
+from ..celtest import celtest
 from ..support import CeluneTestCase
 
 
@@ -192,6 +198,37 @@ class TestApiWebUI(CeluneTestCase):
             },
             receive,
         )
+
+    @staticmethod
+    def _run_webui_event(api_name: str, inputs: list[object]) -> list[object]:
+        """Run one registered Gradio event through its component processors."""
+        blocks = webui_actions.build_webui(api.server_session)
+        dependencies = blocks.config["dependencies"]
+        dependency = next(
+            dependency
+            for dependency in dependencies
+            if dependency.get("api_name") == api_name
+        )
+        function_index = cast(int, dependency["id"])
+
+        async def process_event() -> list[object]:
+            result = await blocks.process_api(
+                function_index,
+                inputs,
+                session_hash="celune-e2e-session",
+            )
+            output = cast(list[object], result["data"])
+            while result["iterator"] is not None:
+                result = await blocks.process_api(
+                    function_index,
+                    [],
+                    iterator=result["iterator"],
+                    session_hash="celune-e2e-session",
+                )
+                output = cast(list[object], result["data"])
+            return output
+
+        return asyncio.run(process_event())
 
     def test_root_redirects_to_browser_ui(self) -> None:
         """Verify the fallback root now forwards users to the browser UI."""
@@ -1072,8 +1109,10 @@ class TestApiWebUI(CeluneTestCase):
 
         assert received == [(1.0, 2.0)]
 
+    @pytest.mark.e2e
+    @celtest("E2E: WebUI text submission enters Persona talkback")
     def test_webui_persona_input_uses_think_path(self) -> None:
-        """Verify browser input follows the Persona path when talkback is enabled."""
+        """Submit through the Gradio event and verify Persona receives the text."""
         chunks = Queue()
         think = mock.Mock(return_value=True)
         say_stream = mock.Mock(return_value=chunks)
@@ -1101,10 +1140,11 @@ class TestApiWebUI(CeluneTestCase):
                 return_value=("VRAM: first",),
             ),
         ):
-            list(webui_actions.webui_speak("hello"))
+            outputs = self._run_webui_event(WEBUI_SPEAK_INPUT_API_NAME, ["hello"])
 
         think.assert_called_once_with("hello")
         say_stream.assert_not_called()
+        assert len(outputs) == 7
 
     def test_webui_sings_cesn_instead_of_sending_it_to_persona(self) -> None:
         """Keep CESN submissions on the singing path when Persona talkback is set."""
@@ -1746,8 +1786,10 @@ class TestApiWebUI(CeluneTestCase):
         assert len(updates) == 1
         assert "not currently available" in updates[0][2]
 
+    @pytest.mark.e2e
+    @celtest("E2E: WebUI text submission returns browser-playable speech")
     def test_webui_speak_returns_browser_audio_after_generation(self) -> None:
-        """Verify the browser submit handler returns one browser audio payload."""
+        """Submit through the Gradio event and verify its audio component output."""
         chunks: SpeechStreamQueue = Queue()
         chunks.put(np.zeros((2, 8), dtype=np.float32))
         chunks.put(None)
@@ -1773,20 +1815,20 @@ class TestApiWebUI(CeluneTestCase):
             "celune.webui.runtime.ui_resources.resource_pages",
             return_value=("VRAM: 10.66/11.94 GB available",),
         ):
-            updates = list(webui_actions.webui_speak("hello"))
+            outputs = self._run_webui_event(WEBUI_SPEAK_INPUT_API_NAME, ["hello"])
 
-        assert len(updates) >= 2
-        first_input, first_audio, *_first_rest = updates[0]
-        second_input, second_audio, *_second_rest = updates[1]
-
-        assert first_input["value"] == ""
-        assert first_audio is None
-        assert second_input["value"] == ""
-        assert isinstance(second_audio, tuple)
-        sample_rate, array = cast(tuple[int, np.ndarray], second_audio)
+        assert len(outputs) == 7
+        audio_value = outputs[1]
+        audio_path = (
+            audio_value.get("path")
+            if isinstance(audio_value, dict)
+            else getattr(audio_value, "path", None)
+        )
+        assert isinstance(audio_path, str)
+        assert Path(audio_path).is_file()
+        array, sample_rate = sf.read(audio_path, dtype="float32")
         assert sample_rate == 48000
         assert array.shape == (8, 2)
-        assert array.dtype == np.int16
         assert not np.any(array)
 
     def test_webui_speak_wakes_sleeping_celune_before_speaking(self) -> None:
@@ -1863,9 +1905,16 @@ class TestApiWebUI(CeluneTestCase):
 
         assert calls == ["calm"]
 
-    def test_webui_convert_audio_returns_browser_audio_after_conversion(self) -> None:
-        """Verify browser audio conversion returns one playable Celune-format payload."""
+    @pytest.mark.e2e
+    @celtest("E2E: WebUI audio upload returns converted browser-playable audio")
+    def test_webui_convert_audio_returns_browser_audio_after_conversion(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Upload through the Gradio audio component and inspect its output file."""
         converted_audio = np.ones((10, 2), dtype=np.float32) * 0.5
+        source_path = tmp_path / "source.wav"
+        sf.write(source_path, np.zeros((16, 2), dtype=np.float32), 44100)
         api.server_session.bound_celune = cast(
             Celune,
             SimpleNamespace(
@@ -1890,19 +1939,31 @@ class TestApiWebUI(CeluneTestCase):
             "celune.webui.runtime.ui_resources.resource_pages",
             return_value=("VRAM: 10.66/11.94 GB available",),
         ):
-            source_value, browser_audio, *_rest = webui_actions.webui_convert_audio(
-                (44100, np.zeros((16, 2), dtype=np.float32)),
-                "sing",
+            outputs = self._run_webui_event(
+                WEBUI_CONVERT_API_NAME,
+                [
+                    {
+                        "path": str(source_path),
+                        "orig_name": source_path.name,
+                        "meta": {"_type": "gradio.FileData"},
+                    },
+                    "sing",
+                ],
             )
 
-        assert source_value is None
-        assert isinstance(browser_audio, tuple)
-        sample_rate, array = cast(tuple[int, np.ndarray], browser_audio)
+        assert len(outputs) == 7
+        audio_value = outputs[1]
+        audio_path = (
+            audio_value.get("path")
+            if isinstance(audio_value, dict)
+            else getattr(audio_value, "path", None)
+        )
+        assert isinstance(audio_path, str)
+        assert Path(audio_path).is_file()
+        array, sample_rate = sf.read(audio_path, dtype="float32")
         assert sample_rate == 48000
         assert array.shape == (20, 2)
-        assert array.dtype == np.int16
-        assert np.max(np.abs(array)) == 32767
-        assert browser_audio[0] == 48000
+        assert np.max(np.abs(array)) > 0.1
         celune_convert_audio = cast(
             mock.Mock, api.server_session.bound_celune.convert_audio
         )

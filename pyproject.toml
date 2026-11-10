@@ -200,6 +200,9 @@ cechar4-openzl = [
 display_name = "Celune"
 
 [tool.pytest.ini_options]
+markers = [
+    "e2e: exercises a user-facing workflow across application layers",
+]
 filterwarnings = [
      # 'silero-vad' uses old legacy PyTorch JIT syntax:
      # Python 3.12 and 3.13 emit this warning.
@@ -294,6 +297,7 @@ min-severity = "warn"
 start = "python main.py"
 test = "pytest -v tests -n 2 --dist loadfile"
 test_basic = "pytest -v tests"
+test_e2e = "pytest -v tests -m e2e"
 test_changed = "pytest -v tests --testmon"
 types = "pyrefly check"
 ruff = "ruff check"
