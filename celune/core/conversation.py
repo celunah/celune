@@ -38,7 +38,9 @@ def think(engine: Celune, text: str) -> bool:
     if not persona_enabled(engine.config):
         return say(engine, text)
     if getattr(engine.backend, "singing", False):
-        engine.log(string("celune.persona_unavailable_singing"), "warning")
+        message = string("celune.persona_unavailable_singing")
+        engine.log(message, "warning")
+        engine.toast(message, severity="warning")
         return False
     if engine.input_mode != "text_to_speech":
         engine.log(string("celune.text_input_unavailable_vc"), "warning")
@@ -46,14 +48,18 @@ def think(engine: Celune, text: str) -> bool:
         return False
 
     if engine.is_in_tutorial:
-        engine.log(string("celune.speech_input_disabled_tutorial"), "warning")
+        message = string("celune.speech_input_disabled_tutorial")
+        engine.log(message, "warning")
+        engine.toast(message, severity="warning")
         return False
 
     from . import agent as core_agent
 
     with engine.say_lock:
         if engine._persona_queue.full():
-            engine.log(string("webui.busy_try_again"), "warning")
+            message = string("webui.busy_try_again")
+            engine.log(message, "warning")
+            engine.toast(message, severity="warning")
             return False
         core_agent.interrupt_active_agent_for_input(engine, text)
         engine._persona_queue.put_nowait(text)
@@ -265,9 +271,12 @@ def _think_worker(engine: Celune) -> None:
                 say(engine, text)
                 continue
 
-            if not think_persona(engine, text):
-                engine.log(string("celune.say_instead"), "warning")
-                say(engine, text)
+            if think_persona(engine, text):
+                continue
+            if say(engine, text):
+                message = string("celune.persona_fallback_notice")
+                engine.log(message, "warning")
+                engine.toast(message, severity="warning")
     finally:
         with engine.say_lock:
             if engine._persona_thread is current_thread:

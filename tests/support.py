@@ -566,6 +566,7 @@ def make_pipeline_engine() -> SimpleNamespace:
     engine.kept_sfx_audio = None
     engine.force_stop_marker = PipelineStates.UTTERANCE_FORCE_END
     engine.log = lambda msg, severity="info", **kwargs: messages.append((msg, severity))
+    engine.toast = mock.Mock()
     engine.error_callback = errors.append
     engine.status_callback = lambda msg, severity="info": statuses.append(
         (msg, severity)

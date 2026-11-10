@@ -86,6 +86,23 @@ class TestPipeline(CeluneTestCase):
             "The active singing backend requires CESN notation.",
             "warning",
         )
+        engine.toast.assert_called_once_with(
+            "The active singing backend requires CESN notation.",
+            severity="warning",
+        )
+        assert engine.text_queue.empty()
+
+    def test_tutorial_speech_rejection_emits_a_warning_toast(self) -> None:
+        """Make tutorial input restrictions visible outside the log panel."""
+        engine = make_pipeline_engine()
+        engine.is_in_tutorial = True
+        engine.log = mock.Mock()
+
+        assert not submission.queue_speech(cast(Celune, engine), "plain speech")
+
+        message = "Speech input is disabled during the tutorial."
+        engine.log.assert_called_once_with(message, "warning")
+        engine.toast.assert_called_once_with(message, severity="warning")
         assert engine.text_queue.empty()
 
     def test_persona_input_rejects_singing_backend_before_queueing(self) -> None:
@@ -100,6 +117,10 @@ class TestPipeline(CeluneTestCase):
         engine.log.assert_called_once_with(
             "Persona replies are unavailable while the singing backend is active.",
             "warning",
+        )
+        engine.toast.assert_called_once_with(
+            "Persona replies are unavailable while the singing backend is active.",
+            severity="warning",
         )
         assert engine.persona_queue.empty()
 

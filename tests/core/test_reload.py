@@ -48,7 +48,8 @@ class TestCeluneReload(CeluneCoreTestSupport):
                 events.append(f"load:{model_id}")
                 return super().load_model(model_id, **kwargs)
 
-        celune = self._make_celune({})
+        toast_callback = mock.Mock()
+        celune = self._make_celune({}, toast_callback=toast_callback)
         celune.loaded = True
         celune.cur_state = "idle"
         celune.model = {"model_id": "fake/balanced", "kwargs": {}}
@@ -69,6 +70,11 @@ class TestCeluneReload(CeluneCoreTestSupport):
             assert core_reload.reload_backend(celune, AltFakeBackend, "storm")
 
         assert events[:2] == ["unload:fake", "load:alt/storm"]
+        toast_callback.assert_called_once_with(
+            "Switched backend to altfake.",
+            severity="info",
+            duration=None,
+        )
 
     def test_set_backend_marks_reload_pending_before_playing_working_signal(
         self,
@@ -124,7 +130,8 @@ class TestCeluneReload(CeluneCoreTestSupport):
 
     def test_set_backend_rejects_non_singing_character_before_reload(self) -> None:
         """Warn in yellow and leave the active backend untouched without a singer."""
-        celune = self._make_celune({})
+        toast_callback = mock.Mock()
+        celune = self._make_celune({}, toast_callback=toast_callback)
         celune.cur_state = "idle"
         celune.loaded = True
         celune.current_character = "Nol"
@@ -149,6 +156,11 @@ class TestCeluneReload(CeluneCoreTestSupport):
                 "warning",
             ),
         ]
+        toast_callback.assert_called_once_with(
+            "Please switch to a singing-capable pack, then try again.",
+            severity="warning",
+            duration=None,
+        )
         thread_cls.assert_not_called()
         celune.change_input_state_callback.assert_not_called()
         celune.change_voice_lock_state_callback.assert_not_called()
@@ -480,7 +492,8 @@ class TestCeluneReload(CeluneCoreTestSupport):
         self,
     ) -> None:
         """Verify unknown backend names do not trigger reload state or working signals."""
-        celune = self._make_celune({})
+        toast_callback = mock.Mock()
+        celune = self._make_celune({}, toast_callback=toast_callback)
         celune.cur_state = "idle"
         celune.loaded = True
         celune.change_input_state_callback = mock.Mock()
@@ -499,6 +512,12 @@ class TestCeluneReload(CeluneCoreTestSupport):
             "unknown backend: qwen (available: mini, qwen3, fireredtts3, dotstts, voxcpm2, ming3, "
             "soulxsinger, seed-vc)",
             "warning",
+        )
+        toast_callback.assert_called_once_with(
+            "unknown backend: qwen (available: mini, qwen3, fireredtts3, dotstts, voxcpm2, ming3, "
+            "soulxsinger, seed-vc)",
+            severity="warning",
+            duration=None,
         )
         assert celune.cur_state == "idle"
         assert celune.loaded
@@ -570,7 +589,8 @@ class TestCeluneReload(CeluneCoreTestSupport):
         self,
     ) -> None:
         """Verify missing CEVOICE bundles do not start a reload or lock the UI."""
-        celune = self._make_celune({})
+        toast_callback = mock.Mock()
+        celune = self._make_celune({}, toast_callback=toast_callback)
         celune.change_input_state_callback = mock.Mock()
         celune.change_voice_lock_state_callback = mock.Mock()
         celune.log_callback = mock.Mock()
@@ -584,6 +604,11 @@ class TestCeluneReload(CeluneCoreTestSupport):
         celune.log_callback.assert_called_once_with(
             "Voice pack not found: invalid_character",
             "warning",
+        )
+        toast_callback.assert_called_once_with(
+            "Voice pack not found: invalid_character",
+            severity="warning",
+            duration=None,
         )
         assert not celune._reload_pending
 
@@ -705,7 +730,8 @@ class TestCeluneReload(CeluneCoreTestSupport):
 
     def test_hot_cevoice_reload_failure_restores_previous_bundle_state(self) -> None:
         """Verify failed CEVOICE reloads restore the previous bundle and voice state."""
-        celune = self._make_celune({})
+        toast_callback = mock.Mock()
+        celune = self._make_celune({}, toast_callback=toast_callback)
         celune.log_level = "verbose"
         celune.log_callback = mock.Mock()
         celune.backend.uses_voice_bundles = True
@@ -778,6 +804,11 @@ class TestCeluneReload(CeluneCoreTestSupport):
             "no voices found" in str(call.args[0])
             for call in celune.log_callback.call_args_list
             if call.args
+        )
+        toast_callback.assert_called_once_with(
+            "Could not switch to this character. The previous character was restored.",
+            severity="warning",
+            duration=None,
         )
 
     def test_set_cevoice_and_wait_recovers_when_reload_setup_crashes(self) -> None:

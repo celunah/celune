@@ -194,12 +194,16 @@ def set_voice(self, name: str) -> bool:
 def _prepare_voice_change(self, name: str) -> bool:
     """Wait for speech to drain before preparing one voice switch."""
     if getattr(self.backend, "singing", False):
-        self.log(string("celune.singing_voice_change_unavailable"), "warning")
+        message = string("celune.singing_voice_change_unavailable")
+        self.log(message, "warning")
+        self.toast(message, severity="warning")
         return False
 
     if name not in self.voices:
         # this voice was not found in the current CEVOICE/CECHAR pack
-        self.log(string("celune.unknown_voice", voice=name), "warning")
+        message = string("celune.unknown_voice", voice=name)
+        self.log(message, "warning")
+        self.toast(message, severity="warning")
         return False
 
     self.change_input_state_callback(locked=True)
@@ -373,6 +377,7 @@ def _log_singing_backend_pack_issue(
             "warning",
         )
     self.log(string("celune.singing_capable_pack_required"), "warning")
+    self.toast(string("celune.singing_capable_pack_required"), severity="warning")
 
 
 def _reject_singing_backend(
@@ -397,22 +402,21 @@ def _prepare_backend_reload(
         reload_already_pending = self._reload_pending or self.cur_state == "reloading"
 
     if reload_already_pending:
-        self.log(string("celune.reload_already_in_progress"), "warning")
+        message = string("celune.reload_already_in_progress")
+        self.log(message, "warning")
+        self.toast(message, severity="warning")
         return False
 
     if isinstance(backend_spec, str):
         normalized_backend = backend_spec.strip().lower()
         if normalized_backend not in BACKENDS and normalized_backend not in VC_BACKENDS:
-            self.log(
-                string(
-                    "celune.unknown_backend",
-                    backend=backend_spec,
-                    available=", ".join(
-                        tuple(BACKENDS.keys()) + tuple(VC_BACKENDS.keys())
-                    ),
-                ),
-                "warning",
+            message = string(
+                "celune.unknown_backend",
+                backend=backend_spec,
+                available=", ".join(tuple(BACKENDS.keys()) + tuple(VC_BACKENDS.keys())),
             )
+            self.log(message, "warning")
+            self.toast(message, severity="warning")
             return False
 
     singing_pack_blocked = False
@@ -434,7 +438,9 @@ def _prepare_backend_reload(
         return False
 
     if reload_already_pending:
-        self.log(string("celune.reload_already_in_progress"), "warning")
+        message = string("celune.reload_already_in_progress")
+        self.log(message, "warning")
+        self.toast(message, severity="warning")
         return False
 
     self.change_input_state_callback(locked=True)
@@ -549,13 +555,17 @@ def _prepare_cevoice_reload(self, bundle: Optional[Union[str, Path]]) -> bool:
         reload_already_pending = self._reload_pending or self.cur_state == "reloading"
 
     if reload_already_pending:
-        self.log(string("celune.reload_already_in_progress"), "warning")
+        message = string("celune.reload_already_in_progress")
+        self.log(message, "warning")
+        self.toast(message, severity="warning")
         return False
 
     if bundle is not None:
         resolved_bundle = resolve_bundle_path(bundle)
         if not resolved_bundle.exists():
-            self.log(string("celune.voice_pack_not_found", bundle=bundle), "warning")
+            message = string("celune.voice_pack_not_found", bundle=bundle)
+            self.log(message, "warning")
+            self.toast(message, severity="warning")
             return False
 
     with self.say_lock:
@@ -876,6 +886,7 @@ def change_voice(self, voice: str) -> None:
                 self.loaded = True
 
         self.log(string("celune.voice_loaded", voice=voice))
+        self.toast(string("celune.voice_loaded", voice=voice))
         self.progress_callback(1, 1)
         self.cur_state = "idle"
         self.status_callback(string("status.idle"))

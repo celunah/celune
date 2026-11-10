@@ -36,6 +36,11 @@ from celune.typing.locks import (
     ComponentLockRequirement,
 )
 from celune.typing.modes import OperationState
+from celune.typing.agent import (
+    AgentClassificationResult,
+    AgentInputClassification,
+    AgentRoute,
+)
 from celune.typing.common import JSONSerializable
 from celune.persona.emotion import PersonaEmotionAnalyzer
 from celune.pipeline.playback import play_signal
@@ -680,6 +685,42 @@ class TestCeluneRuntime(CeluneCoreTestSupport):
         say.assert_called_once_with(celune, "hello while downloading")
         celune.vision.post.assert_not_called()
 
+    def test_think_worker_toasts_when_persona_falls_back_to_speech(self) -> None:
+        """Notify the user when a failed Persona reply falls back to speech."""
+        toast_callback = mock.Mock()
+        celune = self._make_celune(
+            {"mode": "converse", "vram": "high"},
+            toast_callback=toast_callback,
+        )
+        celune.persona_ready = True
+        celune._persona_queue.put_nowait("What time is it?")
+        route = AgentClassificationResult(
+            classification=AgentInputClassification.CONVERSATION,
+            confidence=1.0,
+            route=AgentRoute.CONVERSATION,
+        )
+
+        with (
+            mock.patch(
+                "celune.core.conversation.wait_for_persona_playback",
+                return_value=True,
+            ),
+            mock.patch("celune.core.agent.route_input", return_value=route),
+            mock.patch("celune.core.conversation.think_persona", return_value=False),
+            mock.patch(
+                "celune.core.conversation.say",
+                return_value=True,
+            ) as say,
+        ):
+            core_conversation._think_worker(celune)
+
+        say.assert_called_once_with(celune, "What time is it?")
+        toast_callback.assert_called_once_with(
+            "Persona couldn't reply; your input was queued for speech instead.",
+            severity="warning",
+            duration=None,
+        )
+
     def test_load_voice_conversion_mode_skips_tts_model_load_and_warmup(self) -> None:
         """Verify VC mode does not boot the TTS runtime during startup."""
         with (
@@ -723,7 +764,8 @@ class TestCeluneRuntime(CeluneCoreTestSupport):
 
     def test_change_voice_returns_runtime_state_to_idle(self) -> None:
         """Verify successful voice reload leaves Celune in the idle state."""
-        celune = self._make_celune({})
+        toast_callback = mock.Mock()
+        celune = self._make_celune({}, toast_callback=toast_callback)
         celune.current_voice = "balanced"
         celune.voices = ("balanced", "bold")
         celune.model_name = "shared-model"
@@ -747,6 +789,43 @@ class TestCeluneRuntime(CeluneCoreTestSupport):
         assert celune.cur_state == "idle"
         assert statuses[-1] == ("Idle", "info")
         assert readiness_states == [(True, "idle")]
+        toast_callback.assert_called_once_with(
+            "Voice bold loaded.",
+            severity="info",
+            duration=None,
+        )
+
+    def test_unknown_voice_rejection_emits_a_warning_toast(self) -> None:
+        """Show a toast when a requested voice is absent from the active pack."""
+        toast_callback = mock.Mock()
+        celune = self._make_celune({}, toast_callback=toast_callback)
+        celune.voices = ("balanced",)
+
+        assert not core_voice._prepare_voice_change(celune, "missing")
+
+        toast_callback.assert_called_once_with(
+            "unknown voice: missing",
+            severity="warning",
+            duration=None,
+        )
+
+    def test_full_persona_queue_emits_a_warning_toast(self) -> None:
+        """Make a rejected conversation request visible outside the log panel."""
+        toast_callback = mock.Mock()
+        celune = self._make_celune(
+            {"mode": "converse", "vram": "high"},
+            toast_callback=toast_callback,
+        )
+        for index in range(celune._persona_queue.maxsize):
+            celune._persona_queue.put_nowait(f"queued {index}")
+
+        assert not celune.think("one more request")
+
+        toast_callback.assert_called_once_with(
+            "I'm currently busy. Try again later.",
+            severity="warning",
+            duration=None,
+        )
 
     def test_status_and_sleep_delegate_to_runtime_callbacks(self) -> None:
         """Verify extension helpers forward status and sleep to Celune's runtime."""

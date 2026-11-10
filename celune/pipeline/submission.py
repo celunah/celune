@@ -598,7 +598,9 @@ def _queue_speech_request(
         bool: ``True`` when the request was queued successfully.
     """
     if getattr(engine.backend, "singing", False) and not contains_cesn_note_event(text):
-        engine.log(string("celune.singing_backend_requires_cesn"), "warning")
+        message = string("celune.singing_backend_requires_cesn")
+        engine.log(message, "warning")
+        engine.toast(message, severity="warning")
         return False
 
     if engine.exit_requested or not _prepare_speech_readiness(
@@ -645,7 +647,9 @@ def _prepare_speech_readiness(
     if getattr(engine, "test_finished", False):
         return False
     if engine.is_in_tutorial and not allow_tutorial:
-        engine.log(string("celune.speech_input_disabled_tutorial"), "warning")
+        message = string("celune.speech_input_disabled_tutorial")
+        engine.log(message, "warning")
+        engine.toast(message, severity="warning")
         return False
 
     if getattr(engine, "sleeping", False):

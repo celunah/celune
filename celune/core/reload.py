@@ -552,11 +552,7 @@ def _hot_reload_backend_impl(
     candidate_vc_backend: Optional[CeluneVCBackend] = None
     candidate_model: Optional[PreTrainedModel] = None
     candidate_voice: Optional[str] = None
-    requested_name = (
-        backend_spec.name
-        if isinstance(backend_spec, (CeluneBackend, CeluneVCBackend))
-        else str(backend_spec)
-    )
+    requested_name = str(getattr(backend_spec, "name", None) or backend_spec)
 
     try:
         snapshot = _capture_reload_snapshot(self)
@@ -695,7 +691,9 @@ def _hot_reload_backend_impl(
         elif backend_target == "vc":
             lifecycle.unload_normalizer_components(self)
         self.loaded = True
-        self.log(string("celune.switched_backend", backend=requested_name))
+        message = string("celune.switched_backend", backend=requested_name)
+        self.log(message)
+        self.toast(message)
         self.progress_callback(1, 1)
         self.cur_state = "idle"
         self.status_callback(string("status.idle"))
@@ -916,12 +914,12 @@ def _hot_reload_cevoice_impl(
                 release_loaded_object(cast(ReleasableObject, previous_model))
 
         self.loaded = True
-        self.log(
-            string(
-                "celune.switched_character",
-                character=(bundle if bundle is not None else previous_bundle.name),
-            )
+        message = string(
+            "celune.switched_character",
+            character=(bundle if bundle is not None else previous_bundle.name),
         )
+        self.log(message)
+        self.toast(message)
         self.progress_callback(1, 1)
         self.cur_state = "idle"
         self.status_callback(string("status.idle"))
@@ -967,10 +965,9 @@ def _hot_reload_cevoice_impl(
             self.cur_state = "idle"
         self.status_callback(string("status.idle"))
         self.progress_callback(1, 1)
-        self.log(
-            string("celune.character_restore_failed"),
-            "warning",
-        )
+        message = string("celune.character_restore_failed")
+        self.log(message, "warning")
+        self.toast(message, severity="warning")
         return False
     finally:
         self._reload_pending = False
