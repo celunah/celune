@@ -63,6 +63,16 @@ CELUNE_CSS = """
         constrain: inside;
     }
 
+    #celune-toast.severity-warning {
+        border: round $warning;
+        color: $warning;
+    }
+
+    #celune-toast.severity-error {
+        border: round $error;
+        color: $error;
+    }
+
     #loading-center {
         width: 1fr;
         height: 1fr;

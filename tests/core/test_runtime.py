@@ -1433,6 +1433,30 @@ class TestCeluneRuntime(CeluneCoreTestSupport):
         assert think("hello")
         celune.think.assert_called_once_with("hello")
 
+    def test_toast_dispatches_severity_and_optional_duration(self) -> None:
+        """Verify the core toast method forwards its public call shape."""
+        notifications: list[tuple[str, str, Optional[float]]] = []
+
+        def capture_toast(
+            msg: str,
+            severity: str = "info",
+            *,
+            duration: Optional[float] = None,
+        ) -> None:
+            notifications.append((msg, severity, duration))
+
+        celune = self._make_celune(
+            {"api": {"port": "bad"}},
+            toast_callback=capture_toast,
+        )
+        celune.toast("Saved")
+        celune.toast("Could not save", "error", duration=4.0)
+
+        assert notifications == [
+            ("Saved", "info", None),
+            ("Could not save", "error", 4.0),
+        ]
+
     def test_logging_levels_waiting_and_api_settings_cover_edge_cases(self) -> None:
         """Verify log-level gates, readiness checks, and API fallbacks.
 

@@ -65,6 +65,7 @@ from ..typing.celune import (
     CaptionCallback,
     CoreBackendSpec,
     MessageCallback,
+    ToastCallback,
     ProgressCallback,
     InputStateCallback,
     VoiceLockStateCallback,
@@ -131,6 +132,7 @@ def initialize(
     agent_tool_selector: Optional[AgentToolSelector] = None,
     backend_mode: BackendMode = "normal",
     startup_callback: Optional[Callable[[str], None]] = None,
+    toast_callback: Optional[ToastCallback] = None,
 ) -> None:
     """Create the Celune engine and retain its deferred startup callback.
 
@@ -148,6 +150,7 @@ def initialize(
     self._startup_callback = startup_callback
     self._callbacks = CeluneCallbackState(
         log_callback=partial(_buffer_startup_log, self),
+        toast_callback=toast_callback or _noop_toast,
         status_callback=status_callback or _noop_message,
         error_callback=error_callback or (lambda error: None),
         idle_callback=idle_callback or (lambda: None),
@@ -463,6 +466,16 @@ def _noop_message(
 ) -> None:
     """Discard a message callback."""
     del msg, severity, loglevel
+
+
+def _noop_toast(
+    msg: str,
+    severity: str = "info",
+    *,
+    duration: Optional[float] = None,
+) -> None:
+    """Discard a toast callback when Celune has no interactive UI."""
+    del msg, severity, duration
 
 
 def _noop_input_state(locked: bool) -> None:

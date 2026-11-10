@@ -1397,28 +1397,44 @@ def action_help_quit(self) -> None:
 
 def show_toast(
     self,
-    message: str,
-    duration: float = CeluneToast.DEFAULT_DURATION,
+    msg: str,
+    duration: Optional[float] = None,
+    *,
+    severity: str = "info",
 ) -> None:
     """Schedule a transient message in the bottom toast widget.
 
     Args:
-        message: The single-line message to display.
+        msg: The single-line message to display.
+        severity: The theme severity color to apply.
         duration: Seconds to keep the message visible before fading it out.
     """
-    self.call_later(_display_toast, self, message, duration)
+    self.call_later(_display_toast, self, msg, severity, duration)
 
 
-def _display_toast(self, message: str, duration: float) -> None:
+def _display_toast(
+    self,
+    msg: str,
+    severity: str,
+    duration: Optional[float],
+) -> None:
     """Display a scheduled toast on the Textual application thread."""
+    if severity not in {"info", "warning", "error"}:
+        severity = "info"
+    display_duration = CeluneToast.DEFAULT_DURATION if duration is None else duration
     try:
         toast = self.screen.query_one(CeluneToast)
     except _app.NoMatches:
         toast = CeluneToast()
         self.screen.mount(toast)
-        self.screen.call_later(toast.show, message, duration)
+        self.screen.call_later(
+            toast.show,
+            msg,
+            display_duration,
+            severity=severity,
+        )
     else:
-        toast.show(message, duration)
+        toast.show(msg, display_duration, severity=severity)
 
 
 def action_toggle_debug_inspector(self) -> None:
@@ -2241,11 +2257,13 @@ class InteractionHooks:
 
     def show_toast(
         self,
-        message: str,
-        duration: float = CeluneToast.DEFAULT_DURATION,
+        msg: str,
+        duration: Optional[float] = None,
+        *,
+        severity: str = "info",
     ) -> None:
         """Delegate transient message display to the interaction implementation."""
-        return show_toast(self, message, duration)
+        return show_toast(self, msg, duration, severity=severity)
 
     def process_command(self, command: str, args: list[str]) -> None:
         """Delegate to the interaction implementation."""

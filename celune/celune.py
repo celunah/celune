@@ -22,6 +22,7 @@ from .typing.celune import (
     CaptionCallback,
     CoreBackendSpec,
     MessageCallback,
+    ToastCallback,
     ProgressCallback,
     InputStateCallback,
     CeluneStateAccessors,
@@ -210,6 +211,7 @@ class Celune(CeluneStateAccessors):
         agent_tool_selector: Optional[AgentToolSelector] = None,
         backend_mode: BackendMode = "normal",
         startup_callback: Optional[Callable[[str], None]] = None,
+        toast_callback: Optional[ToastCallback] = None,
     ) -> None:
         """Create the Celune engine and retain its deferred startup callback.
 
@@ -242,6 +244,7 @@ class Celune(CeluneStateAccessors):
             agent_tool_selector,
             backend_mode,
             startup_callback,
+            toast_callback,
         )
 
     bind_forwarded_properties(locals(), CELUNE_FORWARDED_PROPERTIES)
@@ -573,6 +576,22 @@ class Celune(CeluneStateAccessors):
             severity: The message severity level.
         """
         return core_callbacks.log_dev(self, msg, severity)
+
+    def toast(
+        self,
+        msg: "str",
+        severity: "str" = "info",
+        *,
+        duration: "Optional[float]" = None,
+    ) -> "None":
+        """Show a short UI toast using the selected severity color.
+
+        Args:
+            msg: The message to display.
+            severity: The UI severity color to use.
+            duration: Optional time in seconds before the toast fades out.
+        """
+        return core_callbacks.toast(self, msg, severity, duration=duration)
 
     def reset_persona_conversation(self) -> "None":
         """

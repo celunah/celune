@@ -341,6 +341,7 @@ def _bind_runtime_callbacks(self) -> None:
 
     callbacks: tuple[tuple[str, Callable[..., None]], ...] = (
         ("log_callback", self.tts_log),
+        ("toast_callback", self.show_toast),
         ("status_callback", self.safe_status),
         ("error_callback", self.error),
         ("idle_callback", self.tts_idle),

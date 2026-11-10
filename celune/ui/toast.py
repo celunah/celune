@@ -46,11 +46,19 @@ class CeluneToast(Static):
         if self.display:
             self.call_after_refresh(self._center_toast)
 
-    def show(self, message: str, duration: float = DEFAULT_DURATION) -> None:
+    def show(
+        self,
+        message: str,
+        duration: float = DEFAULT_DURATION,
+        *,
+        severity: str = "info",
+    ) -> None:
         """Display a message, then fade it out after ``duration`` seconds."""
         self._generation += 1
         generation = self._generation
         self._cancel_timers()
+        self.set_class(severity == "warning", "severity-warning")
+        self.set_class(severity == "error", "severity-error")
         self.update(" ".join(message.split()))
         self.display = True
         self.call_after_refresh(self._fade_in, generation, max(0.0, duration))

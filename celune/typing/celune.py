@@ -179,6 +179,20 @@ class MessageCallback(Protocol):
         raise NotImplementedError("protocol not defined")
 
 
+class ToastCallback(Protocol):
+    """Callback accepting a toast message, severity, and optional duration."""
+
+    def __call__(
+        self,
+        msg: str,
+        *,
+        severity: str = "info",
+        duration: Optional[float] = None,
+    ) -> None:
+        """Display one transient message in the active UI."""
+        raise NotImplementedError("protocol not defined")
+
+
 class InputStateCallback(Protocol):
     """Callback accepting an input lock state."""
 
@@ -242,6 +256,7 @@ class CeluneStateAccessors:
     """Typed runtime state contract implemented by ``Celune``."""
 
     log_callback: MessageCallback
+    toast_callback: ToastCallback
     status_callback: MessageCallback
     error_callback: Callable[[str], None]
     idle_callback: Callable[[], None]

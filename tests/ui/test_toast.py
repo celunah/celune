@@ -44,3 +44,22 @@ async def test_toast_is_bottom_centered_and_fades_in_and_out() -> None:
         await pilot.pause(0.3)
         assert not toast.display
         assert toast.opacity == 0.0
+
+
+@pytest.mark.anyio
+async def test_toast_colors_warning_and_error_severities() -> None:
+    """Use separate theme colors for warning and error toasts."""
+    app = _ToastHarness()
+    async with app.run_test(size=(80, 24)) as pilot:
+        toast = app.query_one(CeluneToast)
+        toast.show("Warning", severity="warning")
+        await pilot.pause(0.05)
+
+        warning_color = toast.styles.color
+        assert toast.has_class("severity-warning")
+
+        toast.show("Error", severity="error")
+        await pilot.pause(0.05)
+
+        assert toast.has_class("severity-error")
+        assert toast.styles.color != warning_color

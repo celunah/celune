@@ -10,6 +10,7 @@ from collections.abc import Callable
 from celune.celune import Celune
 from celune.core import lifecycle as core_lifecycle
 from celune.core.lifecycle import _close_speech_pipeline as close_pipeline
+from celune.typing.celune import ToastCallback
 from celune.dataclasses.celune import (
     CeluneAudioState,
     CeluneModelState,
@@ -63,6 +64,7 @@ class CeluneCoreTestSupport(CeluneTestCase):
         backend = FakeBackend(log=core_lifecycle._noop_message, fatal=celune.fatal)
         celune._callbacks = CeluneCallbackState(
             log_callback=core_lifecycle._noop_message,
+            toast_callback=core_lifecycle._noop_toast,
             status_callback=core_lifecycle._noop_message,
             error_callback=lambda _error: None,
             idle_callback=lambda: None,
@@ -129,9 +131,10 @@ class CeluneCoreTestSupport(CeluneTestCase):
         self,
         config: dict,
         startup_callback: Optional[Callable[[str], None]] = None,
+        toast_callback: Optional[ToastCallback] = None,
     ) -> Celune:
         """Build a Celune instance with lightweight fakes."""
-        if not config and startup_callback is None:
+        if not config and startup_callback is None and toast_callback is None:
             cached_celune = type(self)._cached_celune
             if cached_celune is not None:
                 type(self)._reset_cached_celune(cached_celune)
@@ -149,8 +152,9 @@ class CeluneCoreTestSupport(CeluneTestCase):
                 config=config,
                 tts_backend=FakeBackend,
                 startup_callback=startup_callback,
+                toast_callback=toast_callback,
             )
-            if not config and startup_callback is None:
+            if not config and startup_callback is None and toast_callback is None:
                 owner = type(self)
                 owner._cached_instance_keys = frozenset(celune.__dict__)
                 owner._cache_celune(celune)

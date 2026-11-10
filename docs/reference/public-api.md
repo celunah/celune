@@ -26,8 +26,8 @@ The root lazily resolves `Celune`, `CeluneContext`, `CeluneExtension`, and
 ## `Celune` construction
 
 The constructor accepts a configuration mapping plus optional backend, VC,
-device, callback, log-level, agent-selector, and test-mode arguments. The
-common integration shape is:
+device, log, toast, and lifecycle callbacks, log-level, agent-selector, and
+test-mode arguments. The common integration shape is:
 
 ```python
 from celune import Celune
@@ -130,6 +130,25 @@ caption maps through `next_playback_source_id`, `playback_source_statuses`,
 `playback_source_meta`, and `playback_caption_states`. These properties let
 Celune's pipeline modules share engine-owned state; integrations should use the
 playback methods and callbacks instead of mutating the maps directly.
+
+## Notifications
+
+`toast(msg: str, severity: str = "info", *, duration: Optional[float] = None) -> None`
+asks the active UI to display a transient message. It returns immediately and
+does nothing when the engine has no interactive toast callback. `severity` may
+be `info`, `warning`, or `error`; unsupported values use the info
+style in the TUI. The TUI renders warning messages in the theme's warning color
+and errors in its error color. `duration` is the visible time in seconds before
+the toast fades; omitting it uses the TUI's three-second default.
+
+```python
+engine.toast("Settings saved")
+engine.toast("Check the selected path", severity="warning")
+engine.toast("The operation failed", severity="error", duration=5.0)
+```
+
+The constructor's optional `toast_callback` receives the message, severity, and
+optional duration. The Textual UI registers this callback automatically.
 
 ## Backends, voices, and character packs
 

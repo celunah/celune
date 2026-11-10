@@ -24,16 +24,23 @@ post-frame worker and report failures on the loading overlay.
 Pressing `CTRL+C` displays a temporary toast at the bottom of the interface:
 `You pressed CTRL+C. Press CTRL+Q to exit.`
 
-Core UI callbacks can display other transient messages with
-`CeluneUI.show_toast(message: str, duration: float = 3.0) -> None`. The message
-is shown on one line, centered near the bottom, and fades out after `duration`
-seconds. Each call replaces the visible toast. The method returns immediately;
-calls are scheduled on the Textual event loop, so callbacks from worker threads
-can use it without blocking input. For example:
+Core code can request a transient message with
+`Celune.toast(msg: str, severity: str = "info", *, duration: Optional[float] = None) -> None`.
+The TUI maps `info` to lavender, `warning` to yellow, and `error` to red. The
+message appears on one line, centered near the bottom, then fades after the
+duration; omitting it uses three seconds. Each call replaces the visible toast.
+The method returns immediately. For example:
 
 ```python
-ui.show_toast("Settings saved", duration=2.0)
+celune.toast("Settings saved", duration=2.0)
+celune.toast("Check the selected path", severity="warning")
+celune.toast("The operation failed", severity="error")
 ```
+
+UI integrations can use
+`CeluneUI.show_toast(msg, duration=None, *, severity="info")` directly. It
+schedules work on Textual's event loop, so callbacks from worker threads do not
+block input.
 
 ## Debug inspector
 

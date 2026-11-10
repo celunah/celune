@@ -1732,6 +1732,7 @@ def start(
                 return runtime.Celune(
                     tts_backend=backend,
                     log_callback=ui.tts_log,
+                    toast_callback=ui.show_toast,
                     status_callback=ui.safe_status,
                     error_callback=ui.error,
                     idle_callback=ui.tts_idle,

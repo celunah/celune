@@ -27,6 +27,7 @@ from ..typing.celune import (
     ErrorCallback,
     CaptionCallback,
     MessageCallback,
+    ToastCallback,
     VCBackendRecipe,
     ProgressCallback,
     TTSBackendRecipe,
@@ -48,6 +49,7 @@ class CeluneCallbackState:
     """Callbacks Celune uses to report state outward."""
 
     log_callback: MessageCallback
+    toast_callback: ToastCallback
     status_callback: MessageCallback
     error_callback: ErrorCallback
     idle_callback: IdleCallback
@@ -210,6 +212,9 @@ class CeluneRuntimeState:
 CELUNE_FORWARDED_PROPERTIES = (
     ForwardedPropertySpec(
         "log_callback", "_callbacks", "log_callback", reject_duplicate=True
+    ),
+    ForwardedPropertySpec(
+        "toast_callback", "_callbacks", "toast_callback", reject_duplicate=True
     ),
     ForwardedPropertySpec(
         "status_callback", "_callbacks", "status_callback", reject_duplicate=True
