@@ -21,6 +21,20 @@ post-frame worker and report failures on the loading overlay.
 | `CTRL+B` | Open or close the debug inspector when `log_level` is `debug`. |
 | `ESC` during startup | Reveal the main interface when the loading footer offers this action. |
 
+Pressing `CTRL+C` displays a temporary toast at the bottom of the interface:
+`You pressed CTRL+C. Press CTRL+Q to exit.`
+
+Core UI callbacks can display other transient messages with
+`CeluneUI.show_toast(message: str, duration: float = 3.0) -> None`. The message
+is shown on one line, centered near the bottom, and fades out after `duration`
+seconds. Each call replaces the visible toast. The method returns immediately;
+calls are scheduled on the Textual event loop, so callbacks from worker threads
+can use it without blocking input. For example:
+
+```python
+ui.show_toast("Settings saved", duration=2.0)
+```
+
 ## Debug inspector
 
 Set `log_level: debug` in `config.yaml`, then press `CTRL+B` to open the

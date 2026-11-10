@@ -20,6 +20,7 @@ from pathlib import Path
 from collections.abc import Callable, Iterator
 
 from . import app as _app
+from .toast import CeluneToast
 from ..constants import SIGTSTP, APP_NAME
 from ..typing.agent import AgentTaskState
 from ..typing.modes import OPERATION_MODES, OperationState
@@ -60,6 +61,7 @@ __all__ = (
     "_split_command_input",
     "_start_vc_recording",
     "_submit_text",
+    "action_help_quit",
     "action_quit",
     "action_toggle_debug_inspector",
     "begin_tutorial",
@@ -81,6 +83,7 @@ __all__ = (
     "open_voice_menu",
     "process_command",
     "request_agent_test_response",
+    "show_toast",
     "split_command_input",
     "stop_vc_debug_capture",
     "toggle_vc_recording",
@@ -1387,6 +1390,37 @@ async def action_quit(self) -> None:
     self._graceful_exit(return_code=self._startup_error_exit_code)
 
 
+def action_help_quit(self) -> None:
+    """Show the Celune-specific hint for the conventional Ctrl+C key."""
+    self.show_toast(_app.string("ui.ctrl_c_toast"))
+
+
+def show_toast(
+    self,
+    message: str,
+    duration: float = CeluneToast.DEFAULT_DURATION,
+) -> None:
+    """Schedule a transient message in the bottom toast widget.
+
+    Args:
+        message: The single-line message to display.
+        duration: Seconds to keep the message visible before fading it out.
+    """
+    self.call_later(_display_toast, self, message, duration)
+
+
+def _display_toast(self, message: str, duration: float) -> None:
+    """Display a scheduled toast on the Textual application thread."""
+    try:
+        toast = self.screen.query_one(CeluneToast)
+    except _app.NoMatches:
+        toast = CeluneToast()
+        self.screen.mount(toast)
+        self.screen.call_later(toast.show, message, duration)
+    else:
+        toast.show(message, duration)
+
+
 def action_toggle_debug_inspector(self) -> None:
     """Open the inspector only while Celune's active log level is debug."""
     if self.cur_state == "exiting":
@@ -2120,6 +2154,10 @@ class InteractionHooks:
         """Delegate to the interaction implementation."""
         return await action_quit(self)
 
+    def action_help_quit(self) -> None:
+        """Delegate Textual's Ctrl+C hint to the Celune toast."""
+        return action_help_quit(self)
+
     def action_toggle_debug_inspector(self) -> None:
         """Delegate the debug-inspector binding to the interaction module."""
         return action_toggle_debug_inspector(self)
@@ -2200,6 +2238,14 @@ class InteractionHooks:
     def open_voice_menu(self, *, preview: bool = False) -> None:
         """Delegate voice-menu opening or its no-op preview."""
         return open_voice_menu(self, preview=preview)
+
+    def show_toast(
+        self,
+        message: str,
+        duration: float = CeluneToast.DEFAULT_DURATION,
+    ) -> None:
+        """Delegate transient message display to the interaction implementation."""
+        return show_toast(self, message, duration)
 
     def process_command(self, command: str, args: list[str]) -> None:
         """Delegate to the interaction implementation."""

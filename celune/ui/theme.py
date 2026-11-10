@@ -7,7 +7,7 @@ from textual.color import Color
 CELUNE_CSS = """
     Screen {
         layout: vertical;
-        layers: base menu loading;
+        layers: base menu loading toast;
         background: $background;
     }
 
@@ -41,6 +41,27 @@ CELUNE_CSS = """
         offset: 0 0;
         align: center middle;
         background: $background;
+    }
+
+    #celune-toast {
+        layer: toast;
+        position: absolute;
+        width: auto;
+        max-width: 1fr;
+        height: 3;
+        margin-bottom: 1;
+        padding: 0 2;
+        border: round $primary;
+        background: $background;
+        color: $foreground;
+        text-wrap: nowrap;
+        text-overflow: ellipsis;
+        text-align: center;
+        content-align: center middle;
+        opacity: 0;
+        transition: opacity 250ms;
+        offset: 0 100%;
+        constrain: inside;
     }
 
     #loading-center {

@@ -924,6 +924,7 @@
     "ui.cesn_input_placeholder": "Enter CESN notation to sing",
     "ui.command_parsing_error": "Command parsing failed.",
     "ui.core_engine_not_loaded": "Core engine is not loaded.",
+    "ui.ctrl_c_toast": "You pressed CTRL+C. Press CTRL+Q to exit.",
     "ui.error_signal_unavailable": "Could not play the error signal.",
     "ui.footer_cost_equivalent": "{provider} (this session): ${cost}",
     "ui.footer_toggle_recording": "CTRL+R toggle recording",

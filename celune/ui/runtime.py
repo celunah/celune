@@ -22,6 +22,7 @@ from collections.abc import Callable
 from rich.cells import cell_len
 
 from . import app as _app
+from .toast import CeluneToast
 
 __all__ = (
     "_agent_status_text",
@@ -1044,6 +1045,7 @@ def compose() -> _app.ComposeResult:
             yield _app.Label("", id="status")
             yield _app.Label("", id="resources")
     yield _app.CeluneLoadingScreen(widget_id="loading-overlay")
+    yield CeluneToast()
 
 
 def on_mount(self) -> None:
