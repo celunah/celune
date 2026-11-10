@@ -11,15 +11,13 @@ import shutil
 import datetime
 import platform
 import subprocess
+from typing import TYPE_CHECKING, Optional, cast
 from pathlib import Path
 from dataclasses import dataclass
 from collections.abc import Mapping, Callable
-from typing import TYPE_CHECKING, Optional, cast
 
 import psutil
 
-from ..typing.modes import OperationMode
-from ..typing.common import JSON, JSONSerializable
 from ..utils import clear_queue, format_error_message
 from ..exceptions import LocalManagementError as _LocalManagementError
 from ..typing.agent import (
@@ -34,6 +32,8 @@ from ..typing.agent import (
     AgentToolArgumentSchema,
     AgentToolExecutionStatus,
 )
+from ..typing.modes import OperationMode
+from ..typing.common import JSON, JSONSerializable
 
 if TYPE_CHECKING:
     from ..celune import Celune
@@ -601,9 +601,14 @@ def _local_missing(path: Path) -> _LocalManagementError:
     return _LocalManagementError("missing", "target does not exist", path)
 
 
-def _requested_local_paths(context: AgentContext) -> tuple[Path, ...]:
-    """Find unique absolute local paths in the order they appear in the request."""
-    request = context.request.original_request or context.request.request
+def _local_request_texts(context: AgentContext) -> tuple[str, ...]:
+    """Return the latest wording and its self-contained routed task request."""
+    requests = (context.request.original_request or "", context.request.request)
+    return tuple(dict.fromkeys(request for request in requests if request.strip()))
+
+
+def _absolute_paths_in_request(request: str) -> tuple[Path, ...]:
+    """Find unique absolute paths in one request, preserving their written order."""
     quoted_matches = list(_QUOTED_LOCAL_PATH_RE.finditer(request))
     quoted_spans = [match.span(1) for match in quoted_matches]
     matches = [(match.start(1), match.group(1), True) for match in quoted_matches]
@@ -632,9 +637,25 @@ def _requested_local_paths(context: AgentContext) -> tuple[Path, ...]:
     return tuple(requested.values())
 
 
+def _requested_local_paths(
+    context: AgentContext,
+    *,
+    expected_count: int,
+) -> tuple[Path, ...]:
+    """Resolve paths from the latest request or its history-resolved task form."""
+    first_nonempty: Optional[tuple[Path, ...]] = None
+    for request in _local_request_texts(context):
+        paths = _absolute_paths_in_request(request)
+        if len(paths) == expected_count:
+            return paths
+        if paths and first_nonempty is None:
+            first_nonempty = paths
+    return first_nonempty or ()
+
+
 def _requested_local_path(context: AgentContext) -> Optional[Path]:
     """Find one unambiguous absolute local path in the task request."""
-    paths = _requested_local_paths(context)
+    paths = _requested_local_paths(context, expected_count=1)
     return paths[0] if len(paths) == 1 else None
 
 
@@ -656,12 +677,8 @@ def _recall_search_request(selected_request: str, context: AgentContext) -> str:
 
 
 def _requested_launch_executable(context: AgentContext) -> Optional[str]:
-    """Return the executable named by the original process-launch request."""
-    requests = (
-        context.request.original_request or "",
-        context.request.request,
-    )
-    for user_request in dict.fromkeys(requests):
+    """Return the executable in the latest or history-resolved task request."""
+    for user_request in _local_request_texts(context):
         match = _LAUNCH_EXECUTABLE_RE.search(user_request)
         if match is None:
             continue
@@ -672,20 +689,20 @@ def _requested_launch_executable(context: AgentContext) -> Optional[str]:
 
 
 def _requested_launch_working_directory(context: AgentContext) -> Optional[str]:
-    """Return the absolute working directory explicitly named in the request."""
-    request = context.request.original_request or context.request.request
-    match = _LAUNCH_WORKING_DIRECTORY_RE.search(request)
-    if match is None:
-        return None
-    directory = next((group for group in match.groups() if group), None)
-    if directory is None or match.group(4) is None:
-        return directory
-    return directory.rstrip(".,;:!?)]}")
+    """Return the working directory named in the latest or resolved request."""
+    for request in _local_request_texts(context):
+        match = _LAUNCH_WORKING_DIRECTORY_RE.search(request)
+        if match is None:
+            continue
+        directory = next((group for group in match.groups() if group), None)
+        if directory is None or match.group(4) is None:
+            return directory
+        return directory.rstrip(".,;:!?)]}")
+    return None
 
 
 def _recover_local_launch_call(call: ToolCall, context: AgentContext) -> ToolCall:
     """Restore launch values from the request and discard invented options."""
-    request = context.request.original_request or context.request.request
     executable = _requested_launch_executable(context)
     arguments = dict(call["arguments"])
     if executable is not None:
@@ -695,7 +712,10 @@ def _recover_local_launch_call(call: ToolCall, context: AgentContext) -> ToolCal
         arguments.pop("cwd", None)
     else:
         arguments["cwd"] = working_directory
-    if _NO_LAUNCH_ARGUMENTS_RE.search(request):
+    if any(
+        _NO_LAUNCH_ARGUMENTS_RE.search(request)
+        for request in _local_request_texts(context)
+    ):
         arguments["arguments"] = []
     return {**call, "arguments": arguments}
 
@@ -726,7 +746,7 @@ def _requested_local_path_pair(
     context: AgentContext,
 ) -> Optional[tuple[Path, Path]]:
     """Find exactly two absolute paths in source-to-destination request order."""
-    paths = _requested_local_paths(context)
+    paths = _requested_local_paths(context, expected_count=2)
     return (paths[0], paths[1]) if len(paths) == 2 else None
 
 
@@ -763,9 +783,11 @@ def infer_local_tool_arguments(
 ) -> Optional[dict[str, JSONSerializable]]:
     """Recover required path arguments for an unambiguous filesystem action."""
     if tool_name in _LOCAL_LAUNCH_TOOL_NAMES:
-        request = context.request.original_request or context.request.request
         executable = _requested_launch_executable(context)
-        if executable and _NO_LAUNCH_ARGUMENTS_RE.search(request):
+        if executable and any(
+            _NO_LAUNCH_ARGUMENTS_RE.search(request)
+            for request in _local_request_texts(context)
+        ):
             return {"executable": executable, "arguments": []}
         return None
     path_arguments = {
@@ -778,7 +800,7 @@ def infer_local_tool_arguments(
     }.get(tool_name)
     if path_arguments is None:
         return None
-    paths = _requested_local_paths(context)
+    paths = _requested_local_paths(context, expected_count=len(path_arguments))
     if len(paths) != len(path_arguments):
         return None
     return {name: str(path) for name, path in zip(path_arguments, paths, strict=True)}

@@ -151,6 +151,45 @@ class TestLocalManagementTools(CeluneTestCase):
 
         assert recovered["arguments"]["pid"] == 1234
 
+    def test_follow_up_path_recovery_uses_the_resolved_task_request(self) -> None:
+        """Restore an earlier target resolved into a self-contained follow-up."""
+        report = str((Path.cwd() / "reports" / "report.txt").resolve())
+        context = self._context(
+            f"Summarize {report}.",
+            "Could you summarize that report again?",
+        )
+        read_call: ToolCall = {
+            "id": "read",
+            "name": "local_read_text",
+            "arguments": {"path": "/wrong/report.txt"},
+        }
+
+        recovered_read = recover_local_tool_call(read_call, context)
+
+        assert recovered_read["arguments"]["path"] == report
+
+        source = str((Path.cwd() / "reports" / "report.txt").resolve())
+        destination = str((Path.cwd() / "archive" / "report.txt").resolve())
+        copy_context = self._context(
+            f"Copy {source} to {destination}.",
+            f"Copy that report to {destination}.",
+        )
+        copy_call: ToolCall = {
+            "id": "copy",
+            "name": "local_copy",
+            "arguments": {
+                "source": "/wrong/source.txt",
+                "destination": "/wrong/dest.txt",
+            },
+        }
+
+        recovered_copy = recover_local_tool_call(copy_call, copy_context)
+
+        assert recovered_copy["arguments"] == {
+            "source": source,
+            "destination": destination,
+        }
+
     def test_launch_process_recovers_requested_executable_and_empty_arguments(
         self,
     ) -> None:

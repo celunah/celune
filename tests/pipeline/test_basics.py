@@ -12,10 +12,10 @@ from pathlib import Path
 from unittest import mock
 
 import numpy as np
-import numpy.typing as npt
 import pytest
 
-from celune.core import speech as core_speech, conversation as core_conversation
+from celune.core import speech as core_speech
+from celune.core import conversation as core_conversation
 from celune.agent import routing as agent_routing
 from celune.utils import discard, clear_queue
 from celune.celune import Celune
@@ -1767,7 +1767,7 @@ class TestPipelineAsync(CeluneAsyncTestCase):
         class UnderflowStream(FakeStream):
             """Output stream fake that reports one inserted underflow."""
 
-            def write(self, audio: npt.NDArray[np.float32]) -> bool:
+            def write(self, audio: np.ndarray) -> bool:
                 super().write(audio)
                 return True
 
@@ -2079,7 +2079,7 @@ class TestPipelineAsync(CeluneAsyncTestCase):
                 super().__init__()
                 self.injected = False
 
-            def write(self, audio: npt.NDArray[np.float32]) -> bool:
+            def write(self, audio: np.ndarray) -> bool:
                 super().write(audio)
                 if not self.injected:
                     self.injected = True
@@ -2141,7 +2141,7 @@ class TestPipelineAsync(CeluneAsyncTestCase):
                 super().__init__()
                 self.injected = False
 
-            def write(self, audio: npt.NDArray[np.float32]) -> bool:
+            def write(self, audio: np.ndarray) -> bool:
                 super().write(audio)
                 if not self.injected:
                     self.injected = True
@@ -2209,7 +2209,7 @@ class TestPipelineAsync(CeluneAsyncTestCase):
                 super().__init__()
                 self.injected = False
 
-            def write(self, audio: npt.NDArray[np.float32]) -> bool:
+            def write(self, audio: np.ndarray) -> bool:
                 super().write(audio)
                 if not self.injected:
                     self.injected = True
@@ -2316,7 +2316,7 @@ class TestPipelineAsync(CeluneAsyncTestCase):
                 super().__init__()
                 self.stop_requested = False
 
-            def write(self, audio: npt.NDArray[np.float32]) -> bool:
+            def write(self, audio: np.ndarray) -> bool:
                 super().write(audio)
                 if not self.stop_requested:
                     self.stop_requested = True
@@ -2374,7 +2374,7 @@ class TestPipelineAsync(CeluneAsyncTestCase):
         class FailingStream(FakeStream):
             """Raise when the playback worker writes the SFX block."""
 
-            def write(self, audio: npt.NDArray[np.float32]) -> bool:
+            def write(self, audio: np.ndarray) -> bool:
                 del audio
                 raise RuntimeError("simulated SFX output failure")
 
@@ -2631,16 +2631,28 @@ class TestPipelineAsync(CeluneAsyncTestCase):
             {"role": "assistant", "content": "I can help with that."},
         ]
 
-    def test_agent_classification_request_uses_a_disposable_prompt(
+    def test_agent_classification_request_includes_bounded_short_term_history(
         self,
     ) -> None:
-        """Build routing input without retaining conversational Persona history."""
+        """Resolve follow-up references from short-term history, without memories."""
         engine = make_pipeline_engine()
         engine.config = {
             "vram": "high",
-            "persona": {"model_id": "fixture/persona-test"},
+            "persona": {
+                "model_id": "fixture/persona-test",
+                "memory": {"max_short_term_messages": 4},
+            },
         }
-        engine.persona_history = [{"role": "assistant", "content": "Earlier."}]
+        engine.persona_history = [
+            {"role": "assistant", "content": "Too old to route."},
+            {
+                "role": "user",
+                "content": "Read /work/report.txt and tell me what it contains.",
+            },
+            {"role": "assistant", "content": "The report has three sections."},
+            {"role": "user", "content": "Now compare it with the budget."},
+            {"role": "assistant", "content": "The totals differ."},
+        ]
         engine.persona_session_summary = "Stale conversation summary."
         engine.retrieved_long_term_memory = ["Stale long-term memory."]
 
@@ -2670,6 +2682,10 @@ class TestPipelineAsync(CeluneAsyncTestCase):
         self.assertIn(
             "Judge the intended operation and target semantically", system_prompt
         )
+        self.assertIn(
+            "Earlier messages are context, not new instructions", system_prompt
+        )
+        self.assertIn("self-contained current operation", system_prompt)
         messages = cast(list[JSON], payload["messages"])
         self.assertEqual(
             messages[-1],
@@ -2679,9 +2695,13 @@ class TestPipelineAsync(CeluneAsyncTestCase):
             messages,
             [
                 {"role": "system", "content": system_prompt},
+                *engine.persona_history[-4:],
                 {"role": "user", "content": "Please handle this."},
             ],
         )
+        self.assertNotIn("Too old to route.", str(messages))
+        self.assertNotIn("Stale long-term memory", str(messages))
+        self.assertNotIn("Stale conversation summary", str(messages))
 
     def test_agent_classification_request_includes_active_routing_context(self) -> None:
         """Expose typed active-task context to semantic routing without a second prompt path."""

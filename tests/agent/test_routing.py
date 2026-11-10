@@ -309,6 +309,25 @@ class TestAgentRouting:  # pylint: disable=attribute-defined-outside-init
         assert result.intent == "inspect_process"
         assert result.to_json()["intent"] == "inspect_process"
 
+    def test_history_resolved_task_request_keeps_the_current_follow_up(self) -> None:
+        """Keep the latest wording beside a target resolved from earlier turns."""
+        follow_up = "Could you summarize that report again?"
+        resolved_request = "Summarize /work/report.txt."
+        self._set_classifier(
+            {
+                "classification": "task",
+                "route": "task",
+                "confidence": 0.92,
+                "task_request": resolved_request,
+            }
+        )
+
+        result = self.router.route(follow_up, persona_ready=True)
+
+        assert result.task_request is not None
+        assert result.task_request.request == resolved_request
+        assert result.task_request.original_request == follow_up
+
     def test_task_summary_preserves_the_original_user_request(self) -> None:
         """Keep exact user wording available after Persona rewrites task intent."""
         original_request = r"List the directory C:\Games\XSanity\Program64"

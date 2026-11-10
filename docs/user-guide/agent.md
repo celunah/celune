@@ -48,9 +48,17 @@ appear idle before its task ends.
 When a task ends after its final playback, the engine returns the status to
 Idle.
 
-Agent prompts do not include Persona's automatically retrieved long-term
-memories, conversation summary, or ordinary chat history. Memory tools remain
-available when a task explicitly needs a memory operation.
+The input router receives up to the 20 most recent user and assistant messages,
+subject to Persona's configured short-term history limit. It uses them only to
+resolve references and follow-ups, such as applying a new request to the file
+from the previous agent task. The latest user message remains the instruction;
+earlier messages provide context and do not trigger work by themselves. When the
+router recognizes a follow-up task, it writes a self-contained task request with
+the resolved target so tool selection and execution do not need the chat history.
+The router does not receive Persona's automatically retrieved long-term memories
+or conversation summary. The self-contained request starts agent planning; when
+more context is needed, the agent can inspect preserved conversation history
+through `query_task_history`.
 
 ## Built-in engine tools
 
@@ -115,10 +123,12 @@ directory.
 Routing and tool-selection prompts instruct Persona and Needle to preserve
 explicit paths from the task request. Celune also retains the original user
 request when Persona produces a shorter task summary, so the selector and local
-filesystem tools can still use the exact requested operation and path. When a
-request clearly names an operation, Needle gives tool-name matches more weight
-than generic description or argument matches, reducing confusion between
-similar tools such as directory listing and creation. When a
+filesystem tools can still use the exact requested operation and path. For a
+history-resolved follow-up, the standalone task request carries the target path
+forward, and filesystem path recovery checks it when the latest wording omits
+that path. When a request clearly names an operation, Needle gives tool-name
+matches more weight than generic description or argument matches, reducing
+confusion between similar tools such as directory listing and creation. When a
 request contains the number of unambiguous absolute paths expected by a
 filesystem tool, Celune uses those exact paths even if Needle supplies
 corrupted or different paths. Copy and move use exactly two requested paths in
