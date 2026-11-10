@@ -42,7 +42,7 @@ class CeluneToast(Static):
         self._cancel_timers()
 
     def on_resize(self, _event: Resize) -> None:
-        """Keep the toast centered when the terminal changes size."""
+        """Recenter against the visible content area after a resize."""
         if self.display:
             self.call_after_refresh(self._center_toast)
 
@@ -65,9 +65,17 @@ class CeluneToast(Static):
         self._hide_timer = self.set_timer(duration, lambda: self._fade_out(generation))
 
     def _center_toast(self) -> None:
-        """Place the toast at the horizontal center and terminal bottom."""
-        center_x = max(0, (self.screen.size.width - self.size.width) // 2)
-        self.styles.offset = (center_x, 0)
+        """Center the toast in the screen's scrollable content region."""
+        screen = self.screen
+        content_region = screen.scrollable_content_region
+        current_offset = self.styles.offset.resolve(screen.size, screen.size)
+        horizontal_offset = round(
+            content_region.center[0] - screen.region.x - self.region.width / 2
+        )
+        self.styles.offset = (
+            horizontal_offset,
+            current_offset.y,
+        )
 
     def _fade_out(self, generation: int) -> None:
         """Fade the current message before removing its widget."""

@@ -11,7 +11,7 @@ from celune.ui.toast import CeluneToast
 class _ToastHarness(App[None]):
     """Minimal Textual host with Celune's toast styles."""
 
-    CSS = CELUNE_CSS
+    CSS = CELUNE_CSS + "\nScreen { scrollbar-gutter: stable; }"
 
     def compose(self) -> ComposeResult:
         """Mount one toast for layout and animation checks."""
@@ -28,7 +28,10 @@ async def test_toast_is_bottom_centered_and_fades_in_and_out() -> None:
 
         await pilot.pause(0.1)
         assert toast.display
-        assert toast.region.x == (app.screen.size.width - toast.size.width) // 2
+        assert (
+            abs(toast.region.center[0] - app.screen.scrollable_content_region.center[0])
+            <= 0.5
+        )
         assert toast.region.bottom == app.screen.size.height - 1
         assert 0.0 < toast.opacity < 1.0
 
