@@ -614,10 +614,10 @@ class EventDispatcher:
         """Reject unknown event names.
 
         Args:
-            event_name: Value for `event_name`.
+            event_name: Event name to validate against the registered names.
 
         Raises:
-            ValueError: If `ValueError` needs to be raised.
+            ValueError: If the event name is not registered.
         """
         if event_name not in _EVENT_NAME_SET:
             raise ValueError(f"unknown event name: {event_name}")
