@@ -889,15 +889,22 @@ def main() -> int:
     """Run the backend request loop until the core closes the pipe."""
     try:
         args = _parse_args()
-    except CEDTSBadInvocationError:
+    except CEDTSBadInvocationError as message:
         print("error: you are running the CEDTS worker in the wrong way")
+        print(f"error: {message}")
         print(f"hint: did you mean to have {APP_NAME} run it instead?")
         print("hint: run `python main.py` or `celune` instead")
         return 1
 
     protocol_stream = _detach_protocol_stream()
+    try:
+        manifest = backend_manifest(args.backend)
+    except KeyError as backend_key:
+        raise CEDTSBadInvocationError(
+            f"CEDTS worker names an invalid backend: {args.backend}"
+        ) from backend_key
+
     binary_input, binary_output = _open_binary_streams(args)
-    manifest = backend_manifest(args.backend)
     backend_kwargs = cast(BackendArguments, json.loads(args.backend_kwargs))
     send_lock = threading.Lock()
     effective_limits = DEFAULT_CEDTS_LIMITS
