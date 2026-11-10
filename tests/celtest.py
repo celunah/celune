@@ -42,6 +42,8 @@ from typing import TypeVar, Optional, Protocol, ParamSpec, cast
 
 import pytest
 
+__version__ = "1.0.0"
+
 _P = ParamSpec("_P")
 _R = TypeVar("_R")
 _DESCRIPTION_PROPERTY = "celtest_description"
@@ -700,6 +702,22 @@ def pytest_sessionstart(session: pytest.Session) -> None:
         Optional[_TerminalReporter],
         config.pluginmanager.get_plugin("terminalreporter"),
     )
+
+    pm = session.config.pluginmanager
+    versions = [
+        f"celtest {__version__}",
+        f"• pytest {pytest.__version__}",
+    ]
+
+    seen = set()
+    for _plugin, dist in pm.list_plugin_distinfo():
+        key = (dist.project_name.casefold(), dist.version)
+        if key in seen:
+            continue
+        versions.append(f"• {dist.project_name} {dist.version}")
+        seen.add(key)
+    _write_line(" ".join(versions))
+
     if (
         _state.verbose
         and _state.is_controller
@@ -968,7 +986,7 @@ def _render_summary(
         _finish_compact_status_line()
         _write_line("")
         _write_line(
-            f"passed {passed}/{len(runnable)} time {_format_duration(elapsed)} "
+            f"passed {passed}/{len(runnable)} • time {_format_duration(elapsed)} • "
             f"warnings {len(_state.warning_lines)}"
         )
         _write_compact_summary_details(runnable)
@@ -979,7 +997,7 @@ def _render_summary(
 
     _write_line("")
     _write_line(
-        f"passed {passed}/{len(runnable)} time {_format_duration(elapsed)} "
+        f"passed {passed}/{len(runnable)} • time {_format_duration(elapsed)} • "
         f"warnings {len(_state.warning_lines)}"
     )
 
