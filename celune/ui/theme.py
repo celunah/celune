@@ -347,7 +347,6 @@ CELUNE_CSS = """
         color: $primary;
         background: $accent;
     }
-
 """
 
 
