@@ -284,7 +284,13 @@ class DotsTtsMF(CeluneBackend[DotsTtsRuntime]):
             DotsTtsModel.from_pretrained(pretrained_path),
         )
         loaded_model.core.to(dtype=torch.bfloat16)
-        loaded_model = self.apply_runtime_quantization(loaded_model, model_id)
+        loaded_model = cast(
+            DotsTtsModel,
+            self.apply_runtime_quantization(
+                cast(DotsTtsRuntime, loaded_model),
+                model_id,
+            ),
+        )
         return DotsTtsRuntime(
             model=loaded_model,
             pretrained_path=pretrained_path,

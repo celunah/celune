@@ -9,34 +9,35 @@ import importlib
 import threading
 import contextlib
 import importlib.util
-from pathlib import Path
 import importlib.metadata
+from types import ModuleType, TracebackType
 from typing import Optional, cast
+from pathlib import Path
+from dataclasses import dataclass
 from collections.abc import Callable, Generator
-from types import ModuleType, TracebackType, SimpleNamespace
 
-import torch
-import torchaudio
 import numpy as np
+import torch
 import soundfile as sf
+import torchaudio
 
+from .base import CeluneVCBackend
+from ...i18n import string
 from ...paths import (
+    temp_data_dir,
     huggingface_progress,
     configure_numba_cache,
     huggingface_hub_cache_dir,
-    temp_data_dir,
 )
-from ...i18n import string
 from ...utils import available
+from ...registry import OTHER_MODELS
+from ...typing.aliases import AudioChunk, SeedVCGenerator
 from ...typing.backends import (
-    SeedVCModelValue,
     SeedVCWrapper,
+    SeedVCModelValue,
     SeedVCRealtimeModule,
 )
-from .base import CeluneVCBackend
-from ...registry import OTHER_MODELS
 from ...registry.consent import require_model_consent
-from ...typing.aliases import AudioChunk, SeedVCGenerator
 from ...dataclasses.pipeline import AudioOutput, VoiceConversionRequest
 
 __all__ = ["CeluneSeedVCBackend"]
@@ -51,6 +52,15 @@ _LIVE_INFERENCE_CFG_RATE = 0.7
 _LIVE_MAX_PROMPT_SECONDS = 3.0
 _F0_LIVE_OVERLAP_SECONDS = 0.04
 _LIVE_OUTPUT_PEAK = 0.95
+
+
+@dataclass(slots=True)
+class _SeedVCRealtimeLoadArgs:
+    """Arguments passed to Seed-VC's native real-time model loader."""
+
+    checkpoint_path: Optional[str]
+    config_path: Optional[str]
+    fp16: bool
 
 
 def _require_seedvc_model_consents() -> None:
@@ -198,8 +208,8 @@ class CeluneSeedVCBackend(CeluneVCBackend):
             )
             return model_path, config_path
 
-        hf_utils_module.load_custom_model_from_hf = load_custom_model_from_hf
-        wrapper_module.load_custom_model_from_hf = load_custom_model_from_hf
+        vars(hf_utils_module)["load_custom_model_from_hf"] = load_custom_model_from_hf
+        vars(wrapper_module)["load_custom_model_from_hf"] = load_custom_model_from_hf
 
     @classmethod
     def _load_wrapper_type(cls) -> type[SeedVCWrapper]:
@@ -238,9 +248,11 @@ class CeluneSeedVCBackend(CeluneVCBackend):
                 configure_numba_cache()
                 realtime_module = self._prepared_live_module or self._load_live_module()
                 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-                realtime_module.device = device
-                realtime_module.fp16 = device.type == "cuda"
-                args = SimpleNamespace(
+                vars(realtime_module).update(
+                    device=device,
+                    fp16=device.type == "cuda",
+                )
+                args = _SeedVCRealtimeLoadArgs(
                     checkpoint_path=None,
                     config_path=None,
                     fp16=device.type == "cuda",
@@ -319,7 +331,9 @@ class CeluneSeedVCBackend(CeluneVCBackend):
         try:
             hf_utils = __import__("hf_utils", fromlist=["*"])
             cls._configure_seedvc_downloads(hf_utils, hf_utils)
-            module.load_custom_model_from_hf = hf_utils.load_custom_model_from_hf
+            vars(module)["load_custom_model_from_hf"] = (
+                hf_utils.load_custom_model_from_hf
+            )
         except ImportError:
             pass
         return cast(SeedVCRealtimeModule, module)
@@ -514,12 +528,14 @@ class CeluneSeedVCBackend(CeluneVCBackend):
         self._live_fade_out_window = 1 - fade_in_window
         self._live_session_key = (reference_path, input_sample_rate)
 
-        realtime_module.prompt_condition = None
-        realtime_module.mel2 = None
-        realtime_module.style2 = None
-        realtime_module.reference_wav_name = ""
-        realtime_module.prompt_len = 0
-        realtime_module.ce_dit_difference = _LIVE_CONTEXT_DIFFERENCE_SECONDS
+        vars(realtime_module).update(
+            prompt_condition=None,
+            mel2=None,
+            style2=None,
+            reference_wav_name="",
+            prompt_len=0,
+            ce_dit_difference=_LIVE_CONTEXT_DIFFERENCE_SECONDS,
+        )
 
     def _append_live_model_audio(self, audio: AudioChunk) -> None:
         """Append one model-rate block to Seed-VC's rolling live buffer."""
