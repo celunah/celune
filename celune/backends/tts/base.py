@@ -377,7 +377,7 @@ class CeluneBackend[ModelT](ABC):
         if info.duration <= _MAX_REFERENCE_SECONDS:
             return reference_wav
 
-        sample_rate = int(info.samplerate)
+        sample_rate = info.samplerate
         frame_limit = int(sample_rate * _MAX_REFERENCE_SECONDS)
         temp_dir = temp_data_dir(create=True)
         source_stat = reference_wav.stat()

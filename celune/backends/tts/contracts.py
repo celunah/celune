@@ -6,9 +6,8 @@ from __future__ import annotations
 import json
 import hashlib
 from pathlib import Path
-from collections import Counter
 from typing import Union, Optional
-from collections.abc import Mapping
+from collections import Counter, abc
 
 import torch
 
@@ -38,7 +37,7 @@ def _sha256(path: Path) -> str:
 
 
 def canonical_inventory(
-    tensors: Mapping[str, tuple[tuple[int, ...], str]],
+    tensors: abc.Mapping[str, tuple[tuple[int, ...], str]],
 ) -> str:
     """Hash sorted tensor names, shapes, and dtypes as a stable inventory."""
     payload = [
@@ -67,7 +66,7 @@ def _dtype_name(dtype: object) -> str:
 
 
 def inventory_from_state(
-    state: Mapping[str, torch.Tensor],
+    state: abc.Mapping[str, torch.Tensor],
 ) -> tuple[dict[str, tuple[tuple[int, ...], str]], Counter[str], int]:
     """Build a structural inventory from a loaded PyTorch state dictionary."""
     tensors: dict[str, tuple[tuple[int, ...], str]] = {}
@@ -76,7 +75,7 @@ def inventory_from_state(
     for name, tensor in state.items():
         if not isinstance(name, str) or not isinstance(tensor, torch.Tensor):
             raise ModelContractError("model state contains an invalid tensor entry")
-        shape = tuple(int(value) for value in tensor.shape)
+        shape = tuple(tensor.shape)
         dtype = _dtype_name(tensor.dtype)
         tensors[name] = (shape, dtype)
         dtype_counts[dtype] += 1
@@ -166,7 +165,7 @@ def _invalid_state(
 
 
 def validate_model_state(
-    state: Mapping[str, torch.Tensor],
+    state: abc.Mapping[str, torch.Tensor],
     contract: TensorInventoryContract,
     *,
     name: str,
@@ -205,7 +204,7 @@ def validate_model_state(
             path=checkpoint_path,
             reason=str(exc),
         ) from exc
-    quantized_state = bool(
+    quantized_state = (
         allow_quantized
         and quantization is not None
         and any(
@@ -242,7 +241,10 @@ def validate_model_state(
                 backend=backend,
                 filename=checkpoint_filename,
                 path=checkpoint_path,
-                reason=f"{name} tensor inventory mismatch: expected {contract.inventory_sha256}, got {inventory_digest}",
+                reason=(
+                    f"{name} tensor inventory mismatch: expected "
+                    f"{contract.inventory_sha256}, got {inventory_digest}"
+                ),
             )
 
     for tensor_name, (_shape, dtype) in tensors.items():
@@ -253,7 +255,7 @@ def validate_model_state(
             or tensor_name == rule.prefix
             or tensor_name.startswith(f"{rule.prefix}.")
         )
-        quantized = bool(
+        quantized = (
             allow_quantized
             and quantization is not None
             and _allows_quantized_tensor(tensor_name, state[tensor_name], quantization)
@@ -272,7 +274,7 @@ def validate_model_state(
                 path=checkpoint_path,
                 reason=f"{name} tensor has dtype {dtype}; expected one of {expected}",
                 tensor_name=tensor_name,
-                shape=tensors[tensor_name][0],
+                shape=_shape,
                 dtype=tensor.dtype,
                 expected=expected_value,
                 actual=tensor.dtype,
@@ -289,7 +291,7 @@ def validate_model_state(
                 path=checkpoint_path,
                 reason=f"{name} tensor contains non-finite values",
                 tensor_name=tensor_name,
-                shape=tensors[tensor_name][0],
+                shape=_shape,
                 dtype=tensor.dtype,
                 actual=tensor.dtype,
             )
@@ -322,16 +324,22 @@ def validate_safetensors_artifact(
         )
     try:
         size = path.stat().st_size
-        if size != artifact.size:
-            raise InvalidCheckpoint(
-                backend=backend,
-                filename=filename,
-                path=artifact.path,
-                reason=f"model artifact size mismatch: expected {artifact.size}, got {size}",
-            )
+    except OSError as exc:
+        raise InvalidCheckpoint(
+            backend=backend,
+            filename=filename,
+            path=artifact.path,
+            reason="model artifact could not be read",
+        ) from exc
+    if size != artifact.size:
+        raise InvalidCheckpoint(
+            backend=backend,
+            filename=filename,
+            path=artifact.path,
+            reason=f"model artifact size mismatch: expected {artifact.size}, got {size}",
+        )
+    try:
         digest = _sha256(path)
-    except InvalidCheckpoint:
-        raise
     except OSError as exc:
         raise InvalidCheckpoint(
             backend=backend,
@@ -370,7 +378,7 @@ def validate_safetensors_artifact(
 
 
 def _inventory_from_header(
-    tensors: Mapping[str, tuple[tuple[int, ...], str]],
+    tensors: abc.Mapping[str, tuple[tuple[int, ...], str]],
 ) -> TensorInventoryContract:
     """Convert a safetensors header map into a compact inventory."""
     dtype_counts = Counter(dtype for _shape, dtype in tensors.values())
@@ -392,13 +400,18 @@ def _read_safetensors_inventory(
     try:
         with path.open("rb") as handle:
             header_length_bytes = handle.read(8)
-            if len(header_length_bytes) != 8:
-                raise ModelContractError("safetensors header length is truncated")
-            header_length = int.from_bytes(header_length_bytes, "little")
-            header = json.loads(handle.read(header_length).decode("utf-8"))
-    except ModelContractError:
-        raise
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError, OverflowError) as exc:
+            header_bytes = (
+                handle.read(int.from_bytes(header_length_bytes, "little"))
+                if len(header_length_bytes) == 8
+                else b""
+            )
+    except (OSError, OverflowError) as exc:
+        raise ModelContractError("safetensors header is invalid") from exc
+    if len(header_length_bytes) != 8:
+        raise ModelContractError("safetensors header length is truncated")
+    try:
+        header = json.loads(header_bytes.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise ModelContractError("safetensors header is invalid") from exc
 
     if not isinstance(header, dict):

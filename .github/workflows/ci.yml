@@ -16,16 +16,36 @@ permissions:
   contents: read
 
 jobs:
-  python-checks:
-    name: Anti AI Slop & Vibe Coding Checks
+  python-check-matrix:
+    name: Prepare Python checks matrix
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    outputs:
+      components: ${{ steps.components.outputs.components }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Build component matrix
+        id: components
+        run: python3 scripts/ci_backend_matrix.py --github-output "$GITHUB_OUTPUT"
+
+  python-checks:
+    name: ${{ matrix.component }}
+    needs: python-check-matrix
+    runs-on: ubuntu-24.04
+    timeout-minutes: ${{ matrix.timeout }}
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix: ${{ fromJSON(needs.python-check-matrix.outputs.components) }}
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
 
       - name: Install system dependencies
+        if: matrix.kind == 'core'
         run: python3 scripts/ci_warnings.py -- bash -c "sudo apt-get update && sudo apt-get install portaudio19-dev"
 
       - name: Install uv
@@ -34,27 +54,72 @@ jobs:
           enable-cache: true
 
       - name: Sync dependencies
+        if: matrix.kind == 'core'
         run: python3 scripts/ci_warnings.py -- uv sync --dev --all-extras
 
+      - name: Sync backend analysis dependencies
+        if: matrix.kind == 'backend'
+        run: >-
+          python3 scripts/ci_warnings.py -- uv sync --only-group dev
+          --no-install-project --python "${{ matrix.python }}"
+
+      - name: Check backend code quality
+        if: matrix.kind == 'backend'
+        run: >-
+          python3 scripts/ci_warnings.py -- uv run --only-group dev --no-sync
+          python scripts/ci_backend.py --backend "${{ matrix.backend_id }}"
+          --environment-root "$RUNNER_TEMP/celune-backend-environments"
+
       - name: Verify formatting
+        if: matrix.kind == 'core'
         run: python3 scripts/ci_warnings.py -- uv run ruff format --check .
 
       - name: Run lint
+        if: matrix.kind == 'core'
         run: python3 scripts/ci_warnings.py -- uv run pylint -j 0 celune tests main.py
 
       - name: Type check
+        if: matrix.kind == 'core'
         run: python3 scripts/ci_warnings.py -- uv run pyrefly check
 
+      - name: Check shared backend code
+        if: matrix.kind == 'core'
+        run: |
+          python3 scripts/ci_warnings.py -- uv run ruff check \
+            celune/backends/tts/__init__.py \
+            celune/backends/tts/base.py \
+            celune/backends/tts/contracts.py \
+            celune/backends/tts/quantization.py \
+            celune/backends/vc/__init__.py \
+            celune/backends/vc/base.py
+          python3 scripts/ci_warnings.py -- uv run pylint -j 0 --ignore-paths='^$' \
+            celune/backends/tts/__init__.py \
+            celune/backends/tts/base.py \
+            celune/backends/tts/contracts.py \
+            celune/backends/tts/quantization.py \
+            celune/backends/vc/__init__.py \
+            celune/backends/vc/base.py
+          python3 scripts/ci_warnings.py -- uv run pyrefly check \
+            celune/backends/tts/__init__.py \
+            celune/backends/tts/base.py \
+            celune/backends/tts/contracts.py \
+            celune/backends/tts/quantization.py \
+            celune/backends/vc/__init__.py \
+            celune/backends/vc/base.py
+
       - name: Check docstring coverage
+        if: matrix.kind == 'core'
         run: |
           python3 scripts/ci_warnings.py -- uv run docstr-coverage -i -P --fail-under 80 celune tests main.py || {
             echo "::warning::Docstring coverage is below 80%. Try adding more missing docstrings."
           }
 
       - name: Run unit tests
+        if: matrix.kind == 'core'
         run: python3 scripts/ci_warnings.py -- uv run poe test_basic
 
       - name: Import smoke test
+        if: matrix.kind == 'core'
         run: python3 scripts/ci_warnings.py -- uv run python -c "import celune; print(dir(celune))"
 
   launcher-build-linux:
@@ -128,6 +193,7 @@ jobs:
   notify-failure:
     name: Comment on CI Failure
     needs:
+      - python-check-matrix
       - python-checks
       - launcher-build-linux
       - launcher-build-windows
@@ -136,6 +202,7 @@ jobs:
         always() &&
         (
           needs.python-checks.result != 'success' ||
+          needs.python-check-matrix.result != 'success' ||
           needs.launcher-build-linux.result != 'success' ||
           needs.launcher-build-windows.result != 'success'
         )
@@ -150,6 +217,6 @@ jobs:
       event_name: ${{ github.event_name }}
       pr_number: ${{ github.event.pull_request.number }}
       run_url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-      python_checks_result: ${{ needs.python-checks.result }}
+      python_checks_result: ${{ needs.python-check-matrix.result != 'success' && 'failure' || needs.python-checks.result }}
       linux_build_result: ${{ needs.launcher-build-linux.result }}
       windows_build_result: ${{ needs.launcher-build-windows.result }}

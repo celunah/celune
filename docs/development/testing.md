@@ -127,12 +127,41 @@ uv run poe test_basic
 The basic task runs the complete `tests/` collection without xdist. Both
 tasks return pytest's exit status and include all selected tests.
 
-GitHub Actions runs `uv run poe test_basic` in the Python checks job. Its
-job-level timeout includes checkout, system packages, dependency installation,
-linting, type checking, and tests. The job allows 30 minutes so a cold uv
-cache, including the CUDA-enabled PyTorch packages, does not cancel the tests
-before they start. Subsequent runs should reuse the uv cache and complete much
-faster.
+## Run end-to-end workflows
+
+The `e2e` marker selects deterministic user-facing smoke tests across Celune's
+HTTP API, mounted Gradio event graph, and Textual startup/shutdown path. These
+tests use fixture audio and fake runtime responses, so they do not download
+models or require a GPU or physical audio device. The normal development and CI
+tasks include them.
+
+Run only the marked workflows with:
+
+```bash
+uv run poe test_e2e
+```
+
+Celtest reports their pass, failure, warning, and skip outcomes like other
+pytest items. Their `E2E:` descriptions identify them in verbose output; the
+marker also supports ordinary pytest selection with `-m e2e`.
+
+GitHub Actions prepares a `Core engine` row and one row for every backend in
+`BACKEND_MANIFESTS`. The core row runs the complete serial suite with
+`uv run poe test_basic`, linting, type checking, and the import smoke check.
+Each backend row provisions that backend's declared CEDTS dependencies and runs
+Ruff, Pylint error checks, Pyrefly, and docstring coverage against its adapter
+source using the manifest's Python version. Pylint's `no-member` and
+`not-callable` diagnostics are disabled for adapters because it cannot resolve
+some Torch callables or source-only classes; Pyrefly checks their types, while
+Ruff checks style and syntax. The core row also checks shared backend support
+modules, which are excluded from the general Pylint and Pyrefly runs. Backend
+rows perform static analysis only: they do not import or start an adapter, load
+model weights, or run inference.
+
+The core row allows 30 minutes for checkout, system packages, dependency
+installation, linting, type checking, and tests. Backend rows allow 60 minutes
+for a cold CEDTS dependency environment and static analysis. At most two matrix
+rows run concurrently to limit pressure from the CUDA-enabled PyTorch packages.
 
 Platform-specific tests use the shared `tests.platform` skip markers. Linux-only
 tests are skipped on Windows, and Windows-only tests are skipped on Linux;

@@ -7,6 +7,7 @@ from importlib.metadata import PackageNotFoundError, version
 
 from .base import CeluneBackend
 from ...typing.backends import BackendModel
+from ...typing.aliases import LogCallback, LogLevel
 from ..environment import BACKEND_MANIFESTS, BackendManifest, backend_manifest
 
 __all__ = [
@@ -31,8 +32,14 @@ BACKENDS = {
 }
 
 
-def _default_log(_msg: str, _severity: str = "info") -> None:
+def _default_log(
+    msg: str,
+    severity: str = "info",
+    *,
+    loglevel: LogLevel = "info",
+) -> None:
     """Default log signature for type checking."""
+    del msg, severity, loglevel
 
 
 def get_version(package: str) -> str:
@@ -52,7 +59,7 @@ def get_version(package: str) -> str:
 
 def resolve_backend(
     backend_name: Union[str, type[CeluneBackend], CeluneBackend],
-    log: Optional[Callable[[str, str], None]] = None,
+    log: Optional[LogCallback] = None,
     fatal: Optional[Callable[[], None]] = None,
     **backend_kwargs,
 ) -> CeluneBackend:
@@ -71,7 +78,8 @@ def resolve_backend(
         ValueError: The named backend is unknown.
         TypeError: The backend specification is not a supported type.
     """
-    log = log or _default_log
+    if log is None:
+        log = _default_log
 
     if isinstance(backend_name, CeluneBackend):
         backend_name.bind_fatal(fatal)
@@ -85,16 +93,14 @@ def resolve_backend(
 
         if key not in BACKENDS:
             raise ValueError(
-                "unknown backend: {backend} (available: {available})".format(
-                    backend=backend_name, available=", ".join(BACKENDS.keys())
-                )
+                f"unknown backend: {backend_name} "
+                f"(available: {', '.join(BACKENDS.keys())})"
             )
 
         if key not in BACKEND_MANIFESTS:
             raise ValueError(
-                "unknown backend: {backend} (available: {available})".format(
-                    backend=backend_name, available=", ".join(BACKENDS.keys())
-                )
+                f"unknown backend: {backend_name} "
+                f"(available: {', '.join(BACKENDS.keys())})"
             )
 
         from ...cedts.remote import RemoteBackendProxy
