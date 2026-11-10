@@ -327,7 +327,7 @@ class TestDoctorCommand(CeluneTestCase):
             exit_code = entrypoint.run_doctor(["celune", "doctor", "--mystery"])
 
         assert exit_code == entrypoint.EXIT_CODES.EXIT_UNKNOWN_ARGS.value
-        assert "Usage: celune doctor [--fix]" in stdout.getvalue()
+        assert "usage: celune doctor [--fix]" in stdout.getvalue()
 
     def test_run_doctor_returns_failure_when_required_checks_fail(self) -> None:
         """Verify failed doctor checks propagate a failing exit status."""
