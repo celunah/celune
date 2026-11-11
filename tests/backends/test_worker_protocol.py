@@ -257,6 +257,7 @@ class TestWorkerProtocol(CeluneTestCase):
         """Verify a real worker process performs handshake, request, and shutdown."""
         child_code = """
 from celune.cedts import worker
+from celune.utils import discard
 
 
 class FakeBackend:
@@ -494,6 +495,7 @@ protocol_stream.close()
         child_code = """
 import time
 from celune.cedts import worker
+from celune.utils import discard
 
 
 class FakeBackend:
@@ -742,6 +744,7 @@ raise SystemExit(worker.main())
 import os
 import threading
 from celune.cedts import worker
+from celune.utils import discard
 
 
 release_fd = int(os.environ["CELUNE_TEST_RELEASE_FD"])
@@ -1123,6 +1126,7 @@ finally:
         child_code = """
 import threading
 from celune.cedts import worker
+from celune.utils import discard
 
 
 class FakeBackend:

@@ -8,34 +8,34 @@ import queue
 import importlib
 import threading
 import contextlib
+from re import Pattern
+from types import ModuleType, TracebackType, SimpleNamespace, MappingProxyType
 from typing import (
     TYPE_CHECKING,
+    Any,
     Self,
     Union,
     ClassVar,
     Optional,
     Protocol,
     TypedDict,
-    Any,
     cast,
 )
-from re import Pattern
 from pathlib import Path
 from unittest import TestCase, mock
 from collections.abc import Callable, Iterable, Iterator, Container
-from types import ModuleType, TracebackType, SimpleNamespace, MappingProxyType
 
 import numpy as np
 import numpy.typing as npt
 
 from celune.utils import discard
 from celune.constants import PipelineStates
-from celune.typing.aliases import AudioChunk
 from celune.typing.common import JSONSerializable
-from celune.backends.tts.base import CeluneBackend
+from celune.typing.aliases import AudioChunk
 from celune.backends.vc.base import CeluneVCBackend
-from celune.dataclasses.pipeline import AudioOutput, VoiceConversionRequest
 from celune.core.concurrency import ComponentLockManager, PriorityInferenceScheduler
+from celune.backends.tts.base import CeluneBackend
+from celune.dataclasses.pipeline import AudioOutput, VoiceConversionRequest
 
 if TYPE_CHECKING:
     from celune.celune import Celune
@@ -488,19 +488,42 @@ class FakeStream:
         return False
 
 
-def make_pipeline_engine() -> SimpleNamespace:
+class _PipelineTestEngine(SimpleNamespace):
+    """Expose Celune's public state accessors over the test backing fields."""
+
+    _ACCESSOR_BACKING_FIELDS: ClassVar[dict[str, str]] = {
+        "persona_thread": "_persona_thread",
+        "model_lock": "_model_lock",
+        "reload_pending": "_reload_pending",
+        "inference_scheduler": "_inference_scheduler",
+    }
+
+    def __getattr__(self, name: str) -> Any:
+        """Read a public accessor from its mutable backing field."""
+        backing_field = self._ACCESSOR_BACKING_FIELDS.get(name)
+        if backing_field is None:
+            raise AttributeError(
+                f"{type(self).__name__!r} object has no attribute {name!r}"
+            )
+        return getattr(self, backing_field)
+
+
+def make_pipeline_engine() -> _PipelineTestEngine:
     """Build a lightweight engine-shaped object for pipeline tests.
 
     Returns:
-        SimpleNamespace: An object exposing the pipeline attributes under test.
+        _PipelineTestEngine: An object exposing the pipeline attributes under test.
     """
     messages: list[tuple[str, str]] = []
     errors: list[str] = []
     statuses: list[tuple[str, str]] = []
     progress: list[tuple[Optional[float], Optional[float]]] = []
-    engine = SimpleNamespace()
+    engine = _PipelineTestEngine()
     engine.backend = SimpleNamespace(supported_languages=("en",))
     engine._inference_scheduler = PriorityInferenceScheduler()
+    engine._model_lock = threading.RLock()
+    engine._persona_thread = None
+    engine._reload_pending = False
     engine.vc_backend = None
     engine.config = {}
     engine.input_mode = "text_to_speech"
