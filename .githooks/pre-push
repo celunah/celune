@@ -1,0 +1,20 @@
+#!/bin/bash
+set -euo pipefail
+
+slop() {
+	echo "SLOP - Fix it now"
+}
+
+trap 'slop' ERR
+
+repo_root=$(git rev-parse --show-toplevel)
+cd "$repo_root"
+
+echo "Checking for slop..."
+
+uv run ruff check
+uv run pyrefly check
+uv run pylint celune tests main.py
+uv run pytest tests
+
+echo "LGTM - Ship it"
