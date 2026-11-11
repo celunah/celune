@@ -312,7 +312,7 @@ CELUNE_CSS = """
         width: 1fr;
         height: 1;
         border-top: solid $primary;
-        margin: 0 2;  /* when zero two works, arno would be proud */
+        margin: 0 2;  /* when zero two works, Arno would be proud */
     }
 
     #controls {

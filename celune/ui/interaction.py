@@ -719,7 +719,7 @@ def _config_autocomplete(
     if value is None:
         return (None,)
     if isinstance(value, bool):
-        return (True, False)
+        return True, False
 
     candidates: dict[tuple[str, ...], tuple[_app.JSONSerializable, ...]] = {
         ("api", "access"): ("same_machine", "same_network", "everyone"),
@@ -967,7 +967,9 @@ def open_voice_menu(self, *, preview: bool = False) -> None:
 
 def _discard_menu_preview_result(result: None) -> None:
     """Consume a preview overlay result without applying a selection."""
-    del result
+    from ..utils import discard
+
+    discard(result)
 
 
 def _show_menu(

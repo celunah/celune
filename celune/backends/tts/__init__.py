@@ -6,9 +6,10 @@ from collections.abc import Callable
 from importlib.metadata import PackageNotFoundError, version
 
 from .base import CeluneBackend
-from ...typing.backends import BackendModel
-from ...typing.aliases import LogCallback, LogLevel
+from ...utils import discard
 from ..environment import BACKEND_MANIFESTS, BackendManifest, backend_manifest
+from ...typing.aliases import LogLevel, LogCallback
+from ...typing.backends import BackendModel
 
 __all__ = [
     "BACKENDS",
@@ -39,7 +40,9 @@ def _default_log(
     loglevel: LogLevel = "info",
 ) -> None:
     """Default log signature for type checking."""
-    del msg, severity, loglevel
+    discard(msg)
+    discard(severity)
+    discard(loglevel)
 
 
 def get_version(package: str) -> str:

@@ -11,11 +11,13 @@ import queue
 import argparse
 import threading
 import traceback
-
+from typing import IO, Never, Optional, cast
 from contextlib import suppress
-from typing import IO, Optional, Never, cast
 from collections import OrderedDict, abc
 
+from ..vram import is_cuda_out_of_memory, release_cuda_after_oom
+from ..paths import configure_numba_cache
+from ..cevoice import select_voice_bundle
 from .protocol import (
     CEDTS_VERSION,
     WORKER_CAPABILITIES,
@@ -33,6 +35,7 @@ from .protocol import (
     receive_payloads,
     limits_from_capabilities,
 )
+from ..constants import APP_NAME
 from ..exceptions import (
     CESNError,
     CEDTSError,
@@ -40,10 +43,11 @@ from ..exceptions import (
     CEDTSStreamError,
     CEDTSPayloadError,
     CEDTSProtocolError,
-    CEDTSBadInvocationError,
     CESNValidationError,
+    CEDTSBadInvocationError,
     CESNUnsupportedFeatureError,
 )
+from ..typing.common import JSONSerializable
 from ..typing.worker import (
     WorkerValue,
     WorkerMessage,
@@ -51,20 +55,15 @@ from ..typing.worker import (
     WorkerResponse,
     WorkerPayloadDescriptor,
 )
+from ..typing.aliases import LogLevel
 from ..typing.backends import (
     BackendModel,
     BackendRuntime,
     BackendArguments,
     BackendDescription,
 )
-from ..constants import APP_NAME
-from ..typing.aliases import LogLevel
-from ..paths import configure_numba_cache
-from ..cevoice import select_voice_bundle
-from ..typing.common import JSONSerializable
-from ..dataclasses.pipeline import VoiceConversionRequest
-from ..vram import is_cuda_out_of_memory, release_cuda_after_oom
 from ..backends.environment import BackendManifest, backend_manifest
+from ..dataclasses.pipeline import VoiceConversionRequest
 
 _WORKER_STDERR = sys.stderr
 _MESSAGE_ID_REPLAY_WINDOW = 4096
@@ -466,11 +465,13 @@ def _validate_request_arguments(
     checked = cast(dict[str, WorkerValue], dict(arguments))
 
     def require_fields(
-        required: frozenset[str],
-        optional: frozenset[str] = frozenset(),
+        required_keys: frozenset[str],
+        optional_keys: frozenset[str] = frozenset(),
     ) -> None:
-        allowed = required | optional
-        if not required.issubset(checked) or not set(checked).issubset(allowed):
+        allowed_keys = required_keys | optional_keys
+        if not required_keys.issubset(checked) or not set(checked).issubset(
+            allowed_keys
+        ):
             raise _worker_protocol_error("backend_worker_request_arguments_are_invalid")
 
     if operation in {"describe", "preload_models"}:
@@ -930,8 +931,8 @@ def main() -> int:
     ) -> tuple[WorkerMessage, dict[str, WorkerValue]]:
         """Receive one CEDTS packet and its validated binary payloads."""
         input_stream = sys.stdin.buffer if control_stream is None else control_stream
-        control = receive_message(input_stream, limits=effective_limits)
-        descriptors = control.get("payloads", [])
+        control_message = receive_message(input_stream, limits=effective_limits)
+        descriptors = control_message.get("payloads", [])
         if not isinstance(descriptors, list):
             raise _worker_protocol_error("worker_payload_descriptors_are_invalid")
         if reject_payloads and descriptors:
@@ -942,8 +943,8 @@ def main() -> int:
             typed_descriptors,
             limits=effective_limits,
         )
-        return control, decode_message(
-            control,
+        return control_message, decode_message(
+            control_message,
             payloads,
             limits=effective_limits,
         )
@@ -963,14 +964,14 @@ def main() -> int:
                 cast(IO[bytes], handshake_input),
                 reject_payloads=True,
             )
-            hello_id = hello.get("message_id")
-            if not isinstance(hello_id, str):
+            initial_hello_id = hello.get("message_id")
+            if not isinstance(initial_hello_id, str):
                 raise CEDTSStreamError("invalid client")
             negotiated = _negotiate_hello(hello)
-        except Exception as error:
-            handshake_results.put((None, error))
+        except Exception as handshake_exception:
+            handshake_results.put((None, handshake_exception))
         else:
-            handshake_results.put(((hello_id, negotiated), None))
+            handshake_results.put(((initial_hello_id, negotiated), None))
         finally:
             with suppress(OSError, ValueError):
                 handshake_input.close()
@@ -1100,9 +1101,9 @@ def main() -> int:
         if not complete and now - last_progress_at < 0.1:
             return
         last_progress_at = now
-        data: dict[str, WorkerValue] = {"step": step}
+        progress_data: dict[str, WorkerValue] = {"step": step}
         if total_value is not None:
-            data["total"] = total_value
+            progress_data["total"] = total_value
         with suppress(BrokenPipeError, CEDTSError, OSError):
             _send_message(
                 protocol_stream,
@@ -1110,7 +1111,7 @@ def main() -> int:
                 build_packet(
                     "progress",
                     operation,
-                    data,
+                    progress_data,
                     reply_to=request_id,
                 ),
                 send_lock,
@@ -1133,9 +1134,9 @@ def main() -> int:
                 stream.close()
 
     def _run_active_request(
-        request: WorkerRequest,
+        active_request: WorkerRequest,
         request_id: str,
-        cancel_event: threading.Event,
+        request_cancel_event: threading.Event,
     ) -> None:
         """Run one backend operation while the control loop handles packets."""
         nonlocal active_request_id, active_request_operation
@@ -1145,26 +1146,26 @@ def main() -> int:
         try:
             response, updated_model_id = _run_request(
                 backend,
-                request,
+                active_request,
                 models,
                 next_model_id,
                 protocol_stream,
                 binary_output,
                 reply_to=request_id,
-                cancellation_event=cancel_event,
+                cancellation_event=request_cancel_event,
                 send_lock=send_lock,
                 limits=effective_limits,
             )
             next_model_id = updated_model_id
-        except Exception as error:
-            if is_cuda_out_of_memory(error):
+        except Exception as request_error:
+            if is_cuda_out_of_memory(request_error):
                 release_cuda_after_oom()
-            response = _error_response(error, limits=effective_limits)
+            response = _error_response(request_error, limits=effective_limits)
             response_kind = "error"
-            if not _is_cesn_input_error(error):
+            if not _is_cesn_input_error(request_error):
                 _worker_log(
                     "[IPC] response operation="
-                    f"{request.get('operation')} ok=False error={error}",
+                    f"{active_request.get('operation')} ok=False error={request_error}",
                     "error",
                     loglevel="verbose",
                 )
@@ -1303,7 +1304,6 @@ def main() -> int:
                     limits=effective_limits,
                 )
                 continue
-            shutting_down = True
             with active_request_lock:
                 active_job = active_request_id is not None
                 running_thread = active_thread

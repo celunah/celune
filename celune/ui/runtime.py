@@ -925,6 +925,14 @@ def _persist_log_entry(self, msg: str, severity: str) -> None:
             handle.write(f"[{timestamp}] [{severity.upper()}] {msg}\n")
 
 
+def _duplicate_terminal_fd(fileno: Callable[[], int]) -> Optional[int]:
+    """Duplicate a terminal stream's file descriptor when it is available."""
+    try:
+        return os.dup(fileno())
+    except (OSError, TypeError, ValueError):
+        return None
+
+
 def _prepare_terminal_output_stream(self) -> Optional[TextIOWrapper]:
     """Give Textual an independent terminal stream before stderr capture starts."""
     if os.name == "nt" or self._terminal_output_stream is not None:
@@ -938,10 +946,16 @@ def _prepare_terminal_output_stream(self) -> Optional[TextIOWrapper]:
     if not callable(fileno):
         return None
 
-    output_fd: Optional[int] = None
+    output_fd = _duplicate_terminal_fd(cast(Callable[[], int], fileno))
+    if output_fd is None:
+        return None
+    output_fd = cast(int, output_fd)
+
+    from ..utils import discard
+
     output_stream: Optional[TextIOWrapper] = None
+    discard(output_stream)
     try:
-        output_fd = os.dup(cast(Callable[[], int], fileno)())
         output_stream = os.fdopen(
             output_fd,
             "w",
@@ -950,11 +964,9 @@ def _prepare_terminal_output_stream(self) -> Optional[TextIOWrapper]:
             buffering=1,
         )
     except (OSError, TypeError, ValueError):
-        if output_fd is not None:
-            with contextlib.suppress(OSError):
-                os.close(output_fd)
+        with contextlib.suppress(OSError):
+            os.close(output_fd)
         return None
-
     if output_stream is None:
         return None
 
@@ -2372,7 +2384,8 @@ class RuntimeHooks:
         """Delegate to the runtime implementation."""
         return attach_celune(self, celune)
 
-    def compose(self) -> _app.ComposeResult:
+    @staticmethod
+    def compose() -> _app.ComposeResult:
         """Delegate to the runtime implementation."""
         return compose()
 

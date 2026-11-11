@@ -51,9 +51,7 @@ _CONVERSATION_SUMMARY_SYSTEM_PROMPT = (
     "no XML tags, role labels, or heading."
 )
 _SUMMARY_PREFIX = "Conversation context:"
-_SUMMARY_SPLIT_RE = re.compile(
-    r"(?:\r?\n+|(?<=[.!?\u3002\uff01\uff1f\u061f])\s*|[;\uff1b]\s*)"
-)
+_SUMMARY_SPLIT_RE = re.compile(r"\r?\n+|(?<=[.!?。！？؟])\s*|[;；]\s*")
 _SUMMARY_WRAPPER_RE = re.compile(r"</?(?:conversation_summary|summary)>", re.IGNORECASE)
 _SUMMARY_LABEL_RE = re.compile(
     r"^\s*(?:summary|earlier summary|conversation summary|conversation context|"
@@ -927,6 +925,7 @@ def create_persona_client(
     Args:
         config: Celune's current configuration.
         log: The logging callback to Celune's UI.
+        log_dev: The developer-facing logging callback to Celune's UI.
 
     Returns:
         Optional[PersonaClient]: ``PersonaClient`` if Persona is enabled, else ``None``.

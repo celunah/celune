@@ -38,6 +38,7 @@ from ...paths import (
     backend_environments_dir,
     huggingface_hub_cache_dir,
 )
+from ...utils import discard
 from ...cevoice import (
     V5_VERSION,
     SINGING_VOICE_NAME,
@@ -411,8 +412,8 @@ def _serialize_section(section: CESNSection) -> _ScoreSection:
     events_list: list[_ScoreEvent] = []
     for block in section.blocks:
         for index, event in enumerate(block.events):
-            note_spans = block._source_note_spans
-            ipa_spans = block._source_ipa_spans
+            note_spans = block.source_note_spans
+            ipa_spans = block.source_ipa_spans
             note_span = note_spans[index] if index < len(note_spans) else None
             ipa_span = ipa_spans[index] if index < len(ipa_spans) else None
             score_event = _score_event(
@@ -1053,7 +1054,8 @@ class SoulXSinger(CeluneBackend[_SoulXRuntime]):
             TypeError: If ``high_precision`` is not a boolean.
             TypeError: If ``streaming`` is not a boolean.
         """
-        del quantize, quantize_kv_cache
+        discard(quantize)
+        discard(quantize_kv_cache)
         if not isinstance(high_precision, bool):
             raise TypeError("high_precision must be a boolean")
         if not isinstance(streaming, bool):
@@ -1146,7 +1148,7 @@ class SoulXSinger(CeluneBackend[_SoulXRuntime]):
         lang: Optional[str] = None,
     ) -> tuple[bool, Optional[str]]:
         """Check the pinned model snapshot without contacting Hugging Face."""
-        del lang
+        discard(lang)
         if model != SOULX_SINGER_MODEL_ID:
             return False, None
         available, snapshot_path = cached_hf_snapshot_path(

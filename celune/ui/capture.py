@@ -86,6 +86,13 @@ __all__ = (
 )
 
 
+def _discard_unused(value: object) -> None:
+    """Use Celune's unused-value marker without eager core imports."""
+    from ..utils import discard
+
+    discard(value)
+
+
 def _reset_playback_widgets(self) -> None:
     """Clear transient caption state and restore the normal playback bar."""
     self._clear_caption_timers()
@@ -118,7 +125,7 @@ def safe_caption_progress(
     ):
         return
 
-    del progress
+    _discard_unused(progress)
     if visible_words is None:
         self._run_on_ui_thread(self._hide_caption_widgets)
         return
@@ -324,7 +331,7 @@ def tts_caption(self, caption: Optional[str]) -> None:
     sentences = tuple(
         tuple(sentence.split())
         for sentence in re.split(
-            r"(?:(?<=[.!?])\s+|\n+)",
+            r"(?<=[.!?])\s+|\n+",
             caption.strip(),
         )
         if sentence.strip()
@@ -703,7 +710,7 @@ def on_uilog_message(self, message: _app.UILogMessage) -> None:
     Args:
         message: Background log message that woke the reconciliation handler.
     """
-    del message
+    _discard_unused(message)
     self._refresh_logs()
 
 
@@ -1118,11 +1125,9 @@ def _start_persona_recording(self) -> bool:
         time_info: Optional[tuple[float, float, float]],
         status: Optional[_app.sd.CallbackFlags],
     ) -> None:
-        from ..utils import discard
-
-        discard(frames)
-        discard(time_info)
-        discard(status)
+        _discard_unused(frames)
+        _discard_unused(time_info)
+        _discard_unused(status)
         nonlocal should_stop
 
         callback_audio = _app.np.asarray(indata, dtype=_app.np.float32).copy()

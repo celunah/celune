@@ -7,13 +7,14 @@ import os
 import sys
 import time
 import subprocess
+from types import SimpleNamespace
 from typing import cast
 from pathlib import Path
-from types import SimpleNamespace
 
 import tests.celtest as celtest_plugin
-from tests.support import CeluneTestCase
+from celune.utils import discard
 from tests.celtest import CeltestMetadata, celtest
+from tests.support import CeluneTestCase
 
 
 class TestCeltest(CeluneTestCase):
@@ -102,7 +103,8 @@ version = "4.5.6"
                 **markup: bool,
             ) -> None:
                 """Capture a terminal write."""
-                del flush, markup
+                discard(flush)
+                discard(markup)
                 messages.append(message)
 
             def line(self) -> None:
@@ -142,7 +144,8 @@ version = "4.5.6"
                 **markup: bool,
             ) -> None:
                 """Capture one compact output write."""
-                del flush, markup
+                discard(flush)
+                discard(markup)
                 messages.append(message)
 
             def line(self) -> None:
@@ -185,7 +188,7 @@ version = "4.5.6"
                 **markup: bool,
             ) -> None:
                 """Capture one output write and its markup."""
-                del flush
+                discard(flush)
                 writes.append((message, markup))
 
             def line(self) -> None:
@@ -227,7 +230,8 @@ version = "4.5.6"
                 **markup: bool,
             ) -> None:
                 """Capture unexpected direct writer output."""
-                del flush, markup
+                discard(flush)
+                discard(markup)
                 writes.append(message)
 
             def line(self) -> None:
@@ -426,7 +430,7 @@ def test_error():
         plugin_file.write_text(
             """
 def pytest_report_teststatus(report, config):
-    del config
+    discard(config)
     if report.when == "call" and report.passed:
         return "unknown", "u", "UNKNOWN"
     return None

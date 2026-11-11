@@ -43,10 +43,12 @@ from .mcp import (
 from .cesn import validate_singing_notation
 from .i18n import string
 from .paths import project_root
-from .utils import format_error_message
-from .webui import actions as webactions, runtime as webui
+from .utils import discard, format_error_message
+from .webui import actions as webactions
+from .webui import runtime as webui
 from .celune import Celune
-from .server import auth as server_auth, jobs as server_jobs
+from .server import auth as server_auth
+from .server import jobs as server_jobs
 from .audio.dsp import resample_audio
 from .constants import BASE_SR, APP_NAME
 from .exceptions import (
@@ -203,7 +205,7 @@ async def model_consent_required_response(
     error: ModelConsentRequired,
 ) -> JSONResponse:
     """Return structured model terms when an operation needs acknowledgement."""
-    del request
+    discard(request)
     metadata = error.metadata
     return JSONResponse(
         status_code=428,
@@ -220,7 +222,7 @@ async def model_commercial_use_restricted_response(
     error: ModelCommercialUseRestricted,
 ) -> JSONResponse:
     """Reject a model operation that conflicts with commercial-use mode."""
-    del request
+    discard(request)
     metadata = error.metadata
     return JSONResponse(
         status_code=403,
@@ -238,7 +240,7 @@ async def model_consent_declined_response(
     error: ModelConsentDeclined,
 ) -> JSONResponse:
     """Reject an operation after the user declines model terms."""
-    del request
+    discard(request)
     return JSONResponse(
         status_code=403,
         content={

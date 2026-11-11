@@ -406,6 +406,7 @@ def _start_configured_api(self) -> None:
                     string(
                         "celune.api_started",
                         app_name=APP_NAME,
+                        # why should I bother with HTTPS?
                         url=f"http://{api_host}:{api_port}",
                     )
                 )

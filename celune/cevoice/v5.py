@@ -93,7 +93,7 @@ def singing_pitch_range(bundle: CEVoice) -> Optional[tuple[int, int]]:
         return None
     pitch_range = voice.get("range")
     if pitch_range is None:
-        return (0, 127)
+        return 0, 127
     if not isinstance(pitch_range, dict):
         return None
     minimum = pitch_range.get("min")

@@ -6,15 +6,16 @@ from unittest import mock
 import pytest
 
 from celune import runtime
+from celune.utils import discard
+from celune.celune import Celune
 from celune.ui.app import (
     CeluneUI,
 )
-from celune.celune import Celune
 from celune.exceptions import RuntimeCheckError
-from celune.typing.aliases import LogCallback, LogLevel
 from celune.ui.headless import CeluneHeadlessUI
+from celune.typing.aliases import LogLevel, LogCallback
 
-from ..support import CeluneTestCase, FakeBackend, FakeGlow
+from ..support import FakeGlow, FakeBackend, CeluneTestCase
 
 
 class TestRuntimeEnvironment(CeluneTestCase):
@@ -158,7 +159,7 @@ class TestRuntimeEnvironment(CeluneTestCase):
         errors: list[str] = []
 
         def fail_runtime_check(log: LogCallback, **kwargs: object) -> bool:
-            del kwargs
+            discard(kwargs)
             log(
                 "Compute test for GPU 0 failed: RuntimeError: synthetic CUDA failure",
                 "warning",

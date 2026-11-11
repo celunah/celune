@@ -548,7 +548,7 @@ _LAUNCH_EXECUTABLE_RE = re.compile(
 )
 _NO_LAUNCH_ARGUMENTS_RE = re.compile(r"(?i)\bno\s+(?:command[- ]line\s+)?arguments?\b")
 _LAUNCH_WORKING_DIRECTORY_RE = re.compile(
-    r"(?i)\b(?:working\s+directory|cwd)\s*(?:(?:to|is)\s*)?(?:=|:)?\s*"
+    r"(?i)\b(?:working\s+directory|cwd)\s*(?:(?:to|is)\s*)?[:=]?\s*"
     r"(?:\"([^\"]+)\"|'([^']+)'|`([^`]+)`|((?:[a-z]:[\\/]|\\\\|/)\S+))"
 )
 
@@ -815,13 +815,14 @@ def _recover_local_terminate_process(
     result = context.last_tool_result
     if not isinstance(expected_name, str) or result is None:
         return call
+    result_metadata = cast(dict[str, JSONSerializable], result)
     if (
-        result.get("tool_id")
+        result_metadata.get("tool_id")
         not in {
             "local_list_processes",
             "local_running_applications",
         }
-        or result.get("status") != "succeeded"
+        or result_metadata.get("status") != "succeeded"
     ):
         return call
     output = result.get("output")

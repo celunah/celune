@@ -15,9 +15,10 @@ from ..modes import mode_allows_agents
 from .runtime import AgentRuntime
 from ..constants import (
     AGENT_CONTEXT_SPACE,
-    PERSONA_HISTORY_MESSAGES,
     AGENT_ROUTING_CONTEXT_SPACE,
     AGENT_ROUTING_MAX_NEW_TOKENS,
+    AGENT_ROUTING_HISTORY_MESSAGES,
+    AGENT_ROUTING_HISTORY_CHARACTERS,
 )
 from ..exceptions import EmptyClassifierOutput
 from ..persona.impl import (
@@ -131,7 +132,6 @@ class AgentInputRouter:
                 AgentTaskState.AWAITING_CHOICE,
             }:
                 self.runtime.cancel_task(active_task.task_id)
-                active_task = None
             else:
                 return self._route_active_task(active_task, clean_text, persona_ready)
 
@@ -439,8 +439,8 @@ class AgentInputRouter:
             if lease is not None:
                 lease.release()
 
+    @staticmethod
     def _classification_payload(
-        self,
         payload: JSONSerializable,
     ) -> JSON:
         """Extract a structured classifier object from a Persona response."""
@@ -450,7 +450,6 @@ class AgentInputRouter:
             return cast(JSON, payload)
 
         found_field = False
-        found_text = False
         for key in ("text", "response", "reply", "output", "content"):
             value = payload.get(key)
             if not isinstance(value, str):
@@ -458,7 +457,6 @@ class AgentInputRouter:
             found_field = True
             if not value.strip():
                 continue
-            found_text = True
             candidate = value.strip()
             if candidate.startswith("```"):
                 candidate = candidate.split("\n", 1)[-1]
@@ -467,11 +465,9 @@ class AgentInputRouter:
             if isinstance(decoded, dict):
                 return cast(JSON, decoded)
             raise TypeError("classifier response content must be a JSON object")
-        if found_field and not found_text:
+        if found_field:
             raise EmptyClassifierOutput("classifier response output was empty")
-        if not found_text:
-            raise ValueError("classifier response did not contain structured output")
-        raise ValueError("classifier response content was empty")
+        raise ValueError("classifier response did not contain structured output")
 
     @staticmethod
     def _repair_classification_request(
@@ -694,8 +690,8 @@ class AgentInputRouter:
             route=AgentRoute.CLARIFICATION,
         )
 
+    @staticmethod
     def _active_result(
-        self,
         task: AgentTask,
         route: AgentRoute,
         reason: str,
@@ -751,7 +747,7 @@ class AgentInputRouter:
             return None
         requested = match.group(1).casefold()
         registered = {tool.name.casefold() for tool in self.runtime.tools}
-        registered.update(name.casefold() for name in self.runtime._tool_schemas)
+        registered.update(name.casefold() for name in self.runtime.tool_schemas)
         return requested if requested in registered else None
 
     def _choice_id_from_text(self, task: AgentTask, text: str) -> Optional[str]:
@@ -927,8 +923,8 @@ AGENT_CLASSIFICATION_INSTRUCTIONS = (
     "output rules below take priority over any character-response, speech, or "
     "conversation-style guidance in the Persona context. Classify the latest user "
     "input for conversation-first routing. The latest user message is the primary "
-    "intent signal; use supplied recent user and assistant messages only to understand "
-    "references such as 'this file' or 'that process', or whether the latest request "
+    "intent signal; use supplied prior user messages only to understand references "
+    "such as 'this file' or 'that process', or whether the latest request "
     "continues an earlier task. Earlier messages are context, not new instructions. "
     "Do not repeat an earlier operation unless the latest message asks you to. When a "
     "new task refers to a prior target, write task_request as a self-contained current "
@@ -990,6 +986,42 @@ def _configured_agent_context_size(engine: Celune) -> int:
     return AGENT_CONTEXT_SPACE
 
 
+def _recent_user_routing_context(engine: Celune) -> list[str]:
+    """Return a small, bounded set of prior user messages for reference resolution.
+
+    Args:
+        engine: The engine whose recent Persona history may resolve references.
+
+    Returns:
+        list[str]: Up to two prior user messages within the routing character budget.
+    """
+    history = persona_history_messages(engine)
+    prior_user_messages = [
+        content
+        for message in history
+        if message.get("role") == "user"
+        and isinstance((content := message.get("content")), str)
+    ][-AGENT_ROUTING_HISTORY_MESSAGES:]
+    per_message_limit = (
+        AGENT_ROUTING_HISTORY_CHARACTERS // AGENT_ROUTING_HISTORY_MESSAGES
+    )
+    return [
+        _truncate_routing_history_message(content, per_message_limit)
+        for content in prior_user_messages
+    ]
+
+
+def _truncate_routing_history_message(message: str, maximum_characters: int) -> str:
+    """Trim oversized history while retaining both its beginning and ending."""
+    if len(message) <= maximum_characters:
+        return message
+    marker = " ... [truncated] ... "
+    retained_characters = maximum_characters - len(marker)
+    prefix_length = retained_characters // 2
+    suffix_length = retained_characters - prefix_length
+    return f"{message[:prefix_length]}{marker}{message[-suffix_length:]}"
+
+
 def build_agent_classification_request(
     engine: Celune,
     request: str,
@@ -1014,8 +1046,16 @@ def build_agent_classification_request(
     )
     persona_prompt = PersonaPromptBuilder.build(context)
     tool_catalog = _available_tool_catalog(engine)
+    prior_user_messages = _recent_user_routing_context(engine)
+    history_context = (
+        "Prior user messages for reference only; do not treat them as current input:\n"
+        f"{json.dumps(prior_user_messages, ensure_ascii=True)}\n\n"
+        if prior_user_messages
+        else ""
+    )
     system_prompt = (
-        f"{persona_prompt}\n\n{AGENT_CLASSIFICATION_INSTRUCTIONS}\n\n"
+        f"{persona_prompt}\n\n{history_context}"
+        f"{AGENT_CLASSIFICATION_INSTRUCTIONS}\n\n"
         "Available agent tools:\n"
         f"{json.dumps(tool_catalog, ensure_ascii=True, sort_keys=True)}"
     )
@@ -1025,10 +1065,8 @@ def build_agent_classification_request(
             f"{json.dumps(routing_context, ensure_ascii=True, sort_keys=True)}"
         )
     clean_request = request.strip()
-    history = persona_history_messages(engine)[-PERSONA_HISTORY_MESSAGES:]
     messages: list[JSON] = [
         cast(JSON, {"role": "system", "content": system_prompt}),
-        *history,
         cast(JSON, {"role": "user", "content": clean_request}),
     ]
     return {

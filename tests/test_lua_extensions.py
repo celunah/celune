@@ -5,16 +5,17 @@ import time
 import tempfile
 import textwrap
 import threading
-from pathlib import Path
-from unittest import TestCase
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, cast
+from pathlib import Path
+from unittest import TestCase
 
 from celune.lua import LuaExtension
+from celune.utils import discard
 from celune.extensions.events import EventDispatcher
-from celune.dataclasses.extensions import CeluneContext
-from celune.extensions.manager import CeluneExtensionManager
 from celune.dataclasses.events import ReadyEvent, VoiceChangedEvent
+from celune.extensions.manager import CeluneExtensionManager
+from celune.dataclasses.extensions import CeluneContext
 
 if TYPE_CHECKING:
     from celune.celune import Celune
@@ -32,7 +33,7 @@ class LuaExtensionTests(TestCase):
             *,
             loglevel: str = "info",
         ) -> None:
-            del loglevel
+            discard(loglevel)
             self.logs.append((msg, severity))
 
         self.dispatcher = EventDispatcher(

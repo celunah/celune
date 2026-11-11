@@ -4,8 +4,9 @@
 from typing import Union, Optional
 
 from .base import CeluneVCBackend
-from ...typing.aliases import LogCallback, LogLevel
+from ...utils import discard
 from ..environment import BACKEND_MANIFESTS, BackendManifest, backend_manifest
+from ...typing.aliases import LogLevel, LogCallback
 
 __all__ = [
     "BACKEND_MANIFESTS",
@@ -31,7 +32,9 @@ def _default_log(
     loglevel: LogLevel = "info",
 ) -> None:
     """Default log signature for type checking."""
-    del msg, severity, loglevel
+    discard(msg)
+    discard(severity)
+    discard(loglevel)
 
 
 def resolve_vc_backend(

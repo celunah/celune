@@ -7,13 +7,13 @@ import time
 import threading
 
 # noinspection PyProtectedMember
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Optional, cast
 from collections.abc import Callable
 
 from .i18n import string
 from .constants import APP_NAME
 from .typing.modes import BackendMode, OperationState
-from .typing.common import JSON, Config
+from .typing.common import JSON, Config, JSONSerializable
 
 _AGENT_TEST_REQUEST = "Check the current working directory and report the result."
 _LIVE_CHECKS = (
@@ -239,7 +239,10 @@ def _run_live_checks(
     startup_detail: Optional[str],
 ) -> tuple[list[JSON], Optional[str]]:
     """Run the configured Persona, Needle, tool, response, and speech path."""
-    from .typing.agent import AgentTaskState, AgentToolExecutionStatus
+    from .typing.agent import (
+        AgentTaskState,
+        AgentToolExecutionStatus,
+    )
 
     checks: list[JSON] = []
     task_id: Optional[str] = None
@@ -321,8 +324,9 @@ def _run_live_checks(
         tool_result = engine.agent_runtime.get_context(task_id).last_tool_result
         if not isinstance(tool_result, dict):
             raise TypeError("agent test completed without executing a tool")
-        tool_id = tool_result.get("tool_id")
-        tool_status = tool_result.get("status")
+        result_metadata = cast(dict[str, JSONSerializable], tool_result)
+        tool_id = result_metadata.get("tool_id")
+        tool_status = result_metadata.get("status")
         if not isinstance(tool_id, str) or not tool_id.strip():
             raise RuntimeError("agent test tool result did not identify a tool")
         status_value = (

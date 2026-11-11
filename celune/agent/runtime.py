@@ -1639,6 +1639,7 @@ class AgentRuntime:
         """Validate one executor result and fill its typed execution status."""
         if not isinstance(value, dict):
             raise TypeError("agent executor returned a non-object tool result")
+        result_metadata = cast(dict[str, JSONSerializable], value)
         call_id = value.get("tool_call_id")
         output = value.get("output")
         error = value.get("error")
@@ -1651,8 +1652,8 @@ class AgentRuntime:
             or not isinstance(end_task, bool)
         ):
             raise ValueError("agent executor returned an invalid tool result")
-        raw_status = value.get("status")
-        raw_tool_id = value.get("tool_id")
+        raw_status = result_metadata.get("status")
+        raw_tool_id = result_metadata.get("tool_id")
         if raw_status is None:
             status = (
                 AgentToolExecutionStatus.FAILED
@@ -2009,3 +2010,8 @@ class AgentRuntime:
             f"[AGENT] emit_return name={event_name}",
             loglevel="debug",
         )
+
+    @property
+    def tool_schemas(self):
+        """Property for agent tool schemas."""
+        return self._tool_schemas

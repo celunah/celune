@@ -118,8 +118,9 @@ class TestApiWebUI(CeluneTestCase):
     def tearDown(self) -> None:
         """Restore global WebUI state after each test."""
         api._unsubscribe_webui_events()
-        if api.server_session.webui_timed_update_unsubscribe is not None:
-            api.server_session.webui_timed_update_unsubscribe()
+        unsubscribe_timed_update = api.server_session.webui_timed_update_unsubscribe
+        if unsubscribe_timed_update is not None:
+            unsubscribe_timed_update()
             api.server_session.webui_timed_update_unsubscribe = None
         api.server_session.bound_celune = self.previous_celune
         api.server_session.webui_status_text = self.previous_status_text

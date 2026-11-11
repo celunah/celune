@@ -127,7 +127,9 @@ class TestCeluneRuntime(CeluneCoreTestSupport):
             *,
             loglevel: str = "info",
         ) -> None:
-            del msg, severity, loglevel
+            discard(msg)
+            discard(severity)
+            discard(loglevel)
 
         celune.log_callback = callback
         with pytest.raises(ValueError, match="already registered"):

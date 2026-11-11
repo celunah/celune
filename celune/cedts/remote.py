@@ -1300,9 +1300,9 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
             capabilities, dict
         ):
             raise _worker_protocol_error("worker_capabilities_are_incompatible")
-        if capabilities.get("streaming") is not True:
+        if not capabilities.get("streaming"):
             raise _worker_protocol_error("worker_does_not_support_streaming")
-        if capabilities.get("cancellation") is not True:
+        if not capabilities.get("cancellation"):
             raise _worker_protocol_error("worker_does_not_support_cancellation")
         supported_operations = capabilities.get("supported_operations")
         supported_media_types = capabilities.get("supported_media_types")
@@ -1902,7 +1902,7 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
     @staticmethod
     def _shutdown_ack_failure(response: WorkerResponse) -> Optional[BackendError]:
         """Return an error when the worker rejects the shutdown request."""
-        if response.get("ok") is True:
+        if response.get("ok"):
             return None
         value = response.get("value")
         reason = response.get("error")

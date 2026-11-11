@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """Shared Persona runtime helpers for Celune-managed generation."""
+# TODO: tell pycharm that the values are "used" here
 
 import gc
 import os
@@ -24,7 +25,7 @@ from transformers.configuration_utils import PreTrainedConfig
 from transformers.tokenization_utils_base import BatchEncoding
 
 from ..vram import resolve_vram_preset, is_cuda_out_of_memory, release_cuda_after_oom
-from ..utils import normalize_special_characters
+from ..utils import discard, normalize_special_characters
 from ..modeling import create_quantized_kv_cache
 from ..constants import (
     N_A_STR,
@@ -79,7 +80,8 @@ class _PersonaCancellationCriteria(StoppingCriteria):
         **kwargs: ModelGenerateKwargValue,
     ) -> torch.Tensor:
         """Return one stop flag per sequence in the current generation batch."""
-        del scores, kwargs
+        discard(scores)
+        discard(kwargs)
         return torch.full(
             (input_ids.shape[0],),
             self._cancellation_event.is_set(),
@@ -372,7 +374,12 @@ class PersonaBackend:
         generation_cache: Optional[Cache] = None
         generation_kwargs: dict[str, ModelGenerateKwargValue] = {}
         try:
-            input_context_space = max(1, request.context_space - 1)
+            # Keep long prompts from shrinking structured output to one token.
+            output_reserve = min(
+                max(0, request.max_new_tokens),
+                request.context_space - 1,
+            )
+            input_context_space = max(1, request.context_space - output_reserve)
             inputs = self._build_inputs(message_dicts, input_context_space)
             model_inputs = {
                 key: cast(torch.Tensor, value) for key, value in dict(inputs).items()

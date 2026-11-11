@@ -10,7 +10,7 @@ from collections.abc import Sequence
 
 from ..i18n import string
 from ..paths import huggingface_progress
-from ..utils import format_error_message
+from ..utils import discard, format_error_message
 from ..exceptions import (
     ModelConsentDeclined,
     ModelConsentRequired,
@@ -99,7 +99,7 @@ def _wait_for_persona_initialization(self) -> bool:
 
 def interrupt_active_agent_for_input(self, text: str) -> bool:
     """Invalidate active agent work before accepting replacement user input."""
-    del text
+    discard(text)
     task = self.agent_runtime.get_active_task("default")
     if task is None or task.state in {
         AgentTaskState.IDLE,
@@ -120,6 +120,7 @@ def interrupt_active_agent_for_input(self, text: str) -> bool:
 
 
 def classify_input(
+    # me when PyCharm bugs me to docstring `self` because we're not working with a class method
     self,
     text: str,
     *,

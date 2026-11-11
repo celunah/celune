@@ -1,19 +1,20 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for Persona's compact attention-cache storage."""
 
-from unittest.mock import patch
 from typing import ClassVar, cast
+from unittest.mock import patch
 
-import pytest
 import torch
+import pytest
 from transformers.configuration_utils import PreTrainedConfig
 
+from celune.utils import discard
 from celune.modeling import (
-    GraphQuantizedKVCacheLayer,
     QuantizedKVCache,
     QuantizedKVCacheLayer,
-    _GraphQuantizedKVWorkspace,
+    GraphQuantizedKVCacheLayer,
     quantized_kv_cache_mode,
+    _GraphQuantizedKVWorkspace,
 )
 
 
@@ -27,7 +28,7 @@ class _CacheConfig:
 
     def get_text_config(self, *, decoder: bool) -> "_CacheConfig":
         """Return this decoder-only fixture configuration."""
-        del decoder
+        discard(decoder)
         return self
 
 

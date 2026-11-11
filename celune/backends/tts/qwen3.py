@@ -19,7 +19,7 @@ from ...paths import (
     configure_numba_cache,
     huggingface_hub_cache_dir,
 )
-from ...utils import custom_assert
+from ...utils import discard, custom_assert
 from ...cevoice import CEVoiceLoader, default_loader
 from ...modeling import (
     QuantizedKVCache,
@@ -248,11 +248,12 @@ class Qwen3(CeluneBackend[FasterQwen3TTS]):
 
         return self.clone_model_id
 
-    def prepare_model_loading(self) -> None:
+    @staticmethod
+    def prepare_model_loading() -> None:
         """Import Qwen's lazy model dependencies before request execution."""
         from qwen_tts import Qwen3TTSModel
 
-        del Qwen3TTSModel
+        discard(Qwen3TTSModel)
 
     def model_is_available_locally(
         self, model: str, lang: Optional[str] = None

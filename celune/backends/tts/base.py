@@ -9,34 +9,34 @@ import hashlib
 import secrets
 import threading
 import contextlib
+import unittest.mock
+from abc import ABC, abstractmethod
 from typing import (
     Union,
     Optional,
     cast,
 )
-import unittest.mock
 from pathlib import Path
-from abc import ABC, abstractmethod
 from collections.abc import Mapping, Callable, Iterator, Generator
 
-import torch
 import numpy as np
+import torch
 import soundfile as sf
 from huggingface_hub import snapshot_download
 
 from ...i18n import string
+from ...vram import backend_vram_report, is_cuda_out_of_memory, release_cuda_after_oom
+from ...paths import temp_data_dir, huggingface_progress, huggingface_hub_cache_dir
 from ...utils import discard
-from ...typing.common import JSON
+from ...cevoice import CEVoiceLoader, default_loader
 from ...constants import N_A_NUMERIC
 from ...exceptions import BackendError
-from ...typing.backends import BackendModel
-from ...cevoice import CEVoiceLoader, default_loader
-from ...typing.aliases import LogLevel, AudioChunk, RuntimeValue
 from .quantization import QuantizationMode, quantization_mode, quantize_component
-from ...paths import temp_data_dir, huggingface_progress, huggingface_hub_cache_dir
-from ...registry.tts import ModelContract, model_contract as resolve_model_contract
-from ...vram import backend_vram_report, is_cuda_out_of_memory, release_cuda_after_oom
-
+from ...registry.tts import ModelContract
+from ...registry.tts import model_contract as resolve_model_contract
+from ...typing.common import JSON
+from ...typing.aliases import LogLevel, AudioChunk, RuntimeValue
+from ...typing.backends import BackendModel
 
 __all__ = [
     "BackendModel",
@@ -470,11 +470,12 @@ class CeluneBackend[ModelT](ABC):
         Raises:
             ModelContractError: No pinned contract exists for the model.
         """
-        del kwargs
+        discard(kwargs)
         return resolve_model_contract(self.name, model_id)
 
+    @staticmethod
     def quantization_components(
-        self, model: ModelT, contract: ModelContract
+        model: ModelT, contract: ModelContract
     ) -> Mapping[str, torch.nn.Module]:
         """Return loaded module roots corresponding to contract components.
 

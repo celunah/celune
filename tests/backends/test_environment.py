@@ -7,14 +7,18 @@ import json
 import tempfile
 import threading
 import subprocess
+from types import SimpleNamespace
+from typing import IO, Optional, cast
 from pathlib import Path
 from unittest import mock
 from collections import abc
-from types import SimpleNamespace
-from typing import IO, Optional, cast
 
 import numpy as np
 
+from celune.cedts import remote, worker
+from celune.paths import temp_data_dir
+from celune.utils import discard
+from celune.backends import environment
 from celune.exceptions import (
     CEDTSError,
     CEDTSEOFError,
@@ -24,7 +28,6 @@ from celune.exceptions import (
     CEDTSProtocolError,
     BackendEnvironmentError,
 )
-from celune.paths import temp_data_dir
 from celune.typing.worker import (
     WorkerValue,
     WorkerRequest,
@@ -49,8 +52,6 @@ from celune.typing.backends import (
     BackendGeneration,
     BackendArgumentValue,
 )
-from celune.backends import environment
-from celune.cedts import remote, worker
 from celune.backends.environment import (
     BACKEND_MANIFESTS,
     BackendManifest,
@@ -175,7 +176,7 @@ class TestBackendEnvironment(CeluneTestCase):
                 **kwargs: BackendArgumentValue,
             ) -> abc.Iterator[BackendGeneration]:
                 """Record one voice request without generating audio."""
-                del model
+                discard(model)
                 self.generated_voices.append(cast(str, kwargs["voice"]))
                 yield from ()
 
@@ -862,7 +863,7 @@ class TestBackendEnvironment(CeluneTestCase):
         class _ClosedStream:
             def write(self, value: bytes) -> int:
                 """Reject every write as a closed-pipe failure."""
-                del value
+                discard(value)
                 raise OSError("pipe is closed")
 
             def flush(self) -> None:
@@ -1260,7 +1261,7 @@ class TestBackendEnvironment(CeluneTestCase):
 
             def generate_stream(self, model: BackendModel):
                 """Block the generator until cancellation has been requested."""
-                del model
+                discard(model)
                 started.set()
                 release.wait(timeout=2)
                 yield {"audio": [0.0], "sample_rate": 48000}
@@ -1298,7 +1299,7 @@ class TestBackendEnvironment(CeluneTestCase):
 
             def generate_stream(self, model: BackendModel):
                 """Yield one chunk, then request cancellation before exhaustion."""
-                del model
+                discard(model)
                 yield {"audio": [0.0], "sample_rate": 48000}
                 cancellation.set()
 
@@ -2035,7 +2036,8 @@ class TestBackendEnvironment(CeluneTestCase):
             @staticmethod
             def generate_stream(model: object, **kwargs: object):
                 """Yield one protocol-compatible fake audio frame."""
-                del model, kwargs
+                discard(model)
+                discard(kwargs)
                 yield {"audio": [0.0], "sample_rate": 48000}
 
         protocol_stream = io.BytesIO()
@@ -2078,7 +2080,8 @@ class TestBackendEnvironment(CeluneTestCase):
             @staticmethod
             def generate_stream(model: object, **kwargs: object):
                 """Yield a chunk only when the request was not already cancelled."""
-                del model, kwargs
+                discard(model)
+                discard(kwargs)
                 yield {"audio": [0.0], "sample_rate": 48000}
 
         cancellation = threading.Event()

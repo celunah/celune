@@ -6,34 +6,26 @@ import os
 import time
 import threading
 import subprocess
+from types import SimpleNamespace
+from typing import IO, Optional, cast
 from pathlib import Path
 from unittest import mock
 from contextlib import suppress
-from types import SimpleNamespace
-from typing import IO, Optional, cast
 from collections import OrderedDict, deque
 from collections.abc import Callable, Generator
 
 from celune.cedts import remote, worker
-from celune.typing.worker import (
-    WorkerValue,
-    WorkerMessage,
-)
-from celune.typing.backends import (
-    BackendModel,
-    BackendRuntime,
-)
-from celune.backends.environment import (
-    BACKEND_MANIFESTS,
-    BackendManifest,
-    BackendEnvironment,
-)
+from celune.utils import discard
 from celune.exceptions import (
     CEDTSError,
     BackendError,
     CEDTSEOFError,
     CEDTSTimeoutError,
     CEDTSProtocolError,
+)
+from celune.typing.worker import (
+    WorkerValue,
+    WorkerMessage,
 )
 from celune.cedts.protocol import (
     CEDTSLimits,
@@ -46,11 +38,19 @@ from celune.cedts.protocol import (
     limits_from_capabilities,
     validate_payload_descriptors,
 )
-
-from .fixtures import make_shutdown_proxy
-from .backend_processes import ShutdownProcess
+from celune.typing.backends import (
+    BackendModel,
+    BackendRuntime,
+)
+from celune.backends.environment import (
+    BACKEND_MANIFESTS,
+    BackendManifest,
+    BackendEnvironment,
+)
 
 from ..support import CeluneTestCase
+from .fixtures import make_shutdown_proxy
+from .backend_processes import ShutdownProcess
 
 
 class TestBackendProxyLifecycle(CeluneTestCase):
@@ -502,7 +502,7 @@ class TestBackendProxyLifecycle(CeluneTestCase):
             reply_to: Optional[str] = None,
         ) -> str:
             """Stand in for packet transmission while preserving reply registration."""
-            del reply_to
+            discard(reply_to)
             packet_id = message_id or f"{kind}-id"
             if kind in {"request", "shutdown"}:
                 with proxy._response_condition:

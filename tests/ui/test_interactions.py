@@ -487,7 +487,7 @@ class TestUIInteractions(CeluneTestCase):
                 Returns:
                     bool: Whether the fake detector considers speech active.
                 """
-                del sample_rate
+                discard(sample_rate)
                 return float(np.max(np.abs(audio))) >= 0.05
 
             def reset(self) -> None:

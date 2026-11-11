@@ -2,24 +2,26 @@
 """Shared fixtures and worker helpers for pipeline tests."""
 
 from __future__ import annotations
+
 import threading
+from types import SimpleNamespace
+from typing import TYPE_CHECKING, Union, Optional, cast
 from pathlib import Path
 from unittest import mock
 from functools import partial
-from types import SimpleNamespace
-from typing import TYPE_CHECKING, Union, Optional, cast
 from collections.abc import Callable, Iterator, Sequence
 
 import numpy as np
 
-from celune.typing.aliases import AudioChunk
-from celune.agent.runtime import AgentRuntime
-from celune.agent.routing import AgentInputRouter
+from celune.utils import discard
 from celune.pipeline import playback, generation
-from celune.typing.common import JSONSerializable
-from celune.persona.memory import PersonaMemoryStore
 from celune.core.reload import reload_model_for_language
 from celune.typing.agent import AgentInputClassification, AgentClassificationResult
+from celune.agent.routing import AgentInputRouter
+from celune.agent.runtime import AgentRuntime
+from celune.typing.common import JSONSerializable
+from celune.persona.memory import PersonaMemoryStore
+from celune.typing.aliases import AudioChunk
 
 if TYPE_CHECKING:
     from celune.celune import Celune
@@ -64,7 +66,8 @@ class LanguageAwareBackend:
         model: mock.Mock, **kwargs: JSONSerializable
     ) -> Iterator[tuple[AudioChunk, int, Optional[dict]]]:
         """Yield one deterministic chunk and preserve kwargs for assertions."""
-        del model, kwargs
+        discard(model)
+        discard(kwargs)
         yield np.zeros((8, 2), dtype=np.float32), 48000, None
 
 
@@ -124,7 +127,7 @@ def prepare_persona_conversation_engine(engine: Celune) -> None:
         *,
         persona_ready: bool,
     ) -> AgentClassificationResult:
-        del persona_ready
+        discard(persona_ready)
         return AgentClassificationResult(
             classification=AgentInputClassification.CONVERSATION,
             confidence=1.0,

@@ -9,6 +9,8 @@ import numpy as np
 
 from ..i18n import string
 from ..constants import BASE_SR
+
+# TODO: stop using internals of Celune
 from ..audio.dsp import _generate_test_tone
 from ..pipeline import buffering, submission
 from ..pipeline.playback import close_stream

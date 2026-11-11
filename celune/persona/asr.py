@@ -31,8 +31,9 @@ from ..registry.consent import require_model_consent
 
 if TYPE_CHECKING:
     # noinspection PyPep8Naming
-    # noinspection PyPep8Naming
     from torch import dtype as DType
+
+    # noinspection PyPep8Naming
     from torch import device as Device
 
 

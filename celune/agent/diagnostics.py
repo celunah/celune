@@ -6,22 +6,21 @@ from __future__ import annotations
 import os
 import sys
 import tempfile
+from types import SimpleNamespace
+from typing import TYPE_CHECKING, Optional, cast
 from pathlib import Path
 from contextlib import ExitStack
-from types import SimpleNamespace
 from dataclasses import dataclass
 from unittest.mock import Mock, patch
 from collections.abc import Mapping, Callable
-from typing import cast, Optional, TYPE_CHECKING
 
 from ..i18n import string
-from ..typing.common import JSON
-from ..paths import temp_data_dir
-from .routing import AgentInputRouter
-from ..exceptions import NeedleSelectionError
-from ..extensions.events import EventDispatcher
-from .runtime import AgentRuntime, DefaultAgentPermissionPolicy
 from .tools import production_agent_tools, production_agent_tool_schemas
+from ..paths import temp_data_dir
+from ..utils import discard
+from .routing import AgentInputRouter
+from .runtime import AgentRuntime, DefaultAgentPermissionPolicy
+from ..exceptions import NeedleSelectionError
 from ..typing.agent import (
     ToolCall,
     AgentTask,
@@ -54,6 +53,8 @@ from ..typing.agent import (
     AgentCancellationReason,
     AgentPermissionDecision,
 )
+from ..typing.common import JSON
+from ..extensions.events import EventDispatcher
 
 if TYPE_CHECKING:
     from ..celune import Celune
@@ -114,7 +115,8 @@ _LOCAL_TOOL_NAMES = {
 class _DiagnosticMemoryRecord:
     """Small in-memory record used to keep diagnostics away from user memory."""
 
-    def to_json(self) -> JSON:
+    @staticmethod
+    def to_json() -> JSON:
         """Return the fixed temporary record in the normal JSON shape."""
         return {
             "record_id": "agent-diagnostic-memory",
@@ -126,8 +128,8 @@ class _DiagnosticMemoryRecord:
 class _DiagnosticMemoryStore:
     """In-memory substitute for persistent Persona memory operations."""
 
+    @staticmethod
     def remember(
-        self,
         _character: str,
         _content: str,
         *,
@@ -139,8 +141,8 @@ class _DiagnosticMemoryStore:
             return None
         return _DiagnosticMemoryRecord()
 
+    @staticmethod
     def retrieve(
-        self,
         _character: str,
         _request: str,
         _limit: int,
@@ -148,7 +150,8 @@ class _DiagnosticMemoryStore:
         """Return the one temporary record expected by the diagnostic."""
         return [_DiagnosticMemoryRecord()]
 
-    def forget(self, _character: str, _record_id: str) -> bool:
+    @staticmethod
+    def forget(_character: str, _record_id: str) -> bool:
         """Accept removal of the temporary record."""
         return True
 
@@ -182,7 +185,7 @@ class _DiagnosticProcess:
     @staticmethod
     def wait(timeout: float) -> None:
         """Accept a no-op wait request."""
-        del timeout
+        discard(timeout)
 
 
 @dataclass
@@ -440,7 +443,7 @@ def _run_runtime_checks(
 
 def _dispatcher(engine: Celune) -> EventDispatcher:
     """Create an event dispatcher detached from the user's extension listeners."""
-    del engine
+    discard(engine)
     return EventDispatcher(
         log_warning=lambda _message, _severity: None,
         log_level="debug",
@@ -721,7 +724,7 @@ def _check_lifecycle_steering(engine: Celune) -> str:
 
 
 def _check_lifecycle_cancellation(engine: Celune) -> str:
-    """Check cancellation reaches a typed cancelled terminal state."""
+    """Check cancellation reaches a typed canceled terminal state."""
     runtime, task = _lifecycle_task(engine, "cancellation")
     runtime.cancel_task(task.task_id, AgentCancellationReason.USER_REQUEST)
     if (

@@ -2,20 +2,20 @@
 """Tests for the shared Persona runtime helpers."""
 
 import contextlib
-from unittest import mock
 from types import SimpleNamespace
 from typing import Union, Optional, cast
+from unittest import mock
 
 import pytest
 
 from celune.utils import discard
-from celune.typing.common import JSON
 from celune.persona import impl, runtime
 from celune.registry import get_model_metadata
 from celune.exceptions import ModelConsentRequired
+from celune.registry.llm import LLM_MODELS, PERSONA_DEFAULT_MODEL_ID, persona_model_tier
+from celune.typing.common import JSON
 from celune.typing.aliases import RecordedKwargValue
 from celune.registry.revisions import remote_code_model_revision
-from celune.registry.llm import LLM_MODELS, PERSONA_DEFAULT_MODEL_ID, persona_model_tier
 
 from ..support import CeluneTestCase
 
@@ -505,17 +505,23 @@ class TestPersonaApi(CeluneTestCase):
         sync.assert_called_once_with()
         empty_cache.assert_called_once_with()
 
-    def test_generation_uses_actual_prompt_length_as_context_budget(self) -> None:
-        """Bound completion tokens by the prompt tokens that were encoded."""
+    def test_generation_reserves_requested_completion_tokens(self) -> None:
+        """Leave context space for the requested completion before encoding."""
 
         class _BudgetModel(_FakeGenerativeModel):
-            """Return an input prefix plus the requested three-token completion."""
+            """Return the encoded prompt followed by the requested completion."""
 
             def generate(self, **kwargs) -> runtime.torch.Tensor:
                 self.calls.append(dict(kwargs))
-                return runtime.torch.tensor(
-                    [[1, 2, 3, 4, 5, 6, 7, 8]],
-                    dtype=runtime.torch.long,
+                input_ids = kwargs["input_ids"]
+                completion = runtime.torch.full(
+                    (input_ids.shape[0], kwargs["max_new_tokens"]),
+                    9,
+                    dtype=input_ids.dtype,
+                )
+                return runtime.torch.cat(
+                    (input_ids, completion),
+                    dim=1,
                 )
 
         backend = runtime.PersonaBackend()
@@ -529,21 +535,25 @@ class TestPersonaApi(CeluneTestCase):
 
         def build_inputs(_messages, context_space):
             limits.append(context_space)
-            return {"input_ids": runtime.torch.tensor([[1, 2, 3, 4, 5]])}
+            input_ids = runtime.torch.ones(
+                (1, context_space),
+                dtype=runtime.torch.long,
+            )
+            return {"input_ids": input_ids}
 
         with mock.patch.object(backend, "_build_inputs", side_effect=build_inputs):
             response = backend.generate(
                 runtime.GenerateRequest(
                     user="hello",
-                    context_space=8,
-                    max_new_tokens=12,
+                    context_space=16,
+                    max_new_tokens=4,
                 )
             )
 
-        assert limits == [7]
-        assert model.calls[0]["max_new_tokens"] == 3
-        assert response.prompt_tokens == 5
-        assert response.completion_tokens == 3
+        assert limits == [12]
+        assert model.calls[0]["max_new_tokens"] == 4
+        assert response.prompt_tokens == 12
+        assert response.completion_tokens == 4
 
     def test_persona_client_response_keeps_local_token_usage(self) -> None:
         """Keep exact generation usage available to Celune's local agent bridge."""

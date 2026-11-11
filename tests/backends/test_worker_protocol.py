@@ -9,29 +9,29 @@ import select
 import argparse
 import threading
 import subprocess
+from types import SimpleNamespace
+from typing import Optional, cast
 from pathlib import Path
 from unittest import mock
 from contextlib import suppress
-from types import SimpleNamespace
-from typing import Optional, cast
 from collections import OrderedDict, deque
 
 import numpy as np
 
-from celune.utils import format_error
-from celune.paths import temp_data_dir
-from celune.cedts import remote, worker
 from celune.cesn import format_cesn_error
+from celune.cedts import remote, worker
+from celune.paths import temp_data_dir
+from celune.utils import discard, format_error
+from celune.exceptions import (
+    CESNError,
+    CEDTSError,
+    BackendError,
+    CESNIPAError,
+    CESNRangeError,
+    CESNValidationError,
+    CESNBackendFormatError,
+)
 from celune.backends.tts import resolve_backend
-from celune.typing.backends import (
-    BackendRuntime,
-)
-from celune.dataclasses.pipeline import VoiceConversionRequest
-from celune.backends.environment import (
-    BACKEND_MANIFESTS,
-    BackendManifest,
-    BackendEnvironment,
-)
 from celune.typing.worker import (
     WorkerValue,
     WorkerMessage,
@@ -47,31 +47,31 @@ from celune.cedts.protocol import (
     receive_message,
     receive_payloads,
 )
-from celune.exceptions import (
-    CESNError,
-    CEDTSError,
-    BackendError,
-    CESNIPAError,
-    CESNRangeError,
-    CESNValidationError,
-    CESNBackendFormatError,
+from celune.typing.backends import (
+    BackendRuntime,
 )
-
-from .backend_processes import send_no_payload_packet
+from celune.backends.environment import (
+    BACKEND_MANIFESTS,
+    BackendManifest,
+    BackendEnvironment,
+)
+from celune.dataclasses.pipeline import VoiceConversionRequest
 
 from ..support import CeluneTestCase
 from ..platform import LINUX_ONLY, WINDOWS_ONLY
+from .backend_processes import send_no_payload_packet
 
 
 def _worker_error_response(error: CESNError) -> tuple[WorkerResponse, str]:
     """Capture a raised CESN exception as a worker response and stderr text."""
     worker_stderr = io.StringIO()
+    response: Optional[WorkerResponse] = None
     try:
         raise error
     except CESNError as caught_error:
         with mock.patch.object(worker, "_WORKER_STDERR", worker_stderr):
-            return worker._error_response(caught_error), worker_stderr.getvalue()
-    raise AssertionError("CESN exception was not raised")
+            response = worker._error_response(caught_error)
+    return response, worker_stderr.getvalue()
 
 
 class TestWorkerProtocol(CeluneTestCase):
@@ -277,11 +277,14 @@ class FakeBackend:
         return model_id
 
     def unload_model(self, release_cuda_cache=True):
-        del release_cuda_cache
+        discard(release_cuda_cache)
 
 
 def fake_load_backend(manifest, log, fatal, kwargs):
-    del manifest, log, fatal, kwargs
+    discard(manifest)
+    discard(log)
+    discard(fatal)
+    discard(kwargs)
     return FakeBackend()
 
 
@@ -510,7 +513,7 @@ class FakeBackend:
         return model_id
 
     def generate_stream(self, model):
-        del model
+        discard(model)
         yield {"audio": [0.0], "sample_rate": 48000}
         if IGNORE_CANCELLATION:
             while True:
@@ -519,11 +522,14 @@ class FakeBackend:
         yield {"audio": [0.0], "sample_rate": 48000}
 
     def unload_model(self, release_cuda_cache=True):
-        del release_cuda_cache
+        discard(release_cuda_cache)
 
 
 def fake_load_backend(manifest, log, fatal, kwargs):
-    del manifest, log, fatal, kwargs
+    discard(manifest)
+    discard(log)
+    discard(fatal)
+    discard(kwargs)
     return FakeBackend()
 
 
@@ -781,7 +787,7 @@ class FakeBackend:
             operation_finished.set()
 
     def convert(self, request):
-        del request
+        discard(request)
         signal_operation_started()
         try:
             wait_for_release()
@@ -798,11 +804,14 @@ class FakeBackend:
             operation_finished.set()
 
     def unload_model(self, release_cuda_cache=True):
-        del release_cuda_cache
+        discard(release_cuda_cache)
 
 
 def fake_load_backend(manifest, log, fatal, kwargs):
-    del manifest, log, fatal, kwargs
+    discard(manifest)
+    discard(log)
+    discard(fatal)
+    discard(kwargs)
     return FakeBackend()
 
 
@@ -1066,7 +1075,7 @@ finally:
 
             def convert(self, request: VoiceConversionRequest) -> dict[str, bool]:
                 """Block conversion until the test releases the backend."""
-                del request
+                discard(request)
                 started.set()
                 release.wait(timeout=2)
                 return {"converted": True}
@@ -1130,19 +1139,22 @@ class FakeBackend:
     is_fake = True
 
     def load_model(self, model_id):
-        del model_id
+        discard(model_id)
         return object()
 
     def generate_stream(self, model):
-        del model
+        discard(model)
         yield {"audio": [0.0], "sample_rate": 48000}
 
     def unload_model(self, release_cuda_cache=True):
-        del release_cuda_cache
+        discard(release_cuda_cache)
 
 
 def fake_load_backend(manifest, log, fatal, kwargs):
-    del manifest, log, fatal, kwargs
+    discard(manifest)
+    discard(log)
+    discard(fatal)
+    discard(kwargs)
     return FakeBackend()
 
 

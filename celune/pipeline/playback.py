@@ -470,6 +470,7 @@ def log_first_playback(
     Args:
         engine: The instance of Celune to log back into.
         timing: Timing data attached to the first output block.
+        timestamp: The timestamp of the playback event.
     """
     start_time = getattr(timing, "start_time", None)
     if not isinstance(start_time, float):

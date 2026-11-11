@@ -2,13 +2,14 @@
 """Focused coverage for the explicit Celune test-mode command hierarchy."""
 
 from __future__ import annotations
+
 import io
 import warnings
 import threading
 import contextlib
-from unittest import mock
 from types import SimpleNamespace
 from typing import ClassVar, Optional, cast
+from unittest import mock
 from collections.abc import Mapping, Callable, Sequence
 
 import pytest
@@ -16,14 +17,13 @@ from textual.widgets import TextArea
 
 from celune import entrypoint
 from celune.i18n import string
-from celune.celune import Celune
-from celune.ui.app import CeluneUI
-from celune.typing.common import JSON
-from celune.config import config_log_level
-from celune.persona.impl import PersonaClient
-from celune.typing.persona import PersonaClientResponse
 from celune.test import run_agent_test, agent_test_succeeded
+from celune.utils import discard
+from celune.celune import Celune
+from celune.config import config_log_level
+from celune.ui.app import CeluneUI
 from celune.agent.needle import NeedleHandler, NeedleToolSelector
+from celune.persona.impl import PersonaClient
 from celune.typing.agent import (
     AgentTool,
     AgentRoute,
@@ -35,6 +35,8 @@ from celune.typing.agent import (
     AgentClassificationFailure,
     AgentClassificationFailureKind,
 )
+from celune.typing.common import JSON
+from celune.typing.persona import PersonaClientResponse
 
 from .support import FakeGlow, FakeBackend, CeluneTestCase
 
@@ -83,7 +85,9 @@ class _TestNeedleHandler:
         max_new_tokens: int = 96,
     ) -> list[NeedleToolCall]:
         """Return the one safe tool selected by this controlled adapter."""
-        del query, tools, max_new_tokens
+        discard(query)
+        discard(tools)
+        discard(max_new_tokens)
         return [{"name": "local_current_working_directory", "arguments": {}}]
 
     def close(self) -> None:
@@ -188,7 +192,7 @@ class TestCommandTests:
                     [TestCore, bool, Optional[str]], None
                 ],
             ) -> None:
-                del startup_messages
+                discard(startup_messages)
                 self.test_completion_callback = test_completion_callback
                 self.return_code = 0
                 self.celune: Optional[TestCore] = None

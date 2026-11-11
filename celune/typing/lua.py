@@ -5,6 +5,7 @@ from pathlib import Path
 from collections.abc import Callable
 
 if TYPE_CHECKING:
+    # unused my ass
     from ..celune import Celune
 
 type LuaValue = Union[

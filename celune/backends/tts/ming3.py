@@ -37,6 +37,7 @@ from ...paths import (
     huggingface_hub_cache_dir,
     temp_directory_environment,
 )
+from ...utils import discard
 from ...cevoice import CEVoiceLoader, default_loader
 from ...registry.tts import (
     MING3_TTS_Q8_FILE,
@@ -239,7 +240,7 @@ class Ming3(CeluneBackend[MingRuntime]):
 
     def model_contract(self, model_id: str, **kwargs: object) -> ModelContract:
         """Return the pinned GGUF contract for the selected precision."""
-        del kwargs
+        discard(kwargs)
         if model_id != MING3_TTS_MODEL_ID:
             raise ValueError(f"unsupported Ming model identifier: {model_id}")
         return resolve_model_contract(
@@ -252,7 +253,7 @@ class Ming3(CeluneBackend[MingRuntime]):
         self, model: str, lang: Optional[str] = None
     ) -> tuple[bool, Optional[str]]:
         """Check whether the selected, pinned GGUF is in the Hub cache."""
-        del lang
+        discard(lang)
         if model != MING3_TTS_MODEL_ID:
             return False, None
 
@@ -607,7 +608,7 @@ class Ming3(CeluneBackend[MingRuntime]):
                         for entry in entries:
                             if isinstance(entry, dict) and entry.get("id") == "ming3":
                                 model_seen = True
-                                if entry.get("loaded") is True:
+                                if entry.get("loaded"):
                                     return MingRuntime(
                                         process=process,
                                         base_url=base_url,

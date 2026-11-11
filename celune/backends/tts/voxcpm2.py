@@ -26,7 +26,7 @@ from .base import (
 )
 from ...i18n import string
 from ...paths import huggingface_progress, huggingface_hub_cache_dir
-from ...utils import available, custom_assert
+from ...utils import discard, available, custom_assert
 from ...cevoice import CEVoiceLoader, default_loader
 from ...modeling import QuantizedKVCacheMode, quantized_kv_cache_mode
 from ...constants import BASE_SR
@@ -326,7 +326,7 @@ def _voxcpm_quantized_forward_step(
     rotary: Callable[..., tuple[torch.Tensor, torch.Tensor]],
 ) -> torch.Tensor:
     """Run one VoxCPM attention step against quantized prefix storage."""
-    del position_id
+    discard(position_id)
     batch_size = hidden_states.size(0)
     query_states = attention.q_proj(hidden_states)
     key_states = attention.k_proj(hidden_states)

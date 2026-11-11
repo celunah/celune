@@ -17,7 +17,7 @@ from ..constants import APP_NAME
 
 
 class CeluneLoadingScreen(Widget):
-    """Display startup progress as an in-place overlay widget."""
+    """Display startup progress as an overlay widget."""
 
     def __init__(self, *, widget_id: Optional[str] = None) -> None:
         super().__init__(id=widget_id)
@@ -210,6 +210,7 @@ class CeluneLoadingScreen(Widget):
             message: Initialization failure to show to the user.
             status_message: Optional replacement for the failure heading.
             footer_message: Optional status to show in the lower-left footer.
+            help_message: Optional actionable help to display below the error message.
         help_message: Optional recovery steps to show below the failure message.
         """
         self._failed = True

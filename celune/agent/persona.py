@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Optional, cast
 from dataclasses import replace
 from collections.abc import Mapping
 
+from ..utils import discard
 from ..persona.impl import compact_persona_history, persona_history_messages
 from ..typing.agent import (
     ToolCall,
@@ -136,7 +137,7 @@ class PersonaAgentBridge:
         result: ToolResult,
     ) -> AgentOutput:
         """Return the structured tool result to Persona for the final reply."""
-        del result
+        discard(result)
         return self._generate(context, terminal=True)
 
     def compact(self, context: AgentContext) -> AgentContext:

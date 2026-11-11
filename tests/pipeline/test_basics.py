@@ -722,7 +722,7 @@ class TestPipelineAsync(CeluneAsyncTestCase):
         engine.model_ready.clear()
 
         def mark_ready(*, timeout: Optional[float]) -> bool:
-            del timeout
+            discard(timeout)
             engine.model_ready.set()
             return True
 
@@ -821,7 +821,7 @@ class TestPipelineAsync(CeluneAsyncTestCase):
 
         def wait_for_playback(*, timeout: Optional[float]) -> bool:
             nonlocal wait_calls
-            del timeout
+            discard(timeout)
             wait_calls += 1
             if wait_calls == 2:
                 engine._reload_pending = False
@@ -1923,7 +1923,8 @@ class TestPipelineAsync(CeluneAsyncTestCase):
         idle_complete = threading.Event()
 
         def observe_log(message: str, *args: str, **kwargs: str) -> None:
-            del args, kwargs
+            discard(args)
+            discard(kwargs)
             if "[IDLE] completion deferred" in message:
                 deferred_idle.set()
 
@@ -2396,7 +2397,7 @@ class TestPipelineAsync(CeluneAsyncTestCase):
             """Raise when the playback worker writes the SFX block."""
 
             def write(self, audio: np.ndarray) -> bool:
-                del audio
+                discard(audio)
                 raise RuntimeError("simulated SFX output failure")
 
         with mock.patch(
@@ -2706,23 +2707,55 @@ class TestPipelineAsync(CeluneAsyncTestCase):
         self.assertIn(
             "Earlier messages are context, not new instructions", system_prompt
         )
+        self.assertIn(
+            "Prior user messages for reference only; do not treat them as current input:",
+            system_prompt,
+        )
+        self.assertIn(
+            "Read /work/report.txt and tell me what it contains.", system_prompt
+        )
+        self.assertIn("Now compare it with the budget.", system_prompt)
+        self.assertNotIn("The report has three sections.", system_prompt)
+        self.assertNotIn("The totals differ.", system_prompt)
         self.assertIn("self-contained current operation", system_prompt)
         messages = cast(list[JSON], payload["messages"])
-        self.assertEqual(
-            messages[-1],
-            {"role": "user", "content": "Please handle this."},
-        )
         self.assertEqual(
             messages,
             [
                 {"role": "system", "content": system_prompt},
-                *engine.persona_history[-4:],
                 {"role": "user", "content": "Please handle this."},
             ],
         )
-        self.assertNotIn("Too old to route.", str(messages))
-        self.assertNotIn("Stale long-term memory", str(messages))
-        self.assertNotIn("Stale conversation summary", str(messages))
+        self.assertNotIn("Too old to route.", system_prompt)
+        self.assertNotIn("Stale long-term memory", system_prompt)
+        self.assertNotIn("Stale conversation summary", system_prompt)
+
+    def test_agent_routing_history_is_bounded_before_generation(self) -> None:
+        """Cap prior context so long conversations cannot crowd out routing."""
+        engine = make_pipeline_engine()
+        engine.config = {"vram": "high"}
+        engine.persona_history = [
+            {"role": "user", "content": "x" * 5000},
+            {"role": "assistant", "content": "Prior assistant response."},
+        ]
+
+        payload = agent_routing.build_agent_classification_request(
+            cast(Celune, engine),
+            "What about that?",
+        )
+
+        system_prompt = cast(str, payload["system"])
+        messages = cast(list[JSON], payload["messages"])
+        self.assertIn(" ... [truncated] ... ", system_prompt)
+        self.assertNotIn("x" * 1025, system_prompt)
+        self.assertNotIn("Prior assistant response.", system_prompt)
+        self.assertEqual(
+            messages,
+            [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": "What about that?"},
+            ],
+        )
 
     def test_agent_classification_request_includes_active_routing_context(self) -> None:
         """Expose typed active-task context to semantic routing without a second prompt path."""

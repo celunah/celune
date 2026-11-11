@@ -86,6 +86,7 @@ def say(
         text: The input text to queue for synthesis.
         save: Whether to save generated output artifacts.
         display_text: Optional text to show in logs instead of the synthesis text.
+        maintain_status: Whether the engine should restore the previous status message after the call completes.
 
     Returns:
         bool: ``True`` when the text was queued successfully, otherwise ``False``.
@@ -469,6 +470,7 @@ def convert_audio_input(
     Args:
         engine: The Celune engine receiving the audio input.
         request: The submitted audio input request.
+        live: Whether live voice conversion is enabled.
 
     Returns:
         Optional[AudioOutput]: The converted audio output, or ``None`` when voice conversion is unavailable.
@@ -548,6 +550,7 @@ def queue_speech(
         save: Whether to save generated output artifacts.
         stream_queue: Optional queue receiving generated 48 kHz float32 chunks.
         display_text: Optional text to show in logs instead of the synthesis text.
+        maintain_status: Whether the engine should restore the previous status message after the call completes.
 
     Returns:
         bool: ``True`` when the text was queued successfully, otherwise ``False``.

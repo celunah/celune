@@ -60,6 +60,12 @@ from ..dataclasses.events import (
 from ..dataclasses.cevoice import CEVoicePersona
 
 
+if TYPE_CHECKING:
+    # for some bizarre reason Codex decided to shove this import at the bottom of this file
+    # it is a type import so why should it matter?
+    from ..celune import Celune
+
+
 @dataclass
 class ReloadSnapshot:
     """Rollback state captured before a backend or CEVOICE hot reload."""
@@ -809,7 +815,7 @@ def _track_reload_backend(
     self,
     backend: Union[CeluneBackend, CeluneVCBackend],
 ) -> bool:
-    """Publish a reload candidate to shutdown before it performs work."""
+    """Publish a reload candidate to shut down before it performs work."""
     with self._model_lock:
         if self._closed:
             return False
@@ -1141,7 +1147,3 @@ def reload_model_for_language(
     backend.unload_model()
     engine.model = backend.load_model(model_id, lang=target_language)
     engine.model_name = model_id
-
-
-if TYPE_CHECKING:
-    from ..celune import Celune

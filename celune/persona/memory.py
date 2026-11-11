@@ -227,8 +227,10 @@ def _load_transformer_text_embedder(model_name: str) -> Optional[EmbeddingBacken
 
     metadata = require_model_consent(model_name)
     try:
-        load_options: dict[str, Union[bool, str]] = {"local_files_only": True}
-        load_options["revision"] = metadata.revision
+        load_options: dict[str, Union[bool, str]] = {
+            "local_files_only": True,
+            "revision": metadata.revision,
+        }
         tokenizer = AutoTokenizer.from_pretrained(model_name, **load_options)
 
         if tokenizer is None:

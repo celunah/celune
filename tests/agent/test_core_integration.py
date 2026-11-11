@@ -35,6 +35,7 @@ from celune.agent import (
     AgentToolExecutionStatus,
     AgentClassificationResult,
 )
+from celune.utils import discard
 from celune.celune import Celune
 from celune.agent.tools import AgentStatusTool, _recall, production_agent_tool_schemas
 from celune.persona.impl import PersonaClient
@@ -110,7 +111,7 @@ class _RoutingFixture(PersonaClient):
 
     def post(self, json: dict[str, JSONSerializable]) -> PersonaClientResponse:
         """Return the next classifier payload and ignore request details."""
-        del json
+        discard(json)
         return PersonaClientResponse({"response": self.payloads.pop(0)})
 
 
@@ -185,7 +186,9 @@ class _SpeakNeedleHandler:
         max_new_tokens: int = 96,
     ) -> list[NeedleToolCall]:
         """Return the registered speak call without model or network work."""
-        del query, tools, max_new_tokens
+        discard(query)
+        discard(tools)
+        discard(max_new_tokens)
         return [{"name": "speak", "arguments": {"text": "hello"}}]
 
     def close(self) -> None:
@@ -446,7 +449,8 @@ class TestAgentCoreIntegration(CeluneTestCase):
             loglevel: LogLevel = "info",
         ) -> None:
             """Capture startup diagnostics for the ordering assertion."""
-            del severity, loglevel
+            discard(severity)
+            discard(loglevel)
             logs.append(msg)
 
         with (
@@ -868,7 +872,7 @@ class TestAgentCoreIntegration(CeluneTestCase):
             maintain_status: bool = False,
         ) -> bool:
             """Capture the character-generated terminal response."""
-            del maintain_status
+            discard(maintain_status)
             delivered.append(response)
             delivery_order.append("delivered")
             return True
@@ -954,7 +958,7 @@ class TestAgentCoreIntegration(CeluneTestCase):
             maintain_status: bool = False,
         ) -> bool:
             """Capture one character-generated terminal response."""
-            del maintain_status
+            discard(maintain_status)
             delivered.append(response)
             return True
 

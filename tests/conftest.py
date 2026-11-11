@@ -5,9 +5,9 @@ import os
 import atexit
 import shutil
 import tempfile
+from typing import Union, Literal, Optional
 from pathlib import Path
 from collections.abc import Iterator
-from typing import Union, Literal, Optional
 
 import pytest
 
@@ -18,6 +18,8 @@ pytest_plugins = ("tests.celtest",)
 
 def _configure_worker_data_root() -> None:
     """Give each xdist worker an isolated Celune data and cache root."""
+    from celune.utils import discard
+
     worker_id = os.environ.get("PYTEST_XDIST_WORKER")
     if not worker_id:
         return
@@ -43,7 +45,12 @@ def _configure_worker_data_root() -> None:
         **_kwargs: object,
     ) -> str:
         """Return this worker's isolated Celune data root."""
-        del appname, appauthor, version, roaming, ensure_exists, use_site_for_root
+        discard(appname)
+        discard(appauthor)
+        discard(version)
+        discard(roaming)
+        discard(ensure_exists)
+        discard(use_site_for_root)
         return str(worker_data_root)
 
     celune_paths.user_data_dir = worker_user_data_dir
@@ -53,14 +60,18 @@ def _configure_worker_data_root() -> None:
 
 def pytest_configure(config: pytest.Config) -> None:
     """Configure process-local state before test modules are collected."""
-    del config
+    from celune.utils import discard
+
+    discard(config)
     _configure_worker_data_root()
 
 
 @pytest.hookimpl(trylast=True)
 def pytest_collection_finish(session: pytest.Session) -> None:
     """Keep Pytest fixtures outside Celune's runtime-cleaned temp directory."""
-    del session
+    from celune.utils import discard
+
+    discard(session)
     tempfile.tempdir = _PYTEST_TEMP_DIRECTORY
 
 
@@ -69,5 +80,7 @@ def celune_test_context(
     request: pytest.FixtureRequest,
 ) -> Iterator[None]:
     """Celune's test context."""
-    del request
+    from celune.utils import discard
+
+    discard(request)
     yield

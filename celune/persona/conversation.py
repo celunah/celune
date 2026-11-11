@@ -63,6 +63,9 @@ from ..cevoice import (
 
 if TYPE_CHECKING:
     from ..celune import Celune
+
+    # hey pycharm can you stop marking types unused?
+    # type checkers care even if she does not
     from ..typing.persona import PersonaClientResponse
 
 _MemoryClassifier = Callable[[JSON], "PersonaClientResponse"]

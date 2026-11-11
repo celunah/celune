@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from enum import Enum
 from typing import (
     TYPE_CHECKING,
     Union,
@@ -12,14 +13,13 @@ from typing import (
     NotRequired,
     cast,
 )
-from enum import Enum
-from collections.abc import Sequence
 from dataclasses import field, dataclass
+from collections.abc import Sequence
 
-from .modes import OperationMode
 from .locks import ComponentBusyResult
+from .modes import OperationMode
 from .common import JSON, JSONSerializable
-from ..constants import AGENT_CONTEXT_SPACE, AGENT_MAX_LOOPS, PERSONA_COMPACT_AT
+from ..constants import AGENT_MAX_LOOPS, PERSONA_COMPACT_AT, AGENT_CONTEXT_SPACE
 
 if TYPE_CHECKING:
     from ..persona.capabilities import PersonaCapabilities
@@ -116,7 +116,7 @@ class AgentToolDangerLevel(str, Enum):
 
 
 class AgentCancellationReason(str, Enum):
-    """Reasons an active agent task can be cancelled."""
+    """Reasons an active agent task can be canceled."""
 
     USER_REQUEST = "user_request"
     SESSION_CANCELLED = "session_cancelled"

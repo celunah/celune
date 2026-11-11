@@ -424,6 +424,26 @@ class CeluneStateAccessors:
         """
         return self._speech_generation
 
+    @property
+    def persona_thread(self):
+        """Property for Celune's current Persona thread."""
+        return self._persona_thread
+
+    @property
+    def model_lock(self):
+        """Property for Celune's model lock."""
+        return self._model_lock
+
+    @property
+    def reload_pending(self):
+        """Property for Celune's pending reload flag."""
+        return self._reload_pending
+
+    @property
+    def inference_scheduler(self):
+        """Property for Celune's inference scheduler."""
+        return self._inference_scheduler
+
 
 class BundleWithPath(Protocol):
     """Protocol for bundle-like objects that expose a path."""

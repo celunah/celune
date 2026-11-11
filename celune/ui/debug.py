@@ -17,8 +17,8 @@ from enum import Enum
 from types import (
     CodeType,
     FrameType,
-    ModuleType,
     MethodType,
+    ModuleType,
     FunctionType,
     BuiltinFunctionType,
 )
@@ -28,16 +28,18 @@ from datetime import datetime
 from collections import abc, deque
 from dataclasses import field, dataclass
 
-from rich.text import Text
-from textual.validation import Regex
 from textual import (
+    app,
     events,
     screen,
     binding,
     widgets,
     containers,
-    app as textual_app,
 )
+from textual import (
+    validation as textual_validation,
+)
+from rich.text import Text
 
 from ..i18n import string
 from ..paths import running_compiled
@@ -46,11 +48,22 @@ from .buttons import CeluneButton
 from ..constants import APP_NAME
 from ..exceptions import (
     InvokeCallError as _InvokeCallError,
+)
+from ..exceptions import (
     InvokeParseError as _InvokeParseError,
+)
+from ..exceptions import (
     InvokeResolutionError as _InvokeResolutionError,
 )
 
-ComposeResult = textual_app.ComposeResult
+ComposeResult = app.ComposeResult
+
+
+def _discard_unused(value: object) -> None:
+    """Use Celune's unused-value marker without eager core imports."""
+    from ..utils import discard
+
+    discard(value)
 
 
 def _site_package_roots() -> tuple[Path, ...]:
@@ -522,7 +535,7 @@ class DebugCallTrace:
         )
 
     def _on_start(self, code: CodeType, instruction_offset: int) -> None:
-        del instruction_offset
+        _discard_unused(instruction_offset)
         if self._failed or self._suspended or not self._recording:
             return
         try:
@@ -572,7 +585,7 @@ class DebugCallTrace:
         callable_value: object,
         arg0: object,
     ) -> None:
-        del arg0
+        _discard_unused(arg0)
         if (
             self._failed
             or self._suspended
@@ -642,7 +655,7 @@ class DebugCallTrace:
         callable_value: object,
         arg0: object,
     ) -> None:
-        del arg0
+        _discard_unused(arg0)
         self._finish_call(
             code,
             "returned",
@@ -659,7 +672,7 @@ class DebugCallTrace:
         callable_value: object,
         arg0: object,
     ) -> None:
-        del arg0
+        _discard_unused(arg0)
         self._finish_call(
             code,
             "raised",
@@ -675,7 +688,8 @@ class DebugCallTrace:
         instruction_offset: int,
         return_value: object,
     ) -> None:
-        del instruction_offset, return_value
+        _discard_unused(instruction_offset)
+        _discard_unused(return_value)
         if self._suspended or not self._recording:
             return
         self._finish_call(code, "returned", None)
@@ -686,7 +700,7 @@ class DebugCallTrace:
         instruction_offset: int,
         exception: BaseException,
     ) -> None:
-        del instruction_offset
+        _discard_unused(instruction_offset)
         if self._suspended or not self._recording:
             return
         self._finish_call(code, "raised", type(exception).__name__)
@@ -969,7 +983,7 @@ class _DebugResizeHandle(widgets.Static):
 
     def on_mouse_release(self, event: events.MouseRelease) -> None:
         """Clear drag state if another widget takes mouse capture."""
-        del event
+        _discard_unused(event)
         self._dragging = False
 
 
@@ -1376,7 +1390,7 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
                             yield widgets.Input(
                                 placeholder=string("debug.glow_color_placeholder"),
                                 validators=(
-                                    Regex(
+                                    textual_validation.Regex(
                                         r"^#[0-9A-Fa-f]{6}$",
                                         failure_description=string(
                                             "debug.glow_invalid_color"
@@ -1393,7 +1407,7 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
                             yield widgets.Input(
                                 placeholder=string("debug.glow_duration_placeholder"),
                                 validators=(
-                                    Regex(
+                                    textual_validation.Regex(
                                         r"^\s*(?=.*[1-9])(?:\d+(?:\.\d*)?|\.\d+)\s*[sS]?\s*$",
                                         failure_description=string(
                                             "debug.glow_invalid_duration"
@@ -1860,9 +1874,11 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
         label.display = False
         label.styles.opacity = 1.0
 
-    def _ignore_modal_preview_result(self, result: object) -> None:
+    @staticmethod
+    # ew, an `object`
+    def _ignore_modal_preview_result(result: object) -> None:
         """Consume a preview modal result without changing application state."""
-        del result
+        _discard_unused(result)
 
     def _open_menu_preview(self, menu_kind: Literal["voice", "settings"]) -> None:
         """Open a no-op preview of the active voice or settings menu."""
@@ -2236,8 +2252,8 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
             self._compiled_notice_target = _compiled_source_filter(source_filters)
         return self._compiled_notice_target
 
+    @staticmethod
     def _call_table_scroll_anchor(
-        self,
         table: widgets.DataTable,
     ) -> tuple[Optional[int], float]:
         """Return the call at the top of the viewport and its visible offset."""

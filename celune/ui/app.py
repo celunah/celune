@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Frontend layer."""
 
+# TODO: stop pycharm from complaining hard here
+# it is complaining about false-positive "unused" imports and things undefined at the module level
 from __future__ import annotations
 
 import sys
@@ -483,35 +485,44 @@ class SelectMenuOverlay(ModalScreen[None]):
         event.stop()
         self.dismiss(None)
 
-    def on_key(self, event: events.Key) -> None:
+    # statics aplenty
+    @staticmethod
+    def on_key(event: events.Key) -> None:
         """Keep unhandled keys from reaching the application underneath."""
         event.stop()
 
-    def on_mouse_down(self, event: events.MouseDown) -> None:
+    @staticmethod
+    def on_mouse_down(event: events.MouseDown) -> None:
         """Consume mouse presses outside the menu popup."""
         event.stop()
 
-    def on_mouse_up(self, event: events.MouseUp) -> None:
+    @staticmethod
+    def on_mouse_up(event: events.MouseUp) -> None:
         """Consume mouse releases outside the menu popup."""
         event.stop()
 
-    def on_mouse_scroll_down(self, event: events.MouseScrollDown) -> None:
+    @staticmethod
+    def on_mouse_scroll_down(event: events.MouseScrollDown) -> None:
         """Consume downward scrolling outside the menu popup."""
         event.stop()
 
-    def on_mouse_scroll_up(self, event: events.MouseScrollUp) -> None:
+    @staticmethod
+    def on_mouse_scroll_up(event: events.MouseScrollUp) -> None:
         """Consume upward scrolling outside the menu popup."""
         event.stop()
 
-    def on_mouse_scroll_right(self, event: events.MouseScrollRight) -> None:
+    @staticmethod
+    def on_mouse_scroll_right(event: events.MouseScrollRight) -> None:
         """Consume rightward scrolling outside the menu popup."""
         event.stop()
 
-    def on_mouse_scroll_left(self, event: events.MouseScrollLeft) -> None:
+    @staticmethod
+    def on_mouse_scroll_left(event: events.MouseScrollLeft) -> None:
         """Consume leftward scrolling outside the menu popup."""
         event.stop()
 
-    def on_click(self, event: events.Click) -> None:
+    @staticmethod
+    def on_click(event: events.Click) -> None:
         """Consume clicks outside the menu popup."""
         event.stop()
 

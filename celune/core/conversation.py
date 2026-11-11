@@ -56,14 +56,14 @@ def think(engine: Celune, text: str) -> bool:
     from . import agent as core_agent
 
     with engine.say_lock:
-        if engine._persona_queue.full():
+        if engine.persona_queue.full():
             message = string("webui.busy_try_again")
             engine.log(message, "warning")
             engine.toast(message, severity="warning")
             return False
         core_agent.interrupt_active_agent_for_input(engine, text)
-        engine._persona_queue.put_nowait(text)
-        thread = engine._persona_thread
+        engine.persona_queue.put_nowait(text)
+        thread = engine.persona_thread
         if thread is not None and thread.is_alive():
             return True
 
@@ -212,12 +212,12 @@ def _think_worker(engine: Celune) -> None:
     try:
         while not engine.exit_requested:
             try:
-                text = engine._persona_queue.get(timeout=0.1)
+                text = engine.persona_queue.get(timeout=0.1)
             except queue.Empty:
                 with engine.say_lock:
-                    if not engine._persona_queue.empty():
+                    if not engine.persona_queue.empty():
                         continue
-                    if engine._persona_thread is current_thread:
+                    if engine.persona_thread is current_thread:
                         engine._persona_thread = None
                     return
 
@@ -228,7 +228,7 @@ def _think_worker(engine: Celune) -> None:
             engine.cur_state = "thinking"
             engine.progress_callback(None, None)
 
-            with engine._model_lock:
+            with engine.model_lock:
                 persona_loading = engine.persona_loading
                 persona_ready = engine.persona_ready
                 vision = engine.vision
@@ -258,7 +258,7 @@ def _think_worker(engine: Celune) -> None:
 
             if not persona_ready:
                 if vision is None:
-                    with engine._model_lock:
+                    with engine.model_lock:
                         if engine.vision is None:
                             engine.vision = persona_conn(engine)
                         vision = engine.vision
@@ -277,7 +277,7 @@ def _think_worker(engine: Celune) -> None:
                 engine.toast(message, severity="warning")
     finally:
         with engine.say_lock:
-            if engine._persona_thread is current_thread:
+            if engine.persona_thread is current_thread:
                 engine._persona_thread = None
 
 
@@ -286,7 +286,7 @@ def wait_for_persona_playback(engine: Celune) -> bool:
     while not engine.exit_requested:
         engine.playback_done.wait(timeout=0.1)
         with engine.say_lock:
-            if engine._reload_pending or engine.cur_state == "reloading":
+            if engine.reload_pending or engine.cur_state == "reloading":
                 continue
             if not engine.locked and engine.cur_state not in {"generating", "speaking"}:
                 return True

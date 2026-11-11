@@ -32,6 +32,7 @@ from ...paths import (
     huggingface_progress,
     huggingface_hub_cache_dir,
 )
+from ...utils import discard
 from ...cevoice import CEVoiceLoader, default_loader
 from ...modeling import create_quantized_kv_cache
 from ...registry.tts import TTS_DEFAULT_VOICE, FIREREDTTS3_MODEL_ID
@@ -805,7 +806,7 @@ class FireRedTTS3(CeluneBackend[FireRedModel]):
         self, model: str, lang: Optional[str] = None
     ) -> tuple[bool, Optional[str]]:
         """Check whether the FireRedTTS3 model snapshot has all required files."""
-        del lang
+        discard(lang)
         return cached_hf_snapshot_path(model, list(self._model_files))
 
     @classmethod

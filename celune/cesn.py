@@ -116,6 +116,16 @@ class CESNBlock:
         """Return pitched event/IPA pairs, excluding rests."""
         return tuple(event for event in self.events if isinstance(event, CESNNotePair))
 
+    @property
+    def source_note_spans(self):
+        """Property for CESN source note spans."""
+        return self._source_note_spans
+
+    @property
+    def source_ipa_spans(self):
+        """Property for CESN source IPA spans."""
+        return self._source_ipa_spans
+
 
 @dataclass(frozen=True)
 class CESNSection:
@@ -136,12 +146,12 @@ class _CESNJoinMarker(NamedTuple):
 _CESNEvent = Union[CESNNoteEvent, CESNRestEvent, _CESNJoinMarker]
 
 NOTE_EVENT_PATTERN = re.compile(
-    r"(?:(?P<pitch>[a-g](?:[#b])?-?\d+)|(?P<rest>r))\s*:\s*"
+    r"(?:(?P<pitch>[a-g][#b]?-?\d+)|(?P<rest>r))\s*:\s*"
     r"(?P<note_type>32|16|8|4|2|1)\s*(?P<dotted>d?)",
     re.IGNORECASE,
 )
 _LANGUAGE_PATTERN = re.compile(r"[a-z]{2,3}(?:-[a-z0-9]{2,8})*\Z")
-_KEY_PATTERN = re.compile(r"[a-g](?:[#b])?\Z", re.IGNORECASE)
+_KEY_PATTERN = re.compile(r"[a-g][#b]?\Z", re.IGNORECASE)
 _TUPLET_PATTERN = re.compile(r"(?P<actual>\d+)\s*,\s*(?P<normal>\d+)\Z")
 _SCALE_INTERVALS = {
     "major": (0, 2, 4, 5, 7, 9, 11),

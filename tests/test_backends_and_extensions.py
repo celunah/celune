@@ -10,18 +10,22 @@ import textwrap
 import importlib
 import threading
 import contextlib
+from types import ModuleType, SimpleNamespace
+from typing import Union, Optional, cast
 from pathlib import Path
 from unittest import mock
 from collections import abc as cabc
-from typing import Union, Optional, cast
-from types import ModuleType, SimpleNamespace
 
+import numpy as np
 import torch
 import pytest
-import numpy as np
 import soundfile as sf
 
+from celune.cesn import CESNSinger
 from celune.i18n import string
+from celune.utils import discard
+from celune.celune import Celune
+from celune.registry import MODEL_BY_ID
 from celune.exceptions import (
     CESNValidationError,
     InvalidExtensionError,
@@ -33,16 +37,19 @@ from celune.backends.vc import (
 from celune.backends.vc import (
     resolve_vc_backend,
 )
-from celune.celune import Celune
-from celune.utils import discard
-from celune.cesn import CESNSinger
+from celune.backends.tts import BACKEND_MANIFESTS, resolve_backend
+from celune.registry.tts import QWEN3_DEFAULT_MODEL_ID, SOULX_SINGER_CODE_REVISION
+from celune.typing.aliases import AudioChunk
+from celune.extensions.base import CeluneContext, CeluneExtension
 from celune.typing.backends import (
     BackendModel,
     SeedVCModelValue,
     SeedVCRealtimeModule,
 )
-from celune.registry import MODEL_BY_ID
-from celune.typing.aliases import AudioChunk
+from celune.backends.tts.base import CeluneBackend
+from celune.backends.vc.seedvc import CeluneSeedVCBackend
+from celune.extensions.manager import CeluneExtensionManager
+from celune.dataclasses.pipeline import VoiceConversionRequest
 from celune.backends.tts.fireredtts3 import (
     FireRedTTS3,
     FireRedModel,
@@ -56,13 +63,6 @@ from celune.backends.tts.soulxsinger import (
     pitch_to_midi,
     load_upstream_source,
 )
-from celune.backends.tts.base import CeluneBackend
-from celune.backends.vc.seedvc import CeluneSeedVCBackend
-from celune.extensions.manager import CeluneExtensionManager
-from celune.dataclasses.pipeline import VoiceConversionRequest
-from celune.extensions.base import CeluneContext, CeluneExtension
-from celune.backends.tts import BACKEND_MANIFESTS, resolve_backend
-from celune.registry.tts import QWEN3_DEFAULT_MODEL_ID, SOULX_SINGER_CODE_REVISION
 
 from .support import (
     FakeBackend,
@@ -544,7 +544,7 @@ class TestBackend(CeluneTestCase):
                 cls, pretrained_model_dir: str, **kwargs: object
             ) -> "FakeRedAE":
                 """Record the loader arguments and return a fake model."""
-                del pretrained_model_dir
+                discard(pretrained_model_dir)
                 redae_load_kwargs.update(kwargs)
                 return cls()
 
@@ -556,7 +556,7 @@ class TestBackend(CeluneTestCase):
                 cls, pretrained_model_dir: str, **kwargs: object
             ) -> "FakeFireRedTTS3BaseCore":
                 """Record the loader arguments and return a fake model."""
-                del pretrained_model_dir
+                discard(pretrained_model_dir)
                 core_load_kwargs.update(kwargs)
                 return cls()
 
@@ -754,7 +754,7 @@ class TestBackend(CeluneTestCase):
                 use_cache: bool,
             ) -> SimpleNamespace:
                 """Return hidden states and a new cache marker."""
-                del attention_mask
+                discard(attention_mask)
                 assert use_cache
                 cache = SimpleNamespace()
                 self.seen_caches.append(past_key_values)

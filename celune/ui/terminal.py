@@ -307,7 +307,7 @@ class SelectMenuWidget(Widget):
             self.refresh()
 
     def on_click(self, event: Click) -> None:
-        """Select clicked rows and confirm on a double-click when supported."""
+        """Select clicked rows and confirm on a double click when supported."""
         option_index = self._option_index_at(event)
         if option_index is None:
             return
@@ -630,6 +630,7 @@ class SelectMenuWidget(Widget):
         if cell_len(value) <= max_cells:
             return value
 
+        # Unicode character... hm
         ellipsis = "…"
         target_cells = max(0, max_cells - cell_len(ellipsis))
         truncated = ""
