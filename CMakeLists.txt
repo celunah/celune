@@ -25,6 +25,10 @@ if(NOT CELUNE_BUILD_MODE STREQUAL "unsigned" AND NOT CELUNE_BUILD_MODE STREQUAL 
     message(FATAL_ERROR "CELUNE_BUILD_MODE must be unsigned or signed")
 endif()
 
+if(CELUNE_BUILD_MODE STREQUAL "unsigned")
+    message(AUTHOR_WARNING "Unsigned builds of Celune cannot be tamper protected.")
+endif()
+
 set(_require_signature_default OFF)
 if("$ENV{CELUNE_REQUIRE_RELEASE_SIGNATURE}" STREQUAL "1")
     set(_require_signature_default ON)
