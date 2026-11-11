@@ -241,9 +241,7 @@ def _think_worker(engine: Celune) -> None:
                     and not persona_ready
                 )
                 if not can_prepare_persona:
-                    core_agent.speak_agent_classification_failure(
-                        engine, text, route.failure, route
-                    )
+                    core_agent.say_agent_classification_fallback(engine, text)
                     continue
             if route.route == AgentRoute.CLARIFICATION:
                 clarification = route.clarification_prompt

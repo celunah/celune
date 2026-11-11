@@ -31,6 +31,7 @@ from ..typing.agent import (
     AgentRequest,
     AgentSession,
     AgentTaskState,
+    AgentToolSchema,
     AgentInterruption,
     AgentFailureReason,
     AgentChoiceResponse,
@@ -485,8 +486,10 @@ class AgentInputRouter:
             repair_instruction = (
                 f"{system}\n\nThe previous routing output was rejected: {reason}. "
                 "Return the corrected classification object now, with no prose or "
-                "Markdown. If there is no active task context and the input is an "
-                "action request, use classification task and route task exactly. "
+                "Markdown. If there is no active task context and a listed available "
+                "tool can perform the requested action, use classification task and "
+                "route task exactly. If no listed tool can perform it, classify it as "
+                "conversation. "
                 "Use task_input only when an active task context is supplied."
             )
             repaired["system"] = repair_instruction
@@ -943,7 +946,8 @@ AGENT_CLASSIFICATION_INSTRUCTIONS = (
     "(user_interrupt, user_steering, or null), reason (short internal label), and "
     "routing_metadata (object or null). Ordinary greetings, social conversation, "
     "questions, explanations, and requests for advice are conversation. A task requires "
-    "a concrete action the local agent would perform. Understand meaning and context, "
+    "a concrete action that at least one listed available tool can perform. Understand "
+    "meaning and context, "
     "not isolated keywords or imperative grammar. If the action, target, control intent, "
     "approval, or choice is genuinely unclear, use clarification and ask one concise "
     "question. When active task context is supplied, treat follow-up instructions as "
@@ -952,7 +956,10 @@ AGENT_CLASSIFICATION_INSTRUCTIONS = (
     "task; never use task_input, approval_response, choice_response, cancellation, "
     "or interruption for a new task. A task is a request for Celune to perform an "
     "operation, inspect or retrieve live/local state, change a setting, use a registered "
-    "capability, or carry out a concrete action for the user. This includes requests "
+    "capability, or carry out a concrete action for the user, using a listed available "
+    "tool. If no listed available tool can perform the requested operation, classify "
+    "the input as conversation so ordinary Persona can answer or explain its limits; "
+    "do not invent a capability or create a task. This includes requests "
     "that ask for a result, such as checking whether a process is running or opening a "
     "file and reporting what is wrong. A conversation is a request for Celune to answer "
     "from the current conversation or general knowledge, explain a supplied concept, "
@@ -1006,7 +1013,12 @@ def build_agent_classification_request(
         include_memory_context=False,
     )
     persona_prompt = PersonaPromptBuilder.build(context)
-    system_prompt = f"{persona_prompt}\n\n{AGENT_CLASSIFICATION_INSTRUCTIONS}"
+    tool_catalog = _available_tool_catalog(engine)
+    system_prompt = (
+        f"{persona_prompt}\n\n{AGENT_CLASSIFICATION_INSTRUCTIONS}\n\n"
+        "Available agent tools:\n"
+        f"{json.dumps(tool_catalog, ensure_ascii=True, sort_keys=True)}"
+    )
     if routing_context is not None:
         system_prompt = (
             f"{system_prompt}\n\nActive routing context:\n"
@@ -1028,6 +1040,7 @@ def build_agent_classification_request(
         "system": system_prompt,
         "user": clean_request,
         "request": clean_request,
+        "tool_catalog": cast(JSONSerializable, tool_catalog),
         "context_space": min(
             _configured_agent_context_size(engine), AGENT_ROUTING_CONTEXT_SPACE
         ),
@@ -1038,3 +1051,25 @@ def build_agent_classification_request(
         "top_p": 1.0,
         "repetition_penalty": 1.0,
     }
+
+
+def _available_tool_catalog(engine: Celune) -> list[JSON]:
+    """Return the available registered tools relevant to input classification."""
+    raw_schemas = getattr(engine, "agent_tool_schemas", None)
+    if not isinstance(raw_schemas, Mapping):
+        return []
+
+    schemas = [
+        schema
+        for schema in raw_schemas.values()
+        if isinstance(schema, AgentToolSchema) and schema.available
+    ]
+    schemas.sort(key=lambda schema: schema.tool_id)
+    return [
+        {
+            "tool_id": schema.tool_id,
+            "display_name": schema.display_name,
+            "description": schema.description,
+        }
+        for schema in schemas
+    ]

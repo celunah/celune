@@ -30,17 +30,19 @@ from celune.celune import Celune
 from celune.config import Config
 from celune.exceptions import BackendError, CEDTSTimeoutError
 from celune.persona.impl import persona_quantization
+from celune.typing.agent import (
+    AgentRoute,
+    AgentInputClassification,
+    AgentClassificationResult,
+    AgentClassificationFailure,
+    AgentClassificationFailureKind,
+)
 from celune.typing.locks import (
     ComponentLockName,
     ComponentLockOwner,
     ComponentLockRequirement,
 )
 from celune.typing.modes import OperationState
-from celune.typing.agent import (
-    AgentClassificationResult,
-    AgentInputClassification,
-    AgentRoute,
-)
 from celune.typing.common import JSONSerializable
 from celune.persona.emotion import PersonaEmotionAnalyzer
 from celune.pipeline.playback import play_signal
@@ -1263,16 +1265,26 @@ class TestCeluneRuntime(CeluneCoreTestSupport):
     def test_classifier_failure_does_not_fall_through_to_persona_generation(
         self,
     ) -> None:
-        """Keep a Persona classifier transport error out of normal generation."""
+        """Speak failed-to-classify input directly without sending it to Persona again."""
         celune = self._make_celune({"mode": "agent", "vram": "xhigh"})
         celune.persona_ready = True
         celune.locked = False
         celune.cur_state = "idle"
         celune.playback_done.set()
         celune.vision = mock.Mock()
-        celune.vision.post.side_effect = RuntimeError("classifier transport failed")
+        failure = AgentClassificationFailure(
+            AgentClassificationFailureKind.TRANSPORT,
+            "classifier transport failed",
+        )
+        route = AgentClassificationResult(
+            classification=AgentInputClassification.CONVERSATION,
+            confidence=0.0,
+            reason="classifier_failure",
+            route=AgentRoute.CONVERSATION,
+            failure=failure,
+        )
         with (
-            mock.patch("celune.vram.torch.cuda.is_available", return_value=False),
+            mock.patch("celune.core.agent.route_input", return_value=route),
             mock.patch("celune.core.conversation.think_persona") as think_pipeline,
             mock.patch.object(celune, "say", return_value=False) as say,
         ):
@@ -1283,9 +1295,8 @@ class TestCeluneRuntime(CeluneCoreTestSupport):
             persona_thread.join(timeout=2)
 
         think_pipeline.assert_not_called()
-        say.assert_called_once_with(
-            i18n.string("agent.classifier_unavailable"), maintain_status=True
-        )
+        say.assert_called_once_with("Delete the fixture.", maintain_status=True)
+        celune.vision.post.assert_not_called()
         self.assertIsNone(celune.agent_runtime.get_active_task("default"))
 
     def test_think_interrupts_active_agent_without_stopping_speech(

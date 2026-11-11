@@ -60,6 +60,12 @@ or conversation summary. The self-contained request starts agent planning; when
 more context is needed, the agent can inspect preserved conversation history
 through `query_task_history`.
 
+For new inputs, the router gives Persona the currently available agent tool
+catalog and asks it to classify requests with no matching tool as conversation.
+Those inputs continue through ordinary Persona conversation. If classification
+fails after its repair attempt, Celune sends the original input through `say()`
+without submitting it to Persona again.
+
 ## Built-in engine tools
 
 The normal production catalog is always local and explicitly registered:

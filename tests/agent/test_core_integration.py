@@ -34,8 +34,6 @@ from celune.agent import (
     AgentInputClassification,
     AgentToolExecutionStatus,
     AgentClassificationResult,
-    AgentClassificationFailure,
-    AgentClassificationFailureKind,
 )
 from celune.celune import Celune
 from celune.agent.tools import AgentStatusTool, _recall, production_agent_tool_schemas
@@ -913,45 +911,23 @@ class TestAgentCoreIntegration(CeluneTestCase):
         assert "do not offer additional help" in failure_prompt
         assert "claim that Celune will do more" in failure_prompt
 
-    def test_classification_failure_is_explained_by_active_persona(self) -> None:
-        """Use the active Persona voice when intent classification fails."""
+    def test_classification_failure_speaks_original_input_without_persona(
+        self,
+    ) -> None:
+        """Send the original text to direct speech without another Persona request."""
         core = self._make_core()
-        persona = _PersonaFixture()
-        persona.responses = [
-            _PersonaResponse("I cannot confidently route that request yet."),
-        ]
-        core.vision = cast(PersonaClient, persona)
-        failure = AgentClassificationFailure(
-            AgentClassificationFailureKind.MALFORMED_OUTPUT,
-            "classifier returned malformed output",
-        )
-        route = AgentClassificationResult(
-            classification=AgentInputClassification.CONVERSATION,
-            confidence=0.0,
-            reason="classifier_failure",
-            route=AgentRoute.CONVERSATION,
-            failure=failure,
-        )
-        delivered: list[str] = []
-        with mock.patch(
-            "celune.core.agent.deliver_persona_response",
-            side_effect=lambda _engine, _request, response, maintain_status=False: (
-                delivered.append(response) or True
-            ),
-        ):
-            assert core_agent.speak_agent_classification_failure(
+        core.vision = mock.Mock()
+        with mock.patch.object(core, "say", return_value=True) as say:
+            assert core_agent.say_agent_classification_fallback(
                 core,
                 "Please handle this ambiguous request.",
-                failure,
-                route,
             )
 
-        assert delivered == ["I cannot confidently route that request yet."]
-        failure_prompt = persona.requests[-1]["system"]
-        assert isinstance(failure_prompt, str)
-        assert "Classification failure" in failure_prompt
-        assert "malformed_output" in failure_prompt
-        assert persona.requests[-1]["context_space"] == 8192
+        say.assert_called_once_with(
+            "Please handle this ambiguous request.",
+            maintain_status=True,
+        )
+        core.vision.post.assert_not_called()
 
     def test_typed_permission_approval_tool_and_cancel_failures_use_persona(
         self,

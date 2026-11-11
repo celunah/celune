@@ -15,6 +15,7 @@ from celune.agent import (
     AgentRoute,
     AgentRuntime,
     AgentTaskState,
+    AgentToolSchema,
     AgentInputRouter,
     AgentChoiceOption,
     AgentToolBehavior,
@@ -96,6 +97,45 @@ class TestAgentRouting:  # pylint: disable=attribute-defined-outside-init
                 assert result.classification == AgentInputClassification.CONVERSATION
                 assert result.route == AgentRoute.CONVERSATION
         assert self.runtime.get_active_task("default") is None
+
+    def test_classifier_uses_available_tools_to_route_unmatched_input_to_persona(
+        self,
+    ) -> None:
+        """Give semantic routing the available tool catalog for conversation matches."""
+        self.engine.agent_tool_schemas = {
+            "read_status": AgentToolSchema(
+                tool_id="read_status",
+                display_name="Read status",
+                description="Read current Celune status.",
+            ),
+            "disabled": AgentToolSchema(
+                tool_id="disabled",
+                display_name="Disabled tool",
+                description="Unavailable capability.",
+                available=False,
+            ),
+        }
+        self._set_classifier({"classification": "conversation", "confidence": 0.96})
+
+        result = self.router.route(
+            "What do you think about the current setup?",
+            persona_ready=True,
+        )
+
+        assert result.route == AgentRoute.CONVERSATION
+        assert self.runtime.get_active_task("default") is None
+        request = self.engine.vision.post.call_args.kwargs["json"]
+        assert request["tool_catalog"] == [
+            {
+                "tool_id": "read_status",
+                "display_name": "Read status",
+                "description": "Read current Celune status.",
+            }
+        ]
+        system_prompt = request["system"]
+        assert isinstance(system_prompt, str)
+        assert "Available agent tools:" in system_prompt
+        assert "If no listed available tool can perform" in system_prompt
 
     def test_explicit_registered_tool_request_skips_persona_classification(
         self,

@@ -22,8 +22,6 @@ from ..typing.agent import (
     ToolCall,
     AgentOutput,
     AgentContext,
-    AgentRequest,
-    AgentSession,
     AgentTaskState,
     AgentAbortReason,
     AgentInterruption,
@@ -33,7 +31,6 @@ from ..typing.agent import (
     AgentInputClassification,
     AgentToolExecutionStatus,
     AgentClassificationResult,
-    AgentClassificationFailure,
 )
 from ..typing.locks import ComponentLockName
 
@@ -486,45 +483,6 @@ def run_agent_route(self, route: AgentClassificationResult) -> bool:
     return output["end"] and not delivery_failed
 
 
-def speak_agent_classification_failure(
-    self,
-    request: str,
-    failure: AgentClassificationFailure,
-    route: AgentClassificationResult,
-) -> bool:
-    """Ask the active Persona to explain a classifier failure naturally."""
-    metadata = route.routing_metadata
-    task_id = metadata.get("task_id") if isinstance(metadata, dict) else None
-    if isinstance(task_id, str):
-        try:
-            context = self.agent_runtime.get_context(task_id)
-        except ValueError:
-            context = None
-    else:
-        context = None
-    if context is None:
-        context = self.agent_runtime.create_context(
-            AgentRequest(
-                request=request,
-                session=AgentSession(session_id="default"),
-            ),
-            classification_failure=failure,
-        )
-    try:
-        output = self._agent_persona_bridge.respond(context)
-        response = output.get("response")
-        if isinstance(response, str) and response.strip():
-            return deliver_persona_response(
-                self, request, response, maintain_status=True
-            )
-    except Exception as exc:
-        self.log(
-            format_error_message(
-                "[AGENT] failure_response_generation_failed",
-                exc,
-                self.log_level,
-            ),
-            "warning",
-            loglevel="verbose",
-        )
-    return self.say(string("agent.classifier_unavailable"), maintain_status=True)
+def say_agent_classification_fallback(self, request: str) -> bool:
+    """Speak the original input directly when semantic classification fails."""
+    return self.say(request, maintain_status=True)
