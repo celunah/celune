@@ -18,6 +18,9 @@ selection, and the checks that confirm Celune is ready to speak.
 The default configuration enables the REST API on loopback port 2060 and keeps
 isolated backend environments enabled. A first launch can therefore spend time
 creating a backend environment and downloading models before the ready state.
+The speech pipeline and ready event become available after backend warmup. When
+Persona initializes in the background, Celune waits for that worker to finish
+before playing the readiness cue, so the cue does not overlap that startup work.
 
 ## Select a backend
 

@@ -117,6 +117,72 @@ class TestCeluneRuntime(CeluneCoreTestSupport):
             celune.fatal()
             self.assertEqual(celune.operation_state, OperationState.FATAL)
 
+    def test_readiness_signal_waits_for_persona_background_load(self) -> None:
+        """Avoid opening the audio stream while Persona startup is still active."""
+        persona_load_release = threading.Event()
+        persona_loaded = threading.Event()
+
+        def load_persona() -> None:
+            persona_load_release.wait()
+            persona_loaded.set()
+
+        persona_thread = threading.Thread(
+            target=load_persona,
+            daemon=True,
+        )
+        persona_thread.start()
+        engine = mock.Mock(
+            backend_mode="normal",
+            exit_requested=False,
+            _model_lock=threading.Lock(),
+            _persona_load_thread=persona_thread,
+        )
+        call_order: list[str] = []
+        signal_played = threading.Event()
+
+        def signal_player(_engine: Celune, signal_type: str) -> bool:
+            call_order.append(signal_type)
+            signal_played.set()
+            return True
+
+        try:
+            with mock.patch(
+                "celune.core.voice.try_play_signal",
+                side_effect=signal_player,
+            ):
+                core_loading._play_readiness_signal_after_persona_load(engine)
+                assert not signal_played.wait(timeout=0.05)
+                persona_load_release.set()
+                assert signal_played.wait(timeout=2)
+        finally:
+            persona_load_release.set()
+            persona_thread.join(timeout=1)
+
+        assert persona_loaded.is_set()
+        assert call_order == ["readiness"]
+
+    def test_readiness_signal_is_immediate_without_persona_load(self) -> None:
+        """Play the readiness cue immediately when no Persona load is pending."""
+        engine = mock.Mock(
+            backend_mode="normal",
+            exit_requested=False,
+            _model_lock=threading.Lock(),
+            _persona_load_thread=None,
+        )
+        call_order: list[str] = []
+
+        def signal_player(_engine: Celune, signal_type: str) -> bool:
+            call_order.append(signal_type)
+            return True
+
+        with mock.patch(
+            "celune.core.voice.try_play_signal",
+            side_effect=signal_player,
+        ):
+            core_loading._play_readiness_signal_after_persona_load(engine)
+
+        assert call_order == ["readiness"]
+
     def test_callback_registration_rejects_the_same_callback_twice(self) -> None:
         """Verify Celune rejects duplicate callback registration attempts."""
         celune = self._make_celune({})
@@ -594,12 +660,20 @@ class TestCeluneRuntime(CeluneCoreTestSupport):
             mock.patch("celune.core.loading.threading.Thread") as thread_cls,
             mock.patch("celune.core.loading.validate_runtime", return_value=True),
             mock.patch("celune.core.voice.play_signal", return_value=False),
+            mock.patch.object(
+                celune, "emit_event", wraps=celune.emit_event
+            ) as emit_event,
         ):
             thread_cls.return_value.start = mock.Mock()
             assert celune.load()
+            emit_event.assert_any_call("ready", mock.ANY)
 
         progress_events_before_persona = progress_events.copy()
-        persona_thread = thread_cls.call_args_list[-1]
+        persona_thread = next(
+            call
+            for call in thread_cls.call_args_list
+            if call.kwargs.get("args") == (celune, persona_client)
+        )
         assert not celune.persona_ready
         assert celune.persona_loading
         persona_thread.kwargs["target"](*persona_thread.kwargs["args"])

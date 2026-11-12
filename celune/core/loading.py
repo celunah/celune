@@ -8,13 +8,16 @@ import os
 import time
 import threading
 import contextlib
-from functools import partial
 from typing import Optional, cast
+from functools import partial
 
 import torch
 from transformers.modeling_utils import PreTrainedModel
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 
+from . import lifecycle
+from ..i18n import string, tagged_string
+from ..vram import vram_profile_fits, resolve_vram_preset, validate_vram_preset
 from ..utils import (
     discard,
     format_error,
@@ -23,6 +26,10 @@ from ..utils import (
     is_port_usable,
     format_error_message,
 )
+from ..cevoice import default_loader, bundle_display_name, announce_default_bundle
+from ..runtime import validate_runtime, log_runtime_banner
+from ..modeling import normalizer_device, load_normalizer_components
+from ..constants import APP_NAME
 from ..exceptions import (
     WarmupError,
     BackendError,
@@ -31,23 +38,15 @@ from ..exceptions import (
     ModelConsentRequired,
     InvalidCharacterError,
 )
-from ..constants import APP_NAME
-from ..typing.aliases import LogLevel
-from ..backends.tts import CeluneBackend
-from ..i18n import string, tagged_string
-from ..persona.impl import persona_enabled
-from ..dataclasses.events import ReadyEvent
-from ..registry.other import NORMALIZER_MODEL_ID
-from ..pipeline.output import saved_output_speech_seconds
-from ..runtime import log_runtime_banner, validate_runtime
-from ..typing.celune import Generative, NormalizerTokenizer
-from ..modeling import normalizer_device, load_normalizer_components
-from ..pipeline.playback import force_stop_speech as force_stop_pipeline
-from ..vram import vram_profile_fits, resolve_vram_preset, validate_vram_preset
-from ..cevoice import default_loader, bundle_display_name, announce_default_bundle
-
-from . import lifecycle
 from .concurrency import run_in_daemon_thread
+from ..backends.tts import CeluneBackend
+from ..persona.impl import persona_enabled
+from ..typing.celune import Generative, NormalizerTokenizer
+from ..registry.other import NORMALIZER_MODEL_ID
+from ..typing.aliases import LogLevel
+from ..pipeline.output import saved_output_speech_seconds
+from ..pipeline.playback import force_stop_speech as force_stop_pipeline
+from ..dataclasses.events import ReadyEvent
 
 
 async def force_stop_speech_async(self) -> bool:
@@ -343,6 +342,36 @@ def load(self, raise_on_error: bool = False, skip_runtime_check: bool = False) -
             "warning",
         )
 
+    if self.backend_mode == "normal":
+        _play_readiness_signal_after_persona_load(self)
+    self.emit_event("ready", ReadyEvent(celune=self))
+
+    return True
+
+
+def _play_readiness_signal_after_persona_load(self) -> None:
+    """Play the readiness cue after background Persona initialization settles."""
+    with self._model_lock:
+        persona_thread = self._persona_load_thread
+
+    if persona_thread is None or not persona_thread.is_alive():
+        _play_readiness_signal(self)
+        return
+
+    def _wait_for_persona_and_announce() -> None:
+        persona_thread.join()
+        if not self.exit_requested:
+            _play_readiness_signal(self)
+
+    threading.Thread(
+        target=_wait_for_persona_and_announce,
+        name="celune-readiness-signal",
+        daemon=True,
+    ).start()
+
+
+def _play_readiness_signal(self) -> None:
+    """Play the readiness cue and log a failure without blocking startup."""
     from .voice import try_play_signal
 
     if self.backend_mode == "normal" and not try_play_signal(self, "readiness"):
@@ -351,10 +380,6 @@ def load(self, raise_on_error: bool = False, skip_runtime_check: bool = False) -
             "warning",
             loglevel="verbose",
         )
-
-    self.emit_event("ready", ReadyEvent(celune=self))
-
-    return True
 
 
 def _start_configured_api(self) -> None:
