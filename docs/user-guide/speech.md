@@ -101,7 +101,7 @@ utterance. The model is
 Apache-2.0 licensed and is downloaded from Hugging Face. When captions are
 enabled, Celune prepares the model in the background during startup without
 blocking startup; the first alignment can still wait if preparation is ongoing.
-Install the optional ONNX Runtime dependency on Windows with:
+Install the optional GPU-enabled ONNX Runtime dependency on Windows with:
 
 ```powershell
 uv sync --dev --extra api --extra captions
@@ -109,6 +109,8 @@ uv sync --dev --extra api --extra captions
 
 Caption alignment keeps ONNX Runtime session logs at error level, suppressing
 CPU graph-optimization warnings while preserving actual runtime errors.
+When its CUDA provider is available, Celune runs model inference on an NVIDIA
+GPU. It falls back to CPU if CUDA is unavailable or cannot initialize.
 
 The `espeak-ng` executable must also be on `PATH`. If eSpeak NG or ONNX Runtime
 is missing, Celune logs a yellow warning and hides captions for the utterance;

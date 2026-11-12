@@ -212,8 +212,9 @@ captions: true
 
 When enabled, Celune uses Sadda's `sadda-speech/wav2vec2-espeak-ctc` model to
 align generated speech words through eSpeak IPA phonemes. The acoustic model and
-ONNX Runtime extra are optional. On Windows, install the Python dependencies
-with:
+GPU-enabled ONNX Runtime extra are optional. Celune prefers the CUDA execution
+provider and falls back to CPU if CUDA is unavailable or cannot initialize. On
+Windows, install the Python dependencies with:
 
 ```powershell
 uv sync --dev --extra api --extra captions

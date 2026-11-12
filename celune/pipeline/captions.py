@@ -7,33 +7,35 @@ import re
 import json
 import math
 import queue
+import string as string_module
 import inspect
+import logging
 import importlib
 import itertools
 import threading
 import subprocess
 import unicodedata
-from pathlib import Path
-import string as string_module
-from collections import abc, deque
+from types import ModuleType
+from typing import TYPE_CHECKING, Union, Optional, Protocol, cast
 from difflib import SequenceMatcher
-from typing import TYPE_CHECKING, Optional, Protocol, Union, cast
+from pathlib import Path
+from collections import abc, deque
 
 import numpy as np
 from iso639.exceptions import InvalidLanguageValue, DeprecatedLanguageValue
 
 from ..i18n import string
-from ..constants import BASE_SR
-from ..typing.common import JSON
-from .timing import monotonic_time
 from ..utils import format_error_message
-from ..audio.resampling import resample_audio
-from ..typing.pipeline import SpeechStreamQueue
-from ..dataclasses.events import StateChangedEvent
-from ..registry.consent import require_model_consent
+from .timing import monotonic_time
+from ..constants import BASE_SR
+from ..exceptions import OnnxRuntimeNotFound, EspeakExecutableNotFound
+from ..typing.common import JSON
 from ..registry.other import CAPTION_ALIGNMENT_MODEL_ID
 from ..typing.aliases import LogLevel, AudioChunk, AudioChunks
-from ..exceptions import OnnxRuntimeNotFound, EspeakExecutableNotFound
+from ..typing.pipeline import SpeechStreamQueue
+from ..audio.resampling import resample_audio
+from ..registry.consent import require_model_consent
+from ..dataclasses.events import StateChangedEvent
 from ..dataclasses.pipeline import (
     SpeechTiming,
     CaptionPlaybackState,
@@ -50,6 +52,8 @@ _MODEL_SAMPLE_RATE = 16000
 _MODEL_FRAME_RATE = 50.0
 
 _ONNX_LOG_SEVERITY_ERROR = 3
+
+_LOGGER = logging.getLogger(__name__)
 
 _ALIGNER_LOCK = threading.Lock()
 
@@ -78,6 +82,9 @@ class _HubDownload(Protocol):
 class _InferenceSession(Protocol):
     """Small ONNX Runtime surface used by the alignment model."""
 
+    def get_providers(self) -> abc.Sequence[str]:
+        """Return the providers registered on this session."""
+
     def get_inputs(self) -> abc.Sequence[_NamedModelValue]:
         """Return model input metadata."""
 
@@ -90,6 +97,12 @@ class _InferenceSession(Protocol):
         input_feed: abc.Mapping[str, np.ndarray],
     ) -> abc.Sequence[np.ndarray]:
         """Evaluate the ONNX graph."""
+
+
+class _SessionOptions(Protocol):
+    """ONNX Runtime session options used by the aligner."""
+
+    log_severity_level: int
 
 
 class CaptionAligner:
@@ -265,19 +278,56 @@ class CaptionAligner:
                 )
                 session_options = runtime.SessionOptions()
                 session_options.log_severity_level = _ONNX_LOG_SEVERITY_ERROR
-                session = cast(
-                    _InferenceSession,
-                    runtime.InferenceSession(
-                        model_path,
-                        sess_options=session_options,
-                        providers=["CPUExecutionProvider"],
-                    ),
+                session = _create_caption_session(
+                    runtime,
+                    model_path,
+                    session_options,
+                )
+                _LOGGER.info(
+                    "Caption alignment ONNX Runtime providers: %s",
+                    session.get_providers(),
                 )
                 self._input_name = session.get_inputs()[0].name
                 self._output_name = session.get_outputs()[0].name
                 self._session = session
                 self._vocab = vocab
             return self._session, self._vocab
+
+
+def _create_caption_session(
+    runtime: ModuleType,
+    model_path: str,
+    session_options: _SessionOptions,
+) -> _InferenceSession:
+    """Prefer CUDA for caption inference and retry with CPU if needed."""
+    cpu_provider = "CPUExecutionProvider"
+    if "CUDAExecutionProvider" in runtime.get_available_providers():
+        try:
+            preload_dlls = getattr(runtime, "preload_dlls", None)
+            if callable(preload_dlls):
+                preload_dlls()
+            return cast(
+                _InferenceSession,
+                runtime.InferenceSession(
+                    model_path,
+                    sess_options=session_options,
+                    providers=["CUDAExecutionProvider", cpu_provider],
+                ),
+            )
+        except Exception:
+            _LOGGER.warning(
+                "Caption CUDA session initialization failed; retrying with CPU.",
+                exc_info=True,
+            )
+
+    return cast(
+        _InferenceSession,
+        runtime.InferenceSession(
+            model_path,
+            sess_options=session_options,
+            providers=[cpu_provider],
+        ),
+    )
 
 
 def get_caption_aligner() -> CaptionAligner:

@@ -26,9 +26,6 @@ dependencies = [
     "safetensors",
     "sentencepiece",
     "transformers>=5.21.0,<6.0.0",
-    # Some models are ONNX models rather than PyTorch ones, so this package allows them to run.
-    "onnxruntime>=1.22.0",
-
     # Audio processing
     "numpy",
     "scipy",
@@ -157,6 +154,11 @@ api = [
     "gradio",
     # MCP server
     "mcp",
+]
+
+# Use ONNX Runtime's CUDA execution provider for speech caption alignment.
+captions = [
+    "onnxruntime-gpu>=1.30.0",
 ]
 
 # Install to use OpenZL-compressed CECHAR v4 packages in Celune.
