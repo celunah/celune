@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import gc
 import os
+import re
 import time
 import queue
 import shutil
@@ -1047,6 +1048,28 @@ def start_persona_background_load(self) -> None:
     thread.start()
 
 
+def _is_memory_related_error(error: BaseException) -> bool:
+    """Return whether an exception chain describes a memory limit failure."""
+    errors_to_check = [error]
+    checked_errors: set[int] = set()
+    memory_pattern = re.compile(r"\b(?:memory|ram|vram|oom)\b", re.IGNORECASE)
+    while errors_to_check:
+        current_error = errors_to_check.pop()
+        error_id = id(current_error)
+        if error_id in checked_errors:
+            continue
+        checked_errors.add(error_id)
+        if memory_pattern.search(str(current_error)):
+            return True
+        for chained_error in (
+            current_error.__cause__,
+            current_error.__context__,
+        ):
+            if chained_error is not None:
+                errors_to_check.append(chained_error)
+    return False
+
+
 def load_persona_background(self, vision: PersonaClient) -> None:
     """Load Persona in the background and publish its ready state."""
     acquired, component_lease = acquire_component_lease(
@@ -1064,14 +1087,15 @@ def load_persona_background(self, vision: PersonaClient) -> None:
     except Exception as error:
         self.log(string("celune.persona_not_initialized"), "warning")
         self.log(string("celune.speech_only_mode"), "warning")
-        self.log(
-            format_error_message(
+        if _is_memory_related_error(error):
+            error_message = string("celune.persona_insufficient_memory")
+        else:
+            error_message = format_error_message(
                 string("celune.persona_init_failed"),
                 error,
                 self.log_level,
-            ),
-            "warning",
-        )
+            )
+        self.log(error_message, "warning")
         with self._model_lock:
             if self.vision is vision:
                 self.vision = None

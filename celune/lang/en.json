@@ -133,6 +133,7 @@
     "celune.not_possible": "Not possible",
     "celune.package_import_failed": "Package import failed.",
     "celune.persona_init_failed": "Persona could not be initialized.",
+    "celune.persona_insufficient_memory": "Not enough memory to load Persona.",
     "celune.persona_fallback_notice": "Persona couldn't reply; your input was queued for speech instead.",
     "celune.persona_initialized": "Persona initialized.",
     "celune.persona_not_initialized": "Persona not initialized.",
