@@ -946,9 +946,10 @@ def _prepare_terminal_output_stream(self) -> Optional[TextIOWrapper]:
     if not callable(fileno):
         return None
 
-    output_fd = _duplicate_terminal_fd(cast(Callable[[], int], fileno))
-    if output_fd is None:
+    duplicated_fd = _duplicate_terminal_fd(cast(Callable[[], int], fileno))
+    if duplicated_fd is None:
         return None
+    output_fd = cast(int, duplicated_fd)
 
     from ..utils import discard
 
