@@ -10,8 +10,7 @@ import numpy as np
 from ..i18n import string
 from ..constants import BASE_SR
 
-# TODO: stop using internals of Celune
-from ..audio.dsp import _generate_test_tone
+from ..audio.dsp import generate_test_tone
 from ..pipeline import buffering, submission
 from ..pipeline.playback import close_stream
 from ..typing.pipeline import SpeechStreamQueue
@@ -165,7 +164,7 @@ def test_audio(engine: Celune) -> bool:
         for channel_index, speaker in enumerate(speakers):
             engine._audio_test_route = (len(speakers), channel_index)
             if speaker.position == "lfe":
-                audio = _generate_test_tone(
+                audio = generate_test_tone(
                     _SUBWOOFER_TEST_FREQUENCY,
                     duration=1.5,
                     sample_rate=BASE_SR,

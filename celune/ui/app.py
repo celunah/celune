@@ -1,8 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """Frontend layer."""
 
-# TODO: stop pycharm from complaining hard here
-# it is complaining about false-positive "unused" imports and things undefined at the module level
 from __future__ import annotations
 
 import sys
@@ -106,6 +104,8 @@ else:
 
 install_textual_timer_sleep()
 
+# PyCharm treats these type-only imports as unused even when annotations need them.
+# noinspection PyUnresolvedReferences
 if TYPE_CHECKING:
     import yaml
     import numpy as np
@@ -212,6 +212,7 @@ _UI_RUNTIME_EXPORTS = (
     launcher_loss_requested,
 )
 
+# noinspection PyUnresolvedReferences
 if TYPE_CHECKING:
     _UI_TYPE_EXPORTS = (
         AgentTask,
@@ -712,6 +713,8 @@ def set_terminal_status(
     )
 
 
+# PyCharm cannot infer globals populated by this deferred dependency loader.
+# noinspection PyGlobalUndefined
 def ensure_ui_runtime_dependencies() -> None:
     """Load optional UI integrations after the first loading frame is visible."""
     global _RUNTIME_DEPENDENCIES_LOADED

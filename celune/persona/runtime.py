@@ -1,6 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
 """Shared Persona runtime helpers for Celune-managed generation."""
-# TODO: tell pycharm that the values are "used" here
 
 import gc
 import os
@@ -25,7 +24,7 @@ from transformers.configuration_utils import PreTrainedConfig
 from transformers.tokenization_utils_base import BatchEncoding
 
 from ..vram import resolve_vram_preset, is_cuda_out_of_memory, release_cuda_after_oom
-from ..utils import discard, normalize_special_characters
+from ..utils import normalize_special_characters
 from ..modeling import create_quantized_kv_cache
 from ..constants import (
     N_A_STR,
@@ -80,8 +79,7 @@ class _PersonaCancellationCriteria(StoppingCriteria):
         **kwargs: ModelGenerateKwargValue,
     ) -> torch.Tensor:
         """Return one stop flag per sequence in the current generation batch."""
-        discard(scores)
-        discard(kwargs)
+        _ = (scores, kwargs)
         return torch.full(
             (input_ids.shape[0],),
             self._cancellation_event.is_set(),

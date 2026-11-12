@@ -582,6 +582,10 @@ entry checksums and all non-tensor format validation still run. Callers that
 consume `.pt` data should use the default full validation.
 
 `read_asset()` additionally validates the SHA-256 digest of the asset bytes before returning them.
+Call `celune.cevoice.validate_v4_embedding(name, data)` to validate one indexed
+`.pt` asset directly. It accepts the archive entry name and serialized tensor
+bytes, returns `None` for a valid embedding, raises `CEVoiceError` for invalid
+data, and raises `CEVoiceDependencyUnavailableError` when PyTorch is missing.
 
 ## Notes from Celune's default pack
 

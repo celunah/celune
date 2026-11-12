@@ -242,6 +242,18 @@ Arrays passed to audio calls should be numeric mono/stereo data; Celune converts
 them to normalized float32. The returned `AudioOutput` includes the actual
 sample rate and channel data.
 
+The DSP module also exposes
+`generate_test_tone(frequency: float, duration: float, sample_rate: int = BASE_SR) -> AudioChunk`.
+It returns contiguous stereo float32 audio with short fades and raises
+`BadAudioError` when the frequency is not strictly between zero and the Nyquist
+rate, or when the duration or sample rate is not positive.
+
+```python
+from celune.audio.dsp import generate_test_tone
+
+tone = generate_test_tone(440.0, duration=0.5)
+```
+
 `test_audio()` waits for active playback, then uses the operating system's
 speaker map when available to route each localized position label to one output
 channel at a time. It uses a standard layout for the detected channel count when
@@ -310,6 +322,7 @@ from celune.cevoice import (
     CEVoice,
     add_cevoice_entries,
     remove_cevoice_entries,
+    validate_v4_embedding,
     write_cevoice,
     write_cechar_v4,
     write_cechar_v5,
@@ -328,6 +341,7 @@ remove_cevoice_entries("my_pack.cevoice", ["speech_style.md"])
 write_cevoice("legacy-compatible.cevoice", voices, metadata, voice_metadata)
 write_cechar_v4("character.cechar", files, metadata, compression=0)
 write_cechar_v5("character-with-singing.cechar", files, metadata, voice_metadata)
+validate_v4_embedding("balanced.pt", bundle.read_asset("balanced", "pt"))
 ```
 
 `CEVoice.open(path, *, validate_embeddings=True)` validates the header,
@@ -337,6 +351,10 @@ validation. `read_asset()` and `read_entry()` validate the selected asset
 digest before returning bytes. `write_cevoice()` writes the legacy-compatible
 layout; `write_cechar_v4()` writes indexed v4 archives, and `write_cechar_v5()`
 writes the current schema with an optional hidden `sing` voice.
+`validate_v4_embedding(name, data)` checks one indexed `.pt` asset against the
+restricted float32 speaker-embedding contract. It returns `None`, raises
+`CEVoiceError` for invalid data, and raises
+`CEVoiceDependencyUnavailableError` when PyTorch is missing.
 `CEVoice.singing_voice` returns `"sing"` when a v5 pack defines it, otherwise
 `None`. TTS voice lists
 exclude that reserved singing entry. `CEVoice.singing_pitch_range` returns its

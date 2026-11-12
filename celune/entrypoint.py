@@ -2095,11 +2095,10 @@ def _add_pack_entries(
             print(string("cli.pack_unsupported_file", name=source.name))
             return 1
         if suffix == ".pt" and bundle.is_indexed:
-            # TODO: make CEVOICE logic public
-            from celune.cevoice.v4 import _validate_v4_embedding
+            from celune.cevoice import validate_v4_embedding
 
             try:
-                _validate_v4_embedding(source.name, source.read_bytes())
+                validate_v4_embedding(source.name, source.read_bytes())
             except CEVoiceDependencyUnavailableError as error:
                 _print_pack_dependency_error(error)
                 return 1

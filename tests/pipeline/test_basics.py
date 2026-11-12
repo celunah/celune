@@ -597,7 +597,7 @@ class TestPipeline(CeluneTestCase):
                 return_value=speakers,
             ),
             mock.patch(
-                "celune.core.speech._generate_test_tone",
+                "celune.core.speech.generate_test_tone",
                 return_value=np.zeros((8, 2), dtype=np.float32),
             ) as generate_tone,
             mock.patch("celune.core.speech.close_stream") as close_stream,

@@ -131,7 +131,7 @@ class TestDsp(CeluneTestCase):
     def test_test_tone_preserves_very_low_frequency(self) -> None:
         """Generate an unfiltered low tone for the subwoofer channel check."""
         sample_rate = 48000
-        audio = dsp._generate_test_tone(20.0, duration=1.0, sample_rate=sample_rate)
+        audio = dsp.generate_test_tone(20.0, duration=1.0, sample_rate=sample_rate)
 
         assert audio.shape == (sample_rate, 2)
         assert audio.dtype == np.float32

@@ -25,6 +25,7 @@ from .v4 import (
     V4_COMPRESSION_ZSTANDARD,
     V4_ALLOWED_ASSET_SUFFIXES,
     V4_MAX_DECOMPRESSED_BYTES,
+    validate_v4_embedding,
     write_cechar_v4,
 )
 from .v5 import (
@@ -141,6 +142,7 @@ __all__ = [
     "resolve_bundle_path",
     "select_voice_bundle",
     "unregister_protected_temp_path",
+    "validate_v4_embedding",
     "write_cechar_v4",
     "write_cechar_v5",
     "write_cevoice",
