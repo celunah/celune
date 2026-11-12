@@ -488,40 +488,22 @@ class FakeStream:
         return False
 
 
-class _PipelineTestEngine(SimpleNamespace):
-    """Expose Celune's public state accessors over the test backing fields."""
-
-    _ACCESSOR_BACKING_FIELDS: ClassVar[dict[str, str]] = {
-        "persona_thread": "_persona_thread",
-        "model_lock": "_model_lock",
-        "reload_pending": "_reload_pending",
-        "inference_scheduler": "_inference_scheduler",
-    }
-
-    def __getattr__(self, name: str) -> Any:
-        """Read a public accessor from its mutable backing field."""
-        backing_field = self._ACCESSOR_BACKING_FIELDS.get(name)
-        if backing_field is None:
-            raise AttributeError(
-                f"{type(self).__name__!r} object has no attribute {name!r}"
-            )
-        return getattr(self, backing_field)
-
-
-def make_pipeline_engine() -> _PipelineTestEngine:
+def make_pipeline_engine() -> SimpleNamespace:
     """Build a lightweight engine-shaped object for pipeline tests.
 
     Returns:
-        _PipelineTestEngine: An object exposing the pipeline attributes under test.
+        SimpleNamespace: An object exposing the pipeline attributes under test.
     """
     messages: list[tuple[str, str]] = []
     errors: list[str] = []
     statuses: list[tuple[str, str]] = []
     progress: list[tuple[Optional[float], Optional[float]]] = []
-    engine = _PipelineTestEngine()
+    engine = SimpleNamespace()
     engine.backend = SimpleNamespace(supported_languages=("en",))
     engine._inference_scheduler = PriorityInferenceScheduler()
+    engine.inference_scheduler = engine._inference_scheduler
     engine._model_lock = threading.RLock()
+    engine.model_lock = engine._model_lock
     engine._persona_thread = None
     engine._reload_pending = False
     engine.vc_backend = None

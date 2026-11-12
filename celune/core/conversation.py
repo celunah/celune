@@ -63,7 +63,7 @@ def think(engine: Celune, text: str) -> bool:
             return False
         core_agent.interrupt_active_agent_for_input(engine, text)
         engine.persona_queue.put_nowait(text)
-        thread = engine.persona_thread
+        thread = engine._persona_thread
         if thread is not None and thread.is_alive():
             return True
 
@@ -217,7 +217,7 @@ def _think_worker(engine: Celune) -> None:
                 with engine.say_lock:
                     if not engine.persona_queue.empty():
                         continue
-                    if engine.persona_thread is current_thread:
+                    if engine._persona_thread is current_thread:
                         engine._persona_thread = None
                     return
 
@@ -277,7 +277,7 @@ def _think_worker(engine: Celune) -> None:
                 engine.toast(message, severity="warning")
     finally:
         with engine.say_lock:
-            if engine.persona_thread is current_thread:
+            if engine._persona_thread is current_thread:
                 engine._persona_thread = None
 
 
@@ -286,7 +286,7 @@ def wait_for_persona_playback(engine: Celune) -> bool:
     while not engine.exit_requested:
         engine.playback_done.wait(timeout=0.1)
         with engine.say_lock:
-            if engine.reload_pending or engine.cur_state == "reloading":
+            if engine._reload_pending or engine.cur_state == "reloading":
                 continue
             if not engine.locked and engine.cur_state not in {"generating", "speaking"}:
                 return True

@@ -141,7 +141,9 @@ def prepare_persona_conversation_engine(engine: Celune) -> None:
         AgentInputRouter,
         SimpleNamespace(route=route_input),
     )
-    engine._model_lock = threading.RLock()
+    test_engine = cast(SimpleNamespace, engine)
+    test_engine._model_lock = threading.RLock()
+    test_engine.model_lock = test_engine._model_lock
     engine._persona_queue = engine.persona_queue
     engine._persona_thread = None
     engine._reload_pending = False
