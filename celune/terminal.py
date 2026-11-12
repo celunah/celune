@@ -56,6 +56,8 @@ RUNTIME_LOG_FILTER_MESSAGES = frozenset(
         "The tokenizer class you load from this checkpoint is",
         "The class this function is called from",
         "HTTP Request:",
+        "Caption alignment ONNX Runtime providers",
+        "Skip loading CUDA and cuDNN DLLs since torch is imported",
     }
 )
 

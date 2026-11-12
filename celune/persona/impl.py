@@ -21,6 +21,7 @@ from ..cevoice import (
     merge_persona_metadata,
     persona_metadata_from_voice,
 )
+from ..terminal import RUNTIME_LOG_FILTER_MESSAGES
 from ..constants import (
     PERSONA_COMPACT_AT,
     PERSONA_CONTEXT_SPACE,
@@ -87,8 +88,12 @@ class PersonaClient:
 
         for line in stderr_buffer.getvalue().splitlines():
             text = line.strip()
-            if text:
-                self.log(f"[PERSONA] {text}", "warning", loglevel="verbose")
+            if not text or any(
+                filtered_message in text
+                for filtered_message in RUNTIME_LOG_FILTER_MESSAGES
+            ):
+                continue
+            self.log(f"[PERSONA] {text}", "warning", loglevel="verbose")
 
     def load(
         self,

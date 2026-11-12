@@ -661,6 +661,11 @@ class TestPersonaApi(CeluneTestCase):
             "load",
             side_effect=lambda model_id, quantization: (
                 print(f"loading {model_id}"),
+                print(
+                    "INFO Caption alignment ONNX Runtime providers: "
+                    "['CUDAExecutionProvider', 'CPUExecutionProvider']",
+                    file=__import__("sys").stderr,
+                ),
                 print(f"warn {quantization}", file=__import__("sys").stderr),
             ),
         ):
