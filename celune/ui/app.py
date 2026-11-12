@@ -104,7 +104,6 @@ else:
 
 install_textual_timer_sleep()
 
-# PyCharm treats these type-only imports as unused even when annotations need them.
 # noinspection PyUnresolvedReferences
 if TYPE_CHECKING:
     import yaml
@@ -713,7 +712,6 @@ def set_terminal_status(
     )
 
 
-# PyCharm cannot infer globals populated by this deferred dependency loader.
 # noinspection PyGlobalUndefined
 def ensure_ui_runtime_dependencies() -> None:
     """Load optional UI integrations after the first loading frame is visible."""

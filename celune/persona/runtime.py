@@ -372,7 +372,6 @@ class PersonaBackend:
         generation_cache: Optional[Cache] = None
         generation_kwargs: dict[str, ModelGenerateKwargValue] = {}
         try:
-            # Keep long prompts from shrinking structured output to one token.
             output_reserve = min(
                 max(0, request.max_new_tokens),
                 request.context_space - 1,
