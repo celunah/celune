@@ -56,6 +56,10 @@ The left pane selects the UI and its subsystems alongside engine components,
 including loaded lifecycle, pipeline, playback, audio-server, and worker modules.
 The right pane refreshes the selected object's state and attributes. Sensitive
 fields such as API keys, tokens, passwords, and credentials are redacted. The
+`Callbacks` entry under `Components > Engine` replaces those tables with a live
+callback list and details for each current handler, signature, source location,
+and any UI handlers chained onto it. The view refreshes with the inspector's
+one-second component snapshot. The
 `UI Modals` entry under `Components > UI` replaces the state and attributes
 tables with buttons for voice selection, the settings menu, and the license
 modal. It opens the current voice and settings menus when available, using

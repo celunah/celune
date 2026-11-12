@@ -4,23 +4,23 @@
 import time
 import asyncio
 import threading
+from types import ModuleType, SimpleNamespace
+from typing import Optional, cast
 from pathlib import Path
 from unittest import mock
-from typing import Optional, cast
-from types import ModuleType, SimpleNamespace
 
 from rich.cells import cell_len
-from textual.content import Content
 from textual.app import App, ComposeResult
-from textual.widgets import Button, Checkbox, DataTable, Input, Static
+from textual.content import Content
+from textual.widgets import Input, Button, Static, Checkbox, DataTable
 
 from celune.ui.debug import (
-    DebugCallTrace,
     DebugCallEntry,
+    DebugCallTrace,
     DebugInspectorScreen,
-    _has_python_call_method,
-    _is_python_callable,
     _classify_source,
+    _is_python_callable,
+    _has_python_call_method,
     _module_matches_filters,
     _snapshot_module_values,
 )
@@ -619,4 +619,64 @@ def test_glow_effects_component_validates_inputs_and_runs_actions() -> None:
             assert str(validation.content) == ""
 
     asyncio.run(inspect_glow())
+    assert not trace.available
+
+
+def test_engine_callbacks_render_as_a_live_callback_viewer() -> None:
+    """Show callback slots and refresh their current handlers in the inspector."""
+
+    def first_callback(_message: str) -> None:
+        return None
+
+    def second_callback(_message: str) -> None:
+        return None
+
+    def replacement_callback(_message: str) -> None:
+        return None
+
+    callback_state = SimpleNamespace(
+        log_callback=first_callback,
+        toast_callback=second_callback,
+    )
+    engine = SimpleNamespace(_callbacks=callback_state, log_level="debug")
+    ui = SimpleNamespace(celune=engine, _startup_log_level="debug")
+    trace = DebugCallTrace(ui)
+    trace.set_enabled(True)
+    trace.set_paused(True)
+    host = _InspectorHost(ui, trace)
+
+    async def inspect_callbacks() -> None:
+        async with host.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            screen = cast(DebugInspectorScreen, host.screen)
+            engine_component = next(
+                component
+                for component in screen._build_component_roots()
+                if component.path == "celune"
+            )
+            callback_component = next(
+                component
+                for component in engine_component.children
+                if component.path == "celune._callbacks"
+            )
+            screen._selected_component = callback_component
+            screen._render_component()
+            await pilot.pause()
+
+            table = screen.query_one("#debug-callback-table", DataTable)
+            assert screen.query_one("#debug-callback-viewer").display
+            assert not screen.query_one("#debug-state-table").display
+            assert not screen.query_one("#debug-attributes-table").display
+            assert table.row_count == 2
+            assert screen._selected_callback_name == "log_callback"
+            assert "first_callback" in (screen._shown_callback_detail or "")
+
+            callback_state.log_callback = replacement_callback
+            screen._render_component()
+            await pilot.pause()
+
+            assert table.row_count == 2
+            assert "replacement_callback" in (screen._shown_callback_detail or "")
+
+    asyncio.run(inspect_callbacks())
     assert not trace.available

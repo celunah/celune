@@ -865,6 +865,21 @@ class _InspectorComponent:
     children: list[_InspectorComponent] = field(default_factory=list)
 
 
+@dataclass(frozen=True)
+class _InspectorCallback:
+    """Current target and source details for one engine callback slot."""
+
+    slot: str
+    target: object
+    handler_name: str
+    handler_label: str
+    signature: str
+    source_category: str
+    source_path: str
+    source_line: Optional[int]
+    chained_handlers: tuple[str, ...]
+
+
 _UI_MODULE_COMPONENTS: tuple[tuple[str, str], ...] = (
     ("celune.ui.runtime", "debug.component_ui_runtime"),
     ("celune.ui.commands", "debug.component_ui_commands"),
@@ -1052,6 +1067,7 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
     #debug-components-title,
     #debug-state-title,
     #debug-attributes-title,
+    #debug-callback-detail-title,
     #debug-modal-preview-title,
     #debug-live-title,
     #debug-call-detail-title {
@@ -1099,6 +1115,23 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
     #debug-attributes-table {
         height: 1fr;
         min-height: 3;
+    }
+    #debug-callback-viewer {
+        display: none;
+        height: 1fr;
+        min-height: 3;
+    }
+    #debug-callback-table {
+        width: 68%;
+        height: 1fr;
+        overflow-y: auto;
+        scrollbar-size-vertical: 2;
+    }
+    #debug-callback-detail {
+        width: 1fr;
+        height: 1fr;
+        padding: 0 1;
+        overflow-y: auto;
     }
     #debug-glow-effects {
         display: none;
@@ -1319,6 +1352,10 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
         self._selected_call_id: Optional[int] = None
         self._selected_call_entry: Optional[DebugCallEntry] = None
         self._displayed_call_entries: dict[int, DebugCallEntry] = {}
+        self._selected_callback_name: Optional[str] = None
+        self._callback_entries: dict[str, _InspectorCallback] = {}
+        self._callback_row_values: dict[str, tuple[str, str]] = {}
+        self._shown_callback_detail: Optional[str] = None
         self._component_width_percent = 30.0
         self._live_pane_height = 10
         self._call_table_width_percent = 75.0
@@ -1384,6 +1421,22 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
                         show_row_labels=False,
                         id="debug-attributes-table",
                     )
+                    with containers.Horizontal(id="debug-callback-viewer"):
+                        yield widgets.DataTable(
+                            cursor_type="row",
+                            show_header=True,
+                            show_row_labels=False,
+                            id="debug-callback-table",
+                        )
+                        with containers.Vertical(id="debug-callback-detail"):
+                            yield widgets.Static(
+                                string("debug.callback_details"),
+                                id="debug-callback-detail-title",
+                            )
+                            yield widgets.Static(
+                                string("debug.select_callback"),
+                                id="debug-callback-detail-body",
+                            )
                     with containers.Vertical(id="debug-glow-effects"):
                         with containers.Horizontal(id="debug-glow-color-row"):
                             yield widgets.Static(string("debug.glow_color_label"))
@@ -1572,6 +1625,14 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
         table.add_column(string("debug.call"), width=14)
         table.add_column(string("debug.source"), key="debug-call-source", width=16)
         table.add_column(string("debug.duration"), key="debug-duration", width=18)
+        table = self.query_one("#debug-callback-table", widgets.DataTable)
+        table.add_column(
+            string("debug.callback_slot"), key="debug-callback-slot", width=25
+        )
+        table.add_column(
+            string("debug.callback_handler"), key="debug-callback-handler", width=28
+        )
+        table.add_column(string("debug.source"), key="debug-callback-source", width=16)
         self._refresh_snapshot()
         self._refresh_source_status()
         self._refresh_live_calls()
@@ -1980,7 +2041,10 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
         self,
         event: widgets.DataTable.RowHighlighted,
     ) -> None:
-        """Show the call path for the highlighted trace entry."""
+        """Select a highlighted callback or call trace entry."""
+        if event.data_table.id == "debug-callback-table":
+            self._select_callback(event.row_key.value)
+            return
         if event.data_table.id != "debug-call-table":
             return
         self._select_call(event.row_key.value)
@@ -1989,10 +2053,20 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
         self,
         event: widgets.DataTable.RowSelected,
     ) -> None:
-        """Show details when a mouse click selects a trace entry."""
+        """Show details when a click selects a callback or trace entry."""
+        if event.data_table.id == "debug-callback-table":
+            self._select_callback(event.row_key.value)
+            return
         if event.data_table.id != "debug-call-table":
             return
         self._select_call(event.row_key.value)
+
+    def _select_callback(self, row_key: Optional[str]) -> None:
+        """Show details for the selected engine callback slot."""
+        if row_key is None or row_key not in self._callback_entries:
+            return
+        self._selected_callback_name = row_key
+        self._render_callback_detail()
 
     def _select_call(self, row_key: Optional[str]) -> None:
         """Keep a stable detail snapshot for the selected trace entry."""
@@ -2555,9 +2629,15 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
         is_glow_effects = (
             component is not None and component.path == "celune.glow_effects"
         )
-        show_generic_details = not (is_modal_catalog or is_glow_effects)
+        is_engine_callbacks = (
+            component is not None and component.path == "celune._callbacks"
+        )
+        show_generic_details = not (
+            is_modal_catalog or is_glow_effects or is_engine_callbacks
+        )
         self.query_one("#debug-modal-preview").display = is_modal_catalog
         self.query_one("#debug-glow-effects").display = is_glow_effects
+        self.query_one("#debug-callback-viewer").display = is_engine_callbacks
         self.query_one("#debug-selected-component").display = not is_modal_catalog
         self.query_one("#debug-state-title").display = show_generic_details
         self.query_one("#debug-state-table").display = show_generic_details
@@ -2570,6 +2650,9 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
         self.query_one("#debug-selected-component", widgets.Static).update(
             Text(component.label)
         )
+        if is_engine_callbacks:
+            self._render_callback_viewer(component.value)
+            return
         attributes = _object_attributes(component.value)
         states: list[tuple[str, str]] = []
         other_attributes: list[tuple[str, str]] = []
@@ -2594,6 +2677,79 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
             string("debug.no_attributes"),
             component.path,
         )
+
+    def _render_callback_viewer(self, callback_state: object) -> None:
+        """Refresh the callback list and keep its selected detail live."""
+        records = {
+            name: _inspect_callback(name, target)
+            for name, target in _object_attributes(callback_state).items()
+        }
+        rows = {
+            name: (record.handler_label, _source_category_label(record.source_category))
+            for name, record in records.items()
+        }
+        table = self.query_one("#debug-callback-table", widgets.DataTable)
+        previous_rows = self._callback_row_values
+        self._callback_entries = records
+
+        for name in previous_rows.keys() - rows.keys():
+            table.remove_row(name)
+        for name, (handler, source) in rows.items():
+            if name not in previous_rows:
+                table.add_row(
+                    Text(name),
+                    Text(handler, no_wrap=False),
+                    Text(source),
+                    key=name,
+                )
+                continue
+            previous_handler, previous_source = previous_rows[name]
+            if handler != previous_handler:
+                table.update_cell(
+                    name,
+                    "debug-callback-handler",
+                    Text(handler, no_wrap=False),
+                )
+            if source != previous_source:
+                table.update_cell(name, "debug-callback-source", Text(source))
+
+        self._callback_row_values = rows
+        if self._selected_callback_name not in records:
+            self._selected_callback_name = next(iter(records), None)
+        self._render_callback_detail()
+
+    def _render_callback_detail(self) -> None:
+        """Show source and wrapper details for the selected callback slot."""
+        body = self.query_one("#debug-callback-detail-body", widgets.Static)
+        record = self._callback_entries.get(self._selected_callback_name or "")
+        if record is None:
+            content = string("debug.no_callbacks")
+        else:
+            source_location = (
+                f"{record.source_path}:{record.source_line}"
+                if record.source_path and record.source_line is not None
+                else string("debug.not_applicable")
+            )
+            lines = [
+                f"{string('debug.callback_slot')}: {record.slot}",
+                f"{string('debug.callback_handler')}: {record.handler_name}",
+                f"{string('debug.callback_signature')}: {record.signature}",
+                (
+                    f"{string('debug.source_category')}: "
+                    f"{_source_category_label(record.source_category)}"
+                ),
+                f"{string('debug.source')}: {source_location}",
+                f"{string('debug.callback_chained_handlers')}:",
+            ]
+            if record.chained_handlers:
+                lines.extend(f"  {handler}" for handler in record.chained_handlers)
+            else:
+                lines.append(f"  {string('debug.none')}")
+            content = "\n".join(lines)
+
+        if content != self._shown_callback_detail:
+            body.update(Text(content, no_wrap=False))
+            self._shown_callback_detail = content
 
     def _render_attribute_table(
         self,
@@ -2800,6 +2956,83 @@ def _qualified_callable_name(module_name: Optional[str], callable_value: object)
     if not module_name:
         return name
     return f"{module_name}.{name}"
+
+
+def _inspect_callback(slot: str, target: object) -> _InspectorCallback:
+    """Build a stable display record for one current callback target."""
+    if not callable(target):
+        unavailable = string("debug.not_applicable")
+        return _InspectorCallback(
+            slot=slot,
+            target=target,
+            handler_name=_format_value(slot, target),
+            handler_label=_format_value(slot, target),
+            signature=unavailable,
+            source_category="unknown",
+            source_path="",
+            source_line=None,
+            chained_handlers=(),
+        )
+
+    name_target = target.func if isinstance(target, functools.partial) else target
+    module_name = _callable_module_name(name_target)
+    handler_name = _qualified_callable_name(module_name, name_target)
+    try:
+        signature = str(inspect.signature(target))
+    except (TypeError, ValueError):
+        signature = string("debug.not_applicable")
+
+    raw_chain = getattr(target, "_celune_callback_chain", ())
+    chain_targets = (
+        tuple(callback for callback in raw_chain if callable(callback))
+        if isinstance(raw_chain, tuple)
+        else ()
+    )
+    chained_handlers = tuple(
+        _qualified_callable_name(
+            _callable_module_name(
+                callback.func if isinstance(callback, functools.partial) else callback
+            ),
+            callback.func if isinstance(callback, functools.partial) else callback,
+        )
+        for callback in chain_targets
+    )
+    display_target = (
+        chain_targets[-1].func
+        if chain_targets and isinstance(chain_targets[-1], functools.partial)
+        else chain_targets[-1]
+        if chain_targets
+        else name_target
+    )
+    handler_label = (
+        chained_handlers[-1].rpartition(".")[2]
+        if chained_handlers
+        else handler_name.rpartition(".")[2]
+    )
+
+    source_module = _callable_module_name(display_target)
+    code_target = (
+        display_target.__func__
+        if isinstance(display_target, MethodType)
+        else display_target
+    )
+    code = getattr(code_target, "__code__", None)
+    if not isinstance(code, CodeType):
+        call_method = inspect.getattr_static(type(code_target), "__call__", None)
+        code = getattr(call_method, "__code__", None)
+    source_path = code.co_filename if isinstance(code, CodeType) else ""
+    source_line = code.co_firstlineno if isinstance(code, CodeType) else None
+    return _InspectorCallback(
+        slot=slot,
+        target=target,
+        handler_name=handler_name,
+        handler_label=handler_label,
+        signature=signature,
+        source_category=_classify_source(source_module, source_path or None),
+        source_path=source_path,
+        source_line=source_line,
+        chained_handlers=chained_handlers,
+    )
 
 
 @functools.lru_cache(maxsize=1024)
