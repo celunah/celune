@@ -375,6 +375,19 @@ async def api_security(
             if asset_response is not None:
                 return asset_response
 
+        if request.url.path == "/ui" and request.method.upper() == "GET":
+            if _webui_authenticated(request):
+                return RedirectResponse(
+                    "/ui/",
+                    status_code=307,
+                    headers={"Cache-Control": "no-store"},
+                )
+            return RedirectResponse(
+                "/ui/key",
+                status_code=307,
+                headers={"Cache-Control": "no-store"},
+            )
+
         if server_session.auth_token is None:
             model_request_token = enter_api_model_request()
             try:
@@ -387,7 +400,7 @@ async def api_security(
         if path == WEBUI_AUTH_PATH and request.method.upper() == "GET":
             if _webui_authenticated(request):
                 return RedirectResponse(
-                    "/ui",
+                    "/ui/",
                     status_code=307,
                     headers={"Cache-Control": "no-store"},
                 )
@@ -413,12 +426,6 @@ async def api_security(
             return await call_next(request)
 
         if not _webui_authenticated(request):
-            if request.method.upper() == "GET" and path == "/ui":
-                return RedirectResponse(
-                    "/ui/key",
-                    status_code=307,
-                    headers={"Cache-Control": "no-store"},
-                )
             return _unauthorized_response()
 
         if request.method.upper() not in {"GET", "HEAD", "OPTIONS"}:
@@ -767,12 +774,12 @@ def favicon() -> FileResponse:
 
 @api.get("/", include_in_schema=False)
 def root() -> RedirectResponse:
-    """Redirect the API root to Celune's browser UI.
+    """Redirect the API root to Celune's mounted browser UI.
 
     Returns:
         RedirectResponse: Redirect response pointing at the mounted WebUI.
     """
-    return RedirectResponse(url="/ui")
+    return RedirectResponse(url="/ui/")
 
 
 @api.get("/v1", response_model=RootResponse)
@@ -1759,7 +1766,7 @@ def run_api(
         bind_celune(celune)
 
     configure_api_security(token=token, requests_per_minute=requests_per_minute)
-    bind_host = resolve_api_host(token=server_session.auth_token, host=host)
+    bind_host = resolve_api_host(token=token, host=host)
     configure_mcp_host_allowlist(bind_host)
 
     def _default_started(bhost: str, bport: int) -> None:

@@ -235,7 +235,7 @@ class TestApiWebUI(CeluneTestCase):
         """Verify the fallback root now forwards users to the browser UI."""
         response = api.root()
         assert response.status_code == 307
-        assert response.headers["location"] == "/ui"
+        assert response.headers["location"] == "/ui/"
 
     def test_browser_ui_requests_bypass_api_security_detection(self) -> None:
         """Verify mounted browser UI paths are recognized by the API middleware."""
@@ -295,6 +295,37 @@ class TestApiWebUI(CeluneTestCase):
         assert response.status_code == 307
         assert response.headers["location"] == "/ui/key"
         assert response.headers["cache-control"] == "no-store"
+
+    def test_authenticated_webui_root_redirects_to_the_mounted_path(self) -> None:
+        """Verify the successful key flow lands on Gradio's slash-terminated mount."""
+        api.server_session.auth_token = "secret"
+
+        with fastapi.testclient.TestClient(api.api) as client:
+            login_response = client.post(
+                "/ui/key",
+                json={"api_key": "secret"},
+                headers={"origin": "http://testserver"},
+            )
+            root_response = client.get("/ui", follow_redirects=False)
+            ui_response = client.get("/ui/")
+
+        assert login_response.status_code == 200
+        assert root_response.status_code == 307
+        assert root_response.headers["location"] == "/ui/"
+        assert ui_response.status_code == 200
+
+    def test_webui_without_api_token_opens_without_a_key_prompt(self) -> None:
+        """Verify an unprotected API serves the mounted WebUI directly."""
+        api.server_session.auth_token = None
+
+        with fastapi.testclient.TestClient(api.api) as client:
+            root_response = client.get("/ui", follow_redirects=False)
+            ui_response = client.get("/ui/")
+
+        assert root_response.status_code == 307
+        assert root_response.headers["location"] == "/ui/"
+        assert ui_response.status_code == 200
+        assert "API key required" not in ui_response.text
 
     def test_key_prompt_is_served_from_the_ui_key_path(self) -> None:
         """Verify the standalone key prompt is served at the documented path."""
@@ -405,7 +436,7 @@ class TestApiWebUI(CeluneTestCase):
         )
         resumed_response = asyncio.run(
             api.api_security(
-                self._request("/ui", headers=next_host_headers),
+                self._request("/ui/", headers=next_host_headers),
                 self._passthrough_response,
             )
         )
@@ -650,7 +681,7 @@ class TestApiWebUI(CeluneTestCase):
         response = asyncio.run(
             api.api_security(
                 self._request(
-                    "/ui",
+                    "/ui/",
                     headers=(
                         (
                             "cookie",

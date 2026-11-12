@@ -12,17 +12,20 @@ import binascii
 import datetime
 import tempfile
 import ipaddress
-from pathlib import Path
-from hashlib import sha256
-from hmac import compare_digest
 from hmac import new as hmac_new
-from urllib.parse import urlsplit
+from hmac import compare_digest
 from typing import Union, Optional
+from hashlib import sha256
+from pathlib import Path
+from urllib.parse import urlsplit
 
 from fastapi import Request, WebSocket
-from starlette.datastructures import Headers
 from starlette.responses import Response, JSONResponse
+from starlette.datastructures import Headers
 
+from ..i18n import string
+from ..paths import api_key_path, app_data_dir
+from .session import server_session
 from .constants import (
     WEBUI_AUTH_COOKIE,
     WEBUI_AUTH_CLIENT_LIMIT,
@@ -30,10 +33,6 @@ from .constants import (
     WEBUI_GENERATION_API_NAMES,
     WEBUI_AUTH_CLIENTS_FILENAME,
 )
-from .session import server_session
-
-from ..i18n import string
-from ..paths import api_key_path, app_data_dir
 
 API_KEY_PREFIX = "C-"
 API_KEY_ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
@@ -147,10 +146,17 @@ def configure_api_security(
         requests_per_minute: The max amount of requests per minute the user is allowed to send.
     """
 
-    server_session.auth_token = _clean_token(token) or _env_auth_token()
+    server_session.auth_token = _resolved_auth_token(token)
     server_session.rate_limit_per_minute = max(0, requests_per_minute)
     with server_session.rate_limit_lock:
         server_session.rate_limit_hits.clear()
+
+
+def _resolved_auth_token(token: Optional[str]) -> Optional[str]:
+    """Resolve an API token while preserving an explicit empty value."""
+    if token is not None and not token.strip():
+        return None
+    return _clean_token(token) or _env_auth_token()
 
 
 def resolve_api_host(token: Optional[str] = None, host: Optional[str] = None) -> str:
@@ -165,7 +171,7 @@ def resolve_api_host(token: Optional[str] = None, host: Optional[str] = None) ->
     """
     if host:
         return host
-    configured_token = _clean_token(token) or _env_auth_token()
+    configured_token = _resolved_auth_token(token)
     if configured_token is None:
         return "127.0.0.1"
     return "0.0.0.0"

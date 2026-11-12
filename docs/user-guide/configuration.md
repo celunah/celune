@@ -256,6 +256,11 @@ api:
 
 Celune creates and persists an API key automatically when `token` is `null` and
 `CELUNE_API_TOKEN` is unset.
+When `token` is `null`, a nonempty `CELUNE_API_TOKEN` is used instead. Set
+`token: ""` to disable API authentication; this explicit empty value also
+overrides `CELUNE_API_TOKEN`. Any other token value is used as the API key.
+With authentication disabled, keep `access: same_machine` unless the API is
+intended to be available without a key to other devices.
 Use `access: same_machine` for localhost, `same_network` for LAN devices, or
 `everyone` for a temporary public Cloudflare tunnel. The API extra is required
 for FastAPI/Gradio deployment. See [REST API](../API.md) for key storage,

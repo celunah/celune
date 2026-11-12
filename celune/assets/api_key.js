@@ -15,7 +15,7 @@ const form = document.querySelector("#key-form");
           body: JSON.stringify({ api_key: input.value }),
         });
         if (response.ok) {
-          window.location.replace("/ui");
+          window.location.replace("/ui/");
           return;
         }
         error.textContent = response.status === 401 ? invalidMessage : errorMessage;
