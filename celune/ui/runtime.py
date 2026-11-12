@@ -949,7 +949,6 @@ def _prepare_terminal_output_stream(self) -> Optional[TextIOWrapper]:
     duplicated_fd = _duplicate_terminal_fd(cast(Callable[[], int], fileno))
     if duplicated_fd is None:
         return None
-    output_fd = cast(int, duplicated_fd)
 
     from ..utils import discard
 
@@ -957,7 +956,7 @@ def _prepare_terminal_output_stream(self) -> Optional[TextIOWrapper]:
     discard(output_stream)
     try:
         output_stream = os.fdopen(
-            output_fd,
+            duplicated_fd,
             "w",
             encoding=getattr(original_stderr, "encoding", None) or "utf-8",
             errors=getattr(original_stderr, "errors", None) or "replace",
@@ -965,7 +964,7 @@ def _prepare_terminal_output_stream(self) -> Optional[TextIOWrapper]:
         )
     except (OSError, TypeError, ValueError):
         with contextlib.suppress(OSError):
-            os.close(output_fd)
+            os.close(duplicated_fd)
         return None
     if output_stream is None:
         return None
