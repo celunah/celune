@@ -70,9 +70,9 @@ class PersonaClient:
         log: Optional[LogCallback] = None,
         log_dev: Optional[LogCallback] = None,
     ) -> None:
-        self.runtime = PersonaRuntime(config=config)
         self.config = config
         self.log = log or log_dev
+        self.runtime = PersonaRuntime(config=config, log=self.log)
         self.inference_scheduler: Optional[PriorityInferenceScheduler] = None
 
     @contextlib.contextmanager
@@ -221,6 +221,10 @@ class PersonaClient:
     def capabilities(self) -> PersonaCapabilities:
         """Return the capabilities of the active Persona architecture."""
         return self.runtime.capabilities()
+
+    def inference_metadata(self) -> dict[str, str]:
+        """Return the effective Persona model and inference metadata."""
+        return self.runtime.inference_metadata()
 
 
 def persona_config(config: Mapping[str, JSONSerializable]) -> Config:

@@ -71,9 +71,9 @@ def test_ming3_resolves_auto_and_unsupported_languages_to_english(
 def test_ming3_runtime_architecture_falls_back_to_python_platform() -> None:
     """Resolve the bundled platform when the isolated worker omits machine env."""
     with (
-        mock.patch("celune.backends.tts.ming3.platform.machine", return_value=""),
+        mock.patch("celune.backends.tts.audio_cpp.platform.machine", return_value=""),
         mock.patch(
-            "celune.backends.tts.ming3.sysconfig.get_platform",
+            "celune.backends.tts.audio_cpp.sysconfig.get_platform",
             return_value="win-amd64",
         ),
     ):
@@ -210,7 +210,8 @@ def test_ming3_yields_normalized_audio_before_stream_completion(
         mock.patch.object(Ming3, "_truncate_reference", return_value=reference),
         mock.patch.object(Ming3, "_apply_seed"),
         mock.patch(
-            "celune.backends.tts.ming3.urllib.request.urlopen", return_value=response
+            "celune.backends.tts.audio_cpp.urllib.request.urlopen",
+            return_value=response,
         ),
     ):
         stream = backend.generate_stream(
@@ -269,9 +270,10 @@ def test_ming3_rejects_empty_streamed_audio(tmp_path: Path) -> None:
         mock.patch.object(Ming3, "_truncate_reference", return_value=reference),
         mock.patch.object(Ming3, "_apply_seed"),
         mock.patch(
-            "celune.backends.tts.ming3.urllib.request.urlopen", return_value=response
+            "celune.backends.tts.audio_cpp.urllib.request.urlopen",
+            return_value=response,
         ),
-        pytest.raises(RuntimeError, match="Ming returned empty audio"),
+        pytest.raises(RuntimeError, match="audio.cpp returned empty audio"),
     ):
         list(
             backend.generate_stream(

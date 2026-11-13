@@ -10,6 +10,7 @@ import subprocess
 from types import SimpleNamespace
 from typing import IO, Optional, cast
 from pathlib import Path
+from dataclasses import replace
 from unittest import mock
 from collections import abc
 
@@ -66,6 +67,19 @@ from ..support import CeluneTestCase
 
 class TestBackendEnvironment(CeluneTestCase):
     """Verify backend environment paths and installation transactions."""
+
+    def test_worker_environment_identity_includes_effective_runtime(self) -> None:
+        """Give native and audio.cpp workers separate persistent identities."""
+        manifest = BACKEND_MANIFESTS["ming3"]
+        native = replace(manifest, runtime="native")
+        audio_cpp = replace(manifest, runtime="audio_cpp")
+        manager = BackendEnvironmentManager(root=Path("backend-env-test"))
+
+        self.assertNotEqual(native.fingerprint(), audio_cpp.fingerprint())
+        self.assertNotEqual(
+            manager.environment_for(native).root,
+            manager.environment_for(audio_cpp).root,
+        )
 
     def test_worker_description_and_proxy_preserve_singing_capability(self) -> None:
         """Expose the worker's singing capability to the core proxy."""
@@ -303,6 +317,56 @@ class TestBackendEnvironment(CeluneTestCase):
         self.assertIs(result, mock.sentinel.backend)
         constructor.assert_called_once_with(log=log, fatal=fatal, setting=True)
 
+    def test_worker_receives_and_checks_resolved_audio_cpp_runtime(self) -> None:
+        """Configure the worker from the resolved implementation identity."""
+
+        class AudioCppBackend:
+            """Small runtime stand-in for an audio.cpp capable TTS backend."""
+
+            def __init__(self, **kwargs: object) -> None:
+                """Retain ordinary options and start with the native runtime."""
+                self.kwargs = kwargs
+                self.supports_audio_cpp = True
+                self.requires_audio_cpp = False
+                self.effective_inference_mode = "native"
+
+            def configure_inference_mode(
+                self,
+                inference_mode: str,
+                *,
+                log: bool,
+            ) -> None:
+                """Resolve this fake backend to its supported implementation."""
+                discard(log)
+                self.effective_inference_mode = (
+                    "audio_cpp" if inference_mode == "gguf" else "native"
+                )
+
+        manifest = BACKEND_MANIFESTS["mini"]
+        with mock.patch.dict(
+            worker._BACKEND_REGISTRY,
+            {"mini": ("tts", lambda: AudioCppBackend)},
+            clear=False,
+        ):
+            backend = cast(
+                AudioCppBackend,
+                worker._load_backend(
+                    manifest,
+                    mock.Mock(),
+                    mock.Mock(),
+                    {
+                        "inference_mode": "gguf",
+                        "effective_inference_mode": "audio_cpp",
+                        "custom_option": True,
+                    },
+                ),
+            )
+
+        self.assertEqual(backend.effective_inference_mode, "audio_cpp")
+        self.assertTrue(backend.kwargs["custom_option"])
+        self.assertNotIn("inference_mode", backend.kwargs)
+        self.assertNotIn("effective_inference_mode", backend.kwargs)
+
     def test_manifests_use_the_main_branch_pytorch_stack(self) -> None:
         """Verify isolated backends use the main branch's CUDA 12.8 stack."""
         expected_requirements = {
@@ -397,6 +461,32 @@ class TestBackendEnvironment(CeluneTestCase):
         assert ming3_manifest.backend_module == "celune.backends.tts.ming3"
         assert ming3_manifest.backend_class == "Ming3"
         assert "torch==2.11.0+cu128" in ming3_manifest.requirements
+        assert ming3_manifest.supports_audio_cpp
+        assert ming3_manifest.requires_audio_cpp
+
+    def test_audio_cpp_manifest_eligibility_matches_verified_adapters(self) -> None:
+        """Advertise only TTS backends with verified streaming adapters."""
+        for backend_id in ("mini", "qwen3", "dotstts", "voxcpm2"):
+            manifest = BACKEND_MANIFESTS[backend_id]
+            assert manifest.supports_audio_cpp
+            assert not manifest.requires_audio_cpp
+
+        for backend_id in ("fireredtts3", "soulxsinger"):
+            manifest = BACKEND_MANIFESTS[backend_id]
+            assert not manifest.supports_audio_cpp
+            assert not manifest.requires_audio_cpp
+
+    def test_manifest_rejects_required_audio_cpp_without_support(self) -> None:
+        """Keep required runtimes within the advertised implementation set."""
+        with self.assertRaisesRegex(ValueError, "requires audio.cpp"):
+            BackendManifest(
+                "invalid",
+                "tts",
+                (),
+                "module",
+                "Backend",
+                requires_audio_cpp=True,
+            )
 
     def test_dotstts_manifest_omits_wetextprocessing(self) -> None:
         """Verify dots.tts keeps its unsupported WeTextProcessing extra omitted."""
@@ -946,7 +1036,7 @@ class TestBackendEnvironment(CeluneTestCase):
             + b"}}}"
         )
         oversized_collection = {
-            "cedts_version": [1, 2],
+            "cedts_version": [1, 3],
             "kind": "request",
             "message_id": "collection",
             "reply_to": None,
@@ -954,7 +1044,7 @@ class TestBackendEnvironment(CeluneTestCase):
             "data": {"arguments": {"value": list(range(1025))}},
         }
         unknown_packet_field = {
-            "cedts_version": [1, 2],
+            "cedts_version": [1, 3],
             "kind": "request",
             "message_id": "unknown-field",
             "reply_to": None,
@@ -972,7 +1062,7 @@ class TestBackendEnvironment(CeluneTestCase):
 
         oversized_string = json.dumps(
             {
-                "cedts_version": [1, 2],
+                "cedts_version": [1, 3],
                 "kind": "request",
                 "message_id": "string",
                 "reply_to": None,
@@ -1098,7 +1188,7 @@ class TestBackendEnvironment(CeluneTestCase):
                 cast(
                     dict[str, WorkerValue],
                     {
-                        "versions": [[1, 2]],
+                        "versions": [[1, 3]],
                         "capabilities": remote.CORE_CAPABILITIES,
                         "unexpected": True,
                     },

@@ -1,12 +1,14 @@
 # SPDX-License-Identifier: Apache-2.0
 """Shared Persona runtime helpers for Celune-managed generation."""
 
+from __future__ import annotations
+
 import gc
 import os
 import logging
 import threading
 import contextlib
-from typing import Union, Optional, cast
+from typing import TYPE_CHECKING, Union, Optional, cast
 from collections.abc import Mapping, Callable, Sequence, Generator
 
 import torch
@@ -51,9 +53,13 @@ from ..typing.persona import (
     ModelGenerateKwargValue,
 )
 from ..registry.consent import require_model_consent
+from ..exceptions import ModelConsentRequired
 from ..dataclasses.persona import ChatMessage, GenerateRequest, GenerateResponse
 
 _LOGGER = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from .gguf import LlamaCppPersonaRuntime
 
 
 def _quantize_kv_cache_enabled(
@@ -574,10 +580,18 @@ class PersonaRuntime:
     def __init__(
         self,
         config: Optional[Mapping[str, JSONSerializable]] = None,
+        log: Optional[Callable[[str, str], None]] = None,
     ) -> None:
         self.backend = PersonaBackend()
         self.config = config
+        self._log_callback = log
         self.lock = threading.Lock()
+        self.requested_runtime = self._inference_mode()
+        self.effective_runtime = "native"
+        self._gguf_runtime: Optional[LlamaCppPersonaRuntime] = None
+        self._loaded_identity: Optional[tuple[str, str, str]] = None
+        self._failed_identity: Optional[tuple[str, str, str]] = None
+        self._failed_message = ""
 
     @property
     def model_id(self) -> str:
@@ -586,6 +600,8 @@ class PersonaRuntime:
         Returns:
             str: The currently loaded Persona model ID, Qwen/Qwen2.5-VL-3B-Instruct or a derivative.
         """
+        if self.effective_runtime == "gguf" and self._gguf_runtime is not None:
+            return self._gguf_runtime.model_id
         return self.backend.model_id
 
     @property
@@ -595,6 +611,8 @@ class PersonaRuntime:
         Returns:
             str: The Persona quantization mode currently in use.
         """
+        if self.effective_runtime == "gguf" and self._gguf_runtime is not None:
+            return self._gguf_runtime.quantization
         return self.backend.quantization
 
     def load(self, model_id: str, quantization: str) -> None:
@@ -606,7 +624,9 @@ class PersonaRuntime:
         """
         quantization = self._allowed_quantization(quantization)
         with self.lock:
-            self.backend.load(model_id, quantization)
+            self._failed_identity = None
+            self._failed_message = ""
+            self._load_runtime(model_id, quantization)
 
     def generate(self, request: GenerateRequest) -> GenerateResponse:
         """Generate a persona-formatted response.
@@ -628,7 +648,9 @@ class PersonaRuntime:
         quantization = self._allowed_quantization(quantization)
         with self.lock:
             self.backend.reset_generation_cancellation()
-            self.backend.load(model_id, quantization)
+            self._load_runtime(model_id, quantization)
+            if self.effective_runtime == "gguf" and self._gguf_runtime is not None:
+                return self._gguf_runtime.generate(request)
             return self.backend.generate(
                 request,
                 quantize_kv_cache=_quantize_kv_cache_enabled(self.config),
@@ -637,12 +659,20 @@ class PersonaRuntime:
     def interrupt(self) -> None:
         """Request cancellation of an active Persona generation."""
         self.backend.interrupt_generation()
+        runtime = self._gguf_runtime
+        if runtime is not None:
+            runtime.interrupt()
 
     def close(self) -> None:
         """Unload the active Persona backend state."""
         with self._close_lock() as acquired:
+            self._close_gguf_runtime()
             if acquired:
                 self.backend.unload()
+            self.effective_runtime = "native"
+            self._loaded_identity = None
+            self._failed_identity = None
+            self._failed_message = ""
 
     @contextlib.contextmanager
     def _close_lock(self) -> Generator[bool, None, None]:
@@ -657,12 +687,179 @@ class PersonaRuntime:
     def emotion_backend(self) -> Optional[tuple[PersonaTokenizer, PersonaModel]]:
         """Return the loaded VLM components used for emotion probing."""
         with self.lock:
+            if self.effective_runtime == "gguf":
+                return None
             return self.backend.emotion_backend()
 
     def capabilities(self) -> PersonaCapabilities:
         """Return the capabilities of the loaded Persona architecture."""
         with self.lock:
+            if self.effective_runtime == "gguf" and self._gguf_runtime is not None:
+                return PersonaCapabilities(
+                    text=True,
+                    vision=True,
+                    image_uploads=True,
+                    emotion_probes=False,
+                )
             return self.backend.capabilities()
+
+    def inference_metadata(self) -> dict[str, str]:
+        """Report the resolved Persona model runtime and quantization."""
+        with self.lock:
+            if self.effective_runtime == "gguf" and self._gguf_runtime is not None:
+                return {
+                    "model": self._gguf_runtime.model_id,
+                    "type": "gguf",
+                    "quant": self._gguf_runtime.quantization,
+                }
+            return {
+                "model": self.backend.model_id,
+                "type": "native",
+                "quant": self._native_quantization_metadata(),
+            }
+
+    def _native_quantization_metadata(self) -> str:
+        """Return the public quantization label for the loaded Transformers model."""
+        quantization = self.backend.quantization.casefold()
+        if quantization in {"4bit", "nf4", "bnb4", "bitsandbytes-4bit"}:
+            return "bnb_4bit"
+        if quantization in {"8bit", "bnb8", "bitsandbytes-8bit"}:
+            return "bnb_8bit"
+        return "full"
+
+    def _inference_mode(self) -> str:
+        """Resolve the shared configured inference mode for Persona."""
+        from ..config import inference_mode
+
+        return inference_mode(self.config)
+
+    def _log(self, message: str, severity: str = "info") -> None:
+        """Emit a runtime selection diagnostic when the client supplied a logger."""
+        if self._log_callback is not None:
+            self._log_callback(message, severity)
+
+    def _configured_context_size(self) -> int:
+        """Return the configured Persona context limit for llama-server."""
+        if self.config is None:
+            return PERSONA_CONTEXT_SPACE
+        persona = self.config.get("persona")
+        if isinstance(persona, Mapping):
+            value = persona.get("context_size")
+            if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+                return min(value, 8192)
+        return PERSONA_CONTEXT_SPACE
+
+    def _close_gguf_runtime(self) -> None:
+        """Stop and release any active llama-server candidate."""
+        runtime = self._gguf_runtime
+        self._gguf_runtime = None
+        if runtime is not None:
+            runtime.close()
+
+    def _load_runtime(self, model_id: str, quantization: str) -> None:
+        """Select, initialize, and cache one Persona runtime for this model."""
+        from .gguf import (
+            LlamaCppPersonaRuntime,
+            download_persona_gguf,
+            ensure_llama_server,
+            persona_gguf_variant,
+        )
+        from ..i18n import string
+
+        requested_runtime = self._inference_mode()
+        identity = (model_id, quantization, requested_runtime)
+        if self._loaded_identity == identity:
+            return
+        if self._failed_identity == identity:
+            raise RuntimeError(self._failed_message)
+
+        self._close_gguf_runtime()
+        self.backend.unload()
+        self.effective_runtime = "native"
+        self._loaded_identity = None
+        self.requested_runtime = requested_runtime
+        fallback_reason: Optional[str] = None
+        if requested_runtime == "gguf":
+            variant = persona_gguf_variant(model_id, quantization)
+            if variant is None:
+                fallback_reason = (
+                    "no verified llama.cpp artifact for this model and quantization"
+                )
+            else:
+                try:
+                    # Consent and policy failures must not trigger native fallback.
+                    require_model_consent(model_id)
+                    server_path = ensure_llama_server()
+                    model_path, projector_path = download_persona_gguf(variant)
+                    self._gguf_runtime = LlamaCppPersonaRuntime(
+                        model_id,
+                        variant,
+                        model_path,
+                        projector_path,
+                        self._configured_context_size(),
+                        self.backend._generation_cancelled,
+                        self._log_callback,
+                        server_path,
+                    )
+                except (ModelConsentRequired, PermissionError, InterruptedError):
+                    raise
+                except Exception as error:
+                    self._close_gguf_runtime()
+                    fallback_reason = str(error)
+                else:
+                    self.effective_runtime = "gguf"
+                    self._loaded_identity = identity
+                    self._log(
+                        string(
+                            "inference.persona_mode",
+                            requested="gguf",
+                            effective="gguf",
+                        )
+                    )
+                    self._log(
+                        string(
+                            "inference.loaded_model",
+                            model=model_id,
+                            type="gguf",
+                            quant=variant.quantization,
+                        )
+                    )
+                    return
+
+        if fallback_reason is not None:
+            self._log(
+                string(
+                    "inference.persona_fallback",
+                    model=model_id,
+                    cause=fallback_reason,
+                ),
+                "warning",
+            )
+        try:
+            self.backend.load(model_id, quantization)
+        except (ModelConsentRequired, PermissionError, InterruptedError):
+            raise
+        except Exception as error:
+            self._failed_identity = identity
+            self._failed_message = str(error)
+            raise
+        self.effective_runtime = "native"
+        self._loaded_identity = identity
+        self._log(
+            string(
+                "inference.persona_mode",
+                requested=requested_runtime,
+                effective="native",
+            )
+        )
+        self._log(
+            string(
+                "inference.loaded_model",
+                model=model_id,
+                type="native",
+                quant=self._native_quantization_metadata(),
+            )
+        )
 
     def _allowed_quantization(self, requested: str) -> str:
         """Clamp Persona quantization to what the VRAM preset allows."""

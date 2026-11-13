@@ -745,6 +745,33 @@ class TestCeluneRuntime(CeluneCoreTestSupport):
         assert celune.vision is None
         assert not celune.persona_ready
 
+    def test_required_audio_cpp_startup_failure_is_recoverable(self) -> None:
+        """Skip readiness and expose a recoverable error when required TTS fails."""
+        celune = self._make_celune({})
+        celune.setup_extensions = mock.Mock()
+        celune.backend.requires_audio_cpp = True
+        celune.backend.name = "ming3"
+        celune.backend.preload_models = mock.Mock(
+            side_effect=RuntimeError("audio.cpp server failed")
+        )
+        celune.error_callback = mock.Mock()
+        ready_event = mock.Mock()
+        celune.emit_event = ready_event
+        with (
+            mock.patch("celune.core.loading.log_runtime_banner"),
+            mock.patch("celune.core.loading.validate_runtime", return_value=True),
+            mock.patch("celune.core.voice.try_play_signal", return_value=False),
+        ):
+            assert not celune.load()
+
+        assert celune.operation_state is OperationState.SEMI_FATAL
+        celune.error_callback.assert_called_once()
+        assert "ming3" in celune.error_callback.call_args.args[0]
+        assert "audio.cpp server failed" in celune.error_callback.call_args.args[0]
+        assert not any(
+            call.args and call.args[0] == "ready" for call in ready_event.call_args_list
+        )
+
     def test_think_falls_back_to_speech_while_persona_loads(self) -> None:
         """Verify queued text uses TTS while Persona is still downloading."""
         celune = self._make_celune({})
@@ -1474,6 +1501,30 @@ class TestCeluneRuntime(CeluneCoreTestSupport):
             celune.close()
 
         backend_abort.assert_called_once_with()
+
+    def test_close_cancels_remote_stream_before_graceful_backend_shutdown(self) -> None:
+        """Let a remote backend close its model after its active stream is cancelled."""
+        celune = self._make_celune({})
+        cancel_active_request = mock.Mock(return_value=True)
+        backend_abort = mock.Mock()
+        celune._playback_thread = mock.Mock(is_alive=mock.Mock(return_value=False))
+
+        with (
+            mock.patch("celune.core.lifecycle._close_speech_pipeline"),
+            mock.patch("celune.core.lifecycle.unload_persona_state"),
+            mock.patch("celune.core.lifecycle.unload_runtime_state"),
+            mock.patch.object(
+                celune.backend,
+                "cancel_active_request",
+                cancel_active_request,
+                create=True,
+            ),
+            mock.patch.object(celune.backend, "abort", backend_abort, create=True),
+        ):
+            celune.close()
+
+        cancel_active_request.assert_called_once_with(wait_for_ack=False)
+        backend_abort.assert_not_called()
 
     def test_close_aborts_a_backend_candidate_stuck_during_reload(self) -> None:
         """Verify shutdown aborts a candidate before it is published as active."""

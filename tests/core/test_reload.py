@@ -30,6 +30,44 @@ from ..support import FakeGlow, FakeBackend, FakeVCBackend
 class TestCeluneReload(CeluneCoreTestSupport):
     """Exercise backend reload behavior of the Celune core."""
 
+    def test_tts_runtime_selection_uses_backend_capabilities(self) -> None:
+        """Select audio.cpp for supported backends and native for unsupported ones."""
+
+        class AudioCppFakeBackend(FakeBackend):
+            """Backend fixture that has an audio.cpp implementation."""
+
+            name = "audio-cpp-fake"
+            supports_audio_cpp = True
+
+        celune = self._make_celune({})
+        unsupported = FakeBackend(log=mock.Mock())
+        with mock.patch(
+            "celune.core.reload.resolve_backend",
+            return_value=unsupported,
+        ):
+            core_reload.resolve_tts_backend(
+                celune,
+                FakeBackend,
+                log=celune.log_callback,
+                inference_mode="gguf",
+            )
+        self.assertEqual(unsupported.requested_inference_mode, "gguf")
+        self.assertEqual(unsupported.effective_inference_mode, "native")
+
+        supported = AudioCppFakeBackend(log=mock.Mock())
+        with mock.patch(
+            "celune.core.reload.resolve_backend",
+            return_value=supported,
+        ):
+            core_reload.resolve_tts_backend(
+                celune,
+                AudioCppFakeBackend,
+                log=celune.log_callback,
+                inference_mode="gguf",
+            )
+        self.assertEqual(supported.requested_inference_mode, "gguf")
+        self.assertEqual(supported.effective_inference_mode, "audio_cpp")
+
     def test_hot_backend_reload_unloads_previous_runtime_before_loading_new_one(
         self,
     ) -> None:
@@ -929,7 +967,10 @@ class TestCeluneReload(CeluneCoreTestSupport):
         failing.error_callback = errors.append
         with mock.patch("celune.core.voice.play_signal", return_value=False):
             self.assertEqual(failing.load(), False)
-        self.assertEqual(errors, ["Default model failed to load"])
+        self.assertEqual(
+            errors,
+            ["TTS backend 'fake' could not initialize: boom"],
+        )
         self.assertEqual(getattr(failing.glow, "fatal_called"), True)  # noqa: B009
 
     def test_unload_runtime_state_clears_models_without_cuda(self) -> None:

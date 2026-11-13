@@ -56,6 +56,26 @@ from .backend_processes import ShutdownProcess
 class TestBackendProxyLifecycle(CeluneTestCase):
     """Exercise remote backend proxy lifecycle behavior."""
 
+    def test_remote_proxy_stores_worker_model_metadata(self) -> None:
+        """Store effective runtime information received from the worker."""
+        proxy = object.__new__(remote.RemoteBackendProxy)
+        proxy.model_metadata = None
+        proxy._log_callback = mock.Mock()
+
+        proxy._dispatch_event(
+            build_packet(
+                "event",
+                "metadata",
+                {"model": "example/model", "type": "native", "quant": "full"},
+            )
+        )
+
+        self.assertEqual(
+            proxy.model_metadata,
+            {"model": "example/model", "type": "native", "quant": "full"},
+        )
+        proxy._log_callback.assert_called_once()
+
     def test_remote_proxy_aborts_timed_out_model_operation(self) -> None:
         """Verify timed-out model operations terminate their isolated worker."""
         proxy = object.__new__(remote.RemoteBackendProxy)
@@ -1462,20 +1482,20 @@ class TestBackendProxyLifecycle(CeluneTestCase):
 
     def test_worker_handshake_negotiates_the_cedts_capabilities(self) -> None:
         """Verify the worker accepts a compatible hello and rejects requirements it lacks."""
-        self.assertEqual(remote.CEDTS_VERSION, (1, 2))
+        self.assertEqual(remote.CEDTS_VERSION, (1, 3))
         hello = build_packet(
             "hello",
             "handshake",
             cast(
                 dict[str, WorkerValue],
                 {
-                    "versions": [[1, 2]],
+                    "versions": [[1, 3]],
                     "capabilities": remote.CORE_CAPABILITIES,
                     "required_capabilities": {"streaming": True},
                 },
             ),
         )
-        self.assertEqual(hello["cedts_version"], [1, 2])
+        self.assertEqual(hello["cedts_version"], [1, 3])
         negotiated = worker._negotiate_hello(hello)
         self.assertEqual(negotiated["streaming"], True)
         self.assertEqual(negotiated["cancellation"], True)
@@ -1501,7 +1521,7 @@ class TestBackendProxyLifecycle(CeluneTestCase):
             cast(
                 dict[str, WorkerValue],
                 {
-                    "versions": [[1, 2]],
+                    "versions": [[1, 3]],
                     "capabilities": remote.CORE_CAPABILITIES,
                     "required_capabilities": {"callback": True},
                 },
@@ -1530,7 +1550,7 @@ class TestBackendProxyLifecycle(CeluneTestCase):
             cast(
                 dict[str, WorkerValue],
                 {
-                    "versions": [[1, 2]],
+                    "versions": [[1, 3]],
                     "capabilities": offered_capabilities,
                 },
             ),
@@ -1629,7 +1649,7 @@ class TestBackendProxyLifecycle(CeluneTestCase):
                 cast(
                     dict[str, WorkerValue],
                     {
-                        "cedts_version": [1, 2],
+                        "cedts_version": [1, 3],
                         "capabilities": remote.CORE_CAPABILITIES,
                     },
                 ),
@@ -1669,7 +1689,7 @@ class TestBackendProxyLifecycle(CeluneTestCase):
                 cast(
                     dict[str, WorkerValue],
                     {
-                        "cedts_version": [1, 2],
+                        "cedts_version": [1, 3],
                         "capabilities": remote.CORE_CAPABILITIES,
                     },
                 ),
@@ -1777,7 +1797,7 @@ class TestBackendProxyLifecycle(CeluneTestCase):
                 cast(
                     dict[str, WorkerValue],
                     {
-                        "cedts_version": [1, 2],
+                        "cedts_version": [1, 3],
                         "capabilities": remote.CORE_CAPABILITIES,
                     },
                 ),
@@ -1876,7 +1896,7 @@ class TestBackendProxyLifecycle(CeluneTestCase):
                 cast(
                     dict[str, WorkerValue],
                     {
-                        "cedts_version": [1, 2],
+                        "cedts_version": [1, 3],
                         "capabilities": small_capabilities,
                     },
                 ),

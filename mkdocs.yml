@@ -77,6 +77,7 @@ nav:
   - Dev:
       - Architecture: development/architecture.md
       - Backends: development/backends.md
+      - Inference runtimes: development/inference-runtimes.md
       - Docs standard: development/documentation.md
       - Testing: development/testing.md
       - Model registry: development/model-registry.md

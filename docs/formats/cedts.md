@@ -3,7 +3,7 @@
 CEDTS is Celune's private **C**elune **E**xtensible **D**ata **T**ransport
 **S**tandard for isolated backend workers and in-process frontend timed-update
 notifications. It is an implementation contract, not a public network API.
-The current protocol version is `(1, 2)`, written as `[1, 2]` in JSON. The
+The current protocol version is `(1, 3)`, written as `[1, 3]` in JSON. The
 pair is ordered as `(major, minor)`.
 
 The design keeps control frames and binary payloads separate, uses explicit
@@ -47,7 +47,7 @@ Control packets use these fields:
 
 | Field | Meaning |
 | --- | --- |
-| `cedts_version` | Two-element `[major, minor]` protocol version, currently `[1, 2]`. |
+| `cedts_version` | Two-element `[major, minor]` protocol version, currently `[1, 3]`. |
 | `kind` | Packet kind. |
 | `message_id` | Unique ID for a request/event. |
 | `reply_to` | Message ID being answered, when applicable. |
@@ -57,8 +57,24 @@ Control packets use these fields:
 
 The packet kinds are `hello`, `hello_ack`, `ready`, `request`, `response`,
 `event`, `callback`, `progress`, `cancel`, `cancel_ack`, `error`, `ping`,
-`pong`, `shutdown`, and `shutdown_ack`. The `event` kind supports the
-`ui_timed_update` operation for TUI-to-WebUI state synchronization.
+`pong`, `shutdown`, and `shutdown_ack`. The `event` kind supports `metadata`
+for worker-to-core model runtime reports and `ui_timed_update` for
+TUI-to-WebUI state synchronization.
+
+### Worker model metadata
+
+After a successful `load_model` request, a backend worker may send an `event`
+with operation `metadata` to the core. Its `data` object has exactly these
+fields:
+
+| Field | Meaning |
+| --- | --- |
+| `model` | Loaded model identifier. |
+| `type` | `native` or `gguf`, identifying the effective inference implementation. |
+| `quant` | `full` for BF16, `float` for FP16, `bnb_8bit` or `bnb_4bit` for Celune's native BitsAndBytes load, or the model's GGUF quantization type (for example, `Q4_K_M`). |
+
+The core validates these values, stores them on the remote backend proxy, and
+logs the effective model runtime.
 
 ### Frontend timed updates
 
@@ -86,9 +102,9 @@ not expose a second public socket or permit arbitrary frontend commands.
 
 ## Handshake
 
-The core sends `hello` with `versions: [[1, 2]]`, its supported operations,
+The core sends `hello` with `versions: [[1, 3]]`, its supported operations,
 supported media types, a `describe` result, and capability flags. The worker
-replies with `hello_ack` containing the selected `[1, 2]` version and the
+replies with `hello_ack` containing the selected `[1, 3]` version and the
 negotiated capability intersection, then sends `ready` after backend setup.
 Limits are negotiated by taking the smaller peer limit. Current capability
 flags cover streaming, cancellation, and callbacks; the core callback
@@ -96,8 +112,9 @@ capability is currently false. Version selection currently requires an exact
 major/minor pair match. Version 1.2 adds optional `source_start` and
 `source_end` integer fields to error response data. They are zero-based,
 half-open CESN source offsets and must appear together; other error responses
-may omit them. Since peers require an exact version match, a 1.1 peer cannot
-exchange packets with a 1.2 peer.
+may omit them. Version 1.3 adds the worker-to-core `metadata` event. Since peers
+require an exact version match, peers on different minor versions cannot
+exchange packets.
 
 Before reading the initial hello, the worker waits up to ten seconds for the
 complete control packet and its empty binary boundary. If no control bytes

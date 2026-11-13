@@ -21,7 +21,12 @@ from ..vram import (
     release_cuda_after_oom,
 )
 from ..utils import available, format_error_message
-from ..config import config_bool, config_value, config_backend_options
+from ..config import (
+    config_bool,
+    config_value,
+    config_backend_options,
+    inference_mode as config_inference_mode,
+)
 from ..cevoice import (
     default_loader,
     active_bundle_path,
@@ -41,6 +46,7 @@ from ..backends.vc import (
     CeluneVCBackend,
     resolve_vc_backend as create_vc_backend,
 )
+from ..backends.environment import backend_manifest
 from ..backends.tts import CeluneBackend, resolve_backend
 from ..typing.celune import (
     VCBackendSpec,
@@ -169,7 +175,41 @@ def resolve_tts_backend(
     **backend_kwargs,
 ) -> CeluneBackend:
     """Resolve a TTS backend and bind runtime callbacks."""
+    inference_mode = config_inference_mode(
+        {"inference_mode": backend_kwargs.pop("inference_mode", "native")}
+    )
+    if isinstance(backend_spec, str):
+        manifest = backend_manifest(backend_spec)
+        supports_audio_cpp = manifest.supports_audio_cpp
+        requires_audio_cpp = manifest.requires_audio_cpp
+        backend_name = manifest.backend_id
+    else:
+        supports_audio_cpp = bool(getattr(backend_spec, "supports_audio_cpp", False))
+        requires_audio_cpp = bool(getattr(backend_spec, "requires_audio_cpp", False))
+        backend_name = str(getattr(backend_spec, "name", backend_spec))
+    effective_mode = (
+        "audio_cpp"
+        if requires_audio_cpp or (inference_mode == "gguf" and supports_audio_cpp)
+        else "native"
+    )
+    if isinstance(backend_spec, str):
+        backend_kwargs["inference_mode"] = inference_mode
+        backend_kwargs["effective_inference_mode"] = effective_mode
+    if inference_mode == "gguf" and not supports_audio_cpp:
+        self.log(
+            string("inference.audio_cpp_unavailable", backend=backend_name),
+            "warning",
+        )
+    self.log(
+        string(
+            "inference.backend_mode",
+            backend=backend_name,
+            requested=inference_mode,
+            effective=effective_mode,
+        )
+    )
     backend = resolve_backend(backend_spec, **backend_kwargs)
+    backend.configure_inference_mode(inference_mode, log=False)
     backend.bind_progress(self.progress_callback)
     backend.log_level = getattr(self, "log_level", "info")
     return backend

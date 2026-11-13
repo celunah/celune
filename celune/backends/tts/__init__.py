@@ -4,6 +4,7 @@
 from typing import Union, Optional
 from collections.abc import Callable
 from importlib.metadata import PackageNotFoundError, version
+from dataclasses import replace
 
 from .base import CeluneBackend
 from ...utils import discard
@@ -108,8 +109,12 @@ def resolve_backend(
 
         from ...cedts.remote import RemoteBackendProxy
 
+        effective_runtime = backend_kwargs.get("effective_inference_mode")
+        manifest = BACKEND_MANIFESTS[key]
+        if isinstance(effective_runtime, str):
+            manifest = replace(manifest, runtime=effective_runtime)
         return RemoteBackendProxy(
-            BACKEND_MANIFESTS[key],
+            manifest,
             log=log,
             fatal=fatal,
             **backend_kwargs,

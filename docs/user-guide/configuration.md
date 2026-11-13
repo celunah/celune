@@ -14,9 +14,10 @@ before the interface opens. `celune config view` prints the active file and
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `backend` | `null` | TTS or VC backend name. `null` lets Celune choose its normal backend. |
+| `inference_mode` | `native` | Use native model libraries or GGUF runtimes where supported. Takes effect after restarting Celune. |
 | `backend_options` | `soulxsinger.high_precision: true` | Constructor options passed only to the named backend. |
 | `commercial` | `false` | Declare commercial use. Celune then allows only models whose reviewed terms confirm commercial use. |
-| `quantize` | `true` | Try contract-approved TTS quantization: INT8 on Ampere and FP8 on sm89 or newer, with BF16 recovery. Ming3 selects Q8_0 when enabled and BF16 otherwise. |
+| `quantize` | `true` | Try contract-approved native TTS quantization: INT8 on Ampere and FP8 on sm89 or newer, with BF16 recovery. Ming3 and supported audio.cpp TTS adapters select Q8_0 when enabled and BF16 otherwise. |
 | `quantize_kv_cache` | `true` | Store supported Persona, Qwen3, FireRedTTS3, and VoxCPM2 cache prefixes in INT8 on Ampere or FP8 on `sm89+`; use `false` to keep their native cache dtype. |
 | `voice_bundle` | `default` | CEVOICE/CECHAR name or path. |
 | `log_level` | `info` | `info`, `verbose`, or `debug`. |
@@ -33,9 +34,18 @@ before the interface opens. `celune config view` prints the active file and
 | `input_device` | `null` | Input device index/name. |
 | `output_device` | `null` | Output device index/name. |
 
-`backend`, `voice_bundle`, and `mode` are the three settings that most directly
-change runtime behavior. Backend-specific settings should stay in their
-documented namespace instead of being duplicated at the top level.
+`backend`, `voice_bundle`, `mode`, and `inference_mode` are settings that most
+directly change runtime behavior. Backend-specific settings should stay in
+their documented namespace instead of being duplicated at the top level.
+
+`inference_mode` accepts `native` or `gguf`. In GGUF mode, Persona uses
+llama.cpp for the reviewed Qwen3-VL 4B package when available. Other Persona
+models fall back to Transformers. TTS backends select audio.cpp only when they
+declare support; native-only backends stay on their existing runtime. Ming3
+requires audio.cpp in either mode. Celune logs the requested and effective
+runtime, and backend workers report their loaded model through CEDTS metadata.
+See [inference runtimes](../development/inference-runtimes.md) for the exact
+compatibility and artifact matrix.
 
 ### Backend-specific options
 
@@ -93,8 +103,8 @@ remain unprofiled until measured separately.
 ### TTS quantization
 
 Set `quantize: true` (the default) to reduce supported TTS model VRAM use.
-Ming3 selects its Q8_0 GGUF package when enabled and BF16 when disabled. Celune
-selects TorchAO weight-only INT8 for Ampere devices before native FP8 support
+Ming3 and supported audio.cpp TTS adapters select their Q8_0 GGUF package when
+enabled and BF16 when disabled. Celune selects TorchAO weight-only INT8 for Ampere devices before native FP8 support
 and FP8 for Ada-class (`sm89`) and newer devices. The model contracts identify the linear
 attention and feed-forward layers eligible for conversion; embeddings, norms,
 output heads, speaker conditioning, and vocoders remain in BF16 or their

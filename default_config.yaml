@@ -12,6 +12,9 @@
 # `seed-vc` = voice conversion mode
 backend: null
 
+# Inference runtime for Persona and compatible TTS backends. Changes apply after restart.
+inference_mode: native
+
 # Model license usage policy
 #
 # `false` = allow models after their normal license consent prompt

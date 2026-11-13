@@ -733,6 +733,7 @@ def _config_autocomplete(
             "seed-vc",
         ),
         ("log_level",): ("info", "verbose", "debug"),
+        ("inference_mode",): ("native", "gguf"),
         ("mode",): OPERATION_MODES,
         ("theme",): ("dark", "light"),
         ("vram",): ("low", "medium", "high", "xhigh"),
@@ -780,6 +781,7 @@ def config_label(path: tuple[str, ...]) -> str:
 def _config_explanation(path: tuple[str, ...]) -> str:
     """Return a localized explanation for one configuration value."""
     aliases: dict[tuple[str, ...], str] = {
+        ("inference_mode",): "celune.inference_mode",
         ("persona", "speech_end_delay_seconds"): "persona.speech_delay",
         (
             "persona",

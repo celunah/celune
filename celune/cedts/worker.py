@@ -299,7 +299,29 @@ def _load_backend(
     constructor = constructor_loader()
     if expected_kind == "vc":
         return constructor(log=log)
-    return constructor(log=log, fatal=fatal, **kwargs)
+    backend_options = dict(kwargs)
+    inference_mode = backend_options.pop(
+        "inference_mode",
+        os.environ.get("CELUNE_TTS_INFERENCE_MODE", "native"),
+    )
+    effective_runtime = backend_options.pop(
+        "effective_inference_mode",
+        os.environ.get("CELUNE_TTS_EFFECTIVE_RUNTIME", ""),
+    )
+    if not isinstance(inference_mode, str) or not isinstance(effective_runtime, str):
+        raise TypeError("backend worker inference runtime metadata is invalid")
+    backend = constructor(log=log, fatal=fatal, **backend_options)
+    configure_inference_mode = getattr(backend, "configure_inference_mode", None)
+    if callable(configure_inference_mode):
+        configure_inference_mode(inference_mode, log=False)
+        if (
+            effective_runtime
+            and getattr(backend, "effective_inference_mode", None) != effective_runtime
+        ):
+            raise RuntimeError(
+                "backend worker inference runtime does not match its environment"
+            )
+    return backend
 
 
 def _describe(backend: BackendRuntime) -> BackendDescription:
@@ -646,6 +668,33 @@ def _run_request(
             backend.unload_model()
             model = backend.load_model(**cast(BackendArguments, arguments))
         backend.model = model
+        metadata_provider = getattr(backend, "inference_metadata", None)
+        if callable(metadata_provider):
+            candidate_metadata = metadata_provider(model)
+            if not isinstance(candidate_metadata, dict):
+                raise TypeError("backend inference metadata must be a dictionary")
+            metadata_model = candidate_metadata.get("model")
+            metadata_type = candidate_metadata.get("type")
+            metadata_quant = candidate_metadata.get("quant")
+            if (
+                not isinstance(metadata_model, str)
+                or not isinstance(metadata_type, str)
+                or metadata_type not in {"native", "gguf"}
+                or not isinstance(metadata_quant, str)
+            ):
+                raise TypeError("backend inference metadata is invalid")
+            metadata: dict[str, WorkerValue] = {
+                "model": metadata_model,
+                "type": metadata_type,
+                "quant": metadata_quant,
+            }
+            _send_message(
+                protocol_stream,
+                binary_stream,
+                build_packet("event", "metadata", metadata),
+                send_lock or threading.Lock(),
+                limits=limits,
+            )
         model_id = next_model_id
         models[model_id] = model
         return {"ok": True, "value": model_id}, next_model_id + 1

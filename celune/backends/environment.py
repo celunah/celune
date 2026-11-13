@@ -93,6 +93,15 @@ class BackendManifest:
     find_links: tuple[str, ...] = ()
     ignore_uv_sources: bool = False
     revision: int = 1
+    supports_audio_cpp: bool = False
+    requires_audio_cpp: bool = False
+
+    def __post_init__(self) -> None:
+        """Validate audio.cpp backend declarations."""
+        if self.requires_audio_cpp and not self.supports_audio_cpp:
+            raise ValueError(
+                f"backend '{self.backend_id}' requires audio.cpp but does not support it"
+            )
 
     def fingerprint(self) -> str:
         """Return the stable environment fingerprint for this manifest."""
@@ -151,6 +160,7 @@ BACKEND_MANIFESTS = {
         backend_module="celune.backends.tts.mini",
         backend_class="Mini",
         index_urls=_PYTORCH_INDEX_URLS,
+        supports_audio_cpp=True,
     ),
     "qwen3": BackendManifest(
         backend_id="qwen3",
@@ -163,6 +173,7 @@ BACKEND_MANIFESTS = {
         backend_module="celune.backends.tts.qwen3",
         backend_class="Qwen3",
         index_urls=_PYTORCH_INDEX_URLS,
+        supports_audio_cpp=True,
     ),
     "fireredtts3": BackendManifest(
         backend_id="fireredtts3",
@@ -190,6 +201,7 @@ BACKEND_MANIFESTS = {
         backend_class="DotsTtsMF",
         python="3.12",
         index_urls=_PYTORCH_INDEX_URLS,
+        supports_audio_cpp=True,
     ),
     "voxcpm2": BackendManifest(
         backend_id="voxcpm2",
@@ -203,6 +215,7 @@ BACKEND_MANIFESTS = {
         backend_class="VoxCPM2",
         python="3.12",
         index_urls=_PYTORCH_INDEX_URLS,
+        supports_audio_cpp=True,
     ),
     "ming3": BackendManifest(
         backend_id="ming3",
@@ -214,6 +227,8 @@ BACKEND_MANIFESTS = {
         backend_module="celune.backends.tts.ming3",
         backend_class="Ming3",
         index_urls=_PYTORCH_INDEX_URLS,
+        supports_audio_cpp=True,
+        requires_audio_cpp=True,
     ),
     "soulxsinger": BackendManifest(
         backend_id="soulxsinger",
@@ -456,6 +471,7 @@ class BackendEnvironmentManager:
             if (
                 not isinstance(stored_manifest, dict)
                 or stored_manifest.get("backend_id") != environment.manifest.backend_id
+                or stored_manifest.get("runtime") != environment.manifest.runtime
                 or metadata.get("fingerprint") != candidate.name
             ):
                 continue

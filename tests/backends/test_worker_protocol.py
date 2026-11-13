@@ -35,6 +35,7 @@ from celune.backends.tts import resolve_backend
 from celune.typing.worker import (
     WorkerValue,
     WorkerMessage,
+    WorkerRequest,
     WorkerResponse,
     WorkerControlMessage,
     WorkerPayloadDescriptor,
@@ -250,6 +251,85 @@ class TestWorkerProtocol(CeluneTestCase):
         self.assertIsNone(singing_voice["cfg_scale"])
         self.assertIsNone(singing_voice["persona"])
 
+    def test_worker_model_metadata_event_is_validated_and_transmitted(self) -> None:
+        """Carry effective runtime metadata from workers to the core."""
+        stream = io.BytesIO()
+        message = build_packet(
+            "event",
+            "metadata",
+            {"model": "example/model", "type": "gguf", "quant": "Q4_K_M"},
+        )
+        send_message(stream, message)
+        stream.seek(0)
+
+        decoded = receive_message(stream)
+        self.assertEqual(decoded["operation"], "metadata")
+        self.assertEqual(
+            decoded["data"],
+            {"model": "example/model", "type": "gguf", "quant": "Q4_K_M"},
+        )
+
+        with self.assertRaises(CEDTSError):
+            send_message(
+                io.BytesIO(),
+                build_packet(
+                    "event",
+                    "metadata",
+                    {
+                        "model": "example/model",
+                        "type": "unknown",
+                        "quant": "Q4_K_M",
+                    },
+                ),
+            )
+
+    def test_worker_sends_loaded_model_metadata_to_core(self) -> None:
+        """Emit runtime metadata as a worker-to-core event after model loading."""
+
+        class MetadataBackend:
+            """Minimal worker adapter that publishes one effective runtime."""
+
+            model: Optional[object] = None
+
+            def load_model(self, model_id: str) -> object:
+                """Return a placeholder model after checking its identity."""
+                assert model_id == "example/model"
+                return object()
+
+            def inference_metadata(self, _model: object) -> dict[str, str]:
+                """Publish the worker's resolved model runtime metadata."""
+                return {
+                    "model": "example/model",
+                    "type": "gguf",
+                    "quant": "Q4_K_M",
+                }
+
+        stream = io.BytesIO()
+        response, next_model_id = worker._run_request(
+            cast(BackendRuntime, MetadataBackend()),
+            cast(
+                WorkerRequest,
+                {
+                    "operation": "load_model",
+                    "arguments": {"model_id": "example/model"},
+                },
+            ),
+            {},
+            7,
+            stream,
+        )
+
+        self.assertTrue(response["ok"])
+        self.assertEqual(next_model_id, 8)
+        stream.seek(0)
+        packet = receive_message(stream)
+        self.assertEqual(packet["kind"], "event")
+        self.assertEqual(packet["operation"], "metadata")
+        self.assertEqual(
+            packet["data"],
+            {"model": "example/model", "type": "gguf", "quant": "Q4_K_M"},
+        )
+
     @LINUX_ONLY
     def test_worker_subprocess_completes_cedts_lifecycle_without_backend_dependencies(
         self,
@@ -340,7 +420,7 @@ raise SystemExit(worker.main())
                 cast(
                     dict[str, WorkerValue],
                     {
-                        "versions": [[1, 2]],
+                        "versions": [[1, 3]],
                         "capabilities": remote.CORE_CAPABILITIES,
                         "required_capabilities": {"streaming": True},
                     },
@@ -593,7 +673,7 @@ raise SystemExit(worker.main())
                     cast(
                         dict[str, WorkerValue],
                         {
-                            "versions": [[1, 2]],
+                            "versions": [[1, 3]],
                             "capabilities": remote.CORE_CAPABILITIES,
                             "required_capabilities": {"streaming": True},
                         },
@@ -914,7 +994,7 @@ finally:
                     cast(
                         dict[str, WorkerValue],
                         {
-                            "versions": [[1, 2]],
+                            "versions": [[1, 3]],
                             "capabilities": remote.CORE_CAPABILITIES,
                             "required_capabilities": {"streaming": True},
                         },
@@ -1224,7 +1304,7 @@ raise SystemExit(worker.main())
                     cast(
                         dict[str, WorkerValue],
                         {
-                            "versions": [[1, 2]],
+                            "versions": [[1, 3]],
                             "capabilities": remote.CORE_CAPABILITIES,
                             "required_capabilities": {"streaming": True},
                         },

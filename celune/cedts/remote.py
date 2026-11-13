@@ -11,7 +11,7 @@ import subprocess
 
 from uuid import uuid4
 from contextlib import suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import IO, Optional, cast
 from collections import OrderedDict, abc, deque
 
@@ -70,6 +70,7 @@ from ..backends.environment import (
     BackendEnvironmentManager,
 )
 from ..cevoice import active_bundle_path
+from ..i18n import string
 from ..utils import format_error_message
 from ..backends.tts.base import CeluneBackend
 from ..backends.vc.base import CeluneVCBackend
@@ -332,7 +333,23 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
         event_callback: Optional[abc.Callable[[WorkerMessage], None]] = None,
         **backend_kwargs: BackendArgumentValue,
     ) -> None:
+        from ..config import inference_mode as config_inference_mode
+
+        requested_mode = config_inference_mode(
+            {"inference_mode": backend_kwargs.get("inference_mode", "native")}
+        )
+        effective_mode = (
+            "audio_cpp"
+            if manifest.requires_audio_cpp
+            or (requested_mode == "gguf" and manifest.supports_audio_cpp)
+            else "native"
+        )
+        manifest = replace(manifest, runtime=effective_mode)
+        backend_kwargs["inference_mode"] = requested_mode
+        backend_kwargs["effective_inference_mode"] = effective_mode
         self._manifest = manifest
+        self.effective_inference_mode = effective_mode
+        self.model_metadata: Optional[dict[str, str]] = None
         self._environment_manager = environment_manager or BackendEnvironmentManager()
         self._fatal_callback = fatal
         self._log_callback = log
@@ -393,6 +410,13 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
                 fatal=fatal,
                 quantize=bool(backend_kwargs.get("quantize", True)),
                 quantize_kv_cache=bool(backend_kwargs.get("quantize_kv_cache", True)),
+                inference_mode="native",
+            )
+            self.supports_audio_cpp = manifest.supports_audio_cpp
+            self.requires_audio_cpp = manifest.requires_audio_cpp
+            self.configure_inference_mode(
+                str(backend_kwargs.get("inference_mode", "native")),
+                log=False,
             )
             self._start_packet_reader()
             self._load_description()
@@ -409,6 +433,12 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
     ) -> None:
         """Start the worker process and forward its stderr logs."""
         environment_variables = _worker_environment(environment)
+        environment_variables["CELUNE_TTS_INFERENCE_MODE"] = str(
+            backend_kwargs.get("inference_mode", "native")
+        )
+        environment_variables["CELUNE_TTS_EFFECTIVE_RUNTIME"] = str(
+            backend_kwargs.get("effective_inference_mode", "native")
+        )
         worker_binary_input = -1
         core_binary_input = -1
         core_binary_output = -1
@@ -979,6 +1009,39 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
         with self._event_condition:
             self._event_queue.append(packet)
             self._event_condition.notify_all()
+        if packet.get("operation") == "metadata":
+            raw_data = packet.get("data")
+            data = (
+                cast(dict[str, object], raw_data) if isinstance(raw_data, dict) else {}
+            )
+            model = data.get("model")
+            runtime_type = data.get("type")
+            quantization = data.get("quant")
+            if (
+                isinstance(model, str)
+                and isinstance(runtime_type, str)
+                and runtime_type in {"native", "gguf"}
+                and isinstance(quantization, str)
+            ):
+                self.model_metadata = {
+                    "model": model,
+                    "type": runtime_type,
+                    "quant": quantization,
+                }
+                self.effective_inference_mode = (
+                    "audio_cpp" if runtime_type == "gguf" else "native"
+                )
+                log_callback = getattr(self, "_log_callback", None)
+                if callable(log_callback):
+                    _emit_log(
+                        cast(LogCallback, log_callback),
+                        string(
+                            "inference.loaded_model",
+                            model=model,
+                            type=runtime_type,
+                            quant=quantization,
+                        ),
+                    )
         if packet.get("kind") == "progress":
             data = packet.get("data")
             if isinstance(data, dict):
@@ -1789,6 +1852,7 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
         """Load a model in the worker and return an opaque handle."""
         from ..registry.consent import require_model_consent
 
+        self.model_metadata = None
         require_model_consent(model_id)
         self.quantization_attempted = getattr(self, "quantization_requested", False)
         value = self.request(
@@ -1822,6 +1886,7 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
         Args:
             release_cuda_cache: Whether the worker should synchronize CUDA and release cached accelerator blocks.
         """
+        self.model_metadata = None
         process = getattr(self, "_process", None)
         if (
             getattr(self, "_closed", False)

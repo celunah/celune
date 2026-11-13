@@ -95,7 +95,7 @@ _AUDIO_MEDIA_TYPES = frozenset(
 _CEDTS_AUDIO_PEAK = np.float32(0.95)
 _TENSOR_MEDIA_TYPES = frozenset({"application/x-tensor"})
 _VALID_DTYPES = frozenset({"bool", "float32", "float64", "int8", "int16", "uint8"})
-CEDTS_VERSION = (1, 2)
+CEDTS_VERSION = (1, 3)
 WORKER_TRACEBACK_MARKER = "\n\n--- CEDTS worker traceback ---\n"
 CONTROL_PACKET_KINDS = frozenset(
     {
@@ -132,6 +132,7 @@ _PROTOCOL_OPERATIONS = frozenset(
         "cancel",
         "fatal",
         "handshake",
+        "metadata",
         "protocol",
         "ready",
         "shutdown",
@@ -163,6 +164,7 @@ _EVENT_OPERATIONS = frozenset(
         "completed",
         "failed",
         "shutdown_requested",
+        "metadata",
         "ui_timed_update",
     }
 )
@@ -1606,7 +1608,7 @@ def _validate_state_data(data: dict[str, object]) -> None:
 
 
 def _validate_event_data(operation: str, data: dict[str, object]) -> None:
-    """Validate fatal and state event payloads."""
+    """Validate lifecycle, model metadata, and state event payloads."""
     if operation == "fatal":
         _validate_exact_fields(data, {"fatal"}, {"message", "error", "error_type"})
         _validate_bool(data["fatal"], "backend worker fatal status")
@@ -1615,6 +1617,18 @@ def _validate_event_data(operation: str, data: dict[str, object]) -> None:
                 raise _worker_protocol_error(
                     "fatal_field_is_invalid", field_name=field_name
                 )
+        return
+    if operation == "metadata":
+        _validate_exact_fields(data, {"model", "type", "quant"})
+        if not isinstance(data["model"], str) or not data["model"].strip():
+            raise _worker_protocol_error("backend_worker_model_metadata_is_invalid")
+        if not isinstance(data["type"], str) or data["type"] not in {
+            "native",
+            "gguf",
+        }:
+            raise _worker_protocol_error("backend_worker_model_metadata_is_invalid")
+        if not isinstance(data["quant"], str) or not data["quant"].strip():
+            raise _worker_protocol_error("backend_worker_model_metadata_is_invalid")
         return
     if operation == "ui_timed_update":
         _validate_exact_fields(

@@ -30,7 +30,7 @@ from ...paths import temp_data_dir, huggingface_progress, huggingface_hub_cache_
 from ...utils import discard
 from ...cevoice import CEVoiceLoader, default_loader
 from ...constants import N_A_NUMERIC
-from ...exceptions import BackendError
+from ...exceptions import BackendError, ModelConsentRequired
 from .quantization import QuantizationMode, quantization_mode, quantize_component
 from ...registry.tts import ModelContract
 from ...registry.tts import model_contract as resolve_model_contract
@@ -247,6 +247,10 @@ class CeluneBackend[ModelT](ABC):
     max_new_tokens: int = 512
     is_fake: bool = False
     log_level: LogLevel = "info"
+    supports_audio_cpp: bool = False
+    requires_audio_cpp: bool = False
+    requested_inference_mode: str = "native"
+    effective_inference_mode: str = "native"
 
     def __init__(
         self,
@@ -256,6 +260,7 @@ class CeluneBackend[ModelT](ABC):
         quantize: bool = True,
         quantize_kv_cache: bool = True,
         singing: bool = False,
+        inference_mode: str = "native",
     ) -> None:
         self.model_name: Optional[str]
         if model_name is not None:
@@ -271,6 +276,8 @@ class CeluneBackend[ModelT](ABC):
         self.quantization_requested = quantize
         self.quantize_kv_cache = quantize_kv_cache
         self.singing = singing
+        self.configure_inference_mode(inference_mode, log=False)
+        self._audio_cpp_fallback_logged = False
         self.quantization_mode: Optional[QuantizationMode] = quantization_mode(quantize)
         self.quantization_active = False
         self.quantization_attempted = False
@@ -280,6 +287,102 @@ class CeluneBackend[ModelT](ABC):
         self.current_seed: Optional[int] = None
         self.random_seed = True
         self._truncated_reference_paths: set[Path] = set()
+
+    def configure_inference_mode(
+        self, inference_mode: str, *, log: bool = True
+    ) -> None:
+        """Resolve the effective runtime for this backend."""
+        if not isinstance(inference_mode, str) or inference_mode not in {
+            "native",
+            "gguf",
+        }:
+            raise ValueError("inference_mode must be either 'native' or 'gguf'")
+        if self.requires_audio_cpp and not self.supports_audio_cpp:
+            raise ValueError(
+                f"backend '{self.name}' requires audio.cpp but does not support it"
+            )
+        self.requested_inference_mode = inference_mode
+        self.effective_inference_mode = (
+            "audio_cpp"
+            if self.requires_audio_cpp
+            or (inference_mode == "gguf" and self.supports_audio_cpp)
+            else "native"
+        )
+        if not log:
+            return
+        if inference_mode == "gguf" and not self.supports_audio_cpp:
+            self.log(
+                string("inference.audio_cpp_unavailable", backend=self.name),
+                "warning",
+            )
+        self.log(
+            string(
+                "inference.backend_mode",
+                backend=self.name,
+                requested=inference_mode,
+                effective=self.effective_inference_mode,
+            )
+        )
+
+    def inference_metadata(self, model: ModelT) -> dict[str, str]:
+        """Describe the loaded model runtime for the Celune core."""
+        dtype = getattr(model, "dtype", None)
+        precision = getattr(model, "precision", None)
+        if isinstance(precision, str):
+            normalized_precision = precision.casefold()
+            if normalized_precision in {"bf16", "bfloat16"}:
+                quantization = "full"
+            elif normalized_precision in {"f16", "fp16", "float16"}:
+                quantization = "float"
+            else:
+                quantization = precision.upper()
+        else:
+            quantization = (
+                "float"
+                if str(dtype).casefold() in {"torch.float16", "float16"}
+                else "full"
+            )
+        return {
+            "model": str(self.model_name or self.default_model_id),
+            "type": "gguf"
+            if self.effective_inference_mode == "audio_cpp"
+            else "native",
+            "quant": quantization,
+        }
+
+    def fallback_audio_cpp_to_native(self, reason: BaseException) -> None:
+        """Remember the load-level fallback and log it once for this backend."""
+        if isinstance(
+            reason, (ModelConsentRequired, PermissionError, InterruptedError)
+        ):
+            raise reason
+        if self.requires_audio_cpp:
+            raise RuntimeError(
+                f"backend '{self.name}' requires audio.cpp and cannot fall back: "
+                f"{reason}"
+            ) from reason
+        if self.effective_inference_mode != "audio_cpp":
+            return
+        self.effective_inference_mode = "native"
+        if self._audio_cpp_fallback_logged:
+            return
+        self._audio_cpp_fallback_logged = True
+        self.log(
+            string(
+                "inference.audio_cpp_fallback",
+                backend=self.name,
+            ),
+            "warning",
+        )
+        self.log(f"audio.cpp fallback reason for {self.name}: {reason}", "debug")
+        self.log(
+            string(
+                "inference.backend_mode",
+                backend=self.name,
+                requested=self.requested_inference_mode,
+                effective=self.effective_inference_mode,
+            )
+        )
 
     def __str__(self) -> str:
         """Return the backend name for callers using str(CeluneBackend(...))."""

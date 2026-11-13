@@ -53,6 +53,15 @@ class TestConfig(CeluneTestCase):
         with mock.patch.dict("os.environ", {}, clear=True):
             assert config.config_bool(values, "CELUNE_TEST", "enabled", default=False)
 
+    def test_inference_mode_defaults_normalizes_and_rejects_invalid_values(
+        self,
+    ) -> None:
+        """Keep the persisted inference selection strict and backward compatible."""
+        assert config.inference_mode({}) == "native"
+        assert config.inference_mode({"inference_mode": " GGUF "}) == "gguf"
+        with pytest.raises(ValueError, match="Inference mode must be native or GGUF"):
+            config.inference_mode({"inference_mode": "automatic"})
+
     def test_config_audio_device_supports_null_name_and_index(self) -> None:
         """Verify audio-device config accepts null, trimmed names, and indices."""
         assert config.config_audio_device({}, "missing") is None

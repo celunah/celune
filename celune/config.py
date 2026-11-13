@@ -24,6 +24,17 @@ from .typing.common import Config, JSONSerializable
 
 ENABLED_ENV_VALUES = {"1", "true", "on", "yes", "enabled"}
 LOG_LEVELS: tuple[LogLevel, ...] = ("info", "verbose", "debug")
+INFERENCE_MODES = ("native", "gguf")
+
+
+def inference_mode(config: Optional[Mapping[str, JSONSerializable]]) -> str:
+    """Return the configured inference mode, defaulting old configs to native."""
+    value = config_value(config, "inference_mode", "native")
+    if isinstance(value, str):
+        mode = value.strip().casefold()
+        if mode in INFERENCE_MODES:
+            return mode
+    raise ValueError(string("celune.inference_mode_invalid"))
 
 
 def normalize_log_level(value: object, default: LogLevel = "info") -> LogLevel:

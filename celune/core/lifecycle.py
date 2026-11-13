@@ -275,6 +275,7 @@ def initialize(
 
     backend_kwargs: dict[str, JSONSerializable] = {
         "quantize": tts_quantization_enabled(config, tts_backend),
+        "inference_mode": config_value(config, "inference_mode", "native"),
     }
     if isinstance(tts_backend, CeluneBackend):
         tts_backend.quantization_requested = bool(backend_kwargs["quantize"])
@@ -1377,12 +1378,18 @@ async def _pipeline_jobs(self) -> None:
 
 
 def _abort_backend_operations(self) -> None:
-    """Abort backend-owned work before pipeline and model teardown begins."""
+    """Cancel active TTS work before pipeline and model teardown begins."""
     seen: set[int] = set()
     for backend in (self.backend, self.vc_backend, self._reload_backend):
         if backend is None or id(backend) in seen:
             continue
         seen.add(id(backend))
+        if backend is self.backend:
+            cancel = getattr(backend, "cancel_active_request", None)
+            if callable(cancel):
+                with contextlib.suppress(Exception):
+                    cancel(wait_for_ack=False)
+                continue
         abort = getattr(backend, "abort", None)
         if callable(abort):
             with contextlib.suppress(Exception):

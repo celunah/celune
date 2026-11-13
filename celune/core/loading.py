@@ -276,7 +276,13 @@ def load(self, raise_on_error: bool = False, skip_runtime_check: bool = False) -
         self.model_name = ""
         self.log(string("celune.ready_for_vc"))
     else:
-        self.backend.preload_models()
+        try:
+            self.backend.preload_models()
+        except (ModelConsentRequired, PermissionError):
+            raise
+        except Exception as error:
+            _report_tts_runtime_failure(self, error, raise_on_error)
+            return False
 
         self.log(string("celune.all_voices_available"))
         try:
@@ -285,20 +291,10 @@ def load(self, raise_on_error: bool = False, skip_runtime_check: bool = False) -
             self.model_name = self.backend.model_id_for_voice(active_voice)
         except ModelConsentRequired:
             raise
+        except PermissionError:
+            raise
         except Exception as e:
-            self.fatal()
-            self.log(
-                format_error_message(
-                    string("celune.default_model_load_failed", app_name=APP_NAME),
-                    e,
-                    self.log_level,
-                ),
-                "error",
-            )
-            self.error_callback(string("celune.default_model_failed_short"))
-            self.progress_callback(0, 1)
-            if raise_on_error:
-                raise
+            _report_tts_runtime_failure(self, e, raise_on_error)
             return False
 
     pipeline_thread = threading.Thread(target=self.run_pipeline_jobs, daemon=True)
@@ -380,6 +376,36 @@ def _play_readiness_signal(self) -> None:
             "warning",
             loglevel="verbose",
         )
+
+
+def _report_tts_runtime_failure(
+    self,
+    error: BaseException,
+    raise_on_error: bool,
+) -> None:
+    """Enter the recoverable startup error state when TTS cannot initialize."""
+    backend_name = self.backend.name
+    self.fatal(semi_fatal=True)
+    detail = format_error_message(
+        string(
+            "inference.tts_startup_failed", backend=backend_name, failure=str(error)
+        ),
+        error,
+        self.log_level,
+    )
+    self.log(detail, "error")
+    self.error_callback(
+        string(
+            "inference.tts_startup_failed",
+            backend=backend_name,
+            failure=str(error),
+        )
+    )
+    self.progress_callback(0, 1)
+    if raise_on_error:
+        raise BackendError(
+            f"runtime for backend '{backend_name}' failed to initialize"
+        ) from error
 
 
 def _start_configured_api(self) -> None:
