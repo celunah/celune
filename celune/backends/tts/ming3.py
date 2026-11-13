@@ -10,13 +10,6 @@ import torch
 from huggingface_hub import hf_hub_download, try_to_load_from_cache
 
 from .base import CeluneBackend
-from .audio_cpp import (
-    AudioCppRuntime,
-    archive_sha256,
-    ensure_audio_cpp_server,
-    runtime_assets,
-    start_audio_cpp_server,
-)
 from ...i18n import string
 from ...paths import (
     app_data_dir,
@@ -25,6 +18,13 @@ from ...paths import (
 )
 from ...utils import discard
 from ...cevoice import CEVoiceLoader, default_loader
+from .audio_cpp import (
+    AudioCppRuntime,
+    archive_sha256,
+    runtime_assets,
+    start_audio_cpp_server,
+    ensure_audio_cpp_server,
+)
 from ...registry.tts import (
     MING3_TTS_Q8_FILE,
     MING3_TTS_Q8_SIZE,
@@ -434,7 +434,7 @@ class Ming3(CeluneBackend[MingRuntime]):
         max_new_tokens = _integer_option(
             kwargs.pop("max_new_tokens", self.max_new_tokens), "max_new_tokens"
         )
-        options: dict[str, Union[str, int, float]] = {
+        options: dict[str, object] = {
             "language": language_code,
             "max_tokens": min(max_new_tokens, _MAX_TOKENS),
             "seed": self.current_seed or 0,
@@ -455,7 +455,7 @@ class Ming3(CeluneBackend[MingRuntime]):
         if isinstance(instruction, str) and instruction.strip():
             options["instruct"] = instruction.strip()
 
-        request_body = {
+        request_body: dict[str, object] = {
             "model": "ming3",
             "input": text,
             "voice_ref": reference_path.resolve().as_posix(),
