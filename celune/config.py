@@ -2,14 +2,17 @@
 """Configuration helpers for Celune."""
 
 import os
-from pathlib import Path
 from copy import deepcopy
 
 # noinspection PyProtectedMember
 from typing import Optional, cast
-from collections.abc import Callable, Mapping, Sequence
+from pathlib import Path
+from collections.abc import Mapping, Callable, Sequence
 
 from .i18n import string
+from .paths import api_key_path
+from .constants import APP_NAME
+from .typing.common import Config, JSONSerializable
 from .typing.config import (
     AudioHostApi,
     AudioDeviceConfig,
@@ -17,10 +20,7 @@ from .typing.config import (
     AudioDeviceInfoValue,
     AudioDeviceQueryResult,
 )
-from .paths import api_key_path
-from .constants import APP_NAME
 from .typing.aliases import LogLevel
-from .typing.common import Config, JSONSerializable
 
 ENABLED_ENV_VALUES = {"1", "true", "on", "yes", "enabled"}
 LOG_LEVELS: tuple[LogLevel, ...] = ("info", "verbose", "debug")
@@ -186,7 +186,8 @@ def config_api_settings(
     host = "0.0.0.0" if access_level == "same_network" else "127.0.0.1"
     token_value = options.get("token")
     token = str(token_value).strip() if token_value is not None else None
-    if enabled:
+    explicitly_disabled_auth = isinstance(token_value, str) and not token_value.strip()
+    if enabled and not explicitly_disabled_auth:
         key_file = path_factory(True)
         env_token = os.getenv("CELUNE_API_TOKEN", "").strip()
         uses_generated_key = not token and not env_token
@@ -205,6 +206,8 @@ def config_api_settings(
                     ),
                     "info",
                 )
+    elif explicitly_disabled_auth:
+        token = ""
 
     try:
         port = config_int(options.get("port", 2060), 2060)

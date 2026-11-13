@@ -134,6 +134,11 @@ API, T2S, Ming3, and Persona. ENTER writes the edited values to the active
 then requests a silent launcher-managed restart; the terminal title changes to
 `Restarting`. ESC leaves the file unchanged.
 
+String settings that allow null can be edited by typing a value directly. Enter
+`null` or `None` without quotes to save YAML null; enter `"null"` or `"None"` to
+save the word as a string. Autocomplete suggestions remain available for
+settings that provide them.
+
 ## YouTube downloads
 
 Celune uses `yt-dlp` for YouTube URLs supplied to audio playback and upgrades
@@ -266,6 +271,11 @@ api:
 
 Celune creates and persists an API key automatically when `token` is `null` and
 `CELUNE_API_TOKEN` is unset.
+When `token` is `null`, a nonempty `CELUNE_API_TOKEN` is used instead. Set
+`token: ""` to disable API authentication; this explicit empty value also
+overrides `CELUNE_API_TOKEN`. Any other token value is used as the API key.
+With authentication disabled, keep `access: same_machine` unless the API is
+intended to be available without a key to other devices.
 Use `access: same_machine` for localhost, `same_network` for LAN devices, or
 `everyone` for a temporary public Cloudflare tunnel. The API extra is required
 for FastAPI/Gradio deployment. See [REST API](../API.md) for key storage,

@@ -14,12 +14,17 @@ api:
 
 ## Access and authentication
 
-Celune generates a key automatically when `api.token` and
-`CELUNE_API_TOKEN` are unset. The generated key uses the `C-` prefix followed
+Celune generates a key automatically when `api.token` is `null` and
+`CELUNE_API_TOKEN` is unset. A nonempty `CELUNE_API_TOKEN` is used when the
+configuration token is `null`. The generated key uses the `C-` prefix followed
 by 25 uppercase base-36 characters, and persists in Celune's app-data
-`api.key` file. The helper `celune.api.get_or_create_api_key()` returns
-that key to Python integrations; `celune.api.generate_api_key()` creates
-a new key without storing it.
+`api.key` file. Set `api.token: ""` to disable API authentication; this explicit
+empty value also overrides `CELUNE_API_TOKEN`. Any other token value is used as
+the API key. With authentication disabled, requests to the API and WebUI are
+not gated by a key, so keep the listener on localhost unless unauthenticated
+network access is intended. The helper `celune.api.get_or_create_api_key()`
+returns the generated or configured key to Python integrations;
+`celune.api.generate_api_key()` creates a new key without storing it.
 
 Choose `api.access` to control where Celune listens:
 
@@ -93,8 +98,9 @@ api_key = key_file.read_text(encoding="utf-8").strip()
 |--------|------|-------------|
 | `GET` | `/v1` | Return Celune's current status. |
 | `GET` | `/v1/version` | Return the running Celune version. |
-| `GET` | `/` | Redirect to the mounted WebUI at `/ui`. |
-| `GET` | `/ui/key` | Show the WebUI API-key prompt. |
+| `GET` | `/` | Redirect to the mounted WebUI at `/ui/`. |
+| `GET` | `/ui/` | Load the mounted WebUI. |
+| `GET` | `/ui/key` | Show the API-key prompt when authentication is enabled. |
 | `POST` | `/ui/key` | Exchange the API key for a browser WebUI session. |
 | `POST` | `/v1/think` | Ask Celune to think through Persona and reply asynchronously through her normal speech pipeline. |
 | `POST` | `/v1/speak` | Queue speech and return one complete `audio/flac` response. |
@@ -481,18 +487,21 @@ Gradio serves its own hashed JavaScript and CSS bundles from that same path
 through the mounted application. A reverse proxy or Cloudflare Tunnel must
 forward `/ui/assets/` requests to Celune without rewriting their paths.
 
-Unauthenticated access to `/ui` redirects to `/ui/key`, which displays a
-blocking API-key prompt. Submitting the key sends it to `POST /ui/key` in a
-JSON `api_key` field. A valid key creates an opaque, `HttpOnly`,
-`SameSite=Strict` cookie scoped to `/ui` for 30 days, then the browser returns
-to `/ui`. The signed cookie carries a random browser client ID and expiry, not
-the API key, and remains valid across Celune restarts. Active sessions are
-extended as the browser uses the WebUI. Changing the API key invalidates
-existing sessions; another browser without its own cookie still sees the key
-prompt. The API key is not stored in the URL or browser storage. The API
-security middleware checks the session on WebUI HTTP actions and WebSocket
-connections; requests without a valid API key or session receive `401`, even
-if the prompt is removed from the page with browser developer tools. API
+When an API key is configured, unauthenticated access to `/ui` redirects to
+`/ui/key`, which displays a blocking API-key prompt. Submitting the key sends it
+to `POST /ui/key` in a JSON `api_key` field. A valid key creates an opaque,
+`HttpOnly`, `SameSite=Strict` cookie scoped to `/ui` for 30 days, then the
+browser returns to `/ui/`. The non-slash `/ui` path redirects to the mounted
+`/ui/` path after authentication. The signed cookie carries a random browser
+client ID and expiry, not the API key, and remains valid across Celune restarts.
+Active sessions are extended as the browser uses the WebUI. Changing the API
+key invalidates existing sessions; another browser without its own cookie still
+sees the key prompt. When authentication is disabled with `api.token: ""`,
+`/ui/` opens without a key prompt. The API key is not stored in the URL or
+browser storage. The API security middleware checks the session on WebUI HTTP
+actions and WebSocket connections; requests without a valid API key or session
+receive `401`, even if the prompt is removed from the page with browser
+developer tools. API
 routes, including read-only status and version routes, also require the API
 key. The authentication request is rate limited, and browser writes and
 WebSocket connections must come from the same origin.

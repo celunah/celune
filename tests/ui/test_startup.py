@@ -8,36 +8,26 @@ import asyncio
 import tempfile
 import warnings
 import threading
+from unittest import mock
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Optional, cast
-from pathlib import Path
-from unittest import mock
 from collections.abc import Callable
 
-import numpy as np
 import pytest
+import numpy as np
 from textual import events
 from textual.app import App
-from textual.widgets import Label, Static, RichLog, TextArea, ProgressBar
 from textual.containers import Vertical
+from textual.widgets import Label, Static, RichLog, TextArea, ProgressBar
 
-from celune.ui import (
-    app as ui_app,
-)
-from celune.ui import (
-    compat as ui_compat,
-)
-from celune.ui import (
-    terminal as ui_terminal,
-)
-from celune.ui import (
-    resources as ui_resources,
-)
-from celune.core import lifecycle as core_lifecycle
-from celune.i18n import string, tagged_string
 from celune.theme import colors
 from celune.utils import discard
 from celune.celune import Celune
+from celune.i18n import string, tagged_string
+from celune.ui import (
+    app as ui_app,
+)
 from celune.ui.app import (
     Button,
     CeluneUI,
@@ -47,15 +37,21 @@ from celune.ui.app import (
     ProgressLabel,
     CeluneLoadingScreen,
 )
+from celune.ui import compat as ui_compat
+from celune.ui import (
+    resources as ui_resources,
+)
+from celune.ui import terminal as ui_terminal
 from celune.constants import APP_NAME, COST_EQUIVALENTS, ExitCodes
-from celune.ui.headless import CeluneHeadlessUI
-from celune.typing.modes import OperationState
-from celune.extensions.events import EventDispatcher
+from celune.core import lifecycle as core_lifecycle
 from celune.dataclasses.events import CharacterChangedEvent
+from celune.extensions.events import EventDispatcher
+from celune.typing.modes import OperationState
+from celune.ui.headless import CeluneHeadlessUI
 
 from ..celtest import celtest
-from ..support import FakeBackend, CeluneTestCase
 from .fixtures import reset_ui_singletons
+from ..support import FakeBackend, CeluneTestCase
 
 
 class TestUIStartup(CeluneTestCase):
@@ -402,6 +398,33 @@ class TestUIStartup(CeluneTestCase):
             "everyone",
         )
         assert "REST API" in option.explanation
+
+    def test_settings_menu_allows_text_for_nullable_and_language_settings(self) -> None:
+        """Allow text entry on nullable fields and language-code suggestions."""
+        ui = CeluneUI()
+        ui.celune = cast(
+            Celune,
+            SimpleNamespace(
+                config={
+                    "locale": None,
+                    "persona": {"speech_language": "auto"},
+                    "agent": {"max_tokens": None},
+                },
+            ),
+        )
+
+        with mock.patch.object(ui, "_show_menu") as show_menu:
+            ui.open_settings_menu()
+
+        menu = show_menu.call_args.args[0]
+        assert [option.allow_free_text for option in menu.options] == [
+            True,
+            True,
+            False,
+        ]
+        assert menu.options[0].autocomplete_values == (None,)
+        assert menu.options[1].autocomplete_values == ("auto",)
+        assert menu.options[2].autocomplete_values == (None,)
 
     def test_settings_menu_saves_values_and_requests_pending_restart(self) -> None:
         """Verify ENTER's settings result writes YAML and returns exit code 7."""
