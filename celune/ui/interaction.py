@@ -6,17 +6,17 @@ from __future__ import annotations
 import os
 import re
 import sys
-import queue as queue_module
 import shlex
 import types
 import ctypes
 import asyncio
-import threading
 import contextlib
-from copy import deepcopy
+import threading
+import queue as queue_module
 from uuid import uuid4
-from typing import TYPE_CHECKING, Optional, cast
+from copy import deepcopy
 from pathlib import Path
+from typing import TYPE_CHECKING, Optional, cast
 from collections.abc import Callable, Iterator
 
 from . import app as _app
@@ -34,6 +34,29 @@ _FATAL_TEXT_EDITOR_BLOCKED_KEYS = frozenset(
         "ctrl+r",
         "ctrl+t",
         "escape",
+    }
+)
+_SETTINGS_FREE_TEXT_PATHS = frozenset(
+    {
+        ("api", "token"),
+        ("audio_api",),
+        ("input_device",),
+        ("locale",),
+        ("output_device",),
+        ("persona", "memory", "storage_dir"),
+        ("persona", "speech_language"),
+        ("youtube", "cookies_file"),
+        ("youtube", "cookies_from_browser"),
+        ("youtube", "js_runtimes"),
+        ("youtube", "player_client"),
+        ("youtube", "po_token"),
+        ("youtube", "remote_components"),
+    }
+)
+_SETTINGS_NULLABLE_INTEGER_PATHS = frozenset(
+    {
+        ("agent", "max_tokens"),
+        ("persona", "max_turns"),
     }
 )
 
@@ -669,6 +692,10 @@ def open_settings_menu(self, *, preview: bool = False) -> None:
                 label=label,
                 value=value,
                 autocomplete_values=self._config_autocomplete(path, value),
+                allow_free_text=(
+                    path in _SETTINGS_FREE_TEXT_PATHS
+                    or (value is None and path not in _SETTINGS_NULLABLE_INTEGER_PATHS)
+                ),
                 explanation=self._config_explanation(path),
             )
         )
@@ -716,8 +743,6 @@ def _config_autocomplete(
     path: tuple[str, ...], value: _app.JSONSerializable
 ) -> Optional[tuple[_app.JSONSerializable, ...]]:
     """Return useful autocomplete candidates for one configuration value."""
-    if value is None:
-        return (None,)
     if isinstance(value, bool):
         return True, False
 
@@ -739,7 +764,14 @@ def _config_autocomplete(
         ("audio_api",): (None, "wasapi", "directsound"),
         ("persona", "speech_language"): ("auto",),
     }
-    return candidates.get(path)
+    if path in candidates:
+        values = candidates[path]
+        if value is None and None not in values:
+            return (None, *values)
+        return values
+    if value is None:
+        return (None,)
+    return None
 
 
 def config_label(path: tuple[str, ...]) -> str:

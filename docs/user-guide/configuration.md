@@ -124,6 +124,11 @@ API, T2S, Ming3, and Persona. ENTER writes the edited values to the active
 then requests a silent launcher-managed restart; the terminal title changes to
 `Restarting`. ESC leaves the file unchanged.
 
+String settings that allow null can be edited by typing a value directly. Enter
+`null` or `None` without quotes to save YAML null; enter `"null"` or `"None"` to
+save the word as a string. Autocomplete suggestions remain available for
+settings that provide them.
+
 ## YouTube downloads
 
 Celune uses `yt-dlp` for YouTube URLs supplied to audio playback and upgrades
