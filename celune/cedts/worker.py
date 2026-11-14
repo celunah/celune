@@ -308,12 +308,25 @@ def _load_backend(
         "effective_inference_mode",
         os.environ.get("CELUNE_TTS_EFFECTIVE_RUNTIME", ""),
     )
+    shared_server_error = backend_options.pop("audio_cpp_shared_server_error", None)
     if not isinstance(inference_mode, str) or not isinstance(effective_runtime, str):
         raise TypeError("backend worker inference runtime metadata is invalid")
+    if shared_server_error is not None and not isinstance(shared_server_error, str):
+        raise TypeError("backend worker shared audio.cpp diagnostics are invalid")
     backend = constructor(log=log, fatal=fatal, **backend_options)
     configure_inference_mode = getattr(backend, "configure_inference_mode", None)
     if callable(configure_inference_mode):
         configure_inference_mode(inference_mode, log=False)
+        if shared_server_error:
+            fallback_audio_cpp_to_native = getattr(
+                backend, "fallback_audio_cpp_to_native", None
+            )
+            if not callable(fallback_audio_cpp_to_native):
+                raise RuntimeError(
+                    "the shared audio.cpp server failed but this backend "
+                    "cannot select a fallback runtime"
+                )
+            fallback_audio_cpp_to_native(RuntimeError(shared_server_error))
         if (
             effective_runtime
             and getattr(backend, "effective_inference_mode", None) != effective_runtime

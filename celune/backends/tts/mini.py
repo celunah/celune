@@ -12,6 +12,7 @@ from collections.abc import Mapping, Callable, Iterator
 import yaml
 import numpy as np
 import torch
+import soundfile as sf
 from pocket_tts import TTSModel
 from huggingface_hub import snapshot_download
 
@@ -65,6 +66,7 @@ class Mini(CeluneBackend[Union[TTSModel, AudioCppRuntime]]):
         super().__init__(log=log, fatal=fatal, quantize=quantize)
         self._validate_refs()
         self._voice_states: dict[str, MiniPromptState] = {}
+        self._audio_cpp_reference_paths: dict[str, Path] = {}
         self._generated_config_path: Optional[Path] = None
         self._loaded_language: Optional[str] = None
 
@@ -278,6 +280,40 @@ class Mini(CeluneBackend[Union[TTSModel, AudioCppRuntime]]):
         loader, _ = compatible_bundle
         return loader.materialize(voice, "wav")
 
+    def _audio_cpp_reference_path(self, voice: str) -> Path:
+        """Prepare a reference WAV with native Pocket TTS pause handling."""
+        from pocket_tts.data.audio import audio_read
+        from pocket_tts.data.audio_utils import convert_audio, end_on_pause
+
+        cached_path = self._audio_cpp_reference_paths.get(voice)
+        if cached_path is not None and cached_path.is_file():
+            return cached_path
+
+        reference_path = self._truncate_reference(self._reference_voice_path(voice))
+        audio, source_sample_rate = audio_read(reference_path)
+        conditioning_audio = convert_audio(audio, source_sample_rate, 24_000, 1)
+        conditioning_audio = end_on_pause(conditioning_audio, 24_000)
+        audio_array = np.asarray(
+            conditioning_audio.squeeze(0).detach().cpu().numpy(), dtype=np.float32
+        )
+
+        with tempfile.NamedTemporaryFile(
+            prefix="celune-pocket-reference-",
+            suffix=".wav",
+            dir=str(temp_data_dir(create=True)),
+            delete=False,
+        ) as temporary_file:
+            prepared_path = Path(temporary_file.name)
+        try:
+            sf.write(prepared_path, audio_array, 24_000, subtype="FLOAT")
+        except Exception:
+            with contextlib.suppress(OSError):
+                prepared_path.unlink(missing_ok=True)
+            raise
+
+        self._audio_cpp_reference_paths[voice] = prepared_path
+        return prepared_path
+
     def _get_voice_state(self, model: MiniModel, voice: str) -> MiniPromptState:
         """Return a cached Pocket TTS voice state for the selected voice."""
         if voice in self._voice_states:
@@ -393,6 +429,9 @@ class Mini(CeluneBackend[Union[TTSModel, AudioCppRuntime]]):
                         sample_rate=24_000,
                         torch_root=Path(torch.__file__).resolve().parent,
                         device=torch.cuda.current_device(),
+                        load_options={
+                            "language": MINI_LANGUAGE_MODEL_VARIANTS[requested_language]
+                        },
                         log=self.log,
                         report_progress=self.report_progress,
                     )
@@ -466,6 +505,10 @@ class Mini(CeluneBackend[Union[TTSModel, AudioCppRuntime]]):
         """
         generated_config_path = self._generated_config_path
         self._voice_states.clear()
+        for reference_path in self._audio_cpp_reference_paths.values():
+            with contextlib.suppress(OSError):
+                reference_path.unlink(missing_ok=True)
+        self._audio_cpp_reference_paths.clear()
         self._generated_config_path = None
         self._loaded_language = None
         if generated_config_path is not None:
@@ -606,7 +649,7 @@ class Mini(CeluneBackend[Union[TTSModel, AudioCppRuntime]]):
         voice = kwargs.pop("voice", self.default_voice)
         if not isinstance(voice, str):
             voice = self.default_voice or TTS_DEFAULT_VOICE
-        reference_path = self._reference_voice_path(voice)
+        reference_path = self._audio_cpp_reference_path(voice)
         self._apply_seed()
         temperature_value = kwargs.pop("temperature", 0.15)
         if not isinstance(temperature_value, (int, float)) or isinstance(

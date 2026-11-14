@@ -15,11 +15,11 @@ from celune.dataclasses.persona import ChatMessage, GenerateRequest
 from celune.exceptions import ModelConsentRequired
 from celune.persona import gguf, runtime
 from celune.registry import get_model_metadata
-from celune.registry.llm import PERSONA_DEFAULT_MODEL_ID
+from celune.registry.llm import LLM_MODELS, PERSONA_DEFAULT_MODEL_ID
 
 
-def test_gguf_artifacts_are_limited_to_reviewed_model_and_precisions() -> None:
-    """Resolve only the pinned Qwen3-VL packages for matching precisions."""
+def test_gguf_artifacts_cover_registered_models_and_precisions() -> None:
+    """Resolve pinned packages for every built-in Persona model and precision."""
     assert (
         gguf.persona_gguf_variant(PERSONA_DEFAULT_MODEL_ID, "4bit")
         == (gguf.QWEN3_VL_GGUF_VARIANTS["4bit"])
@@ -28,7 +28,12 @@ def test_gguf_artifacts_are_limited_to_reviewed_model_and_precisions() -> None:
         gguf.persona_gguf_variant(PERSONA_DEFAULT_MODEL_ID, "8bit")
         == (gguf.QWEN3_VL_GGUF_VARIANTS["8bit"])
     )
-    assert gguf.persona_gguf_variant("Qwen/Qwen3-VL-8B-Instruct", "4bit") is None
+    for metadata in LLM_MODELS:
+        for quantization in ("4bit", "8bit"):
+            assert (
+                gguf.persona_gguf_variant(metadata.model_id, quantization) is not None
+            )
+    assert gguf.persona_gguf_variant("unregistered/model", "4bit") is None
     assert gguf.persona_gguf_variant(PERSONA_DEFAULT_MODEL_ID, "none") is None
 
 
@@ -115,6 +120,7 @@ def test_gguf_model_load_falls_back_once_when_server_initialization_fails() -> N
 
 def test_unsupported_persona_model_uses_native_without_trying_gguf() -> None:
     """Use native inference directly for a model without a verified package."""
+    model_id = "unregistered/model"
     persona_runtime = runtime.PersonaRuntime(
         config={"vram": "high", "inference_mode": "gguf"}
     )
@@ -123,10 +129,10 @@ def test_unsupported_persona_model_uses_native_without_trying_gguf() -> None:
         mock.patch("celune.persona.gguf.LlamaCppPersonaRuntime") as llama_runtime,
         mock.patch.object(persona_runtime.backend, "load") as native_load,
     ):
-        persona_runtime.load("Qwen/Qwen3-VL-8B-Instruct", "4bit")
+        persona_runtime.load(model_id, "4bit")
 
     llama_runtime.assert_not_called()
-    native_load.assert_called_once_with("Qwen/Qwen3-VL-8B-Instruct", "4bit")
+    native_load.assert_called_once_with(model_id, "4bit")
     assert persona_runtime.requested_runtime == "gguf"
     assert persona_runtime.effective_runtime == "native"
 

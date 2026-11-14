@@ -21,13 +21,18 @@ import urllib.request
 import zipfile
 import contextlib
 from pathlib import Path
-from collections import abc, deque
+from collections import deque
 from typing import Optional
 from dataclasses import dataclass
 from urllib.parse import unquote, urlparse
 
 from ..paths import app_data_dir, huggingface_hub_cache_dir
 from ..dataclasses.persona import GenerateRequest, GenerateResponse
+from .gguf_catalog import (
+    PERSONA_GGUF_VARIANTS_BY_MODEL,
+    PersonaGGUFFile,
+    PersonaGGUFVariant,
+)
 
 LLAMA_CPP_RELEASE = "b12110"
 LLAMA_CPP_COMMIT = "cd959bae99ff4bed22bef2604f45241c09bbb8c8"
@@ -41,40 +46,38 @@ _SERVER_START_TIMEOUT_SECONDS = 120.0
 _HTTP_TIMEOUT_SECONDS = 120.0
 
 
-@dataclass(frozen=True, slots=True)
-class PersonaGGUFVariant:
-    """Describe one exact language-model and vision-projector pair."""
-
-    request_quantization: str
-    quantization: str
-    model_file: str
-    model_size: int
-    model_sha256: str
-    projector_file: str
-    projector_size: int
-    projector_sha256: str
-
-
 QWEN3_VL_GGUF_VARIANTS = {
     "4bit": PersonaGGUFVariant(
+        repo_id=QWEN3_VL_GGUF_REPO,
+        revision=QWEN3_VL_GGUF_REVISION,
         request_quantization="4bit",
         quantization="Q4_K_M",
-        model_file="Qwen3VL-4B-Instruct-Q4_K_M.gguf",
-        model_size=2_497_281_664,
-        model_sha256="66358cb18bb6b3b1b6675aa412c7a88ef01d228f481184d13668e5201c730a0a",
-        projector_file="mmproj-Qwen3VL-4B-Instruct-Q8_0.gguf",
-        projector_size=453_974_304,
-        projector_sha256="30ba2c7dd3127a4561b6cba9d13d0f711c91bdb38742e2f56d73c8cb596bd06d",
+        model=PersonaGGUFFile(
+            filename="Qwen3VL-4B-Instruct-Q4_K_M.gguf",
+            size=2_497_281_664,
+            sha256="66358cb18bb6b3b1b6675aa412c7a88ef01d228f481184d13668e5201c730a0a",
+        ),
+        projector=PersonaGGUFFile(
+            filename="mmproj-Qwen3VL-4B-Instruct-Q8_0.gguf",
+            size=453_974_304,
+            sha256="30ba2c7dd3127a4561b6cba9d13d0f711c91bdb38742e2f56d73c8cb596bd06d",
+        ),
     ),
     "8bit": PersonaGGUFVariant(
+        repo_id=QWEN3_VL_GGUF_REPO,
+        revision=QWEN3_VL_GGUF_REVISION,
         request_quantization="8bit",
         quantization="Q8_0",
-        model_file="Qwen3VL-4B-Instruct-Q8_0.gguf",
-        model_size=4_280_406_144,
-        model_sha256="054721f478bc5fa6beffb7f38eae575d45298f88cbb8d2f83ef675a727863eb1",
-        projector_file="mmproj-Qwen3VL-4B-Instruct-Q8_0.gguf",
-        projector_size=453_974_304,
-        projector_sha256="30ba2c7dd3127a4561b6cba9d13d0f711c91bdb38742e2f56d73c8cb596bd06d",
+        model=PersonaGGUFFile(
+            filename="Qwen3VL-4B-Instruct-Q8_0.gguf",
+            size=4_280_406_144,
+            sha256="054721f478bc5fa6beffb7f38eae575d45298f88cbb8d2f83ef675a727863eb1",
+        ),
+        projector=PersonaGGUFFile(
+            filename="mmproj-Qwen3VL-4B-Instruct-Q8_0.gguf",
+            size=453_974_304,
+            sha256="30ba2c7dd3127a4561b6cba9d13d0f711c91bdb38742e2f56d73c8cb596bd06d",
+        ),
     ),
 }
 
@@ -120,15 +123,20 @@ def persona_gguf_variant(
     model_id: str,
     quantization: str,
 ) -> Optional[PersonaGGUFVariant]:
-    """Return a verified GGUF package for the exact selected Persona model."""
-    if model_id != _QWEN3_VL_MODEL_ID:
-        return None
+    """Return the pinned GGUF package for the exact selected Persona model."""
     normalized = quantization.strip().casefold()
-    if normalized in {"4bit", "nf4", "bnb4", "bitsandbytes-4bit"}:
-        return QWEN3_VL_GGUF_VARIANTS["4bit"]
-    if normalized in {"8bit", "bnb8", "bitsandbytes-8bit"}:
-        return QWEN3_VL_GGUF_VARIANTS["8bit"]
-    return None
+    if normalized in {"4bit", "nf4", "bnb4", "bnb_4bit", "bitsandbytes-4bit"}:
+        variant_key = "4bit"
+    elif normalized in {"8bit", "bnb8", "bnb_8bit", "bitsandbytes-8bit"}:
+        variant_key = "8bit"
+    else:
+        return None
+    if model_id == _QWEN3_VL_MODEL_ID:
+        return QWEN3_VL_GGUF_VARIANTS[variant_key]
+    variants = PERSONA_GGUF_VARIANTS_BY_MODEL.get(model_id)
+    if variants is None:
+        return None
+    return variants.get(variant_key)
 
 
 def llama_cpp_archives() -> tuple[_RuntimeArchive, ...]:
@@ -172,28 +180,28 @@ def _verify_artifact(path: Path, size: int, digest: str) -> None:
 
 
 def download_persona_gguf(variant: PersonaGGUFVariant) -> tuple[Path, Path]:
-    """Download and verify a pinned Qwen3-VL model/projector pair."""
+    """Download and verify one pinned Persona model/projector pair."""
     from huggingface_hub import hf_hub_download
 
     cache_dir = str(huggingface_hub_cache_dir(create=True))
     model_path = Path(
         hf_hub_download(
-            repo_id=QWEN3_VL_GGUF_REPO,
-            filename=variant.model_file,
-            revision=QWEN3_VL_GGUF_REVISION,
+            repo_id=variant.repo_id,
+            filename=variant.model.filename,
+            revision=variant.revision,
             cache_dir=cache_dir,
         )
     )
     projector_path = Path(
         hf_hub_download(
-            repo_id=QWEN3_VL_GGUF_REPO,
-            filename=variant.projector_file,
-            revision=QWEN3_VL_GGUF_REVISION,
+            repo_id=variant.repo_id,
+            filename=variant.projector.filename,
+            revision=variant.revision,
             cache_dir=cache_dir,
         )
     )
-    _verify_artifact(model_path, variant.model_size, variant.model_sha256)
-    _verify_artifact(projector_path, variant.projector_size, variant.projector_sha256)
+    _verify_artifact(model_path, variant.model.size, variant.model.sha256)
+    _verify_artifact(projector_path, variant.projector.size, variant.projector.sha256)
     return model_path, projector_path
 
 
@@ -371,13 +379,11 @@ class LlamaCppPersonaRuntime:
         projector_path: Path,
         context_size: int,
         cancellation_event: threading.Event,
-        log: Optional[abc.Callable[[str, str], None]] = None,
         server_path: Optional[Path] = None,
     ) -> None:
         self.model_id = model_id
         self.quantization = variant.quantization
         self._cancellation_event = cancellation_event
-        self._log_callback = log
         self._diagnostics: deque[str] = deque(maxlen=_MAX_SERVER_LOG_LINES)
         self._diagnostics_lock = threading.Lock()
         self._connection_lock = threading.Lock()
@@ -451,9 +457,6 @@ class LlamaCppPersonaRuntime:
                 continue
             with self._diagnostics_lock:
                 self._diagnostics.append(line)
-            callback = self._log_callback
-            if callable(callback):
-                callback(f"[PERSONA][llama.cpp] {line}", "warning")
 
     def _diagnostic_tail(self) -> str:
         """Return recent server output for one initialization or API failure."""

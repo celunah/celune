@@ -19,10 +19,11 @@ import contextlib
 import subprocess
 import urllib.error
 import urllib.request
+from uuid import uuid4
+from typing import Optional
 from pathlib import Path
 from dataclasses import field, dataclass
 from collections.abc import Callable, Iterator
-from typing import Optional
 
 import numpy as np
 from huggingface_hub import hf_hub_download
@@ -30,9 +31,9 @@ from huggingface_hub import hf_hub_download
 from ...i18n import string
 from ...paths import (
     app_data_dir,
-    huggingface_hub_cache_dir,
-    huggingface_progress,
     temp_data_dir,
+    huggingface_progress,
+    huggingface_hub_cache_dir,
     temp_directory_environment,
 )
 from ...typing.aliases import AudioChunk
@@ -73,19 +74,33 @@ _VERIFIED_GGUF_LOCK = threading.Lock()
 
 @dataclass(slots=True)
 class AudioCppRuntime:
-    """Own one pinned audio.cpp server and its active GGUF model."""
+    """Represent one loaded GGUF served by the pinned audio.cpp runtime."""
 
-    process: subprocess.Popen[bytes]
+    process: Optional[subprocess.Popen[bytes]]
     base_url: str
     log_path: Path
     model_path: Path
     precision: str
     default_sample_rate: int = 44_100
     server_model_id: str = "celune"
+    shared_server: bool = False
     request_lock: threading.Lock = field(default_factory=threading.Lock)
 
     def close(self) -> None:
         """Stop the server process and release the model's accelerator memory."""
+        if self.shared_server:
+            with contextlib.suppress(Exception):
+                server_json(
+                    self.base_url,
+                    "/v1/tasks/unload_models",
+                    timeout=10.0,
+                    method="POST",
+                    payload={"model_ids": [self.server_model_id]},
+                )
+            return
+
+        if self.process is None:
+            return
         if self.process.poll() is not None:
             return
 
@@ -125,7 +140,7 @@ class AudioCppRuntime:
         )
 
         with self.request_lock:
-            if self.process.poll() is not None:
+            if self.process is not None and self.process.poll() is not None:
                 raise RuntimeError(
                     "audio.cpp server is no longer running:\n"
                     + server_log_tail(self.log_path)
@@ -190,6 +205,12 @@ class AudioCppRuntime:
                 details = error.read().decode("utf-8", errors="replace")
                 raise RuntimeError(
                     f"audio.cpp rejected the request ({error.code}): {details}"
+                ) from error
+            except urllib.error.URLError as error:
+                details = server_log_tail(self.log_path) if self.shared_server else ""
+                details_suffix = f"\n{details}" if details else ""
+                raise RuntimeError(
+                    f"audio.cpp server is unavailable: {error}{details_suffix}"
                 ) from error
 
             if not stream_finished:
@@ -313,7 +334,7 @@ def load_audio_cpp_tts_model(
         report_progress=report_progress,
     )
     model_path = materialize_audio_cpp_gguf(downloaded_path, artifact, backend_id)
-    server_model_id = f"celune-{backend_id}"
+    server_model_id = f"celune-{backend_id}-{uuid4().hex[:12]}"
     model_config: dict[str, object] = {
         "id": server_model_id,
         "family": artifact.family,
@@ -328,6 +349,17 @@ def load_audio_cpp_tts_model(
         model_config["session_options"] = session_options
     if default_request_options:
         model_config["default_request_options"] = default_request_options
+    shared_server_url = os.environ.get("CELUNE_AUDIO_CPP_SHARED_SERVER_URL")
+    if shared_server_url:
+        model_config.pop("lazy", None)
+        model_config["device"] = device
+        return load_audio_cpp_model_into_shared_server(
+            shared_server_url,
+            model_config,
+            model_path=model_path,
+            precision=artifact.quantization,
+            sample_rate=sample_rate,
+        )
     return start_audio_cpp_server(
         server_path,
         model_path=model_path,
@@ -564,13 +596,120 @@ def native_environment(server_path: Path, torch_root: Path) -> dict[str, str]:
     return environment
 
 
-def server_json(base_url: str, endpoint: str, timeout: float) -> dict[str, object]:
+def server_json(
+    base_url: str,
+    endpoint: str,
+    timeout: float,
+    *,
+    method: str = "GET",
+    payload: Optional[dict[str, object]] = None,
+) -> dict[str, object]:
     """Return one JSON response from the loopback server."""
-    with urllib.request.urlopen(f"{base_url}{endpoint}", timeout=timeout) as response:
-        payload = json.loads(response.read())
-    if not isinstance(payload, dict):
+    request_data = json.dumps(payload).encode("utf-8") if payload is not None else None
+    request = urllib.request.Request(
+        f"{base_url}{endpoint}",
+        data=request_data,
+        headers={"Content-Type": "application/json"}
+        if request_data is not None
+        else {},
+        method=method,
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            response_payload = json.loads(response.read())
+    except urllib.error.HTTPError as error:
+        details = error.read().decode("utf-8", errors="replace")
+        raise RuntimeError(
+            f"audio.cpp returned HTTP {error.code} from {endpoint}: {details}"
+        ) from error
+    if not isinstance(response_payload, dict):
         raise TypeError(f"audio.cpp returned invalid JSON from {endpoint}")
-    return payload
+    return response_payload
+
+
+def acquire_shared_audio_cpp_server(
+    virtualenv: Path,
+    *,
+    backend_name: str,
+    log: Callable[[str, str], None],
+) -> "AudioCppServerLease":
+    """Acquire the one shared audio.cpp server used by Celune's TTS workers."""
+    return _SHARED_AUDIO_CPP_SERVER_MANAGER.acquire(
+        virtualenv,
+        backend_name=backend_name,
+        log=log,
+    )
+
+
+def load_audio_cpp_model_into_shared_server(
+    base_url: str,
+    model_config: dict[str, object],
+    *,
+    model_path: Path,
+    precision: str,
+    sample_rate: int,
+) -> AudioCppRuntime:
+    """Register and eagerly load one GGUF in Celune's shared audio.cpp server."""
+    server_model_id = model_config.get("id")
+    if not isinstance(server_model_id, str) or not server_model_id:
+        raise ValueError("audio.cpp shared model configuration has no ID")
+    try:
+        server_json(
+            base_url,
+            "/v1/tasks/unload_all_models",
+            timeout=_SERVER_START_TIMEOUT_SECONDS,
+            method="POST",
+        )
+        server_json(
+            base_url,
+            "/v1/models/load",
+            timeout=_SERVER_START_TIMEOUT_SECONDS,
+            method="POST",
+            payload=model_config,
+        )
+        deadline = time.monotonic() + _SERVER_START_TIMEOUT_SECONDS
+        model_seen = False
+        while time.monotonic() < deadline:
+            models = server_json(base_url, "/v1/models", timeout=2.0)
+            entries = models.get("data", models.get("models", []))
+            if isinstance(entries, list):
+                for entry in entries:
+                    if (
+                        not isinstance(entry, dict)
+                        or entry.get("id") != server_model_id
+                    ):
+                        continue
+                    model_seen = True
+                    if entry.get("loaded"):
+                        return AudioCppRuntime(
+                            process=None,
+                            base_url=base_url,
+                            log_path=Path(
+                                os.environ.get("CELUNE_AUDIO_CPP_SHARED_SERVER_LOG", "")
+                            ),
+                            model_path=model_path,
+                            precision=precision,
+                            default_sample_rate=sample_rate,
+                            server_model_id=server_model_id,
+                            shared_server=True,
+                        )
+                    break
+            time.sleep(0.25)
+        raise TimeoutError(
+            "audio.cpp shared server did not load the model within "
+            f"{_SERVER_START_TIMEOUT_SECONDS:.0f} seconds "
+            f"(model listed: {model_seen})"
+        )
+    except Exception:
+        with contextlib.suppress(Exception):
+            server_json(
+                base_url,
+                "/v1/tasks/unload_models",
+                timeout=10.0,
+                method="POST",
+                payload={"model_ids": [server_model_id]},
+            )
+        raise
 
 
 def server_log_tail(path: Path) -> str:
@@ -699,6 +838,201 @@ def start_audio_cpp_server(
         raise
     finally:
         config_path.unlink(missing_ok=True)
+
+
+@dataclass(slots=True)
+class _SharedAudioCppServer:
+    """Own Celune's single audio.cpp server process across backend workers."""
+
+    process: subprocess.Popen[bytes]
+    base_url: str
+    log_path: Path
+
+    def close(self) -> None:
+        """Stop the shared server and free its resident model."""
+        if self.process.poll() is not None:
+            return
+        with contextlib.suppress(OSError):
+            self.process.terminate()
+        try:
+            self.process.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            with contextlib.suppress(OSError):
+                self.process.kill()
+            with contextlib.suppress(subprocess.TimeoutExpired):
+                self.process.wait(timeout=5)
+
+
+class AudioCppServerLease:
+    """Hold one reference to the shared audio.cpp process."""
+
+    def __init__(
+        self,
+        manager: "_SharedAudioCppServerManager",
+        server: _SharedAudioCppServer,
+    ) -> None:
+        self.base_url = server.base_url
+        self.log_path = server.log_path
+        self._manager = manager
+        self._server = server
+        self._released = False
+
+    def release(self) -> None:
+        """Release this worker's reference to the shared process."""
+        if self._released:
+            return
+        self._released = True
+        self._manager.release(self._server)
+
+
+class _SharedAudioCppServerManager:
+    """Keep one lazily started audio.cpp server alive across TTS backend switches."""
+
+    def __init__(self) -> None:
+        self._lock = threading.RLock()
+        self._server: Optional[_SharedAudioCppServer] = None
+        self._references = 0
+
+    def acquire(
+        self,
+        virtualenv: Path,
+        *,
+        backend_name: str,
+        log: Callable[[str, str], None],
+    ) -> AudioCppServerLease:
+        """Start the shared server when needed and return a worker lease."""
+        with self._lock:
+            if self._server is not None and self._server.process.poll() is not None:
+                raise RuntimeError(
+                    "the shared audio.cpp server exited:\n"
+                    + server_log_tail(self._server.log_path)
+                )
+            if self._server is None:
+                server_path = ensure_audio_cpp_server(
+                    report_progress=lambda current, total: None,
+                    log=log,
+                    backend_name=backend_name,
+                )
+                torch_root = _torch_root_in_virtualenv(virtualenv)
+                self._server = start_shared_audio_cpp_server(
+                    server_path,
+                    torch_root=torch_root,
+                    backend_name=backend_name,
+                    log=log,
+                )
+            self._references += 1
+            return AudioCppServerLease(self, self._server)
+
+    def release(self, server: _SharedAudioCppServer) -> None:
+        """Stop the server after the final backend worker releases it."""
+        with self._lock:
+            if self._server is not server:
+                return
+            self._references = max(0, self._references - 1)
+            if self._references == 0:
+                self._server.close()
+                self._server = None
+
+
+def _torch_root_in_virtualenv(virtualenv: Path) -> Path:
+    """Find the isolated worker's Torch package for CUDA DLL discovery."""
+    candidates = [virtualenv / "Lib" / "site-packages" / "torch"]
+    candidates.extend((virtualenv / "lib").glob("python*/site-packages/torch"))
+    for candidate in candidates:
+        if candidate.is_dir():
+            return candidate
+    raise RuntimeError(
+        f"no Torch installation was found in the backend environment: {virtualenv}"
+    )
+
+
+def start_shared_audio_cpp_server(
+    server_path: Path,
+    *,
+    torch_root: Path,
+    backend_name: str,
+    log: Callable[[str, str], None],
+) -> _SharedAudioCppServer:
+    """Start one empty, model-management-enabled audio.cpp server."""
+    with socket.socket() as candidate_socket:
+        candidate_socket.bind(("127.0.0.1", 0))
+        port = candidate_socket.getsockname()[1]
+
+    base_url = f"http://127.0.0.1:{port}"
+    temp_dir = temp_data_dir(create=True)
+    config_path = temp_dir / f"audio-cpp-shared-{os.getpid()}-{port}.json"
+    log_path = temp_dir / f"audio-cpp-shared-{os.getpid()}-{port}.log"
+    config = {
+        "host": "127.0.0.1",
+        "port": port,
+        "backend": "cuda",
+        "device": 0,
+        "threads": min(os.cpu_count() or 1, 4),
+        "ui": True,
+        "ui_management": True,
+        "lazy_load": True,
+        "max_loaded_models": 1,
+        "models": [],
+    }
+    config_path.write_text(json.dumps(config), encoding="utf-8")
+    log(string("inference.audio_cpp_runtime_starting", backend=backend_name), "info")
+    with log_path.open("ab") as log_file:
+        process = subprocess.Popen(
+            [
+                str(server_path),
+                "--config",
+                str(config_path),
+                "--ui",
+                "--ui-management",
+                "--log",
+                "--log-file",
+                str(log_path),
+            ],
+            cwd=str(server_path.parent),
+            env=native_environment(server_path, torch_root),
+            stdin=subprocess.DEVNULL,
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+            creationflags=int(getattr(subprocess, "CREATE_NO_WINDOW", 0)),
+        )
+
+    deadline = time.monotonic() + _SHARED_SERVER_START_TIMEOUT_SECONDS
+    try:
+        while time.monotonic() < deadline:
+            if process.poll() is not None:
+                raise RuntimeError(
+                    "audio.cpp exited before the shared server became ready "
+                    f"(exit code {process.returncode}):\n{server_log_tail(log_path)}"
+                )
+            try:
+                health = server_json(base_url, "/health", timeout=2.0)
+                if health.get("status") == "ok":
+                    return _SharedAudioCppServer(process, base_url, log_path)
+            except (OSError, urllib.error.URLError, ValueError, json.JSONDecodeError):
+                pass
+            time.sleep(0.25)
+        raise TimeoutError(
+            "audio.cpp shared server did not become ready within "
+            f"{_SHARED_SERVER_START_TIMEOUT_SECONDS:.0f} seconds:\n"
+            f"{server_log_tail(log_path)}"
+        )
+    except Exception:
+        with contextlib.suppress(OSError):
+            process.terminate()
+        with contextlib.suppress(subprocess.TimeoutExpired):
+            process.wait(timeout=5)
+        if process.poll() is None:
+            with contextlib.suppress(OSError):
+                process.kill()
+            with contextlib.suppress(subprocess.TimeoutExpired):
+                process.wait(timeout=5)
+        raise
+    finally:
+        config_path.unlink(missing_ok=True)
+
+
+_SHARED_SERVER_START_TIMEOUT_SECONDS = 60.0
+_SHARED_AUDIO_CPP_SERVER_MANAGER = _SharedAudioCppServerManager()
 
 
 def remove_owned_tree(path: Path, root: Path) -> None:

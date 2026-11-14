@@ -151,6 +151,14 @@ def _persona_emotion_analyzer(engine: Celune) -> Optional[PersonaEmotionAnalyzer
     )
     if (
         isinstance(capabilities, PersonaCapabilities)
+        and capabilities.vision
+        and not capabilities.emotion_probes
+    ):
+        analyzer.clear_vlm()
+        engine.persona_emotion_analyzer = analyzer
+        return None
+    if (
+        isinstance(capabilities, PersonaCapabilities)
         and not capabilities.emotion_probes
     ) or emotion_backend is None:
         analyzer.clear_vlm()

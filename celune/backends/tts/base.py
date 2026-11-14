@@ -368,14 +368,17 @@ class CeluneBackend[ModelT](ABC):
         if self._audio_cpp_fallback_logged:
             return
         self._audio_cpp_fallback_logged = True
+        reason_text = str(reason).strip()
+        if len(reason_text) > 1000:
+            reason_text = reason_text[:997] + "..."
         self.log(
             string(
                 "inference.audio_cpp_fallback",
                 backend=self.name,
+                cause=reason_text,
             ),
             "warning",
         )
-        self.log(f"audio.cpp fallback reason for {self.name}: {reason}", "debug")
         self.log(
             string(
                 "inference.backend_mode",

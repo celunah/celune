@@ -339,6 +339,7 @@ def _backend_reload_kwargs(
     """Return constructor kwargs needed to instantiate one backend specification."""
     backend_kwargs: dict[str, JSONSerializable] = {
         "quantize": tts_quantization_enabled(self.config, backend_spec),
+        "inference_mode": config_value(self.config, "inference_mode", "native"),
     }
     raw_name = getattr(backend_spec, "name", None)
     backend_name = (
@@ -354,7 +355,7 @@ def _backend_reload_kwargs(
     if isinstance(backend_spec, CeluneBackend):
         backend_spec.quantization_requested = bool(backend_kwargs["quantize"])
         backend_spec.quantize_kv_cache = quantize_kv_cache
-        return {}
+        return {"inference_mode": backend_kwargs["inference_mode"]}
 
     if backend_name in TTS_KV_CACHE_BACKENDS:
         backend_kwargs["quantize_kv_cache"] = quantize_kv_cache

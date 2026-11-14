@@ -798,7 +798,6 @@ class PersonaRuntime:
                         projector_path,
                         self._configured_context_size(),
                         self.backend._generation_cancelled,
-                        self._log_callback,
                         server_path,
                     )
                 except (ModelConsentRequired, PermissionError, InterruptedError):

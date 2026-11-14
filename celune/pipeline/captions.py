@@ -82,9 +82,6 @@ class _HubDownload(Protocol):
 class _InferenceSession(Protocol):
     """Small ONNX Runtime surface used by the alignment model."""
 
-    def get_providers(self) -> abc.Sequence[str]:
-        """Return the providers registered on this session."""
-
     def get_inputs(self) -> abc.Sequence[_NamedModelValue]:
         """Return model input metadata."""
 
@@ -282,10 +279,6 @@ class CaptionAligner:
                     runtime,
                     model_path,
                     session_options,
-                )
-                _LOGGER.info(
-                    "Caption alignment ONNX Runtime providers: %s",
-                    session.get_providers(),
                 )
                 self._input_name = session.get_inputs()[0].name
                 self._output_name = session.get_outputs()[0].name

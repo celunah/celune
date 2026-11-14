@@ -31,7 +31,7 @@ class TestCeluneReload(CeluneCoreTestSupport):
     """Exercise backend reload behavior of the Celune core."""
 
     def test_tts_runtime_selection_uses_backend_capabilities(self) -> None:
-        """Select audio.cpp for supported backends and native for unsupported ones."""
+        """Keep configured inference mode when a backend is reloaded."""
 
         class AudioCppFakeBackend(FakeBackend):
             """Backend fixture that has an audio.cpp implementation."""
@@ -39,7 +39,9 @@ class TestCeluneReload(CeluneCoreTestSupport):
             name = "audio-cpp-fake"
             supports_audio_cpp = True
 
-        celune = self._make_celune({})
+        celune = self._make_celune({"inference_mode": "gguf"})
+        reload_kwargs = core_reload._backend_reload_kwargs(celune, FakeBackend)
+        self.assertEqual(reload_kwargs["inference_mode"], "gguf")
         unsupported = FakeBackend(log=mock.Mock())
         with mock.patch(
             "celune.core.reload.resolve_backend",
@@ -49,7 +51,7 @@ class TestCeluneReload(CeluneCoreTestSupport):
                 celune,
                 FakeBackend,
                 log=celune.log_callback,
-                inference_mode="gguf",
+                **reload_kwargs,
             )
         self.assertEqual(unsupported.requested_inference_mode, "gguf")
         self.assertEqual(unsupported.effective_inference_mode, "native")
@@ -63,7 +65,7 @@ class TestCeluneReload(CeluneCoreTestSupport):
                 celune,
                 AudioCppFakeBackend,
                 log=celune.log_callback,
-                inference_mode="gguf",
+                **core_reload._backend_reload_kwargs(celune, AudioCppFakeBackend),
             )
         self.assertEqual(supported.requested_inference_mode, "gguf")
         self.assertEqual(supported.effective_inference_mode, "audio_cpp")
