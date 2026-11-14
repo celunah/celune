@@ -4,8 +4,8 @@
 import time
 import inspect
 import contextlib
+from typing import Union, Optional, Protocol, cast
 from pathlib import Path
-from typing import Optional, Protocol, Union, cast
 from collections.abc import Callable, Iterator
 
 import torch
@@ -22,6 +22,11 @@ from ...paths import (
 )
 from ...utils import discard, custom_assert
 from ...cevoice import CEVoiceLoader, default_loader
+from .audio_cpp import (
+    AudioCppRuntime,
+    ensure_audio_cpp_server,
+    load_audio_cpp_tts_model,
+)
 from ...modeling import (
     QuantizedKVCache,
     GraphQuantizedKVCache,
@@ -30,14 +35,9 @@ from ...modeling import (
 )
 from ...registry.tts import TTS_DEFAULT_VOICE, QWEN3_DEFAULT_MODEL_ID
 from ...typing.aliases import AudioChunk
-from ...registry.consent import require_model_consent
-from ...typing.backends import BackendArgumentValue
-from .audio_cpp import (
-    AudioCppRuntime,
-    ensure_audio_cpp_server,
-    load_audio_cpp_tts_model,
-)
 from .audio_cpp_models import audio_cpp_model_artifact
+from ...typing.backends import BackendArgumentValue
+from ...registry.consent import require_model_consent
 
 
 class _Qwen3TalkerGraph(Protocol):
@@ -510,7 +510,11 @@ class Qwen3(CeluneBackend[Union[FasterQwen3TTS, AudioCppRuntime]]):
         if not isinstance(text, str) or not text.strip():
             raise ValueError("expected text to say")
         voice_value = kwargs.pop("voice", self.default_voice)
-        voice = voice_value if isinstance(voice_value, str) else self.default_voice
+        voice = (
+            voice_value
+            if isinstance(voice_value, str)
+            else self.default_voice or TTS_DEFAULT_VOICE
+        )
         kwargs.pop("chunk_size", None)
         instruct = kwargs.pop("instruct", None)
         language = kwargs.pop("language", None)

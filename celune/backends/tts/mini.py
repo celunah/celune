@@ -5,8 +5,8 @@ import time
 import inspect
 import tempfile
 import contextlib
+from typing import Union, Optional, cast
 from pathlib import Path
-from typing import Optional, Union, cast
 from collections.abc import Mapping, Callable, Iterator
 
 import yaml
@@ -15,7 +15,16 @@ import torch
 from pocket_tts import TTSModel
 from huggingface_hub import snapshot_download
 
+from .base import CeluneBackend, cached_hf_snapshot_path
 from ...i18n import string
+from ...paths import temp_data_dir, huggingface_progress, huggingface_hub_cache_dir
+from ...utils import custom_assert
+from ...cevoice import CEVoiceLoader, default_loader
+from .audio_cpp import (
+    AudioCppRuntime,
+    ensure_audio_cpp_server,
+    load_audio_cpp_tts_model,
+)
 from ...registry.tts import (
     MINI_VOICE_MODELS,
     TTS_DEFAULT_VOICE,
@@ -24,22 +33,15 @@ from ...registry.tts import (
     MINI_SUPPORTED_LANGUAGES,
     MINI_LANGUAGE_MODEL_VARIANTS,
     ModelContract,
+)
+from ...registry.tts import (
     model_contract as resolve_model_contract,
 )
-from ...utils import custom_assert
-from ...cevoice import CEVoiceLoader, default_loader
-from ...registry.consent import require_model_consent
 from ...registry.types import ModelMetadata
 from ...typing.aliases import AudioChunk, AudioChunks
-from .base import CeluneBackend, cached_hf_snapshot_path
-from .audio_cpp import (
-    AudioCppRuntime,
-    ensure_audio_cpp_server,
-    load_audio_cpp_tts_model,
-)
 from .audio_cpp_models import audio_cpp_model_artifact
-from ...typing.backends import BackendArgumentValue, MiniModel, MiniPromptState
-from ...paths import temp_data_dir, huggingface_progress, huggingface_hub_cache_dir
+from ...typing.backends import MiniModel, MiniPromptState, BackendArgumentValue
+from ...registry.consent import require_model_consent
 
 
 class Mini(CeluneBackend[Union[TTSModel, AudioCppRuntime]]):
@@ -432,24 +434,29 @@ class Mini(CeluneBackend[Union[TTSModel, AudioCppRuntime]]):
         try:
             load_model_parameters = inspect.signature(TTSModel.load_model).parameters
             if "sampler_decode_steps" in load_model_parameters:
-                self.model = TTSModel.load_model(
+                native_model = TTSModel.load_model(
                     config=generated_config_path, temp=0.15, sampler_decode_steps=2
                 )
             else:
-                self.model = TTSModel.load_model(
+                native_model = TTSModel.load_model(
                     config=generated_config_path, temp=0.15, lsd_decode_steps=2
                 )
-            self.model = self.apply_runtime_quantization(
-                self.model,
-                model_id,
-                lang=requested_language,
+            self.model = native_model
+            native_model = cast(
+                TTSModel,
+                self.apply_runtime_quantization(
+                    native_model,
+                    model_id,
+                    lang=requested_language,
+                ),
             )
+            self.model = native_model
         except Exception:
             self.unload_model(release_cuda_cache=False)
             raise
         self._loaded_language = requested_language
         self._voice_states.clear()
-        return self.model
+        return native_model
 
     def unload_model(self, release_cuda_cache: bool = True) -> None:
         """Release the loaded model and cached voice states.
@@ -598,7 +605,7 @@ class Mini(CeluneBackend[Union[TTSModel, AudioCppRuntime]]):
             raise ValueError("expected text to say")
         voice = kwargs.pop("voice", self.default_voice)
         if not isinstance(voice, str):
-            voice = self.default_voice
+            voice = self.default_voice or TTS_DEFAULT_VOICE
         reference_path = self._reference_voice_path(voice)
         self._apply_seed()
         temperature_value = kwargs.pop("temperature", 0.15)
@@ -606,7 +613,7 @@ class Mini(CeluneBackend[Union[TTSModel, AudioCppRuntime]]):
             temperature_value, bool
         ):
             raise TypeError("temperature must be numeric")
-        request_body = {
+        request_body: dict[str, object] = {
             "model": model.server_model_id,
             "input": text,
             "voice_ref": reference_path.resolve().as_posix(),

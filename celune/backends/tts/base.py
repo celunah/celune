@@ -321,7 +321,8 @@ class CeluneBackend[ModelT](ABC):
                 backend=self.name,
                 requested=inference_mode,
                 effective=self.effective_inference_mode,
-            )
+            ),
+            "info",
         )
 
     def inference_metadata(self, model: ModelT) -> dict[str, str]:
@@ -343,7 +344,7 @@ class CeluneBackend[ModelT](ABC):
                 else "full"
             )
         return {
-            "model": str(self.model_name or self.default_model_id),
+            "model": self.model_name or self.default_model_id,
             "type": "gguf"
             if self.effective_inference_mode == "audio_cpp"
             else "native",
@@ -381,7 +382,8 @@ class CeluneBackend[ModelT](ABC):
                 backend=self.name,
                 requested=self.requested_inference_mode,
                 effective=self.effective_inference_mode,
-            )
+            ),
+            "info",
         )
 
     def __str__(self) -> str:

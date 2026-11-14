@@ -4,9 +4,9 @@
 import os
 import time
 import contextlib
-from pathlib import Path
 from types import MethodType
 from typing import Union, Optional, Protocol, cast
+from pathlib import Path
 from collections.abc import Mapping, Callable, Iterator, Generator
 
 import numpy as np
@@ -29,18 +29,18 @@ from ...i18n import string
 from ...paths import huggingface_progress, huggingface_hub_cache_dir
 from ...utils import discard, available, custom_assert
 from ...cevoice import CEVoiceLoader, default_loader
-from ...modeling import QuantizedKVCacheMode, quantized_kv_cache_mode
-from ...constants import BASE_SR
-from ...registry.tts import TTS_DEFAULT_VOICE, VOXCPM2_VOICE_MODELS
-from ...typing.aliases import AudioChunk, AudioChunks
-from ...registry.consent import require_model_consent
-from ...typing.backends import BackendArgumentValue
 from .audio_cpp import (
     AudioCppRuntime,
     ensure_audio_cpp_server,
     load_audio_cpp_tts_model,
 )
+from ...modeling import QuantizedKVCacheMode, quantized_kv_cache_mode
+from ...constants import BASE_SR
+from ...registry.tts import TTS_DEFAULT_VOICE, VOXCPM2_VOICE_MODELS
+from ...typing.aliases import AudioChunk, AudioChunks
 from .audio_cpp_models import audio_cpp_model_artifact
+from ...typing.backends import BackendArgumentValue
+from ...registry.consent import require_model_consent
 
 _VOXCPM_RUNTIME_KV_CACHE_LENGTH = 2048
 
@@ -812,34 +812,39 @@ class VoxCPM2(CeluneBackend[Union[VoxCPM, AudioCppRuntime]]):
             self._suppress_backend_output(),
         ):
             if quantize_on_cpu:
-                self.model = VoxCPM.from_pretrained(
+                native_model = VoxCPM.from_pretrained(
                     path,
                     load_denoiser=load_denoiser,
                     optimize=load_optimize,
                     device="cpu",
                 )
             else:
-                self.model = VoxCPM.from_pretrained(
+                native_model = VoxCPM.from_pretrained(
                     path,
                     load_denoiser=load_denoiser,
                     optimize=load_optimize,
                 )
-            self._install_checkpoint_tokenizer(self.model, path)
-        self._resize_runtime_caches(self.model)
-        self.model = self.apply_runtime_quantization(self.model, model_id)
+            self.model = native_model
+            self._install_checkpoint_tokenizer(native_model, path)
+        self._resize_runtime_caches(native_model)
+        native_model = cast(
+            VoxCPM,
+            self.apply_runtime_quantization(native_model, model_id),
+        )
+        self.model = native_model
         if quantize_on_cpu:
-            self._move_quantized_runtime_to_cuda(self.model)
+            self._move_quantized_runtime_to_cuda(native_model)
             if optimize:
-                self.model.tts_model.optimize()
-                self.model.tts_model.generate(
+                native_model.tts_model.optimize()
+                native_model.tts_model.generate(
                     target_text="Hello, this is the first test sentence.",
                     max_len=10,
                 )
         install_voxcpm_quantized_cache(
-            cast(VoxCPMModel, self.model),
+            cast(VoxCPMModel, native_model),
             self.quantize_kv_cache,
         )
-        return self.model
+        return native_model
 
     @staticmethod
     def _runtime_cache_length(max_length: int) -> int:
@@ -1074,7 +1079,11 @@ class VoxCPM2(CeluneBackend[Union[VoxCPM, AudioCppRuntime]]):
     ) -> Iterator[tuple[AudioChunk, int, Optional[dict]]]:
         """Stream VoxCPM2 GGUF audio using Celune's voice reference and controls."""
         voice_value = kwargs.pop("voice", self.default_voice)
-        voice = voice_value if isinstance(voice_value, str) else self.default_voice
+        voice = (
+            voice_value
+            if isinstance(voice_value, str)
+            else self.default_voice or TTS_DEFAULT_VOICE
+        )
         instruct = kwargs.pop("instruct", None)
         kwargs.pop("language", None)
         kwargs.pop("chunk_size", None)
