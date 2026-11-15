@@ -3,9 +3,10 @@
 
 from __future__ import annotations
 
+import logging
 import threading
-from typing import TYPE_CHECKING, Union, Optional, cast
 from collections.abc import Mapping, Callable, Sequence
+from typing import TYPE_CHECKING, Union, Optional, cast
 
 import numpy as np
 import torch
@@ -25,6 +26,8 @@ from ..typing.persona import (
 )
 from ..dataclasses.asr import (
     WhisperWord as _WhisperWord,
+)
+from ..dataclasses.asr import (
     WhisperSegment as _WhisperSegment,
 )
 from ..registry.consent import require_model_consent
@@ -40,6 +43,18 @@ if TYPE_CHECKING:
 PERSONA_SPEECH_NO_INPUT_TIMEOUT_SECONDS = 5.0
 PERSONA_SPEECH_END_DELAY_SECONDS = 1.5
 WHISPER_SAMPLE_RATE = 16000
+_TRANSFORMERS_GENERATION_LOGGER = "transformers.generation.utils"
+_GENERATION_CONFIG_WARNING = (
+    "Passing `generation_config` together with generation-related arguments="
+)
+
+
+class _GenerationConfigWarningFilter(logging.Filter):
+    """Filter one known warning emitted inside Whisper's generation wrapper."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        """Hide only the upstream mixed-generation-arguments warning."""
+        return not record.getMessage().startswith(_GENERATION_CONFIG_WARNING)
 
 
 class WhisperTranscriber:
@@ -52,6 +67,8 @@ class WhisperTranscriber:
         progress_callback: Optional[
             Callable[[Optional[float], Optional[float]], None]
         ] = None,
+        *,
+        allow_cpu: bool = False,
     ) -> None:
         self.model_id = model_id.strip() or DEFAULT_PERSONA_SPEECH_MODEL_ID
         metadata = get_model_metadata(self.model_id)
@@ -65,6 +82,7 @@ class WhisperTranscriber:
         self._load_lock = threading.Lock()
         self._inference_lock = threading.Lock()
         self._progress_callback = progress_callback
+        self._allow_cpu = allow_cpu
 
     @property
     def loaded_model(self) -> Optional[WhisperModel]:
@@ -93,33 +111,45 @@ class WhisperTranscriber:
             metadata = require_model_consent(self.model_id)
             self._revision = metadata.revision
 
-            from transformers import (
-                AutoProcessor,
-                BitsAndBytesConfig,
-                AutoModelForSpeechSeq2Seq,
-            )
+            from transformers import AutoProcessor, AutoModelForSpeechSeq2Seq
 
-            if not torch.cuda.is_available():
+            use_cuda = torch.cuda.is_available()
+            if not use_cuda and not self._allow_cpu:
                 raise RuntimeError("can't load Whisper without a CUDA device")
 
-            bnb_config = BitsAndBytesConfig(
-                load_in_8bit=True,
-            )
             model_kwargs: dict[str, str] = {}
             if self._revision is not None:
                 model_kwargs["revision"] = self._revision
             with huggingface_progress(self._progress_callback):
-                model = cast(
-                    WhisperModel,
-                    AutoModelForSpeechSeq2Seq.from_pretrained(
-                        self.model_id,
-                        dtype=torch.bfloat16,
-                        low_cpu_mem_usage=True,
-                        quantization_config=bnb_config,
-                        device_map="auto",
-                        **model_kwargs,
-                    ),
-                )
+                if use_cuda:
+                    from transformers import BitsAndBytesConfig
+
+                    model = cast(
+                        WhisperModel,
+                        AutoModelForSpeechSeq2Seq.from_pretrained(
+                            self.model_id,
+                            dtype=torch.bfloat16,
+                            low_cpu_mem_usage=True,
+                            quantization_config=BitsAndBytesConfig(
+                                load_in_8bit=True,
+                            ),
+                            device_map="auto",
+                            **model_kwargs,
+                        ),
+                    )
+                    self._dtype = torch.bfloat16
+                else:
+                    model = cast(
+                        WhisperModel,
+                        AutoModelForSpeechSeq2Seq.from_pretrained(
+                            self.model_id,
+                            dtype=torch.float32,
+                            low_cpu_mem_usage=True,
+                            device_map="cpu",
+                            **model_kwargs,
+                        ),
+                    )
+                    self._dtype = torch.float32
                 self._processor = cast(
                     WhisperProcessor,
                     AutoProcessor.from_pretrained(self.model_id, **model_kwargs),
@@ -131,7 +161,6 @@ class WhisperTranscriber:
             )
             self._model = model
             self._device = next(model.parameters()).device
-            self._dtype = torch.bfloat16
 
     def _decode(
         self,
@@ -177,16 +206,22 @@ class WhisperTranscriber:
             if self.language is not None and self.language.lower() != "auto":
                 model_inputs["language"] = self.language
 
-        with torch.inference_mode():
-            if return_segments:
-                generated = model.generate(
-                    **model_inputs,
-                    return_timestamps=True,
-                    return_segments=True,
-                    return_token_timestamps=True,
-                )
-            else:
-                generated = model.generate(**model_inputs)
+        generation_logger = logging.getLogger(_TRANSFORMERS_GENERATION_LOGGER)
+        warning_filter = _GenerationConfigWarningFilter()
+        generation_logger.addFilter(warning_filter)
+        try:
+            with torch.inference_mode():
+                if return_segments:
+                    generated = model.generate(
+                        **model_inputs,
+                        return_timestamps=True,
+                        return_segments=True,
+                        return_token_timestamps=True,
+                    )
+                else:
+                    generated = model.generate(**model_inputs)
+        finally:
+            generation_logger.removeFilter(warning_filter)
 
         if return_segments:
             return self._decode_segments(

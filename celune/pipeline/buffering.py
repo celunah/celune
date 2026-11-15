@@ -9,11 +9,13 @@ import queue
 import threading
 import contextlib
 import collections.abc
-from typing import TYPE_CHECKING, Optional, Union, cast
+from typing import TYPE_CHECKING, Union, Optional, cast
 
-import psutil
 import numpy as np
+import psutil
 
+from ..i18n import string
+from ..utils import discard
 from .timing import (
     LEGACY_BUFFER_SECONDS,
     SMART_BUFFER_SMOOTHING,
@@ -43,8 +45,7 @@ from .captions import (
     playback_source_meta,
     set_playback_source_status,
 )
-from ..i18n import string
-from ..utils import discard
+from ..constants import BASE_SR, APP_NAME, PipelineStates
 from ..typing.locks import (
     ComponentLockName,
     ComponentLockOwner,
@@ -52,17 +53,16 @@ from ..typing.locks import (
     ComponentLockAcquisition,
     ComponentLockRequirement,
 )
+from ..typing.common import JSONSerializable
+from ..typing.aliases import AudioChunk, AudioChunks
+from ..typing.pipeline import SpeechStreamQueue
+from ..core.concurrency import ComponentLockManager
+from ..dataclasses.events import StateChangedEvent
 from ..dataclasses.pipeline import (
     SpeechTiming,
     PlaybackChunk,
     PlaybackSourceDone,
 )
-from ..typing.common import JSONSerializable
-from ..typing.pipeline import SpeechStreamQueue
-from ..dataclasses.events import StateChangedEvent
-from ..core.concurrency import ComponentLockManager
-from ..typing.aliases import AudioChunk, AudioChunks
-from ..constants import BASE_SR, APP_NAME, PipelineStates
 
 if TYPE_CHECKING:
     from ..celune import Celune
@@ -452,6 +452,11 @@ def queue_playback_done(
     notify_idle_when_finished: bool = True,
     saved_path: Optional[str] = None,
     analysis_audio: Optional[AudioChunk] = None,
+    analysis_text: Optional[str] = None,
+    analysis_language: Optional[str] = None,
+    analysis_backend: Optional[str] = None,
+    analysis_latency_ms: Optional[float] = None,
+    analysis_realtime_speed: Optional[float] = None,
     generation: Optional[int] = None,
 ) -> bool:
     """Queue a completion marker for one playback source."""
@@ -494,6 +499,11 @@ def queue_playback_done(
             notify_idle=notify_idle_when_finished,
             saved_path=saved_path,
             analysis_audio=analysis_audio,
+            analysis_text=analysis_text,
+            analysis_language=analysis_language,
+            analysis_backend=analysis_backend,
+            analysis_latency_ms=analysis_latency_ms,
+            analysis_realtime_speed=analysis_realtime_speed,
             generation=expected_generation,
         )
     )

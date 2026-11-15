@@ -2,30 +2,43 @@
 """Analyze a WAV file and generate a radar chart plus a text report."""
 
 import pathlib
+import sqlite3
 import warnings
 import threading
 import contextlib
-from pathlib import Path
 
 # noinspection PyProtectedMember
 from typing import Optional, cast
+from pathlib import Path
 from collections.abc import Callable
 
+import numpy as np
 import torch
 import librosa
 import matplotlib
-import numpy as np
-import numpy.typing as npt
-from matplotlib import pyplot as plt
+from numpy import typing as npt
 from matplotlib import colors as mcolors
-from matplotlib.projections import PolarAxes
+from matplotlib import pyplot as plt
 from matplotlib import rcParams, font_manager
+from matplotlib.projections import PolarAxes
 
+from .cvs import (
+    language_key,
+    calculate_cvs,
+    record_cvs_utterance,
+    word_error_counts,
+    supports_word_error_rate,
+)
+from .i18n import string
+from .paths import huggingface_progress
+from .utils import run_async
+from .compat import torchao_compatibility
+from .cevoice import ManifestValue, default_loader
 from .constants import (
     N_A_NUMERIC,
 )
-from .i18n import string
-from .utils import run_async
+from .registry.other import VOICE_EMBEDDING_MODEL
+from .typing.aliases import AudioChunk
 from .typing.analysis import (
     TextConfig,
     VoiceMatch,
@@ -34,11 +47,6 @@ from .typing.analysis import (
     EmbeddingPayload,
     EmbeddingProcessor,
 )
-from .typing.aliases import AudioChunk
-from .paths import huggingface_progress
-from .compat import torchao_compatibility
-from .registry.other import VOICE_EMBEDDING_MODEL
-from .cevoice import ManifestValue, default_loader
 from .registry.consent import require_model_consent
 
 matplotlib.use("Agg")
@@ -104,21 +112,6 @@ TEXT_CONFIG: TextConfig = {
         "spectral_centroid_label": "Spectral centroid (Hz)",
         "zcr_label": "Zero-crossing rate",
         "hf_energy_label": "HF energy ratio (>=4kHz)",
-        "reference_voice_label": "Reference voice",
-        "voice_similarity_label": "Reference similarity",
-        "voice_similarity_raw_label": "Cosine similarity",
-        "voice_similarity_status_label": "Status",
-        "voice_similarity_status_ok": "OK",
-        "voice_similarity_status_mismatch": "MISMATCH",
-        "voice_similarity_best_match_label": "Best match",
-        "voice_similarity_next_closest_label": "Next closest",
-        "voice_similarity_margin_label": "Confidence margin",
-        "voice_drift_label": "Drift level",
-        "voice_drift_stable": "stable",
-        "voice_drift_expressive": "expressive",
-        "voice_drift_weak": "weak",
-        "voice_drift_wrong": "wrong",
-        "voice_similarity_na": "N/A",
     },
     "assessment": {
         "warning_short_audio": (
@@ -151,13 +144,6 @@ TEXT_CONFIG: TextConfig = {
         "overall_balanced": "Overall, the voice shows a balanced mix of traits.",
         "high_pause_ratio": (
             "A high pause ratio suggests deliberate pacing or significant silence."
-        ),
-        "reference_similarity": (
-            "Reference voice similarity is {percent:.1f}% "
-            "(cosine {cosine:.4f}) against {voice}."
-        ),
-        "reference_similarity_failed": (
-            "Reference voice similarity could not be calculated: {reason}."
         ),
     },
 }
@@ -514,6 +500,52 @@ def add_reference_similarity_metrics(
         ) - next_match.get("percent", 0.0)
 
 
+def _add_word_error_metrics(
+    metrics: dict,
+    y: npt.NDArray[np.float32],
+    sr: int,
+    reference_text: Optional[str],
+    language: Optional[str],
+) -> None:
+    """Transcribe generated speech with the reviewed small TTS ASR model."""
+    if not reference_text or not reference_text.strip():
+        metrics["wer_ok"] = False
+        return
+    if not supports_word_error_rate(reference_text):
+        metrics["wer_ok"] = False
+        return
+
+    transcriber = None
+    try:
+        from .persona.asr import WhisperTranscriber
+        from .registry.asr import WHISPER_TINY_MODEL_ID
+
+        resolved_language = language_key(language)
+        transcriber = WhisperTranscriber(
+            WHISPER_TINY_MODEL_ID,
+            language=None if resolved_language == "unknown" else resolved_language,
+            allow_cpu=True,
+        )
+        hypothesis = transcriber.transcribe(y, sr)
+        wer_counts = word_error_counts(reference_text, hypothesis)
+        if wer_counts is None:
+            metrics["wer_ok"] = False
+            return
+        wer_errors, wer_reference_words = wer_counts
+        wer_percent = 100.0 * wer_errors / wer_reference_words
+        metrics["wer_percent"] = wer_percent
+        metrics["wer_errors"] = wer_errors
+        metrics["wer_reference_words"] = wer_reference_words
+        metrics["wer_ok"] = True
+    except Exception as error:
+        metrics["wer_ok"] = False
+        metrics["wer_error"] = str(error)
+    finally:
+        if transcriber is not None:
+            with contextlib.suppress(Exception):
+                transcriber.unload()
+
+
 def _clip_norm(value: float, low: float, high: float) -> float:
     """Map ``value`` from ``[low, high]`` to ``[0.0, 1.0]`` and clip."""
     return float(np.clip((value - low) / (high - low + 1e-9), 0.0, 1.0))
@@ -734,17 +766,6 @@ def generate_assessment(m: dict, traits: dict) -> list[str]:
     if m["pause_ratio"] > 0.5:
         lines.append(_text("assessment", "high_pause_ratio"))
 
-    if m.get("voice_similarity_ok"):
-        lines.append(
-            _text("assessment", "reference_similarity").format(
-                percent=m["voice_similarity_percent"],
-                cosine=m["voice_similarity_cosine"],
-                voice=m["reference_voice"],
-            )
-        )
-    elif "voice_similarity_error" in m:
-        lines.append(m["voice_similarity_error"])
-
     return lines
 
 
@@ -848,12 +869,12 @@ def plot_radar(
         fontweight="bold",
     )
 
-    if metrics and metrics.get("voice_similarity_ok"):
+    if metrics and metrics.get("cvs_score") is not None:
         fig.text(
             0.5,
             0.025,
-            f"{_text('report', 'voice_similarity_label')}: "
-            f"{metrics['voice_similarity_percent']:.1f}%",
+            f"CVS[{metrics.get('cvs_language', 'unknown')}]: "
+            f"{metrics['cvs_score']:.1f} / 100",
             ha="center",
             va="center",
             color=grid_color,
@@ -950,57 +971,7 @@ def write_report(
         file_handle.write(
             f"  {_text('report', 'hf_energy_label'):<22}: {m['hf_energy_ratio']:.6f}\n"
         )
-        if "reference_voice" in m:
-            file_handle.write(
-                f"  {_text('report', 'reference_voice_label'):<22}: {m['reference_voice']}\n"
-            )
-        if m.get("voice_similarity_ok"):
-            file_handle.write(
-                f"  {_text('report', 'voice_similarity_label'):<22}: "
-                f"{m['voice_similarity_percent']:.2f}%\n"
-            )
-            file_handle.write(
-                f"  {_text('report', 'voice_similarity_raw_label'):<22}: "
-                f"{m['voice_similarity_cosine']:.6f}\n"
-            )
-            drift_key = f"voice_drift_{m['voice_drift_level']}"
-            file_handle.write(
-                f"  {_text('report', 'voice_drift_label'):<22}: "
-                f"{_text('report', drift_key)} "
-                f"({m['voice_drift_percent']:.2f}%)\n"
-            )
-            status_key = (
-                "voice_similarity_status_ok"
-                if m["voice_similarity_status"] == "OK"
-                else "voice_similarity_status_mismatch"
-            )
-            file_handle.write(
-                f"  {_text('report', 'voice_similarity_status_label'):<22}: "
-                f"{_text('report', status_key)}\n"
-            )
-            best_match = m.get("voice_similarity_best_match")
-            next_closest = m.get("voice_similarity_next_closest")
-            if best_match is not None:
-                file_handle.write(
-                    f"  {_text('report', 'voice_similarity_best_match_label'):<22}: "
-                    f"{best_match['voice']} ({best_match['percent']:.2f}%)\n"
-                )
-            if next_closest is not None:
-                file_handle.write(
-                    f"  {_text('report', 'voice_similarity_next_closest_label'):<22}: "
-                    f"{next_closest['voice']} ({next_closest['percent']:.2f}%)\n"
-                )
-            if best_match is not None and next_closest is not None:
-                file_handle.write(
-                    f"  {_text('report', 'voice_similarity_margin_label'):<22}: "
-                    f"{best_match['voice']} - {next_closest['voice']} = "
-                    f"{m['voice_similarity_margin']:.2f}%\n"
-                )
-        elif "voice_similarity_error" in m:
-            file_handle.write(
-                f"  {_text('report', 'voice_similarity_label'):<22}: "
-                f"{_text('report', 'voice_similarity_na')}\n"
-            )
+        _write_cvs_report(file_handle, m)
         file_handle.write("\n")
 
         file_handle.write(f"{_text('report', 'traits_header')}\n")
@@ -1021,6 +992,64 @@ def write_report(
         file_handle.write(f"{sep}\n")
 
 
+def _write_cvs_report(file_handle, metrics: dict) -> None:
+    """Write the per-utterance CVS, backend aggregate, and component inputs."""
+    language = metrics.get("cvs_language", "unknown")
+    score = metrics.get("cvs_score")
+    aggregate = metrics.get("cvs_aggregate")
+    aggregate_count = metrics.get("cvs_aggregate_count", 0)
+    unavailable = string("analysis.cvs_unavailable")
+    file_handle.write(f"{string('analysis.cvs_header')}\n")
+    score_text = unavailable if score is None else f"{score:.1f} / 100"
+    file_handle.write(f"  CVS[{language}]: {score_text}\n")
+    if aggregate is None or aggregate_count == 0:
+        aggregate_text = unavailable
+    else:
+        aggregate_text = (
+            f"{aggregate:.1f} / 100 "
+            f"({string('analysis.cvs_sample_count', count=aggregate_count)})"
+        )
+    file_handle.write(f"  CVS[all]: {aggregate_text}\n")
+
+    component_rows = (
+        (
+            "analysis.cvs_voice_match",
+            "cvs_voice_match_score",
+            "voice_similarity_percent",
+            "%",
+        ),
+        ("analysis.cvs_wer", "cvs_wer_score", "wer_percent", "%"),
+        ("analysis.cvs_latency", "cvs_latency_score", "latency_ms", " ms"),
+        (
+            "analysis.cvs_realtime",
+            "cvs_realtime_speed_score",
+            "realtime_speed",
+            "x",
+        ),
+    )
+    for label_key, score_key, raw_key, unit in component_rows:
+        component_score = metrics.get(score_key)
+        raw_value = metrics.get(raw_key)
+        if component_score is None or raw_value is None:
+            value_text = unavailable
+        else:
+            value_text = f"{component_score:.1f} / 100 ({raw_value:.2f}{unit})"
+            if label_key == "analysis.cvs_wer":
+                wer_errors = metrics.get("wer_errors")
+                wer_reference_words = metrics.get("wer_reference_words")
+                if wer_errors is not None and wer_reference_words is not None:
+                    value_text += (
+                        " ("
+                        + string(
+                            "analysis.wer_edit_count",
+                            errors=wer_errors,
+                            words=wer_reference_words,
+                        )
+                        + ")"
+                    )
+        file_handle.write(f"  {string(label_key):<22}: {value_text}\n")
+
+
 def _analyze_voice_data(
     y: npt.NDArray[np.float32],
     sr: int,
@@ -1031,6 +1060,11 @@ def _analyze_voice_data(
     progress_callback: Optional[
         Callable[[Optional[float], Optional[float]], None]
     ] = None,
+    reference_text: Optional[str] = None,
+    language: Optional[str] = None,
+    backend_id: Optional[str] = None,
+    latency_ms: Optional[float] = None,
+    realtime_speed: Optional[float] = None,
 ) -> None:
     """Analyze voice audio and write report artifacts."""
     radar_path = out_dir / f"{stem}_radar.png"
@@ -1044,6 +1078,40 @@ def _analyze_voice_data(
         reference_voice,
         progress_callback,
     )
+    _add_word_error_metrics(metrics, y, sr, reference_text, language)
+    score = calculate_cvs(
+        metrics.get("voice_similarity_percent")
+        if metrics.get("voice_similarity_ok")
+        else None,
+        metrics.get("wer_percent") if metrics.get("wer_ok") else None,
+        latency_ms,
+        realtime_speed,
+    )
+    metrics["cvs_score"] = score.score
+    metrics["cvs_voice_match_score"] = score.voice_match
+    metrics["cvs_wer_score"] = score.wer
+    metrics["cvs_latency_score"] = score.latency
+    metrics["cvs_realtime_speed_score"] = score.realtime_speed
+    metrics["cvs_language"] = language_key(language)
+    metrics["latency_ms"] = latency_ms
+    metrics["realtime_speed"] = realtime_speed
+    if backend_id:
+        try:
+            aggregate, count = record_cvs_utterance(
+                str(voice.resolve()),
+                backend_id,
+                metrics["cvs_language"],
+                score,
+                similarity_percent=metrics.get("voice_similarity_percent"),
+                wer_percent=metrics.get("wer_percent"),
+                latency_ms=latency_ms,
+                realtime_speed=realtime_speed,
+            )
+            metrics["cvs_aggregate"] = aggregate
+            metrics["cvs_aggregate_count"] = count
+        except (OSError, RuntimeError, sqlite3.Error):
+            metrics["cvs_aggregate"] = None
+            metrics["cvs_aggregate_count"] = 0
     traits = compute_traits(metrics)
     assessment = generate_assessment(metrics, traits)
     plot_radar(traits, voice.name, radar_path, metrics)
@@ -1060,6 +1128,12 @@ def analyze_voice_audio(
     progress_callback: Optional[
         Callable[[Optional[float], Optional[float]], None]
     ] = None,
+    *,
+    reference_text: Optional[str] = None,
+    language: Optional[str] = None,
+    backend_id: Optional[str] = None,
+    latency_ms: Optional[float] = None,
+    realtime_speed: Optional[float] = None,
 ) -> None:
     """Analyze in-memory voice audio without any saved SFX prefix.
 
@@ -1071,6 +1145,11 @@ def analyze_voice_audio(
         stem: File stem to use for report artifacts.
         reference_voice: Optional voice whose reference embedding should be compared with the analyzed audio.
         progress_callback: Callback receiving Hugging Face transfer progress.
+        reference_text: Text Celune asked the TTS backend to speak.
+        language: Language code used for this utterance.
+        backend_id: Stable backend identifier used for aggregation.
+        latency_ms: Request-to-first-audio latency in milliseconds.
+        realtime_speed: Generated audio duration divided by generation time.
     """
     y = np.asarray(audio, dtype=np.float32)
     if y.ndim == 2:
@@ -1084,6 +1163,11 @@ def analyze_voice_audio(
         stem,
         reference_voice,
         progress_callback,
+        reference_text,
+        language,
+        backend_id,
+        latency_ms,
+        realtime_speed,
     )
 
 
@@ -1095,6 +1179,12 @@ def schedule_voice_analysis(
     stem: str,
     reference_voice: Optional[str],
     on_error: Callable[[Exception], None],
+    *,
+    reference_text: Optional[str] = None,
+    language: Optional[str] = None,
+    backend_id: Optional[str] = None,
+    latency_ms: Optional[float] = None,
+    realtime_speed: Optional[float] = None,
 ) -> threading.Thread:
     """Start voice analysis without blocking the caller on process startup.
 
@@ -1106,6 +1196,11 @@ def schedule_voice_analysis(
         stem: File stem to use for report artifacts.
         reference_voice: Optional reference voice for similarity metrics.
         on_error: Callback for failures to start the analysis process.
+        reference_text: Text Celune asked the TTS backend to speak.
+        language: Language code used for this utterance.
+        backend_id: Stable backend identifier used for aggregation.
+        latency_ms: Request-to-first-audio latency in milliseconds.
+        realtime_speed: Generated audio duration divided by generation time.
 
     Returns:
         threading.Thread: Daemon thread that starts the detached analysis process.
@@ -1121,6 +1216,11 @@ def schedule_voice_analysis(
                 out_dir,
                 stem,
                 reference_voice,
+                reference_text=reference_text,
+                language=language,
+                backend_id=backend_id,
+                latency_ms=latency_ms,
+                realtime_speed=realtime_speed,
             )
         except Exception as error:
             on_error(error)

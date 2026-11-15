@@ -5,10 +5,9 @@ from __future__ import annotations
 
 import time
 import queue
-
+from typing import Union, Optional
 from pathlib import Path
-from typing import Optional, Union
-from dataclasses import dataclass, field
+from dataclasses import field, dataclass
 
 import numpy as np
 import numpy.typing as npt
@@ -122,6 +121,11 @@ class PlaybackSourceDone:
     saved_path: Optional[str] = None
     analysis_audio: Optional[AudioChunk] = None
     generation: int = 0
+    analysis_text: Optional[str] = None
+    analysis_language: Optional[str] = None
+    analysis_backend: Optional[str] = None
+    analysis_latency_ms: Optional[float] = None
+    analysis_realtime_speed: Optional[float] = None
 
 
 @dataclass(frozen=True)

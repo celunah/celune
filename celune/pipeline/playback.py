@@ -873,6 +873,11 @@ def _finalize_playback_idle(
     source_id: Optional[int] = None,
     saved_path: Optional[str] = None,
     analysis_audio: Optional[AudioChunk] = None,
+    analysis_text: Optional[str] = None,
+    analysis_language: Optional[str] = None,
+    analysis_backend: Optional[str] = None,
+    analysis_latency_ms: Optional[float] = None,
+    analysis_realtime_speed: Optional[float] = None,
 ) -> None:
     """Handle post-playback reactions when the mixer becomes fully idle."""
     _reset_glow_audio_reactivity(engine)
@@ -944,6 +949,11 @@ def _finalize_playback_idle(
                     ),
                     "warning",
                 ),
+                reference_text=analysis_text,
+                language=analysis_language,
+                backend_id=analysis_backend,
+                latency_ms=analysis_latency_ms,
+                realtime_speed=analysis_realtime_speed,
             )
 
         if (
@@ -1109,6 +1119,11 @@ async def playback_worker_job(engine: Celune) -> None:
             source_id=marker.source_id,
             saved_path=marker.saved_path,
             analysis_audio=marker.analysis_audio,
+            analysis_text=marker.analysis_text,
+            analysis_language=marker.analysis_language,
+            analysis_backend=marker.analysis_backend,
+            analysis_latency_ms=marker.analysis_latency_ms,
+            analysis_realtime_speed=marker.analysis_realtime_speed,
         )
 
     async def handle_playback_error(error: BaseException) -> None:

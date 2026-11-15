@@ -1022,6 +1022,11 @@ class CaptionAlignmentWorker:
         notify_idle_when_finished: bool = True,
         saved_path: Optional[str] = None,
         analysis_audio: Optional[np.ndarray] = None,
+        analysis_text: Optional[str] = None,
+        analysis_language: Optional[str] = None,
+        analysis_backend: Optional[str] = None,
+        analysis_latency_ms: Optional[float] = None,
+        analysis_realtime_speed: Optional[float] = None,
         finish_stream: bool = True,
     ) -> None:
         """Queue a source completion marker after its pending audio chunks."""
@@ -1036,6 +1041,11 @@ class CaptionAlignmentWorker:
                 notify_idle_when_finished=notify_idle_when_finished,
                 saved_path=saved_path,
                 analysis_audio=analysis_audio,
+                analysis_text=analysis_text,
+                analysis_language=analysis_language,
+                analysis_backend=analysis_backend,
+                analysis_latency_ms=analysis_latency_ms,
+                analysis_realtime_speed=analysis_realtime_speed,
             )
             with self._state_lock:
                 self._cancelled_sources.discard(source_id)

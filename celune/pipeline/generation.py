@@ -677,6 +677,18 @@ def _process_generation_request(
 
             saved_path = None
             analysis_audio = None
+            analysis_text = (
+                timing_text if not getattr(engine.backend, "singing", False) else None
+            )
+            backend_name = getattr(engine.backend, "name", None)
+            analysis_backend = (
+                backend_name
+                if isinstance(backend_name, str)
+                else type(engine.backend).__name__
+            )
+            analysis_language = caption_language
+            analysis_latency_ms = speech_timing.ttfc_ms()
+            analysis_realtime_speed = generation_speed
             if capture_tutorial_audio:
                 audio_capture_queue = item.audio_capture_queue
                 if audio_capture_queue is None:
@@ -885,6 +897,11 @@ def _process_generation_request(
                         release_pipeline_when_finished=False,
                         saved_path=saved_path,
                         analysis_audio=analysis_audio,
+                        analysis_text=analysis_text,
+                        analysis_language=analysis_language,
+                        analysis_backend=analysis_backend,
+                        analysis_latency_ms=analysis_latency_ms,
+                        analysis_realtime_speed=analysis_realtime_speed,
                     )
                     release_pipeline(engine, playback_idle=False)
                 else:
@@ -894,6 +911,11 @@ def _process_generation_request(
                         release_pipeline_when_finished=True,
                         saved_path=saved_path,
                         analysis_audio=analysis_audio,
+                        analysis_text=analysis_text,
+                        analysis_language=analysis_language,
+                        analysis_backend=analysis_backend,
+                        analysis_latency_ms=analysis_latency_ms,
+                        analysis_realtime_speed=analysis_realtime_speed,
                     )
                     if stream_queue is not None:
                         stream_queue.put(None)
