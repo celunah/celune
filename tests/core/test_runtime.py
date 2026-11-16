@@ -285,6 +285,39 @@ class TestCeluneRuntime(CeluneCoreTestSupport):
             celune, "mini"
         )
 
+    def test_qwen3_backend_option_reaches_initial_and_reloaded_backends(self) -> None:
+        """Forward Qwen3 cloning mode from its backend-specific config section."""
+        with (
+            mock.patch.dict("os.environ", {}, clear=True),
+            mock.patch("celune.core.lifecycle.AudioRGBGlow", FakeGlow),
+            mock.patch("celune.core.lifecycle.default_loader", return_value=None),
+            mock.patch(
+                "celune.core.lifecycle.persona_is_available", return_value=False
+            ),
+            mock.patch(
+                "celune.core.lifecycle.resolve_backend_name",
+                return_value="qwen3",
+            ),
+            mock.patch("celune.runtime.validate_runtime", return_value=True),
+            mock.patch(
+                "celune.core.reload.resolve_backend",
+                return_value=FakeBackend(),
+            ) as resolve,
+        ):
+            celune = Celune(
+                config={
+                    "backend_options": {"qwen3": {"x_vector_only": True}},
+                },
+                tts_backend="qwen3",
+            )
+            self.addCleanup(self._close_celune, celune)
+
+        assert resolve.call_args.kwargs["x_vector_only"] is True
+        assert (
+            core_reload._backend_reload_kwargs(celune, "qwen3")["x_vector_only"] is True
+        )
+        assert "x_vector_only" not in core_reload._backend_reload_kwargs(celune, "mini")
+
     def test_constructor_accepts_backend_alias_for_vc_runtime(self) -> None:
         """Verify ``backend=`` can configure the VC runtime in VC mode."""
         with (

@@ -36,16 +36,14 @@ quantize: true
 # `false` = keep KV cache dtypes unmodified
 quantize_kv_cache: true
 
-# Qwen3 TTS settings
-#
-# full reference conditioning preserves the reference prosody and expression
-# set this to `true` when stronger speaker identity matters more than expression
-qwen3_x_vector_only: false
-
 # Backend specific settings
 #
 # these settings will only apply to their target backends
 backend_options:
+  qwen3:
+    # full reference conditioning preserves reference prosody and expression
+    # set this to `true` when stronger speaker identity matters more than expression
+    x_vector_only: false
   soulxsinger:
     # use two-pass singing generation for improved pitch control and advanced musical features
     high_precision: true

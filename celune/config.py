@@ -624,11 +624,41 @@ def merge_missing_defaults(
     Returns:
         tuple[Config, bool]: The merged configuration and whether it changed.
     """
-    merged: Config = {}
-    changed = False
+    source_config = config
+    migrated_qwen3_option = False
+    default_backend_options = defaults.get("backend_options")
+    default_qwen3_options = (
+        default_backend_options.get("qwen3")
+        if isinstance(default_backend_options, dict)
+        else None
+    )
+    if (
+        config is not None
+        and "qwen3_x_vector_only" in config
+        and isinstance(default_qwen3_options, dict)
+        and "x_vector_only" in default_qwen3_options
+    ):
+        source_values = dict(config)
+        legacy_value = source_values.pop("qwen3_x_vector_only")
+        raw_backend_options = source_values.get("backend_options")
+        backend_options = (
+            dict(raw_backend_options) if isinstance(raw_backend_options, dict) else {}
+        )
+        raw_qwen3_options = backend_options.get("qwen3")
+        qwen3_options = (
+            dict(raw_qwen3_options) if isinstance(raw_qwen3_options, dict) else {}
+        )
+        qwen3_options.setdefault("x_vector_only", legacy_value)
+        backend_options["qwen3"] = qwen3_options
+        source_values["backend_options"] = backend_options
+        source_config = source_values
+        migrated_qwen3_option = True
 
-    if config is not None:
-        for key, current_value in config.items():
+    merged: Config = {}
+    changed = migrated_qwen3_option
+
+    if source_config is not None:
+        for key, current_value in source_config.items():
             if key not in defaults:
                 changed = True
                 continue

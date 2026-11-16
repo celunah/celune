@@ -361,13 +361,15 @@ def _backend_reload_kwargs(
         backend_kwargs["quantize_kv_cache"] = quantize_kv_cache
     if backend_name == "qwen3":
         preset = resolve_vram_preset(self.config)
-        backend_kwargs["x_vector_only"] = config_bool(
-            self.config,
-            "CELUNE_QWEN3_X_VECTOR_ONLY",
-            "qwen3_x_vector_only",
-        )
         backend_kwargs["clone_model_id"] = preset.qwen3_clone_model_id
-    backend_kwargs.update(config_backend_options(self.config, backend_name))
+    backend_options = dict(config_backend_options(self.config, backend_name))
+    if backend_name == "qwen3":
+        backend_options["x_vector_only"] = config_bool(
+            backend_options,
+            "CELUNE_QWEN3_X_VECTOR_ONLY",
+            "x_vector_only",
+        )
+    backend_kwargs.update(backend_options)
     return backend_kwargs
 
 

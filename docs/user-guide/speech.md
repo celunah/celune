@@ -42,8 +42,9 @@ counterpart. The same pattern is available for backends and CEVOICE packs.
 Qwen3 and the other cloning backends use the active voice's `wav` and, when
 required, its exact `reference_text`. A full reference recording is preferred
 to a very short fragment because it preserves timbre more consistently. The
-`qwen3_x_vector_only` option can lock speaker identity while reducing expressive
-conditioning; use it when identity stability matters more than style transfer.
+`backend_options.qwen3.x_vector_only` can lock speaker identity while reducing
+expressive conditioning; set it when identity stability matters more than style
+transfer.
 
 FireRedTTS3 uses the active reference WAV and its exact `reference_text` for
 zero-shot cloning and keeps those two prompt spans aligned to prevent reference

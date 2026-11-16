@@ -814,6 +814,11 @@ def _config_explanation(path: tuple[str, ...]) -> str:
     """Return a localized explanation for one configuration value."""
     aliases: dict[tuple[str, ...], str] = {
         ("inference_mode",): "celune.inference_mode",
+        (
+            "backend_options",
+            "qwen3",
+            "x_vector_only",
+        ): "qwen3_x_vector_only",
         ("persona", "speech_end_delay_seconds"): "persona.speech_delay",
         (
             "persona",

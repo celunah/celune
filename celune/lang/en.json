@@ -1034,7 +1034,7 @@
     "ui.settings_explanation.persona.speech_delay": "Set the silence after voice activity ends before Persona submits input.",
     "ui.settings_explanation.persona.speech_language": "Choose the language used for Persona voice input, or detect it automatically.",
     "ui.settings_explanation.persona.speech_model_id": "Choose the Whisper model used for Persona voice input.",
-    "ui.settings_explanation.qwen3_x_vector_only": "Preserve full reference conditioning when using Qwen3 TTS.",
+    "ui.settings_explanation.qwen3_x_vector_only": "Enable identity-only cloning for Qwen3 TTS, reducing reference prosody and expression.",
     "ui.settings_explanation.sleep.enabled": "Allow {app_name} to unload idle resources and enter sleep mode.",
     "ui.settings_explanation.sleep.timeout": "Set how many idle minutes pass before sleep mode begins.",
     "ui.settings_explanation.sleep.unload.normalizer": "Unload the text normalizer when sleep mode begins.",

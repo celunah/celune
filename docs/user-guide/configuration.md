@@ -15,7 +15,7 @@ before the interface opens. `celune config view` prints the active file and
 | --- | --- | --- |
 | `backend` | `null` | TTS or VC backend name. `null` lets the application choose its normal backend. |
 | `inference_mode` | `native` | Use native model libraries or GGUF runtimes where supported. Takes effect after restarting Celune. |
-| `backend_options` | `soulxsinger.high_precision: true` | Constructor options passed only to the named backend. |
+| `backend_options` | `qwen3.x_vector_only: false`; `soulxsinger.high_precision: true` | Constructor options passed only to the named backend. |
 | `commercial` | `false` | Declare commercial use. Celune then allows only models whose reviewed terms confirm commercial use. |
 | `quantize` | `true` | Try contract-approved native TTS quantization: INT8 on Ampere and FP8 on sm89 or newer, with BF16 recovery. Ming3 and supported audio.cpp TTS adapters select Q8_0 when enabled and BF16 otherwise. |
 | `quantize_kv_cache` | `true` | Store supported Persona, Qwen3, FireRedTTS3, and VoxCPM2 cache prefixes in INT8 on Ampere or FP8 on `sm89+`; use `false` to keep their native cache dtype. |
@@ -57,10 +57,16 @@ or `streaming` to `true` for shorter inference chunks:
 
 ```yaml
 backend_options:
+  qwen3:
+    x_vector_only: false
   soulxsinger:
     high_precision: true
     streaming: false
 ```
+
+`backend_options.qwen3.x_vector_only` defaults to `false`, preserving full
+reference prosody and expression. Set it to `true` when speaker identity
+stability matters more than expressive conditioning.
 
 With `streaming: true`, Celune divides long singing sections into chunks of
 about 1.92 seconds, equal to three default TTS chunk lengths, at event

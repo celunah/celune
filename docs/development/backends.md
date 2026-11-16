@@ -79,8 +79,9 @@ fails to parse its incomplete project metadata.
 `qwen3` streams at 12.5 chunks per second and supports `zh-cn`, `en`, `ja`,
 `ko`, `de`, `fr`, `ru`, `pt`, `es`, and `it`. Medium and larger VRAM presets use
 the 1.7B clone model; low VRAM can select the 0.6B model. It reads a CEVOICE
-reference WAV and per-voice transcript. `qwen3_x_vector_only` favors identity
-stability over full reference expressiveness.
+reference WAV and per-voice transcript. The backend-specific
+`backend_options.qwen3.x_vector_only` setting favors identity stability over
+full reference expressiveness.
 
 ### Mini
 

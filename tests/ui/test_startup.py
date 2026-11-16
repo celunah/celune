@@ -362,7 +362,11 @@ class TestUIStartup(CeluneTestCase):
         ui.celune = cast(
             Celune,
             SimpleNamespace(
-                config={"backend": "mini", "persona": {"context_size": 8192}},
+                config={
+                    "backend": "mini",
+                    "backend_options": {"qwen3": {"x_vector_only": False}},
+                    "persona": {"context_size": 8192},
+                },
             ),
         )
 
@@ -372,13 +376,21 @@ class TestUIStartup(CeluneTestCase):
         menu = show_menu.call_args.args[0]
         assert [option.label for option in menu.options] == [
             "Backend",
+            "Backend options Qwen3 x vector only",
             "Persona context size",
         ]
         assert menu.options[0].explanation == (
             "Choose the speech backend Celune should use."
         )
         assert menu.return_value is False
-        assert ui._settings_paths == (("backend",), ("persona", "context_size"))
+        assert menu.options[1].explanation == (
+            "Enable identity-only cloning for Qwen3 TTS, reducing reference prosody and expression."
+        )
+        assert ui._settings_paths == (
+            ("backend",),
+            ("backend_options", "qwen3", "x_vector_only"),
+            ("persona", "context_size"),
+        )
 
     def test_settings_menu_offers_the_api_access_levels(self) -> None:
         """Verify the API setting exposes Celune's three network-access modes."""

@@ -447,6 +447,42 @@ class TestConfig(CeluneTestCase):
             "token": None,
         }
 
+    def test_merge_missing_defaults_migrates_legacy_qwen3_option(self) -> None:
+        """Move the former top-level Qwen3 option into its backend section."""
+        current: Mapping[str, JSONSerializable] = {
+            "qwen3_x_vector_only": True,
+            "backend_options": {"soulxsinger": {"high_precision": True}},
+        }
+        defaults: JSON = {
+            "backend_options": {
+                "qwen3": {"x_vector_only": False},
+                "soulxsinger": {"high_precision": True},
+            },
+        }
+
+        merged, changed = config.merge_missing_defaults(current, defaults)
+
+        assert changed
+        assert "qwen3_x_vector_only" not in merged
+        assert merged["backend_options"] == {
+            "qwen3": {"x_vector_only": True},
+            "soulxsinger": {"high_precision": True},
+        }
+        assert current["qwen3_x_vector_only"] is True
+
+    def test_merge_missing_defaults_prefers_nested_qwen3_option(self) -> None:
+        """Keep the new backend-specific value when both config keys exist."""
+        merged, changed = config.merge_missing_defaults(
+            {
+                "qwen3_x_vector_only": True,
+                "backend_options": {"qwen3": {"x_vector_only": False}},
+            },
+            {"backend_options": {"qwen3": {"x_vector_only": False}}},
+        )
+
+        assert changed
+        assert merged == {"backend_options": {"qwen3": {"x_vector_only": False}}}
+
     def test_merge_missing_defaults_removes_unknown_schema_keys(self) -> None:
         """Verify removed configuration options are pruned at the schema boundary."""
         current: Mapping[str, JSONSerializable] = {
