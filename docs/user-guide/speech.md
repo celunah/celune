@@ -48,7 +48,7 @@ conditioning; use it when identity stability matters more than style transfer.
 FireRedTTS3 uses the active reference WAV and its exact `reference_text` for
 zero-shot cloning and keeps those two prompt spans aligned to prevent reference
 text from leaking into the requested speech. It returns a complete 24 kHz
-waveform after inference, which Celune resamples at the common playback
+waveform after inference, which the application resamples at the common playback
 boundary. Its Qwen backbone, stop head, and RedAE encoder load in BF16; the
 flow head and decoder remain F32.
 
@@ -108,13 +108,13 @@ uv sync --dev --extra api --extra captions
 ```
 
 Caption alignment keeps ONNX Runtime session logs at error level, suppressing
-CPU graph-optimization warnings while preserving actual runtime errors.
-When its CUDA provider is available, Celune runs model inference on an NVIDIA
-GPU. It falls back to CPU if CUDA is unavailable or cannot initialize.
+CPU graph-optimization warnings while preserving actual runtime errors. When
+the ONNX Runtime CUDA provider is available, the alignment session runs on an
+NVIDIA GPU. The session uses CPU if CUDA is unavailable or cannot initialize.
 
 The `espeak-ng` executable must also be on `PATH`. If eSpeak NG or ONNX Runtime
-is missing, Celune logs a yellow warning and hides captions for the utterance;
-speech playback continues. For speech, Celune hides captions when aligned word
+is missing, the application logs a yellow warning and hides captions for the utterance;
+speech playback continues. For speech, the application hides captions when aligned word
 timings are unavailable instead of advancing them at a uniform pace. With
 aligned timings, captions reveal the final word and remain visible until
 playback completes. With captions disabled, Celune does not load or download

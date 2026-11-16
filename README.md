@@ -175,8 +175,9 @@ will be unavailable.
 
 ## VRAM presets & requirements
 
-Celune leaves a 2 GB leeway in the host's memory to protect the system and other applications from memory 
-exhaustion. Please note that this may affect her capabilities.
+The engine reserves a 2 GiB margin from total VRAM to protect the system and
+other applications from memory exhaustion. The table shows the budget available
+for model loading and inference.
 
 | Preset   | Total VRAM     | Allocated budget |
 | -------- | -------------: | ---------------: |
@@ -427,12 +428,12 @@ Python extensions can use other third-party modules for deeper integrations into
 
 ## Web UI
 
-Celune exposes a web interface for remote access to Celune. It reuses the Celune API commands to provide
-an interface for control.
-It can be accessed via `/ui` on Celune's exposed API URL.
+The application exposes a web interface for remote access. The WebUI reuses the
+application's API commands for control and is available at `/ui` on the
+application's API URL.
 
-On public Celune APIs, usage of the web interface will require you to enter her API token before you 
-can use it.
+On public Celune APIs, using the web interface requires you to enter the API
+token before you can use it.
 
 ## Shortlink
 

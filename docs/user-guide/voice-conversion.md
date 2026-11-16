@@ -40,7 +40,7 @@ The REST API exposes the same operation at `POST /v1/convert` as a multipart
 upload. The optional `f0_condition` form field overrides the runtime default
 for that request.
 
-Celune plays converted audio with a 2 dB attenuation to bring its playback
+The engine plays converted audio with 2 dB attenuation to bring the playback
 level closer to TTS. This affects file and live VC playback only; conversion
 results returned to Python or the REST API retain the backend's original level.
 
@@ -49,16 +49,17 @@ results returned to Python or the REST API retain the backend's original level.
 Press `CTRL+R` in VC mode to start or stop microphone capture. The capture path
 uses preroll, hangover, voice-activity checks, and a bounded submission queue
 so the first phonemes are not cut off and stale audio cannot grow without
-limit. With the optional `live-vc-ai` extra, Celune uses Silero VAD; otherwise
-it uses the built-in energy detector. VAD is always active during live capture.
+limit. With the optional `live-vc-ai` extra, the application uses Silero VAD;
+otherwise, the application uses the built-in energy detector. VAD is always
+active during live capture.
 
 Use `/vcmode talk` for ordinary speech and `/vcmode sing` for F0-conditioned
 singing. The UI exposes a button for changing F0 mode.
 
 To inspect the live signal, run `/vcdebug on`, speak through live VC, stop the
-microphone stream, then run `/vcdebug off`. Celune saves the raw microphone
+microphone stream, then run `/vcdebug off`. The application saves the raw microphone
 capture and converted output as `microphone.flac` and `converted.flac` in a
-temporary folder under its AppData directory. Both files use 48 kHz, 24-bit
+temporary folder under the application's AppData directory. Both files use 48 kHz, 24-bit
 FLAC. Debug capture writes asynchronously and does not change the audio sent to
 the converter or playback. Turn it off to finish exporting the files. The files
 remain there for inspection; delete the temporary folder when they are no

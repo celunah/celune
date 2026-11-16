@@ -18,10 +18,10 @@ the matrix below. Other Persona models use Transformers. A supported TTS
 backend selects audio.cpp; native-only backends such as SoulX-Singer continue
 to use their native adapter. Ming3 requires audio.cpp in both modes.
 
-When a GGUF runtime or package cannot initialize, Celune closes the candidate
-and attempts native inference once. It logs the reason and keeps the effective
-runtime for that loaded component. Generation errors are returned through the
-current backend error path and do not replay a request through another
+When a GGUF runtime or package cannot initialize, the application closes the
+candidate and attempts native inference once. It logs the reason and keeps
+the effective runtime for that loaded component. Generation errors are returned
+through the current backend error path and do not replay a request through another
 runtime. Consent, policy, cancellation, and invalid-request errors remain
 direct. TTS model identity and runtime metadata arrive from the worker in a
 CEDTS `metadata` event; Persona logs the same model, effective runtime, and
@@ -161,9 +161,9 @@ loopback streaming server.
 
 ## Failure behavior and verification
 
-If a required TTS runtime cannot initialize at startup, Celune enters its
-recoverable startup error state, names the backend and failure, skips the ready
-event and readiness cue, and allows configuration recovery. Backend reloads
+If a required TTS runtime cannot initialize at startup, the application enters
+a recoverable startup error state, names the backend and failure, skips the
+ready event and readiness cue, and allows configuration recovery. Backend reloads
 use the existing rollback path to restore the last working backend. If
 Persona cannot initialize either runtime while TTS is healthy, Celune marks
 Persona unavailable and continues in speech-only mode.

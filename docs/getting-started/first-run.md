@@ -75,10 +75,10 @@ uv run python main.py doctor
 
 If the loading screen changes to the red `Failed to start` state, read the
 diagnostic shown there. When engine initialization returns a failure without
-raising an exception, Celune shows the most recent error-level startup log
+raising an exception, the application shows the most recent error-level startup log
 instead of only the generic startup message. The screen keeps the final error
-message concise; traceback detail remains in the application log. Celune remains
-open so the error can be read; press `CTRL+Q` to close it. A missing required
+message concise; traceback detail remains in the application log. The application
+remains open so the error can be read; press `CTRL+Q` to close it. A missing required
 dependency returns exit code `4` to the launcher, which can then report or
 repair the environment.
 

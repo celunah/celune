@@ -1,6 +1,6 @@
 # Backends
 
-This page describes how Celune resolves, launches, and extends its
+This page describes how the application resolves, launches, and extends its
 text-to-speech and voice-conversion backends.
 
 ## Application environment
@@ -88,14 +88,15 @@ stability over full reference expressiveness.
 supports English, French, German, Italian, Portuguese, and Spanish. Version
 3.2.0 adds the 24-layer French model used by Celune's pinned snapshot
 ([upstream release](https://github.com/kyutai-labs/pocket-tts/releases/tag/v3.2.0)).
-Celune matches each snapshot language variant to its corresponding package
-config, which keeps the model architecture aligned with its weights. It uses
-`lsd_decode_steps=2` with the pre-3.0.0 API and `sampler_decode_steps=2` with the
-3.0.0-or-newer API. Generated model configs select the matching tokenizer
-loader for either the JSON tokenizer or SentencePiece model stored in the
+The application matches each snapshot language variant to its corresponding
+package config, which keeps the model architecture aligned with its weights.
+The Mini adapter uses `lsd_decode_steps=2` with the pre-3.0.0 API and
+`sampler_decode_steps=2` with the 3.0.0-or-newer API. Generated model configs
+select the matching tokenizer loader for either the JSON tokenizer or
+SentencePiece model stored in the
 snapshot. Mini remains the supported CPU-friendly path and uses pack reference
 data for cloning. If a language-specific reload fails during generation,
-Celune clears the model reference and enters its fatal state instead of
+The runtime clears the model reference and enters a fatal state instead of
 continuing with a stale model.
 
 ### FireRedTTS3
@@ -104,13 +105,12 @@ continuing with a stale model.
 across 24 languages and 21 Chinese dialect tags. It consumes the active voice's
 complete reference WAV and exact `reference_text`, then streams progressive 24 kHz
 audio chunks to the CEDTS worker. FireRed's autoregressive core emits four
-RedAE frames per generation step; Celune keeps the RedAE decoder's Qwen3 KV
-cache and incrementally overlap-adds its ISTFT frames, forwarding each newly
-stable audio segment without waiting for the final waveform. Celune loads the
-RedAE and transformer checkpoints directly in BF16 before moving them to CUDA
-and runs the FireRed
-generation path under BF16 autocast so its FP32 prompt tensors remain
-compatible with the loaded model. During construction,
+RedAE frames per generation step. The backend runtime keeps the RedAE decoder's
+Qwen3 KV cache and incrementally overlap-adds the decoder's ISTFT frames,
+forwarding each newly stable audio segment without waiting for the final
+waveform. The runtime loads the RedAE and transformer checkpoints directly in
+BF16 before moving them to CUDA, then runs FireRed generation under BF16 autocast
+to keep the FP32 prompt tensors compatible with the loaded model. During construction,
 every FireRed Qwen configuration that requests `flash_attention_2` is replaced
 with PyTorch SDPA. The backend reports model-construction stages through the
 CEDTS progress and log callbacks, so a blocking load remains observable. The
@@ -151,11 +151,11 @@ The backend supports Chinese, English, Japanese, Korean, German, French, and
 Spanish. It clones from the active CEVOICE/CECHAR voice's reference WAV and exact
 `reference_text`. The server runs one request at a time on the active CUDA
 device, binds only to loopback, eagerly loads one selected GGUF, and is owned by
-the CEDTS backend runtime. Celune downloads and verifies the pinned Windows CUDA
-13.3 binary and CUDA runtime packages or the Linux CUDA 12.8 package, then stores
-them under application data. It selects Q8_0 weights when `quantize: true` and
-BF16 weights when quantization is disabled. A load failure does not silently
-switch the selected precision. The model card is MIT-licensed; its usage
+the CEDTS backend runtime. The application downloads and verifies the pinned
+Windows CUDA 13.3 binary and CUDA runtime packages or the Linux CUDA 12.8 package,
+then stores them under application data. The backend selects Q8_0 weights when
+`quantize: true` and BF16 weights when quantization is disabled. A load failure
+does not silently switch the selected precision. The model card is MIT-licensed; its usage
 disclaimer does not mark it research-only or non-commercial.
 
 When Celune's language is `Auto`, the submission pipeline uses Lingua to detect
@@ -394,9 +394,9 @@ immediately.
 opts in by passing `singing=True` to the base initializer. For a request with
 CESN tags, Celune parses the original notation, validates the explicit language
 against the backend's `supported_languages`, and records warnings in the runtime
-log before calling `cesn_to_model(text)`. It passes the user's original source
-so backend validation can report exact line and character locations. The hook
-is called once before generation chunking.
+log before calling `cesn_to_model(text)`. The hook receives the user's original
+source so backend validation can report exact line and character locations. It
+runs once before generation chunking.
 
 `celune/cesn.py` owns X-SAMPA conversion, parsing, singing validation,
 syllabification, synthesis preparation, and canonical rendering. It calls the

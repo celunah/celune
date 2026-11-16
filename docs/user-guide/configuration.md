@@ -13,7 +13,7 @@ before the interface opens. `celune config view` prints the active file and
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `backend` | `null` | TTS or VC backend name. `null` lets Celune choose its normal backend. |
+| `backend` | `null` | TTS or VC backend name. `null` lets the application choose its normal backend. |
 | `inference_mode` | `native` | Use native model libraries or GGUF runtimes where supported. Takes effect after restarting Celune. |
 | `backend_options` | `soulxsinger.high_precision: true` | Constructor options passed only to the named backend. |
 | `commercial` | `false` | Declare commercial use. Celune then allows only models whose reviewed terms confirm commercial use. |
@@ -50,9 +50,9 @@ compatibility and artifact matrix.
 ### Backend-specific options
 
 Put backend-only constructor options under `backend_options` and the backend's
-registered name. Celune passes only the selected backend's options to its
-isolated worker. SoulX-Singer defaults to F0 melody-conditioning mode and
-full-section inference; set `high_precision` to `false` for score conditioning
+registered name. The application passes only the selected backend's options to
+that backend's isolated worker. SoulX-Singer defaults to F0 melody-conditioning
+mode and full-section inference; set `high_precision` to `false` for score conditioning
 or `streaming` to `true` for shorter inference chunks:
 
 ```yaml
@@ -64,9 +64,9 @@ backend_options:
 
 With `streaming: true`, Celune divides long singing sections into chunks of
 about 1.92 seconds, equal to three default TTS chunk lengths, at event
-boundaries. It keeps tied and slurred note chains together. Each chunk is a
-separate inference call, so playback can begin before the complete section is
-generated. The default `false` preserves full-section generation and phrasing.
+boundaries. The backend keeps tied and slurred note chains together. Each chunk
+is a separate inference call, so playback can begin before the complete section
+is generated. The default `false` preserves full-section generation and phrasing.
 
 This mode downloads SoulX-Singer's pinned RMVPE F0 extractor checkpoint if it is
 not already cached. Celune measures the singer reference's F0, generates a
@@ -377,8 +377,8 @@ target automatically.
 
 Voice-conversion F0 conditioning is a runtime control rather than a YAML
 setting. Live capture always performs voice-activity detection. The
-optional `live-vc-ai` extra supplies Silero VAD; when it is unavailable, Celune
-uses its built-in energy detector instead. With Silero enabled, the energy
+optional `live-vc-ai` extra supplies Silero VAD; when it is unavailable, the
+application uses its built-in energy detector instead. With Silero enabled, the energy
 detector also catches speech onset while the background model catches up. Live
 capture preserves microphone audio through a 300 ms VAD hangover so delayed or
 briefly missed decisions do not cut off speech boundaries.

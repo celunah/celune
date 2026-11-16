@@ -37,7 +37,9 @@ Keep backend implementation dispatch and dependency environment manifests in the
 
 ## Consent behavior
 
-Celune stores acknowledgement in its app-data directory, keyed by the exact model ID and commit SHA. A later revision requires a new acknowledgement. No prior agreement is inferred for existing installations.
+The application stores acknowledgement in its app-data directory, keyed by the
+exact model ID and commit SHA. A later revision requires a new acknowledgement.
+No prior agreement is inferred for existing installations.
 
 Before any cataloged or custom model is downloaded or loaded, the calling path uses `require_model_consent`. The guard covers startup preload, Textual and browser UI actions, REST requests, and CEDTS worker-backed loads. A missing acknowledgement raises `ModelConsentRequired`; declining raises `ModelConsentDeclined`. Neither path permits the model load to continue.
 

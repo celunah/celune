@@ -37,13 +37,13 @@ Choose `api.access` to control where Celune listens:
 The `same_network` mode may need a host-firewall rule for local devices. Router
 port forwarding is needed only if you also want to reach that listener from
 outside the local network. The `everyone` mode requires `cloudflared` on `PATH`;
-Celune stops the quick-tunnel process when it closes. If `cloudflared` is
-unavailable, Celune keeps the API on loopback and reports that the public
-tunnel did not start.
+the application stops the quick-tunnel process when it closes. If `cloudflared`
+is unavailable, the application keeps the API on loopback and reports that the
+public tunnel did not start.
 
-When the API starts in `everyone` mode, Celune uses the Cloudflare URL in its
-startup message when `cloudflared` publishes it within ten seconds. If the
-tunnel fails or does not publish a URL by then, the startup message uses the
+When the API starts in `everyone` mode, the application uses the Cloudflare URL
+in its startup message when `cloudflared` publishes it within ten seconds. If
+the tunnel fails or does not publish a URL by then, the startup message uses the
 loopback API URL; a public URL that appears later is logged separately.
 
 The API is an optional core extra. Install it with `uv sync --extra api` (or
@@ -102,7 +102,7 @@ api_key = key_file.read_text(encoding="utf-8").strip()
 | `GET` | `/ui/` | Load the mounted WebUI. |
 | `GET` | `/ui/key` | Show the API-key prompt when authentication is enabled. |
 | `POST` | `/ui/key` | Exchange the API key for a browser WebUI session. |
-| `POST` | `/v1/think` | Ask Celune to think through Persona and reply asynchronously through her normal speech pipeline. |
+| `POST` | `/v1/think` | Ask Celune to think through Persona and reply asynchronously through the application's normal speech pipeline. |
 | `POST` | `/v1/speak` | Queue speech and return one complete `audio/flac` response. |
 | `POST` | `/v1/speak/stream` | Return generated speech progressively as multipart `audio/flac` chunks. |
 | `POST` | `/v1/sing` | Validate CESN, queue singing, and stream the result as `audio/flac`. |
@@ -482,7 +482,8 @@ unqueued requests that do not consume the generation limit. Speech and
 conversion submissions remain limited; Gradio's other UI transport requests
 do not consume that budget.
 
-Celune serves its page scripts, styles, and bundled fonts under `/ui/assets/`.
+The application serves its page scripts, styles, and bundled fonts under
+`/ui/assets/`.
 Gradio serves its own hashed JavaScript and CSS bundles from that same path
 through the mounted application. A reverse proxy or Cloudflare Tunnel must
 forward `/ui/assets/` requests to Celune without rewriting their paths.
@@ -506,8 +507,8 @@ routes, including read-only status and version routes, also require the API
 key. The authentication request is rate limited, and browser writes and
 WebSocket connections must come from the same origin.
 
-Celune also remembers a successful browser authentication for 30 days in its
-app-data directory. The record is a keyed fingerprint of the client's
+The application also remembers a successful browser authentication for 30 days
+in its app-data directory. The record is a keyed fingerprint of the client's
 resolved address (Cloudflare's forwarded address when tunneled) and browser
 request headers; it does not contain the API key, address, or raw headers. This
 lets the same client pass the gate after a Quick Tunnel hostname changes and

@@ -25,14 +25,14 @@ Install the optional API dependencies with `uv sync --extra api`. The MCP endpoi
 | Tool | Arguments | Result |
 | --- | --- | --- |
 | `status` | None | Runtime state, loaded/sleeping/locked flags, and a `ready` flag. |
-| `wake` | None | Runtime status after Celune finishes waking, with an `awake` flag. |
-| `speak` | `content: str`, `save: bool = true` | FLAC audio after Celune finishes playing it. Requires a speaking backend. |
-| `sing` | `content: str`, `save: bool = true` | FLAC audio after Celune finishes playing it. Requires a singing backend and valid CESN. |
+| `wake` | None | Runtime status after the engine finishes waking, with an `awake` flag. |
+| `speak` | `content: str`, `save: bool = true` | FLAC audio after the runtime finishes playing it. Requires a speaking backend. |
+| `sing` | `content: str`, `save: bool = true` | FLAC audio after the runtime finishes playing it. Requires a singing backend and valid CESN. |
 | `run_persona` | `content: str` | Text confirming that Persona accepted the request. |
 | `change_voice` | Exactly one of `voice_name: str` or `pack_name: str` | Text confirming the selected voice or pack. |
 | `change_backend` | `backend_name: str` | Text confirming the selected installed TTS or VC backend. |
 
-`status` returns `engine_state`, `loaded`, `sleeping`, `locked`, and `ready`. `ready` is true when Celune is loaded, awake, unlocked, and her model-ready signal is set. Call `wake` when `sleeping` is true; it waits for the normal reload and warmup path before returning. `wake` is safe to call while Celune is already awake. Check `ready` before starting other actions.
+`status` returns `engine_state`, `loaded`, `sleeping`, `locked`, and `ready`. `ready` is true when the runtime is loaded, awake, unlocked, and its model-ready signal is set. Call `wake` when `sleeping` is true; it waits for the normal reload and warmup path before returning. `wake` is safe to call while the runtime is already awake. Check `ready` before starting other actions.
 
 For example, an MCP client can inspect the runtime, wake it if needed, then verify readiness:
 
@@ -46,7 +46,7 @@ For example, an MCP client can inspect the runtime, wake it if needed, then veri
 
 Both tools take an empty argument object. Call `status` again after `wake` when the returned `ready` flag is false.
 
-Speech and singing tools return an MCP audio content block with MIME type `audio/flac`. Each call stays pending until Celune finishes playing the audio through her normal playback path. This makes the tool response a safe point for a client to issue a backend or voice change. `save` defaults to `true`, matching `/v1/speak` and `/v1/sing`.
+Speech and singing tools return an MCP audio content block with MIME type `audio/flac`. Each call stays pending until the runtime finishes playing the audio through its normal playback path. This makes the tool response a safe point for a client to issue a backend or voice change. `save` defaults to `true`, matching `/v1/speak` and `/v1/sing`.
 
 The TUI and WebUI disable their controls while Celune wakes, reloads a voice or backend, generates speech, or plays audio. `speak` and `sing` keep those controls disabled until playback finishes. The same runtime callbacks apply when these actions start from the REST API, WebUI, or TUI. `run_persona` reports when a request is accepted; Persona processing continues in the background and the interface remains available for follow-up input.
 

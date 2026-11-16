@@ -2,8 +2,8 @@
 
 The Textual UI is the primary interactive surface. It has a loading phase,
 status header, log panel, caption/progress area, input editor, voice/style
-button, optional VC controls, and rotating resource information. Celune
-registers its default dark/light palette and mounts the loading screen before
+button, optional VC controls, and rotating resource information. The
+application registers its default dark/light palette and mounts the loading screen before
 importing or initializing the engine, Persona, agent, audio, backend, or model
 runtime, so the first frame is both themed and responsive. Pack-derived colors
 are applied later when the runtime is available. Those dependencies load in the
@@ -152,8 +152,8 @@ instead of bringing the loading overlay back. Before that point, the loading
 screen only offers `CTRL+Q` to quit.
 
 The style button cycles the active voice on a normal click. Hold it to open
-`Select voice` after releasing the button, including while Celune is sleeping;
-selecting a voice wakes her first. The menu lists every readable `.cevoice` and
+`Select voice` after releasing the button, including while the engine is
+sleeping; selecting a voice wakes the engine first. The menu lists every readable `.cevoice` and
 `.cechar` CEVOICE/CECHAR pack as one character row. Left/Right cycles the voice
 entry when a pack has multiple entries; single-entry packs omit the bracketed
 value. Confirming a row hot-loads that pack and voice. In VC mode
@@ -433,7 +433,7 @@ brightness runs. Idle modulation resumes after playback finishes.
 Set `headless: true` or `CELUNE_HEADLESS=1` for service/API/extension use. Set
 `headless: null` to auto-detect the mode: Windows uses the full Textual UI;
 Linux uses Textual when a desktop session is detected, and uses headless mode
-for TTY-only or non-interactive sessions. If detection fails, Celune attempts
-the full Textual UI and retains its existing unsupported-terminal handling.
+for TTY-only or non-interactive sessions. If detection fails, the application
+attempts the full Textual UI and retains its existing unsupported-terminal handling.
 The headless UI forwards logs and lifecycle callbacks but has no editable input
 box; use the REST API, Python calls, or extensions to submit work.

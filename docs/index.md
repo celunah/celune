@@ -1,9 +1,10 @@
 # Celune
 
 Celune is a local-first character engine for expressive text-to-speech, voice
-conversion, Persona conversation, and constrained agent work. It buffers speech
-for responsive playback, keeps the core runtime usable from Python, and exposes
-the same engine through the terminal UI, REST API, WebUI, and extension system.
+conversion, Persona conversation, and constrained agent work. The application
+buffers speech for responsive playback, keeps its core runtime usable from
+Python, and exposes the same engine through the terminal UI, REST API, WebUI,
+and extension system.
 
 This site documents the behavior implemented in the repository, including the
 custom CEVOICE/CECHAR voice-pack format and CEDTS isolated-worker protocol.
