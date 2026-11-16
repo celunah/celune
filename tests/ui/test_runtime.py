@@ -31,6 +31,14 @@ from ..support import CeluneTestCase
 class TestUIRuntime(CeluneTestCase):
     """Verify Textual runtime presentation and lazy startup behavior."""
 
+    def test_ui_protocols_are_not_reexported_from_the_runtime_package(self) -> None:
+        """Keep UI protocols owned by their canonical typing module."""
+        import celune.ui as ui_package
+
+        assert not hasattr(ui_package, "CeluneBaseUI")
+        assert not hasattr(ui_package, "CeluneHeadlessBaseUI")
+        assert not hasattr(ui_package, "CeluneTextualUI")
+
     def test_ui_error_formatter_remains_available_after_lazy_import(self) -> None:
         """Verify deferred UI imports retain the formatter used by error paths."""
         assert ui_app.format_error(RuntimeError("startup"), "info") == ""

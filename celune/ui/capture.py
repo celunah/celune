@@ -5,19 +5,20 @@ from __future__ import annotations
 
 import re
 import time
-import queue as queue_module
 import threading
 import contextlib
+import queue as queue_module
 from uuid import uuid4
-from typing import Union, Optional, cast
 from collections.abc import Callable
+from typing import Union, Optional, cast
 
 from textual.color import Color
 
 from . import app as _app
 from .theme import with_brightness
-from .constants import CAPTION_FADE_SECONDS
 from ..typing.modes import OperationState
+
+CAPTION_FADE_SECONDS = 0.36
 
 __all__ = (
     "_acquire_recording_component_lease",

@@ -7,13 +7,9 @@ if TYPE_CHECKING:
     from .app import CeluneUI
     from .headless import CeluneHeadlessUI
     from .terminal import SelectMenu, LogRedirect, SelectMenuOption, SelectMenuWidget
-    from .protocols import CeluneBaseUI, CeluneTextualUI, CeluneHeadlessBaseUI
 
 __all__ = [
-    "CeluneBaseUI",
-    "CeluneHeadlessBaseUI",
     "CeluneHeadlessUI",
-    "CeluneTextualUI",
     "CeluneUI",
     "LogRedirect",
     "SelectMenu",
@@ -32,10 +28,6 @@ def __getattr__(name: str) -> type:
         from .headless import CeluneHeadlessUI
 
         return CeluneHeadlessUI
-    if name in {"CeluneBaseUI", "CeluneHeadlessBaseUI", "CeluneTextualUI"}:
-        from . import protocols
-
-        return getattr(protocols, name)
     if name in {"LogRedirect", "SelectMenu", "SelectMenuOption", "SelectMenuWidget"}:
         from . import terminal
 
