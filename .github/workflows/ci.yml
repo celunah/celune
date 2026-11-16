@@ -122,6 +122,23 @@ jobs:
         if: matrix.kind == 'core'
         run: python3 scripts/ci_warnings.py -- uv run python -c "import celune; print(dir(celune))"
 
+  required-python-check:
+    name: Anti AI Slop & Vibe Coding Checks
+    if: always()
+    needs:
+      - python-check-matrix
+      - python-checks
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Confirm Python checks passed
+        if: needs.python-check-matrix.result == 'success' && needs.python-checks.result == 'success'
+        run: echo "All Python checks passed."
+
+      - name: Fail when Python checks did not pass
+        if: needs.python-check-matrix.result != 'success' || needs.python-checks.result != 'success'
+        run: exit 1
+
   launcher-build-linux:
     name: Linux Launcher Build
     runs-on: ubuntu-latest
