@@ -1,18 +1,20 @@
-# Backend selection
+# Backend and inference mode selection
 #
-# you will be asked to choose, but VRAM presets may limit availability
-# of certain backends
+# you will be asked to choose a backend
+# VRAM presets may limit availability of certain backends
 #
-# `qwen3` = faster, less expressive
-# `ming3` = low latency, inexpensive
-# `dotstts` = slower, very high quality
-# `voxcpm2` = slower, high quality
-# `mini` = much faster, and just as good
+# `qwen3` = faster, consistent
+# `ming3` = audio.cpp only, very fast
+# `dotstts` = slowest, very high quality
+# `voxcpm2` = slower, very expressive
+# `mini` = very fast, just as good
 # `soulxsinger` = singing mode
 # `seed-vc` = voice conversion mode
 backend: null
-
-# Inference runtime for Persona and compatible TTS backends. Changes apply after restart.
+# `native` = run inference natively with upstream libraries, more compatible
+# `gguf` = use optimized GGUF-based llama.cpp/audio.cpp inference, faster
+# TTS backends will run on audio.cpp with BF16/Q8_0 GGUFs, Persona will run on llama.cpp with Q8_0/Q4_K_M GGUFs
+# not all backends are capable of GGUF inference, unsupported backends will continue to run natively
 inference_mode: native
 
 # Model license usage policy
