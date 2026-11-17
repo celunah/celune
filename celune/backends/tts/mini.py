@@ -192,7 +192,6 @@ class Mini(CeluneBackend[Union[TTSModel, AudioCppRuntime]]):
 
         language_code = self.resolve_generation_language(lang)
         language_name = self._resolve_language_name(lang)
-        language_variant: str
         if language_variant is not None and language_variant != language_name:
             variant_path = CONFIGS_DIR / f"{language_variant}.yaml"
             if variant_path.is_file():

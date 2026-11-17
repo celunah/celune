@@ -48,7 +48,7 @@ def canonical_inventory(
     return hashlib.sha256(encoded).hexdigest()
 
 
-def _dtype_name(dtype: torch.dtype) -> str:
+def _dtype_name(dtype: Union[str, torch.dtype]) -> str:
     """Normalize a tensor or safetensors dtype to the contract spelling."""
     value = str(dtype)
     if value.startswith("torch."):

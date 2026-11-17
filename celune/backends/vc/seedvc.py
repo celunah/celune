@@ -349,7 +349,7 @@ class CeluneSeedVCBackend(CeluneVCBackend):
             files = distribution.files or ()
             for file in files:
                 if Path(file).name == "real-time-gui.py":
-                    candidate = Path(distribution.locate_file(file))
+                    candidate = Path(str(distribution.locate_file(file)))
                     if candidate.is_file():
                         return candidate
 
