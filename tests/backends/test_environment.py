@@ -75,7 +75,7 @@ class TestBackendEnvironment:
         manager = BackendEnvironmentManager(root=Path("backend-env-test"))
 
         assert (native.fingerprint()) != (audio_cpp.fingerprint())
-        assert (manager.environment_for(native).root) != (
+        assert manager.environment_for(native).root != (
             manager.environment_for(audio_cpp).root
         )
 
@@ -98,7 +98,7 @@ class TestBackendEnvironment:
         proxy.request.return_value = "backend-format"
         bundle_path = Path("custom.cevoice")
         with mock.patch.object(remote, "active_bundle_path", return_value=bundle_path):
-            assert (proxy.cesn_to_model(notation)) == ("backend-format")
+            assert (proxy.cesn_to_model(notation)) == "backend-format"
         proxy.request.assert_called_with(
             "call",
             method="cesn_to_model",
@@ -112,7 +112,8 @@ class TestBackendEnvironment:
         class SingingBackend:
             """Backend stand-in with an observable CESN conversion hook."""
 
-            def cesn_to_model(self, text: str) -> str:
+            @staticmethod
+            def cesn_to_model(text: str) -> str:
                 """Return a backend-specific marker for the test notation."""
                 return f"converted:{text}"
 
@@ -136,7 +137,7 @@ class TestBackendEnvironment:
                 io.BytesIO(),
             )
 
-        assert (response["value"]) == (f"converted:{notation}")
+        assert (response["value"]) == f"converted:{notation}"
         select_bundle.assert_called_once_with("custom.cevoice")
 
     def test_remote_bundle_voice_uses_worker_model_for_custom_name(self) -> None:
@@ -148,7 +149,7 @@ class TestBackendEnvironment:
         proxy.voice_models = {"balanced": "shared-model"}
         proxy.default_voice = "balanced"
 
-        assert (proxy.model_id_for_voice("Standard")) == ("shared-model")
+        assert (proxy.model_id_for_voice("Standard")) == "shared-model"
 
     def test_remote_bundle_voice_switch_passes_active_pack_to_worker(self) -> None:
         """Verify switching from a pack default voice to another voice keeps the worker on that pack."""
@@ -165,11 +166,11 @@ class TestBackendEnvironment:
             list(proxy.generate_stream(model, text="A", voice="Alternate"))
 
         calls = proxy._stream_request.call_args_list
-        assert (len(calls)) == (2)
-        assert (calls[0].kwargs["voice"]) == ("Standard")
-        assert (calls[1].kwargs["voice"]) == ("Alternate")
+        assert (len(calls)) == 2
+        assert (calls[0].kwargs["voice"]) == "Standard"
+        assert (calls[1].kwargs["voice"]) == "Alternate"
         assert (calls[1].kwargs["voice_bundle"]) == (str(bundle_path))
-        assert (calls[1].kwargs["model_id"]) == (1)
+        assert (calls[1].kwargs["model_id"]) == 1
 
     def test_worker_switches_from_pack_default_to_non_default_voice(self) -> None:
         """Verify the worker selects the active pack before each requested voice."""
@@ -214,8 +215,8 @@ class TestBackendEnvironment:
                 )
                 assert response["done"]
 
-        assert (backend.generated_voices) == (["Standard", "Alternate"])
-        assert (select_bundle.call_args_list) == (
+        assert backend.generated_voices == (["Standard", "Alternate"])
+        assert select_bundle.call_args_list == (
             [mock.call("custom.cevoice"), mock.call("custom.cevoice")]
         )
 
@@ -311,7 +312,7 @@ class TestBackendEnvironment:
             log = mock.Mock()
             fatal = mock.Mock()
             result = worker._load_backend(manifest, log, fatal, {"setting": True})
-        assert (result) is (mock.sentinel.backend)
+        assert result is mock.sentinel.backend
         constructor.assert_called_once_with(log=log, fatal=fatal, setting=True)
 
     def test_worker_receives_and_checks_resolved_audio_cpp_runtime(self) -> None:
@@ -359,10 +360,10 @@ class TestBackendEnvironment:
                 ),
             )
 
-        assert (backend.effective_inference_mode) == ("audio_cpp")
+        assert backend.effective_inference_mode == "audio_cpp"
         assert backend.kwargs["custom_option"]
-        assert ("inference_mode") not in (backend.kwargs)
-        assert ("effective_inference_mode") not in (backend.kwargs)
+        assert "inference_mode" not in backend.kwargs
+        assert "effective_inference_mode" not in backend.kwargs
 
     def test_manifests_use_the_main_branch_pytorch_stack(self) -> None:
         """Verify isolated backends use the main branch's CUDA 12.8 stack."""
@@ -597,10 +598,8 @@ class TestBackendEnvironment:
 
             def fake_run(command: list[str], **_kwargs) -> None:
                 if command[1] == "venv":
-                    backend_environment = manager.environment_for(manifest)
-                    relative_python = backend_environment.python.relative_to(
-                        backend_environment.virtualenv
-                    )
+                    env = manager.environment_for(manifest)
+                    relative_python = env.python.relative_to(env.virtualenv)
                     virtualenv_python = Path(command[-1]) / relative_python
                     virtualenv_python.parent.mkdir(parents=True, exist_ok=True)
                     virtualenv_python.touch()
@@ -610,7 +609,7 @@ class TestBackendEnvironment:
             ) as run:
                 result = manager.ensure(manifest)
 
-            assert (result) == (backend_environment)
+            assert result == backend_environment
             assert result.is_ready
             assert (
                 json.loads(result.metadata_path.read_text(encoding="utf-8"))[
@@ -621,8 +620,8 @@ class TestBackendEnvironment:
             assert run.call_count == 2
             install_command = run.call_args_list[1].args[0]
             strategy_index = install_command.index("--index-strategy")
-            assert (install_command[strategy_index + 1]) == ("unsafe-best-match")
-            assert "--index-url" in (install_command)
+            assert (install_command[strategy_index + 1]) == "unsafe-best-match"
+            assert "--index-url" in install_command
             assert not (
                 any(
                     path.name.startswith(f"{backend_environment.root.name}.install-")
@@ -643,7 +642,7 @@ class TestBackendEnvironment:
             backend_environment.metadata_path.write_text("{}", encoding="utf-8")
 
             with mock.patch("celune.backends.environment.subprocess.run") as run:
-                assert (manager.ensure(manifest)) == (backend_environment)
+                assert (manager.ensure(manifest)) == backend_environment
 
             run.assert_not_called()
 
@@ -739,13 +738,13 @@ class TestBackendEnvironment:
                 mock.patch.dict(os.environ, {}, clear=True),
             ):
                 worker_environment = remote._worker_environment(backend_environment)
-                assert (worker_environment["OPENBLAS_NUM_THREADS"]) == ("1")
+                assert (worker_environment["OPENBLAS_NUM_THREADS"]) == "1"
 
                 mini_environment = environment.BackendEnvironment(
                     manifest=BackendManifest("mini", "tts", (), "module", "Backend"),
                     root=root,
                 )
-                assert ("OPENBLAS_NUM_THREADS") not in (
+                assert "OPENBLAS_NUM_THREADS" not in (
                     remote._worker_environment(mini_environment)
                 )
 
@@ -755,10 +754,13 @@ class TestBackendEnvironment:
                     clear=True,
                 ):
                     assert (
-                        remote._worker_environment(backend_environment)[
-                            "OPENBLAS_NUM_THREADS"
-                        ]
-                    ) == ("4")
+                        (
+                            remote._worker_environment(backend_environment)[
+                                "OPENBLAS_NUM_THREADS"
+                            ]
+                        )
+                        == "4"
+                    )
 
     def test_worker_environment_uses_celune_temp_directory(self) -> None:
         """Keep isolated backend workers on Celune's managed temp directory."""
@@ -901,9 +903,9 @@ class TestBackendEnvironment:
             assert isinstance(error, CEDTSError)
         assert isinstance(errors[1], TimeoutError)
         assert isinstance(errors[4], OSError)
-        assert (str(errors[0])) == ("unexpected EOF while reading stream")
-        assert (str(errors[1])) == ("load_model timed out after 180 seconds")
-        assert (str(errors[2])) == ("invalid packet hello")
+        assert (str(errors[0])) == "unexpected EOF while reading stream"
+        assert (str(errors[1])) == "load_model timed out after 180 seconds"
+        assert (str(errors[2])) == "invalid packet hello"
         assert (str(errors[3])) == (
             "invalid binary payload received while processing generate_stream"
         )
@@ -938,7 +940,8 @@ class TestBackendEnvironment:
         """Verify a closed CEDTS output pipe becomes a stream error."""
 
         class _ClosedStream:
-            def write(self, value: bytes) -> int:
+            @staticmethod
+            def write(value: bytes) -> int:
                 """Reject every write as a closed-pipe failure."""
                 discard(value)
                 raise OSError("pipe is closed")
@@ -969,11 +972,11 @@ class TestBackendEnvironment:
         frame = stream.getvalue()
         payload_size = int.from_bytes(frame[:4], "big")
         payload = frame[4:]
-        assert (payload_size) == (len(payload))
-        assert (json.loads(payload.decode("utf-8"))) == (message)
+        assert payload_size == (len(payload))
+        assert (json.loads(payload.decode("utf-8"))) == message
 
         stream.seek(0)
-        assert (receive_message(stream)) == (message)
+        assert (receive_message(stream)) == message
 
     def test_worker_protocol_rejects_non_json_control_bytes(self) -> None:
         """Verify non-JSON control bytes become a CEDTS protocol error."""
@@ -1069,7 +1072,8 @@ class TestBackendEnvironment:
         class FakeBackend:
             """Backend stand-in for dispatch validation."""
 
-            def describe_secret(self) -> str:
+            @staticmethod
+            def describe_secret() -> str:
                 """Represent a method that must never be remotely exposed."""
                 return "secret"
 
@@ -1100,7 +1104,8 @@ class TestBackendEnvironment:
         class FakeBackend:
             """Backend stand-in for VRAM callback dispatch."""
 
-            def vram_report(self) -> dict[str, WorkerValue]:
+            @staticmethod
+            def vram_report() -> dict[str, WorkerValue]:
                 """Return a minimal JSON-compatible VRAM report."""
                 return {"process_scope": "worker"}
 
@@ -1118,7 +1123,7 @@ class TestBackendEnvironment:
 
         assert response["ok"]
         assert (response["value"]) == ({"process_scope": "worker"})
-        assert (next_model_id) == (1)
+        assert next_model_id == 1
 
     def test_protocol_accepts_registered_backend_callbacks(self) -> None:
         """Verify registered callbacks pass the parent packet validator."""
@@ -1280,11 +1285,11 @@ class TestBackendEnvironment:
             io.BytesIO(),
         )
         assert loaded["ok"]
-        assert (backend.loaded[0]) == ("mini")
+        assert (backend.loaded[0]) == "mini"
         loaded_settings = cast(
             dict[str, BackendArgumentValue], backend.loaded[1]["settings"]
         )
-        assert (loaded_settings["voice"]) == ("celune")
+        assert (loaded_settings["voice"]) == "celune"
 
         generated, _ = worker._run_request(
             cast(BackendRuntime, backend),
@@ -1307,7 +1312,7 @@ class TestBackendEnvironment:
         generated_decoding = cast(
             dict[str, BackendArgumentValue], backend.generated[1]["decoding"]
         )
-        assert (generated_decoding["top_k"]) == (20)
+        assert (generated_decoding["top_k"]) == 20
 
         malformed_arguments = (
             {"operation": "load_model", "arguments": {"temperature": 0.7}},
@@ -1342,7 +1347,8 @@ class TestBackendEnvironment:
         class FakeBackend:
             """Backend stand-in whose stream blocks before exhausting."""
 
-            def generate_stream(self, model: BackendModel):
+            @staticmethod
+            def generate_stream(model: BackendModel):
                 """Block the generator until cancellation has been requested."""
                 discard(model)
                 started.set()
@@ -1371,7 +1377,7 @@ class TestBackendEnvironment:
         thread.join(timeout=2)
 
         assert not thread.is_alive()
-        assert (responses) == ([{"ok": False, "cancelled": True, "done": True}])
+        assert responses == ([{"ok": False, "cancelled": True, "done": True}])
 
     def test_worker_stream_cancellation_after_final_chunk_is_terminal(self) -> None:
         """Verify cancellation requested after the final chunk cannot complete normally."""
@@ -1380,7 +1386,8 @@ class TestBackendEnvironment:
         class FakeBackend:
             """Backend stand-in that requests cancellation while exhausting."""
 
-            def generate_stream(self, model: BackendModel):
+            @staticmethod
+            def generate_stream(model: BackendModel):
                 """Yield one chunk, then request cancellation before exhaustion."""
                 discard(model)
                 yield {"audio": [0.0], "sample_rate": 48000}
@@ -1398,7 +1405,7 @@ class TestBackendEnvironment:
             cancellation_event=cancellation,
         )
 
-        assert (response) == ({"ok": False, "cancelled": True, "done": True})
+        assert response == ({"ok": False, "cancelled": True, "done": True})
 
     def test_worker_protocol_round_trips_audio_on_the_binary_channel(self) -> None:
         """Verify audio metadata stays in JSON while samples use binary framing."""
@@ -1414,7 +1421,7 @@ class TestBackendEnvironment:
         send_message(control_stream, control)
         send_payloads(binary_stream, payloads)
 
-        assert (cast(list, control["payloads"])[0]["media_type"]) == ("audio/pcm_f32le")
+        assert (cast(list, control["payloads"])[0]["media_type"]) == "audio/pcm_f32le"
         assert (audio.tobytes()) not in (control_stream.getvalue())
         control_stream.seek(0)
         binary_stream.seek(0)
@@ -1426,7 +1433,7 @@ class TestBackendEnvironment:
         decoded = decode_message(received_control, received_payloads)
         output = cast(AudioOutput, cast(dict, decoded["data"])["value"])
         np.testing.assert_array_equal(output.audio, audio)
-        assert (output.sample_rate) == (48000)
+        assert output.sample_rate == 48000
 
     def test_worker_protocol_preflights_payload_limits_before_materializing_arrays(
         self,
@@ -1455,7 +1462,7 @@ class TestBackendEnvironment:
             encode_message(
                 {"values": cast(list[WorkerValue], [first, second])}, limits=limits
             )
-        assert (contiguous.call_count) == (1)
+        assert contiguous.call_count == 1
 
         limits = CEDTSLimits(max_aggregate_payload_size=8, max_payload_descriptors=2)
         audio = AudioOutput(np.zeros(3, dtype=np.float32), 48000)
@@ -1634,8 +1641,8 @@ class TestBackendEnvironment:
         np.testing.assert_array_equal(
             decoded_request.source_audio, request.source_audio
         )
-        assert (decoded_request.sample_rate) == (request.sample_rate)
-        assert (decoded_request.target_voice) == (request.target_voice)
+        assert decoded_request.sample_rate == request.sample_rate
+        assert decoded_request.target_voice == request.target_voice
 
     def test_worker_protocol_rejects_binary_after_zero_payload_message(self) -> None:
         """Verify an undeclared binary frame cannot desynchronize later messages."""
@@ -1724,8 +1731,8 @@ class TestBackendEnvironment:
             decoded_data = cast(dict[str, WorkerValue], decoded["data"])
             if isinstance(value, AudioOutput):
                 decoded_value = cast(AudioOutput, decoded_data["value"])
-                assert (decoded_value.sample_rate) == (48000)
-                assert (decoded_value.audio.shape) == (audio.shape)
+                assert decoded_value.sample_rate == 48000
+                assert decoded_value.audio.shape == audio.shape
             else:
                 decoded_arguments = cast(
                     dict[str, WorkerValue], decoded_data["arguments"]
@@ -1734,8 +1741,8 @@ class TestBackendEnvironment:
                     VoiceConversionRequest,
                     decoded_arguments["request"],
                 )
-                assert (decoded_value.sample_rate) == (24000)
-                assert (decoded_value.source_audio.shape) == (audio.shape)
+                assert decoded_value.sample_rate == 24000
+                assert decoded_value.source_audio.shape == audio.shape
 
         generation_control, generation_payloads = encode_message(
             build_packet(
@@ -1748,7 +1755,7 @@ class TestBackendEnvironment:
             dict[str, WorkerValue],
             cast(dict[str, WorkerValue], generation_control["data"])["value"],
         )
-        assert (encoded_generation["channels"]) == (2)
+        assert (encoded_generation["channels"]) == 2
         assert (encoded_generation["shape"]) == ([2, 2])
         decoded_generation_value = cast(
             tuple[np.ndarray, int, WorkerValue],
@@ -1763,8 +1770,8 @@ class TestBackendEnvironment:
                 )["data"],
             )["value"],
         )
-        assert (decoded_generation_value[1]) == (48000)
-        assert (decoded_generation_value[0].shape) == (audio.shape)
+        assert (decoded_generation_value[1]) == 48000
+        assert decoded_generation_value[0].shape == audio.shape
 
         for field_name, invalid_value in (
             ("sample_rate", 44100),
@@ -1912,7 +1919,7 @@ class TestBackendEnvironment:
         )
         output = cast(AudioOutput, cast(dict, decoded["data"])["value"])
 
-        assert (output.audio.dtype) == (np.float32)
+        assert output.audio.dtype == np.float32
         np.testing.assert_allclose(
             output.audio,
             np.array([-1.0, 0.0, 32767 / 32768], dtype=np.float32),

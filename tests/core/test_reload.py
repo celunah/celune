@@ -44,7 +44,7 @@ class TestCeluneReload(CeluneCoreTestSupport):
 
         celune = self._make_celune(request, {"inference_mode": "gguf"})
         reload_kwargs = core_reload._backend_reload_kwargs(celune, FakeBackend)
-        assert (reload_kwargs["inference_mode"]) == ("gguf")
+        assert reload_kwargs["inference_mode"] == "gguf"
         unsupported = FakeBackend(log=mock.Mock())
         with mock.patch(
             "celune.core.reload.resolve_backend",
@@ -56,8 +56,8 @@ class TestCeluneReload(CeluneCoreTestSupport):
                 log=celune.log_callback,
                 **reload_kwargs,
             )
-        assert (unsupported.requested_inference_mode) == ("gguf")
-        assert (unsupported.effective_inference_mode) == ("native")
+        assert unsupported.requested_inference_mode == "gguf"
+        assert unsupported.effective_inference_mode == "native"
 
         supported = AudioCppFakeBackend(log=mock.Mock())
         with mock.patch(
@@ -70,8 +70,8 @@ class TestCeluneReload(CeluneCoreTestSupport):
                 log=celune.log_callback,
                 **core_reload._backend_reload_kwargs(celune, AudioCppFakeBackend),
             )
-        assert (supported.requested_inference_mode) == ("gguf")
-        assert (supported.effective_inference_mode) == ("audio_cpp")
+        assert supported.requested_inference_mode == "gguf"
+        assert supported.effective_inference_mode == "audio_cpp"
 
     def test_hot_backend_reload_unloads_previous_runtime_before_loading_new_one(
         self,
@@ -1016,8 +1016,8 @@ class TestCeluneReload(CeluneCoreTestSupport):
         failing.error_callback = errors.append
         with mock.patch("celune.core.voice.play_signal", return_value=False):
             assert (failing.load()) is False
-        assert (errors) == (["TTS backend 'fake' could not initialize: boom"])
-        assert (getattr(failing.glow, "fatal_called")) is True  # noqa: B009
+        assert errors == ["TTS backend 'fake' could not initialize: boom"]
+        assert getattr(failing.glow, "fatal_called") is True  # noqa: B009
 
     def test_unload_runtime_state_clears_models_without_cuda(
         self, request: pytest.FixtureRequest
@@ -1106,8 +1106,8 @@ class TestCeluneReload(CeluneCoreTestSupport):
         synchronize.assert_not_called()
         empty_cache.assert_not_called()
         assert celune.sleeping
-        assert (celune.llm) is None
-        assert (celune.tokenizer) is None
+        assert celune.llm is None
+        assert celune.tokenizer is None
 
     def test_sleep_unload_failure_restores_model_readiness(
         self, request: pytest.FixtureRequest
@@ -1245,15 +1245,15 @@ class TestCeluneReload(CeluneCoreTestSupport):
         with mock.patch("celune.core.voice.play_signal", return_value=False):
             assert (celune.enter_sleep_mode()) is True
 
-        assert (celune.sleeping) is True
+        assert celune.sleeping is True
         assert not celune.loaded
-        assert (celune.cur_state) == ("sleeping")
-        assert (getattr(celune.glow, "sleep_called")) is True  # noqa: B009
-        assert (celune.model) is None
-        assert (celune.model_name) == ("")
-        assert (celune.llm) is None
-        assert (celune.tokenizer) is None
-        assert (celune.vision) is None
+        assert celune.cur_state == "sleeping"
+        assert getattr(celune.glow, "sleep_called") is True  # noqa: B009
+        assert celune.model is None
+        assert celune.model_name == ""
+        assert celune.llm is None
+        assert celune.tokenizer is None
+        assert celune.vision is None
         persona_client.close.assert_called_once_with()
 
         wake_result: list[bool] = []
@@ -1280,13 +1280,13 @@ class TestCeluneReload(CeluneCoreTestSupport):
         if background_thread is not None:
             background_thread.join(timeout=2)
 
-        assert (celune.backend) is not (old_backend)
+        assert celune.backend is not old_backend
         assert not celune.sleeping
         assert celune.loaded
-        assert (celune.cur_state) == ("idle")
-        assert (getattr(celune.glow, "wake_called")) is True  # noqa: B009
-        assert (celune.model) == ({"model_id": "fake/balanced", "kwargs": {}})
-        assert (celune.model_name) == ("fake/balanced")
+        assert celune.cur_state == "idle"
+        assert getattr(celune.glow, "wake_called") is True  # noqa: B009
+        assert celune.model == {"model_id": "fake/balanced", "kwargs": {}}
+        assert celune.model_name == "fake/balanced"
         warmup.assert_called_once_with(celune)
         celune.load_normalizer.assert_called_once_with()
         persona_client.load.assert_called_once_with(
@@ -1612,8 +1612,8 @@ class TestCeluneReload(CeluneCoreTestSupport):
 
         result = core_loading.warmup(celune, fatal_on_failure=False)
 
-        assert (result) is False
-        assert (celune.cur_state) == ("reloading")
+        assert result is False
+        assert celune.cur_state == "reloading"
         assert celune.loaded
-        assert (getattr(celune.glow, "fatal_called")) is False  # noqa: B009
+        assert getattr(celune.glow, "fatal_called") is False  # noqa: B009
         celune.error_callback.assert_not_called()

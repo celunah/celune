@@ -168,9 +168,9 @@ class TestAgentLoop:
             assert selected == call
             return _result(call)
 
-        def handle(context, result):
-            handled_results.append(result)
-            assert context.last_tool_result is result
+        def handle(context, res):
+            handled_results.append(res)
+            assert context.last_tool_result is res
             return _output(response="Result received.")
 
         runtime = AgentRuntime(
@@ -723,29 +723,29 @@ class TestAgentLoop:
     def test_dependency_cancellation_leaves_terminal_task(self) -> None:
         """Handle cancellation during planning, selection, and execution."""
 
-        def make_runtime(phase: str) -> AgentRuntime:
+        def make_runtime(agent_phase: str) -> AgentRuntime:
             """Build one runtime whose selected dependency cancels the task."""
-            runtime: AgentRuntime
+            agent_runtime: AgentRuntime
 
             def planner(context):
-                if phase == "planning":
+                if agent_phase == "planning":
                     assert context.task is not None
-                    runtime.cancel_task(context.task.task_id)
+                    agent_runtime.cancel_task(context.task.task_id)
                 return _output(tool_call=_call())
 
             def selector(context, output):
-                if phase == "selection":
+                if agent_phase == "selection":
                     assert context.task is not None
-                    runtime.cancel_task(context.task.task_id)
+                    agent_runtime.cancel_task(context.task.task_id)
                 return output["tool_call"]
 
             def execute(context, call):
-                if phase == "execution":
+                if agent_phase == "execution":
                     assert context.task is not None
-                    runtime.cancel_task(context.task.task_id)
+                    agent_runtime.cancel_task(context.task.task_id)
                 return _result(call)
 
-            runtime = AgentRuntime(
+            agent_runtime = AgentRuntime(
                 planner=planner,
                 tool_selector=selector,
                 tool_executor=execute,
@@ -753,7 +753,7 @@ class TestAgentLoop:
                     response="done", end=True
                 ),
             )
-            return runtime
+            return agent_runtime
 
         for phase in ("planning", "selection", "execution"):
             with nullcontext():
@@ -811,9 +811,9 @@ class TestAgentLoop:
         handled: list[ToolResult] = []
         outputs: list[AgentOutput] = []
 
-        def record_result(_context, result: ToolResult) -> AgentOutput:
+        def record_result(_context, res: ToolResult) -> AgentOutput:
             """Record a result if the terminal result guard regresses."""
-            handled.append(result)
+            handled.append(res)
             return _output(response="unexpected")
 
         def record_output(output: AgentOutput) -> None:

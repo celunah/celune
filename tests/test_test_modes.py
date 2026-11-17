@@ -79,8 +79,8 @@ class _TestNeedleHandler:
             available_only=available_only,
         )
 
+    @staticmethod
     def select_tools(
-        self,
         query: str,
         tools: NeedleToolCatalog,
         max_new_tokens: int = 96,
@@ -255,7 +255,8 @@ class TestCommandTests:
 class TestFinishedLifecycleTests:
     """Verify the stopped-but-alive boundary shared by explicit test modes."""
 
-    def _make_core(self, request: pytest.FixtureRequest) -> Celune:
+    @staticmethod
+    def _make_core(request: pytest.FixtureRequest) -> Celune:
         """Create a lightweight core for test-mode lifecycle coverage."""
         with (
             mock.patch("celune.core.lifecycle.AudioRGBGlow", FakeGlow),
@@ -461,10 +462,10 @@ class TestFinishedLifecycleTests:
                 },
             ]
 
-        def interaction_checks(_engine, request_user):
-            assert request_user is not None
-            assert request_user("Choice question") == "any answer"
-            assert request_user("Approval question") == "any answer"
+        def interaction_checks(_engine, user):
+            assert user is not None
+            assert user("Choice question") == "any answer"
+            assert user("Approval question") == "any answer"
             return [
                 {"name": "choice", "status": "passed", "detail": "processed"},
                 {"name": "approval", "status": "passed", "detail": "processed"},

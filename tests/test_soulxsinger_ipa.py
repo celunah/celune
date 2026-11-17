@@ -165,7 +165,7 @@ def test_generate_stream_uses_or_rejects_explicit_ipa(
     if expected_phonemes is not None:
         assert processor.process.call_count == (2 if high_precision else 1)
         target_metadata = processed_metadata[-1]
-        assert target_metadata["phoneme"] == (f"<SP> {expected_phonemes} <SP>")
+        assert target_metadata["phoneme"] == f"<SP> {expected_phonemes} <SP>"
         assert "text" not in target_metadata
         duration_metadata = target_metadata["duration"]
         pitch_metadata = target_metadata["note_pitch"]

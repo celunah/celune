@@ -52,6 +52,7 @@ from celune.typing.common import JSONSerializable
 from celune.agent.needle.impl import parse_single_selection
 from celune.agent.needle.models import NeedleModel
 from celune.persona.capabilities import PersonaCapabilities
+from celune.utils import discard
 
 
 def _tool(name: str) -> AgentTool:
@@ -598,7 +599,8 @@ class TestNeedleSelector:
                 self.encoded.append(value)
                 return [2, 3]
 
-            def decode(self, _values: list[int]) -> str:
+            @staticmethod
+            def decode(_values: list[int]) -> str:
                 """Return one deterministic JSON tool call."""
                 return '{"name":"set_timer","arguments":{"minutes":5}}'
 
@@ -607,8 +609,8 @@ class TestNeedleSelector:
 
             config = SimpleNamespace(max_seq_len=16)
 
+            @staticmethod
             def generate(
-                self,
                 input_ids: torch.Tensor,
                 max_new_tokens: int,
             ) -> torch.Tensor:
@@ -712,6 +714,7 @@ class TestNeedleSelector:
         )
 
         result = runtime.run(task.request)
+        discard(result)
 
         assert task.failure_reason is None
         assert task.state.value == "awaiting_approval"
@@ -799,13 +802,13 @@ class TestNeedleSelector:
                     ) -> NeedleToolSelection:
                         """Cancel or interrupt before returning a model call."""
                         assert self.runtime is not None
-                        task = self.runtime.get_active_task("session-1")
-                        assert task is not None
+                        active_task = self.runtime.get_active_task("session-1")
+                        assert active_task is not None
                         if self.action_name == "cancel":
-                            self.runtime.cancel_task(task.task_id)
+                            self.runtime.cancel_task(active_task.task_id)
                         else:
                             self.runtime.interrupt_task(
-                                task.task_id,
+                                active_task.task_id,
                                 AgentInterruption(
                                     AgentInterruptionKind.USER_INTERRUPT,
                                 ),

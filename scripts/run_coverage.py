@@ -14,6 +14,7 @@ sys.path.insert(0, str(root))
 cov = Coverage(source=["celune"], branch=True)
 cov.start()
 
+# noinspection PyBroadException
 try:
     sys.argv = ["main.py", *sys.argv[1:]]
     runpy.run_path(str(root / "main.py"), run_name="__main__")

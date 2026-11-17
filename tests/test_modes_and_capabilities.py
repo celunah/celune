@@ -20,9 +20,9 @@ class TestOperationMode:
 
     def test_operation_modes_are_resolved_directly(self) -> None:
         """Verify the active global modes include the production agent mode."""
-        assert (resolve_operation_mode({"mode": "performance"})) == ("performance")
-        assert (resolve_operation_mode({"mode": "converse"})) == ("converse")
-        assert (resolve_operation_mode({"mode": "agent"})) == ("agent")
+        assert resolve_operation_mode({"mode": "performance"}) == "performance"
+        assert resolve_operation_mode({"mode": "converse"}) == "converse"
+        assert resolve_operation_mode({"mode": "agent"}) == "agent"
 
     def test_legacy_speak_mode_resolves_to_performance(self) -> None:
         """Keep existing configs using the former speak mode operational."""

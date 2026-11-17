@@ -99,7 +99,7 @@ class TestBackend:
         )
         backend = FakeBackend()
         assert not backend.singing
-        assert (backend.cesn_to_model(notation)) == (notation)
+        assert backend.cesn_to_model(notation) == notation
 
         singing_backend = FakeBackend(singing=True)
         assert singing_backend.singing
@@ -118,16 +118,16 @@ class TestBackend:
         ):
             section = decode_score(backend.cesn_to_model(notation))[0]
 
-        assert ((section.bpm, section.key, section.scale)) == ((120, "c", "major"))
-        assert (section.singer_path) == (str(singer.bundle_path))
-        assert (pitch_to_midi("a4")) == (69)
+        assert (section.bpm, section.key, section.scale) == (120, "c", "major")
+        assert section.singer_path == str(singer.bundle_path)
+        assert pitch_to_midi("a4") == 69
         with pytest.raises(CESNValidationError) as error:
             backend.cesn_to_model("[#comment only]")
         assert str(error.value) == "No CESN notation found"
 
     def test_soulxsinger_description_uses_a_finite_chunk_rate(self) -> None:
         """Give CEDTS a finite rate for SoulX's complete-score audio chunk."""
-        assert (SoulXSinger.chunk_rate) == (1.0)
+        assert SoulXSinger.chunk_rate == 1.0
 
     def test_soulxsinger_source_install_rechecks_after_lock(self) -> None:
         """Reuse the pinned checkout another backend worker just installed."""
@@ -160,7 +160,7 @@ class TestBackend:
                 repository_type.return_value.head.commit.hexsha = source_root.name
                 repository_type.return_value.is_dirty.return_value = False
 
-                assert (load_upstream_source()) == (source_root)
+                assert load_upstream_source() == source_root
 
             acquire_lock.assert_called_once_with(
                 source_root.parent / ".install.lock",
@@ -183,10 +183,10 @@ class TestBackend:
             converted = backend.cesn_to_model(notation)
 
         section = decode_score(converted)[0]
-        assert ((section.bpm, section.key, section.scale)) == ((120, "c", "major"))
-        assert (section.singer_path) == (str(singer.bundle_path))
-        assert (section.display_text) == ("Ah")
-        assert (pitch_to_midi("a4")) == (69)
+        assert (section.bpm, section.key, section.scale) == (120, "c", "major")
+        assert section.singer_path == str(singer.bundle_path)
+        assert section.display_text == "Ah"
+        assert pitch_to_midi("a4") == 69
 
     def test_tts_load_oom_does_not_retry_unquantized_model(self) -> None:
         """Verify CUDA OOM releases a partial load without retrying BF16."""
@@ -1094,7 +1094,7 @@ class TestBackend:
                 nonlocal load_count
                 load_count += 1
                 captured["cwd"] = Path.cwd()
-                return ("model", "semantic", "vocoder", "campplus", "mel", {})
+                return "model", "semantic", "vocoder", "campplus", "mel", {}
 
             setattr(module, "load_models", load_models)  # noqa: B010
             captured_stdout = io.StringIO()
@@ -1105,10 +1105,10 @@ class TestBackend:
                 backend._get_live_runtime()
                 backend._get_live_runtime()
 
-        assert (captured["cwd"]) == (source_root)
-        assert (Path.cwd()) == (original_cwd)
-        assert (load_count) == (1)
-        assert (captured_stdout.getvalue()) == ("")
+        assert captured["cwd"] == source_root
+        assert Path.cwd() == original_cwd
+        assert load_count == 1
+        assert captured_stdout.getvalue() == ""
 
     def test_seedvc_live_inference_keeps_native_stdout_off_the_worker_stream(
         self,

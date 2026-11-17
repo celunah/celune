@@ -35,7 +35,8 @@ class _ToyAttention(nn.Module):
         self.v_proj = nn.Linear(4, 2, bias=False)
         self.o_proj = nn.Linear(4, 4, bias=False)
 
-    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+    @staticmethod
+    def forward(hidden_states: torch.Tensor) -> torch.Tensor:
         """Provide the unused module forward surface required by PyTorch."""
         return hidden_states
 

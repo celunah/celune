@@ -71,7 +71,7 @@ class TestBackendProxyLifecycle:
             )
         )
 
-        assert (proxy.model_metadata) == (
+        assert proxy.model_metadata == (
             {"model": "example/model", "type": "native", "quant": "full"}
         )
         proxy._log_callback.assert_called_once()
@@ -120,7 +120,7 @@ class TestBackendProxyLifecycle:
 
         proxy.unload_model()
 
-        assert (proxy.model) is None
+        assert proxy.model is None
         proxy.request.assert_not_called()
 
     def test_remote_proxy_allows_slow_model_initialization(self) -> None:
@@ -131,7 +131,7 @@ class TestBackendProxyLifecycle:
         with mock.patch("celune.registry.consent.require_model_consent"):
             handle = proxy.load_model("slow-model")
 
-        assert (handle.identifier) == (7)
+        assert handle.identifier == 7
         proxy.request.assert_called_once_with(
             "load_model",
             response_timeout=900.0,
@@ -262,7 +262,7 @@ class TestBackendProxyLifecycle:
         )
 
         assert terminal["done"]
-        assert (reused["value"]) == ("reused")
+        assert (reused["value"]) == "reused"
 
     def test_remote_repeated_cancel_after_terminal_is_a_noop(self) -> None:
         """Verify a completed request cannot emit a stale repeated cancellation."""
@@ -338,7 +338,7 @@ class TestBackendProxyLifecycle:
             proxy._mark_request_terminal_locked("active-request")
 
         assert not proxy._request_cancellation_states
-        assert "active-request" in (proxy._terminal_cancellation_states)
+        assert "active-request" in proxy._terminal_cancellation_states
         assert not proxy.cancel_active_request("active-request", wait_for_ack=False)
         proxy._handle_cancel_ack(
             cast(
@@ -372,7 +372,7 @@ class TestBackendProxyLifecycle:
             {"active_job_policy": "cancel"},
         )
         assert not process.terminated
-        assert (process.returncode) == (0)
+        assert process.returncode == 0
 
     def test_remote_proxy_abort_wakes_event_waiters_before_termination(self) -> None:
         """Verify abort releases a consumer blocked on the next worker event."""
@@ -397,18 +397,18 @@ class TestBackendProxyLifecycle:
         waiter.join(timeout=1)
 
         assert not waiter.is_alive()
-        assert (len(error)) == (1)
+        assert (len(error)) == 1
         assert isinstance(error[0], CEDTSEOFError)
 
     def test_remote_proxy_cancels_active_work_before_graceful_shutdown(self) -> None:
-        """Verify active work is cancelled before the correlated shutdown exchange."""
+        """Verify active work is canceled before the correlated shutdown exchange."""
         proxy, process = make_shutdown_proxy(active_request_id="active-request")
         send_packet = mock.Mock(side_effect=["cancel-id", "shutdown-id"])
         proxy._send_packet = send_packet
 
         proxy.close()
 
-        assert (send_packet.call_count) == (2)
+        assert send_packet.call_count == 2
         send_packet.assert_has_calls(
             [
                 mock.call(
@@ -544,7 +544,7 @@ class TestBackendProxyLifecycle:
         )
 
         try:
-            assert (next(generator)) == ("chunk")
+            assert (next(generator)) == "chunk"
             assert proxy._protocol_lock.locked()
             close_thread = threading.Thread(target=proxy.close)
             close_thread.start()
@@ -553,11 +553,11 @@ class TestBackendProxyLifecycle:
             assert not close_thread.is_alive()
             assert shutdown_sent.is_set()
             assert not process.terminated
-            assert (process.returncode) == (0)
+            assert process.returncode == 0
             assert process.stdin.closed
             assert process.stdout.closed
             sent_kinds = [call.args[1] for call in proxy._send_packet.call_args_list]
-            assert (sent_kinds) == (["request", "cancel", "shutdown"])
+            assert sent_kinds == (["request", "cancel", "shutdown"])
         finally:
             generator.close()
             writer_thread.join(timeout=2)
@@ -576,7 +576,7 @@ class TestBackendProxyLifecycle:
 
         proxy._await_shutdown_ack.assert_called_once()
         assert process.terminated
-        assert (process.returncode) == (0)
+        assert process.returncode == 0
 
     def test_remote_proxy_surfaces_failed_shutdown_acknowledgement(self) -> None:
         """Verify a failed shutdown acknowledgement is not hidden by process exit."""
@@ -586,7 +586,7 @@ class TestBackendProxyLifecycle:
             proxy.close()
 
         assert "shutdown acknowledgement reported failure" in (str(context.value))
-        assert (process.returncode) == (0)
+        assert process.returncode == 0
         assert not process.terminated
 
     def test_remote_proxy_close_is_idempotent(self) -> None:
@@ -645,7 +645,7 @@ class TestBackendProxyLifecycle:
         with proxy._event_condition:
             assert not proxy._event_queue
         with proxy._active_request_lock:
-            assert (proxy._active_request_id) is None
+            assert proxy._active_request_id is None
             assert not proxy._request_cancellation_states
         assert not proxy._stream_active.is_set()
         assert cancel_event.is_set()
@@ -689,12 +689,12 @@ class TestBackendProxyLifecycle:
             consumer.join(timeout=2)
 
         assert not consumer.is_alive()
-        assert (len(generator_errors)) == (1)
+        assert (len(generator_errors)) == 1
         assert not proxy._stream_active.is_set()
         assert not proxy._pending_reply_ids
         assert not proxy._response_queues
         assert not proxy._request_cancellation_states
-        assert (process.returncode) == (0)
+        assert process.returncode == 0
 
     def test_remote_proxy_abort_closes_streams_after_worker_exit(self) -> None:
         """Verify abort closes exited-worker streams and reader threads repeatedly."""
@@ -721,10 +721,10 @@ class TestBackendProxyLifecycle:
         assert process.stdin.closed
         assert process.stdout.closed
         assert process.stderr.closed
-        assert (proxy._binary_input) is None
-        assert (proxy._binary_output) is None
-        assert (proxy._stderr_thread) is None
-        assert (proxy._reader_thread) is None
+        assert proxy._binary_input is None
+        assert proxy._binary_output is None
+        assert proxy._stderr_thread is None
+        assert proxy._reader_thread is None
         assert not stderr_thread.is_alive()
         assert not reader_thread.is_alive()
 
@@ -794,9 +794,9 @@ class TestBackendProxyLifecycle:
         assert process.stdout.closed
         assert process.stderr.closed
         assert binary_input.closed
-        assert (proxy._process) is None
-        assert (proxy._binary_input) is None
-        assert (proxy._binary_output) is None
+        assert proxy._process is None
+        assert proxy._binary_input is None
+        assert proxy._binary_output is None
 
     def test_remote_stream_disconnect_sends_cancel_and_drains_terminal_frames(
         self,
@@ -860,10 +860,10 @@ class TestBackendProxyLifecycle:
             Generator[WorkerValue, None, None],
             proxy._stream_request("generate_stream"),
         )
-        assert (next(generator)) == ("chunk")
+        assert (next(generator)) == "chunk"
         generator.close()
 
-        assert (proxy._send_packet.call_count) == (2)
+        assert proxy._send_packet.call_count == 2
         proxy._send_packet.assert_called_with(
             proxy._process.stdin,
             "cancel",
@@ -910,7 +910,7 @@ class TestBackendProxyLifecycle:
             Generator[WorkerValue, None, None],
             proxy._stream_request("generate_stream"),
         )
-        assert (next(generator)) == ("chunk")
+        assert (next(generator)) == "chunk"
         with mock.patch.object(proxy, "_drain_stream", return_value=False):
             generator.close()
 
@@ -931,7 +931,7 @@ class TestBackendProxyLifecycle:
 
         assert not drained
         read_response.assert_called_once()
-        assert (read_response.call_args.kwargs["timeout"]) > (0)
+        assert (read_response.call_args.kwargs["timeout"]) > 0
 
     def test_worker_unload_closes_runtime_models(self) -> None:
         """Verify worker unload releases models stored outside the backend object."""
@@ -1021,8 +1021,8 @@ class TestBackendProxyLifecycle:
         callback.assert_called_once_with()
         assert response["value"] == "ready"
 
+    @staticmethod
     def _make_packet_reader_proxy(
-        self,
         *,
         event_callback: Optional[Callable[[WorkerMessage], None]] = None,
         fatal_callback: Optional[Callable[[], None]] = None,
@@ -1091,7 +1091,7 @@ class TestBackendProxyLifecycle:
 
         try:
             assert not request_thread.is_alive()
-            assert (len(errors)) == (1)
+            assert (len(errors)) == 1
             assert isinstance(errors[0], CEDTSEOFError)
             log_messages = [
                 str(call.args[0])
@@ -1150,7 +1150,7 @@ class TestBackendProxyLifecycle:
             assert ([event["kind"] for event in events if event is not None]) == (
                 ["event", "progress", "callback"]
             )
-            assert (event_callback.call_count) == (3)
+            assert event_callback.call_count == 3
             fatal_callback.assert_called_once_with()
         finally:
             proxy._reader_stop.set()
@@ -1189,7 +1189,7 @@ class TestBackendProxyLifecycle:
             if reader_thread is not None:
                 reader_thread.join(timeout=2)
                 assert not reader_thread.is_alive()
-            assert (proxy._reader_error) is None
+            assert proxy._reader_error is None
             log_messages = [
                 str(call.args[0])
                 for call in cast(mock.Mock, proxy._log_callback).call_args_list
@@ -1274,7 +1274,7 @@ class TestBackendProxyLifecycle:
         received = proxy.get_worker_event(timeout=2)
         notifier.join(timeout=2)
 
-        assert (received) == (event)
+        assert received == event
         assert not notifier.is_alive()
 
     def test_remote_proxy_event_waiter_returns_none_on_timeout(self) -> None:
@@ -1288,8 +1288,8 @@ class TestBackendProxyLifecycle:
         started = time.monotonic()
         received = proxy.get_worker_event(timeout=0.05)
 
-        assert (received) is None
-        assert (time.monotonic() - started) >= (0.04)
+        assert received is None
+        assert time.monotonic() - started >= 0.04
 
     def test_remote_proxy_event_waiter_surfaces_reader_failure(self) -> None:
         """Verify a worker reader failure wakes and fails an idle event waiter."""
@@ -1320,8 +1320,8 @@ class TestBackendProxyLifecycle:
         waiter.join(timeout=2)
 
         assert not waiter.is_alive()
-        assert (len(errors)) == (1)
-        assert (errors[0]) is (reader_error)
+        assert len(errors) == 1
+        assert errors[0] is reader_error
 
     def test_remote_proxy_dispatches_progress_while_waiting_for_response(self) -> None:
         """Verify the reader routes progress independently of a response waiter."""
@@ -1361,9 +1361,9 @@ class TestBackendProxyLifecycle:
             )
             progress = proxy.get_worker_event(timeout=2)
             assert response["done"]
-            assert (progress) is not None
-            assert (progress["kind"]) == ("progress")
-            assert (progress["reply_to"]) == (request_id)
+            assert progress is not None
+            assert progress["kind"] == "progress"
+            assert progress["reply_to"] == request_id
             event_callback.assert_called_once()
             progress_callback.assert_called_once_with(1.0, None)
         finally:
@@ -1406,17 +1406,17 @@ class TestBackendProxyLifecycle:
 
             assert isinstance(reader_error, CEDTSError)
             with proxy._response_condition:
-                assert (len(proxy._response_queues[request_id])) == (2)
+                assert len(proxy._response_queues[request_id]) == 2
                 queued_bytes = proxy._response_queue_bytes[request_id]
-            assert (queued_bytes) > (0)
+            assert queued_bytes > 0
 
             process = cast(subprocess.Popen[bytes], proxy._process)
-            assert (proxy._read_response(process, request_id)["value"]) == ("chunk-0")
-            assert (proxy._read_response(process, request_id)["value"]) == ("chunk-1")
+            assert proxy._read_response(process, request_id)["value"] == "chunk-0"
+            assert proxy._read_response(process, request_id)["value"] == "chunk-1"
             with proxy._response_condition:
-                assert (request_id) not in (proxy._response_queues)
-                assert (request_id) not in (proxy._response_queue_item_sizes)
-                assert (request_id) not in (proxy._response_queue_bytes)
+                assert request_id not in proxy._response_queues
+                assert request_id not in proxy._response_queue_item_sizes
+                assert request_id not in proxy._response_queue_bytes
         finally:
             proxy._reader_stop.set()
             writer.close()
@@ -1456,9 +1456,9 @@ class TestBackendProxyLifecycle:
 
             assert isinstance(reader_error, CEDTSError)
             with proxy._response_condition:
-                assert (request_id) not in (proxy._response_queues)
-                assert (request_id) not in (proxy._response_queue_item_sizes)
-                assert (request_id) not in (proxy._response_queue_bytes)
+                assert request_id not in proxy._response_queues
+                assert request_id not in proxy._response_queue_item_sizes
+                assert request_id not in proxy._response_queue_bytes
         finally:
             proxy._reader_stop.set()
             writer.close()
@@ -1469,7 +1469,7 @@ class TestBackendProxyLifecycle:
 
     def test_worker_handshake_negotiates_the_cedts_capabilities(self) -> None:
         """Verify the worker accepts a compatible hello and rejects requirements it lacks."""
-        assert (remote.CEDTS_VERSION) == ((1, 3))
+        assert remote.CEDTS_VERSION == (1, 3)
         hello = build_packet(
             "hello",
             "handshake",
@@ -1545,16 +1545,14 @@ class TestBackendProxyLifecycle:
 
         negotiated = worker._negotiate_hello(hello)
         limits = limits_from_capabilities(negotiated)
-        assert (limits) == (
-            CEDTSLimits(
-                max_control_frame_size=768,
-                max_binary_frame_size=64,
-                max_aggregate_payload_size=8,
-                max_payload_descriptors=1,
-                max_json_depth=8,
-                max_string_length=1024,
-                max_collection_entries=16,
-            )
+        assert limits == CEDTSLimits(
+            max_control_frame_size=768,
+            max_binary_frame_size=64,
+            max_aggregate_payload_size=8,
+            max_payload_descriptors=1,
+            max_json_depth=8,
+            max_string_length=1024,
+            max_collection_entries=16,
         )
 
         oversized_control = build_packet(
@@ -1621,8 +1619,8 @@ class TestBackendProxyLifecycle:
             )
         error_stream.seek(0)
         error_packet = receive_message(error_stream)
-        assert (error_packet["kind"]) == ("error")
-        assert (error_packet["reply_to"]) == ("hello-id")
+        assert error_packet["kind"] == "error"
+        assert error_packet["reply_to"] == "hello-id"
 
     def test_remote_proxy_requires_hello_ack_then_ready(self) -> None:
         """Verify core handshake packets are correlated before backend requests begin."""
@@ -1742,8 +1740,8 @@ class TestBackendProxyLifecycle:
             proxy._handshake()
 
         error = context.value
-        assert (error.error_code) == ("backend_worker_error")
-        assert (error.error_type) == ("ImportError")
+        assert error.error_code == "backend_worker_error"
+        assert error.error_type == "ImportError"
         assert "backend dependency missing" in (str(context.value))
 
     def test_remote_proxy_eof_reports_worker_exception_without_traceback(self) -> None:
@@ -1768,7 +1766,7 @@ class TestBackendProxyLifecycle:
             "unexpected EOF while reading stream: "
             "ModuleNotFoundError: No module named 'torch'"
         )
-        assert ("Traceback") not in (str(error))
+        assert "Traceback" not in str(error)
         proxy._stderr_thread.join.assert_called_once_with(timeout=2.0)
 
     def test_remote_proxy_surfaces_handshake_error_before_ready(self) -> None:
@@ -1819,8 +1817,8 @@ class TestBackendProxyLifecycle:
             proxy._handshake()
 
         error = context.value
-        assert (error.error_code) == ("backend_worker_error")
-        assert (error.error_type) == ("ImportError")
+        assert error.error_code == "backend_worker_error"
+        assert error.error_type == "ImportError"
         assert "backend dependency missing" in (str(context.value))
 
     def test_remote_proxy_bounds_packet_id_replay_window(self) -> None:
@@ -1831,7 +1829,7 @@ class TestBackendProxyLifecycle:
         for index in range(remote._MESSAGE_ID_REPLAY_WINDOW + 1):
             proxy._register_packet({"message_id": f"packet-{index}"})
 
-        assert (len(proxy._received_message_ids)) == (remote._MESSAGE_ID_REPLAY_WINDOW)
+        assert len(proxy._received_message_ids) == remote._MESSAGE_ID_REPLAY_WINDOW
         with pytest.raises(CEDTSError):
             proxy._register_packet(
                 {"message_id": f"packet-{remote._MESSAGE_ID_REPLAY_WINDOW}"}
@@ -1845,12 +1843,10 @@ class TestBackendProxyLifecycle:
         for index in range(worker._MESSAGE_ID_REPLAY_WINDOW + 1):
             assert worker._remember_message_id(received_message_ids, f"packet-{index}")
 
-        assert (len(received_message_ids)) == (worker._MESSAGE_ID_REPLAY_WINDOW)
-        assert not (
-            worker._remember_message_id(
-                received_message_ids,
-                f"packet-{worker._MESSAGE_ID_REPLAY_WINDOW}",
-            )
+        assert len(received_message_ids) == worker._MESSAGE_ID_REPLAY_WINDOW
+        assert not worker._remember_message_id(
+            received_message_ids,
+            f"packet-{worker._MESSAGE_ID_REPLAY_WINDOW}",
         )
         assert worker._remember_message_id(received_message_ids, "packet-0")
 
@@ -1907,7 +1903,7 @@ class TestBackendProxyLifecycle:
         with mock.patch.object(proxy, "_send_packet", return_value="hello-id"):
             proxy._handshake()
 
-        assert (proxy._cedts_limits.max_control_frame_size) == (768)
-        assert (proxy._cedts_limits.max_binary_frame_size) == (64)
-        assert (proxy._cedts_limits.max_aggregate_payload_size) == (8)
-        assert (proxy._cedts_limits.max_payload_descriptors) == (1)
+        assert proxy._cedts_limits.max_control_frame_size == 768
+        assert proxy._cedts_limits.max_binary_frame_size == 64
+        assert proxy._cedts_limits.max_aggregate_payload_size == 8
+        assert proxy._cedts_limits.max_payload_descriptors == 1

@@ -42,8 +42,8 @@ def test_vc_debug_capture_exports_original_levels_as_48k_pcm24_flac(
     token = capture.begin_conversion()
     capture.record_conversion(token, converted, 22050)
 
-    def on_complete(result: VCDebugSaveResult) -> None:
-        results.append(result)
+    def on_complete(res: VCDebugSaveResult) -> None:
+        results.append(res)
         completed.set()
 
     capture.stop(on_complete)

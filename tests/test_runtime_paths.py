@@ -596,8 +596,9 @@ class TestRuntimePath:
             else:
                 delattr(main_module, "__compiled__")
 
+    @staticmethod
     def _assert_compiled_project_root_and_bundled_paths(
-        self, expected_root: Path, executable: Path
+        expected_root: Path, executable: Path
     ) -> None:
         """Verify bundled files resolve beside a compiled executable."""
         fake_main = type("CompiledMain", (), {"__compiled__": True})()
@@ -636,8 +637,9 @@ class TestRuntimePath:
             Path("/Apps/Celune/celune"),
         )
 
+    @staticmethod
     def _assert_compiled_project_root_from_bin(
-        self, expected_root: Path, executable: Path
+        expected_root: Path, executable: Path
     ) -> None:
         """Verify a compiled launch from bin/ resolves the repository root."""
         fake_main = type("CompiledMain", (), {"__compiled__": True})()

@@ -239,7 +239,7 @@ _state = _PluginState()
 def _friendly_name(value: str) -> str:
     """Turn a pytest function name or node ID into a readable fallback."""
     function_name = value.rsplit("::", 1)[-1]
-    function_name = re.sub(r"\[[^]]*\]$", "", function_name)
+    function_name = re.sub(r"\[[^]]*]$", "", function_name)
     function_name = re.sub(r"^test_", "", function_name)
     words = re.sub(r"[_-]+", " ", function_name).strip().split()
     if not words:
@@ -374,7 +374,7 @@ def _source_metadata(
     body: list[ast.stmt] = tree.body
     current: Optional[ast.AST] = None
     for raw_part in parts:
-        part = re.sub(r"\[[^]]*\]$", "", raw_part)
+        part = re.sub(r"\[[^]]*]$", "", raw_part)
         current = next(
             (
                 candidate

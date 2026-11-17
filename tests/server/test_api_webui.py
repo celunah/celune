@@ -2256,7 +2256,7 @@ class TestApiWebUI:
     def test_start_api_can_defer_its_startup_log_to_the_callback() -> None:
         """Verify deferred startup logging lets callbacks report alternate URLs."""
         celune = SimpleNamespace(log=mock.Mock(), dev=False)
-        on_started = mock.Mock()
+        started_callback = mock.Mock()
 
         def fake_run_api(
             _celune: Optional[Celune],
@@ -2275,10 +2275,10 @@ class TestApiWebUI:
             thread = api.start_api(
                 cast(Celune, celune),
                 host="127.0.0.1",
-                on_started=on_started,
+                on_started=started_callback,
                 defer_startup_log=True,
             )
             thread.join(timeout=1.0)
 
-        on_started.assert_called_once_with("127.0.0.1", 2060)
+        started_callback.assert_called_once_with("127.0.0.1", 2060)
         celune.log.assert_not_called()

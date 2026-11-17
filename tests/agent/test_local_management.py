@@ -38,8 +38,8 @@ from ..platform import WINDOWS_ONLY
 class TestLocalManagementTools:
     """Verify typed local filesystem and diagnostic behavior without a shell."""
 
+    @staticmethod
     def _context(
-        self,
         request: str = "inspect local state",
         original_request: Optional[str] = None,
     ) -> AgentContext:
@@ -50,7 +50,8 @@ class TestLocalManagementTools:
             persona_capabilities=PersonaCapabilities(),
         )
 
-    def _tool(self, tool_id: str) -> OfflineAgentTool:
+    @staticmethod
+    def _tool(tool_id: str) -> OfflineAgentTool:
         """Return one named local-management tool from the canonical registry."""
         tool = next(
             tool

@@ -88,12 +88,12 @@ def _load_root_pin_sources(
     header_source = header_path.read_text(encoding="utf-8")
     python_match = re.search(
         r"(?m)^RELEASE_KEYRING_ROOT_PUBLIC_KEY_HEX = \(\r?\n"
-        r'    "([0-9a-fA-F]{64})"\r?\n\)',
+        r'\s{4}"([0-9a-fA-F]{64})"\r?\n\)',
         python_source,
     )
     header_match = re.search(
-        r"(?ms)^static const unsigned char launcher_release_keyring_root\[32\] = \{\n"
-        r"(.*?)\n\};",
+        r"(?ms)^static const unsigned char launcher_release_keyring_root\[32] = \{\n"
+        r"(.*?)\n};",
         header_source,
     )
     if python_match is None or header_match is None:
@@ -124,7 +124,7 @@ def _render_root_pin_sources(
     public_key_hex = public_key.hex()
     python_source, python_count = re.subn(
         r"(?m)^RELEASE_KEYRING_ROOT_PUBLIC_KEY_HEX = \(\r?\n"
-        r'    "[0-9a-fA-F]{64}"\r?\n\)',
+        r'\s{4}"[0-9a-fA-F]{64}"\r?\n\)',
         f'RELEASE_KEYRING_ROOT_PUBLIC_KEY_HEX = (\n    "{public_key_hex}"\n)',
         python_source,
         count=1,
@@ -141,8 +141,8 @@ def _render_root_pin_sources(
         + ","
     )
     header_source, header_count = re.subn(
-        r"(?ms)^static const unsigned char launcher_release_keyring_root\[32\] = \{\n"
-        r".*?\n\};",
+        r"(?ms)^static const unsigned char launcher_release_keyring_root\[32] = \{\n"
+        r".*?\n};",
         "static const unsigned char launcher_release_keyring_root[32] = {\n"
         + formatted_bytes
         + "\n};",

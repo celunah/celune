@@ -484,6 +484,11 @@ def _recall(engine: Celune, call: ToolCall, _context: AgentContext) -> JSON:
     return {"memories": [record.to_json() for record in records]}
 
 
+def recall(engine: Celune, call: ToolCall, _context: AgentContext) -> JSON:
+    """Retrieve semantically relevant character-scoped memories."""
+    return _recall(engine, call, _context)
+
+
 def _forget(engine: Celune, call: ToolCall, _context: AgentContext) -> JSON:
     """Forget one character-scoped memory by record ID."""
     record_id = _string(call, "record_id")

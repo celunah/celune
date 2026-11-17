@@ -555,13 +555,13 @@ class TestUtils:
         )
         assert (
             utils.normalize_special_characters("Status\u00a0: ready", for_tts=True)
-        ) == ("Status, ready")
+        ) == "Status, ready"
         assert (
             utils.normalize_special_characters(
                 "# **status** / ready - now",
                 for_tts=True,
             )
-        ) == ("status, ready, now")
+        ) == "status, ready, now"
 
     def test_format_number_handles_precision_and_non_finite_values(self) -> None:
         """Verify number formatting and invalid precision handling.

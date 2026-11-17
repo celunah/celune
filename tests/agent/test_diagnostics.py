@@ -30,7 +30,8 @@ def _check_name(check: JSON) -> str:
 class TestAgentDiagnostics:
     """Exercise the complete active feature matrix without model inference."""
 
-    def _core(self, request: pytest.FixtureRequest) -> Celune:
+    @staticmethod
+    def _core(request: pytest.FixtureRequest) -> Celune:
         """Create a healthy fake core for direct production-handler checks."""
         with (
             mock.patch("celune.core.lifecycle.AudioRGBGlow", FakeGlow),

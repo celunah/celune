@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 
 _LANGUAGE_FILE = Path("celune/lang/en.json")
-_EXCEPTION_PLACEHOLDER = re.compile(r"\{(?:error|detail|reason)\}")
+_EXCEPTION_PLACEHOLDER = re.compile(r"\{(?:error|detail|reason)}")
 
 
 def _translations() -> dict[str, str]:
@@ -28,11 +28,11 @@ def test_localization_entries_follow_size_and_content_rules() -> None:
     assert not any(
         _EXCEPTION_PLACEHOLDER.search(value) for value in translations.values()
     )
-    assert not any(re.match(r"^\[[^\]]+\]", value) for value in translations.values())
+    assert not any(re.match(r"^\[[^]]+]", value) for value in translations.values())
 
 
 def test_product_name_uses_placeholder_in_user_facing_messages() -> None:
-    """Keep the product name configurable outside of technical identifiers."""
+    """Keep the product name configurable outside technical identifiers."""
     translations = _translations()
     literal_name_keys = {
         key for key, value in translations.items() if "celune" in value.casefold()

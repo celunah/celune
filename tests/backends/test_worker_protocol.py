@@ -106,9 +106,9 @@ class TestWorkerProtocol:
         )
 
         assert isinstance(restored, CESNValidationError)
-        assert (restored.source_start) == (8)
-        assert (restored.source_end) == (10)
-        assert (str(restored)) == ("unsupported score value")
+        assert restored.source_start == 8
+        assert restored.source_end == 10
+        assert str(restored) == "unsupported score value"
 
     def test_worker_cesn_errors_use_notation_diagnostics_without_tracebacks(
         self,
@@ -131,8 +131,8 @@ class TestWorkerProtocol:
             error.source_end = error.source_start + len(source_text)
             response, worker_stderr = _worker_error_response(error)
 
-            assert (worker_stderr) == ("")
-            assert (worker.WORKER_TRACEBACK_MARKER) not in (response["error"])
+            assert worker_stderr == ""
+            assert worker.WORKER_TRACEBACK_MARKER not in response["error"]
 
             restored = remote._worker_exception(
                 response["error_type"],
@@ -143,16 +143,16 @@ class TestWorkerProtocol:
             assert isinstance(restored, CESNError)
             diagnostic = format_cesn_error(notation, restored)
             assert diagnostic.startswith("Parse error in CESN notation")
-            assert "^" in (diagnostic)
-            assert ("Traceback") not in (diagnostic)
+            assert "^" in diagnostic
+            assert "Traceback" not in diagnostic
 
     def test_worker_retains_tracebacks_for_internal_cesn_format_errors(self) -> None:
         """Keep backend-format defects on the backend diagnostic path."""
         error = CESNBackendFormatError("prepared score has an invalid pitch")
         response, worker_stderr = _worker_error_response(error)
 
-        assert "Traceback" in (worker_stderr)
-        assert worker.WORKER_TRACEBACK_MARKER in (response["error"])
+        assert "Traceback" in worker_stderr
+        assert worker.WORKER_TRACEBACK_MARKER in response["error"]
 
     def test_remote_proxy_keeps_internal_cesn_format_errors_as_backend_errors(
         self,
@@ -166,7 +166,7 @@ class TestWorkerProtocol:
         )
 
         assert isinstance(error, BackendError)
-        assert (error.error_type) == ("celune.exceptions.CESNBackendFormatError")
+        assert error.error_type == "celune.exceptions.CESNBackendFormatError"
 
     def test_worker_response_serialization_error_reaches_traceback_file(
         self,
@@ -192,8 +192,8 @@ class TestWorkerProtocol:
 
         stream_bytes = stream.getvalue()
         packet = receive_message(io.BytesIO(stream_bytes))
-        assert (packet["kind"]) == ("error")
-        assert (packet["reply_to"]) == ("describe-request")
+        assert packet["kind"] == "error"
+        assert packet["reply_to"] == "describe-request"
         data = cast(dict[str, WorkerValue], packet["data"])
         proxy = object.__new__(remote.RemoteBackendProxy)
         proxy._received_message_ids = OrderedDict()
@@ -215,9 +215,9 @@ class TestWorkerProtocol:
             format_error(error, "debug")
 
         traceback_text = traceback_file.read_text(encoding="utf-8")
-        assert "Worker traceback:" in (traceback_text)
-        assert "ValueError: JSON number is not finite" in (traceback_text)
-        assert "_send_message" in (traceback_text)
+        assert "Worker traceback:" in traceback_text
+        assert "ValueError: JSON number is not finite" in traceback_text
+        assert "_send_message" in traceback_text
         assert not cast(bool, data["ok"])
 
     def test_cedts_accepts_null_cechar_singing_metadata(self) -> None:
@@ -256,10 +256,12 @@ class TestWorkerProtocol:
         stream.seek(0)
 
         decoded = receive_message(stream)
-        assert (decoded["operation"]) == ("metadata")
-        assert (decoded["data"]) == (
-            {"model": "example/model", "type": "gguf", "quant": "Q4_K_M"}
-        )
+        assert decoded["operation"] == "metadata"
+        assert decoded["data"] == {
+            "model": "example/model",
+            "type": "gguf",
+            "quant": "Q4_K_M",
+        }
 
         with pytest.raises(CEDTSError):
             send_message(
@@ -283,12 +285,14 @@ class TestWorkerProtocol:
 
             model: Optional[object] = None
 
-            def load_model(self, model_id: str) -> object:
+            @staticmethod
+            def load_model(model_id: str) -> object:
                 """Return a placeholder model after checking its identity."""
                 assert model_id == "example/model"
                 return object()
 
-            def inference_metadata(self, _model: object) -> dict[str, str]:
+            @staticmethod
+            def inference_metadata(_model: object) -> dict[str, str]:
                 """Publish the worker's resolved model runtime metadata."""
                 return {
                     "model": "example/model",
@@ -312,14 +316,16 @@ class TestWorkerProtocol:
         )
 
         assert response["ok"]
-        assert (next_model_id) == (8)
+        assert next_model_id == 8
         stream.seek(0)
         packet = receive_message(stream)
-        assert (packet["kind"]) == ("event")
-        assert (packet["operation"]) == ("metadata")
-        assert (packet["data"]) == (
-            {"model": "example/model", "type": "gguf", "quant": "Q4_K_M"}
-        )
+        assert packet["kind"] == "event"
+        assert packet["operation"] == "metadata"
+        assert packet["data"] == {
+            "model": "example/model",
+            "type": "gguf",
+            "quant": "Q4_K_M",
+        }
 
     @LINUX_ONLY
     def test_worker_subprocess_completes_cedts_lifecycle_without_backend_dependencies(
@@ -400,8 +406,8 @@ raise SystemExit(worker.main())
                 """Read one worker packet within a bounded test deadline."""
                 assert process is not None
                 assert process.stdout is not None
-                ready, _, _ = select.select([process.stdout], [], [], 10.0)
-                if not ready:
+                is_ready, _, _ = select.select([process.stdout], [], [], 10.0)
+                if not is_ready:
                     pytest.fail("worker did not send the next CEDTS packet")
                 return receive_message(process.stdout)
 
@@ -421,10 +427,10 @@ raise SystemExit(worker.main())
             send_no_payload_packet(process.stdin, core_binary_output, hello)
             hello_ack = receive_worker_message()
             ready = receive_worker_message()
-            assert (hello_ack["kind"]) == ("hello_ack")
-            assert (hello_ack["reply_to"]) == ("hello-request")
-            assert (ready["kind"]) == ("ready")
-            assert (ready["reply_to"]) == ("hello-request")
+            assert hello_ack["kind"] == "hello_ack"
+            assert hello_ack["reply_to"] == "hello-request"
+            assert ready["kind"] == "ready"
+            assert ready["reply_to"] == "hello-request"
 
             request = build_packet(
                 "request",
@@ -434,8 +440,8 @@ raise SystemExit(worker.main())
             )
             send_no_payload_packet(process.stdin, core_binary_output, request)
             response = receive_worker_message()
-            assert (response["kind"]) == ("response")
-            assert (response["reply_to"]) == ("describe-request")
+            assert response["kind"] == "response"
+            assert response["reply_to"] == "describe-request"
             assert cast(dict, response["data"])["ok"]
 
             load_request = build_packet(
@@ -449,9 +455,9 @@ raise SystemExit(worker.main())
             )
             send_no_payload_packet(process.stdin, core_binary_output, load_request)
             load_response = receive_worker_message()
-            assert (load_response["kind"]) == ("response")
-            assert (load_response["reply_to"]) == ("load-request")
-            assert (cast(dict, load_response["data"])["value"]) == (1)
+            assert load_response["kind"] == "response"
+            assert load_response["reply_to"] == "load-request"
+            assert cast(dict, load_response["data"])["value"] == 1
 
             shutdown = build_packet(
                 "shutdown",
@@ -461,10 +467,10 @@ raise SystemExit(worker.main())
             )
             send_no_payload_packet(process.stdin, core_binary_output, shutdown)
             shutdown_ack = receive_worker_message()
-            assert (shutdown_ack["kind"]) == ("shutdown_ack")
-            assert (shutdown_ack["reply_to"]) == ("shutdown-request")
+            assert shutdown_ack["kind"] == "shutdown_ack"
+            assert shutdown_ack["reply_to"] == "shutdown-request"
             assert (
-                (cast(dict, shutdown_ack["data"])["value"]["active_job_cancelled"])
+                cast(dict, shutdown_ack["data"])["value"]["active_job_cancelled"]
                 is False
             )
             stderr_output = b""
@@ -472,7 +478,7 @@ raise SystemExit(worker.main())
                 _, stderr_output = process.communicate(timeout=15)
             except subprocess.TimeoutExpired:
                 pytest.fail("worker did not exit after shutdown acknowledgement")
-            assert (process.returncode) == (0)
+            assert process.returncode == 0
             assert "backend load diagnostic" in (
                 stderr_output.decode("utf-8", errors="replace")
             )
@@ -530,7 +536,7 @@ protocol_stream.close()
         stderr_thread = threading.Thread(target=read_stderr, daemon=True)
         stderr_thread.start()
         try:
-            assert (process.stdout.readline()) == (b"ready\n")
+            assert process.stdout.readline() == b"ready\n"
             stderr_thread.join(timeout=5)
             assert not stderr_thread.is_alive()
             assert ([line.rstrip(b"\r\n") for line in stderr_lines]) == (
@@ -539,7 +545,7 @@ protocol_stream.close()
             process.stdin.write(b"\n")
             process.stdin.flush()
             process.wait(timeout=10)
-            assert (process.returncode) == (0)
+            assert process.returncode == 0
         finally:
             if process.poll() is None:
                 with suppress(Exception):
@@ -554,8 +560,9 @@ protocol_stream.close()
             if process.stderr is not None:
                 process.stderr.close()
 
+    @staticmethod
     def _run_worker_stream_shutdown_policy(
-        self, policy: str, *, ignore_cancellation: bool = False
+        policy: str, *, ignore_cancellation: bool = False
     ) -> tuple[dict[str, WorkerValue], list[WorkerControlMessage]]:
         """Run an active stream through one CEDTS shutdown policy."""
         child_code = """
@@ -642,13 +649,13 @@ raise SystemExit(worker.main())
 
             def receive_worker_packet() -> WorkerControlMessage:
                 """Read one worker packet and its matching binary boundary."""
-                packet = receive_message(process.stdout)
-                descriptors = packet.get("payloads", [])
+                worker_packet = receive_message(process.stdout)
+                descriptors = worker_packet.get("payloads", [])
                 receive_payloads(
                     core_binary_input_stream,
                     cast(list[WorkerPayloadDescriptor], descriptors),
                 )
-                return packet
+                return worker_packet
 
             send_no_payload_packet(
                 process.stdin,
@@ -699,7 +706,7 @@ raise SystemExit(worker.main())
             )
             first_frame = receive_worker_packet()
             first_data = cast(dict[str, WorkerValue], first_frame["data"])
-            assert (first_frame["kind"]) == ("response"), (
+            assert first_frame["kind"] == "response", (
                 f"unexpected worker packet: {first_frame!r}"
             )
             assert first_data.get("stream"), (
@@ -749,8 +756,8 @@ raise SystemExit(worker.main())
         """Verify finish waits for completion and reports no cancellation."""
         value, packets = self._run_worker_stream_shutdown_policy("finish")
 
-        assert (value["active_job_policy"]) == ("finish")
-        assert (value["active_job_result"]) == ("finished")
+        assert value["active_job_policy"] == "finish"
+        assert value["active_job_result"] == "finished"
         assert not value["active_job_cancelled"]
         assert value["active_job_completed"]
         assert any(
@@ -764,8 +771,8 @@ raise SystemExit(worker.main())
         """Verify cancel interrupts an active stream and reports cancellation."""
         value, packets = self._run_worker_stream_shutdown_policy("cancel")
 
-        assert (value["active_job_policy"]) == ("cancel")
-        assert (value["active_job_result"]) == ("cancelled")
+        assert value["active_job_policy"] == "cancel"
+        assert value["active_job_result"] == "cancelled"
         assert value["active_job_cancelled"]
         assert value["active_job_completed"]
         assert any(
@@ -782,8 +789,8 @@ raise SystemExit(worker.main())
             ignore_cancellation=True,
         )
 
-        assert (value["active_job_policy"]) == ("cancel")
-        assert (value["active_job_result"]) == ("timed_out")
+        assert value["active_job_policy"] == "cancel"
+        assert value["active_job_result"] == "timed_out"
         assert value["active_job_cancelled"]
         assert not value["active_job_completed"]
         assert not (
@@ -794,8 +801,9 @@ raise SystemExit(worker.main())
             )
         )
 
+    @staticmethod
     def _run_blocking_worker_control_test(
-        self, packet_kind: str, operation: str = "preload_models"
+        packet_kind: str, operation: str = "preload_models"
     ) -> float:
         """Verify control traffic remains responsive during a blocking request."""
         # mock Celune backend for testing purposes
@@ -1050,9 +1058,9 @@ finally:
                         response = packet
                 assert cancellation_ack is not None
                 assert response is not None
-                assert (cancellation_ack["kind"]) == ("cancel_ack")
+                assert cancellation_ack["kind"] == "cancel_ack"
                 assert not cast(dict, cancellation_ack["data"])["cancelled"]
-                assert (response["kind"]) == ("response")
+                assert response["kind"] == "response"
                 assert cast(dict, response["data"])["ok"]
                 assert cancellation_ack_elapsed is not None
                 return cancellation_ack_elapsed
@@ -1080,15 +1088,15 @@ finally:
                 if packet["kind"] == "shutdown_ack":
                     shutdown_ack = packet
             elapsed = time.monotonic() - started
-            assert (shutdown_ack["kind"]) == ("shutdown_ack")
-            assert (shutdown_ack["reply_to"]) == ("shutdown-request")
+            assert shutdown_ack["kind"] == "shutdown_ack"
+            assert shutdown_ack["reply_to"] == "shutdown-request"
             shutdown_data = cast(dict[str, WorkerValue], shutdown_ack["data"])
             assert not shutdown_data["ok"]
             shutdown_value = cast(dict[str, WorkerValue], shutdown_data["value"])
-            assert (shutdown_value["active_job_result"]) == ("timed_out")
+            assert shutdown_value["active_job_result"] == "timed_out"
             assert not shutdown_value["active_job_cancelled"]
             release_blocked_operation()
-            assert (process.wait(timeout=2)) == (0)
+            assert process.wait(timeout=2) == 0
             return elapsed
         finally:
             for descriptor in (
@@ -1117,7 +1125,7 @@ finally:
     def test_worker_control_loop_handles_cancel_during_blocking_operation(self) -> None:
         """Verify non-stream cancellation is rejected before successful completion."""
         for operation in ("preload_models", "load_model", "call"):
-            assert (self._run_blocking_worker_control_test("cancel", operation)) < (1.0)
+            assert self._run_blocking_worker_control_test("cancel", operation) < 1.0
 
     def test_worker_blocking_conversion_does_not_report_successful_cancellation(
         self,
@@ -1131,7 +1139,8 @@ finally:
         class FakeBackend:
             """Backend stand-in for a non-cooperative conversion operation."""
 
-            def convert(self, request: VoiceConversionRequest) -> dict[str, bool]:
+            @staticmethod
+            def convert(request: VoiceConversionRequest) -> dict[str, bool]:
                 """Block conversion until the test releases the backend."""
                 discard(request)
                 started.set()
@@ -1164,16 +1173,16 @@ finally:
         thread.join(timeout=2)
 
         assert not thread.is_alive()
-        assert (len(responses)) == (1)
+        assert len(responses) == 1
         assert responses[0]["ok"]
-        assert ("cancelled") not in (responses[0])
+        assert "cancelled" not in responses[0]
 
     @LINUX_ONLY
     def test_worker_control_loop_handles_shutdown_during_blocking_operation(
         self,
     ) -> None:
         """Verify shutdown is acknowledged while preload remains blocked."""
-        assert (self._run_blocking_worker_control_test("shutdown")) < (1.0)
+        assert self._run_blocking_worker_control_test("shutdown") < 1.0
 
     @LINUX_ONLY
     def test_worker_rejects_cancel_after_terminal_state_is_marked(self) -> None:
@@ -1325,7 +1334,7 @@ raise SystemExit(worker.main())
                 terminal_line = process.stderr.readline()
                 if b"TERMINAL_READY" in terminal_line:
                     break
-            assert b"TERMINAL_READY" in (terminal_line)
+            assert b"TERMINAL_READY" in terminal_line
             send_no_payload_packet(
                 process.stdin,
                 core_binary_output,
@@ -1338,7 +1347,7 @@ raise SystemExit(worker.main())
             )
             cancel_ack = receive_message(process.stdout)
             terminal = receive_message(process.stdout)
-            assert (cancel_ack["kind"]) == ("cancel_ack")
+            assert cancel_ack["kind"] == "cancel_ack"
             assert not cast(dict, cancel_ack["data"])["cancelled"]
             assert cast(dict, terminal["data"])["done"]
         finally:
@@ -1398,7 +1407,7 @@ raise SystemExit(worker.main())
         proxy._worker_stderr = deque()
         proxy._worker_stderr_lock = threading.Lock()
         process = cast(subprocess.Popen[bytes], SimpleNamespace(stdout=duplicate))
-        assert (proxy._read_response(process, "active-request")["value"]) == ("once")
+        assert proxy._read_response(process, "active-request")["value"] == "once"
         with pytest.raises(CEDTSError):
             proxy._read_response(process, "active-request")
 
@@ -1438,9 +1447,9 @@ raise SystemExit(worker.main())
 
         assert isinstance(error, remote.BackendError)
         assert not isinstance(error, ValueError)
-        assert (error.error_code) == ("backend_worker_error")
-        assert (error.error_type) == ("builtins.ValueError")
-        assert (str(error)) == ("backend_worker_error (builtins.ValueError): bad input")
+        assert error.error_code == "backend_worker_error"
+        assert error.error_type == "builtins.ValueError"
+        assert str(error) == "backend_worker_error (builtins.ValueError): bad input"
 
     def test_remote_proxy_rejects_unmapped_worker_exception_names(self) -> None:
         """Verify unknown and nested worker exception names remain backend errors."""
@@ -1452,9 +1461,9 @@ raise SystemExit(worker.main())
             error = remote._worker_exception(error_type, "generation failed")
 
             assert isinstance(error, remote.BackendError)
-            assert (error.error_code) == ("backend_worker_error")
-            assert (error.error_type) == (error_type)
-            assert (str(error)) == (
+            assert error.error_code == "backend_worker_error"
+            assert error.error_type == error_type
+            assert str(error) == (
                 f"backend_worker_error ({error_type}): generation failed"
             )
 
@@ -1468,8 +1477,8 @@ raise SystemExit(worker.main())
         )
 
         assert isinstance(error, remote.BackendError)
-        assert (error.error_type) == ("builtins.__class_getitem__")
-        assert (str(error)) == (
+        assert error.error_type == "builtins.__class_getitem__"
+        assert str(error) == (
             "backend_worker_error (builtins.__class_getitem__): generation failed"
         )
 
@@ -1599,9 +1608,9 @@ raise SystemExit(worker.main())
         error = remote._worker_exception("backend_pkg.ModelError", "generation failed")
 
         assert isinstance(error, remote.BackendError)
-        assert (error.error_code) == ("backend_worker_error")
-        assert (error.error_type) == ("backend_pkg.ModelError")
-        assert (str(error)) == (
+        assert error.error_code == "backend_worker_error"
+        assert error.error_type == "backend_pkg.ModelError"
+        assert str(error) == (
             "backend_worker_error (backend_pkg.ModelError): generation failed"
         )
 
@@ -1653,23 +1662,21 @@ raise SystemExit(worker.main())
                 {},
             )
 
-        assert ("PYTHONHOME") not in (popen.call_args.kwargs["env"])
-        assert ("CELUNE_WORKER_SECRET") not in (popen.call_args.kwargs["env"])
-        assert ("HF_TOKEN") not in (popen.call_args.kwargs["env"])
-        assert ("C:/attacker") not in (popen.call_args.kwargs["env"]["PYTHONPATH"])
-        assert (popen.call_args.kwargs["env"]["PYTHONPATH"]) == (
+        assert "PYTHONHOME" not in popen.call_args.kwargs["env"]
+        assert "CELUNE_WORKER_SECRET" not in popen.call_args.kwargs["env"]
+        assert "HF_TOKEN" not in popen.call_args.kwargs["env"]
+        assert "C:/attacker" not in popen.call_args.kwargs["env"]["PYTHONPATH"]
+        assert popen.call_args.kwargs["env"]["PYTHONPATH"] == (
             str(remote.project_root().resolve())
         )
-        assert (popen.call_args.kwargs["env"]["PATH"]) == (
+        assert popen.call_args.kwargs["env"]["PATH"] == (
             os.pathsep.join(
                 (str(backend_environment.python.resolve().parent), "C:/system")
             )
         )
         expected_temp_directory = str(temp_data_dir())
         for variable in ("TMPDIR", "TEMP", "TMP"):
-            assert (popen.call_args.kwargs["env"][variable]) == (
-                expected_temp_directory
-            )
+            assert popen.call_args.kwargs["env"][variable] == (expected_temp_directory)
         assert (popen.call_args.kwargs["env"]["NUMBA_CACHE_DIR"]) == (
             str(Path("C:/celune/temp/numba"))
         )
@@ -1680,12 +1687,12 @@ raise SystemExit(worker.main())
             str(Path("C:/celune/huggingface/hub"))
         )
         configure_numba_cache.assert_called_once_with()
-        assert (popen.call_args.kwargs["env"]["USERNAME"]) == ("test-user")
-        assert (popen.call_args.kwargs["env"]["CUDA_VISIBLE_DEVICES"]) == ("1")
-        assert (popen.call_args.kwargs["env"]["CUDA_PATH"]) == ("C:/CUDA")
-        assert (popen.call_args.kwargs["env"]["LD_LIBRARY_PATH"]) == ("/opt/cuda/lib64")
-        assert (popen.call_args.kwargs["env"]["PYTHONNOUSERSITE"]) == ("1")
-        assert (popen.call_args.args[0][2]) == ("--backend")
+        assert popen.call_args.kwargs["env"]["USERNAME"] == "test-user"
+        assert popen.call_args.kwargs["env"]["CUDA_VISIBLE_DEVICES"] == "1"
+        assert popen.call_args.kwargs["env"]["CUDA_PATH"] == "C:/CUDA"
+        assert popen.call_args.kwargs["env"]["LD_LIBRARY_PATH"] == "/opt/cuda/lib64"
+        assert popen.call_args.kwargs["env"]["PYTHONNOUSERSITE"] == "1"
+        assert popen.call_args.args[0][2] == "--backend"
         assert proxy._binary_input is not None
         assert proxy._binary_output is not None
         proxy._binary_input.close()
@@ -1732,10 +1739,10 @@ raise SystemExit(worker.main())
             startup_info = cast(StartupInfo, kwargs["startupinfo"])
             handle_list.extend(startup_info.lpAttributeList["handle_list"])
             assert kwargs["close_fds"]
-            assert "--binary-input-handle" in (command)
-            assert "--binary-output-handle" in (command)
-            assert ("--binary-input-fd") not in (command)
-            assert ("--binary-output-fd") not in (command)
+            assert "--binary-input-handle" in command
+            assert "--binary-output-handle" in command
+            assert "--binary-input-fd" not in command
+            assert "--binary-output-fd" not in command
             return process
 
         with (
@@ -1776,7 +1783,7 @@ raise SystemExit(worker.main())
                 {},
             )
 
-        assert (len(handle_list)) == (2)
+        assert len(handle_list) == 2
         assert proxy._binary_input is not None
         assert proxy._binary_output is not None
         proxy._binary_input.close()
@@ -1804,14 +1811,14 @@ raise SystemExit(worker.main())
         ):
             streams = worker._open_binary_streams(args)
 
-        assert (streams) == ((input_stream, output_stream))
-        assert (open_osfhandle.call_args_list) == (
+        assert streams == (input_stream, output_stream)
+        assert open_osfhandle.call_args_list == (
             [
                 mock.call(101, worker.os.O_RDONLY | getattr(worker.os, "O_BINARY", 0)),
                 mock.call(202, worker.os.O_WRONLY | getattr(worker.os, "O_BINARY", 0)),
             ]
         )
-        assert (fdopen.call_args_list) == (
+        assert fdopen.call_args_list == (
             [
                 mock.call(31, "rb", buffering=0),
                 mock.call(32, "wb", buffering=0),

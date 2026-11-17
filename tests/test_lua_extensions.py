@@ -136,7 +136,7 @@ class TestLuaExtension:
         assert callback_complete.wait(timeout=5)
 
         lua_extension = cast(LuaExtension, extension)
-        assert (lua_extension.runtime._globals["observed"]) == ("balanced->bold")
+        assert (lua_extension.runtime._globals["observed"]) == "balanced->bold"
         assert not lua_extension.runtime._globals["has_core"]
 
         manager.unregister("events")

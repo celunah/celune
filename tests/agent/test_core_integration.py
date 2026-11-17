@@ -39,7 +39,7 @@ from celune.agent import (
 )
 from celune.utils import discard
 from celune.celune import Celune
-from celune.agent.tools import AgentStatusTool, _recall, production_agent_tool_schemas
+from celune.agent.tools import AgentStatusTool, recall, production_agent_tool_schemas
 from celune.persona.impl import PersonaClient
 from celune.registry.llm import PERSONA_DEFAULT_MODEL_ID
 from celune.typing.agent import NeedleToolCall, NeedleToolCatalog
@@ -181,8 +181,8 @@ class _SpeakNeedleHandler:
             available_only=available_only,
         )
 
+    @staticmethod
     def select_tools(
-        self,
         query: str,
         tools: NeedleToolCatalog,
         max_new_tokens: int = 96,
@@ -342,8 +342,8 @@ class TestAgentCoreIntegration:
         assert result == [True]
         assert task.state == AgentTaskState.COMPLETED
 
+    @staticmethod
     def _make_core(
-        self,
         request: pytest.FixtureRequest,
         *,
         agent_tool_selector: Optional[AgentToolSelector] = None,
@@ -438,7 +438,7 @@ class TestAgentCoreIntegration:
             mock.patch("celune.agent.tools._memory_store", return_value=store),
             mock.patch("celune.agent.tools._character", return_value="Celune"),
         ):
-            result = _recall(cast(Celune, object()), call, context)
+            result = recall(cast(Celune, object()), call, context)
 
         assert result == {"memories": []}
         store.retrieve.assert_called_once_with(
@@ -783,12 +783,12 @@ class TestAgentCoreIntegration:
         original_run = core.agent_runtime.run
 
         def record_run(
-            request: AgentRequest,
+            req: AgentRequest,
             *,
             callback: Optional[AgentResponseCallback] = None,
         ) -> AgentOutput:
             """Capture the runtime output while preserving the real call."""
-            output = original_run(request, callback=callback)
+            output = original_run(req, callback=callback)
             outputs.append(output)
             return output
 

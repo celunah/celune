@@ -54,7 +54,7 @@ def test_try_install_uses_supported_package_manager_commands(monkeypatch) -> Non
     monkeypatch.setattr(
         configure,
         "_privileged_command",
-        lambda manager, arguments: [manager, *arguments],
+        lambda _manager, arguments: [_manager, *arguments],
     )
     monkeypatch.setattr(
         configure,

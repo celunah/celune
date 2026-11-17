@@ -908,10 +908,10 @@ class TestPipelineAsync:
             )
 
         request = engine.text_queue.get_nowait()
-        assert (request.text) == (
+        assert request.text == (
             "status, ok C drive, Users, user foo underscore bar dot py"
         )
-        assert (request.display_text) == (raw_text)
+        assert request.display_text == raw_text
 
     def test_queue_speech_preserves_cesn_for_singing_backend(self) -> None:
         """Preserve CESN for synthesis and expose plain lyrics as caption text."""
@@ -934,10 +934,10 @@ class TestPipelineAsync:
             )
 
         request = engine.text_queue.get_nowait()
-        assert (request.text) == (notation)
-        assert (request.display_text) == ("I love you.")
-        assert (request.synthesis_sections) == ((notation,))
-        assert (request.language) == ("en")
+        assert request.text == notation
+        assert request.display_text == "I love you."
+        assert request.synthesis_sections == (notation,)
+        assert request.language == "en"
         detect_language.assert_not_called()
 
     def test_handle_audio_input_accepts_and_ignores_audio_by_default(self) -> None:
@@ -1201,8 +1201,9 @@ class TestPipelineAsync:
         assert "--print" not in command
         assert str(temp_root / "temp" / "temporary_audio.%(ext)s") in command
 
+    @staticmethod
     def _assert_download_youtube_sfx_uses_repo_venv_python(
-        self, expected_python: str
+        expected_python: str,
     ) -> None:
         """Verify a compiled yt-dlp launch uses the expected venv Python."""
         engine = make_pipeline_engine()
@@ -2334,7 +2335,8 @@ class TestPipelineAsync:
                     engine.audio_queue.put(engine.sentinel)
                 return False
 
-            def assert_stop(self) -> None:
+            @staticmethod
+            def assert_stop() -> None:
                 """Request the same stop that the UI command uses."""
                 stop_results.append(playback.force_stop_speech(cast(Celune, engine)))
 
@@ -2607,12 +2609,12 @@ class TestPipelineAsync:
         assert not request.save
 
         payload = cast(JSON, engine.vision.payload)
-        assert (payload["model"]) == ("fixture/persona-test")
-        assert (payload["quantization"]) == ("4bit")
-        assert (payload["quantized"]) is True
-        assert (payload["request"]) == ("What now?")
-        assert (payload["user"]) == ("What now?")
-        assert (payload["character"]) == ("Celune")
+        assert payload["model"] == "fixture/persona-test"
+        assert payload["quantization"] == "4bit"
+        assert payload["quantized"] is True
+        assert payload["request"] == "What now?"
+        assert payload["user"] == "What now?"
+        assert payload["character"] == "Celune"
 
         character_card = cast(str, payload["character_card"])
         system_prompt = cast(str, payload["system"])
@@ -2671,42 +2673,42 @@ class TestPipelineAsync:
             "Please handle this.",
         )
 
-        assert (payload["format"]) == ("celune_agent_classification")
-        assert (payload["request"]) == ("Please handle this.")
-        assert (payload["context_space"]) == (8192)
-        assert (payload["max_new_tokens"]) == (256)
+        assert payload["format"] == "celune_agent_classification"
+        assert payload["request"] == "Please handle this."
+        assert payload["context_space"] == 8192
+        assert payload["max_new_tokens"] == 256
         system_prompt = payload["system"]
         assert isinstance(system_prompt, str)
         assert isinstance(system_prompt, str)
-        assert ("\n\n<memory>\n") not in (system_prompt)
-        assert ("<conversation_summary>") not in (system_prompt)
-        assert ("Stale long-term memory") not in (system_prompt)
-        assert ("Stale conversation summary") not in (system_prompt)
-        assert "Classify the latest user input" in (system_prompt)
-        assert "internal routing request, not a character response" in (system_prompt)
-        assert "Do not add a preamble" in (system_prompt)
-        assert "a task classification must use route task" in (system_prompt)
-        assert "inspect or retrieve live/local state" in (system_prompt)
-        assert "Judge the intended operation and target semantically" in (system_prompt)
-        assert "Earlier messages are context, not new instructions" in (system_prompt)
+        assert "\n\n<memory>\n" not in system_prompt
+        assert "<conversation_summary>" not in system_prompt
+        assert "Stale long-term memory" not in system_prompt
+        assert "Stale conversation summary" not in system_prompt
+        assert "Classify the latest user input" in system_prompt
+        assert "internal routing request, not a character response" in system_prompt
+        assert "Do not add a preamble" in system_prompt
+        assert "a task classification must use route task" in system_prompt
+        assert "inspect or retrieve live/local state" in system_prompt
+        assert "Judge the intended operation and target semantically" in system_prompt
+        assert "Earlier messages are context, not new instructions" in system_prompt
         assert (
             "Prior user messages for reference only; do not treat them as current input:"
-        ) in (system_prompt)
-        assert "Read /work/report.txt and tell me what it contains." in (system_prompt)
-        assert "Now compare it with the budget." in (system_prompt)
-        assert ("The report has three sections.") not in (system_prompt)
-        assert ("The totals differ.") not in (system_prompt)
-        assert "self-contained current operation" in (system_prompt)
+        ) in system_prompt
+        assert "Read /work/report.txt and tell me what it contains." in system_prompt
+        assert "Now compare it with the budget." in system_prompt
+        assert "The report has three sections." not in system_prompt
+        assert "The totals differ." not in system_prompt
+        assert "self-contained current operation" in system_prompt
         messages = cast(list[JSON], payload["messages"])
-        assert (messages) == (
+        assert messages == (
             [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": "Please handle this."},
             ]
         )
-        assert ("Too old to route.") not in (system_prompt)
-        assert ("Stale long-term memory") not in (system_prompt)
-        assert ("Stale conversation summary") not in (system_prompt)
+        assert "Too old to route." not in system_prompt
+        assert "Stale long-term memory" not in system_prompt
+        assert "Stale conversation summary" not in system_prompt
 
     def test_agent_routing_history_is_bounded_before_generation(self) -> None:
         """Cap prior context so long conversations cannot crowd out routing."""
@@ -2724,10 +2726,10 @@ class TestPipelineAsync:
 
         system_prompt = cast(str, payload["system"])
         messages = cast(list[JSON], payload["messages"])
-        assert " ... [truncated] ... " in (system_prompt)
-        assert ("x" * 1025) not in (system_prompt)
-        assert ("Prior assistant response.") not in (system_prompt)
-        assert (messages) == (
+        assert " ... [truncated] ... " in system_prompt
+        assert "x" * 1025 not in system_prompt
+        assert "Prior assistant response." not in system_prompt
+        assert messages == (
             [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": "What about that?"},
@@ -2763,8 +2765,8 @@ class TestPipelineAsync:
         system_prompt = payload["system"]
         assert isinstance(system_prompt, str)
         assert isinstance(system_prompt, str)
-        assert "approval_response" in (system_prompt)
-        assert "awaiting_approval" in (system_prompt)
+        assert "approval_response" in system_prompt
+        assert "awaiting_approval" in system_prompt
 
     def test_persona_request_uses_xhigh_quantization(self) -> None:
         """Verify xhigh VRAM presets request Persona in 8-bit mode."""
@@ -2792,7 +2794,7 @@ class TestPipelineAsync:
         conversation = persona_conversation.build_persona_request(
             cast(Celune, engine), "Hello"
         )
-        assert (conversation["context_space"]) == (2048)
+        assert conversation["context_space"] == 2048
 
         task = AgentTask(
             task_id="task-context",
@@ -2810,4 +2812,4 @@ class TestPipelineAsync:
             task.request.request,
             agent_context=agent_context,
         )
-        assert (agent["context_space"]) == (8192)
+        assert agent["context_space"] == 8192

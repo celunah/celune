@@ -74,11 +74,14 @@ class TestAgentRouting:
     def _set_classifier(self, *payloads: dict[str, JSONSerializable]) -> None:
         """Install deterministic structured Persona routing responses."""
         responses = []
+
         for payload in payloads:
+            serialized_payload = json.dumps(payload)
+
             responses.append(
                 SimpleNamespace(
                     raise_for_status=mock.Mock(),
-                    json=lambda payload=payload: {"text": json.dumps(payload)},
+                    json=lambda serialized=serialized_payload: {"text": serialized},
                 )
             )
         self.engine.vision = SimpleNamespace(post=mock.Mock(side_effect=responses))

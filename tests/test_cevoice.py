@@ -728,9 +728,9 @@ class TestCEVoice:
                 return_value=user_dir,
             ),
         ):
-            assert (cevoice.bundled_voices_dir()) == (user_dir)
+            assert cevoice.bundled_voices_dir() == user_dir
 
-        assert ((user_dir / "default.cevoice").read_bytes()) == (b"new-default")
+        assert (user_dir / "default.cevoice").read_bytes() == b"new-default"
 
     def test_all_repository_cevoice_packs_are_synced_to_user_data(self) -> None:
         """Verify repository-provided official packs are available to the loader."""

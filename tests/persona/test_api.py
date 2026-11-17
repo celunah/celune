@@ -323,10 +323,10 @@ class TestPersonaApi:
             revision=revision,
         )
         loaders["model_loader"].assert_called_once()
-        assert (loaders["model_loader"].call_args.args) == (
+        assert loaders["model_loader"].call_args.args == (
             ("Qwen/Qwen3-VL-4B-Instruct",)
         )
-        assert (loaders["model_loader"].call_args.kwargs) == (
+        assert loaders["model_loader"].call_args.kwargs == (
             {
                 "trust_remote_code": True,
                 "revision": revision,
@@ -346,12 +346,12 @@ class TestPersonaApi:
         revision = cast(str, remote_code_model_revision(model_id))
         metadata = get_model_metadata(model_id)
         assert metadata is not None
-        assert (metadata.revision) == (revision)
-        assert (metadata.tier) == (persona_model_tier(model_id))
+        assert metadata.revision == revision
+        assert metadata.tier == persona_model_tier(model_id)
 
     def test_persona_registry_derives_supported_variants_and_tiers(self) -> None:
         """Verify every Persona catalog entry has a pinned revision and tier."""
-        assert (len(LLM_MODELS)) == (14)
+        assert len(LLM_MODELS) == 14
 
         for metadata in LLM_MODELS:
             assert (remote_code_model_revision(metadata.model_id)) == (

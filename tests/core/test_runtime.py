@@ -88,11 +88,11 @@ class TestCeluneRuntime(CeluneCoreTestSupport):
         assert "clone_model_id" not in resolve.call_args.kwargs
         assert celune.operation_state is OperationState.NORMAL
         celune.close()
-        assert (celune.operation_state) == (OperationState.STOPPED)
+        assert celune.operation_state == OperationState.STOPPED
 
         celune = self._make_celune(request, {})
-        assert (celune.chunk_size) == (8)
-        assert (getattr(celune.glow, "started")) is True  # noqa: B009
+        assert celune.chunk_size == 8
+        assert getattr(celune.glow, "started") is True  # noqa: B009
         celune.close()
 
         with (
@@ -117,10 +117,10 @@ class TestCeluneRuntime(CeluneCoreTestSupport):
 
         with mock.patch("celune.core.voice.try_play_signal", return_value=False):
             celune.fatal(semi_fatal=True)
-            assert (celune.operation_state) == (OperationState.SEMI_FATAL)
+            assert celune.operation_state == OperationState.SEMI_FATAL
 
             celune.fatal()
-            assert (celune.operation_state) == (OperationState.FATAL)
+            assert celune.operation_state == OperationState.FATAL
 
     def test_readiness_signal_waits_for_persona_background_load(self) -> None:
         """Avoid opening the audio stream while Persona startup is still active."""
@@ -1453,7 +1453,6 @@ class TestCeluneRuntime(CeluneCoreTestSupport):
         ):
             assert celune.think("Delete the fixture.")
             persona_thread = celune._persona_thread
-            assert (persona_thread) is not None
             assert persona_thread is not None
             persona_thread.join(timeout=2)
 
@@ -1515,7 +1514,6 @@ class TestCeluneRuntime(CeluneCoreTestSupport):
         ):
             assert celune.think("Delete the fixture.")
             persona_thread = celune._persona_thread
-            assert (persona_thread) is not None
             assert persona_thread is not None
             persona_thread.join(timeout=2)
 
@@ -1549,8 +1547,8 @@ class TestCeluneRuntime(CeluneCoreTestSupport):
         assert celune.think("Use the safer status check.")
 
         celune.force_stop_speech.assert_not_called()
-        assert (task.state) == (AgentTaskState.INTERRUPTED)
-        assert (celune._persona_queue.get_nowait()) == ("Use the safer status check.")
+        assert task.state == AgentTaskState.INTERRUPTED
+        assert celune._persona_queue.get_nowait() == "Use the safer status check."
 
     def test_say_does_not_stop_active_speech(
         self, request: pytest.FixtureRequest
@@ -1601,8 +1599,8 @@ class TestCeluneRuntime(CeluneCoreTestSupport):
         ):
             celune.close()
 
-        assert (task.state) == (AgentTaskState.CANCELLED)
-        assert (task.cancellation_reason) == (AgentCancellationReason.RUNTIME_SHUTDOWN)
+        assert task.state == AgentTaskState.CANCELLED
+        assert task.cancellation_reason == AgentCancellationReason.RUNTIME_SHUTDOWN
         backend_abort.assert_called_once_with()
         tunnel.stop.assert_called_once_with()
 
@@ -1697,7 +1695,7 @@ class TestCeluneRuntime(CeluneCoreTestSupport):
         ):
             celune.close()
 
-        assert (events) == (["abort", "graceful", "teardown"])
+        assert events == ["abort", "graceful", "teardown"]
 
     def test_close_does_not_wait_for_reload_lock(
         self, request: pytest.FixtureRequest
@@ -1750,7 +1748,7 @@ class TestCeluneRuntime(CeluneCoreTestSupport):
         core_lifecycle.unload_persona_state(celune)
 
         clear_vlm_mock.assert_called_once_with()
-        assert (celune.persona_emotion_analyzer) is None
+        assert celune.persona_emotion_analyzer is None
 
     def test_reset_persona_conversation_clears_history_summary_and_attachments(
         self,
@@ -2119,7 +2117,7 @@ class TestCeluneRuntime(CeluneCoreTestSupport):
             owner,
         )
         assert acquisition.acquired
-        assert (lease) is not None
+        assert lease is not None
         request.addfinalizer(celune.component_locks.release_all)
 
         with (
@@ -2133,7 +2131,7 @@ class TestCeluneRuntime(CeluneCoreTestSupport):
         assert not core_reload.reload_backend(celune, FakeBackend)
         assert not celune._reload_pending
         assert celune._model_ready.is_set()
-        assert (celune.last_component_busy) is None
+        assert celune.last_component_busy is None
         celune.change_input_state_callback.assert_any_call(locked=False)
         celune.change_voice_lock_state_callback.assert_any_call(locked=False)
 

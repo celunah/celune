@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for the Pocket TTS backend adapter."""
+# TODO: merge this into test_backends_and_extensions.py
 
 import sys
 from types import ModuleType, SimpleNamespace

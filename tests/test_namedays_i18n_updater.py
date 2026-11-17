@@ -285,7 +285,7 @@ class TestUpdater:
             with pytest.raises(updater.UpdateError) as raised:
                 updater._validate_zip_member(member, Path("destination"))
 
-            assert (str(raised.value)) == (f"{message}: {member.filename!r}")
+            assert str(raised.value) == f"{message}: {member.filename!r}"
 
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -316,8 +316,8 @@ class TestUpdater:
 
             extracted_root = updater._extract_artifact_root(zip_path, destination)
 
-            assert (extracted_root) == (destination / "release" / "nested")
-            assert ((extracted_root / "bin" / "celune.exe").read_bytes()) == (b"binary")
+            assert extracted_root == destination / "release" / "nested"
+            assert (extracted_root / "bin" / "celune.exe").read_bytes() == b"binary"
 
     def test_version_helpers_order_tags(self) -> None:
         """Verify version normalization and ordering helpers.

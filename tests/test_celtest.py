@@ -94,8 +94,8 @@ version = "4.5.6"
 
             hasmarkup = True
 
+            @staticmethod
             def write(
-                self,
                 message: str,
                 *,
                 flush: bool = False,
@@ -106,7 +106,8 @@ version = "4.5.6"
                 discard(markup)
                 messages.append(message)
 
-            def line(self) -> None:
+            @staticmethod
+            def line() -> None:
                 """Capture a terminal newline."""
                 messages.append("\n")
 
@@ -135,8 +136,8 @@ version = "4.5.6"
         class Writer:
             """Capture compact output writes."""
 
+            @staticmethod
             def write(
-                self,
                 message: str,
                 *,
                 flush: bool = False,
@@ -147,7 +148,8 @@ version = "4.5.6"
                 discard(markup)
                 messages.append(message)
 
-            def line(self) -> None:
+            @staticmethod
+            def line() -> None:
                 """Capture a terminal newline."""
                 messages.append("\n")
 
@@ -179,8 +181,8 @@ version = "4.5.6"
 
             hasmarkup = False
 
+            @staticmethod
             def write(
-                self,
                 message: str,
                 *,
                 flush: bool = False,
@@ -221,8 +223,8 @@ version = "4.5.6"
 
             hasmarkup = False
 
+            @staticmethod
             def write(
-                self,
                 message: str,
                 *,
                 flush: bool = False,
@@ -233,7 +235,8 @@ version = "4.5.6"
                 discard(markup)
                 writes.append(message)
 
-            def line(self) -> None:
+            @staticmethod
+            def line() -> None:
                 """Capture an unexpected direct writer newline."""
                 writes.append("\n")
 
@@ -242,7 +245,8 @@ version = "4.5.6"
 
             _tw = Writer()
 
-            def write_line(self, value: str) -> None:
+            @staticmethod
+            def write_line(value: str) -> None:
                 """Capture one newline-terminated reporter line."""
                 lines.append(f"{value}\n")
 

@@ -74,7 +74,7 @@ def test_tutorial_keeps_each_utterance_separate_and_syncs_actions(
     events: list[str] = []
     ui = _tutorial_ui(events)
     spoken_sections: list[tuple[str, ...]] = []
-    display_sections: list[tuple[str, ...]] = []
+    prepared_display_sections: list[tuple[str, ...]] = []
 
     class ImmediateThread:
         """Run the tutorial worker inline for deterministic coverage."""
@@ -97,7 +97,7 @@ def test_tutorial_keeps_each_utterance_separate_and_syncs_actions(
         events.append("prepare")
         assert is_active()
         spoken_sections.append(sections)
-        display_sections.append(visible_sections)
+        prepared_display_sections.append(visible_sections)
         return tuple(f"audio:{index}" for index in range(len(sections)))
 
     def play(
@@ -113,8 +113,8 @@ def test_tutorial_keeps_each_utterance_separate_and_syncs_actions(
         events.append("play")
         assert is_active()
         assert len(audio) == len(sections)
-        voice_pack_index = sections.index(string("commands.tutorial_voice_pack"))
-        assert display_sections[voice_pack_index] == string(
+        voice_pack_idx = sections.index(string("commands.tutorial_voice_pack"))
+        assert display_sections[voice_pack_idx] == string(
             "commands.tutorial_voice_pack_display"
         )
         for index in range(len(sections)):
@@ -128,7 +128,7 @@ def test_tutorial_keeps_each_utterance_separate_and_syncs_actions(
     commands.tutorial(cast(CeluneUI, ui))
 
     voice_pack_index = spoken_sections[0].index(string("commands.tutorial_voice_pack"))
-    assert display_sections[0][voice_pack_index] == string(
+    assert prepared_display_sections[0][voice_pack_index] == string(
         "commands.tutorial_voice_pack_display"
     )
     assert events[:2] == ["prepare", "play"]

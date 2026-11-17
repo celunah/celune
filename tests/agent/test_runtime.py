@@ -102,7 +102,8 @@ class TestAgentRuntimeLifecycle:
         self.event_names.append("finished")
         self.finished_events.append(event)
 
-    def _request(self, session_id: str = "session-1") -> AgentRequest:
+    @staticmethod
+    def _request(session_id: str = "session-1") -> AgentRequest:
         """Build an explicit action request for one test session."""
         return AgentRequest(
             request="Perform the requested action.",
@@ -577,7 +578,7 @@ class TestAgentRuntimeLifecycle:
         assert self.event_names.count("finished") == 1
 
     def test_legacy_session_flags_follow_explicit_task_state(self) -> None:
-        """Keep paused and cancelled compatibility fields synchronized."""
+        """Keep paused and canceled compatibility fields synchronized."""
         task = self._working_task()
         self.runtime.pause(task.session_id)
         paused = self.runtime.get_session(task.session_id)
