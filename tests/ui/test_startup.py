@@ -8,26 +8,33 @@ import asyncio
 import tempfile
 import warnings
 import threading
-from unittest import mock
-from pathlib import Path
 from types import SimpleNamespace
 from typing import Optional, cast
-from collections.abc import Callable
+from pathlib import Path
+from unittest import mock
+from functools import partial
+from collections.abc import Callable, Iterator
 
-import pytest
 import numpy as np
+import pytest
 from textual import events
 from textual.app import App
-from textual.containers import Vertical
 from textual.widgets import Label, Static, RichLog, TextArea, ProgressBar
+from textual.containers import Vertical
 
-from celune.theme import colors
-from celune.utils import discard
-from celune.celune import Celune
-from celune.i18n import string, tagged_string
 from celune.ui import (
     app as ui_app,
 )
+from celune.ui import compat as ui_compat
+from celune.ui import terminal as ui_terminal
+from celune.ui import (
+    resources as ui_resources,
+)
+from celune.core import lifecycle as core_lifecycle
+from celune.i18n import string, tagged_string
+from celune.theme import colors
+from celune.utils import discard
+from celune.celune import Celune
 from celune.ui.app import (
     Button,
     CeluneUI,
@@ -37,28 +44,23 @@ from celune.ui.app import (
     ProgressLabel,
     CeluneLoadingScreen,
 )
-from celune.ui import compat as ui_compat
-from celune.ui import (
-    resources as ui_resources,
-)
-from celune.ui import terminal as ui_terminal
 from celune.constants import APP_NAME, COST_EQUIVALENTS, ExitCodes
-from celune.core import lifecycle as core_lifecycle
-from celune.dataclasses.events import CharacterChangedEvent
-from celune.extensions.events import EventDispatcher
-from celune.typing.modes import OperationState
 from celune.ui.headless import CeluneHeadlessUI
+from celune.typing.modes import OperationState
+from celune.extensions.events import EventDispatcher
+from celune.dataclasses.events import CharacterChangedEvent
 
 from ..celtest import celtest
+from ..support import FakeBackend
 from .fixtures import reset_ui_singletons
-from ..support import FakeBackend, CeluneTestCase
 
 
-class TestUIStartup(CeluneTestCase):
+class TestUIStartup:
     """Tests for UI startup guard rails."""
 
-    def tearDown(self) -> None:
-        """Reset singleton UI guards after each test."""
+    @pytest.fixture(autouse=True)
+    def _pytest_setup_and_teardown(self) -> Iterator[None]:
+        yield
         reset_ui_singletons()
 
     def test_deferred_startup_catches_system_exit_in_the_ui_worker(self) -> None:
@@ -118,7 +120,7 @@ class TestUIStartup(CeluneTestCase):
             with mock.patch.object(ui_compat.sys, "platform", "win32"):
                 ui_compat.install_textual_timer_sleep()
 
-            self.assertIs(textual_timer.sleep, ui_compat._asyncio_timer_sleep)
+            assert (textual_timer.sleep) is (ui_compat._asyncio_timer_sleep)
 
             with mock.patch.object(
                 asyncio.BaseEventLoop,
@@ -261,12 +263,10 @@ class TestUIStartup(CeluneTestCase):
         ui = CeluneUI()
         ui.prepare_theme()
 
-        self.assertIsNone(ui.celune)
-        self.assertEqual(ui.theme, "celune")
-        self.assertEqual(ui.current_theme.name, "celune")
-        self.assertEqual(
-            ui.theme_variables["background"].lower(), colors.THEME.background
-        )
+        assert (ui.celune) is None
+        assert (ui.theme) == ("celune")
+        assert (ui.current_theme.name) == ("celune")
+        assert (ui.theme_variables["background"].lower()) == (colors.THEME.background)
 
     def test_main_ui_prepares_the_lightweight_theme_before_runtime_imports(
         self,
@@ -278,9 +278,9 @@ class TestUIStartup(CeluneTestCase):
             ui._prepare_loading_theme()
 
         load_runtime.assert_not_called()
-        self.assertEqual(ui.theme, "celune")
-        self.assertEqual(ui.current_theme.background, "#1d1826")
-        self.assertEqual(ui.current_theme.primary, "#cebaff")
+        assert (ui.theme) == ("celune")
+        assert (ui.current_theme.background) == ("#1d1826")
+        assert (ui.current_theme.primary) == ("#cebaff")
 
     def test_main_ui_prepares_configured_theme_before_rendering(self) -> None:
         """Verify the main UI applies the configured theme before ``run``."""
@@ -290,10 +290,12 @@ class TestUIStartup(CeluneTestCase):
         with mock.patch("celune.ui.app.default_loader", return_value=None):
             ui.prepare_theme()
 
-        self.assertEqual(ui.theme, "celune_light")
-        self.assertEqual(ui.current_theme.name, "celune_light")
+        assert (ui.theme) == ("celune_light")
+        assert (ui.current_theme.name) == ("celune_light")
 
-    def test_character_change_refreshes_the_active_pack_state(self) -> None:
+    def test_character_change_refreshes_the_active_pack_state(
+        self, request: pytest.FixtureRequest
+    ) -> None:
         """Verify a pack transition updates palette, glow, and voice selection."""
         colors.configure_theme()
         ui = CeluneUI()
@@ -315,9 +317,9 @@ class TestUIStartup(CeluneTestCase):
         ui._ensure_themes_registered()
         ui.theme = "celune"
         ui._bind_agent_events()
-        self.addCleanup(ui._unbind_agent_events)
-        self.addCleanup(ui._ensure_themes_registered)
-        self.addCleanup(colors.configure_theme)
+        request.addfinalizer(ui._unbind_agent_events)
+        request.addfinalizer(ui._ensure_themes_registered)
+        request.addfinalizer(colors.configure_theme)
 
         loader = SimpleNamespace(
             bundle=SimpleNamespace(
@@ -347,11 +349,11 @@ class TestUIStartup(CeluneTestCase):
         ):
             dispatcher.emit("character_changed", event)
 
-        self.assertEqual(ui.theme, "celune")
-        self.assertEqual(ui.current_theme.background, "#21170f")
-        self.assertEqual(colors.THEME.primary, "#e6c206")
-        self.assertEqual(ui.celune_styles, ("balanced", "calm", "spirited"))
-        self.assertEqual(ui.style_index, 1)
+        assert (ui.theme) == ("celune")
+        assert (ui.current_theme.background) == ("#21170f")
+        assert (colors.THEME.primary) == ("#e6c206")
+        assert (ui.celune_styles) == (("balanced", "calm", "spirited"))
+        assert (ui.style_index) == (1)
         voice_changed.assert_called_once_with("calm")
         update_lock.assert_called_once_with(locked=False)
         glow._set_color.assert_called_once_with("#d8751c")
@@ -489,10 +491,11 @@ class TestUIStartup(CeluneTestCase):
 
     def test_settings_restart_preserves_restart_state_through_graceful_exit(
         self,
+        request: pytest.FixtureRequest,
     ) -> None:
         """Verify a settings restart uses the normal fade while retaining its exit code."""
         ui = CeluneUI()
-        self.addCleanup(setattr, CeluneUI, "_instance", None)
+        request.addfinalizer(partial(setattr, CeluneUI, "_instance", None))
         ui.cur_state = "restarting"
         ui.exit = mock.Mock()
         ui._shutdown_runtime = mock.Mock()
@@ -554,10 +557,9 @@ class TestUIStartup(CeluneTestCase):
                     "  ".join(APP_NAME.upper())
                 )
                 screen.set_latest_log_message("Backend initialized")
-                self.assertEqual(
-                    str(screen.query_one("#loading-log-message", Static).render()),
-                    "Backend initialized",
-                )
+                assert (
+                    str(screen.query_one("#loading-log-message", Static).render())
+                ) == ("Backend initialized")
                 screen.set_startup_messages(
                     [
                         string("ui.startup_checking_dependencies"),
@@ -565,13 +567,11 @@ class TestUIStartup(CeluneTestCase):
                         string("ui.startup_initializing_core"),
                     ]
                 )
-                self.assertEqual(
-                    str(screen.query_one("#loading-diagnostics", Static).render()),
-                    "Checking dependencies...\nLoading core...\nInitializing core...",
-                )
-                self.assertIn(
-                    str(screen.query_one("#loading-spinner", Static).render()),
-                    {"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"},
+                assert (
+                    str(screen.query_one("#loading-diagnostics", Static).render())
+                ) == ("Checking dependencies...\nLoading core...\nInitializing core...")
+                assert (str(screen.query_one("#loading-spinner", Static).render())) in (
+                    {"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
                 )
                 log = screen.query_one("#loading-log")
                 log_message = screen.query_one("#loading-log-message")
@@ -980,10 +980,10 @@ class TestUIStartup(CeluneTestCase):
         ):
             ui.on_mount()
 
-        self.assertIsNone(ui.celune)
-        self.assertIsNotNone(ui._loading_screen)
+        assert (ui.celune) is None
+        assert (ui._loading_screen) is not None
         if ui._loading_screen is not None:
-            self.assertTrue(ui._loading_screen.display)
+            assert ui._loading_screen.display
         call_after_refresh.assert_not_called()
 
     def test_progress_label_switches_between_percentage_time_and_hidden(self) -> None:
@@ -1075,8 +1075,8 @@ class TestUIStartup(CeluneTestCase):
         ):
             ui.attach_celune(fake_celune)
 
-        self.assertIs(ui.celune, fake_celune)
-        self.assertEqual(fake_celune.log_callback, ui.tts_log)
+        assert (ui.celune) is (fake_celune)
+        assert fake_celune.log_callback == ui.tts_log  # pylint: disable=W0143
         resources.prime_usage.assert_called_once_with()
         call_after_refresh.assert_called_once_with(start_init)
 
@@ -1654,9 +1654,9 @@ class TestUIStartup(CeluneTestCase):
         schedule_thread.join(timeout=1)
         cancel_thread.join(timeout=1)
 
-        self.assertFalse(schedule_thread.is_alive())
-        self.assertFalse(cancel_thread.is_alive())
-        self.assertEqual(ui.call_from_thread.call_count, 2)
+        assert not schedule_thread.is_alive()
+        assert not cancel_thread.is_alive()
+        assert (ui.call_from_thread.call_count) == (2)
 
     def test_headless_ui_warns_without_attached_celune(self) -> None:
         """Verify headless mode warns before doing nothing without Celune."""
@@ -1866,12 +1866,11 @@ class TestUIStartup(CeluneTestCase):
         ui.change_input_state.assert_called_once_with(locked=True)
         ui.change_voice_lock_state.assert_called_once_with(locked=True)
         ui.tts_voice_changed.assert_called_once_with("balanced")
-        self.assertEqual(ui.input_box.placeholder, string("ui.stopped_placeholder"))
+        assert (ui.input_box.placeholder) == (string("ui.stopped_placeholder"))
         ui.safe_status.assert_called_once_with(string("status.stopped"), "sleeping")
         ui._refresh_logs.assert_called_once_with()
-        self.assertEqual(
-            ui._terminal_status_for(string("status.stopped"), "sleeping"),
-            ("stopped", string("osc.action_stopped")),
+        assert (ui._terminal_status_for(string("status.stopped"), "sleeping")) == (
+            ("stopped", string("osc.action_stopped"))
         )
 
     def test_log_refresh_does_not_duplicate_pending_background_message(self) -> None:
@@ -1887,7 +1886,7 @@ class TestUIStartup(CeluneTestCase):
         ui.on_uilog_message(UILogMessage("Test result", "info"))
 
         logs.write.assert_called_once()
-        self.assertEqual(ui._rendered_log_count, 1)
+        assert (ui._rendered_log_count) == (1)
 
     def test_queued_log_reconciles_stale_render_cursor(self) -> None:
         """Verify a queued log is restored when the render cursor got ahead of the widget."""
@@ -1904,7 +1903,7 @@ class TestUIStartup(CeluneTestCase):
 
         logs.clear.assert_called_once_with()
         logs.write.assert_called_once()
-        self.assertEqual(ui._rendered_log_count, 1)
+        assert (ui._rendered_log_count) == (1)
 
     def test_log_refresh_preserves_rendered_history(self) -> None:
         """Verify a layout refresh does not clear already rendered log entries."""
@@ -1935,7 +1934,7 @@ class TestUIStartup(CeluneTestCase):
 
         ui.safe_status(string("status.speaking"))
 
-        self.assertNotEqual(ui._status_text, string("status.speaking"))
+        assert (ui._status_text) != (string("status.speaking"))
 
     def test_submit_text_is_noop_in_ui_test_mode(self) -> None:
         """Verify interactive fake-backend UI test mode ignores submitted input."""
@@ -2117,10 +2116,12 @@ class TestUIStartup(CeluneTestCase):
         assert "gemini-3.8-flash-tts (overall): $0.14" in cost_pages
         assert "gpt-realtime-2.1 (overall): $0.38" in cost_pages
 
-    def test_ctrl_r_toggles_tui_vc_recording(self) -> None:
+    def test_ctrl_r_toggles_tui_vc_recording(
+        self, request: pytest.FixtureRequest
+    ) -> None:
         """Verify CTRL+R streams VC audio live and flushes the final tail on stop."""
         ui = CeluneUI()
-        self.addCleanup(setattr, CeluneUI, "_instance", None)
+        request.addfinalizer(partial(setattr, CeluneUI, "_instance", None))
         ui.celune = cast(
             Celune,
             SimpleNamespace(

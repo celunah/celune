@@ -2,6 +2,7 @@
 """Tests for runtime and platform environment validation."""
 
 from unittest import mock
+from functools import partial
 
 import pytest
 
@@ -15,10 +16,10 @@ from celune.exceptions import RuntimeCheckError
 from celune.ui.headless import CeluneHeadlessUI
 from celune.typing.aliases import LogLevel, LogCallback
 
-from ..support import FakeGlow, FakeBackend, CeluneTestCase
+from ..support import FakeGlow, FakeBackend
 
 
-class TestRuntimeEnvironment(CeluneTestCase):
+class TestRuntimeEnvironment:
     """Tests for runtime environment checks."""
 
     def test_core_runtime_classes_are_final_at_runtime(self) -> None:
@@ -151,7 +152,9 @@ class TestRuntimeEnvironment(CeluneTestCase):
         assert not errors
         assert not states
 
-    def test_gpu_runtime_preflight_precedes_backend_model_loading(self) -> None:
+    def test_gpu_runtime_preflight_precedes_backend_model_loading(
+        self, request: pytest.FixtureRequest
+    ) -> None:
         """Reject a GPU backend before model loading and preserve diagnostics."""
         Celune._instance = None
         backend = FakeBackend()
@@ -193,8 +196,8 @@ class TestRuntimeEnvironment(CeluneTestCase):
                 tts_backend="qwen3",
                 error_callback=errors.append,
             )
-            self.addCleanup(setattr, Celune, "_instance", None)
-            self.addCleanup(engine.close)
+            request.addfinalizer(partial(setattr, Celune, "_instance", None))
+            request.addfinalizer(engine.close)
             check.assert_not_called()
             with pytest.raises(RuntimeCheckError, match="synthetic CUDA failure"):
                 engine.load(raise_on_error=True)
@@ -205,7 +208,9 @@ class TestRuntimeEnvironment(CeluneTestCase):
         assert len(errors) == 1
         assert "synthetic CUDA failure" in errors[0]
 
-    def test_cpu_backend_preflight_skips_cuda_compute_check(self) -> None:
+    def test_cpu_backend_preflight_skips_cuda_compute_check(
+        self, request: pytest.FixtureRequest
+    ) -> None:
         """Allow Mini on CPU without running CUDA device or compute checks."""
         Celune._instance = None
 
@@ -224,8 +229,8 @@ class TestRuntimeEnvironment(CeluneTestCase):
             ),
         ):
             celune = Celune(config={"vram": "low"}, tts_backend="mini")
-            self.addCleanup(setattr, Celune, "_instance", None)
-            self.addCleanup(celune.close)
+            request.addfinalizer(partial(setattr, Celune, "_instance", None))
+            request.addfinalizer(celune.close)
             with mock.patch("celune.core.voice.play_signal", return_value=False):
                 assert celune.load()
 

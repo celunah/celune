@@ -8,6 +8,7 @@ import datetime
 import tempfile
 from pathlib import Path
 from unittest import mock
+from collections.abc import Iterator
 
 import pytest
 from git import Repo
@@ -17,10 +18,9 @@ from celune import i18n, updater, namedays
 from celune.vcs import get_revision, is_git_checkout
 
 from .platform import LINUX_ONLY
-from .support import CeluneTestCase
 
 
-class TestNameDay(CeluneTestCase):
+class TestNameDay:
     """Tests for name-day lookup helpers."""
 
     def test_lookup_helpers_cover_supported_inputs(self) -> None:
@@ -44,11 +44,12 @@ class TestNameDay(CeluneTestCase):
             namedays.get_names_for_date("bad-date")
 
 
-class TestI18n(CeluneTestCase):
+class TestI18n:
     """Tests for localization fallback behavior."""
 
-    def tearDown(self) -> None:
-        """Restore the process locale after each localization test."""
+    @pytest.fixture(autouse=True)
+    def _pytest_setup_and_teardown(self) -> Iterator[None]:
+        yield
         i18n.set_locale("en")
 
     def test_string_falls_back_and_formats_values(self) -> None:
@@ -122,7 +123,7 @@ class TestI18n(CeluneTestCase):
             i18n.STRINGS.update(original)
 
 
-class TestUpdater(CeluneTestCase):
+class TestUpdater:
     """Tests for pure updater decision logic."""
 
     def test_gitpython_helpers_read_repository_metadata(self) -> None:
@@ -202,9 +203,9 @@ class TestUpdater(CeluneTestCase):
             with zipfile.ZipFile(zip_path, "w"):
                 pass
 
-            with self.assertRaisesRegex(
+            with pytest.raises(
                 updater.UpdateError,
-                "downloaded artifact is missing update metadata",
+                match="downloaded artifact is missing update metadata",
             ):
                 updater._extract_artifact_root(zip_path, destination)
 
@@ -228,10 +229,9 @@ class TestUpdater(CeluneTestCase):
                 with zipfile.ZipFile(zip_path, "w") as archive:
                     archive.writestr(member_name, b"unsafe")
 
-                with self.subTest(member_name=member_name):
-                    with self.assertRaises(updater.UpdateError):
-                        updater._extract_artifact_root(zip_path, destination)
-                    self.assertFalse((root / "escape.txt").exists())
+                with pytest.raises(updater.UpdateError):
+                    updater._extract_artifact_root(zip_path, destination)
+                assert not (root / "escape.txt").exists()
                 destination.rmdir()
                 zip_path.unlink()
 
@@ -244,9 +244,9 @@ class TestUpdater(CeluneTestCase):
             with zipfile.ZipFile(zip_path, "w") as archive:
                 archive.writestr(symlink, "../../escape.txt")
 
-            with self.assertRaises(updater.UpdateError):
+            with pytest.raises(updater.UpdateError):
                 updater._extract_artifact_root(zip_path, destination)
-            self.assertFalse((root / "escape.txt").exists())
+            assert not (root / "escape.txt").exists()
 
     @LINUX_ONLY
     def test_extract_artifact_rejects_existing_symlink_escape(self) -> None:
@@ -263,9 +263,9 @@ class TestUpdater(CeluneTestCase):
             with zipfile.ZipFile(zip_path, "w") as archive:
                 archive.writestr("release/escaped.txt", b"unsafe")
 
-            with self.assertRaises(updater.UpdateError):
+            with pytest.raises(updater.UpdateError):
                 updater._extract_artifact_root(zip_path, destination)
-            self.assertFalse((outside / "escaped.txt").exists())
+            assert not (outside / "escaped.txt").exists()
 
     @LINUX_ONLY
     def test_zip_safety_errors_keep_raw_exception_messages(self) -> None:
@@ -282,13 +282,10 @@ class TestUpdater(CeluneTestCase):
         )
 
         for member, message in cases:
-            with self.subTest(message=message):
-                with self.assertRaises(updater.UpdateError) as raised:
-                    updater._validate_zip_member(member, Path("destination"))
+            with pytest.raises(updater.UpdateError) as raised:
+                updater._validate_zip_member(member, Path("destination"))
 
-                self.assertEqual(
-                    str(raised.exception), f"{message}: {member.filename!r}"
-                )
+            assert (str(raised.value)) == (f"{message}: {member.filename!r}")
 
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -299,12 +296,11 @@ class TestUpdater(CeluneTestCase):
             (destination / "release").symlink_to(outside, target_is_directory=True)
 
             member = zipfile.ZipInfo("release/file.txt")
-            with self.assertRaises(updater.UpdateError) as raised:
+            with pytest.raises(updater.UpdateError) as raised:
                 updater._validate_zip_member(member, destination)
 
-            self.assertEqual(
-                str(raised.exception),
-                f"ZIP member escapes extraction directory: {member.filename!r}",
+            assert (str(raised.value)) == (
+                f"ZIP member escapes extraction directory: {member.filename!r}"
             )
 
     def test_extract_artifact_preserves_valid_nested_archives(self) -> None:
@@ -320,10 +316,8 @@ class TestUpdater(CeluneTestCase):
 
             extracted_root = updater._extract_artifact_root(zip_path, destination)
 
-            self.assertEqual(extracted_root, destination / "release" / "nested")
-            self.assertEqual(
-                (extracted_root / "bin" / "celune.exe").read_bytes(), b"binary"
-            )
+            assert (extracted_root) == (destination / "release" / "nested")
+            assert ((extracted_root / "bin" / "celune.exe").read_bytes()) == (b"binary")
 
     def test_version_helpers_order_tags(self) -> None:
         """Verify version normalization and ordering helpers.

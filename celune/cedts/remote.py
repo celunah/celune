@@ -1055,7 +1055,9 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
         if packet.get("operation") == "metadata":
             raw_data = packet.get("data")
             data = (
-                cast(dict[str, object], raw_data) if isinstance(raw_data, dict) else {}
+                cast(dict[str, WorkerValue], raw_data)
+                if isinstance(raw_data, dict)
+                else {}
             )
             model = data.get("model")
             runtime_type = data.get("type")
@@ -1419,7 +1421,7 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
         ):
             raise _worker_protocol_error("worker_capability_negotiation_is_incomplete")
         self._negotiated_capabilities = cast(dict[str, WorkerValue], capabilities)
-        self._cedts_limits = limits_from_capabilities(capabilities)
+        self._cedts_limits = limits_from_capabilities(self._negotiated_capabilities)
         ready = self._receive_handshake_packet(process)
         self._raise_handshake_error(ready, hello_id)
         if (

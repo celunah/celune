@@ -14,10 +14,9 @@ from pathlib import Path
 import tests.celtest as celtest_plugin
 from celune.utils import discard
 from tests.celtest import CeltestMetadata, celtest
-from tests.support import CeluneTestCase
 
 
-class TestCeltest(CeluneTestCase):
+class TestCeltest:
     """Tests for the Celtest decorator and pytest presentation."""
 
     def test_celtest_attaches_metadata_without_wrapping_the_test(self) -> None:

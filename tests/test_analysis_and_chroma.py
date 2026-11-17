@@ -5,19 +5,17 @@ import datetime
 from pathlib import Path
 from unittest import mock
 
+import numpy as np
 import torch
 import pytest
-import numpy as np
 
 from celune import i18n, analysis
-from celune.theme.colors import RGB
 from celune.chroma import AudioRGBGlow
 from celune.constants import BASE_SR, N_A_NUMERIC
+from celune.theme.colors import RGB
 
-from .support import CeluneTestCase
 
-
-class TestAnalysis(CeluneTestCase):
+class TestAnalysis:
     """Tests for deterministic analysis helper behavior."""
 
     def test_embedding_inference_keeps_torchao_compatibility_active(
@@ -205,9 +203,9 @@ class TestAnalysis(CeluneTestCase):
 
             with (
                 mock.patch("celune.analysis.default_loader", return_value=None),
-                self.assertRaisesRegex(
+                pytest.raises(
                     FileNotFoundError,
-                    "no compatible CEVOICE/CECHAR package with reference embeddings is loaded",
+                    match="no compatible CEVOICE/CECHAR package with reference embeddings is loaded",
                 ),
             ):
                 analysis.load_reference_embedding("balanced")
@@ -224,9 +222,8 @@ class TestAnalysis(CeluneTestCase):
                     "balanced",
                 )
 
-            self.assertEqual(
-                metrics["voice_similarity_error"],
-                "localized similarity: backend detail",
+            assert (metrics["voice_similarity_error"]) == (
+                "localized similarity: backend detail"
             )
         finally:
             i18n.set_locale(original_locale)
@@ -279,15 +276,11 @@ class TestAnalysis(CeluneTestCase):
         for value, expected_error in invalid_values:
             torch_load.return_value = value
             with (
-                self.subTest(value_type=type(value).__name__),
                 mock.patch(
                     "celune.analysis.default_loader",
                     return_value=fake_loader,
                 ),
-                self.assertRaisesRegex(
-                    expected_error,
-                    "invalid reference embedding",
-                ),
+                pytest.raises(expected_error, match="invalid reference embedding"),
             ):
                 analysis.load_reference_embedding("balanced")
 
@@ -311,17 +304,16 @@ class TestAnalysis(CeluneTestCase):
         ):
             torch_load.return_value = value
             with (
-                self.subTest(shape=tuple(value.shape), dtype=value.dtype),
                 mock.patch(
                     "celune.analysis.default_loader",
                     return_value=fake_loader,
                 ),
-                self.assertRaisesRegex(ValueError, "invalid reference embedding"),
+                pytest.raises(ValueError, match="invalid reference embedding"),
             ):
                 analysis.load_reference_embedding("balanced")
 
 
-class TestChroma(CeluneTestCase):
+class TestChroma:
     """Tests for pure RGB glow helper behavior."""
 
     def test_pure_glow_helpers_process_audio_without_devices(self) -> None:

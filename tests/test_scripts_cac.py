@@ -17,8 +17,6 @@ import soundfile as sf
 
 from celune.cevoice import CEVoice, write_cechar_v4, write_cechar_v5
 
-from .support import CeluneTestCase
-
 
 def _load_cac_module():
     script_path = Path(__file__).resolve().parent.parent / "scripts" / "cac.py"
@@ -61,7 +59,7 @@ def _load_cac_module():
 cac = _load_cac_module()
 
 
-class TestCACScript(CeluneTestCase):
+class TestCACScript:
     """Verify the CEVOICE helper script supports simple and wizard modes."""
 
     def test_simple_mode_prompts_for_reference_text_when_not_provided(self) -> None:
@@ -198,7 +196,6 @@ class TestCACScript(CeluneTestCase):
             wav_path.write_bytes(b"RIFFfakeWAVE")
             for version in (4, 5):
                 with (
-                    self.subTest(version=version),
                     mock.patch.object(cac, f"write_cechar_v{version}") as writer,
                     mock.patch.object(
                         cac, "normalize_reference_wav_asset", return_value=b"wav"
@@ -272,7 +269,6 @@ class TestCACScript(CeluneTestCase):
             sf.write(source, np.zeros(240, dtype=np.float32), 24000, subtype="FLOAT")
             for version, writer in ((4, write_cechar_v4), (5, write_cechar_v5)):
                 with (
-                    self.subTest(version=version),
                     mock.patch.object(cac, "np", np),
                     mock.patch.object(cac, "sf", sf),
                     mock.patch.object(cac, f"write_cechar_v{version}", writer),

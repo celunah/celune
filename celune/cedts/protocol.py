@@ -20,7 +20,7 @@ from ..exceptions import (
     CEDTSPayloadError,
     CEDTSProtocolError,
 )
-from ..typing.common import JSONSerializable
+from ..typing.common import JSON, JSONSerializable
 from ..typing.worker import (
     WorkerValue,
     WorkerMessage,
@@ -249,7 +249,7 @@ WORKER_CAPABILITIES: dict[str, JSONSerializable] = dict(CORE_CAPABILITIES)
 
 
 def limits_from_capabilities(
-    capabilities: Mapping[str, object],
+    capabilities: Mapping[str, WorkerValue],
     *,
     fallback: CEDTSLimits = DEFAULT_CEDTS_LIMITS,
 ) -> CEDTSLimits:
@@ -392,7 +392,7 @@ class _PayloadBuilder:
         shape: Optional[Sequence[int]] = None,
         sample_rate: Optional[int] = None,
         channels: Optional[int] = None,
-    ) -> dict[str, str]:
+    ) -> dict[str, JSONSerializable]:
         """Add one bounded payload and return its JSON reference."""
         byte_length = len(data)
         self.preflight(
@@ -475,7 +475,7 @@ class _DecodedPayloadBudget:
         self.typed_payload_ids: set[str] = set()
         self.allocated_bytes = 0
 
-    def reserve(self, value: object, *, audio: bool) -> None:
+    def reserve(self, value: JSONSerializable, *, audio: bool) -> None:
         """Reserve one unique typed payload's decoded allocation."""
         payload_id = _payload_id(value)
         if payload_id in self.typed_payload_ids:
@@ -499,7 +499,7 @@ class _DecodedPayloadBudget:
 
 
 def _validate_decoded_payload_budget(
-    value: object,
+    value: WorkerControlMessage,
     payloads: Mapping[str, WorkerPayload],
     *,
     limits: CEDTSLimits,
@@ -509,7 +509,9 @@ def _validate_decoded_payload_budget(
     _scan_decoded_payload_value(value, budget)
 
 
-def _scan_decoded_payload_value(value: object, budget: _DecodedPayloadBudget) -> None:
+def _scan_decoded_payload_value(
+    value: JSONSerializable, budget: _DecodedPayloadBudget
+) -> None:
     """Scan nested JSON values for typed payload allocations."""
     if isinstance(value, dict):
         if "__cedts_payload_id__" in value:
@@ -554,7 +556,7 @@ def send_message(
             raise TypeError("control message is not an object")
         json_message = dict(message)
         _validate_json_value(json_message, limits=limits)
-        _validate_packet(json_message, limits=limits)
+        _validate_packet(cast(WorkerControlMessage, json_message), limits=limits)
         payload = json.dumps(
             json_message,
             allow_nan=False,
@@ -601,7 +603,7 @@ def receive_message(
                 "backend_worker_control_frame_is_not_an_object"
             )
         _validate_json_value(decoded, limits=limits)
-        _validate_packet(decoded, limits=limits)
+        _validate_packet(cast(WorkerControlMessage, decoded), limits=limits)
         descriptors = decoded.get("payloads", [])
         if not isinstance(descriptors, list):
             raise _worker_protocol_error(
@@ -830,7 +832,7 @@ def _validate_payload_data(descriptor: WorkerPayloadDescriptor, data: bytes) -> 
     _validate_descriptor_shape(descriptor)
 
 
-def _encode_value(value: WorkerValue, builder: _PayloadBuilder) -> object:
+def _encode_value(value: WorkerValue, builder: _PayloadBuilder) -> JSONSerializable:
     """Encode one backend value as JSON-compatible metadata."""
     if isinstance(value, np.ndarray):
         dtype = str(value.dtype)
@@ -900,14 +902,14 @@ def _encode_value(value: WorkerValue, builder: _PayloadBuilder) -> object:
         return [_encode_value(item, builder) for item in value]
     if isinstance(value, Path):
         return str(value)
-    return cast(WorkerValue, value)
+    return cast(JSONSerializable, value)
 
 
 def _encode_audio(
     audio: np.ndarray,
     sample_rate: int,
     builder: _PayloadBuilder,
-) -> dict[str, str]:
+) -> dict[str, JSONSerializable]:
     """Encode one audio array with CEDTS audio metadata."""
     dtype = str(audio.dtype)
     media_type = {"float32": "audio/pcm_f32le", "int16": "audio/pcm_s16le"}.get(dtype)
@@ -944,7 +946,9 @@ def _encode_audio(
     )
 
 
-def _decode_value(value: object, payloads: Mapping[str, WorkerPayload]) -> WorkerValue:
+def _decode_value(
+    value: JSONSerializable, payloads: Mapping[str, WorkerPayload]
+) -> WorkerValue:
     """Decode one JSON value and its payload references."""
     if isinstance(value, dict):
         payload_id = value.get("__cedts_payload_id__")
@@ -983,11 +987,15 @@ def _decode_value(value: object, payloads: Mapping[str, WorkerPayload]) -> Worke
                 raise _worker_protocol_error(
                     "voice_conversion_target_references_are_invalid"
                 )
+            target_references = cast(list[str], target_references)
+            target_voice = value.get("target_voice")
+            target_character = value.get("target_character")
+            f0_condition = value.get("f0_condition")
             sample_rate = _typed_int(value.get("sample_rate"), "sample_rate")
-            _typed_optional(value.get("target_voice"), str, "target_voice")
-            _typed_optional(value.get("target_character"), str, "target_character")
+            _typed_optional(target_voice, str, "target_voice")
+            _typed_optional(target_character, str, "target_character")
             _typed_optional(value.get("pitch_shift"), int, "pitch_shift")
-            _typed_optional(value.get("f0_condition"), bool, "f0_condition")
+            _typed_optional(f0_condition, bool, "f0_condition")
             return VoiceConversionRequest(
                 source_audio=_decode_audio(
                     value["source_audio"],
@@ -995,13 +1003,13 @@ def _decode_value(value: object, payloads: Mapping[str, WorkerPayload]) -> Worke
                     expected_sample_rate=sample_rate,
                 ),
                 sample_rate=sample_rate,
-                target_voice=value.get("target_voice"),
-                target_character=value.get("target_character"),
+                target_voice=cast(Optional[str], target_voice),
+                target_character=cast(Optional[str], target_character),
                 target_references=tuple(Path(path) for path in target_references),
                 label=_typed_string(
                     value.get("label", string("ui.audio_input_label")), "label"
                 ),
-                f0_condition=value.get("f0_condition"),
+                f0_condition=cast(Optional[bool], f0_condition),
             )
         if value_type == "audio_output":
             _validate_typed_fields(
@@ -1041,6 +1049,7 @@ def _decode_value(value: object, payloads: Mapping[str, WorkerPayload]) -> Worke
                 raise _worker_protocol_error(
                     "typed_value_field_is_invalid", field_name="shape"
                 )
+            shape = cast(list[int], shape)
             channels = _typed_int(value.get("channels"), "channels")
             metadata = _decode_value(value.get("metadata"), payloads)
             audio = _decode_audio(
@@ -1069,7 +1078,9 @@ def _decode_value(value: object, payloads: Mapping[str, WorkerPayload]) -> Worke
     return cast(WorkerValue, value)
 
 
-def _decode_array(value: object, payloads: Mapping[str, WorkerPayload]) -> np.ndarray:
+def _decode_array(
+    value: JSONSerializable, payloads: Mapping[str, WorkerPayload]
+) -> np.ndarray:
     """Decode a typed NumPy payload without reconstructing Python objects."""
     payload_id = _payload_id(value)
     payload = payloads[payload_id]
@@ -1087,7 +1098,7 @@ def _decode_array(value: object, payloads: Mapping[str, WorkerPayload]) -> np.nd
 
 
 def _decode_audio(
-    value: object,
+    value: JSONSerializable,
     payloads: Mapping[str, WorkerPayload],
     *,
     expected_sample_rate: Optional[int] = None,
@@ -1137,7 +1148,7 @@ def _decode_audio(
     return normalized
 
 
-def _payload_id(value: object) -> str:
+def _payload_id(value: JSONSerializable) -> str:
     """Extract a payload ID from a JSON payload reference."""
     if not isinstance(value, dict) or len(value) != 1:
         raise _worker_protocol_error("binary_value_is_not_a_payload_reference")
@@ -1148,12 +1159,13 @@ def _payload_id(value: object) -> str:
 
 
 def _object_from_pairs(
-    pairs: list[tuple[str, object]], max_entries: int = _MAX_COLLECTION_ENTRIES
-) -> dict[str, object]:
+    pairs: list[tuple[str, JSONSerializable]],
+    max_entries: int = _MAX_COLLECTION_ENTRIES,
+) -> JSON:
     """Build a JSON object while rejecting duplicate or excessive fields."""
     if len(pairs) > max_entries:
         raise ValueError("JSON object contains too many fields")
-    result: dict[str, object] = {}
+    result: JSON = {}
     for key, value in pairs:
         if key in result:
             raise ValueError("JSON object contains a duplicate field")
@@ -1204,7 +1216,7 @@ def _validate_json_value(
 
 
 def _validate_packet(
-    packet: Mapping[str, object], *, limits: CEDTSLimits = DEFAULT_CEDTS_LIMITS
+    packet: WorkerControlMessage, *, limits: CEDTSLimits = DEFAULT_CEDTS_LIMITS
 ) -> None:
     """Validate a CEDTS packet envelope and its kind-specific data schema."""
     if not set(packet).issubset(_PACKET_FIELDS):
@@ -1241,11 +1253,13 @@ def _validate_packet(
         raise _worker_protocol_error(
             "backend_worker_payload_descriptors_are_not_an_array"
         )
-    validate_payload_descriptors(descriptors, limits=limits)
-    _validate_packet_data(kind, operation, data)
+    validate_payload_descriptors(
+        cast(list[WorkerPayloadDescriptor], descriptors), limits=limits
+    )
+    _validate_packet_data(kind, operation, cast(JSON, data))
 
 
-def _validate_packet_data(kind: str, operation: str, data: dict[str, object]) -> None:
+def _validate_packet_data(kind: str, operation: str, data: JSON) -> None:
     """Validate the typed data object associated with one packet kind."""
     if kind == "hello":
         _validate_operation_match(operation, "handshake")
@@ -1318,26 +1332,26 @@ def _validate_operation_match(operation: str, expected: str) -> None:
 
 
 def _validate_exact_fields(
-    value: object,
+    value: JSONSerializable,
     required: set[str],
     optional: Optional[set[str]] = None,
-) -> dict[str, object]:
+) -> JSON:
     """Return an object after rejecting missing and unknown fields."""
     if not isinstance(value, dict):
         raise _worker_protocol_error("backend_worker_packet_data_is_not_an_object")
     allowed = required | (optional or set())
     if not required.issubset(value) or not set(value).issubset(allowed):
         raise _worker_protocol_error("backend_worker_packet_data_fields_are_invalid")
-    return value
+    return cast(JSON, value)
 
 
-def _validate_version(value: object) -> None:
+def _validate_version(value: JSONSerializable) -> None:
     """Validate one negotiated CEDTS version."""
     if not _is_current_version(value):
         raise _worker_protocol_error("backend_worker_cedts_version_is_invalid")
 
 
-def _is_current_version(value: object) -> bool:
+def _is_current_version(value: JSONSerializable) -> bool:
     """Return whether a JSON version pair matches the current CEDTS version."""
     return (
         isinstance(value, list)
@@ -1347,19 +1361,19 @@ def _is_current_version(value: object) -> bool:
     )
 
 
-def _validate_identifier(value: object, field_name: str) -> None:
+def _validate_identifier(value: JSONSerializable, field_name: str) -> None:
     """Validate a bounded packet identifier."""
     if not isinstance(value, str) or not value or len(value) > _MAX_MESSAGE_ID_LENGTH:
         raise _worker_protocol_error("field_is_invalid", field_name=field_name)
 
 
-def _validate_bool(value: object, field_name: str) -> None:
+def _validate_bool(value: JSONSerializable, field_name: str) -> None:
     """Validate a required boolean packet field."""
     if not isinstance(value, bool):
         raise _worker_protocol_error("field_is_invalid", field_name=field_name)
 
 
-def _validate_hello_data(data: dict[str, object]) -> None:
+def _validate_hello_data(data: JSON) -> None:
     """Validate the core-to-worker handshake data."""
     _validate_exact_fields(
         data, {"versions", "capabilities"}, {"required_capabilities"}
@@ -1376,7 +1390,7 @@ def _validate_hello_data(data: dict[str, object]) -> None:
         _validate_capability_requirements(data["required_capabilities"])
 
 
-def _validate_capabilities(value: object) -> None:
+def _validate_capabilities(value: JSONSerializable) -> None:
     """Validate the bounded capability negotiation object."""
     if not isinstance(value, dict):
         raise _worker_protocol_error("cedts_capabilities_are_invalid")
@@ -1414,7 +1428,7 @@ def _validate_capabilities(value: object) -> None:
         _validate_bool(value[field_name], f"CEDTS capability {field_name}")
 
 
-def _validate_capability_requirements(value: object) -> None:
+def _validate_capability_requirements(value: JSONSerializable) -> None:
     """Validate required capability flags without accepting arbitrary values."""
     if not isinstance(value, dict):
         raise _worker_protocol_error("cedts_required_capabilities_are_invalid")
@@ -1438,7 +1452,7 @@ def _validate_capability_requirements(value: object) -> None:
             raise _worker_protocol_error("required_capability_is_invalid", name=name)
 
 
-def _validate_operation_arguments(operation: str, value: object) -> None:
+def _validate_operation_arguments(operation: str, value: JSONSerializable) -> None:
     """Validate one request's operation-specific argument object."""
     if not isinstance(value, dict):
         raise _worker_protocol_error(
@@ -1472,7 +1486,7 @@ def _validate_operation_arguments(operation: str, value: object) -> None:
         _validate_call_arguments(value)
 
 
-def _validate_model_arguments(value: dict[str, object], model_type: type) -> None:
+def _validate_model_arguments(value: JSON, model_type: type[object]) -> None:
     """Validate a model handle plus bounded backend-specific keyword fields."""
     if not isinstance(value, dict) or "model_id" not in value:
         raise _worker_protocol_error("backend_worker_model_arguments_are_invalid")
@@ -1484,7 +1498,7 @@ def _validate_model_arguments(value: dict[str, object], model_type: type) -> Non
     _validate_backend_kwargs(value, {"model_id"})
 
 
-def _validate_backend_kwargs(value: dict[str, object], reserved: set[str]) -> None:
+def _validate_backend_kwargs(value: JSON, reserved: set[str]) -> None:
     """Validate explicitly bounded backend-specific JSON keyword arguments."""
     if len(value) - len(reserved) > _MAX_BACKEND_ARGUMENT_FIELDS:
         raise _worker_protocol_error(
@@ -1502,7 +1516,7 @@ def _validate_backend_kwargs(value: dict[str, object], reserved: set[str]) -> No
         _validate_json_value(argument)
 
 
-def _validate_call_arguments(value: dict[str, object]) -> None:
+def _validate_call_arguments(value: JSON) -> None:
     """Validate one allowlisted backend callback invocation."""
     method = value.get("method")
     if not isinstance(method, str):
@@ -1533,7 +1547,7 @@ def _validate_call_arguments(value: dict[str, object]) -> None:
 
 
 def _validate_response_data(
-    data: dict[str, object],
+    data: JSON,
     *,
     required: Optional[set[str]] = None,
 ) -> None:
@@ -1563,7 +1577,7 @@ def _validate_response_data(
     _validate_error_source_span(data)
 
 
-def _validate_error_data(data: dict[str, object]) -> None:
+def _validate_error_data(data: JSON) -> None:
     """Validate a structured error packet."""
     _validate_exact_fields(
         data,
@@ -1580,7 +1594,7 @@ def _validate_error_data(data: dict[str, object]) -> None:
     _validate_error_source_span(data)
 
 
-def _validate_error_source_span(data: dict[str, object]) -> None:
+def _validate_error_source_span(data: JSON) -> None:
     """Require valid paired, zero-based source offsets on worker errors."""
     source_start = data.get("source_start")
     source_end = data.get("source_end")
@@ -1598,7 +1612,7 @@ def _validate_error_source_span(data: dict[str, object]) -> None:
         raise _worker_protocol_error("backend_worker_error_source_span_is_invalid")
 
 
-def _validate_state_data(data: dict[str, object]) -> None:
+def _validate_state_data(data: JSON) -> None:
     """Validate a state callback payload."""
     _validate_exact_fields(data, {"state"}, {"message"})
     if data["state"] not in _STATE_VALUES:
@@ -1607,7 +1621,7 @@ def _validate_state_data(data: dict[str, object]) -> None:
         raise _worker_protocol_error("backend_worker_callback_message_is_invalid")
 
 
-def _validate_event_data(operation: str, data: dict[str, object]) -> None:
+def _validate_event_data(operation: str, data: JSON) -> None:
     """Validate lifecycle, model metadata, and state event payloads."""
     if operation == "fatal":
         _validate_exact_fields(data, {"fatal"}, {"message", "error", "error_type"})
@@ -1669,7 +1683,7 @@ def _validate_event_data(operation: str, data: dict[str, object]) -> None:
     _validate_state_data(data)
 
 
-def _validate_progress_data(data: dict[str, object]) -> None:
+def _validate_progress_data(data: JSON) -> None:
     """Validate a bounded progress event payload."""
     _validate_exact_fields(data, {"step"}, {"total", "message", "state"})
     step = data["step"]
@@ -1687,19 +1701,21 @@ def _validate_progress_data(data: dict[str, object]) -> None:
         raise _worker_protocol_error("backend_worker_progress_state_is_invalid")
 
 
-def _validate_operation(operation: object) -> None:
+def _validate_operation(operation: JSONSerializable) -> None:
     """Reject operations outside the CEDTS protocol and backend allowlist."""
     if not isinstance(operation, str) or operation not in _VALID_OPERATIONS:
         raise _worker_protocol_error("backend_worker_packet_operation_is_invalid")
 
 
-def _validate_typed_fields(value: Mapping[str, object], fields: set[str]) -> None:
+def _validate_typed_fields(
+    value: Mapping[str, JSONSerializable], fields: set[str]
+) -> None:
     """Reject unknown or excessive fields in a typed binary wrapper."""
     if len(value) > _MAX_TYPED_VALUE_FIELDS or not set(value).issubset(fields):
         raise _worker_protocol_error("typed_cedts_value_fields_are_invalid")
 
 
-def _typed_string(value: object, field_name: str) -> str:
+def _typed_string(value: JSONSerializable, field_name: str) -> str:
     """Return a required typed string or reject malformed metadata."""
     if not isinstance(value, str):
         raise _worker_protocol_error(
@@ -1708,7 +1724,7 @@ def _typed_string(value: object, field_name: str) -> str:
     return value
 
 
-def _typed_int(value: object, field_name: str) -> int:
+def _typed_int(value: JSONSerializable, field_name: str) -> int:
     """Return a required typed integer or reject malformed metadata."""
     if not isinstance(value, int) or isinstance(value, bool):
         raise _worker_protocol_error(
@@ -1717,7 +1733,9 @@ def _typed_int(value: object, field_name: str) -> int:
     return value
 
 
-def _typed_optional(value: object, expected_type: type, field_name: str) -> None:
+def _typed_optional(
+    value: JSONSerializable, expected_type: type[object], field_name: str
+) -> None:
     """Validate an optional typed metadata field."""
     if value is not None and (
         not isinstance(value, expected_type)

@@ -4,7 +4,7 @@
 from types import SimpleNamespace
 from typing import Optional, cast
 from unittest import mock
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 
 import numpy as np
 import pytest
@@ -21,14 +21,13 @@ from celune.registry.asr import (
 )
 from celune.typing.persona import WhisperProcessor
 
-from ..support import CeluneTestCase
 
-
-class TestSpeechInput(CeluneTestCase):
+class TestSpeechInput:
     """Verify Persona speech-input routing and transcription helpers."""
 
-    def tearDown(self) -> None:
-        """Reset the singleton UI instance after each test."""
+    @pytest.fixture(autouse=True)
+    def _pytest_setup_and_teardown(self) -> Iterator[None]:
+        yield
         CeluneUI._instance = None
 
     def test_whisper_transcriber_uses_configured_model_lazily(self) -> None:

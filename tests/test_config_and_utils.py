@@ -13,11 +13,10 @@ import pytest
 from celune import utils, config
 from celune.typing.common import JSON, JSONSerializable
 
-from .support import CeluneTestCase
 from .platform import WINDOWS_ONLY
 
 
-class TestConfig(CeluneTestCase):
+class TestConfig:
     """Tests for configuration value resolution."""
 
     def test_env_bool_uses_fallback_and_strict_enabled_values(self) -> None:
@@ -509,7 +508,7 @@ class TestConfig(CeluneTestCase):
         assert current["gpt_sovits_t2s_weights_path"] == "C:/old-weights.pth"
 
 
-class TestUtils(CeluneTestCase):
+class TestUtils:
     """Tests for lightweight common utility functions."""
 
     def test_available_checks_namespaces_attributes_and_modules(self) -> None:
@@ -542,33 +541,27 @@ class TestUtils(CeluneTestCase):
         self,
     ) -> None:
         """Verify TTS-only formatting handles technical punctuation and Markdown."""
-        self.assertEqual(
-            utils.normalize_special_characters("“hello”—*world*…"),
-            '"hello": world...',
+        assert (utils.normalize_special_characters("“hello”—*world*…")) == (
+            '"hello": world...'
         )
-        self.assertEqual(
-            utils.normalize_special_characters(r"C:\Users\user", for_tts=True),
-            "C drive, Users, user",
+        assert (utils.normalize_special_characters(r"C:\Users\user", for_tts=True)) == (
+            "C drive, Users, user"
         )
-        self.assertEqual(
-            utils.normalize_special_characters("foo_bar.py", for_tts=True),
-            "foo underscore bar dot py",
+        assert (utils.normalize_special_characters("foo_bar.py", for_tts=True)) == (
+            "foo underscore bar dot py"
         )
-        self.assertEqual(
-            utils.normalize_special_characters('{status: "ok"}', for_tts=True),
-            "status, ok",
+        assert (utils.normalize_special_characters('{status: "ok"}', for_tts=True)) == (
+            "status, ok"
         )
-        self.assertEqual(
-            utils.normalize_special_characters("Status\u00a0: ready", for_tts=True),
-            "Status, ready",
-        )
-        self.assertEqual(
+        assert (
+            utils.normalize_special_characters("Status\u00a0: ready", for_tts=True)
+        ) == ("Status, ready")
+        assert (
             utils.normalize_special_characters(
                 "# **status** / ready - now",
                 for_tts=True,
-            ),
-            "status, ready, now",
-        )
+            )
+        ) == ("status, ready, now")
 
     def test_format_number_handles_precision_and_non_finite_values(self) -> None:
         """Verify number formatting and invalid precision handling.

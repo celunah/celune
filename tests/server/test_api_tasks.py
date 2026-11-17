@@ -3,33 +3,31 @@
 
 import asyncio
 import threading
-from unittest import mock
 from types import SimpleNamespace
 from typing import Literal, Optional, cast
+from unittest import mock
+from collections.abc import Iterator
 
 import pytest
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
 from celune import api
-from celune.server import jobs
 from celune.celune import Celune
+from celune.server import jobs
 from celune.typing.api import TaskStatus, TaskEventName
 
-from ..support import CeluneTestCase
 
-
-class TestApiTaskWebSocket(CeluneTestCase):
+class TestApiTaskWebSocket:
     """Verify task event history, live subscriptions, and cancellation routing."""
 
-    def setUp(self) -> None:
+    @pytest.fixture(autouse=True)
+    def _pytest_setup_and_teardown(self) -> Iterator[None]:
         """Reset the in-memory API task registry before each test."""
         api.server_session.speech_jobs.clear()
         api.server_session.active_speech_task_id = None
         api.server_session.auth_token = None
-
-    def tearDown(self) -> None:
-        """Reset the in-memory API task registry after each test."""
+        yield
         api.server_session.speech_jobs.clear()
         api.server_session.active_speech_task_id = None
 

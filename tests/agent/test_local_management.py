@@ -12,6 +12,8 @@ from tempfile import TemporaryDirectory
 from unittest import mock
 from contextlib import nullcontext
 
+import pytest
+
 from celune.celune import Celune
 from celune.agent.tools import (
     OfflineAgentTool,
@@ -30,11 +32,10 @@ from celune.typing.agent import (
 from celune.typing.modes import OperationMode
 from celune.persona.capabilities import PersonaCapabilities
 
-from ..support import CeluneTestCase
 from ..platform import WINDOWS_ONLY
 
 
-class TestLocalManagementTools(CeluneTestCase):
+class TestLocalManagementTools:
     """Verify typed local filesystem and diagnostic behavior without a shell."""
 
     def _context(
@@ -319,6 +320,7 @@ class TestLocalManagementTools(CeluneTestCase):
 
     def test_local_reads_resolve_relative_paths_but_writes_require_absolute_paths(
         self,
+        request: pytest.FixtureRequest,
     ) -> None:
         """Resolve relative read paths against CWD and keep mutations explicit."""
         with nullcontext():
@@ -332,7 +334,7 @@ class TestLocalManagementTools(CeluneTestCase):
                 if root.exists():
                     root.rmdir()
 
-            self.addCleanup(cleanup)
+            request.addfinalizer(cleanup)
             write = self._tool("local_write_text").execute(
                 {
                     "id": "write",

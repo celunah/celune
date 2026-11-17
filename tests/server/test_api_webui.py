@@ -14,6 +14,7 @@ from typing import (
 from pathlib import Path
 from unittest import mock
 from collections import abc, deque
+from collections.abc import Iterator
 
 import numpy as np
 import pytest
@@ -39,13 +40,14 @@ from celune.typing.pipeline import SpeechStreamQueue
 from celune.server.constants import WEBUI_CONVERT_API_NAME, WEBUI_SPEAK_INPUT_API_NAME
 
 from ..celtest import celtest
-from ..support import CeluneTestCase
 
 
-class TestApiWebUI(CeluneTestCase):
+class TestApiWebUI:
     """Tests for the mounted Gradio browser UI helpers."""
 
-    def setUp(self) -> None:
+    @pytest.fixture(autouse=True)
+    def _pytest_setup_and_teardown(self) -> Iterator[None]:
+        # pylint: disable=W0201
         """Snapshot global WebUI state before each test."""
         self.previous_celune = api.server_session.bound_celune
         self.previous_status_text = api.server_session.webui_status_text
@@ -114,9 +116,7 @@ class TestApiWebUI(CeluneTestCase):
         api.server_session.webui_timed_update_received_at = 0.0
         api.server_session.webui_timed_update_source = "fallback"
         api.set_webui_status("Starting up")
-
-    def tearDown(self) -> None:
-        """Restore global WebUI state after each test."""
+        yield
         api._unsubscribe_webui_events()
         unsubscribe_timed_update = api.server_session.webui_timed_update_unsubscribe
         if unsubscribe_timed_update is not None:

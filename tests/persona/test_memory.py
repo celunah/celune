@@ -3,17 +3,15 @@
 
 import datetime
 import tempfile
+from typing import Union, Optional
 from pathlib import Path
 from unittest import mock
 from dataclasses import replace
-from typing import Union, Optional
 from collections.abc import Sequence
 
 import numpy as np
 
 from celune.persona.memory import PersonaMemoryStore, classifier_memory_candidates
-
-from ..support import CeluneTestCase
 
 
 class StubEmbeddingMemoryStore(PersonaMemoryStore):
@@ -45,7 +43,7 @@ class StubEmbeddingMemoryStore(PersonaMemoryStore):
         return [np.array(self.embedding_map[text], dtype=np.float32) for text in texts]
 
 
-class TestPersonaMemory(CeluneTestCase):
+class TestPersonaMemory:
     """Verify Persona long-term memory behavior stays conservative and stable."""
 
     def test_explicit_memory_persists_across_store_instances(self) -> None:

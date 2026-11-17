@@ -3,23 +3,23 @@
 
 from typing import cast
 from unittest import mock
+from collections.abc import Iterator
 
-import pytest
 import numpy as np
+import pytest
 
 from celune.audio import dsp
 from celune.theme import colors
 from celune.constants import UtteranceLoudnessTier
 from celune.exceptions import BadAudioError, AudioMismatchError
 
-from .support import CeluneTestCase
 
-
-class TestColor(CeluneTestCase):
+class TestColor:
     """Tests for generated Celune theme palettes."""
 
-    def tearDown(self) -> None:
-        """Reset shared audio-reactivity state after each color test."""
+    @pytest.fixture(autouse=True)
+    def _pytest_setup_and_teardown(self) -> Iterator[None]:
+        yield
         colors.configure_theme()
 
     def test_default_and_custom_theme_palettes_are_configured(self) -> None:
@@ -50,11 +50,12 @@ class TestColor(CeluneTestCase):
         assert colors.SEVERITY_COLORS["celune_light"]["sleeping"] == "#7558af"
 
 
-class TestDsp(CeluneTestCase):
+class TestDsp:
     """Tests for lightweight DSP helpers."""
 
-    def tearDown(self) -> None:
-        """Reset shared audio-reactivity state after each DSP test."""
+    @pytest.fixture(autouse=True)
+    def _pytest_setup_and_teardown(self) -> Iterator[None]:
+        yield
         dsp._SIGNAL_CACHE.clear()
 
     def test_make_stereo_and_resampling_validate_audio(self) -> None:

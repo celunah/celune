@@ -2,36 +2,38 @@
 """Tests for Textual command routing and agent-status presentation."""
 
 import tempfile
-from pathlib import Path
-from unittest import mock
 from types import SimpleNamespace
 from typing import Optional, cast
+from pathlib import Path
+from unittest import mock
+from collections.abc import Iterator
 
 import numpy as np
+import pytest
 from textual import events
 from textual.widgets import TextArea
 
+from celune.i18n import string
+from celune.agent import AgentTaskState
+from celune.celune import Celune
 from celune.ui.app import (
     CeluneUI,
     VoiceButton,
     ButtonActions,
 )
-from celune.i18n import string
-from celune.celune import Celune
+from celune.ui.commands import process_command, attachment_source
 from celune.typing.locks import (
     ComponentLockName,
     ComponentLockOwner,
     ComponentBusyResult,
 )
-from celune.agent import AgentTaskState
 from celune.typing.modes import OperationState
-from celune.ui.commands import process_command, attachment_source
 
+from ..support import FakeBackend, FakeVCBackend
 from ..platform import WINDOWS_ONLY
-from ..support import FakeBackend, FakeVCBackend, CeluneTestCase
 
 
-class TestUICommand(CeluneTestCase):
+class TestUICommand:
     """Tests for lightweight slash command behavior."""
 
     @staticmethod
@@ -52,7 +54,9 @@ class TestUICommand(CeluneTestCase):
 
         return _ImmediateThread()
 
-    def setUp(self) -> None:
+    @pytest.fixture(autouse=True)
+    def _pytest_setup_and_teardown(self) -> Iterator[None]:
+        # pylint: disable=W0201
         """Create the lightweight command-test UI fixture."""
         self.logs: list[tuple[str, str]] = []
         self.ui = SimpleNamespace()
@@ -80,6 +84,7 @@ class TestUICommand(CeluneTestCase):
             vc_f0_condition=False,
             vc_backend=SimpleNamespace(),
         )
+        yield
 
     def test_help_includes_cesn_glossary_for_singing_backend(self) -> None:
         """Show CESN syntax help only when the active TTS backend sings."""
@@ -592,11 +597,12 @@ class TestUICommand(CeluneTestCase):
         assert parts == ["attach", r"C:\Users\user\Downloads\bad suggestion.png"]
 
 
-class TestAgentStatusUI(CeluneTestCase):
+class TestAgentStatusUI:
     """Tests for the typed agent lifecycle projection in the UI."""
 
-    def tearDown(self) -> None:
-        """Reset singleton UI guards after each test."""
+    @pytest.fixture(autouse=True)
+    def _pytest_setup_and_teardown(self) -> Iterator[None]:
+        yield
         CeluneUI._instance = None
 
     @staticmethod
@@ -650,25 +656,24 @@ class TestAgentStatusUI(CeluneTestCase):
             (AgentTaskState.CANCELLED, "agent.status.cancelled"),
             (AgentTaskState.ABORTED, "agent.status.aborted"),
         ):
-            with self.subTest(state=state):
-                task.state = state
-                ui._agent_status_signature = None
-                safe_status.reset_mock()
+            task.state = state
+            ui._agent_status_signature = None
+            safe_status.reset_mock()
 
-                ui._refresh_agent_status()
-                ui._refresh_agent_status()
+            ui._refresh_agent_status()
+            ui._refresh_agent_status()
 
-                if state == AgentTaskState.WORKING:
-                    safe_status.assert_called_once_with(
-                        string(
-                            "agent.status.working",
-                            iteration=2,
-                            maximum=5,
-                        ),
-                        "info",
-                    )
-                else:
-                    safe_status.assert_called_once_with(string(expected), "info")
+            if state == AgentTaskState.WORKING:
+                safe_status.assert_called_once_with(
+                    string(
+                        "agent.status.working",
+                        iteration=2,
+                        maximum=5,
+                    ),
+                    "info",
+                )
+            else:
+                safe_status.assert_called_once_with(string(expected), "info")
 
     def test_agent_status_prioritizes_compaction_and_structured_busy_components(
         self,
@@ -722,21 +727,18 @@ class TestAgentStatusUI(CeluneTestCase):
         ui.update_resources = mock.Mock()
         ui.change_input_state(locked=True)
 
-        self.assertEqual(ui.input_box.placeholder, string("ui.stopped_placeholder"))
-        self.assertEqual(
-            ui._terminal_status_for(string("status.speaking"), "info"),
-            ("stopped", string("osc.action_stopped")),
+        assert (ui.input_box.placeholder) == (string("ui.stopped_placeholder"))
+        assert (ui._terminal_status_for(string("status.speaking"), "info")) == (
+            ("stopped", string("osc.action_stopped"))
         )
         ui.celune.cur_state = "thinking"
         ui._agent_task_state = AgentTaskState.AWAITING_APPROVAL
-        self.assertEqual(
-            ui._terminal_status_for(string("agent.status.awaiting_approval"), "info"),
-            ("awaiting", string("agent.status.awaiting_approval")),
-        )
+        assert (
+            ui._terminal_status_for(string("agent.status.awaiting_approval"), "info")
+        ) == (("awaiting", string("agent.status.awaiting_approval")))
         ui._agent_task_state = AgentTaskState.PAUSED
-        self.assertEqual(
-            ui._terminal_status_for(string("agent.status.paused"), "info"),
-            ("paused", string("agent.status.paused")),
+        assert (ui._terminal_status_for(string("agent.status.paused"), "info")) == (
+            ("paused", string("agent.status.paused"))
         )
         ui.celune.cur_state = "stopped"
 

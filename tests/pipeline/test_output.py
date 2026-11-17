@@ -1,34 +1,30 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for pipeline helpers that do not perform real synthesis."""
 
+import json as _json
 import tempfile
 import threading
-import json as _json
-from pathlib import Path
-from typing import cast
-from unittest import mock
 from types import SimpleNamespace
+from typing import cast
+from pathlib import Path
+from unittest import mock
 
-import pytest
 import numpy as np
+import pytest
 import soundfile as sf
 
 from celune import cesn
-from celune.celune import Celune
-from celune.constants import APP_SLUG
 from celune import metadata as celune_metadata
-from celune.dataclasses import pipeline as pipeline_types
+from celune.celune import Celune
 from celune.pipeline import output, playback, submission
+from celune.constants import APP_SLUG
+from celune.dataclasses import pipeline as pipeline_types
 
-from ..support import (
-    FakeStream,
-    CeluneAsyncTestCase,
-    make_pipeline_engine,
-)
+from ..support import FakeStream, make_pipeline_engine
 
 
 @pytest.mark.anyio
-class TestPipelineAsync(CeluneAsyncTestCase):
+class TestPipelineAsync:
     """Exercise pipeline output and playback behavior."""
 
     def test_split_text_breaks_long_unpunctuated_lines(self) -> None:

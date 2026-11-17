@@ -17,6 +17,7 @@ from contextlib import suppress
 from collections import OrderedDict, deque
 
 import numpy as np
+import pytest
 
 from celune.cesn import format_cesn_error
 from celune.cedts import remote, worker
@@ -58,7 +59,6 @@ from celune.backends.environment import (
 )
 from celune.dataclasses.pipeline import VoiceConversionRequest
 
-from ..support import CeluneTestCase
 from ..platform import LINUX_ONLY, WINDOWS_ONLY
 from .backend_processes import send_no_payload_packet
 
@@ -75,7 +75,7 @@ def _worker_error_response(error: CESNError) -> tuple[WorkerResponse, str]:
     return response, worker_stderr.getvalue()
 
 
-class TestWorkerProtocol(CeluneTestCase):
+class TestWorkerProtocol:
     """Exercise the CEDTS worker wire protocol in subprocesses."""
 
     def test_cedts_preserves_cesn_error_source_spans(self) -> None:
@@ -105,10 +105,10 @@ class TestWorkerProtocol(CeluneTestCase):
             source_end=cast(int, data["source_end"]),
         )
 
-        self.assertIsInstance(restored, CESNValidationError)
-        self.assertEqual(restored.source_start, 8)
-        self.assertEqual(restored.source_end, 10)
-        self.assertEqual(str(restored), "unsupported score value")
+        assert isinstance(restored, CESNValidationError)
+        assert (restored.source_start) == (8)
+        assert (restored.source_end) == (10)
+        assert (str(restored)) == ("unsupported score value")
 
     def test_worker_cesn_errors_use_notation_diagnostics_without_tracebacks(
         self,
@@ -127,39 +127,32 @@ class TestWorkerProtocol(CeluneTestCase):
             ),
         )
         for notation, error, source_text in cases:
-            with self.subTest(error_type=type(error).__name__):
-                error.source_start = notation.index(source_text)
-                error.source_end = error.source_start + len(source_text)
-                response, worker_stderr = _worker_error_response(error)
+            error.source_start = notation.index(source_text)
+            error.source_end = error.source_start + len(source_text)
+            response, worker_stderr = _worker_error_response(error)
 
-                self.assertEqual(worker_stderr, "")
-                self.assertNotIn(
-                    worker.WORKER_TRACEBACK_MARKER,
-                    response["error"],
-                )
+            assert (worker_stderr) == ("")
+            assert (worker.WORKER_TRACEBACK_MARKER) not in (response["error"])
 
-                restored = remote._worker_exception(
-                    response["error_type"],
-                    response["error"],
-                    source_start=response["source_start"],
-                    source_end=response["source_end"],
-                )
-                self.assertIsInstance(restored, CESNError)
-                diagnostic = format_cesn_error(notation, restored)
-                self.assertTrue(diagnostic.startswith("Parse error in CESN notation"))
-                self.assertIn("^", diagnostic)
-                self.assertNotIn("Traceback", diagnostic)
+            restored = remote._worker_exception(
+                response["error_type"],
+                response["error"],
+                source_start=response["source_start"],
+                source_end=response["source_end"],
+            )
+            assert isinstance(restored, CESNError)
+            diagnostic = format_cesn_error(notation, restored)
+            assert diagnostic.startswith("Parse error in CESN notation")
+            assert "^" in (diagnostic)
+            assert ("Traceback") not in (diagnostic)
 
     def test_worker_retains_tracebacks_for_internal_cesn_format_errors(self) -> None:
         """Keep backend-format defects on the backend diagnostic path."""
         error = CESNBackendFormatError("prepared score has an invalid pitch")
         response, worker_stderr = _worker_error_response(error)
 
-        self.assertIn("Traceback", worker_stderr)
-        self.assertIn(
-            worker.WORKER_TRACEBACK_MARKER,
-            response["error"],
-        )
+        assert "Traceback" in (worker_stderr)
+        assert worker.WORKER_TRACEBACK_MARKER in (response["error"])
 
     def test_remote_proxy_keeps_internal_cesn_format_errors_as_backend_errors(
         self,
@@ -172,8 +165,8 @@ class TestWorkerProtocol(CeluneTestCase):
             source_end=7,
         )
 
-        self.assertIsInstance(error, BackendError)
-        self.assertEqual(error.error_type, "celune.exceptions.CESNBackendFormatError")
+        assert isinstance(error, BackendError)
+        assert (error.error_type) == ("celune.exceptions.CESNBackendFormatError")
 
     def test_worker_response_serialization_error_reaches_traceback_file(
         self,
@@ -199,8 +192,8 @@ class TestWorkerProtocol(CeluneTestCase):
 
         stream_bytes = stream.getvalue()
         packet = receive_message(io.BytesIO(stream_bytes))
-        self.assertEqual(packet["kind"], "error")
-        self.assertEqual(packet["reply_to"], "describe-request")
+        assert (packet["kind"]) == ("error")
+        assert (packet["reply_to"]) == ("describe-request")
         data = cast(dict[str, WorkerValue], packet["data"])
         proxy = object.__new__(remote.RemoteBackendProxy)
         proxy._received_message_ids = OrderedDict()
@@ -222,10 +215,10 @@ class TestWorkerProtocol(CeluneTestCase):
             format_error(error, "debug")
 
         traceback_text = traceback_file.read_text(encoding="utf-8")
-        self.assertIn("Worker traceback:", traceback_text)
-        self.assertIn("ValueError: JSON number is not finite", traceback_text)
-        self.assertIn("_send_message", traceback_text)
-        self.assertFalse(cast(bool, data["ok"]))
+        assert "Worker traceback:" in (traceback_text)
+        assert "ValueError: JSON number is not finite" in (traceback_text)
+        assert "_send_message" in (traceback_text)
+        assert not cast(bool, data["ok"])
 
     def test_cedts_accepts_null_cechar_singing_metadata(self) -> None:
         """Keep CECHAR v5 null singing fields valid CEDTS JSON values."""
@@ -248,8 +241,8 @@ class TestWorkerProtocol(CeluneTestCase):
         fields = cast(dict[str, WorkerValue], decoded["data"])
         description = cast(dict[str, WorkerValue], fields["value"])
         singing_voice = cast(dict[str, WorkerValue], description["sing"])
-        self.assertIsNone(singing_voice["cfg_scale"])
-        self.assertIsNone(singing_voice["persona"])
+        assert (singing_voice["cfg_scale"]) is None
+        assert (singing_voice["persona"]) is None
 
     def test_worker_model_metadata_event_is_validated_and_transmitted(self) -> None:
         """Carry effective runtime metadata from workers to the core."""
@@ -263,13 +256,12 @@ class TestWorkerProtocol(CeluneTestCase):
         stream.seek(0)
 
         decoded = receive_message(stream)
-        self.assertEqual(decoded["operation"], "metadata")
-        self.assertEqual(
-            decoded["data"],
-            {"model": "example/model", "type": "gguf", "quant": "Q4_K_M"},
+        assert (decoded["operation"]) == ("metadata")
+        assert (decoded["data"]) == (
+            {"model": "example/model", "type": "gguf", "quant": "Q4_K_M"}
         )
 
-        with self.assertRaises(CEDTSError):
+        with pytest.raises(CEDTSError):
             send_message(
                 io.BytesIO(),
                 build_packet(
@@ -319,15 +311,14 @@ class TestWorkerProtocol(CeluneTestCase):
             stream,
         )
 
-        self.assertTrue(response["ok"])
-        self.assertEqual(next_model_id, 8)
+        assert response["ok"]
+        assert (next_model_id) == (8)
         stream.seek(0)
         packet = receive_message(stream)
-        self.assertEqual(packet["kind"], "event")
-        self.assertEqual(packet["operation"], "metadata")
-        self.assertEqual(
-            packet["data"],
-            {"model": "example/model", "type": "gguf", "quant": "Q4_K_M"},
+        assert (packet["kind"]) == ("event")
+        assert (packet["operation"]) == ("metadata")
+        assert (packet["data"]) == (
+            {"model": "example/model", "type": "gguf", "quant": "Q4_K_M"}
         )
 
     @LINUX_ONLY
@@ -411,7 +402,7 @@ raise SystemExit(worker.main())
                 assert process.stdout is not None
                 ready, _, _ = select.select([process.stdout], [], [], 10.0)
                 if not ready:
-                    self.fail("worker did not send the next CEDTS packet")
+                    pytest.fail("worker did not send the next CEDTS packet")
                 return receive_message(process.stdout)
 
             hello = build_packet(
@@ -430,10 +421,10 @@ raise SystemExit(worker.main())
             send_no_payload_packet(process.stdin, core_binary_output, hello)
             hello_ack = receive_worker_message()
             ready = receive_worker_message()
-            self.assertEqual(hello_ack["kind"], "hello_ack")
-            self.assertEqual(hello_ack["reply_to"], "hello-request")
-            self.assertEqual(ready["kind"], "ready")
-            self.assertEqual(ready["reply_to"], "hello-request")
+            assert (hello_ack["kind"]) == ("hello_ack")
+            assert (hello_ack["reply_to"]) == ("hello-request")
+            assert (ready["kind"]) == ("ready")
+            assert (ready["reply_to"]) == ("hello-request")
 
             request = build_packet(
                 "request",
@@ -443,9 +434,9 @@ raise SystemExit(worker.main())
             )
             send_no_payload_packet(process.stdin, core_binary_output, request)
             response = receive_worker_message()
-            self.assertEqual(response["kind"], "response")
-            self.assertEqual(response["reply_to"], "describe-request")
-            self.assertTrue(cast(dict, response["data"])["ok"])
+            assert (response["kind"]) == ("response")
+            assert (response["reply_to"]) == ("describe-request")
+            assert cast(dict, response["data"])["ok"]
 
             load_request = build_packet(
                 "request",
@@ -458,12 +449,9 @@ raise SystemExit(worker.main())
             )
             send_no_payload_packet(process.stdin, core_binary_output, load_request)
             load_response = receive_worker_message()
-            self.assertEqual(load_response["kind"], "response")
-            self.assertEqual(load_response["reply_to"], "load-request")
-            self.assertEqual(
-                cast(dict, load_response["data"])["value"],
-                1,
-            )
+            assert (load_response["kind"]) == ("response")
+            assert (load_response["reply_to"]) == ("load-request")
+            assert (cast(dict, load_response["data"])["value"]) == (1)
 
             shutdown = build_packet(
                 "shutdown",
@@ -473,21 +461,20 @@ raise SystemExit(worker.main())
             )
             send_no_payload_packet(process.stdin, core_binary_output, shutdown)
             shutdown_ack = receive_worker_message()
-            self.assertEqual(shutdown_ack["kind"], "shutdown_ack")
-            self.assertEqual(shutdown_ack["reply_to"], "shutdown-request")
-            self.assertEqual(
-                cast(dict, shutdown_ack["data"])["value"]["active_job_cancelled"],
-                False,
+            assert (shutdown_ack["kind"]) == ("shutdown_ack")
+            assert (shutdown_ack["reply_to"]) == ("shutdown-request")
+            assert (
+                (cast(dict, shutdown_ack["data"])["value"]["active_job_cancelled"])
+                is False
             )
             stderr_output = b""
             try:
                 _, stderr_output = process.communicate(timeout=15)
             except subprocess.TimeoutExpired:
-                self.fail("worker did not exit after shutdown acknowledgement")
-            self.assertEqual(process.returncode, 0)
-            self.assertIn(
-                "backend load diagnostic",
-                stderr_output.decode("utf-8", errors="replace"),
+                pytest.fail("worker did not exit after shutdown acknowledgement")
+            assert (process.returncode) == (0)
+            assert "backend load diagnostic" in (
+                stderr_output.decode("utf-8", errors="replace")
             )
         finally:
             for descriptor in (
@@ -543,17 +530,16 @@ protocol_stream.close()
         stderr_thread = threading.Thread(target=read_stderr, daemon=True)
         stderr_thread.start()
         try:
-            self.assertEqual(process.stdout.readline(), b"ready\n")
+            assert (process.stdout.readline()) == (b"ready\n")
             stderr_thread.join(timeout=5)
-            self.assertFalse(stderr_thread.is_alive())
-            self.assertEqual(
-                [line.rstrip(b"\r\n") for line in stderr_lines],
-                [b"backend diagnostic"],
+            assert not stderr_thread.is_alive()
+            assert ([line.rstrip(b"\r\n") for line in stderr_lines]) == (
+                [b"backend diagnostic"]
             )
             process.stdin.write(b"\n")
             process.stdin.flush()
             process.wait(timeout=10)
-            self.assertEqual(process.returncode, 0)
+            assert (process.returncode) == (0)
         finally:
             if process.poll() is None:
                 with suppress(Exception):
@@ -713,14 +699,11 @@ raise SystemExit(worker.main())
             )
             first_frame = receive_worker_packet()
             first_data = cast(dict[str, WorkerValue], first_frame["data"])
-            self.assertEqual(
-                first_frame["kind"],
-                "response",
-                f"unexpected worker packet: {first_frame!r}",
+            assert (first_frame["kind"]) == ("response"), (
+                f"unexpected worker packet: {first_frame!r}"
             )
-            self.assertTrue(
-                first_data.get("stream"),
-                f"unexpected worker packet: {first_frame!r}",
+            assert first_data.get("stream"), (
+                f"unexpected worker packet: {first_frame!r}"
             )
             send_no_payload_packet(
                 process.stdin,
@@ -766,16 +749,14 @@ raise SystemExit(worker.main())
         """Verify finish waits for completion and reports no cancellation."""
         value, packets = self._run_worker_stream_shutdown_policy("finish")
 
-        self.assertEqual(value["active_job_policy"], "finish")
-        self.assertEqual(value["active_job_result"], "finished")
-        self.assertFalse(value["active_job_cancelled"])
-        self.assertTrue(value["active_job_completed"])
-        self.assertTrue(
-            any(
-                cast(dict, packet["data"]).get("stream")
-                for packet in packets
-                if packet["kind"] == "response"
-            )
+        assert (value["active_job_policy"]) == ("finish")
+        assert (value["active_job_result"]) == ("finished")
+        assert not value["active_job_cancelled"]
+        assert value["active_job_completed"]
+        assert any(
+            cast(dict, packet["data"]).get("stream")
+            for packet in packets
+            if packet["kind"] == "response"
         )
 
     @LINUX_ONLY
@@ -783,16 +764,14 @@ raise SystemExit(worker.main())
         """Verify cancel interrupts an active stream and reports cancellation."""
         value, packets = self._run_worker_stream_shutdown_policy("cancel")
 
-        self.assertEqual(value["active_job_policy"], "cancel")
-        self.assertEqual(value["active_job_result"], "cancelled")
-        self.assertTrue(value["active_job_cancelled"])
-        self.assertTrue(value["active_job_completed"])
-        self.assertTrue(
-            any(
-                cast(dict, packet["data"]).get("cancelled")
-                for packet in packets
-                if packet["kind"] == "response"
-            )
+        assert (value["active_job_policy"]) == ("cancel")
+        assert (value["active_job_result"]) == ("cancelled")
+        assert value["active_job_cancelled"]
+        assert value["active_job_completed"]
+        assert any(
+            cast(dict, packet["data"]).get("cancelled")
+            for packet in packets
+            if packet["kind"] == "response"
         )
 
     @LINUX_ONLY
@@ -803,11 +782,11 @@ raise SystemExit(worker.main())
             ignore_cancellation=True,
         )
 
-        self.assertEqual(value["active_job_policy"], "cancel")
-        self.assertEqual(value["active_job_result"], "timed_out")
-        self.assertTrue(value["active_job_cancelled"])
-        self.assertFalse(value["active_job_completed"])
-        self.assertFalse(
+        assert (value["active_job_policy"]) == ("cancel")
+        assert (value["active_job_result"]) == ("timed_out")
+        assert value["active_job_cancelled"]
+        assert not value["active_job_completed"]
+        assert not (
             any(
                 cast(dict, packet["data"]).get("done")
                 for packet in packets
@@ -1033,13 +1012,13 @@ finally:
             ready, _, _ = select.select([started_read], [], [], remaining)
             if not ready:
                 stderr = process.stderr.read() if process.poll() is not None else b""
-                self.fail(
+                pytest.fail(
                     "blocking backend operation did not start "
                     f"(returncode={process.poll()}, stderr={stderr!r})"
                 )
             if not os.read(started_read, 1):
                 stderr = process.stderr.read() if process.poll() is not None else b""
-                self.fail(
+                pytest.fail(
                     "blocking backend operation did not start "
                     f"(returncode={process.poll()}, stderr={stderr!r})"
                 )
@@ -1071,10 +1050,10 @@ finally:
                         response = packet
                 assert cancellation_ack is not None
                 assert response is not None
-                self.assertEqual(cancellation_ack["kind"], "cancel_ack")
-                self.assertFalse(cast(dict, cancellation_ack["data"])["cancelled"])
-                self.assertEqual(response["kind"], "response")
-                self.assertTrue(cast(dict, response["data"])["ok"])
+                assert (cancellation_ack["kind"]) == ("cancel_ack")
+                assert not cast(dict, cancellation_ack["data"])["cancelled"]
+                assert (response["kind"]) == ("response")
+                assert cast(dict, response["data"])["ok"]
                 assert cancellation_ack_elapsed is not None
                 return cancellation_ack_elapsed
 
@@ -1093,23 +1072,23 @@ finally:
             while shutdown_ack is None:
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
-                    self.fail("shutdown acknowledgement was not prompt")
+                    pytest.fail("shutdown acknowledgement was not prompt")
                 ready, _, _ = select.select([process.stdout], [], [], remaining)
                 if not ready:
-                    self.fail("shutdown acknowledgement was not prompt")
+                    pytest.fail("shutdown acknowledgement was not prompt")
                 packet = receive_message(process.stdout)
                 if packet["kind"] == "shutdown_ack":
                     shutdown_ack = packet
             elapsed = time.monotonic() - started
-            self.assertEqual(shutdown_ack["kind"], "shutdown_ack")
-            self.assertEqual(shutdown_ack["reply_to"], "shutdown-request")
+            assert (shutdown_ack["kind"]) == ("shutdown_ack")
+            assert (shutdown_ack["reply_to"]) == ("shutdown-request")
             shutdown_data = cast(dict[str, WorkerValue], shutdown_ack["data"])
-            self.assertFalse(shutdown_data["ok"])
+            assert not shutdown_data["ok"]
             shutdown_value = cast(dict[str, WorkerValue], shutdown_data["value"])
-            self.assertEqual(shutdown_value["active_job_result"], "timed_out")
-            self.assertFalse(shutdown_value["active_job_cancelled"])
+            assert (shutdown_value["active_job_result"]) == ("timed_out")
+            assert not shutdown_value["active_job_cancelled"]
             release_blocked_operation()
-            self.assertEqual(process.wait(timeout=2), 0)
+            assert (process.wait(timeout=2)) == (0)
             return elapsed
         finally:
             for descriptor in (
@@ -1138,11 +1117,7 @@ finally:
     def test_worker_control_loop_handles_cancel_during_blocking_operation(self) -> None:
         """Verify non-stream cancellation is rejected before successful completion."""
         for operation in ("preload_models", "load_model", "call"):
-            with self.subTest(operation=operation):
-                self.assertLess(
-                    self._run_blocking_worker_control_test("cancel", operation),
-                    1.0,
-                )
+            assert (self._run_blocking_worker_control_test("cancel", operation)) < (1.0)
 
     def test_worker_blocking_conversion_does_not_report_successful_cancellation(
         self,
@@ -1183,22 +1158,22 @@ finally:
 
         thread = threading.Thread(target=run_conversion)
         thread.start()
-        self.assertTrue(started.wait(timeout=1))
+        assert started.wait(timeout=1)
         cancellation.set()
         release.set()
         thread.join(timeout=2)
 
-        self.assertFalse(thread.is_alive())
-        self.assertEqual(len(responses), 1)
-        self.assertTrue(responses[0]["ok"])
-        self.assertNotIn("cancelled", responses[0])
+        assert not thread.is_alive()
+        assert (len(responses)) == (1)
+        assert responses[0]["ok"]
+        assert ("cancelled") not in (responses[0])
 
     @LINUX_ONLY
     def test_worker_control_loop_handles_shutdown_during_blocking_operation(
         self,
     ) -> None:
         """Verify shutdown is acknowledged while preload remains blocked."""
-        self.assertLess(self._run_blocking_worker_control_test("shutdown"), 1.0)
+        assert (self._run_blocking_worker_control_test("shutdown")) < (1.0)
 
     @LINUX_ONLY
     def test_worker_rejects_cancel_after_terminal_state_is_marked(self) -> None:
@@ -1344,13 +1319,13 @@ raise SystemExit(worker.main())
                 ),
             )
             first_frame = receive_message(process.stdout)
-            self.assertTrue(cast(dict, first_frame["data"])["stream"])
+            assert cast(dict, first_frame["data"])["stream"]
             terminal_line = b""
             for _ in range(20):
                 terminal_line = process.stderr.readline()
                 if b"TERMINAL_READY" in terminal_line:
                     break
-            self.assertIn(b"TERMINAL_READY", terminal_line)
+            assert b"TERMINAL_READY" in (terminal_line)
             send_no_payload_packet(
                 process.stdin,
                 core_binary_output,
@@ -1363,9 +1338,9 @@ raise SystemExit(worker.main())
             )
             cancel_ack = receive_message(process.stdout)
             terminal = receive_message(process.stdout)
-            self.assertEqual(cancel_ack["kind"], "cancel_ack")
-            self.assertFalse(cast(dict, cancel_ack["data"])["cancelled"])
-            self.assertTrue(cast(dict, terminal["data"])["done"])
+            assert (cancel_ack["kind"]) == ("cancel_ack")
+            assert not cast(dict, cancel_ack["data"])["cancelled"]
+            assert cast(dict, terminal["data"])["done"]
         finally:
             for descriptor in (
                 worker_binary_input,
@@ -1402,7 +1377,7 @@ raise SystemExit(worker.main())
         proxy._received_message_ids = OrderedDict()
         proxy._worker_stderr = deque()
         proxy._worker_stderr_lock = threading.Lock()
-        with self.assertRaises(CEDTSError):
+        with pytest.raises(CEDTSError):
             proxy._read_response(
                 cast(subprocess.Popen[bytes], SimpleNamespace(stdout=mismatched)),
                 "active-request",
@@ -1423,10 +1398,8 @@ raise SystemExit(worker.main())
         proxy._worker_stderr = deque()
         proxy._worker_stderr_lock = threading.Lock()
         process = cast(subprocess.Popen[bytes], SimpleNamespace(stdout=duplicate))
-        self.assertEqual(
-            proxy._read_response(process, "active-request")["value"], "once"
-        )
-        with self.assertRaises(CEDTSError):
+        assert (proxy._read_response(process, "active-request")["value"]) == ("once")
+        with pytest.raises(CEDTSError):
             proxy._read_response(process, "active-request")
 
     def test_remote_proxy_does_not_treat_progress_as_a_response(self) -> None:
@@ -1457,20 +1430,17 @@ raise SystemExit(worker.main())
             cast(subprocess.Popen[bytes], SimpleNamespace(stdout=stream)),
             "active-request",
         )
-        self.assertTrue(response["done"])
+        assert response["done"]
 
     def test_remote_proxy_keeps_worker_builtin_exception_types_inert(self) -> None:
         """Verify worker ValueErrors never select a core exception class."""
         error = remote._worker_exception("builtins.ValueError", "bad input")
 
-        self.assertIsInstance(error, remote.BackendError)
-        self.assertNotIsInstance(error, ValueError)
-        self.assertEqual(error.error_code, "backend_worker_error")
-        self.assertEqual(error.error_type, "builtins.ValueError")
-        self.assertEqual(
-            str(error),
-            "backend_worker_error (builtins.ValueError): bad input",
-        )
+        assert isinstance(error, remote.BackendError)
+        assert not isinstance(error, ValueError)
+        assert (error.error_code) == ("backend_worker_error")
+        assert (error.error_type) == ("builtins.ValueError")
+        assert (str(error)) == ("backend_worker_error (builtins.ValueError): bad input")
 
     def test_remote_proxy_rejects_unmapped_worker_exception_names(self) -> None:
         """Verify unknown and nested worker exception names remain backend errors."""
@@ -1479,16 +1449,14 @@ raise SystemExit(worker.main())
             "celune.exceptions.BackendError.Nested",
             "backend_pkg.ModelError",
         ):
-            with self.subTest(error_type=error_type):
-                error = remote._worker_exception(error_type, "generation failed")
+            error = remote._worker_exception(error_type, "generation failed")
 
-                self.assertIsInstance(error, remote.BackendError)
-                self.assertEqual(error.error_code, "backend_worker_error")
-                self.assertEqual(error.error_type, error_type)
-                self.assertEqual(
-                    str(error),
-                    f"backend_worker_error ({error_type}): generation failed",
-                )
+            assert isinstance(error, remote.BackendError)
+            assert (error.error_code) == ("backend_worker_error")
+            assert (error.error_type) == (error_type)
+            assert (str(error)) == (
+                f"backend_worker_error ({error_type}): generation failed"
+            )
 
     def test_remote_proxy_does_not_invoke_constructor_sensitive_worker_names(
         self,
@@ -1499,11 +1467,10 @@ raise SystemExit(worker.main())
             "generation failed",
         )
 
-        self.assertIsInstance(error, remote.BackendError)
-        self.assertEqual(error.error_type, "builtins.__class_getitem__")
-        self.assertEqual(
-            str(error),
-            "backend_worker_error (builtins.__class_getitem__): generation failed",
+        assert isinstance(error, remote.BackendError)
+        assert (error.error_type) == ("builtins.__class_getitem__")
+        assert (str(error)) == (
+            "backend_worker_error (builtins.__class_getitem__): generation failed"
         )
 
     def test_remote_proxy_does_not_drain_after_consuming_worker_error_frame(
@@ -1544,7 +1511,7 @@ raise SystemExit(worker.main())
         with (
             mock.patch.object(proxy, "_send_packet", return_value="request-id"),
             mock.patch.object(proxy, "_drain_stream") as drain,
-            self.assertRaisesRegex(BackendError, "missing codec"),
+            pytest.raises(BackendError, match="missing codec"),
         ):
             list(proxy._stream_request("generate_stream"))
 
@@ -1631,12 +1598,11 @@ raise SystemExit(worker.main())
         """Verify unknown backend exception classes retain their qualified name."""
         error = remote._worker_exception("backend_pkg.ModelError", "generation failed")
 
-        self.assertIsInstance(error, remote.BackendError)
-        self.assertEqual(error.error_code, "backend_worker_error")
-        self.assertEqual(error.error_type, "backend_pkg.ModelError")
-        self.assertEqual(
-            str(error),
-            "backend_worker_error (backend_pkg.ModelError): generation failed",
+        assert isinstance(error, remote.BackendError)
+        assert (error.error_code) == ("backend_worker_error")
+        assert (error.error_type) == ("backend_pkg.ModelError")
+        assert (str(error)) == (
+            "backend_worker_error (backend_pkg.ModelError): generation failed"
         )
 
     def test_remote_proxy_does_not_inherit_core_pythonhome(self) -> None:
@@ -1687,51 +1653,39 @@ raise SystemExit(worker.main())
                 {},
             )
 
-        self.assertNotIn("PYTHONHOME", popen.call_args.kwargs["env"])
-        self.assertNotIn("CELUNE_WORKER_SECRET", popen.call_args.kwargs["env"])
-        self.assertNotIn("HF_TOKEN", popen.call_args.kwargs["env"])
-        self.assertNotIn("C:/attacker", popen.call_args.kwargs["env"]["PYTHONPATH"])
-        self.assertEqual(
-            popen.call_args.kwargs["env"]["PYTHONPATH"],
-            str(remote.project_root().resolve()),
+        assert ("PYTHONHOME") not in (popen.call_args.kwargs["env"])
+        assert ("CELUNE_WORKER_SECRET") not in (popen.call_args.kwargs["env"])
+        assert ("HF_TOKEN") not in (popen.call_args.kwargs["env"])
+        assert ("C:/attacker") not in (popen.call_args.kwargs["env"]["PYTHONPATH"])
+        assert (popen.call_args.kwargs["env"]["PYTHONPATH"]) == (
+            str(remote.project_root().resolve())
         )
-        self.assertEqual(
-            popen.call_args.kwargs["env"]["PATH"],
+        assert (popen.call_args.kwargs["env"]["PATH"]) == (
             os.pathsep.join(
                 (str(backend_environment.python.resolve().parent), "C:/system")
-            ),
+            )
         )
         expected_temp_directory = str(temp_data_dir())
         for variable in ("TMPDIR", "TEMP", "TMP"):
-            self.assertEqual(
-                popen.call_args.kwargs["env"][variable],
-                expected_temp_directory,
+            assert (popen.call_args.kwargs["env"][variable]) == (
+                expected_temp_directory
             )
-        self.assertEqual(
-            popen.call_args.kwargs["env"]["NUMBA_CACHE_DIR"],
-            str(Path("C:/celune/temp/numba")),
+        assert (popen.call_args.kwargs["env"]["NUMBA_CACHE_DIR"]) == (
+            str(Path("C:/celune/temp/numba"))
         )
-        self.assertEqual(
-            popen.call_args.kwargs["env"]["HF_HOME"],
-            str(Path("C:/celune/huggingface")),
+        assert (popen.call_args.kwargs["env"]["HF_HOME"]) == (
+            str(Path("C:/celune/huggingface"))
         )
-        self.assertEqual(
-            popen.call_args.kwargs["env"]["HF_HUB_CACHE"],
-            str(Path("C:/celune/huggingface/hub")),
+        assert (popen.call_args.kwargs["env"]["HF_HUB_CACHE"]) == (
+            str(Path("C:/celune/huggingface/hub"))
         )
         configure_numba_cache.assert_called_once_with()
-        self.assertEqual(popen.call_args.kwargs["env"]["USERNAME"], "test-user")
-        self.assertEqual(
-            popen.call_args.kwargs["env"]["CUDA_VISIBLE_DEVICES"],
-            "1",
-        )
-        self.assertEqual(popen.call_args.kwargs["env"]["CUDA_PATH"], "C:/CUDA")
-        self.assertEqual(
-            popen.call_args.kwargs["env"]["LD_LIBRARY_PATH"],
-            "/opt/cuda/lib64",
-        )
-        self.assertEqual(popen.call_args.kwargs["env"]["PYTHONNOUSERSITE"], "1")
-        self.assertEqual(popen.call_args.args[0][2], "--backend")
+        assert (popen.call_args.kwargs["env"]["USERNAME"]) == ("test-user")
+        assert (popen.call_args.kwargs["env"]["CUDA_VISIBLE_DEVICES"]) == ("1")
+        assert (popen.call_args.kwargs["env"]["CUDA_PATH"]) == ("C:/CUDA")
+        assert (popen.call_args.kwargs["env"]["LD_LIBRARY_PATH"]) == ("/opt/cuda/lib64")
+        assert (popen.call_args.kwargs["env"]["PYTHONNOUSERSITE"]) == ("1")
+        assert (popen.call_args.args[0][2]) == ("--backend")
         assert proxy._binary_input is not None
         assert proxy._binary_output is not None
         proxy._binary_input.close()
@@ -1777,11 +1731,11 @@ raise SystemExit(worker.main())
         def record_startup_info(command: list[str], **kwargs: object) -> object:
             startup_info = cast(StartupInfo, kwargs["startupinfo"])
             handle_list.extend(startup_info.lpAttributeList["handle_list"])
-            self.assertTrue(kwargs["close_fds"])
-            self.assertIn("--binary-input-handle", command)
-            self.assertIn("--binary-output-handle", command)
-            self.assertNotIn("--binary-input-fd", command)
-            self.assertNotIn("--binary-output-fd", command)
+            assert kwargs["close_fds"]
+            assert "--binary-input-handle" in (command)
+            assert "--binary-output-handle" in (command)
+            assert ("--binary-input-fd") not in (command)
+            assert ("--binary-output-fd") not in (command)
             return process
 
         with (
@@ -1822,7 +1776,7 @@ raise SystemExit(worker.main())
                 {},
             )
 
-        self.assertEqual(len(handle_list), 2)
+        assert (len(handle_list)) == (2)
         assert proxy._binary_input is not None
         assert proxy._binary_output is not None
         proxy._binary_input.close()
@@ -1850,20 +1804,18 @@ raise SystemExit(worker.main())
         ):
             streams = worker._open_binary_streams(args)
 
-        self.assertEqual(streams, (input_stream, output_stream))
-        self.assertEqual(
-            open_osfhandle.call_args_list,
+        assert (streams) == ((input_stream, output_stream))
+        assert (open_osfhandle.call_args_list) == (
             [
                 mock.call(101, worker.os.O_RDONLY | getattr(worker.os, "O_BINARY", 0)),
                 mock.call(202, worker.os.O_WRONLY | getattr(worker.os, "O_BINARY", 0)),
-            ],
+            ]
         )
-        self.assertEqual(
-            fdopen.call_args_list,
+        assert (fdopen.call_args_list) == (
             [
                 mock.call(31, "rb", buffering=0),
                 mock.call(32, "wb", buffering=0),
-            ],
+            ]
         )
 
     def test_backend_resolution_uses_the_registered_manifest(self) -> None:

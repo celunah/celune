@@ -58,12 +58,12 @@ from .helpers import (
     wait_for_persona_worker,
     prepare_persona_conversation_engine,
 )
-from ..support import CeluneAsyncTestCase, make_pipeline_engine
+from ..support import make_pipeline_engine
 from ..platform import LINUX_ONLY, WINDOWS_ONLY
 
 
 @pytest.mark.anyio
-class TestPipelineAsync(CeluneAsyncTestCase):
+class TestPipelineAsync:
     """Exercise persona-aware pipeline behavior."""
 
     def test_persona_context_omits_voice_prompt_when_unsupported(self) -> None:
@@ -397,13 +397,13 @@ class TestPipelineAsync(CeluneAsyncTestCase):
                 )
             )
 
-        self.assertIn("Manifest identity.", prompt)
-        self.assertIn("Manifest personality.", prompt)
-        self.assertIn("Manifest speech style.", prompt)
-        self.assertIn("<user_instructions>", prompt)
-        self.assertIn("Legacy personality text.", prompt)
-        self.assertNotIn("Legacy identity text.", prompt)
-        self.assertNotIn("Ignored text.", prompt)
+        assert "Manifest identity." in (prompt)
+        assert "Manifest personality." in (prompt)
+        assert "Manifest speech style." in (prompt)
+        assert "<user_instructions>" in (prompt)
+        assert "Legacy personality text." in (prompt)
+        assert ("Legacy identity text.") not in (prompt)
+        assert ("Ignored text.") not in (prompt)
 
     def test_persona_debug_overrides_replace_manifest_markdown_files(self) -> None:
         """Verify opt-in app-data Markdown replaces matching CECHAR source files."""
@@ -464,14 +464,16 @@ class TestPipelineAsync(CeluneAsyncTestCase):
             persona_conversation.build_persona_context(cast(Celune, engine), "Hello.")
         )
 
-        self.assertIn("Name: Celune", prompt)
-        self.assertIn(f"Gender: {string('persona.default_gender')}", prompt)
+        assert "Name: Celune" in (prompt)
+        assert f"Gender: {string('persona.default_gender')}" in (prompt)
 
-    def test_default_cechar_pack_adds_celune_prompt_foundation(self) -> None:
+    def test_default_cechar_pack_adds_celune_prompt_foundation(
+        self, request: pytest.FixtureRequest
+    ) -> None:
         """Verify the bundled CECHAR pack assembles only its current prompt."""
         bundle = CEVoice.open(Path("voices/default.cevoice"))
         loader = CEVoiceLoader(bundle)
-        self.addCleanup(loader.close)
+        request.addfinalizer(loader.close)
 
         engine = make_pipeline_engine()
         engine.config = {}
@@ -489,33 +491,33 @@ class TestPipelineAsync(CeluneAsyncTestCase):
             )
 
         for source_text in persona_files_from_bundle(bundle).values():
-            self.assertIn(source_text, prompt)
+            assert source_text in (prompt)
 
-        self.assertIn("Aliases: Cel", prompt)
-        self.assertIn("Role: Lunar guardian", prompt)
-        self.assertIn("Ground every claim in available evidence.", prompt)
-        self.assertIn("adopt the corrected meaning immediately", prompt)
-        self.assertIn("Remain consistently yourself.", prompt)
-        self.assertNotIn("apply the correction immediately", prompt)
-        self.assertNotIn("Celune is a quiet nocturnal presence", prompt)
-        self.assertNotIn(
-            "These examples demonstrate tone and conversational style", prompt
+        assert "Aliases: Cel" in (prompt)
+        assert "Role: Lunar guardian" in (prompt)
+        assert "Ground every claim in available evidence." in (prompt)
+        assert "adopt the corrected meaning immediately" in (prompt)
+        assert "Remain consistently yourself." in (prompt)
+        assert ("apply the correction immediately") not in (prompt)
+        assert ("Celune is a quiet nocturnal presence") not in (prompt)
+        assert ("These examples demonstrate tone and conversational style") not in (
+            prompt
         )
-        self.assertNotIn(
-            "Keep the familiar nocturnal tone grounded and concise.", prompt
+        assert ("Keep the familiar nocturnal tone grounded and concise.") not in (
+            prompt
         )
-        self.assertNotIn("## Response Behavior", prompt)
-        self.assertNotIn("User: i think i fixed it", prompt)
+        assert ("## Response Behavior") not in (prompt)
+        assert ("User: i think i fixed it") not in (prompt)
 
         voice_manifest = bundle.metadata["voices"]
-        self.assertIsInstance(voice_manifest, dict)
+        assert isinstance(voice_manifest, dict)
         for voice_name, voice_metadata in voice_manifest.items():
-            self.assertIsInstance(voice_metadata, dict)
+            assert isinstance(voice_metadata, dict)
             if voice_name == "sing":
-                self.assertIsNone(voice_metadata.get("persona"))
-                self.assertIsNone(voice_metadata.get("cfg_scale"))
+                assert (voice_metadata.get("persona")) is None
+                assert (voice_metadata.get("cfg_scale")) is None
                 continue
-            self.assertNotIn("persona", voice_metadata)
+            assert ("persona") not in (voice_metadata)
 
     def test_non_default_character_pack_does_not_inherit_celune_foundation(
         self,
@@ -531,7 +533,7 @@ class TestPipelineAsync(CeluneAsyncTestCase):
             persona_conversation.build_persona_context(cast(Celune, engine), "Hello.")
         )
 
-        self.assertNotIn("You are Celune, commonly called Cel.", prompt)
+        assert ("You are Celune, commonly called Cel.") not in (prompt)
 
     def test_agent_prompt_context_excludes_persona_memory_and_history(self) -> None:
         """Verify agent prompts use task data without Persona memory context."""
@@ -588,15 +590,15 @@ class TestPipelineAsync(CeluneAsyncTestCase):
         )
         prompt = PersonaPromptBuilder.build(context)
 
-        self.assertIn("<agent_context>", prompt)
-        self.assertIn('"tool_id": "process_status"', prompt)
-        self.assertIn('"state": "queued"', prompt)
-        self.assertIn('"output": "running"', prompt)
-        self.assertIn("runtime remains authoritative", prompt)
-        self.assertNotIn("\n\n<memory>\n", prompt)
-        self.assertNotIn("<conversation_summary>", prompt)
-        self.assertNotIn("Stale long-term memory", prompt)
-        self.assertNotIn("Stale conversation summary", prompt)
+        assert "<agent_context>" in (prompt)
+        assert '"tool_id": "process_status"' in (prompt)
+        assert '"state": "queued"' in (prompt)
+        assert '"output": "running"' in (prompt)
+        assert "runtime remains authoritative" in (prompt)
+        assert ("\n\n<memory>\n") not in (prompt)
+        assert ("<conversation_summary>") not in (prompt)
+        assert ("Stale long-term memory") not in (prompt)
+        assert ("Stale conversation summary") not in (prompt)
 
         payload = persona_conversation.build_persona_request(
             cast(Celune, engine),
@@ -606,11 +608,11 @@ class TestPipelineAsync(CeluneAsyncTestCase):
             pending_tool_call=pending_call,
         )
         messages = cast(list[JSON], payload["messages"])
-        self.assertEqual(payload["system"], messages[0]["content"])
-        self.assertEqual(cast(str, payload["system"]).count("<agent_context>"), 1)
-        self.assertEqual(len(messages), 2)
-        self.assertNotIn("Old conversation detail", str(messages))
-        self.assertNotIn("Stale assistant claim", str(messages))
+        assert (payload["system"]) == (messages[0]["content"])
+        assert (cast(str, payload["system"]).count("<agent_context>")) == (1)
+        assert (len(messages)) == (2)
+        assert ("Old conversation detail") not in (str(messages))
+        assert ("Stale assistant claim") not in (str(messages))
 
     def test_agent_opening_and_approval_prompts_use_restricted_instructions(
         self,
@@ -1638,34 +1640,28 @@ class TestPipelineAsync(CeluneAsyncTestCase):
         ):
             await run_generation_worker(cast(Celune, engine))
 
-        self.assertEqual(
-            engine.normalize.call_args_list,
-            [mock.call("first"), mock.call("second")],
+        assert (engine.normalize.call_args_list) == (
+            [mock.call("first"), mock.call("second")]
         )
-        self.assertEqual(
-            generated_texts,
-            ["normalized first", "normalized second", "followup"],
+        assert (generated_texts) == (
+            ["normalized first", "normalized second", "followup"]
         )
-        self.assertTrue(generated_during_alignment)
-        self.assertFalse(alignment_timed_out)
-        self.assertIn(
-            "align:normalized first normalized second:flushes=2",
-            events,
-        )
-        self.assertEqual(
-            alignment_calls[0],
+        assert generated_during_alignment
+        assert not alignment_timed_out
+        assert "align:normalized first normalized second:flushes=2" in (events)
+        assert (alignment_calls[0]) == (
             (
                 "normalized first normalized second",
                 (
                     CaptionAlignmentSection(0, 8, 0, 2, 0, 1),
                     CaptionAlignmentSection(8, 16, 2, 4, 1, 2),
                 ),
-            ),
+            )
         )
         caption_states = captions.playback_caption_states(cast(Celune, engine))
         caption_state = next(iter(caption_states.values()))
-        self.assertEqual(len(caption_state.segments), 1)
-        self.assertEqual(len(caption_state.segments[0].word_start_frames), 2)
+        assert (len(caption_state.segments)) == (1)
+        assert (len(caption_state.segments[0].word_start_frames)) == (2)
 
     @pytest.mark.parametrize(
         "error_message",

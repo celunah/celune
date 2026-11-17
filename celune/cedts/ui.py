@@ -51,7 +51,7 @@ class UiTimedUpdateChannel:
             control,
             {payload.descriptor["id"]: payload for payload in payloads},
         )
-        data = cast(dict[str, object], decoded["data"])
+        data = cast(dict[str, WorkerValue], decoded["data"])
         framed_update = _UiTimedUpdate(
             runtime_id=cast(str, data["runtime_id"]),
             sequence=cast(int, data["sequence"]),

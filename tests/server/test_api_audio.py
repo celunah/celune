@@ -24,10 +24,9 @@ from celune.server import jobs
 from celune.typing.pipeline import SpeechStreamQueue
 
 from ..celtest import celtest
-from ..support import CeluneTestCase
 
 
-class TestApiAudio(CeluneTestCase):
+class TestApiAudio:
     """Tests for API audio payload formatting."""
 
     @staticmethod

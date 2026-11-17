@@ -17,8 +17,6 @@ from celune.typing.common import JSON
 from celune.typing.aliases import RecordedKwargValue
 from celune.registry.revisions import remote_code_model_revision
 
-from ..support import CeluneTestCase
-
 
 class _FakeEncoded:
     """Minimal encoded-input object supporting ``.to()``."""
@@ -166,7 +164,7 @@ class _FakeQwenVlConfig:
     model_type = "qwen3_vl"
 
 
-class TestPersonaApi(CeluneTestCase):
+class TestPersonaApi:
     """Tests for shared Persona runtime behavior."""
 
     @staticmethod
@@ -325,18 +323,16 @@ class TestPersonaApi(CeluneTestCase):
             revision=revision,
         )
         loaders["model_loader"].assert_called_once()
-        self.assertEqual(
-            loaders["model_loader"].call_args.args,
-            ("Qwen/Qwen3-VL-4B-Instruct",),
+        assert (loaders["model_loader"].call_args.args) == (
+            ("Qwen/Qwen3-VL-4B-Instruct",)
         )
-        self.assertEqual(
-            loaders["model_loader"].call_args.kwargs,
+        assert (loaders["model_loader"].call_args.kwargs) == (
             {
                 "trust_remote_code": True,
                 "revision": revision,
                 "device_map": "auto",
                 "dtype": runtime.torch.bfloat16,
-            },
+            }
         )
         loaders["tokenizer_loader"].assert_not_called()
         fake_model.eval.assert_called_once_with()
@@ -350,21 +346,18 @@ class TestPersonaApi(CeluneTestCase):
         revision = cast(str, remote_code_model_revision(model_id))
         metadata = get_model_metadata(model_id)
         assert metadata is not None
-        self.assertEqual(metadata.revision, revision)
-        self.assertEqual(metadata.tier, persona_model_tier(model_id))
+        assert (metadata.revision) == (revision)
+        assert (metadata.tier) == (persona_model_tier(model_id))
 
     def test_persona_registry_derives_supported_variants_and_tiers(self) -> None:
         """Verify every Persona catalog entry has a pinned revision and tier."""
-        self.assertEqual(
-            len(LLM_MODELS),
-            14,
-        )
+        assert (len(LLM_MODELS)) == (14)
 
         for metadata in LLM_MODELS:
-            self.assertEqual(
-                remote_code_model_revision(metadata.model_id), metadata.revision
+            assert (remote_code_model_revision(metadata.model_id)) == (
+                metadata.revision
             )
-            self.assertEqual(persona_model_tier(metadata.model_id), metadata.tier)
+            assert (persona_model_tier(metadata.model_id)) == (metadata.tier)
 
     def test_load_requires_consent_for_unknown_models_before_loading(self) -> None:
         """Verify unregistered Persona repositories stop before model loading."""
@@ -374,7 +367,7 @@ class TestPersonaApi(CeluneTestCase):
             mock.patch.object(runtime.AutoConfig, "from_pretrained") as config_loader,
             mock.patch("celune.registry.consent._STORE") as store,
             mock.patch("celune.registry.consent._PENDING_CONSENTS", {}),
-            self.assertRaises(ModelConsentRequired),
+            pytest.raises(ModelConsentRequired),
         ):
             hub_api.return_value.model_info.return_value.sha = "a" * 40
             store.has_acknowledged.return_value = False
@@ -596,13 +589,11 @@ class TestPersonaApi(CeluneTestCase):
         )
         assert model.calls[0]["cache_implementation"] == "dynamic"
         criterion = cast(runtime._PersonaCancellationCriteria, criteria[0])
-        self.assertFalse(
+        assert not (
             criterion(runtime.torch.tensor([[1]]), runtime.torch.tensor([])).item()
         )
         backend.interrupt_generation()
-        self.assertTrue(
-            criterion(runtime.torch.tensor([[1]]), runtime.torch.tensor([])).item()
-        )
+        assert criterion(runtime.torch.tensor([[1]]), runtime.torch.tensor([])).item()
 
     def test_generation_retries_with_dynamic_cache_after_quantized_cache_failure(
         self,

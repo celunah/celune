@@ -3,10 +3,8 @@
 
 import celune
 
-from .support import CeluneTestCase
 
-
-class TestPackageApi(CeluneTestCase):
+class TestPackageApi:
     """Tests for package exports and interactive inspection."""
 
     def test_dir_only_lists_curated_public_exports(self) -> None:

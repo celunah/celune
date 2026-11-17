@@ -3,14 +3,17 @@
 
 import queue
 import threading
-from unittest import mock
 from typing import Optional
+from unittest import mock
+from functools import partial
 from collections.abc import Callable
 
-from celune.celune import Celune
+import pytest
+
 from celune.core import lifecycle as core_lifecycle
-from celune.core.lifecycle import _close_speech_pipeline as close_pipeline
+from celune.celune import Celune
 from celune.typing.celune import ToastCallback
+from celune.core.lifecycle import _close_speech_pipeline as close_pipeline
 from celune.dataclasses.celune import (
     CeluneAudioState,
     CeluneModelState,
@@ -21,10 +24,10 @@ from celune.dataclasses.celune import (
     CelunePipelineState,
 )
 
-from ..support import FakeGlow, FakeBackend, CeluneTestCase
+from ..support import FakeGlow, FakeBackend
 
 
-class CeluneCoreTestSupport(CeluneTestCase):
+class CeluneCoreTestSupport:
     """Shared engine construction and cleanup helpers without test methods."""
 
     _cached_celune: Optional[Celune] = None
@@ -119,16 +122,9 @@ class CeluneCoreTestSupport(CeluneTestCase):
         celune.close = close_cached
         cls._cached_celune = celune
 
-    @classmethod
-    def tearDownClass(cls) -> None:
-        """Close the cached default test instance after the core suite."""
-        if cls._cached_celune is not None:
-            cached_celune = cls._cached_celune
-            cls._cached_celune = None
-            cached_celune.close()
-
     def _make_celune(
         self,
+        request: pytest.FixtureRequest,
         config: dict,
         startup_callback: Optional[Callable[[str], None]] = None,
         toast_callback: Optional[ToastCallback] = None,
@@ -160,7 +156,7 @@ class CeluneCoreTestSupport(CeluneTestCase):
                 owner._cache_celune(celune)
                 Celune._instance = None
             else:
-                self.addCleanup(self._close_celune, celune)
+                request.addfinalizer(partial(self._close_celune, celune))
             return celune
 
     @staticmethod

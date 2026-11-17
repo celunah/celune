@@ -3,20 +3,24 @@
 
 import os
 from unittest import mock
+from collections.abc import Iterator
+
+import pytest
 
 from celune import watchdog
 from celune.constants import ExitCodes
 
-from .support import CeluneTestCase
 from .platform import LINUX_ONLY
 
 
-class TestWatchdog(CeluneTestCase):
+class TestWatchdog:
     """Verify the launcher-loss watchdog's process-facing behavior."""
 
-    def setUp(self) -> None:
+    @pytest.fixture(autouse=True)
+    def _pytest_setup_and_teardown(self) -> Iterator[None]:
         """Clear the process-wide launcher-loss request before each test."""
         watchdog._LAUNCHER_LOST.clear()
+        yield
 
     def test_launcher_lost_exit_code_is_eight(self) -> None:
         """Verify launcher loss uses the reserved exit code eight."""
@@ -34,7 +38,7 @@ class TestWatchdog(CeluneTestCase):
                 "_request_launcher_lost",
                 side_effect=RuntimeError("launcher lost"),
             ) as exit_launcher_lost,
-            self.assertRaisesRegex(RuntimeError, "launcher lost"),
+            pytest.raises(RuntimeError, match="launcher lost"),
         ):
             watchdog._watch_posix_pipe(str(read_fd))
 

@@ -5,8 +5,8 @@ from types import SimpleNamespace
 from typing import Union, Optional
 from collections.abc import Sequence
 
-import torch
 import numpy as np
+import torch
 from transformers.tokenization_utils_base import BatchEncoding
 
 from celune.utils import discard
@@ -19,8 +19,6 @@ from celune.persona.emotion import (
     compute_emotion_scores,
     compute_emotion_directions,
 )
-
-from ..support import CeluneTestCase
 
 
 class StubPersonaEmotionAnalyzer(PersonaEmotionAnalyzer):
@@ -115,7 +113,7 @@ class FakePersonaModel:
         """Evaluate mock tokens."""
 
 
-class TestPersonaEmotion(CeluneTestCase):
+class TestPersonaEmotion:
     """Verify weighted Persona emotion blending stays stable."""
 
     @staticmethod

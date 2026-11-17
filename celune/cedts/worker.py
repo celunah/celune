@@ -487,8 +487,8 @@ def _backend_method_map(
 
 
 def _validate_request_arguments(
-    operation: object,
-    arguments: object,
+    operation: WorkerValue,
+    arguments: WorkerValue,
     backend: Optional[BackendRuntime] = None,
 ) -> dict[str, WorkerValue]:
     """Validate one request's operation, argument object, and method allowlist."""
@@ -898,7 +898,9 @@ def _send_error(
     )
 
 
-def _negotiate_hello(control: abc.Mapping[str, object]) -> dict[str, JSONSerializable]:
+def _negotiate_hello(
+    control: WorkerMessage,
+) -> dict[str, JSONSerializable]:
     """Validate a core hello and return the worker's negotiated capabilities."""
     if control.get("cedts_version") != list(CEDTS_VERSION):
         raise _worker_protocol_error("unsupported_cedts_packet_version")

@@ -15,12 +15,10 @@ import pytest
 import main
 from tests.platform import LINUX_ONLY, WINDOWS_ONLY
 
-from .support import CeluneTestCase
-
 entrypoint = main.load_entrypoint_module()
 
 
-class TestDoctorCommand(CeluneTestCase):
+class TestDoctorCommand:
     """Verify `celune doctor` works without booting the full app."""
 
     def test_missing_dependency_help_identifies_launch_environment(self) -> None:

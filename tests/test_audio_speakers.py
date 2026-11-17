@@ -3,10 +3,8 @@
 
 from celune.audio.speakers import _windows_channel_positions
 
-from .support import CeluneTestCase
 
-
-class TestSpeakerChannelLayout(CeluneTestCase):
+class TestSpeakerChannelLayout:
     """Verify Windows channel masks preserve speaker positions and order."""
 
     def test_surround_layouts_preserve_back_and_side_channels(self) -> None:

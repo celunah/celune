@@ -5,19 +5,15 @@ import os
 import sys
 import tempfile
 import threading
+from typing import Optional, cast
 from pathlib import Path
 from unittest import mock
-from typing import Optional, cast
+from collections.abc import Iterator
 
 import yaml
 import pytest
 from textual.widgets import RichLog
 
-from celune.constants import APP_SLUG
-from celune.utils import discard, format_error
-from celune.ui.app import CeluneUI, UILogMessage
-from celune.persona.memory import default_memory_dir
-from celune.cevoice import bundled_voices_dir, default_bundle_path
 from celune.paths import (
     project_root,
     voices_data_dir,
@@ -30,16 +26,20 @@ from celune.paths import (
     migrate_legacy_app_data,
     backend_environments_dir,
     huggingface_hub_cache_dir,
+    configure_temp_environment,
     configure_huggingface_runtime,
     configure_huggingface_cache_environment,
-    configure_temp_environment,
 )
+from celune.utils import discard, format_error
+from celune.ui.app import CeluneUI, UILogMessage
+from celune.cevoice import bundled_voices_dir, default_bundle_path
+from celune.constants import APP_SLUG
+from celune.persona.memory import default_memory_dir
 
-from .support import CeluneTestCase
 from .platform import LINUX_ONLY, WINDOWS_ONLY
 
 
-class TestRuntimePath(CeluneTestCase):
+class TestRuntimePath:
     """Verify runtime files are written into the user data directory."""
 
     def test_format_error_uses_log_level_detail_tiers(self) -> None:
@@ -57,8 +57,9 @@ class TestRuntimePath(CeluneTestCase):
             assert "RuntimeError: tiered failure" in output
             assert trace_path.exists()
 
-    def tearDown(self) -> None:
-        """Reset singleton UI guards after each test."""
+    @pytest.fixture(autouse=True)
+    def _pytest_setup_and_teardown(self) -> Iterator[None]:
+        yield
         CeluneUI._instance = None
 
     def test_default_memory_dir_uses_persona_runtime_directory(self) -> None:
@@ -253,7 +254,7 @@ class TestRuntimePath(CeluneTestCase):
         # noinspection PyProtectedMember
         import importlib
 
-        from huggingface_hub import _snapshot_download, file_download
+        from huggingface_hub import file_download, _snapshot_download
 
         callback = mock.Mock()
         progress_module = importlib.import_module("huggingface_hub.utils.tqdm")
@@ -323,6 +324,7 @@ class TestRuntimePath(CeluneTestCase):
     def test_huggingface_progress_forwards_generic_tqdm_bars(self) -> None:
         """Forward generic tqdm progress without library-specific integration."""
         from io import StringIO
+
         from tqdm.std import tqdm
 
         callback = mock.Mock()
@@ -342,6 +344,7 @@ class TestRuntimePath(CeluneTestCase):
     def test_huggingface_progress_keeps_one_generic_bar_primary(self) -> None:
         """Keep concurrent generic bars from making progress jump between totals."""
         from io import StringIO
+
         from tqdm.std import tqdm
 
         callback = mock.Mock()
@@ -363,6 +366,7 @@ class TestRuntimePath(CeluneTestCase):
         """Resume generic progress after active Hub transfers have closed."""
         import importlib
         from io import StringIO
+
         from tqdm.std import tqdm
 
         callback = mock.Mock()
@@ -397,6 +401,7 @@ class TestRuntimePath(CeluneTestCase):
         """Do not leave a closed generic primary blocking later progress bars."""
         import importlib
         from io import StringIO
+
         from tqdm.std import tqdm
 
         callback = mock.Mock()

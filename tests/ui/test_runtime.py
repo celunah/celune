@@ -25,10 +25,8 @@ from celune.terminal import set_terminal_title, terminal_status_escape
 from celune.constants import APP_NAME
 from celune.typing.common import JSONSerializable
 
-from ..support import CeluneTestCase
 
-
-class TestUIRuntime(CeluneTestCase):
+class TestUIRuntime:
     """Verify Textual runtime presentation and lazy startup behavior."""
 
     def test_ui_protocols_are_not_reexported_from_the_runtime_package(self) -> None:
@@ -441,7 +439,7 @@ class TestUIRuntime(CeluneTestCase):
             check=False,
         )
 
-        self.assertEqual(check.returncode, 0, check.stderr)
+        assert (check.returncode) == (0), check.stderr
 
     def test_loading_ui_import_keeps_engine_and_model_libraries_deferred(self) -> None:
         """Verify loading-screen imports do not initialize engine dependencies."""
@@ -469,7 +467,7 @@ class TestUIRuntime(CeluneTestCase):
             check=False,
         )
 
-        self.assertEqual(check.returncode, 0, check.stderr)
+        assert (check.returncode) == (0), check.stderr
 
     def test_ui_test_command_avoids_unused_runtime_dependencies(self) -> None:
         """Start the explicit UI test without importing engine integrations."""
@@ -508,7 +506,7 @@ class TestUIRuntime(CeluneTestCase):
             check=False,
         )
 
-        self.assertEqual(check.returncode, 0, check.stderr)
+        assert (check.returncode) == (0), check.stderr
 
     def test_terminal_title_formats_and_sanitizes_status(self) -> None:
         """Verify structured terminal titles remove control characters."""

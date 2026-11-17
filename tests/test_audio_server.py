@@ -8,11 +8,10 @@ import pytest
 
 from celune.audio import server
 
-from .support import CeluneTestCase
 from .platform import LINUX_ONLY, WINDOWS_ONLY
 
 
-class TestAudioServer(CeluneTestCase):
+class TestAudioServer:
     """Verify platform-specific audio-server restart commands."""
 
     @staticmethod

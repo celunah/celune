@@ -2,20 +2,23 @@
 """Verify the CLI agent diagnostic covers tools and isolates side effects."""
 
 from __future__ import annotations
+
 import os
-from unittest import mock
 from types import SimpleNamespace
+from unittest import mock
+
+import pytest
 
 from celune.celune import Celune
+from celune.agent.tools import production_agent_tools, production_agent_tool_schemas
+from celune.typing.agent import AgentToolSchema, AgentToolBehavior
+from celune.typing.common import JSON
 from celune.agent.diagnostics import (
     run_agent_feature_checks,
     run_agent_interaction_checks,
 )
-from celune.typing.common import JSON
-from celune.typing.agent import AgentToolSchema, AgentToolBehavior
-from celune.agent.tools import production_agent_tools, production_agent_tool_schemas
 
-from ..support import FakeGlow, FakeBackend, CeluneTestCase
+from ..support import FakeGlow, FakeBackend
 
 
 def _check_name(check: JSON) -> str:
@@ -24,10 +27,10 @@ def _check_name(check: JSON) -> str:
     return name if isinstance(name, str) else ""
 
 
-class TestAgentDiagnostics(CeluneTestCase):
+class TestAgentDiagnostics:
     """Exercise the complete active feature matrix without model inference."""
 
-    def _core(self) -> Celune:
+    def _core(self, request: pytest.FixtureRequest) -> Celune:
         """Create a healthy fake core for direct production-handler checks."""
         with (
             mock.patch("celune.core.lifecycle.AudioRGBGlow", FakeGlow),
@@ -49,13 +52,17 @@ class TestAgentDiagnostics(CeluneTestCase):
             "celune.core.conversation.wait_for_persona_playback", return_value=True
         )
         playback_wait.start()
-        self.addCleanup(playback_wait.stop)
-        self.addCleanup(core.close)
+        request.addfinalizer(playback_wait.stop)
+        request.addfinalizer(core.close)
         return core
 
-    def test_active_catalog_tools_are_checked_and_safe(self) -> None:
+    def test_active_catalog_tools_are_checked_and_safe(
+        self, request: pytest.FixtureRequest
+    ) -> None:
         """Run each active tool and ensure process operations stay stubbed."""
-        core = self._core()
+        core = self._core(
+            request,
+        )
         with mock.patch.dict(os.environ, {"CELUNE_AGENT_FS_TOOLS": "true"}):
             announced: list[str] = []
             checks = run_agent_feature_checks(
@@ -103,9 +110,13 @@ class TestAgentDiagnostics(CeluneTestCase):
             "runtime.outcome.cancelled",
         }.issubset({_check_name(check) for check in checks})
 
-    def test_disabled_local_management_is_reported_as_skipped(self) -> None:
+    def test_disabled_local_management_is_reported_as_skipped(
+        self, request: pytest.FixtureRequest
+    ) -> None:
         """Omit optional local tools while retaining an explicit skip result."""
-        core = self._core()
+        core = self._core(
+            request,
+        )
         with mock.patch.dict(os.environ, {"CELUNE_AGENT_FS_TOOLS": "false"}):
             checks = run_agent_feature_checks(core)
 
@@ -127,9 +138,13 @@ class TestAgentDiagnostics(CeluneTestCase):
             {_check_name(check) for check in checks if check["status"] == "skipped"}
         )
 
-    def test_one_runtime_failure_does_not_hide_later_checks(self) -> None:
+    def test_one_runtime_failure_does_not_hide_later_checks(
+        self, request: pytest.FixtureRequest
+    ) -> None:
         """Keep unrelated runtime and tool outcomes after a check fails."""
-        core = self._core()
+        core = self._core(
+            request,
+        )
         with mock.patch(
             "celune.agent.diagnostics._check_lifecycle_interruption",
             side_effect=RuntimeError("controlled lifecycle failure"),
@@ -142,9 +157,13 @@ class TestAgentDiagnostics(CeluneTestCase):
         assert "runtime.outcome.completed" in results
         assert "query_status" in results
 
-    def test_tool_announcement_failure_does_not_hide_later_tools(self) -> None:
+    def test_tool_announcement_failure_does_not_hide_later_tools(
+        self, request: pytest.FixtureRequest
+    ) -> None:
         """Keep independent tool results when one spoken report fails."""
-        core = self._core()
+        core = self._core(
+            request,
+        )
         announced: list[str] = []
 
         def announce(name: str, _status: str, _detail: str) -> None:
@@ -160,9 +179,13 @@ class TestAgentDiagnostics(CeluneTestCase):
         assert "query_models" in announced
         assert results["query_models"]["status"] == "passed"
 
-    def test_interactive_choice_and_approval_answers_are_processed(self) -> None:
+    def test_interactive_choice_and_approval_answers_are_processed(
+        self, request: pytest.FixtureRequest
+    ) -> None:
         """Process typed choices and both approval outcomes in the paused runtime."""
-        core = self._core()
+        core = self._core(
+            request,
+        )
         prompts: list[str] = []
         answers = iter(("2", "decline"))
 
@@ -200,9 +223,13 @@ class TestAgentDiagnostics(CeluneTestCase):
         assert isinstance(approved_detail, str)
         assert "approved" in approved_detail
 
-    def test_unmapped_production_tool_fails_coverage_and_its_own_check(self) -> None:
+    def test_unmapped_production_tool_fails_coverage_and_its_own_check(
+        self, request: pytest.FixtureRequest
+    ) -> None:
         """Report an unmapped catalog tool while continuing the tool pass."""
-        core = self._core()
+        core = self._core(
+            request,
+        )
         tools = production_agent_tools(core)
         schemas = dict(production_agent_tool_schemas())
         unmapped_schema = AgentToolSchema(

@@ -9,6 +9,7 @@ from celune.core import voice as core_voice
 from celune.core import reload as core_reload
 from celune.core import lifecycle as core_lifecycle
 
+from ..support import patch_owner
 from .fixtures import CeluneCoreTestSupport
 
 
@@ -16,17 +17,21 @@ from .fixtures import CeluneCoreTestSupport
 class TestCeluneAsyncRuntime(CeluneCoreTestSupport):
     """Tests for async Celune runtime entry points."""
 
-    async def test_set_backend_async_uses_daemon_workers(self) -> None:
+    async def test_set_backend_async_uses_daemon_workers(
+        self, request: pytest.FixtureRequest
+    ) -> None:
         """Verify async backend switching avoids asyncio's default executor."""
-        celune = self._make_celune({})
+        celune = self._make_celune(request, {})
         celune.loaded = True
-        prepare_backend = self.patch_owner(
-            core_voice, "_prepare_backend_reload", return_value=True
+        prepare_backend = patch_owner(
+            request, core_voice, "_prepare_backend_reload", return_value=True
         )
         celune.current_voice = "nova"
-        hot_reload = self.patch_owner(core_reload, "reload_backend", return_value=True)
-        active_backend_name = self.patch_owner(
-            core_lifecycle, "active_runtime_backend_name", return_value="mini"
+        hot_reload = patch_owner(
+            request, core_reload, "reload_backend", return_value=True
+        )
+        active_backend_name = patch_owner(
+            request, core_lifecycle, "active_runtime_backend_name", return_value="mini"
         )
         run_in_daemon_thread = mock.AsyncMock(
             side_effect=lambda func, *args: func(*args)
@@ -44,9 +49,11 @@ class TestCeluneAsyncRuntime(CeluneCoreTestSupport):
         active_backend_name.assert_called_once_with(celune)
         assert run_in_daemon_thread.await_count == 3
 
-    async def test_say_async_does_not_stop_active_speech(self) -> None:
+    async def test_say_async_does_not_stop_active_speech(
+        self, request: pytest.FixtureRequest
+    ) -> None:
         """Verify a new async speech request does not cancel active playback."""
-        celune = self._make_celune({})
+        celune = self._make_celune(request, {})
         celune.force_stop_speech = mock.Mock()
 
         with (
@@ -67,12 +74,15 @@ class TestCeluneAsyncRuntime(CeluneCoreTestSupport):
             display_text=None,
         )
 
-    def test_set_backend_stops_active_speech_before_starting_reload(self) -> None:
+    def test_set_backend_stops_active_speech_before_starting_reload(
+        self, request: pytest.FixtureRequest
+    ) -> None:
         """Verify backend reload requests invalidate active speech before reloading."""
-        celune = self._make_celune({})
+        celune = self._make_celune(request, {})
         order: list[str] = []
         celune.force_stop_speech = mock.Mock(side_effect=lambda: order.append("stop"))
-        hot_reload = self.patch_owner(
+        hot_reload = patch_owner(
+            request,
             core_reload,
             "reload_backend",
             side_effect=lambda *_args: order.append("reload"),
@@ -88,9 +98,11 @@ class TestCeluneAsyncRuntime(CeluneCoreTestSupport):
         assert order == ["stop", "reload"]
         hot_reload.assert_called_once()
 
-    async def test_wake_from_sleep_async_uses_daemon_workers(self) -> None:
+    async def test_wake_from_sleep_async_uses_daemon_workers(
+        self, request: pytest.FixtureRequest
+    ) -> None:
         """Verify waking avoids the asyncio default executor."""
-        celune = self._make_celune({})
+        celune = self._make_celune(request, {})
         celune.wake_from_sleep = mock.Mock(return_value=True)
         run_in_daemon_thread = mock.AsyncMock(
             side_effect=lambda func, *args: func(*args)

@@ -10,10 +10,8 @@ import torch
 from celune import modeling
 from celune.backends.tts import CeluneBackend
 
-from .support import CeluneTestCase
 
-
-class TestModeling(CeluneTestCase):
+class TestModeling:
     """Tests for lightweight modeling helpers."""
 
     def test_normalizer_device_follows_vram_preset(self) -> None:

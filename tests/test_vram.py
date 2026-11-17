@@ -22,14 +22,12 @@ from celune.vram import (
     windows_shared_memory_capacity_bytes,
     windows_shared_memory_headroom_bytes,
 )
-from celune.typing.common import Config
-from celune.constants import VRAM_BUDGETS
 from celune.celune import tts_quantization_enabled
+from celune.constants import VRAM_BUDGETS
+from celune.typing.common import Config
 
-from .support import CeluneTestCase
 
-
-class TestVram(CeluneTestCase):
+class TestVram:
     """Test VRAM-aware backend selection."""
 
     def test_agent_mode_is_enabled_at_high_with_standard_persona(self) -> None:
