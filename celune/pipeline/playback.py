@@ -237,7 +237,7 @@ class _PlaybackWriter:
                     if timing.first_playback_time is None:
                         log_first_playback(self._engine, timing, started_at)
                 self._record_played_frames(item)
-            except BaseException as error:  # pylint: disable=broad-exception-caught
+            except BaseException as error:  # pylint: disable=W0718
                 failed = error
                 with self._lock:
                     self._error = error
@@ -1048,12 +1048,12 @@ async def playback_worker_job(engine: Celune) -> None:
             buffered_seconds + writer.pending_seconds,
         )
 
-    def finish_rebuffer_wait(now: Optional[float] = None) -> None:
+    def finish_rebuffer_wait(curr: Optional[float] = None) -> None:
         """Record the active reserve-gate wait, if one is in progress."""
         nonlocal rebuffer_wait_started_at
         if rebuffer_wait_started_at is None:
             return
-        finished_at = monotonic_time() if now is None else now
+        finished_at = monotonic_time() if curr is None else curr
         engine.playback_rebuffer_wait_seconds += max(
             0.0,
             finished_at - rebuffer_wait_started_at,
@@ -1191,13 +1191,13 @@ async def playback_worker_job(engine: Celune) -> None:
     async def drain_pending_items() -> bool:
         nonlocal buffered_seconds, last_monitor_at, stop_requested
 
-        now = monotonic_time()
-        contention.sample_cpu(now)
+        curr = monotonic_time()
+        contention.sample_cpu(curr)
         if source_buffers or writer.pending_seconds > 0.0:
             contention.observe_scheduler_lag(
-                max(0.0, now - last_monitor_at - PIPELINE_CPU_YIELD_SECONDS)
+                max(0.0, curr - last_monitor_at - PIPELINE_CPU_YIELD_SECONDS)
             )
-        last_monitor_at = now
+        last_monitor_at = curr
         drained_items = 0
         while drained_items < max_drain_items:
             buffer_capacity_seconds = max(

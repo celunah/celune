@@ -1023,17 +1023,17 @@ def _persona_transcription_worker(
             component_lease.release()
 
         def complete_transcription(
-            transcript: str = transcript,
-            prefix: str = prefix,
-            error: Optional[Exception] = error,
-            partial_error_reported: bool = partial_error_reported,
+            _transcript: str = transcript,
+            _prefix: str = prefix,
+            _error: Optional[Exception] = error,
+            _partial_error_reported: bool = partial_error_reported,
         ) -> None:
             """Complete the captured Persona transcription on the UI thread."""
             self._complete_persona_transcription(
-                transcript,
-                prefix,
-                error,
-                error_already_reported=partial_error_reported and error is not None,
+                _transcript,
+                _prefix,
+                _error,
+                error_already_reported=_partial_error_reported and _error is not None,
             )
 
         self._run_on_ui_thread(complete_transcription)

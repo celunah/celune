@@ -1,13 +1,11 @@
 # SPDX-License-Identifier: Apache-2.0
 """Core Celune protocols and callback types."""
 
-# pylint: disable=unused-argument,unnecessary-ellipsis
-
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Union, Optional, Protocol
 from pathlib import Path
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 
 import torch
 from transformers.modeling_utils import PreTrainedModel
@@ -32,7 +30,13 @@ if TYPE_CHECKING:
     from ..backends.vc import CeluneVCBackend
     from ..backends.tts import BackendModel, CeluneBackend
     from ..persona.impl import PersonaClient
-    from ..agent.runtime import AgentRuntime
+    from ..agent.runtime import (
+        AgentRuntime,
+        AgentTool,
+        AgentToolSchema,
+        AgentToolSelector,
+    )
+    from ..agent.routing import AgentInputRouter
     from ..persona.memory import PersonaMemoryStore
     from ..persona.emotion import PersonaEmotionAnalyzer
     from ..core.concurrency import ComponentLockManager, PriorityInferenceScheduler
@@ -390,6 +394,10 @@ class CeluneStateAccessors:
     last_component_busy: Optional[ComponentBusyResult]
     audio_unavailable: bool
     current_sr: Optional[int]
+    _agent_tools: tuple[AgentTool, ...]
+    _agent_tool_schemas: Mapping[str, AgentToolSchema]
+    _agent_router: AgentInputRouter
+    _agent_needle_selector: Optional[AgentToolSelector]
 
     @property
     def cur_state(self) -> str:

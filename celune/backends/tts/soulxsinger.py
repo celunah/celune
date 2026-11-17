@@ -19,6 +19,7 @@ from dataclasses import field, replace, dataclass
 from collections.abc import Mapping, Callable, Iterator
 
 import numpy as np
+import numpy.typing as npt
 import torch
 from huggingface_hub import snapshot_download
 
@@ -875,7 +876,9 @@ def _natural_f0_contour(
         end_frame = frame_ranges[group_end - 1][1]
         event_contour = contour[start_frame:end_frame]
         delay_seconds = float(vibrato.delay_beats) * 60.0 / bpm
-        frame_times = np.arange(len(event_contour), dtype=np.float64) / frame_rate
+        frame_times: npt.NDArray[np.float64] = (
+            np.arange(len(event_contour), dtype=np.float64) / frame_rate
+        )
         vibrato_mask = (frame_times >= delay_seconds) & (event_contour > 0)
         if np.any(vibrato_mask):
             vibrato_seconds = frame_times[vibrato_mask] - delay_seconds

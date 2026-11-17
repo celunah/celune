@@ -662,14 +662,14 @@ class SelectMenuWidget(Widget):
             return value
 
         # Unicode character... hm
-        ellipsis = "…"
-        target_cells = max(0, max_cells - cell_len(ellipsis))
+        ellipsis_char = "…"
+        target_cells = max(0, max_cells - cell_len(ellipsis_char))
         truncated = ""
         for character in value:
             if cell_len(truncated + character) > target_cells:
                 break
             truncated += character
-        return truncated + ellipsis
+        return truncated + ellipsis_char
 
 
 class LogRedirect:

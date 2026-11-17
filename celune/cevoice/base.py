@@ -371,7 +371,7 @@ class CEVoice:
         else:
             names = sorted(
                 asset_entries,
-                key=lambda name: asset_entries[name].offset,
+                key=lambda _name: asset_entries[_name].offset,
             )
         folded_names: set[str] = set()
         result: list[CEVoiceEntry] = []

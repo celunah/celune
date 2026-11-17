@@ -659,6 +659,7 @@ def _vlm_persona_summary(
     if not callable(summarize_history):
         return ""
 
+    # noinspection PyBroadException
     try:
         generated = summarize_history(
             old_messages,
@@ -917,6 +918,8 @@ def persona_is_available() -> bool:
     Returns:
         bool: Whether the in-process Persona is usable.
     """
+
+    # noinspection PyBroadException
     try:
         PersonaRuntime()
         return True

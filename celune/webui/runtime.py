@@ -261,7 +261,7 @@ def _webui_agent_status_message(
     if callable(get_task):
         get_task_call = cast(Callable[[str], object], get_task)
         with contextlib.suppress(KeyError, ValueError):
-            task = get_task_call(task_id)  # pylint: disable=not-callable
+            task = get_task_call(task_id)  # pylint: disable=E1102
     state = getattr(task, "state", fallback_state)
     state_value = getattr(state, "value", state)
     if not isinstance(state_value, str):

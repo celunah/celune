@@ -56,6 +56,8 @@ from .compat import install_textual_timer_sleep
 from .buttons import CeluneButton
 from .loading import CeluneLoadingScreen
 from .terminal import SelectMenuOption, SelectMenuWidget
+
+# noinspection PyUnresolvedReferences
 from ..watchdog import launcher_loss_requested
 from ..constants import BASE_SR, SIGTSTP, APP_NAME, ExitCodes
 from ..typing.agent import AgentTaskState
@@ -104,13 +106,20 @@ else:
 
 install_textual_timer_sleep()
 
-# noinspection PyUnresolvedReferences
 if TYPE_CHECKING:
+    # noinspection PyUnresolvedReferences
     import yaml
+
+    # noinspection PyUnresolvedReferences
     import numpy as np
+
+    # noinspection PyUnresolvedReferences
     import sounddevice as sd
+
+    # noinspection PyUnresolvedReferences
     import numpy.typing as npt
 
+    # noinspection PyUnresolvedReferences
     from ..vc import (
         VC_PLAYBACK_GAIN,
         VCDebugCapture,
@@ -123,28 +132,46 @@ if TYPE_CHECKING:
         vc_live_chunk_overlap_frames,
         create_live_voice_activity_detector,
     )
+
+    # noinspection PyUnresolvedReferences
     from ..paths import config_path, main_window_log_path
+
+    # noinspection PyUnresolvedReferences
     from ..utils import discard, replace_ipa, is_april_fools
     from ..celune import Celune
+
+    # noinspection PyUnresolvedReferences
     from ..config import format_audio_device_name, resolve_audio_device_with_info
     from ..cevoice import CEVoiceLoader
+
+    # noinspection PyUnresolvedReferences
     from .commands import process_command as process_ui_command
     from .terminal import (
         LogRedirect,
         UILogHandler,
         is_celune_log_record,
     )
+
+    # noinspection PyUnresolvedReferences
     from .resources import FOOTER_ROTATE_SECONDS
+
+    # noinspection PyUnresolvedReferences
     from ..exceptions import CEDTSError
+
+    # noinspection PyUnresolvedReferences
     from ..persona.asr import (
         DEFAULT_PERSONA_SPEECH_MODEL_ID,
         PERSONA_SPEECH_END_DELAY_SECONDS,
         PERSONA_SPEECH_NO_INPUT_TIMEOUT_SECONDS,
         WhisperTranscriber,
     )
+
+    # noinspection PyUnresolvedReferences
     from ..persona.impl import persona_config, persona_enabled, persona_talkback_enabled
     from ..typing.agent import AgentTask
     from ..typing.aliases import LogLevel, AudioChunk, AudioChunks, VCAudioCallback
+
+    # noinspection PyUnresolvedReferences
     from ..dataclasses.asr import WhisperSegment
     from ..core.concurrency import ComponentLockLease
     from ..extensions.events import EventDispatcher
@@ -158,10 +185,14 @@ if TYPE_CHECKING:
         AgentTaskStateChangedEvent,
         AgentApprovalRequestedEvent,
     )
+
+    # noinspection PyUnresolvedReferences
     from ..pipeline.submission import (
         queue_streaming_sfx_audio,
         finish_streaming_sfx_audio,
     )
+
+    # noinspection PyUnresolvedReferences
     from ..dataclasses.pipeline import AudioOutput
 
     colors: ModuleType
@@ -345,6 +376,7 @@ class Button(CeluneButton):
             super().__init__()
             self.button = button
 
+    # noinspection PyShadowingBuiltins
     def __init__(
         self,
         label: Optional[str] = None,
@@ -352,9 +384,8 @@ class Button(CeluneButton):
             "default"
         ),
         *,
-        # pylint: disable=redefined-builtin
         name: Optional[str] = None,
-        id: Optional[str] = None,
+        id: Optional[str] = None,  # pylint: disable=W0622
         classes: Optional[str] = None,
         tooltip: Optional[RenderableType] = None,
         action: Optional[str] = None,
@@ -713,6 +744,7 @@ def set_terminal_status(
 
 
 # noinspection PyGlobalUndefined
+# noinspection PyUnresolvedReferences
 def ensure_ui_runtime_dependencies() -> None:
     """Load optional UI integrations after the first loading frame is visible."""
     global _RUNTIME_DEPENDENCIES_LOADED
@@ -1586,6 +1618,7 @@ class CeluneUI(
         )
         original_call_handlers = logging.Logger.callHandlers
 
+        # noinspection PyShadowingNames
         def call_handlers(self: logging.Logger, record: logging.LogRecord) -> None:
             if is_celune_log_record(record):
                 original_call_handlers(self, record)

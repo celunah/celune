@@ -816,7 +816,7 @@ class TestPipelineAsync(CeluneAsyncTestCase):
     def test_persona_wait_does_not_cross_a_model_reload_boundary(self) -> None:
         """Verify Persona waits for reload completion before changing engine state."""
         engine = make_pipeline_engine()
-        engine._reload_pending = True
+        engine.reload_pending = True
         wait_calls = 0
 
         def wait_for_playback(*, timeout: Optional[float]) -> bool:
@@ -824,7 +824,7 @@ class TestPipelineAsync(CeluneAsyncTestCase):
             discard(timeout)
             wait_calls += 1
             if wait_calls == 2:
-                engine._reload_pending = False
+                engine.reload_pending = False
                 engine.cur_state = "idle"
             return True
 

@@ -1,8 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """Compatibility exports for the relocated agent type definitions."""
 
-# pylint: disable=duplicate-code
-
 from ..exceptions import (
     NeedleSelectionError,
     NeedleCheckpointError,

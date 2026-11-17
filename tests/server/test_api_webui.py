@@ -381,7 +381,7 @@ class TestApiWebUI(CeluneTestCase):
     def test_api_security_accepts_a_webui_session_cookie(self) -> None:
         """Verify an authenticated browser session can use WebUI actions."""
         api.server_session.auth_token = "secret"
-        session_id = server_auth._new_ui_session()
+        session_id = server_auth.new_ui_session()
 
         response = asyncio.run(
             api.api_security(
@@ -464,7 +464,7 @@ class TestApiWebUI(CeluneTestCase):
     ) -> None:
         """Verify automatic Gradio callbacks do not consume the generation quota."""
         api.server_session.auth_token = "secret"
-        session_id = server_auth._new_ui_session()
+        session_id = server_auth.new_ui_session()
         browser_headers = (
             ("cookie", f"{server_constants.WEBUI_AUTH_COOKIE}={session_id}"),
             ("origin", "http://127.0.0.1:2060"),
@@ -576,7 +576,7 @@ class TestApiWebUI(CeluneTestCase):
     def test_webui_websocket_limit_does_not_block_actions(self) -> None:
         """Verify WebSocket reconnects cannot consume the WebUI action budget."""
         api.server_session.auth_token = "secret"
-        session_id = server_auth._new_ui_session()
+        session_id = server_auth.new_ui_session()
         reached_gradio = False
 
         async def downstream(
@@ -648,7 +648,7 @@ class TestApiWebUI(CeluneTestCase):
     def test_webui_session_survives_restart_but_is_bound_to_the_api_key(self) -> None:
         """Verify signed browser sessions persist until the application key changes."""
         api.server_session.auth_token = "secret"
-        session_id = server_auth._new_ui_session()
+        session_id = server_auth.new_ui_session()
 
         api.configure_api_security(token="secret")
         assert server_auth._ui_session_valid(session_id)
@@ -703,7 +703,7 @@ class TestApiWebUI(CeluneTestCase):
     def test_api_security_rejects_cross_origin_webui_actions(self) -> None:
         """Verify browser sessions cannot authorize cross-origin actions."""
         api.server_session.auth_token = "secret"
-        session_id = server_auth._new_ui_session()
+        session_id = server_auth.new_ui_session()
 
         response = asyncio.run(
             api.api_security(
@@ -792,7 +792,7 @@ class TestApiWebUI(CeluneTestCase):
         assert not reached_gradio
         assert sent_messages == [{"type": "websocket.close", "code": 4401}]
 
-        session_id = server_auth._new_ui_session()
+        session_id = server_auth.new_ui_session()
         scope["headers"] = [
             (
                 b"cookie",

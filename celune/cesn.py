@@ -245,15 +245,15 @@ def _parse_cesn(
             section_state = None
             section_blocks = []
             return
-        language = section_state.language
-        if language is None:
+        lang = section_state.language
+        if lang is None:
             raise CESNValidationError("CESN language must be specified")
         sections.append(
             CESNSection(
                 bpm=section_state.bpm,
                 key=section_state.key,
                 scale=section_state.scale,
-                language=language,
+                language=lang,
                 singer=section_state.singer,
                 blocks=tuple(section_blocks),
             )
@@ -261,10 +261,10 @@ def _parse_cesn(
         section_state = None
         section_blocks = []
 
-    def apply_tuplet(events: tuple[_CESNEvent, ...]) -> tuple[_CESNEvent, ...]:
+    def apply_tuplet(note_events: tuple[_CESNEvent, ...]) -> tuple[_CESNEvent, ...]:
         nonlocal active_tuplet, tuplet_remaining
         annotated: list[_CESNEvent] = []
-        for event in events:
+        for event in note_events:
             if isinstance(event, _CESNJoinMarker):
                 annotated.append(event)
                 continue

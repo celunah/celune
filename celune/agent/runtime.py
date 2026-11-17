@@ -1749,6 +1749,8 @@ class AgentRuntime:
         """Deliver a terminal output without masking lifecycle cleanup."""
         if callback is None:
             return
+
+        # noinspection PyBroadException
         try:
             callback(output)
         except Exception:

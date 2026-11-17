@@ -357,14 +357,14 @@ def run_agent_route(self, route: AgentClassificationResult) -> bool:
                     loglevel="verbose",
                 )
 
-    def deliver_output(output: AgentOutput) -> None:
+    def deliver_output(out: AgentOutput) -> None:
         """Deliver generated agent responses through the shared speech path."""
         nonlocal delivery_failed, suppress_initial_plan
-        terminal = output.get("terminal")
+        terminal = out.get("terminal")
         if suppress_initial_plan and terminal is None:
             suppress_initial_plan = False
             return
-        if output.get("tool_call") is not None:
+        if out.get("tool_call") is not None:
             return
         if terminal is not None:
             if terminal.state == AgentTaskState.COMPLETED:
@@ -385,11 +385,11 @@ def run_agent_route(self, route: AgentClassificationResult) -> bool:
                     self, request.request, response, maintain_status=True
                 ):
                     raise RuntimeError("agent failure response could not be queued")
-            except Exception as exc:
+            except Exception as exception:
                 self.log(
                     format_error_message(
                         "[AGENT] failure_response_generation_failed",
-                        exc,
+                        exception,
                         self.log_level,
                     ),
                     "warning",
@@ -408,9 +408,9 @@ def run_agent_route(self, route: AgentClassificationResult) -> bool:
                 if not self.say(fallback, maintain_status=True):
                     delivery_failed = True
             return
-        if self.backend_mode == "agent_test" and not output.get("end"):
+        if self.backend_mode == "agent_test" and not out.get("end"):
             return
-        response = output.get("response")
+        response = out.get("response")
         if not isinstance(response, str) or not response.strip():
             return
         if self.cur_state in {

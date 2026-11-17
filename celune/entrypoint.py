@@ -1500,7 +1500,7 @@ def start(
             def finish_test(
                 core: "Celune",
                 success: bool,
-                detail: Optional[str],
+                details: Optional[str],
             ) -> None:
                 """Finish the selected explicit test through the core boundary."""
                 if active_test_mode == "agent":
@@ -1509,7 +1509,7 @@ def start(
                     run_agent_test(
                         core,
                         startup_success=success,
-                        startup_detail=detail,
+                        startup_detail=details,
                         request_user=getattr(
                             ui,
                             "request_agent_test_response",
@@ -1520,7 +1520,7 @@ def start(
                 core.finish_test_mode(
                     active_test_mode,
                     success,
-                    detail=detail,
+                    detail=details,
                 )
 
             ui = CeluneUI(
@@ -1725,11 +1725,11 @@ def start(
 
             def prepare_interactive_runtime():
                 """Construct the engine inside the already-mounted UI worker."""
-                runtime = _load_core_runtime(defer_missing_dependency=True)
+                core = _load_core_runtime(defer_missing_dependency=True)
                 _print_startup_diagnostic(
                     string("ui.startup_loading_core"),
                 )
-                return runtime.Celune(
+                return core.Celune(
                     tts_backend=backend,
                     log_callback=ui.tts_log,
                     toast_callback=ui.show_toast,

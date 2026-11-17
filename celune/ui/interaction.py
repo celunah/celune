@@ -231,11 +231,11 @@ def _start_vc_recording(self) -> bool:
                 )
                 if live_source_id is None:
                     live_playback_generation = None
-            except Exception as exc:
+            except Exception as _exception:
                 self.safe_log(
                     _app.format_error_message(
                         _app.string("ui.recording_stream_submit_failed"),
-                        exc,
+                        _exception,
                         _app.resolve_log_level(
                             getattr(self.celune, "log_level", None),
                             self._startup_log_level,
@@ -309,7 +309,7 @@ def _start_vc_recording(self) -> bool:
 
                 if is_final_chunk:
                     finish_playback_segment()
-            except Exception as exc:
+            except Exception as exception:
                 if debug_capture is not None:
                     debug_capture.record_conversion(debug_token)
                 if self.celune is None:
@@ -320,12 +320,12 @@ def _start_vc_recording(self) -> bool:
                             "ui.recording_stream_chunk_failed",
                             label=queued_label,
                         ),
-                        exc,
+                        exception,
                         getattr(self.celune, "log_level", "info"),
                     ),
                     "warning",
                 )
-                if isinstance(exc, _app.CEDTSError):
+                if isinstance(exception, _app.CEDTSError):
                     self._cancel_vc_recording(announce=False)
 
     worker = threading.Thread(target=submit_live_audio, daemon=True)
@@ -392,6 +392,7 @@ def _start_vc_recording(self) -> bool:
                 return
 
             live_audio: Optional[_app.AudioChunk] = None
+            discard(live_audio)
             if voice_detected:
                 if not self._vc_recording_speech_started:
                     self._prepend_vc_preroll_locked()
@@ -768,7 +769,7 @@ def _config_autocomplete(
     if path in candidates:
         values = candidates[path]
         if value is None and None not in values:
-            return (None, *values)
+            return None, *values
         return values
     if value is None:
         return (None,)
@@ -992,8 +993,8 @@ def open_voice_menu(self, *, preview: bool = False) -> None:
             _app.string("ui.voice_menu_title"),
             options,
             value_display="all",
-            footer_builder=lambda option: self._menu_footer(
-                option,
+            footer_builder=lambda _option: self._menu_footer(
+                _option,
                 option_count=len(options),
                 confirm_hint=_app.string("ui.voice_confirm_hint"),
                 include_search=not singing_backend,
@@ -1904,6 +1905,7 @@ def _shutdown_from_windows_signal(self) -> None:
 
 def _hide_scrollbars_for_exit(self) -> None:
     """Hide mounted scrollbars before painting the final transparent frame."""
+    # noinspection PyBroadException
     try:
         screen = self.screen
         widgets = (screen, *screen.query(_app.Widget))
@@ -1951,6 +1953,7 @@ def _graceful_exit(self, return_code: Optional[int] = None) -> None:
 
         def finish_fade() -> None:
             """Paint one final fully transparent frame before unmounting."""
+            # noinspection PyBroadException
             try:
                 self._hide_scrollbars_for_exit()
                 self.screen.styles.opacity = 0.0
@@ -1959,6 +1962,7 @@ def _graceful_exit(self, return_code: Optional[int] = None) -> None:
             except Exception:
                 finish_exit()
 
+        # noinspection PyBroadException
         try:
             self._animate_opacity(
                 self.screen,

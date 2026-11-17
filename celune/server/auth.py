@@ -122,7 +122,7 @@ def get_or_create_api_key(
     return generated
 
 
-def _clean_token(token: Optional[str]) -> Optional[str]:
+def clean_token(token: Optional[str]) -> Optional[str]:
     """Normalize empty token values to ``None``."""
     if token is None:
         return None
@@ -132,7 +132,7 @@ def _clean_token(token: Optional[str]) -> Optional[str]:
 
 def _env_auth_token() -> Optional[str]:
     """Return the API token from the environment, if configured."""
-    return _clean_token(os.getenv("CELUNE_API_TOKEN"))
+    return clean_token(os.getenv("CELUNE_API_TOKEN"))
 
 
 def configure_api_security(
@@ -156,7 +156,7 @@ def _resolved_auth_token(token: Optional[str]) -> Optional[str]:
     """Resolve an API token while preserving an explicit empty value."""
     if token is not None and not token.strip():
         return None
-    return _clean_token(token) or _env_auth_token()
+    return clean_token(token) or _env_auth_token()
 
 
 def resolve_api_host(token: Optional[str] = None, host: Optional[str] = None) -> str:
@@ -188,7 +188,7 @@ def _headers_token(headers: Headers) -> Optional[str]:
     scheme, _, value = auth_header.partition(" ")
     if scheme.lower() == "bearer" and value:
         return value.strip()
-    return _clean_token(headers.get("x-celune-token"))
+    return clean_token(headers.get("x-celune-token"))
 
 
 def _headers_authenticated(headers: Headers) -> bool:
@@ -199,7 +199,7 @@ def _headers_authenticated(headers: Headers) -> bool:
     return given is not None and compare_digest(given, server_session.auth_token)
 
 
-def _authenticated(request: Request) -> bool:
+def authenticated(request: Request) -> bool:
     """Return whether the request carries the configured API token."""
     return _headers_authenticated(request.headers)
 
@@ -217,7 +217,7 @@ def is_browser_ui_request(request: Request) -> bool:
     return path == "/ui" or path.startswith("/ui/")
 
 
-def _is_public_api_request(request: Request) -> bool:
+def is_public_api_request(request: Request) -> bool:
     """Return whether the request is safe to serve without an API token."""
     method = request.method.upper()
     path = request.url.path.rstrip("/") or "/"
@@ -278,12 +278,12 @@ def _rate_limited_client(client_key: str) -> bool:
         return False
 
 
-def _rate_limited(request: Request) -> bool:
+def rate_limited(request: Request) -> bool:
     """Return whether the request exceeds the configured rate limit."""
     return _rate_limited_client(_rate_limit_key(request))
 
 
-async def _is_webui_generation_request(request: Request) -> bool:
+async def is_webui_generation_request(request: Request) -> bool:
     """Return whether a POST can start speech or voice-conversion generation."""
     if request.method.upper() != "POST":
         return False
@@ -423,7 +423,7 @@ def _webui_auth_client_cached(connection: Union[Request, WebSocket]) -> bool:
         return True
 
 
-def _remember_webui_auth_client(connection: Union[Request, WebSocket]) -> None:
+def remember_webui_auth_client(connection: Union[Request, WebSocket]) -> None:
     """Remember an authenticated client for the browser-session lifetime."""
     fingerprint = _webui_auth_client_fingerprint(connection)
     if fingerprint is None:
@@ -495,7 +495,7 @@ def _ui_session_details(session: Optional[str]) -> Optional[tuple[str, int]]:
     return client_id, expires_at
 
 
-def _new_ui_session(client_id: Optional[str] = None) -> str:
+def new_ui_session(client_id: Optional[str] = None) -> str:
     """Create a signed WebUI session that survives Celune restarts."""
     if server_session.auth_token is None:
         return ""
@@ -510,7 +510,7 @@ def _ui_session_valid(session_id: Optional[str]) -> bool:
     return _ui_session_details(session_id) is not None
 
 
-def _set_ui_session_cookie(
+def set_ui_session_cookie(
     response: Response,
     request: Request,
     session: str,
@@ -527,35 +527,35 @@ def _set_ui_session_cookie(
     )
 
 
-def _refresh_ui_session_cookie(request: Request, response: Response) -> Response:
+def refresh_ui_session_cookie(request: Request, response: Response) -> Response:
     """Extend an active browser session near its expiry without asking again."""
     details = _ui_session_details(request.cookies.get(WEBUI_AUTH_COOKIE))
     if details is None:
         if _webui_auth_client_cached(request):
-            _set_ui_session_cookie(response, request, _new_ui_session())
+            set_ui_session_cookie(response, request, new_ui_session())
         return response
 
     client_id, expires_at = details
     if expires_at - int(time.time()) > WEBUI_AUTH_SESSION_SECONDS // 2:
         return response
 
-    _remember_webui_auth_client(request)
-    _set_ui_session_cookie(response, request, _new_ui_session(client_id))
+    remember_webui_auth_client(request)
+    set_ui_session_cookie(response, request, new_ui_session(client_id))
     return response
 
 
-def _webui_authenticated(connection: Union[Request, WebSocket]) -> bool:
+def webui_authenticated(connection: Union[Request, WebSocket]) -> bool:
     """Return whether a WebUI connection has an API token or active session."""
     if server_session.auth_token is None or _headers_authenticated(connection.headers):
         return True
     if _ui_session_valid(connection.cookies.get(WEBUI_AUTH_COOKIE)):
         if not _webui_auth_client_cached(connection):
-            _remember_webui_auth_client(connection)
+            remember_webui_auth_client(connection)
         return True
     return _webui_auth_client_cached(connection)
 
 
-def _same_origin(connection: Union[Request, WebSocket]) -> bool:
+def same_origin(connection: Union[Request, WebSocket]) -> bool:
     """Return whether a browser supplied origin matches this API host."""
     origin = connection.headers.get("origin")
     if origin is None:
@@ -592,7 +592,7 @@ def _same_origin(connection: Union[Request, WebSocket]) -> bool:
     )
 
 
-def _unauthorized_response() -> JSONResponse:
+def unauthorized_response() -> JSONResponse:
     """Build the shared unauthorized response for protected requests."""
     return JSONResponse(
         status_code=401,
@@ -604,7 +604,7 @@ def _unauthorized_response() -> JSONResponse:
     )
 
 
-def _rate_limit_response() -> JSONResponse:
+def rate_limit_response() -> JSONResponse:
     """Build the shared rate limit response for protected requests."""
     current_time = datetime.datetime.now(datetime.UTC)
     next_minute = current_time.replace(second=0, microsecond=0) + datetime.timedelta(
@@ -621,7 +621,7 @@ def _rate_limit_response() -> JSONResponse:
     )
 
 
-def _websocket_authenticated(websocket: WebSocket) -> bool:
+def websocket_authenticated(websocket: WebSocket) -> bool:
     """Return whether a WebSocket carries the configured API token."""
     if server_session.auth_token is None:
         return True
@@ -630,7 +630,7 @@ def _websocket_authenticated(websocket: WebSocket) -> bool:
     scheme, _, value = auth_header.partition(" ")
     given = value.strip() if scheme.lower() == "bearer" and value else None
     if given is None:
-        given = _clean_token(websocket.headers.get("x-celune-token"))
+        given = clean_token(websocket.headers.get("x-celune-token"))
     if given is None:
-        given = _clean_token(websocket.query_params.get("token"))
+        given = clean_token(websocket.query_params.get("token"))
     return given is not None and compare_digest(given, server_session.auth_token)

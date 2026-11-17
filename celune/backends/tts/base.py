@@ -63,6 +63,7 @@ def to_numpy_audio(chunk: Union[torch.Tensor, np.ndarray]) -> AudioChunk:
     else:
         audio = np.asarray(chunk)
 
+    normalized: np.float32
     if np.issubdtype(audio.dtype, np.integer):
         limits = np.iinfo(audio.dtype)
         if np.issubdtype(audio.dtype, np.unsignedinteger):
@@ -592,6 +593,7 @@ class CeluneBackend[ModelT](ABC):
         """
         components: dict[str, torch.nn.Module] = {}
         for component in contract.components:
+            component: torch.nn.Module
             candidates = (
                 getattr(model, component.name, None),
                 getattr(getattr(model, "model", None), component.name, None),

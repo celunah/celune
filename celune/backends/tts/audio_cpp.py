@@ -36,6 +36,7 @@ from ...paths import (
     huggingface_hub_cache_dir,
     temp_directory_environment,
 )
+from ...typing import JSONSerializable
 from ...typing.aliases import AudioChunk
 from .audio_cpp_models import (
     AUDIOCPP_GGUF_REPO,
@@ -727,7 +728,7 @@ def start_audio_cpp_server(
     model_path: Path,
     precision: str,
     sample_rate: int,
-    model_config: dict[str, object],
+    model_config: dict[str, JSONSerializable],
     torch_root: Path,
     device: int,
     backend_name: str,
@@ -925,12 +926,13 @@ class _SharedAudioCppServerManager:
 
     def release(self, server: _SharedAudioCppServer) -> None:
         """Stop the server after the final backend worker releases it."""
+        existing_server: _SharedAudioCppServer = self._server
         with self._lock:
-            if self._server is not server:
+            if existing_server is not server:
                 return
             self._references = max(0, self._references - 1)
             if self._references == 0:
-                self._server.close()
+                existing_server.close()
                 self._server = None
 
 

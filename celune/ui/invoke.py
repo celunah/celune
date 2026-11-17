@@ -50,10 +50,10 @@ async def invoke_expression(expression: str, engine: object) -> object:
             value = await resolve(node.value)
             try:
                 return getattr(value, node.attr)
-            except AttributeError as exc:
+            except AttributeError as exception:
                 raise _InvokeResolutionError(
                     f"cannot resolve attribute {node.attr!r}"
-                ) from exc
+                ) from exception
         if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.UAdd, ast.USub)):
             value = await resolve(node.operand)
             if not isinstance(value, (int, float, complex)) or isinstance(value, bool):
@@ -98,8 +98,8 @@ async def invoke_expression(expression: str, engine: object) -> object:
                 if inspect.isawaitable(result):
                     return await cast(Awaitable[object], result)
                 return result
-            except Exception as exc:
-                raise _InvokeCallError(exc) from exc
+            except Exception as exception:
+                raise _InvokeCallError(exception) from exception
 
         raise _InvokeParseError(
             f"unsupported expression element: {type(node).__name__}"

@@ -495,6 +495,7 @@ def _handle_restartaudio(ui: CeluneUI, _args: list[str]) -> None:
         audio_test_succeeded = False
         if celune is not None:
             close_stream(celune, abort=True)
+            # noinspection PyBroadException
             try:
                 test_audio = getattr(celune, "test_audio", None)
                 audio_test_succeeded = callable(test_audio) and bool(test_audio())

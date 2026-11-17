@@ -60,9 +60,10 @@ def _validated_call() -> ValidatedToolCall:
     }
 
 
-class TestAgentRuntimeLifecycle:  # pylint: disable=attribute-defined-outside-init
+class TestAgentRuntimeLifecycle:
     """Verify lifecycle ownership without invoking a model or local tool."""
 
+    # pylint: disable=W0201
     def setup_method(self) -> None:
         """Create a fresh runtime and event recorder for each test."""
         self.event_names: list[str] = []

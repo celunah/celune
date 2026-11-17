@@ -1,8 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """UI protocol definitions."""
 
-# pylint: disable=unused-argument,unnecessary-ellipsis
-
 from __future__ import annotations
 from typing import TYPE_CHECKING, Optional, Protocol
 

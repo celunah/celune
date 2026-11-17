@@ -543,7 +543,8 @@ class LlamaCppPersonaRuntime:
                     self._active_connection = None
             connection.close()
 
-    def _messages(self, request: GenerateRequest) -> list[dict[str, object]]:
+    @staticmethod
+    def _messages(request: GenerateRequest) -> list[dict[str, object]]:
         """Convert user conversation history to the llama.cpp chat shape."""
         messages = request.messages
         if not messages:

@@ -295,6 +295,7 @@ def _create_caption_session(
     """Prefer CUDA for caption inference and retry with CPU if needed."""
     cpu_provider = "CPUExecutionProvider"
     if "CUDAExecutionProvider" in runtime.get_available_providers():
+        # noinspection PyBroadException
         try:
             preload_dlls = getattr(runtime, "preload_dlls", None)
             if callable(preload_dlls):
@@ -481,10 +482,10 @@ def merge_empty_caption_alignment_sections(
     if not sections:
         return ()
 
-    def is_empty(section: CaptionAlignmentSection) -> bool:
+    def is_empty(sect: CaptionAlignmentSection) -> bool:
         return (
-            section.transcript_word_start == section.transcript_word_end
-            or section.display_word_start == section.display_word_end
+            sect.transcript_word_start == sect.transcript_word_end
+            or sect.display_word_start == sect.display_word_end
         )
 
     merged: list[CaptionAlignmentSection] = []

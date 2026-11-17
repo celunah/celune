@@ -144,6 +144,7 @@ def initialize(
     """
 
     # "protected member" - she is being created, what are you on?
+    # noinspection PyProtectedMember
     if type(self)._instance is not None:
         raise RuntimeError(f"can only instantiate {self.__class__.__name__} once")
     if backend_mode not in {"normal", "ui_test", "agent_test"}:
@@ -602,6 +603,7 @@ def finish_test_mode(
         }
         result["summary"] = cast(JSONSerializable, summary)
     self._runtime_state.test_result = result
+    # noinspection PyBroadException
     try:
         self.cur_state = "stopped"
     except Exception:

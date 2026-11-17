@@ -148,26 +148,26 @@ def validate_runtime(
 
     def format_runtime_error(
         message: str,
-        error: Exception,
+        err: Exception,
         include_cause: bool = False,
     ) -> str:
         """Attach runtime exception details to one diagnostic.
 
         Args:
             message: The diagnostic prefix.
-            error: The exception raised by the runtime check.
+            err: The exception raised by the runtime check.
             include_cause: Whether to include a concise cause at info log level.
 
         Returns:
             str: The prefix with any available exception details.
         """
-        details = format_error(error, log_level)
+        details = format_error(err, log_level)
         if not details and include_cause:
-            details = f"{type(error).__name__}: {error}"
+            details = f"{type(err).__name__}: {err}"
         if not details:
             return message
-        separator = "\n" if log_level == "debug" else ": "
-        return f"{message}{separator}{details}"
+        sep = "\n" if log_level == "debug" else ": "
+        return f"{message}{sep}{details}"
 
     if sys.version_info < (3, 12) or sys.version_info >= (3, 15):
         log(

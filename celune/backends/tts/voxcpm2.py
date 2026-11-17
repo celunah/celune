@@ -777,8 +777,8 @@ class VoxCPM2(CeluneBackend[Union[VoxCPM, AudioCppRuntime]]):
                     self.model = runtime
                     return runtime
 
-        available, path = self.model_is_available_locally(model_id)
-        if not available or path is None:
+        is_available, path = self.model_is_available_locally(model_id)
+        if not is_available or path is None:
             self.log(string("tts.model_download_start"), "info")
             with huggingface_progress(self.report_progress):
                 path = snapshot_download(

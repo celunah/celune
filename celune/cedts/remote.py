@@ -671,6 +671,7 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
         """Return one worker error line after its stderr reader has drained."""
         process = getattr(self, "_process", None)
         stderr_thread = getattr(self, "_stderr_thread", None)
+        # noinspection PyBroadException
         try:
             process_exited = process is not None and process.poll() is not None
         except Exception:

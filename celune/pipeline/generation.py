@@ -1071,9 +1071,9 @@ async def generation_worker_job(
         engine._active_speech_generation = request.generation
         try:
             await run_in_daemon_thread(
-                lambda request=request: _process_generation_request(
+                lambda _request=request: _process_generation_request(
                     engine,
-                    request,
+                    _request,
                     caption_worker,
                     reload_language_model,
                 )

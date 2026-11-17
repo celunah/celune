@@ -423,6 +423,7 @@ def _error_response(
 def _release_worker_models(models: dict[int, BackendModel]) -> None:
     """Best-effort close every runtime held by the worker model table."""
     for model in tuple(models.values()):
+        # noinspection PyBroadException
         try:
             close = getattr(model, "close", None)
         except Exception:
@@ -431,6 +432,8 @@ def _release_worker_models(models: dict[int, BackendModel]) -> None:
             with suppress(Exception):
                 close()
             continue
+
+        # noinspection PyBroadException
         try:
             unload = getattr(model, "unload", None)
         except Exception:

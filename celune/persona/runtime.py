@@ -174,6 +174,11 @@ class PersonaBackend:
         self.supports_emotion_probes = False
         self._generation_cancelled = threading.Event()
 
+    @property
+    def generation_cancelled(self) -> threading.Event:
+        """Property for canceled generations."""
+        return self._generation_cancelled
+
     def interrupt_generation(self) -> None:
         """Request cancellation of the current model generation."""
         self._generation_cancelled.set()
@@ -797,7 +802,7 @@ class PersonaRuntime:
                         model_path,
                         projector_path,
                         self._configured_context_size(),
-                        self.backend._generation_cancelled,
+                        self.backend.generation_cancelled,
                         server_path,
                     )
                 except (ModelConsentRequired, PermissionError, InterruptedError):

@@ -49,9 +49,10 @@ def _call() -> ValidatedToolCall:
     }
 
 
-class TestAgentRouting:  # pylint: disable=attribute-defined-outside-init
+class TestAgentRouting:
     """Verify routing keeps conversation and task input separate."""
 
+    # pylint: disable=W0201
     def setup_method(self) -> None:
         """Create a fresh router and engine fixture for each test."""
         self._cuda_patch = mock.patch(

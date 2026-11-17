@@ -60,22 +60,23 @@ from .exceptions import (
 from .typing.api import (
     TaskCommandName,
 )
+
 from .server.auth import (
-    _clean_token,
-    _same_origin,
-    _rate_limited,
-    _authenticated,
-    _new_ui_session,
-    _rate_limit_response,
-    _webui_authenticated,
+    clean_token,
+    same_origin,
+    rate_limited,
+    authenticated,
+    new_ui_session,
+    rate_limit_response,
+    webui_authenticated,
     is_browser_ui_request,
-    _is_public_api_request,
-    _set_ui_session_cookie,
-    _unauthorized_response,
-    _websocket_authenticated,
-    _refresh_ui_session_cookie,
-    _remember_webui_auth_client,
-    _is_webui_generation_request,
+    is_public_api_request,
+    set_ui_session_cookie,
+    unauthorized_response,
+    websocket_authenticated,
+    refresh_ui_session_cookie,
+    remember_webui_auth_client,
+    is_webui_generation_request,
 )
 from .server.jobs import SpeechJob, TaskEvent, TaskSubscription
 from .webui.actions import (
@@ -364,7 +365,7 @@ async def api_security(
     Returns:
         Response: The response returned by the protected route or security layer.
     """
-    if _is_public_api_request(request):
+    if is_public_api_request(request):
         return await call_next(request)
 
     if is_browser_ui_request(request):
@@ -376,7 +377,7 @@ async def api_security(
                 return asset_response
 
         if request.url.path == "/ui" and request.method.upper() == "GET":
-            if _webui_authenticated(request):
+            if webui_authenticated(request):
                 return RedirectResponse(
                     "/ui/",
                     status_code=307,
@@ -398,7 +399,7 @@ async def api_security(
         if path.startswith("/ui/assets/") and request.method.upper() == "GET":
             return await call_next(request)
         if path == WEBUI_AUTH_PATH and request.method.upper() == "GET":
-            if _webui_authenticated(request):
+            if webui_authenticated(request):
                 return RedirectResponse(
                     "/ui/",
                     status_code=307,
@@ -419,32 +420,32 @@ async def api_security(
             )
 
         if path == WEBUI_AUTH_PATH and request.method.upper() == "POST":
-            if not _same_origin(request):
+            if not same_origin(request):
                 return JSONResponse(status_code=403, content={"error": "forbidden"})
-            if _rate_limited(request):
-                return _rate_limit_response()
+            if rate_limited(request):
+                return rate_limit_response()
             return await call_next(request)
 
-        if not _webui_authenticated(request):
-            return _unauthorized_response()
+        if not webui_authenticated(request):
+            return unauthorized_response()
 
         if request.method.upper() not in {"GET", "HEAD", "OPTIONS"}:
-            if not _same_origin(request):
+            if not same_origin(request):
                 return JSONResponse(status_code=403, content={"error": "forbidden"})
-            if await _is_webui_generation_request(request) and _rate_limited(request):
-                return _rate_limit_response()
+            if await is_webui_generation_request(request) and rate_limited(request):
+                return rate_limit_response()
         model_request_token = enter_api_model_request()
         try:
             response = await call_next(request)
         finally:
             exit_api_model_request(model_request_token)
-        return _refresh_ui_session_cookie(request, response)
+        return refresh_ui_session_cookie(request, response)
 
-    if not _authenticated(request):
-        return _unauthorized_response()
+    if not authenticated(request):
+        return unauthorized_response()
 
-    if _rate_limited(request):
-        return _rate_limit_response()
+    if rate_limited(request):
+        return rate_limit_response()
 
     model_request_token = enter_api_model_request()
     try:
@@ -473,7 +474,7 @@ class WebUiWebSocketSecurityMiddleware:
             and server_session.auth_token is not None
         ):
             websocket = WebSocket(scope, receive, send)
-            if not _webui_authenticated(websocket) or not _same_origin(websocket):
+            if not webui_authenticated(websocket) or not same_origin(websocket):
                 await send({"type": "websocket.close", "code": 4401})
                 return
         await self.app(scope, receive, send)
@@ -601,7 +602,7 @@ async def authenticate_webui(
     request: Request,
 ) -> Response:
     """Exchange the configured application key for a WebUI session cookie."""
-    provided_key = _clean_token(body.api_key)
+    provided_key = clean_token(body.api_key)
     if server_session.auth_token is None:
         return JSONResponse(status_code=404, content={"error": "not_found"})
     if provided_key is None or not compare_digest(
@@ -621,8 +622,8 @@ async def authenticate_webui(
         content={"authenticated": True},
         headers={"Cache-Control": "no-store"},
     )
-    _remember_webui_auth_client(request)
-    _set_ui_session_cookie(response, request, _new_ui_session())
+    remember_webui_auth_client(request)
+    set_ui_session_cookie(response, request, new_ui_session())
     return response
 
 
@@ -729,7 +730,7 @@ async def speech_task_websocket(websocket: WebSocket, job_id: str) -> None:
         websocket: The client WebSocket connection.
         job_id: The speech task ID to stream.
     """
-    if not _websocket_authenticated(websocket):
+    if not websocket_authenticated(websocket):
         await websocket.close(code=4401)
         return
 

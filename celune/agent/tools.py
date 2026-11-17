@@ -1176,7 +1176,7 @@ def _local_launch_process(
     if cwd is not None and not cwd.is_dir():
         raise _LocalManagementError("invalid_target", "cwd is not a directory", cwd)
     try:
-        # pylint: disable=consider-using-with
+        # pylint: disable=R1732
         process = subprocess.Popen(
             [resolved, *_argument_list(call, "arguments")],
             cwd=str(cwd) if cwd is not None else None,
@@ -1241,6 +1241,7 @@ def _local_system_info(
 
 def _local_gpu_info() -> JSON:
     """Return detected CUDA devices without failing system diagnostics."""
+    # noinspection PyBroadException
     try:
         import torch
 

@@ -22,7 +22,7 @@ from types import (
     FunctionType,
     BuiltinFunctionType,
 )
-from typing import Literal, ClassVar, Optional, cast
+from typing import Literal, ClassVar, Optional, cast, TYPE_CHECKING
 from pathlib import Path
 from datetime import datetime
 from collections import abc, deque
@@ -55,6 +55,9 @@ from ..exceptions import (
 from ..exceptions import (
     InvokeResolutionError as _InvokeResolutionError,
 )
+
+if TYPE_CHECKING:
+    from ..celune import Celune
 
 ComposeResult = app.ComposeResult
 
@@ -342,6 +345,7 @@ class DebugCallTrace:
         if tool_id is None:
             return False
 
+        # noinspection PyBroadException
         try:
             self._monitoring.use_tool_id(tool_id, "celune-debug-inspector")
             self._tool_id = tool_id
@@ -538,6 +542,8 @@ class DebugCallTrace:
         _discard_unused(instruction_offset)
         if self._failed or self._suspended or not self._recording:
             return
+
+        # noinspection PyBroadException
         try:
             frame = sys._getframe().f_back
             module_name = _frame_module_name(frame, code)
@@ -593,6 +599,8 @@ class DebugCallTrace:
             or _is_python_callable(callable_value)
         ):
             return
+
+        # noinspection PyBroadException
         try:
             if isinstance(callable_value, BuiltinFunctionType):
                 module_name, name, special_method = _builtin_callable_metadata(
@@ -719,6 +727,8 @@ class DebugCallTrace:
             return
         thread_id = threading.get_ident()
         finished_ns = time.perf_counter_ns()
+
+        # noinspection PyBroadException
         try:
             with self._lock:
                 stack = self._stacks.get(thread_id)
@@ -833,6 +843,8 @@ class DebugCallTrace:
         if enabled == (code in self._active_codes):
             return
         event_mask = self._local_event_mask if enabled else monitoring.events.NO_EVENTS
+
+        # noinspection PyBroadException
         try:
             monitoring.set_local_events(tool_id, code, event_mask)
         except Exception:
@@ -1771,7 +1783,7 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
     def _invoke_worker(
         self,
         expression: str,
-        engine: object,
+        engine: Celune,
         generation: int,
     ) -> None:
         """Invoke one expression and return its categorized result to the UI."""
@@ -3266,6 +3278,8 @@ def _worker_status(backend: object) -> str:
         or not callable(is_alive)
     ):
         return string("debug.worker_inactive")
+
+    # noinspection PyBroadException
     try:
         active = poll() is None and is_alive()
     except Exception:

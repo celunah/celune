@@ -214,27 +214,27 @@ class CeluneTestCase:
         """Run the legacy class setup hook through pytest."""
         setup = getattr(cls, "setUpClass", None)
         if callable(setup):
-            setup()  # pylint: disable=not-callable
+            setup()  # pylint: disable=E1102
 
     @classmethod
     def teardown_class(cls) -> None:
         """Run the legacy class teardown hook through pytest."""
         teardown = getattr(cls, "tearDownClass", None)
         if callable(teardown):
-            teardown()  # pylint: disable=not-callable
+            teardown()  # pylint: disable=E1102
 
     def setup_method(self) -> None:
         """Run the legacy per-test setup hook through pytest."""
         self._cleanups.clear()
         setup = getattr(self, "setUp", None)
         if callable(setup):
-            setup()  # pylint: disable=not-callable
+            setup()  # pylint: disable=E1102
 
     def teardown_method(self) -> None:
         """Run teardown and registered cleanup callbacks through pytest."""
         teardown = getattr(self, "tearDown", None)
         if callable(teardown):
-            teardown()  # pylint: disable=not-callable
+            teardown()  # pylint: disable=E1102
         for function, args, kwargs in reversed(self._cleanups):
             function(*args, **kwargs)
 
@@ -504,8 +504,8 @@ def make_pipeline_engine() -> SimpleNamespace:
     engine.inference_scheduler = engine._inference_scheduler
     engine._model_lock = threading.RLock()
     engine.model_lock = engine._model_lock
-    engine._persona_thread = None
-    engine._reload_pending = False
+    engine.persona_thread = None
+    engine.reload_pending = False
     engine.vc_backend = None
     engine.config = {}
     engine.input_mode = "text_to_speech"

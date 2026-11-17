@@ -66,6 +66,7 @@ if TYPE_CHECKING:
 
     # hey pycharm can you stop marking types unused?
     # type checkers care even if she does not
+    # noinspection PyUnresolvedReferences
     from ..typing.persona import PersonaClientResponse
 
 _MemoryClassifier = Callable[[JSON], "PersonaClientResponse"]

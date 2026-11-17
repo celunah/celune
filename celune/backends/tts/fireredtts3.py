@@ -1144,13 +1144,13 @@ class FireRedTTS3(CeluneBackend[FireRedModel]):
             """Yield generated audio using one cached incremental decoder."""
             decoder: Optional[FireRedIncrementalDecoder] = None
             prompt_samples = 0
-            sample_rate = 0
+            sr = 0
 
             for (
                 prompt_latents,
                 latent_patch,
                 prompt_samples,
-                sample_rate,
+                sr,
             ) in self._stream_latents(
                 model,
                 language=language or "English",
@@ -1170,20 +1170,20 @@ class FireRedTTS3(CeluneBackend[FireRedModel]):
                     )
                     decoder.push(prompt_latents)
 
-                audio, audio_start = decoder.push(latent_patch)
-                if audio is None:
+                latent, audio_start = decoder.push(latent_patch)
+                if latent is None:
                     continue
                 trim = max(0, prompt_samples - audio_start)
-                if trim >= audio.shape[-1]:
+                if trim >= latent.shape[-1]:
                     continue
-                yield audio[trim:], sample_rate
+                yield latent[trim:], sr
 
             if decoder is not None:
-                audio, audio_start = decoder.finish()
-                if audio is not None:
+                latent, audio_start = decoder.finish()
+                if latent is not None:
                     trim = max(0, prompt_samples - audio_start)
-                    if trim < audio.shape[-1]:
-                        yield audio[trim:], sample_rate
+                    if trim < latent.shape[-1]:
+                        yield latent[trim:], sr
 
         with (
             self._suppress_backend_output(),
@@ -1240,6 +1240,9 @@ class FireRedTTS3(CeluneBackend[FireRedModel]):
                     chunk_index += 1
                     pending_audio = None
                     pending_steps = 0
+
+                    discard(pending_audio)
+                    discard(pending_steps)
 
                 total_steps += len(audio_batch)
                 if first_chunk_time is None:
