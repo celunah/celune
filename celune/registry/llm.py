@@ -3,7 +3,7 @@
 
 from typing import Literal, Optional
 
-from .types import ModelMetadata
+from ..typing.registry import ModelMetadata
 
 PERSONA_DEFAULT_MODEL_ID = "Qwen/Qwen3-VL-4B-Instruct"
 

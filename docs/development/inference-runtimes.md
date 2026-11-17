@@ -33,7 +33,7 @@ The built-in Persona registry currently contains 14 model IDs. All 14 now have
 a pinned GGUF package for the `4bit` and `8bit` Persona precision settings.
 `Qwen/Qwen3-VL-4B-Instruct` uses its reviewed Qwen package. The other 13 use
 matching mradermacher GGUF packages listed below and in
-`celune/persona/gguf_catalog.py`. An unsupported model or precision logs one
+`celune/registry/gguf_catalog.py`. An unsupported model or precision logs one
 reason and falls back to native inference.
 
 | Persona model and requested precision | GGUF model file | Vision projector | GGUF quantization | Eligible platform |
@@ -120,7 +120,7 @@ requires audio.cpp.
 
 The enabled streaming adapters use the exact GGUF filenames, sizes, SHA-256
 digests, model IDs, quantization labels, and package revision recorded in
-`celune/backends/tts/audio_cpp_models.py`. All package files come from
+`celune/registry/audio_cpp_models.py`. All package files come from
 `audio-cpp/audio.cpp-gguf` revision
 `73ce4162f6cce370dd533c6782b772135c1b2a8e`. Each downloaded file is checked
 against its pinned size and SHA-256 before the runtime can load it. The runtime

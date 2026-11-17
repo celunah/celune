@@ -38,7 +38,7 @@ from ...paths import (
 )
 from ...typing import JSONSerializable
 from ...typing.aliases import AudioChunk
-from .audio_cpp_models import (
+from ...registry.audio_cpp_models import (
     AUDIOCPP_GGUF_REPO,
     AUDIOCPP_GGUF_REVISION,
     AudioCppModelArtifact,

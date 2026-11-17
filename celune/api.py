@@ -60,7 +60,6 @@ from .exceptions import (
 from .typing.api import (
     TaskCommandName,
 )
-
 from .server.auth import (
     clean_token,
     same_origin,
@@ -99,9 +98,9 @@ from .webui.runtime import (
     get_webui_input_placeholder,
     subscribe_webui_timed_updates,
 )
-from .registry.types import ModelMetadata
 from .server.session import ServerSession, server_session
 from .typing.pipeline import SpeechStreamQueue
+from .typing.registry import ModelMetadata
 from .registry.consent import (
     consent_status,
     consent_details,

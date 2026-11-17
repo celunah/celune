@@ -1,15 +1,15 @@
 # SPDX-License-Identifier: Apache-2.0
 """Pinned audio.cpp GGUF packages verified against the TTS adapters."""
 
-from dataclasses import dataclass
 from typing import Optional
+from dataclasses import dataclass
 
-from ...registry.tts import (
+from .tts import (
+    VOXCPM2_MODEL_ID,
     DOTS_TTS_MODEL_ID,
     POCKET_TTS_MODEL_ID,
     QWEN3_TTS_0_6B_MODEL_ID,
     QWEN3_TTS_1_7B_MODEL_ID,
-    VOXCPM2_MODEL_ID,
 )
 
 AUDIOCPP_GGUF_REPO = "audio-cpp/audio.cpp-gguf"

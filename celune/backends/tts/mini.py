@@ -38,11 +38,11 @@ from ...registry.tts import (
 from ...registry.tts import (
     model_contract as resolve_model_contract,
 )
-from ...registry.types import ModelMetadata
 from ...typing.aliases import AudioChunk, AudioChunks
-from .audio_cpp_models import audio_cpp_model_artifact
 from ...typing.backends import MiniModel, MiniPromptState, BackendArgumentValue
+from ...typing.registry import ModelMetadata
 from ...registry.consent import require_model_consent
+from ...registry.audio_cpp_models import audio_cpp_model_artifact
 
 
 class Mini(CeluneBackend[Union[TTSModel, AudioCppRuntime]]):
@@ -283,7 +283,7 @@ class Mini(CeluneBackend[Union[TTSModel, AudioCppRuntime]]):
     def _audio_cpp_reference_path(self, voice: str) -> Path:
         """Prepare a reference WAV with native Pocket TTS pause handling."""
         from pocket_tts.data.audio import audio_read
-        from pocket_tts.data.audio_utils import convert_audio, end_on_pause
+        from pocket_tts.data.audio_utils import end_on_pause, convert_audio
 
         cached_path = self._audio_cpp_reference_paths.get(voice)
         if cached_path is not None and cached_path.is_file():

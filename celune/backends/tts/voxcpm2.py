@@ -38,9 +38,9 @@ from ...modeling import QuantizedKVCacheMode, quantized_kv_cache_mode
 from ...constants import BASE_SR
 from ...registry.tts import TTS_DEFAULT_VOICE, VOXCPM2_VOICE_MODELS
 from ...typing.aliases import AudioChunk, AudioChunks
-from .audio_cpp_models import audio_cpp_model_artifact
 from ...typing.backends import BackendArgumentValue
 from ...registry.consent import require_model_consent
+from ...registry.audio_cpp_models import audio_cpp_model_artifact
 
 _VOXCPM_RUNTIME_KV_CACHE_LENGTH = 2048
 

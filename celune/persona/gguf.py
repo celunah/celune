@@ -4,31 +4,31 @@
 import os
 import sys
 import json
+import stat
 import time
 import base64
-import hashlib
-import http.client
-import mimetypes
-import platform
 import shutil
 import socket
-import stat
+import hashlib
 import tarfile
-import tempfile
-import threading
-import subprocess
-import urllib.request
 import zipfile
+import platform
+import tempfile
+import mimetypes
+import threading
 import contextlib
+import subprocess
+import http.client
+import urllib.request
+from typing import Optional
 from pathlib import Path
 from collections import deque
-from typing import Optional
 from dataclasses import dataclass
 from urllib.parse import unquote, urlparse
 
 from ..paths import app_data_dir, huggingface_hub_cache_dir
 from ..dataclasses.persona import GenerateRequest, GenerateResponse
-from .gguf_catalog import (
+from ..registry.gguf_catalog import (
     PERSONA_GGUF_VARIANTS_BY_MODEL,
     PersonaGGUFFile,
     PersonaGGUFVariant,

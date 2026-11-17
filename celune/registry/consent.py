@@ -13,13 +13,13 @@ from pathlib import Path
 from contextvars import Token, ContextVar
 from collections.abc import Callable
 
-from .types import ModelMetadata
 from ..paths import model_consent_path
 from ..exceptions import (
     ModelConsentDeclined,
     ModelConsentRequired,
     ModelCommercialUseRestricted,
 )
+from ..typing.registry import ModelMetadata
 
 _COMMIT_SHA_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 _STORE_LOCK = threading.RLock()

@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Reviewed metadata for Celune's embedding and supporting models."""
 
-from .types import ModelMetadata
+from ..typing.registry import ModelMetadata
 
 VOICE_EMBEDDING_MODEL = "marksverdhei/Qwen3-Voice-Embedding-12Hz-1.7B"
 VOICE_EMBEDDING_MODEL_REVISION = "7577f61c42737fc8064bba773e2a18602df92803"

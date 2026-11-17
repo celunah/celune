@@ -7,7 +7,7 @@ from pathlib import Path
 from .typing.common import JSON
 
 if TYPE_CHECKING:
-    from .registry.types import ModelMetadata
+    from .typing.registry import ModelMetadata
 
 
 class CeluneError(Exception):

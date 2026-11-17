@@ -35,9 +35,9 @@ from ...modeling import (
 )
 from ...registry.tts import TTS_DEFAULT_VOICE, QWEN3_DEFAULT_MODEL_ID
 from ...typing.aliases import AudioChunk
-from .audio_cpp_models import audio_cpp_model_artifact
 from ...typing.backends import BackendArgumentValue
 from ...registry.consent import require_model_consent
+from ...registry.audio_cpp_models import audio_cpp_model_artifact
 
 
 class _Qwen3TalkerGraph(Protocol):

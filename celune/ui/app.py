@@ -37,17 +37,31 @@ from textual import (
     binding,
     widgets,
     containers,
+)
+from textual import (
     color as textual_color,
+)
+from textual import (
     screen as textual_screen,
+)
+from textual import (
     widget as textual_widget,
+)
+from textual import (
     message as textual_message,
 )
 from rich.text import Text
 
 from . import (
     debug as _debug,
+)
+from . import (
     capture as _capture,
+)
+from . import (
     runtime as _runtime,
+)
+from . import (
     interaction as _interaction,
 )
 from ..i18n import string, tagged_string
@@ -69,8 +83,8 @@ from ..typing.locks import (
 from ..typing.modes import OperationState
 from ..typing.common import JSONSerializable
 from ..typing.config import AudioDeviceInfoValue
-from ..registry.types import ModelMetadata
 from ..theme.defaults import default_theme_family, default_error_theme_family
+from ..typing.registry import ModelMetadata
 from ..core.concurrency import run_in_daemon_thread
 
 App = app.App

@@ -1,39 +1,39 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for the shared audio.cpp runtime and verified TTS packages."""
 
+import json
 import base64
 import hashlib
-import json
 import subprocess
-from collections.abc import Iterator
-from dataclasses import replace
-from pathlib import Path
 from types import SimpleNamespace
-from typing import Optional, Self, cast
+from typing import Self, Optional, cast
+from pathlib import Path
 from unittest import mock
+from dataclasses import replace
+from collections.abc import Iterator
 
 import numpy as np
 import pytest
 
+from celune.exceptions import ModelConsentRequired
+from celune.registry.tts import (
+    VOXCPM2_MODEL_ID,
+    DOTS_TTS_MODEL_ID,
+    POCKET_TTS_MODEL_ID,
+    QWEN3_TTS_0_6B_MODEL_ID,
+    QWEN3_TTS_1_7B_MODEL_ID,
+)
+from celune.typing.registry import ModelMetadata
+from celune.backends.tts.base import CeluneBackend
 from celune.backends.tts.audio_cpp import (
     AudioCppRuntime,
     load_audio_cpp_tts_model,
     materialize_audio_cpp_gguf,
 )
-from celune.backends.tts.audio_cpp_models import (
+from celune.registry.audio_cpp_models import (
     AUDIOCPP_GGUF_REVISION,
     audio_cpp_model_artifact,
 )
-from celune.backends.tts.base import CeluneBackend
-from celune.exceptions import ModelConsentRequired
-from celune.registry.tts import (
-    DOTS_TTS_MODEL_ID,
-    POCKET_TTS_MODEL_ID,
-    QWEN3_TTS_0_6B_MODEL_ID,
-    QWEN3_TTS_1_7B_MODEL_ID,
-    VOXCPM2_MODEL_ID,
-)
-from celune.registry.types import ModelMetadata
 
 
 @pytest.mark.parametrize(
