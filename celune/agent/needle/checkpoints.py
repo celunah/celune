@@ -243,11 +243,11 @@ def validate_needle_safetensors(
             dtype_errors.append(f"{name}: expected {dtype}, got {tensor.dtype}")
     if shape_errors:
         raise NeedleCheckpointError(
-            "Needle checkpoint tensor shapes do not match: " + "; ".join(shape_errors)
+            "Needle checkpoint tensor shapes do not match: " + ", ".join(shape_errors)
         )
     if dtype_errors:
         raise NeedleCheckpointError(
-            "Needle checkpoint tensor dtypes do not match: " + "; ".join(dtype_errors)
+            "Needle checkpoint tensor dtypes do not match: " + ", ".join(dtype_errors)
         )
 
     try:
@@ -405,7 +405,7 @@ def prepare_needle_checkpoint(
 
     The normal path selects the pinned upstream ``model.safetensors`` artifact.
     The legacy ``needle.pkl`` path is accepted only through an explicitly
-    isolated converter callback; Celune never unpickles it in the runtime.
+    isolated converter callback. Celune never unpickles it in the runtime.
     """
     if source_filename not in {NEEDLE_WEIGHTS_FILE, NEEDLE_PICKLE_FILE}:
         raise NeedleCheckpointError(
@@ -463,7 +463,7 @@ def prepare_needle_checkpoint(
 
     if pickle_converter is None:
         raise NeedleUnsupportedConverterError(
-            "needle.pkl is a legacy JAX/Flax checkpoint; provide an isolated "
+            "needle.pkl is a legacy JAX/Flax checkpoint. Provide an isolated "
             "offline converter before using it"
         )
     artifact_dir = (

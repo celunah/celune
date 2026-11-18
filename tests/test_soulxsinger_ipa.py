@@ -548,7 +548,7 @@ def test_cesn_preprocessing_uses_the_selected_singers_pitch_range() -> None:
             "[lang:en][bpm:120,key:f#,scale:major][f#3:4][æ]Ah."
         )
 
-    assert str(error.value) == "note F3 is outside Celune's singing range (F#3–C5)."
+    assert str(error.value) == "note F3 is outside Celune's singing range (F#3-C5)."
     assert error.value.source_start == notation.index("f3")
     assert error.value.source_end == notation.index("f3") + 2
     assert f"{' ' * notation.index('f3')}^~" in format_cesn_error(

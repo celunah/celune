@@ -161,7 +161,7 @@ class TestPipelineAsync:
         assert "A careful archivist with a dry wit." in prompt
         assert "Push the conversation forward naturally." in prompt
         assert (
-            "Never output emojis; use plain text suitable for speech synthesis."
+            "Never output emojis. Use plain text suitable for speech synthesis."
             in prompt
         )
         assert (

@@ -10,7 +10,7 @@ Then gather the voice brief and generate A/B/C using the exact model and candida
 
 ## CAC wizard boundary
 
-Use CAC's complete interactive wizard for the selected voice and character. Inspect the current `collect_character_data()` prompt order before supplying answers; it is the source of truth. Populate the required name, description, voice count, voice name, selected WAV, reference transcript, per-voice persona, default voice, voice order, theme, and shared persona fields from the approved brief. Use a controlled stdin sequence only when every answer is known and validated; otherwise run the wizard interactively.
+Use CAC's complete interactive wizard for the selected voice and character. Inspect the current `collect_character_data()` prompt order before supplying answers. It is the source of truth. Populate the required name, description, voice count, voice name, selected WAV, reference transcript, per-voice persona, default voice, voice order, theme, and shared persona fields from the approved brief. Use a controlled stdin sequence only when every answer is known and validated. Otherwise run the wizard interactively.
 
 Do not create a CECHAR/CEVOICE archive yourself and do not add fields that CAC does not support. If the wizard cannot represent a requested personality detail, report that limitation and preserve the user-approved data in the run metadata rather than silently dropping it.
 

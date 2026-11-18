@@ -21,7 +21,7 @@ the system and other GPU users:
 An unprofiled hardware/model combination is allowed to start with a warning that
 it may not work on that hardware. A confirmed profile that exceeds the budget
 or current GPU headroom is rejected. Persona and standard agent models require
-`high`; registered smart 8B-tier models require `xhigh`.
+`high`. Registered smart 8B-tier models require `xhigh`.
 
 The `doctor` command reports the active Python, PyTorch, CUDA, GPU, and system
 dependency state. It is the first diagnostic to run when a feature is missing.
@@ -36,18 +36,18 @@ Install these before using the corresponding features:
 - OpenRGB, plus a compatible device, for audio-reactive lighting.
 - A C/C++ compiler for VoxCPM2 and any backend that builds native extensions.
 - A driver that supports the installed PyTorch CUDA build. Celune's runtime
-  check accepts CUDA 12.8 to 13.4; the core project currently pins CUDA
+  check accepts CUDA 12.8 to 13.4. The core project currently pins CUDA
   13.0, and CEDTS workers use a separate CUDA 12.8 stack.
 - Symbolic-link support on Windows when developing or using workflows that
   create links.
 
 The setup helper can install system tools with `apt` on Debian, Ubuntu, Mint,
-and Pop!_OS; `pacman` on Arch, Manjaro, and EndeavourOS; `dnf` on Fedora,
-Rocky Linux, and AlmaLinux; and `zypper` on openSUSE. Alpine Linux is supported
-experimentally through `apk`; some packages may potentially be unsupported
+and Pop!_OS, `pacman` on Arch, Manjaro, and EndeavourOS, `dnf` on Fedora,
+Rocky Linux, and AlmaLinux, and `zypper` on openSUSE. Alpine Linux is supported
+experimentally through `apk`. Some packages may potentially be unsupported
 there. On Debian-like Linux distributions, the project commonly needs
 PortAudio development headers for `sounddevice`. The CI workflow installs
-`portaudio19-dev`; other distributions should use their equivalent package.
+`portaudio19-dev`. Other distributions should use their equivalent package.
 
 ## Source installation
 
@@ -71,16 +71,16 @@ python configure.py
 
 The helper installs required system tools, synchronizes the Python environment,
 creates Celune's AppData directories, and seeds the default configuration and
-voice pack. On Linux it uses `uv sync --dev --all-extras`; on Windows it uses
+voice pack. On Linux it uses `uv sync --dev --all-extras`. On Windows it uses
 `uv sync --dev --extra api` because OpenZL is not currently buildable there.
 If all setup criteria are already satisfied, it asks, `You have already
-configured Celune. Repair Celune?`; answer `yes` to remove and recreate the
+configured Celune. Repair Celune?` Answer `yes` to remove and recreate the
 project `.venv` before synchronizing dependencies, or press Enter to leave the
 existing installation unchanged. Run the helper with a system Python
 interpreter rather than the `.venv` interpreter when repairing, because the
 active environment cannot safely remove itself.
 The optional `live-vc-ai` extra adds Silero VAD for AI-assisted live
-voice-conversion capture; `cechar4-openzl` adds OpenZL-compressed CECHAR v4/v5
+voice-conversion capture. `cechar4-openzl` adds OpenZL-compressed CECHAR v4/v5
 support on Linux.
 
 For a dependency-only manual setup, use `uv sync --dev --all-extras` on Linux
@@ -132,7 +132,7 @@ These variables are useful for diagnostics and deployment:
 | --- | --- |
 | `CELUNE_LOG_LEVEL` | Initial log level: `info`, `verbose`, or `debug`. |
 | `CELUNE_BACKEND` | Overrides the configured backend name. |
-| `CELUNE_HEADLESS` | Overrides `headless`; enabled values start without Textual. |
+| `CELUNE_HEADLESS` | Overrides `headless`. Enabled values start without Textual. |
 | `CELUNE_API_TOKEN` | Supplies the API key as a bearer token when config does not contain one. |
 | `CELUNE_LAUNCHER` | Marks a launch as owned by the Celune launcher. |
 | `CELUNE_OVERRIDE_CELINE_DAY` | Bypasses the name-day startup pause used by the app. |

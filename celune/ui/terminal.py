@@ -863,10 +863,10 @@ class UILogHandler(logging.Handler):
             return
 
         if (
-            "triton not found; flop counting will not work for triton kernels"
-            in message
+            message.startswith("triton not found")
+            and "flop counting will not work for triton kernels" in message
         ):
-            message = "triton not found; flop counting will not work for triton kernels"
+            message = "triton not found, flop counting will not work for triton kernels"
 
         if self._is_filtered_message(message):
             return

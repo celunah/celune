@@ -1319,7 +1319,7 @@ def _run_tool_checks(
                     elif status != "succeeded":
                         raise RuntimeError(execution_result.get("error") or status)
                     else:
-                        detail = f"status={status}; result={_tool_output_text(execution_result)}"
+                        detail = f"status={status}, result={_tool_output_text(execution_result)}"
                         spoken_status = "passed"
                     _append_tool_result(
                         checks,

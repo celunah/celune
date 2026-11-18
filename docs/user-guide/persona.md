@@ -2,7 +2,7 @@
 
 Persona is Celune's local character runtime. It turns text, speech, and vision
 inputs into a response that is spoken by the active TTS pipeline. Persona is
-available in `converse` and `agent` modes; `performance` mode deliberately bypasses
+available in `converse` and `agent` modes. `performance` mode deliberately bypasses
 it.
 
 ## Model and capabilities
@@ -22,13 +22,13 @@ present.
 
 The `high` preset supports registered standard models, including the 4B tier.
 Registered smart 8B-tier models require `xhigh`. Persona context is capped at
-2,048 tokens outside agent mode; agent requests use a separate 8,192-token cap.
+2,048 tokens outside agent mode. Agent requests use a separate 8,192-token cap.
 
 ## Character context
 
 The active CEVOICE/CECHAR pack supplies the character identity, speaking style,
 boundaries, prompt rules, examples, and per-voice refinements. The shared
-character layer is combined with the selected voice layer; changing voice does
+character layer is combined with the selected voice layer. Changing voice does
 not discard the character identity.
 
 The default short-term history keeps up to 20 messages. The shared
@@ -58,7 +58,7 @@ aligner documented in [speech](speech.md).
 (`.mp4`, `.webm`). HTTP and HTTPS image/video URLs are accepted when their path
 extension identifies one of those types. Use `/attach clear` to remove all
 pending attachments. Attachments are sent on the next vision-capable Persona
-turn; they are not interpreted by a speech-only backend.
+turn. They are not interpreted by a speech-only backend.
 
 `/say <text>` is useful after an attachment: it sends the text as a direct
 vision prompt. In a vision-capable setup, Celune also keeps an internal display
@@ -92,10 +92,10 @@ limit. It uses user-authored messages, not Celune's generated replies, as
 evidence. Sensitive-looking secrets, passwords, API keys, payment numbers, and
 similar credentials are rejected rather than stored. Retrieval combines local
 sentence-transformer similarity with literal token and phrase overlap when
-embeddings are available, and uses token overlap when they are not; configured
+embeddings are available, and uses token overlap when they are not. Configured
 thresholds control candidate eligibility. Explicit `recall` commands preserve
 the search phrase from the original user request. Inferred memories stop being
-retrieved 60 days after their last update by default; explicit memories remain
+retrieved 60 days after their last update by default. Explicit memories remain
 available until forgotten. Set `persona.memory.automatic_max_age_days` to
 `null` to disable inferred-memory expiry. Exact duplicates are merged, and
 high-confidence semantic duplicates are merged when local embeddings are
@@ -109,7 +109,7 @@ Agent tools expose `remember`, `recall`, `forget`, `clear_recent_context`, and
 Set `persona.debug_overrides: true` to develop a character without rebuilding
 the pack. Persona looks in the character-slug directory for the supported
 Markdown files described in [Persona Markdown](../formats/persona-markdown.md).
-Overrides replace the matching embedded file only; memory remains in its
+Overrides replace the matching embedded file only. Memory remains in its
 separate `memory/` directory.
 
 Malformed or missing character packs do not silently become a different

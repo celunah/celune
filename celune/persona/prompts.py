@@ -56,7 +56,7 @@ def _render_agent_context(
             "pending action and its supplied argument values in the active character's "
             "voice, then tell the user to say 'approve' to proceed or 'deny' to reject. "
             "Use only the registered tool and arguments shown below. The action has not "
-            "run yet; do not imply that it has started or succeeded."
+            "run yet. Do not imply that it has started or succeeded."
         )
     elif agent_context.opening:
         response_instruction = (
@@ -71,7 +71,7 @@ def _render_agent_context(
         response_instruction = (
             "Planning instruction: state the concrete local action intent in concise "
             "natural language for the registered tool selector. Preserve the user's "
-            "requested operation and exact target or path; do not substitute a related task."
+            "requested operation and exact target or path. Do not substitute a related task."
         )
     else:
         tool_result = cast(JSON, agent_context.last_tool_result)
@@ -82,7 +82,7 @@ def _render_agent_context(
             response_instruction = (
                 "Directory-listing response instruction: answer naturally in the active "
                 "character's voice using the structured result. Begin by stating the exact resolved "
-                "path and include every returned entry name; identify entries whose kind "
+                "path and include every returned entry name. Identify entries whose kind "
                 "is directory as folders. If the result says it is truncated, say that "
                 "the list is partial. If it contains no items, say the directory is "
                 "empty. Preserve the path and names exactly. Do not omit these facts, "
@@ -113,7 +113,7 @@ def _render_agent_context(
         ):
             response_instruction += (
                 " This is a final response: do not announce or offer any future action, "
-                "including retrying; report only the task outcome and supplied result."
+                "including retrying. Report only the task outcome and supplied result."
             )
     sections = [
         (
@@ -419,7 +419,7 @@ class PersonaPromptBuilder:
             "- Push the conversation forward naturally.",
             "- Stay under 3 sentences unless the user asked for detail.",
             "- Use a single paragraph unless formatting is necessary.",
-            "- Never output emojis; use plain text suitable for speech synthesis.",
+            "- Never output emojis. Use plain text suitable for speech synthesis.",
             "- Prefer reacting to the current conversation over reinforcing the character's identity.",
         ]
         character_name = (

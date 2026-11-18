@@ -191,7 +191,7 @@ def _parse_cesn(
     Each section begins when its singer, language, BPM, key, or scale changes.
     Every pitched note requires one dot-separated pronunciation syllable. Raw
     IPA is retained and marked X-SAMPA is converted to IPA. The original lyrics
-    remain intact on each block; no spelling-based syllabification is performed.
+    remain intact on each block. No spelling-based syllabification is performed.
     Rests remain in each block's event stream but consume no pronunciation.
     A lyric block ending in a period or comma gains an automatic half-note or
     quarter-note rest unless an explicit trailing rest already follows it. The

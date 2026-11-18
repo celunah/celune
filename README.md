@@ -3,10 +3,10 @@
 
 ---
 
-![Python](https://img.shields.io/badge/Python-3.12–3.14-cebaff)
+![Python](https://img.shields.io/badge/Python-3.12%E2%80%913.14-cebaff)
 ![License](https://img.shields.io/badge/License-Apache%202.0-cebaff)
 ![Platform](https://img.shields.io/badge/Platform-Windows%2FLinux-cebaff)
-![VRAM](https://img.shields.io/badge/VRAM-6%20GB–16%20GB+-cebaff)
+![VRAM](https://img.shields.io/badge/VRAM-6%20GB%E2%80%9116%20GB+-cebaff)
 
 Celune is a conversational character engine with agentic features.
 
@@ -16,22 +16,26 @@ She can sing.
 
 She can talk.
 
-She can also work.
+She can work.
+
+She can also become anyone.
 
 Proudly made in :poland: Poland, for the finest of use cases.
 
 ## Features
 
-- Real-time buffered audio pipeline
+- Low-latency, real-time audio pipeline
 - Seven default built-in voice styles
-- Multiple operation modes
 - Stable long-form narration with minimal identity drift
 - Native audio controls & DSP effects
-- Optimized high-speed GPU inference
-- Configurable character voices and identities via CEVOICE/CECHAR packs
-- Characters can respond back to you
+- Optimized operation lean on your CPU
+- Fit for many use cases
+- Configurable character voices and identities with voice packs
+- Characters can converse with you
 - Can voice change into character voices
+- Characters can both talk and sing
 - Automatic memory saving
+- Mood controls for expressive conversation
 - Agentic capabilities with tools
 
 ## Operation modes
@@ -61,7 +65,7 @@ All decisions and implementations were reviewed, validated, and approved by huma
 
 Celune never was, and will never become an "AI slop" project.
 
-<sub><sup><i>*laugh* Maybe I should call it "human slop".</i></sup></sub>
+<sub><sup><i>\*laugh\* Maybe I should call it "human slop".</i></sup></sub>
 
 ## Documentation
 
@@ -74,17 +78,15 @@ from [Hugging Face](https://huggingface.co) that are of varying licenses,
 such as [Apache 2.0](https://www.apache.org/licenses/LICENSE-2.0) (Qwen, etc.), 
 [CC-BY-4.0](https://creativecommons.org/licenses/by/4.0/deed.en) (Pocket TTS),
 [GPL-3.0](https://opensource.org/license/gpl-3.0) (SeedVC),
-and MIT (Whisper, Silero VAD, etc.).
+and [MIT](https://opensource.org/license/mit) (Whisper, Silero VAD, etc.).
 
-Users of Celune will be presented with a license acknowledgement prompt when using models for the first time.
+Users of Celune will be presented with a license acknowledgement prompt for non-permissive licenses of certain models.
 
-Please note that Celune 4.3.2 and older are still licensed under the MIT license.
+Only Celune 5.0.0 and later are Apache 2.0 licensed. Older releases remain MIT licensed.
 
 ## Voices and samples
 
-This section was moved to Celune's documentation page.
-
-Current voice samples are available in the 
+Celune's voice samples are available in the
 [voice sample gallery](https://celune.readthedocs.io/en/latest/development/samples/), including both new 
 and old recordings of her voice, and details on how it was created.
 
@@ -93,9 +95,12 @@ available for reference.
 
 ## Voice packs
 
-Celune comes with four default packs, containing many types of example voices.
+Celune comes with four default packs, allowing you to use all features from the get-go.
 
-The packs are:
+No packs need to be installed separately. More packs can be installed or created as needed.
+Ask your coding agent for details.
+
+The default packs are:
 
 | Pack               | File                  | Released      | Description                                                                         |
 |--------------------|-----------------------|---------------|-------------------------------------------------------------------------------------|
@@ -134,7 +139,7 @@ any past releases.
 > This is a sentence, 中文, 日本語, 한국어.  // ambiguous language boundary
 > ```
 
-Samples were captured directly from Celune's output directory. No extra post-processing was applied.
+Samples were captured raw from Celune's output directory, and were not modified.
 
 For details on voice production, check [VOICES.md](./docs/VOICES.md).
 
@@ -147,26 +152,27 @@ For details on voice production, check [VOICES.md](./docs/VOICES.md).
 ## System Requirements
 
 Celune requires Python 3.12, 3.13, or 3.14. Most features require an NVIDIA RTX 30-series GPU or newer. 
-CPU-only operation is supported by Celune Mini and LuxTTS.
+CPU-only operation is supported by compatible CPU backends. Lack of a GPU will otherwise result in a red screen.
 
 Celune also uses system dependencies for specific features:
 
-| Dependency                | Needed for                                                                        |
-| ------------------------- | --------------------------------------------------------------------------------- |
-| SoX                       | Audio processing                                                                  |
-| Rubber Band               | Speed control; without it, Celune speaks at normal speed                          |
-| CUDA Toolkit 12.8 or 13.0 | Building PyTorch from source; not needed with compatible pre-built PyTorch wheels |
-| C/C++ compiler            | Building dependencies for the VoxCPM2 backend                                     |
-| eSpeak-NG                 | Captioning and caption display                                                    |
-| OpenRGB                   | Lighting compatible devices                                                       |
-| Symbolic link support     | Recommended on Windows for best performance and compatibility                     |
+| Dependency                 | Needed for                                                                        |
+| -------------------------- | --------------------------------------------------------------------------------- |
+| SoX                        | Audio processing                                                                  |
+| Rubber Band                | Speed control: without it, Celune speaks at normal speed                          |
+| CUDA Toolkit 12.8 or newer | Building PyTorch from source, not needed with compatible pre-built PyTorch wheels |
+| C/C++ compiler             | Building dependencies for the VoxCPM2 backend                                     |
+| eSpeak-NG                  | Captioning and caption display                                                    |
+| OpenRGB                    | Lighting compatible devices                                                       |
+| Symbolic link support      | Recommended on Windows for best performance and compatibility                     |
 
 The UI requires an ANSI-capable terminal. Terminals without ANSI support can use headless mode instead. 
-True Color is recommended; without it, themes may look different. 
+True Color is recommended: without it, themes may look different.
 
-On Linux, if your terminal supports True Color but Celune does not detect it, run:
+On Linux, if your terminal supports True Color but Celune does not detect it, run Celune with your path:
 
 ```bash
+# Replace the placeholder with the actual path
 COLORTERM=truecolor /path/to/celune
 ```
 
@@ -180,7 +186,7 @@ other applications from memory exhaustion. The table shows the budget available
 for model loading and inference.
 
 | Preset   | Total VRAM     | Allocated budget |
-| -------- | -------------: | ---------------: |
+| -------- | -------------- | ---------------- |
 | `low`    | 6 GiB          | 4 GiB            |
 | `medium` | 8 GiB          | 6 GiB            |
 | `high`   | 12 GiB         | 10 GiB           |
@@ -192,6 +198,9 @@ Large Persona models (~8B parameters) will only run on `xhigh`.
 Persona context is variable depending on Celune's operation mode: 2,048 tokens in basic conversation
 mode (`mode: converse`), and 8,192 tokens in agent mode (`mode: agent`).
 
+The context size is configurable and can be increased or reduced as needed, and it will be automatically compacted
+to prevent context memory exhaustion.
+
 Combinations of presets and model selections were validated where possible, unchecked configurations
 display clear warnings and may fail with OOM errors, use them with caution.
 
@@ -199,6 +208,7 @@ The desired preset may be set in Celune's configuration file. Refer to `default_
 
 ---
 Performance may be reduced when running GPU intensive applications along with Celune.
+Automatic resource management may reduce the impact on your GPU, models will be unloaded when Celune is not in use.
 
 Tested on: RTX 5070 (12 GB VRAM)
 
@@ -207,7 +217,7 @@ Tested on: RTX 5070 (12 GB VRAM)
 ### Run a released build
 
 Download and extract the [latest release](https://github.com/celunah/celune/releases/latest). 
-Keep the launcher and `celune-bin` together in the extracted application directory; the launcher depends on 
+Keep the launcher and `celune-bin` together in the extracted application directory, as it depends on
 files in the Celune repository.
 
 Set up the environment:
@@ -238,13 +248,14 @@ Clone the repository:
 git clone https://github.com/celunah/celune
 cd celune
 ```
+
 Install `uv`, then set up the development environment:
 
 ```bash
 uv sync --dev --all-extras
 ```
 
-On Windows, install only the extras you need:
+On Windows, OpenZL may fail to compile. Use the following command instead:
 
 ```powershell
 uv sync --dev --extra api --extra captions
@@ -262,8 +273,8 @@ cmake --preset signed
 cmake --build --preset signed
 ```
 
-The selected backend is installed into Celune’s AppData environment the first time it is used. 
-Run `celune doctor` to check the environment.
+Backends will have their environments automatically provisioned by Celune the first time they are used.
+Run `celune doctor` to check the core environment. Backend environments are not inspected by this checker.
 
 ### SoX & Rubber Band installation
 
@@ -338,8 +349,6 @@ This will enable captioning and caption display.
 Celune's VoxCPM2 backend may require a C/C++ compiler to compile dependencies. To install a suitable compiler,
 run one of the following commands:
 
-This is not required to use other backends, but you may need to install dependencies manually.
-
 ```bash
 # Windows
 winget install Microsoft.VisualStudio.2022.BuildTools --override "--wait --passive --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
@@ -351,21 +360,23 @@ sudo apt install build-essential
 sudo pacman -S base-devel
 ```
 
+This is not required to use other backends. GGUF inference may or may not need some dependencies.
+Otherwise, you may need to install some dependencies manually.
+
 ### CUDA Toolkit installation
 
 This step can be skipped if you are using pre-built PyTorch wheels.
 
-Download and install CUDA Toolkit 12.8 or 13.0 from NVIDIA:
+Download and install CUDA Toolkit 12.8 or newer: <https://developer.nvidia.com/cuda-toolkit-archive>
 
-- <https://developer.nvidia.com/cuda-12-8-0-download-archive>
-- <https://developer.nvidia.com/cuda-13-0-0-download-archive>
+Older toolkits may not support every CUDA capability Celune supports, and are not recommended.
 
 Make sure to:
 
 - Select the correct OS and version
 - Install both **CUDA Toolkit** and **NVIDIA drivers** (if not already installed)
 
-Celune core is only compatible with CUDA Toolkit 12.8 or 13.0. Other versions may cause red screens or other errors.
+Note: CUDA Toolkit is not required to run Celune. Not having it will not cause any issues.
 
 After installation, verify CUDA:
 
@@ -384,7 +395,7 @@ To enable them:
 - Enable **Developer Mode** in Windows settings
   (Settings → Privacy & Security → For Developers)
 
-Without this, Celune may require elevated permissions or fall back to slower behavior.
+Without this, Celune may require elevated permissions to run, or use fallback workarounds.
 
 ## REST API
 
@@ -424,13 +435,13 @@ Celune extensions can be made in either Python or Lua.
 Lua extensions use Celune's singleton objects and do not require additional imports to run. 
 They inherit the same feature set from Python extensions.
 
-Python extensions can use other third-party modules for deeper integrations into Celune.
+Python extensions can use other third-party modules for deeper integrations with Celune.
 
 ## Web UI
 
 The application exposes a web interface for remote access. The WebUI reuses the
-application's API commands for control and is available at `/ui` on the
-application's API URL.
+application's API commands for control and is available at `/ui/` on the
+application's API URL: `http://localhost:2060/` by default.
 
 On public Celune APIs, using the web interface requires you to enter the API
 token before you can use it.

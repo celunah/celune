@@ -32,11 +32,11 @@ cmake --preset signed
 cmake --build --preset signed
 ```
 
-Both presets build the `celune_release` target with at most two build jobs;
+Both presets build the `celune_release` target with at most two build jobs.
 Nuitka's C compiler is also capped at two jobs.
 The dependency chain enforces libsodium → C launcher and native signature
 verification → Python core (Nuitka) → release packaging. `uv run poe build`
-builds the unsigned preset; `uv run poe build_signed` builds the signed preset.
+builds the unsigned preset. `uv run poe build_signed` builds the signed preset.
 The CI workflow also builds both platform archives for pushed tags matching
 `v*`. These workflow artifacts are unsigned validation builds. Publish the
 original ZIPs with their signed counterparts, following the signature steps
@@ -51,7 +51,7 @@ CPython ABI. The CMake build pins the Nuitka invocation to Python 3.13.
 Build from a Git checkout with at least one commit. CMake checks for a valid
 `HEAD` before stopping a running Celune process or changing build artifacts. A GitHub
 **Download ZIP** has no commit history and cannot supply the revision recorded
-in `.celune-root` and the update manifest; use a Git clone to build release
+in `.celune-root` and the update manifest. Use a Git clone to build release
 artifacts.
 
 Celune treats a build as non-development only when `HEAD` matches an annotated
@@ -65,7 +65,7 @@ manifests without this field are treated as development builds.
 
 The compiled build remains a deployment build rather than a fully standalone
 bundle, so its `.venv` must use the matching Python 3.13 runtime. Python 3.14
-remains available for source development and source-based launches; a Python
+remains available for source development and source-based launches. A Python
 3.14 `.venv` cannot run the compiled 3.13 executable.
 
 Windows builds use CMake, Visual Studio C++ tools, the launcher C sources, the
@@ -100,9 +100,9 @@ Typical output files are:
 | Linux | `bin/celune`, `bin/celune-bin`, `bin/celune.AppImage`, `bin/celune-update.json`, optional `bin/celune-update.sig`, `bin/Celune-linux-x64.zip` or `bin/Celune-linux-x64-signed.zip` |
 
 The Windows archive contains `celune.exe`, `celune-bin.exe`,
-`vcruntime140.dll`, and `celune-update.json`; signed builds also include
+`vcruntime140.dll`, and `celune-update.json`. Signed builds also include
 `celune-update.sig`. It does not contain the legacy
-`celune-bin.cmd` compatibility wrapper; the native launcher owns the runtime
+`celune-bin.cmd` compatibility wrapper. The native launcher owns the runtime
 environment setup. The launcher checks for AVX in native C before starting
 Python on x86-64,
 consistently on Windows and Linux. The `doctor`, help, and version commands
@@ -124,27 +124,27 @@ invoked and uses a valid local runtime immediately when one is present. Fatal
 Textual UI return codes are propagated to this launcher, so callback failures
 use the same preserved-output failure path as startup errors. Search traversal
 is breadth-first, so progress levels are processed in ascending order. Level
-transitions repaint immediately; repeated updates within one level are
+transitions repaint immediately. Repeated updates within one level are
 throttled. The loading screen's terminal-title and early-shutdown helpers stay
 lightweight, so exiting before runtime initialization cannot enter an undefined
 or heavy runtime-import path. Ctrl+C stops an active runtime search, and the
 launcher failure screen handles errors from the default, `start`, and `run`
-operations; other CLI commands return their own exit status directly.
+operations. Other CLI commands return their own exit status directly.
 On Windows, a `CreateProcessA` failure with `ERROR_FILE_CORRUPT` (1392) while
 starting the compiled runtime displays the recovery guidance in
 [First run](../getting-started/first-run.md#recover-a-corrupted-windows-runtime).
 When the automatic lookup should be bypassed, the compiled launchers accept
 `CELUNE_ROOT=/path/to/celune`, `--root /path/to/celune`, or
-`--root=/path/to/celune`. The selected path must identify a valid Celune root;
-the launcher removes `--root` and its value before forwarding the remaining
+`--root=/path/to/celune`. The selected path must identify a valid Celune root.
+The launcher removes `--root` and its value before forwarding the remaining
 arguments to the runtime.
 
 The repository root is identified by a `.celune-root` marker containing a
 version, abbreviated commit, and date in the form `v5.0.0 (d870260),
 23/08/2026`. The native search ignores unreadable entries and all symbolic-link
-or reparse-point entries; a marker stops traversal only when its expected
+or reparse-point entries. A marker stops traversal only when its expected
 `celune-bin` runtime is also present. Configure the tracked post-commit hook once with
-`git config core.hooksPath .githooks`; on Linux, make the hook executable with
+`git config core.hooksPath .githooks`. On Linux, make the hook executable with
 `chmod +x .githooks/post-commit`. Builds also run `python scripts/root.py` as a
 fallback when the hook is not installed.
 
@@ -163,18 +163,18 @@ launches. Explicit `HF_HOME` and `HF_HUB_CACHE` values remain authoritative.
 
 The update manifest records the project version, Git revision, artifact name,
 development status, and files. The `development` field is `false` only for a
-matching annotated release tag; it participates in the manifest signature when
+matching annotated release tag. It participates in the manifest signature when
 the bundle is signed. Exit code 7 is `EXIT_PENDING_RESTART`: the launcher
 silently restarts Celune when no manifest is present, and uses the existing
 update helper and internal `__apply_update` command when the compiled bundle
 contains a manifest. The UI terminal title changes to `Restarting` before the
-handoff. Do not call that internal command directly; it is a launcher protocol.
+handoff. Do not call that internal command directly. It is a launcher protocol.
 
 ### Release signatures
 
 Compatible release ZIPs carry `celune-update.json` and its detached
 `celune-update.sig` Ed25519 signature. The signature covers the exact manifest
-bytes; the manifest contains SHA-256 digests for the shipped executables and
+bytes. The manifest contains SHA-256 digests for the shipped executables and
 runtime files. Signed launchers carry a root-signed public-key catalog in a
 trailer after the executable image. The C launcher reads that keyring from its
 own file, verifies the manifest signature and selected runtime digest, then
@@ -182,16 +182,16 @@ starts the runtime. The Python entrypoint independently reads the same launcher
 trailer and verifies the signature and every listed file during startup. A present but
 invalid signature or a mismatched runtime digest rejects startup. When no
 signature is present, the C launcher allows startup and Python warns that the
-copy is unsigned; this keeps legacy JSON-manifest bundles usable. The updater
+copy is unsigned. This keeps legacy JSON-manifest bundles usable. The updater
 still rejects unsigned remote release ZIPs.
 
 The public keys that sign manifests live in `celune/release_keyring.json`.
 Only the Ed25519 keyring root remains pinned in the C and Python verifier
-sources; the root signs the catalog before the builder appends it to the
+sources. The root signs the catalog before the builder appends it to the
 launcher. A missing or invalid trailer rejects a signed bundle. This lets a
 future release add a signing key without recompiling a list of keys into both
 verifiers. The root private key is required to create the trailer. Previously
-published launchers keep their original key lists; releases that must remain
+published launchers keep their original key lists. Releases that must remain
 verifiable by those launchers must use a key they already trust.
 
 Prepare the signing keys and configure the signed build from the checkout that
@@ -208,7 +208,7 @@ uv run python scripts/make_signing_key.py
 The script creates an unencrypted Ed25519 release-key PEM at
 `%LOCALAPPDATA%\Celune\keys\release-ed25519-private.pem` on Windows and
 `~/.celune/release-signing-key.pem` on Linux. A valid existing release key is
-reused; a missing one is generated. The script also prepares the separate root
+reused. A missing one is generated. The script also prepares the separate root
 key at
 `%LOCALAPPDATA%\Celune\keys\release-keyring-root.pem` on Windows or
 `~/.celune/release-keyring-root.pem` on Linux. If the root key is missing, the
@@ -216,7 +216,7 @@ script generates it and updates the public root pin in `celune/constants.py`
 and `launcher/release_keys.h`, along with the root entry in
 `celune/release_keyring.json`. Existing root keys that match both verifier pins
 are reused. If an existing key does not match, the script stops unless
-`--trust-existing-root` is supplied; that option updates the checkout's trust
+`--trust-existing-root` is supplied. That option updates the checkout's trust
 pins to the existing key. A root-key change means launchers compiled with the
 previous pin will reject catalogs signed by the new root, so review and commit
 the updated public files with the release.
@@ -265,16 +265,16 @@ release assets must use signed ZIPs and preserve the detached
 `celune-update.sig` file. Unsigned CI build artifacts are for build validation
 and cannot be installed through the signed updater path. Historical ZIP releases
 with compatible update metadata must retain their version and file contents and
-gain a signed manifest and sidecar when migrated; precompiled legacy clients do
+gain a signed manifest and sidecar when migrated. Precompiled legacy clients do
 not verify signatures themselves.
 
 For each compatible GitHub release, keep the original ZIP under its existing
 name as the unsigned archive and publish a second archive named
 `Celune-{platform}-x64-{tag}-signed.zip`, for example
 `Celune-win-x64-v5.0.0-signed.zip`. Signed builds now produce a
-`Celune-win-x64-signed.zip` or `Celune-linux-x64-signed.zip` package; rename it
+`Celune-win-x64-signed.zip` or `Celune-linux-x64-signed.zip` package. Rename it
 to the versioned release name before publishing. The updater selects only the
-signed archive whose name matches the release tag; it ignores the original
+signed archive whose name matches the release tag. It ignores the original
 unsigned archive.
 
 The `signed` suffix means that Celune's custom Ed25519 bundle anti-tamper
@@ -282,7 +282,7 @@ signature verifies against the root-authenticated keyring appended to the
 launcher. It does not mean
 that the executable has a CA-issued or Authenticode code-signing certificate.
 The original ZIPs, which keep their existing names without the `-signed` suffix,
-are unsigned because they have no Celune bundle signature; legacy copies remain
+are unsigned because they have no Celune bundle signature. Legacy copies remain
 allowed with a startup warning.
 
 The published Windows and Linux ZIPs from v4.1.0 through v5.0.0 have signed
@@ -320,7 +320,7 @@ python:
 The documentation source is `docs/`, the navigation is `mkdocs.yml`, and
 `mkdocs-material` is installed from `docs/requirements.txt`. Pushing the
 configured repository branch triggers the ReadTheDocs webhook when the
-project's GitHub integration is enabled; the published URL is
+project's GitHub integration is enabled. The published URL is
 `https://celune.readthedocs.io/en/latest/`. The repository's
 `.github/workflows/docs.yml` workflow builds the same MkDocs site in GitHub
 Actions for documentation changes, but it does not replace the ReadTheDocs

@@ -14,7 +14,7 @@ Before redistributing a build, voice pack, model cache, or generated bundle:
 - Do not describe a third-party model as Apache 2.0-licensed merely because the Celune
   wrapper is Apache 2.0-licensed.
 
-The `docs/` pages describe interfaces and file formats; they do not grant
+The `docs/` pages describe interfaces and file formats. They do not grant
 rights to redistribute models or voice recordings. The lore-only
 `resources/about/about-celune.md` is not a technical license notice.
 

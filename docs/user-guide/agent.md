@@ -51,12 +51,12 @@ Idle.
 The input router receives up to the 20 most recent user and assistant messages,
 subject to Persona's configured short-term history limit. It uses them only to
 resolve references and follow-ups, such as applying a new request to the file
-from the previous agent task. The latest user message remains the instruction;
-earlier messages provide context and do not trigger work by themselves. When the
+from the previous agent task. The latest user message remains the instruction.
+Earlier messages provide context and do not trigger work by themselves. When the
 router recognizes a follow-up task, it writes a self-contained task request with
 the resolved target so tool selection and execution do not need the chat history.
 The router does not receive Persona's automatically retrieved long-term memories
-or conversation summary. The self-contained request starts agent planning; when
+or conversation summary. The self-contained request starts agent planning. When
 more context is needed, the agent can inspect preserved conversation history
 through `query_task_history`.
 
@@ -90,7 +90,7 @@ Important argument constraints include:
 - `set_reverb.strength` is 0 through 1.
 - `remember.importance` is 1 through 3.
 - `recall.limit` is 1 through 20.
-- `set_conversation_mode.mode` must be `converse`; `set_agent_mode.mode` must
+- `set_conversation_mode.mode` must be `converse`. `set_agent_mode.mode` must
   be `agent`.
 
 Every mutating tool has `approval_required: true` in its typed schema. The
@@ -105,26 +105,26 @@ runtime emits a warning when it is enabled.
 
 | Tool family | Calls | Policy |
 | --- | --- | --- |
-| Filesystem read | `local_current_working_directory`, `local_list_directory`, `local_file_metadata`, `local_read_text` | Absolute or working-directory-relative paths; non-recursive listing; text bounded to 1 MiB. |
+| Filesystem read | `local_current_working_directory`, `local_list_directory`, `local_file_metadata`, `local_read_text` | Absolute or working-directory-relative paths. Non-recursive listing. Text bounded to 1 MiB. |
 | Filesystem mutation | `local_write_text`, `local_make_directory`, `local_copy` | Medium danger and approval required. |
-| Filesystem destructive | `local_move`, `local_delete` | High danger; exact absolute target; recursive delete must be explicitly enabled. |
-| Process diagnostics | `local_list_processes`, `local_inspect_process`, `local_system_info` | Read-only, bounded diagnostics; system information includes detected CUDA device names, capability, and memory. |
-| Process control | `local_launch_process`, `local_terminate_process` | High danger; structured arguments, no shell, and identity checks. |
-| Application discovery/control | `local_discover_application`, `local_running_applications`, `local_launch_application` | High-danger launch operations; close a verified application with `local_terminate_process`. No GUI automation. |
+| Filesystem destructive | `local_move`, `local_delete` | High danger. Exact absolute target. Recursive delete must be explicitly enabled. |
+| Process diagnostics | `local_list_processes`, `local_inspect_process`, `local_system_info` | Read-only, bounded diagnostics. System information includes detected CUDA device names, capability, and memory. |
+| Process control | `local_launch_process`, `local_terminate_process` | High danger. Structured arguments, no shell, and identity checks. |
+| Application discovery/control | `local_discover_application`, `local_running_applications`, `local_launch_application` | High-danger launch operations. Close a verified application with `local_terminate_process`. No GUI automation. |
 
 Read-only filesystem paths may be absolute or relative to Celune's process
-working directory; Celune resolves them before access. Filesystem mutation
+working directory. Celune resolves them before access. Filesystem mutation
 paths must remain absolute so approval identifies the exact target. Process
 and application termination requires an expected name so a stale PID cannot
 be used blindly. The agent never turns a free-form prompt into a shell command.
 `local_file_metadata` reports `created_at` and `modified_at` as local ISO 8601
-timestamps with an explicit UTC offset; creation time is `null` when the
+timestamps with an explicit UTC offset. Creation time is `null` when the
 operating system does not expose it.
 Process launch resolves executable names through `PATH` and, on Windows, also
 checks the Windows system directories. Arguments are passed as a structured
 list, and shell execution remains disabled. When the task omits a working
 directory, the application uses its own process working directory and discards
-any generated `cwd`; an explicit `cwd` must be named in the task and resolve to
+any generated `cwd`. An explicit `cwd` must be named in the task and resolve to
 an existing directory.
 Routing and tool-selection prompts instruct Persona and Needle to preserve
 explicit paths from the task request. Celune also retains the original user
@@ -140,7 +140,7 @@ filesystem tool, Celune uses those exact paths even if Needle supplies
 corrupted or different paths. Copy and move use exactly two requested paths in
 source-then-destination order. Recovered paths are applied before approval so
 the prompt identifies the requested target. Sentence punctuation after an
-unquoted path is ignored; quote paths when punctuation is part of the target
+unquoted path is ignored. Quote paths when punctuation is part of the target
 name. Requests with an ambiguous number of paths are not rewritten.
 For a successful directory listing, Persona is instructed to include the
 resolved path and returned entries in its final answer. It is also instructed
@@ -149,7 +149,7 @@ to identify empty and truncated listings and preserve entry names exactly.
 ## Needle tool selection
 
 Production agent mode uses the Needle selector when its verified checkpoint is
-available. The checkpoint is validated and prepared in an isolated cache; a
+available. The checkpoint is validated and prepared in an isolated cache. A
 legacy JAX/Flax `needle.pkl` is not accepted as a normal production artifact.
 An input beginning with `Use`, `Call`, `Run`, or `Invoke` followed by a
 registered tool ID routes directly to that exact tool request.
@@ -166,17 +166,17 @@ identify an option in their response. Celune executes only the selected call,
 then applies the normal availability and approval checks. The choice pause does
 not consume an iteration or trigger another planning step.
 Needle integer arguments normalize exact whole-number values and numeric strings
-to integers; `null` optional arguments and optional values with the wrong type
+to integers. Optional arguments set to `null` and optional values with the wrong type
 are omitted so the registered default applies. Invalid required values remain
 errors. Before selection, the selector uses request-to-tool keyword overlap to
-form a candidate set. A clear match leaves Needle one tool choice; otherwise it
+form a candidate set. A clear match leaves Needle one tool choice. Otherwise it
 includes up to eight ranked tools. If the request and action intent have no
 lexical overlap with the catalog, all available tools remain candidates. If the
 selector receives no call, it retries with a compact instruction and the same
-candidate schema; when the set was narrowed, it then retries once with the full
+candidate schema. When the set was narrowed, it then retries once with the full
 catalog.
 Oversized catalogs have their lower-ranked argument and tool descriptions
-removed first; lower-ranked definitions are omitted only if the remaining typed
+removed first. Lower-ranked definitions are omitted only if the remaining typed
 schemas still do not fit. Needle receives the original user request with
 Persona's action intent, even when task classification produced a shorter
 summary. It retries with the original request alone if needed. The selector
@@ -192,7 +192,7 @@ The loader instantiates the model in the dtype declared by its validated
 checkpoint before placing it on the selected device, avoiding an intermediate
 FP32 copy for BF16 checkpoints.
 Needle's KV cache grows with generated tokens and lasts only for that selection
-request. Rotary values are computed for the prompt or decode step in use;
+request. Rotary values are computed for the prompt or decode step in use.
 `max_seq_len` is a hard limit and does not reserve a full positional table.
 
 ## User steering and approvals
@@ -200,16 +200,16 @@ request. Rotary values are computed for the prompt or decode step in use;
 The UI displays approval and choice requests as task states. Persona speaks a
 character-voiced explanation of the exact pending action before asking for
 approval. Short answers such as `yes`, `approve`, `go ahead`, `no`, and `deny`
-are handled directly; unclear answers leave the request pending and ask again.
+are handled directly. Unclear answers leave the request pending and ask again.
 Iteration and task status refresh as the runtime advances, including while
 agent speech is playing and after the task returns to idle. Persona generates
 opening acknowledgments using the active character's guidance. If an opening
 claims status, progress, or unsupported facts, Persona is asked to regenerate it
-once; a second invalid opening is not spoken. Punctuation-only responses are
+once. A second invalid opening is not spoken. Punctuation-only responses are
 retried once and never sent to speech. Tool-result replies are prompted to
 report only facts present in the structured result. Approval pauses do not
-increment the iteration;
-the counter advances when the approved tool begins execution.
+increment the iteration.
+The counter advances when the approved tool begins execution.
 The user can also provide a clarification, pause, resume, or cancel the task.
 Extensions can subscribe to `agent_approval_requested`,
 `agent_choice_requested`, `agent_task_state_changed`, and
@@ -226,7 +226,7 @@ as passed, failed, or skipped. Optional local-management checks run only when
 describes the report and exit status.
 
 After the live task, the test invokes every active tool with isolated test
-adapters and speaks a short status for each tool; the detailed result is
+adapters and speaks a short status for each tool. The detailed result is
 recorded in the test log. Celune then speaks a multiple-choice request and an
 approval request before displaying each request and accepting a typed answer.
 The answer is applied directly to the paused diagnostic runtime, so the check
@@ -235,7 +235,7 @@ Persona response. Either listed choice is accepted, and approving or declining
 the simulated mutation passes when processed. The answer field says “Enter your
 answer here,” with “Waiting for answer” and “Processing answer” status messages.
 These spoken tool results and interactive prompts apply only to
-`celune test agent`. Each typed response has a two-minute timeout; no response
+`celune test agent`. Each typed response has a two-minute timeout. No response
 fails that check.
 
 ## See also

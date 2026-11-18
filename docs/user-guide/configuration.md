@@ -2,7 +2,7 @@
 
 Celune loads YAML configuration from the user application-data directory. The
 `configure.py` setup helper creates `config.yaml` from the repository's
-`default_config.yaml`; if setup was skipped, the first launch creates it
+`default_config.yaml`. If setup was skipped, the first launch creates it
 instead. On startup, Celune synchronizes an existing file with the current
 default schema: known user values are preserved, new defaults are added, and
 obsolete options are removed recursively. The synchronized file is written
@@ -15,18 +15,18 @@ before the interface opens. `celune config view` prints the active file and
 | --- | --- | --- |
 | `backend` | `null` | TTS or VC backend name. `null` lets the application choose its normal backend. |
 | `inference_mode` | `native` | Use native model libraries or GGUF runtimes where supported. Takes effect after restarting Celune. |
-| `backend_options` | `qwen3.x_vector_only: false`; `soulxsinger.high_precision: true` | Constructor options passed only to the named backend. |
+| `backend_options` | `qwen3.x_vector_only: false`, `soulxsinger.high_precision: true` | Constructor options passed only to the named backend. |
 | `commercial` | `false` | Declare commercial use. Celune then allows only models whose reviewed terms confirm commercial use. |
 | `quantize` | `true` | Try contract-approved native TTS quantization: INT8 on Ampere and FP8 on sm89 or newer, with BF16 recovery. Ming3 and supported audio.cpp TTS adapters select Q8_0 when enabled and BF16 otherwise. |
-| `quantize_kv_cache` | `true` | Store supported Persona, Qwen3, FireRedTTS3, and VoxCPM2 cache prefixes in INT8 on Ampere or FP8 on `sm89+`; use `false` to keep their native cache dtype. |
+| `quantize_kv_cache` | `true` | Store supported Persona, Qwen3, FireRedTTS3, and VoxCPM2 cache prefixes in INT8 on Ampere or FP8 on `sm89+`. Use `false` to keep their native cache dtype. |
 | `voice_bundle` | `default` | CEVOICE/CECHAR name or path. |
 | `log_level` | `info` | `info`, `verbose`, or `debug`. |
-| `locale` | `null` | Locale override; `null` uses system detection. |
+| `locale` | `null` | Locale override. `null` uses system detection. |
 | `mode` | `performance` | `performance`, `converse`, or `agent`. The former `speak` name remains compatible. |
-| `vram` | `medium` | Model-size and memory preset: `low`, `medium`, `high`, or `xhigh`. Persona and standard agent models need `high`; smart 8B-tier Persona models need `xhigh`. |
+| `vram` | `medium` | Model-size and memory preset: `low`, `medium`, `high`, or `xhigh`. Persona and standard agent models need `high`. Smart 8B-tier Persona models need `xhigh`. |
 | `headless` | `false` | Suppress the Textual interface. |
 | `headless_nocolor` | `false` | Suppress color in headless output. |
-| `theme` | `dark` | `dark` or `light`; a pack can supply its own accent colors. |
+| `theme` | `dark` | `dark` or `light`. A pack can supply its own accent colors. |
 | `use_normalizer` | `false` | Enable the optional text normalizer. |
 | `captions` | `false` | Enable IPA forced alignment for speech caption timing. |
 | `ipa` | `false` | Enable IPA-oriented text handling where supported. |
@@ -41,7 +41,7 @@ their documented namespace instead of being duplicated at the top level.
 `inference_mode` accepts `native` or `gguf`. In GGUF mode, Persona uses
 llama.cpp for the reviewed Qwen3-VL 4B package when available. Other Persona
 models fall back to Transformers. TTS backends select audio.cpp only when they
-declare support; native-only backends stay on their existing runtime. Ming3
+declare support. Native-only backends stay on their existing runtime. Ming3
 requires audio.cpp in either mode. Celune logs the requested and effective
 runtime, and backend workers report their loaded model through CEDTS metadata.
 See [inference runtimes](../development/inference-runtimes.md) for the exact
@@ -52,7 +52,7 @@ compatibility and artifact matrix.
 Put backend-only constructor options under `backend_options` and the backend's
 registered name. The application passes only the selected backend's options to
 that backend's isolated worker. SoulX-Singer defaults to F0 melody-conditioning
-mode and full-section inference; set `high_precision` to `false` for score conditioning
+mode and full-section inference. Set `high_precision` to `false` for score conditioning
 or `streaming` to `true` for shorter inference chunks:
 
 ```yaml
@@ -79,7 +79,7 @@ not already cached. Celune measures the singer reference's F0, generates a
 score-conditioned teacher performance, extracts its natural pitch movement,
 re-centers each note on the written pitch, and then synthesizes a final
 melody-conditioned performance. This adds a second inference pass, so it takes
-longer than the default score mode. CESN still specifies note pitches; this
+longer than the default score mode. CESN still specifies note pitches. This
 option does not add explicit pitch bends or cents offsets to the notation.
 
 Set `commercial: true` when Celune is used commercially. Models marked
@@ -94,7 +94,7 @@ budget is therefore 4 GiB at `low`, 6 GiB at `medium`, 10 GiB at `high`, and
 14 GiB at `xhigh`. Preset names still describe minimum total GPU capacity.
 
 Persona context is capped at 2,048 tokens outside agent mode and 8,192 tokens
-in agent mode. Standard Persona models are available at `high`; smart models,
+in agent mode. Standard Persona models are available at `high`. Smart models,
 including the registered 8B-tier variants, require `xhigh`.
 
 Celune checks exact hardware and model profiles when one is available. A
@@ -112,7 +112,7 @@ Set `quantize: true` (the default) to reduce supported TTS model VRAM use.
 Ming3 and supported audio.cpp TTS adapters select their Q8_0 GGUF package when
 enabled and BF16 when disabled. Celune selects TorchAO weight-only INT8 for Ampere devices before native FP8 support
 and FP8 for Ada-class (`sm89`) and newer devices. The model contracts identify the linear
-attention and feed-forward layers eligible for conversion; embeddings, norms,
+attention and feed-forward layers eligible for conversion. Embeddings, norms,
 output heads, speaker conditioning, and vocoders remain in BF16 or their
 backend-required dtype.
 
@@ -123,25 +123,25 @@ backends retain their existing loading path. For conversion, startup speech
 probing, or generation failures other than CUDA out-of-memory, Celune unloads
 the quantized model and retries in BF16. If that recovery also fails, startup
 enters the normal fatal state. A CUDA out-of-memory error does not retry with
-larger BF16 weights; Celune releases partial allocations, reports the failure,
+larger BF16 weights. Celune releases partial allocations, reports the failure,
 and returns speech generation to an idle state. Set `quantize: false` to opt
 out.
 
 `log_level` controls exception detail as well as ordinary diagnostics. `info`
 keeps handled failures concise, `verbose` appends the exception message, and
 `debug` appends the full traceback and writes it to Celune's runtime traceback
-file. Public API responses continue to use safe, localized summaries; the
+file. Public API responses continue to use safe, localized summaries. The
 additional detail is written to the configured runtime logs instead.
 
 In the Textual interface, `/settings` opens the configuration manager. Nested
 YAML values are shown with human-readable labels that preserve names such as
 API, T2S, Ming3, and Persona. ENTER writes the edited values to the active
 `config.yaml`, fades the interface through the normal shutdown transition, and
-then requests a silent launcher-managed restart; the terminal title changes to
+then requests a silent launcher-managed restart. The terminal title changes to
 `Restarting`. ESC leaves the file unchanged.
 
 String settings that allow null can be edited by typing a value directly. Enter
-`null` or `None` without quotes to save YAML null; enter `"null"` or `"None"` to
+`null` or `None` without quotes to save YAML null. Enter `"null"` or `"None"` to
 save the word as a string. Autocomplete suggestions remain available for
 settings that provide them.
 
@@ -149,7 +149,7 @@ settings that provide them.
 
 Celune uses `yt-dlp` for YouTube URLs supplied to audio playback and upgrades
 it with the default EJS support group. YouTube extraction may also need a
-supported JavaScript runtime; configure its executable when it is not on
+supported JavaScript runtime. Configure its executable when it is not on
 `PATH`. These values are passed to the downloader only for YouTube playback.
 
 ```yaml
@@ -173,7 +173,7 @@ youtube:
 | `youtube.remote_components` | Component or list | Allows components such as `ejs:npm` when supported by the runtime. |
 | `youtube.extractor_args` | List of `IE_KEY:ARGS` values | Supplies advanced `yt-dlp` extractor arguments. |
 
-Use either `cookies_file` or `cookies_from_browser`; when both are present,
+Use either `cookies_file` or `cookies_from_browser`. When both are present,
 Celune uses `cookies_file`. Keep cookie files and PO tokens private. Browser
 cookies can expire or rotate, and using an account with `yt-dlp` may trigger
 provider security checks. PO tokens are client- and session-specific, so
@@ -191,7 +191,7 @@ from aggressive changes. Playback also uses a persistent output writer and an
 adaptive reserve. Its target starts at 2 seconds and can grow to 30 seconds
 when Celune detects high system/process CPU usage, delayed scheduling, slow
 output writes, or a PortAudio underflow. Playback no longer waits up to 250 ms
-to build a startup reserve before dispatching the first ready block; the
+to build a startup reserve before dispatching the first ready block. The
 contention monitor can still delay output when it needs to rebuild reserve.
 Celune requests sounddevice's device low-latency setting for input and output
 streams. The actual latency depends on the device and host API. This reduces
@@ -202,7 +202,7 @@ does not wait for seconds of buffered audio.
 
 Playback contention is an engine-owned policy and is not user-configurable. A
 persistent queue reader and output writer keep queue waits and stream writes
-off the mixer polling path; the mixer yields briefly between blocks so the
+off the mixer polling path. The mixer yields briefly between blocks so the
 writer can continue draining during CPU spikes. Debug timing traces are
 sampled at a low rate instead of being written for every block.
 
@@ -217,13 +217,13 @@ felt: `playback_queue_wait_seconds` measures producer backpressure,
 `playback_rebuffer_wait_seconds` measures cumulative reserve-gate waiting.
 Debug traces include these values as `queue_wait`, `generation_gap`,
 `rebuffer_wait`, `writer_wait`, `writer_gap`, and `writer_write` fields. A large
-queue or generation gap points upstream; a large writer wait or writer gap
-points to thread scheduling; a large writer-write value points to the audio
+queue or generation gap points upstream. A large writer wait or writer gap
+points to thread scheduling. A large writer-write value points to the audio
 device or driver.
 
 Runtime speech controls are also exposed as `/speed`, `/reverb`, `/seed`, and
 Python properties on `Celune`. The command values are deliberately narrower
-than the Python values; see [Text UI](../interfaces/tui.md).
+than the Python values. See [Text UI](../interfaces/tui.md).
 
 ## Speech captions
 
@@ -243,7 +243,7 @@ uv sync --dev --extra api --extra captions
 
 Also install the `espeak-ng` executable and make it available on `PATH`. When
 captions are enabled, Celune prepares the Apache-2.0-licensed acoustic model in
-the background during startup without blocking startup; the first alignment can
+the background during startup without blocking startup. The first alignment can
 still wait if preparation is ongoing. See [speech](speech.md) for alignment and
 troubleshooting details. With `captions: false`, Celune does not load or download
 the alignment model.
@@ -260,7 +260,7 @@ sleep:
 ```
 
 When enabled, idle time can unload selected model components. `unload_persona`
-and `normalizer` release their respective memory; `tts` controls whether the
+and `normalizer` release their respective memory. `tts` controls whether the
 active TTS model is unloaded. `Celune.wake_from_sleep()` restores the runtime.
 Sleep is a lifecycle feature, not a process shutdown.
 
@@ -278,7 +278,7 @@ api:
 Celune creates and persists an API key automatically when `token` is `null` and
 `CELUNE_API_TOKEN` is unset.
 When `token` is `null`, a nonempty `CELUNE_API_TOKEN` is used instead. Set
-`token: ""` to disable API authentication; this explicit empty value also
+`token: ""` to disable API authentication. This explicit empty value also
 overrides `CELUNE_API_TOKEN`. Any other token value is used as the API key.
 With authentication disabled, keep `access: same_machine` unless the API is
 intended to be available without a key to other devices.
@@ -314,7 +314,7 @@ persona:
     semantic_embedding_model: sentence-transformers/all-MiniLM-L6-v2
 ```
 
-Persona is available in `converse` and `agent` modes; it is not enabled or
+Persona is available in `converse` and `agent` modes. It is not enabled or
 disabled through a Persona-local switch. `context_size` bounds each ordinary
 Persona request, and `max_turns: null` leaves the turn count unbounded unless
 the memory settings impose a shorter history. The shared `compact_at` setting
@@ -323,7 +323,7 @@ size, capped at 2,048 tokens outside agent mode and 8,192 tokens in agent mode.
 
 Persona, Qwen3, FireRedTTS3, and VoxCPM2 use the configured
 `quantize_kv_cache` policy for supported CUDA caches. Older keys and values
-use INT8 on Ampere GPUs or FP8 on `sm89` and newer GPUs; recent tokens remain
+use INT8 on Ampere GPUs or FP8 on `sm89` and newer GPUs. Recent tokens remain
 in the model's compute dtype. Attention uses dequantized values, so model
 compute retains its normal dtype. Qwen3 keeps CUDA-graph decoding enabled and
 stores older graph-cache tokens in the selected quantized format. Unsupported
@@ -333,7 +333,7 @@ caches. Whisper and Needle are not affected.
 `context_size` is an upper bound: input encoding is limited to that bound while
 leaving room for at least one response token, and generation is capped by the
 remaining space after the actual prompt tokens are counted. The dynamic cache
-grows with the encoded prompt and generated tokens; it does not reserve the
+grows with the encoded prompt and generated tokens. It does not reserve the
 configured maximum. Celune releases the request cache after each response.
 
 The default Whisper model is pinned to a specific Hugging Face commit so its
@@ -352,12 +352,12 @@ agent:
 ```
 
 `fs_tools` enables the local filesystem and process tool catalog. Agent task
-limits are applied when Celune creates a task; `null` for `max_tokens` means
+limits are applied when Celune creates a task. `null` for `max_tokens` means
 that generation is bounded only by the model and context limits. Agent context
 is capped at 8,192 tokens. Routing and classification requests use the same
 ceiling to limit transient KV-cache allocation. Routing prompts contain only
 the current input and active task
-metadata; they do not retain conversational history. Persona generation
+metadata. They do not retain conversational history. Persona generation
 requests use the configured KV-cache policy and release unused CUDA allocator
 blocks after each response. In agent mode, Celune records the actual prompt and
 completion token counts. The shared `persona.compact_at` setting triggers
@@ -365,25 +365,25 @@ compaction of older Persona history according to the memory settings. In agent
 mode, its percentage is applied to the agent's configured context size. Celune
 updates the task's history snapshot and uses a new request-scoped cache for the
 next generation, releasing the previous generation's cache and pruned history
-references. Compaction is a soft threshold; `context_size` remains the hard
+references. Compaction is a soft threshold. `context_size` remains the hard
 maximum for the prompt and its response.
 
 Persona is independent of TTS backend selection. The model registry in
-`celune.constants` pins allowed remote-code revisions; changing a model ID does
+`celune.constants` pins allowed remote-code revisions. Changing a model ID does
 not grant arbitrary remote code. Memory records are character-scoped and are
-stored under the Persona data directory. Explicit memory requests are favored;
-the classifier is optional and confidence-gated.
+stored under the Persona data directory. Explicit memory requests are favored.
+The classifier is optional and confidence-gated.
 
 Persona and standard agent models require at least the `high` preset. Smart
 8B-tier Persona models require `xhigh`. Selecting an incompatible preset
-disables the corresponding feature; Celune does not raise the configured VRAM
+disables the corresponding feature. Celune does not raise the configured VRAM
 target automatically.
 
 ## Voice conversion
 
 Voice-conversion F0 conditioning is a runtime control rather than a YAML
 setting. Live capture always performs voice-activity detection. The
-optional `live-vc-ai` extra supplies Silero VAD; when it is unavailable, the
+optional `live-vc-ai` extra supplies Silero VAD. When it is unavailable, the
 application uses its built-in energy detector instead. With Silero enabled, the energy
 detector also catches speech onset while the background model catches up. Live
 capture preserves microphone audio through a 300 ms VAD hangover so delayed or

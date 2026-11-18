@@ -453,7 +453,7 @@ class InvalidCheckpoint(ValueError, ModelContractError):
             details.append(f"expected={expected}, actual={actual}")
         if reason is not None:
             details.append(reason)
-        super().__init__(": ".join((details[0], "; ".join(details[1:]))))
+        super().__init__(": ".join((details[0], ", ".join(details[1:]))))
 
 
 class EmptyClassifierOutput(ValueError, CeluneError):

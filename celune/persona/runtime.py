@@ -439,7 +439,7 @@ class PersonaBackend:
                     if generation_cache is None:
                         raise
                     _LOGGER.debug(
-                        "Persona quantized KV cache failed; retrying dynamic cache",
+                        "Persona quantized KV cache failed, retrying dynamic cache",
                         exc_info=True,
                     )
                     generation_cache = None

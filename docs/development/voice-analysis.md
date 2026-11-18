@@ -23,7 +23,7 @@ Its public functions are:
 under `out_dir`. Its CVS-specific arguments are the TTS reference text,
 language tag, backend identifier, request-to-first-audio latency in
 milliseconds, and synthesis realtime speed. Audio analysis failures propagate
-to the caller; ASR failures make WER unavailable, and database write failures
+to the caller. ASR failures make WER unavailable, and database write failures
 leave the per-utterance score in the report while the aggregate is `N/A`.
 
 ```python
@@ -51,7 +51,7 @@ analyze_voice_audio(
 
 Reference similarity requires a `.pt` asset with a 2,048-element float32
 speaker embedding in the active pack. Missing or malformed embeddings produce
-a clear analysis error; the rest of the raw analysis can still be useful.
+a clear analysis error. The rest of the raw analysis can still be useful.
 
 ## Automatic generation analysis
 
@@ -71,13 +71,13 @@ scores recorded for that backend.
 
 | Component | Score | Input |
 | --- | --- | --- |
-| Voice match (40%) | 100 at 97% similarity; 10 points per similarity percentage point below 97%; 0 at 87% or lower | Cosine similarity to the selected CEVOICE reference embedding |
-| WER (30%) | `max(0, 100 - 5 × WER_percent)` | Whisper Tiny transcription compared with the exact text sent to TTS; WER is in percentage points and is an ASR estimate |
-| Latency (15%) | 100 through 500 ms; then 5 points per additional 250 ms; 0 at 5,500 ms | Request-to-first-usable-audio latency |
-| Realtime speed (15%) | Linear from 0 at 0× to 100 at 1.2×; capped at 100 | Generated audio duration divided by generation time |
+| Voice match (40%) | 100 at 97% similarity, 10 points per similarity percentage point below 97%, and 0 at 87% or lower | Cosine similarity to the selected CEVOICE reference embedding |
+| WER (30%) | `max(0, 100 - 5 × WER_percent)` | Whisper Tiny transcription compared with the exact text sent to TTS. WER is in percentage points and is an ASR estimate |
+| Latency (15%) | 100 through 500 ms, then 5 points per additional 250 ms, and 0 at 5,500 ms | Request-to-first-usable-audio latency |
+| Realtime speed (15%) | Linear from 0 at 0× to 100 at 1.2×, capped at 100 | Generated audio duration divided by generation time |
 
 The weighted total is `0.40V + 0.30W + 0.15L + 0.15S`. A missing input
-component leaves that utterance's total unavailable; the report still shows
+component leaves that utterance's total unavailable. The report still shows
 available component measurements. WER compares case-folded,
 punctuation-normalized whitespace-separated words and reports the edit count
 and reference word count. Whisper recognition errors can raise WER even when
@@ -85,7 +85,7 @@ the speech sounds correct, so treat it as an ASR estimate rather than a direct
 measure of audible intelligibility. WER is unavailable for Japanese, Chinese,
 Thai, Lao, Myanmar, and Khmer text because this analysis path does not segment
 those scripts into words. The Whisper Tiny analysis adapter can run on CUDA or
-CPU; on CPU, report generation may take longer.
+CPU. On CPU, report generation may take longer.
 
 Utterance measurements and the backend aggregate are stored in
 `cvs_aggregates.db` under Celune's application data directory. The database
@@ -97,8 +97,8 @@ the utterance twice. Only complete CVS scores contribute to `CVS[all]`.
 ## Verification and troubleshooting
 
 - Run `python scripts/run_ci.py` after changes to the analysis or ASR code.
-- A report with `CVS[<language>]: N/A` has at least one unavailable component;
-  inspect the four component rows to identify it.
+- A report with `CVS[<language>]: N/A` has at least one unavailable component.
+  Inspect the four component rows to identify it.
 - `CVS[all]: N/A` means this backend has no complete utterance scores in the
   aggregate database yet, or the database could not be written.
 - WER and voice match require the exact generation transcript and a compatible
@@ -136,7 +136,7 @@ The wizard collects a pack/character name, number of voices, each voice name,
 reference WAV, transcript, optional CFG scale, optional per-voice Persona style,
 theme, shared Persona metadata, default voice, and voice order. It rejects
 duplicate/unknown names and writes a validated bundle. It is intentionally
-interactive; automation should call `write_cevoice()` for legacy-compatible
+interactive. Automation should call `write_cevoice()` for legacy-compatible
 packs or `write_cechar_v5()` for new indexed character packs. Use
 `write_cechar_v4()` only when v4 compatibility is required.
 

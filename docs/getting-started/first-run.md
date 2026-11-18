@@ -54,10 +54,10 @@ active capabilities.
 ## Verify speech
 
 In performance mode, type text and press `CTRL+ENTER`. In converse mode, the same
-action sends the text through Persona; use `CTRL+R` for Persona speech input.
+action sends the text through Persona. Use `CTRL+R` for Persona speech input.
 Generated files are placed in the repository
 `outputs/` directory when saving is enabled. Celune writes 48 kHz, 24-bit FLAC
-outputs; the runtime keeps audio arrays as normalized float32.
+outputs. The runtime keeps audio arrays as normalized float32.
 
 For a headless first check, set `headless: true` and use the REST API or an
 extension. To let Celune choose based on the environment, set `headless: null`.
@@ -77,8 +77,8 @@ If the loading screen changes to the red `Failed to start` state, read the
 diagnostic shown there. When engine initialization returns a failure without
 raising an exception, the application shows the most recent error-level startup log
 instead of only the generic startup message. The screen keeps the final error
-message concise; traceback detail remains in the application log. The application
-remains open so the error can be read; press `CTRL+Q` to close it. A missing required
+message concise. Traceback detail remains in the application log. The application
+remains open so the error can be read. Press `CTRL+Q` to close it. A missing required
 dependency returns exit code `4` to the launcher, which can then report or
 repair the environment.
 

@@ -1868,7 +1868,7 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
 
         Voice-bundle backends use the same backend model for every voice in a
         CEVOICE/CECHAR pack. The worker description provides that model as
-        ``clone_model_id`` or ``model_name``; the pack-local voice name is
+        ``clone_model_id`` or ``model_name``. The pack-local voice name is
         only used to select the reference audio in the generation request.
 
         Args:

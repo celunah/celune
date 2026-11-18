@@ -97,7 +97,7 @@ def load(self, raise_on_error: bool = False, skip_runtime_check: bool = False) -
     Raises:
         NotAvailableError: If no usable voice or backend is available.
         Exception: If an unexpected loading failure occurs and `raise_on_error` is enabled.
-        RuntimeCheckError: If runtime validation fails; the message contains its diagnostics.
+        RuntimeCheckError: If runtime validation fails. The message contains its diagnostics.
         BackendError: If backend initialization fails.
     """
     if self._startup_callback is not None:

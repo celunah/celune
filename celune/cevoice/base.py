@@ -595,7 +595,7 @@ def add_cevoice_entries(
     Args:
         path: The pack to update in place.
         sources: Files to add in their requested order.
-        position: Optional 1-based insertion position; omit it to append.
+        position: Optional 1-based insertion position. Omit it to append.
         validate_embeddings: Whether to validate indexed `.pt` assets with PyTorch.
 
     Returns:

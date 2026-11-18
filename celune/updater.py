@@ -45,7 +45,7 @@ FORCE_DISABLE_UPDATES = False
 _UPDATE_INVALID_RELEASE_MESSAGE = "the release ZIP has invalid update metadata"
 _UPDATE_NO_PLATFORM_ZIP_MESSAGE = "the latest SemVer release has no platform ZIP"
 _GIT_CHECKOUT_REQUIRED_MESSAGE = (
-    "This action requires Git and a checkout with a commit; install Git if needed."
+    "This action requires Git and a checkout with a commit. Install Git if needed."
 )
 SEMVER_PATTERN = re.compile(
     r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)"

@@ -628,7 +628,7 @@ class TestUpdater:
         ):
             updater.update_to_latest()
         assert (
-            "This action requires Git and a checkout with a commit; install Git if needed."
+            "This action requires Git and a checkout with a commit. Install Git if needed."
             in str(error.value)
         )
         assert updater.git_checkout_hint() in str(error.value)

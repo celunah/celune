@@ -902,7 +902,7 @@ class TestCeluneRuntime(CeluneCoreTestSupport):
 
         say.assert_called_once_with(celune, "What time is it?")
         toast_callback.assert_called_once_with(
-            "Persona couldn't reply; your input was queued for speech instead.",
+            "Persona couldn't reply. Your input was queued for speech instead.",
             severity="warning",
             duration=None,
         )

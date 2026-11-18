@@ -277,9 +277,9 @@ def make_signing_key(
     """Prepare protected release and root keys and synchronize their trust data.
 
     Args:
-        output_path: Release private-key path; an existing Ed25519 key is reused.
+        output_path: Release private-key path. An existing Ed25519 key is reused.
         project_root: Checkout whose release catalog and verifier pins are updated.
-        root_key_path: Root private-key path; a missing root is generated.
+        root_key_path: Root private-key path. A missing root is generated.
         trust_existing_root: Update verifier pins to trust an existing root key.
 
     Returns:
@@ -326,7 +326,7 @@ def make_signing_key(
         root_is_new or trust_existing_root
     ):
         raise ValueError(
-            "the existing root key differs from the pinned verifier key; "
+            "the existing root key differs from the pinned verifier key. "
             "use --trust-existing-root to update the trust anchor"
         )
     release_is_new = not release_destination.exists()

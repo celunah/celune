@@ -23,7 +23,7 @@ The project header is read from the active project's ``pyproject.toml``::
     [tool.celtest]
     display_name = "Example Project"
 
-``tool.celtest.display_name`` is optional; ``project.name`` is used when it
+``tool.celtest.display_name`` is optional. ``project.name`` is used when it
 is absent. The plugin has no dependency on the host project's package.
 """
 

@@ -38,17 +38,17 @@ wavs, sample_rate = model.generate_voice_design(
 )
 ```
 
-The installed `faster_qwen3_tts` wrapper may expose the same method and requires CUDA. Inspect the actual signatures and model type at runtime. The loaded model must report VoiceDesign support; a successful load of the wrong model type is a failure, not a fallback opportunity. Save each returned waveform as a playable WAV using its returned sample rate, preserving the original candidate until CAC completes.
+The installed `faster_qwen3_tts` wrapper may expose the same method and requires CUDA. Inspect the actual signatures and model type at runtime. The loaded model must report VoiceDesign support. A successful load of the wrong model type is a failure, not a fallback opportunity. Save each returned waveform as a playable WAV using its returned sample rate, preserving the original candidate until CAC completes.
 
 ## Candidate metadata and revisions
 
 For every candidate record JSON with at least:
 
-- candidate label and batch/revision number;
-- exact model ID, resolved snapshot path, and revision/commit;
-- full VoiceDesign instruction and original brief;
-- preview text and language;
-- seed and all generation settings;
+- candidate label and batch/revision number
+- exact model ID, resolved snapshot path, and revision/commit
+- full VoiceDesign instruction and original brief
+- preview text and language
+- seed and all generation settings
 - WAV output path and sample rate.
 
 Generate A/B/C with identical inputs and settings except for the recorded random/sampling seed. If the user gives descriptive feedback, append it to the original instruction and generate a new batch, up to three batches by default. Never change the preview sentence, model, or cache policy just to make candidates easier to compare.

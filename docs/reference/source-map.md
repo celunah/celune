@@ -135,7 +135,7 @@ own. It is the index to use when a feature needs a precise code entrypoint.
 | --- | --- |
 | `scripts/cac.py` | Interactive/simple CEVOICE pack creator. |
 | `scripts/run_ci.py` | Canonical Windows-safe CI process wrapper. |
-| `scripts/update_docstrings.py` | Docstring coverage helper; inspect its diff for mechanical collateral. |
+| `scripts/update_docstrings.py` | Docstring coverage helper. Inspect its diff for mechanical collateral. |
 | `CMakeLists.txt`, `CMakePresets.json`, `cmake/` | Pinned libsodium build, native launcher verification, Nuitka core build, and release packaging. |
 | `scripts/make_signing_key.py` | Protected release/root key setup, trust-pin synchronization, and signed preset configuration. |
 | `scripts/append_release_keyring.py` | Root-sign and append the release-key catalog to the launcher. |

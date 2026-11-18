@@ -3,10 +3,10 @@
 `CEVOICE` is Celune's voice-pack container format. Repository-bundled character
 packs are listed in the known default-pack registry and display their registered
 variant label. The registry contains `default.cevoice`, `default_sep19.cevoice`,
-`classic.cevoice`, and `nol.cevoice`; earlier default-pack checksums remain
+`classic.cevoice`, and `nol.cevoice`. Earlier default-pack checksums remain
 associated with `default.cevoice`. The Natural `default_sep19.cevoice` pack uses
 CECHAR v3. The `default.cevoice` pack uses `CECHAR` v5 and includes the hidden
-`sing` reference; the classic pack remains on CECHAR v4. CECHAR v5 keeps the
+`sing` reference. The classic pack remains on CECHAR v4. CECHAR v5 keeps the
 indexed archive layout and reserves an optional hidden `sing` voice for singing
 backends. Older `CECHAR` v2/v3 and
 legacy `CEVOICE` v1 bundles remain readable. `write_cevoice()` writes the
@@ -79,11 +79,11 @@ Celune loads a compression codec only when an indexed pack declares that
 codec. Packs using no compression, gzip, or XZ do not require Zstandard or
 OpenZL. If a pack uses a codec that is not installed, `celune ls` and
 `celune tar` report the missing dependency instead of classifying the pack as invalid.
-OpenZL writing also requires NumPy; other CEVOICE reads and edits do not import
+OpenZL writing also requires NumPy. Other CEVOICE reads and edits do not import
 NumPy for OpenZL support.
 CLI pack operations skip PyTorch tensor validation for existing `.pt` entries.
 Adding a new indexed `.pt` entry validates it with PyTorch.
-Codec loading is implemented in `celune/cevoice/v4.py`; CLI reporting is in
+Codec loading is implemented in `celune/cevoice/v4.py`. CLI reporting is in
 `celune/entrypoint.py`.
 
 ## Metadata schema
@@ -163,7 +163,7 @@ Each voice entry may also include:
 | --- | --- |
 | `cfg_scale` | Optional positive VoxCPM2 classifier-free guidance scale for that voice |
 | `reference_text` | Optional non-empty transcript for the voice's reference audio |
-| `display_name` | Optional selector label; voice keys remain the backend identifiers |
+| `display_name` | Optional selector label. Voice keys remain the backend identifiers |
 | `persona` | Optional style/rule additions layered on the shared Persona metadata |
 | `cesn` | In CECHAR v5, required for `sing` and `null` for speaking voices |
 | `range` | For CECHAR v5 `sing`, inclusive `min` and `max` MIDI pitches from 0 to 127 |
@@ -184,7 +184,7 @@ Supported `persona` fields are:
 
 | Field | Meaning |
 | --- | --- |
-| `persona.identity.name` | Character name; takes precedence over top-level `name` for character naming |
+| `persona.identity.name` | Character name, taking precedence over top-level `name` for character naming |
 | `persona.identity.age` | Optional age text |
 | `persona.identity.gender` | Optional gender text |
 | `persona.identity.profile` | Optional profile text |
@@ -207,7 +207,7 @@ Persona unchanged.
 CECHAR v5 reserves the exact voice name `sing` for the character's singing
 reference. The entry is optional. Its assets remain under `voices`, but Celune
 keeps it out of `voice_order` and never offers it to TTS backends. A v5 manifest
-may omit `voice_order`; Celune then lists every voice except `sing`. If an
+may omit `voice_order`. Celune then lists every voice except `sing`. If an
 explicit `voice_order` or `default_voice` selects `sing`, the pack is invalid.
 
 The singing entry requires a WAV asset, a non-empty `reference_text`, a
@@ -215,10 +215,10 @@ non-empty `cesn` score, a `range` object, and explicit `null` values for
 `cfg_scale` and `persona`. The range contains inclusive MIDI `min` and `max`
 integers from 0 through 127, with `min` no greater than `max`. New packs written
 with `write_cechar_v5()` must declare it. For compatibility, older v5 packs
-without `range` remain readable and use the full MIDI range (0–127). Every
+without `range` remain readable and use the full MIDI range (0-127). Every
 ordinary TTS voice must include `cesn: null`. Celune does not apply speaking
 Persona or VoxCPM2 guidance settings to the singing entry.
-Future singing backends must select only `sing`; they must report that singing
+Future singing backends must select only `sing`. They must report that singing
 is unavailable when the pack has no `sing` entry and must not fall back to a
 speaking voice.
 
@@ -323,7 +323,7 @@ The official `default`, `default_sep19`, and `classic` packs are recognized by
 their content checksums, so they retain Celune's built-in Persona identity
 behavior. When shown in character or voice-pack selectors, they are labeled
 `Celune (default)`, `Celune (default_sep19)`, and `Celune (classic)` respectively.
-The variant label is display metadata only; these packs still provide the
+The variant label is display metadata only. These packs still provide the
 character identity `Celune` to Persona and extensions.
 
 `celune.cevoice.KNOWN_DEFAULT_CEVOICE_PACKS` maps each repository pack filename
@@ -336,7 +336,7 @@ The loader parses and validates the bundle, then lazily materializes assets into
 
 - Qwen3 clone mode reads `wav` assets as reference audio and requires per-voice `reference_text`.
 - VoxCPM2 reads `wav` assets as reference audio and uses per-voice `cfg_scale` when present.
-- Voice names are local to the pack; they are not required to match a backend's built-in voice names.
+- Voice names are local to the pack. They are not required to match a backend's built-in voice names.
 - CEDTS synchronizes the active pack with its worker and resolves each voice to the shared backend model.
 - Analysis helpers read optional `pt` assets directly from the bundle.
 - `default_voice` controls the initial selected voice.
@@ -471,7 +471,7 @@ The values in the `voices` mapping can be:
 `wav` is the important runtime asset. Include `pt` only if you also want Celune's analysis features to have embeddings for that voice.
 
 To add an optional singing reference, write CECHAR v5. Provide its WAV,
-transcript, and CESN score under the reserved `sing` key; the writer stores
+transcript, and CESN score under the reserved `sing` key. The writer stores
 null speaking-only metadata for it. Keep `sing` out of `voice_order`:
 
 ```python
@@ -577,8 +577,8 @@ print(bundle.read_asset("balanced", "wav")[:16])
 - offsets and lengths against the payload size
 
 Pass `validate_embeddings=False` to check the container without importing
-PyTorch or validating indexed `.pt` tensor contents. The CLI uses this option;
-entry checksums and all non-tensor format validation still run. Callers that
+PyTorch or validating indexed `.pt` tensor contents. The CLI uses this option.
+Entry checksums and all non-tensor format validation still run. Callers that
 consume `.pt` data should use the default full validation.
 
 `read_asset()` additionally validates the SHA-256 digest of the asset bytes before returning them.
@@ -598,11 +598,11 @@ Celune's bundled `default.cevoice` uses:
 - top-level `assets`: prompt source material for the bundled character
 - `soul.md`: shared character continuity and relationship guidance
 - per-voice `persona`: response-style refinements layered onto the shared character
-- `cfg_scale`: `2.4` for `balanced`, `bold`, and `upbeat`; `3.0` for `calm`
+- `cfg_scale`: `2.4` for `balanced`, `bold`, and `upbeat`, and `3.0` for `calm`
 - `reference_text`: the transcript matching each bundled reference `wav`
-- `sing.range`: MIDI pitches 54–72 (F#3–C5), inclusive
+- `sing.range`: MIDI pitches 54-72 (F#3-C5), inclusive
 - both `wav` and `pt` assets for each voice
-- a `sing` WAV reference with transcript `Moonlight resting, silver-blue, I'll keep one quiet light for you.`; Celune keeps this voice out of `voice_order` and TTS selection
+- a `sing` WAV reference with transcript `Moonlight resting, silver-blue, I'll keep one quiet light for you.`. Celune keeps this voice out of `voice_order` and TTS selection
 
 That pack is a good real-world model if you want your own bundle to behave like the stock one.
 

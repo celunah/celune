@@ -1,7 +1,7 @@
 # Modes
 
 Celune has three operation modes and a separate legacy input-mode layer. The
-operation mode decides how text is routed; the input mode decides whether the
+operation mode decides how text is routed. The input mode decides whether the
 engine accepts text or audio.
 
 ## Modes
@@ -28,7 +28,7 @@ as new public configuration.
 ## Text-to-speech flow
 
 In `performance` mode, `say()` and `/say` queue the supplied text literally. A new
-request does not implicitly stop an utterance that is already playing; a direct
+request does not implicitly stop an utterance that is already playing. A direct
 request is reported as busy until the shared speech pipeline is available. Use
 `/stop` or `force_stop_speech()` when interruption is intentional. Celune
 normalizes special characters, removes horizontal whitespace before colons,
@@ -50,18 +50,18 @@ Textual's `disabled` state.
 The voice button uses `press` to cycle to the next loaded voice and `hold` to
 open the voice selector. These capabilities are independent, so the UI can set
 `ButtonActions(press=False, hold=True)` while Celune sleeps. A short press then
-does nothing, while a hold opens the selector; confirming a voice wakes Celune
+does nothing, while a hold opens the selector. Confirming a voice wakes Celune
 before applying the selected voice. With a singing backend, voice cycling stays
 locked and the hold menu lists only packs that provide the reserved `sing`
-voice. Since each pack provides one singing role, the menu has no entry search;
-confirming a row loads that character pack.
+voice. Since each pack provides one singing role, the menu has no entry search.
+Confirming a row loads that character pack.
 
 ## Conversation flow
 
 In `converse` mode, typed text is handled by Persona. The response may use the
 loaded CEVOICE character metadata, short-term history, long-term memory, visual
 attachments, and emotion cues. The final response is passed to the normal
-speech pipeline; Persona does not own a separate playback implementation.
+speech pipeline. Persona does not own a separate playback implementation.
 
 `/think` is the direct UI command for this route. The REST `/v1/think` endpoint
 accepts a request asynchronously and returns `202` when the turn is accepted.

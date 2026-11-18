@@ -8,7 +8,7 @@ doctor report, and the test-mode listing use lightweight command dependencies.
 Configuration commands load only the configuration-path and system-browser
 helpers. Voice-pack commands use the CEVOICE reader and writer without starting
 the runtime. Normal starts load the full Celune dependency contract. Agent test
-mode loads the engine and configured integrations; UI test mode uses the Textual
+mode loads the engine and configured integrations. UI test mode uses the Textual
 interface with a lightweight runtime state object.
 
 ## Commands
@@ -36,16 +36,16 @@ interface with a lightweight runtime state object.
 
 The agent test runs the configured Persona, Needle, and TTS path through one
 read-only task. It then runs every active production tool handler with isolated
-test state and speaks a short worked/didn't work status for each tool; detailed
+test state and speaks a short worked/didn't work status for each tool. Detailed
 results are recorded in the test log. Celune speaks a multiple-choice question
 and an approval request before displaying them and accepting typed answers. The
 answers are applied directly to the paused diagnostic runtime, without another
 Persona response. Either listed choice passes. Approving or declining the
 simulated mutation passes when the response is processed. The test also checks task
 lifecycle, schema validation, permissions, context limits, and terminal
-outcomes. Each typed response prompt waits up to two minutes; a missing answer
+outcomes. Each typed response prompt waits up to two minutes. A missing answer
 fails that check. When local-management tools are enabled, filesystem operations stay
-inside a temporary directory; process and application mutations use test
+inside a temporary directory. Process and application mutations use test
 doubles and never launch or close real resources. Independent checks continue
 after a failure.
 
@@ -58,7 +58,7 @@ Use agent test mode when checking the configured engine and its integrations.
 The stopped test UI log shows one `PASS`, `FAIL`, or `SKIP` entry per check and
 a total for each status. Local-management tools are skipped when
 `agent.fs_tools` is disabled. When enabled, filesystem mutations stay inside a
-temporary directory; process and application launch or termination use test
+temporary directory. Process and application launch or termination use test
 doubles and do not affect running programs. A failed active check makes
 `celune test agent` return the standard failure exit code after the UI closes.
 
@@ -81,7 +81,7 @@ bytes.
 | `celune tar -xf <pack.cevoice> [destination]` | Extract to the current directory or the optional destination. |
 | `celune tar -rf <pack.cevoice> <file...>` | Remove entries by exact filename. |
 | `celune tar -df <pack.cevoice> <entry...>` | Remove entries by exact filename or 1-based index. |
-| `celune tar -af<N> <pack.cevoice> <file...>` | Insert files before entry N; use entry count + 1 to append. |
+| `celune tar -af<N> <pack.cevoice> <file...>` | Insert files before entry N. Use entry count + 1 to append. |
 
 Extraction creates the optional destination and any subdirectories used by
 entry names. It checks every output path before writing and fails if an output
@@ -97,7 +97,7 @@ For `-df`, Celune first looks for an exact case-sensitive filename. If there is
 no exact match and the selector is decimal, it is treated as a 1-based index.
 Repeated selectors, missing entries, and out-of-range indexes are argument
 errors. `-rf` accepts filenames only. Removing a voice's final asset also
-removes its voice metadata references; an edit that would leave an invalid
+removes its voice metadata references. An edit that would leave an invalid
 pack fails without replacing the original.
 
 Successful edits preserve the pack generation, metadata, compression, and
@@ -119,7 +119,7 @@ names the required dependency instead of reporting the pack as invalid.
 Adding a new indexed `.pt` entry requires PyTorch to validate the tensor.
 
 The `-v` spelling is accepted both as the verbose start flag and as the version
-alias by the dispatcher; use `--verbose` and `--version` in scripts to avoid
+alias by the dispatcher. Use `--verbose` and `--version` in scripts to avoid
 ambiguity.
 
 ## Environment overrides
@@ -127,7 +127,7 @@ ambiguity.
 The launcher reads `CELUNE_LOG_LEVEL`, `CELUNE_BACKEND`, `CELUNE_HEADLESS`,
 `CELUNE_LAUNCHER`, and `CELUNE_ROOT`. `CELUNE_ROOT` and the packaged launcher's
 `--root <path>` option select a validated installation when automatic lookup
-should be bypassed. Persistent settings belong in `config.yaml`; environment
+should be bypassed. Persistent settings belong in `config.yaml`. Environment
 overrides are useful for one process, a service wrapper, or a packaged launcher.
 
 ## Doctor checks
@@ -166,7 +166,7 @@ arguments, already-running instances, no ANSI-capable terminal, launcher loss,
 pending updates, and an unsupported CPU. A normal interactive start should use
 the launcher so process-loss, CPU compatibility, and update handoff behavior
 are preserved.
-Press Ctrl+C during the initial backend picker to interrupt startup; the
+Press Ctrl+C during the initial backend picker to interrupt startup. The
 launcher reports the interruption.
 
 ## See also

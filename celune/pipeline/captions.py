@@ -310,7 +310,7 @@ def _create_caption_session(
             )
         except Exception:
             _LOGGER.warning(
-                "Caption CUDA session initialization failed; retrying with CPU.",
+                "Caption CUDA session initialization failed, retrying with CPU.",
                 exc_info=True,
             )
 

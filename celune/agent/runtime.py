@@ -871,7 +871,7 @@ class AgentRuntime:
         """Run one bounded agent task through planning and typed tool execution.
 
         An existing non-terminal task for ``request.session.session_id`` is always
-        reused.  When no task exists, this compatibility entry point creates one;
+        reused.  When no task exists, this compatibility entry point creates one.
         routed Phase 3 requests therefore never create a second task.
         """
         task = self._session_task(request.session.session_id)

@@ -785,7 +785,7 @@ class TestAgentRouting:
 
         self.runtime.resume(task.session_id)
         cancellation = self.router.route(
-            "I changed my mind; abandon this task.", persona_ready=True
+            "I changed my mind. Abandon this task.", persona_ready=True
         )
         assert cancellation.route == AgentRoute.CANCELLATION
         assert task.state == AgentTaskState.CANCELLED

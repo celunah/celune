@@ -215,7 +215,7 @@ def download_youtube_sfx(
 
         if attempt < total_attempts:
             engine.log(
-                f"{string('pipeline.download_failed')}: {failure_reason}; "
+                f"{string('pipeline.download_failed')}: {failure_reason}, "
                 f"{string('pipeline.download_retry', retry_count=attempt, max_retries=MAX_YOUTUBE_DOWNLOAD_RETRIES)}",
                 "warning",
             )

@@ -690,7 +690,7 @@ class TestAgentCoreIntegration:
         assert approval is not None
 
         approval_route = core.route_input(
-            "That is approved; continue.", persona_ready=True
+            "That is approved. Continue.", persona_ready=True
         )
         assert approval_route.route.value == "approval_response"
         with mock.patch(

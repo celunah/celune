@@ -983,9 +983,9 @@ class NeedleToolSelector:
         sections = [
             (
                 "Reconsider tool selection because the previous call omitted required arguments. "
-                "Choose the registered tool that best matches the original request; the previous "
+                "Choose the registered tool that best matches the original request. The previous "
                 "tool may be wrong. Do not repeat an incomplete call. Use only values supported "
-                "by the request, action intent, or previous tool result; never invent arguments."
+                "by the request, action intent, or previous tool result. Never invent arguments."
             ),
             f"Original user request: {request}",
             f"Persona action intent: {intent}",

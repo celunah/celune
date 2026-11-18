@@ -602,7 +602,7 @@ def stop_vc_debug_capture(
             self.safe_log(_app.string("ui.vc_debug_empty"), "warning")
 
         if result.errors and announce:
-            message = "; ".join(result.errors)
+            message = ", ".join(result.errors)
             self.safe_log(
                 _app.format_error_message(
                     _app.string("ui.vc_debug_save_failed"),

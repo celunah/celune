@@ -2,7 +2,7 @@
 
 Extensions are Python modules or Lua scripts loaded from the repository's
 `extensions/` directory. They run inside the Celune process and use the same
-core engine; they are not isolated backend workers. Treat third-party
+core engine. They are not isolated backend workers. Treat third-party
 extensions as trusted code.
 
 ## Minimal extension
@@ -67,7 +67,7 @@ calls an extension by name and `/extensions` lists what loaded successfully.
 Each `.lua` file receives its own Lupa runtime. The script can use the `celune`
 object for runtime methods, `CELUNE_VERSION` for the current version, and
 `subscribe` to register event handlers. `celune.sleep(seconds)` blocks the
-extension's worker thread. `EXTENSION_NAME` is optional; without it, Celune uses
+extension's worker thread. `EXTENSION_NAME` is optional. Without it, Celune uses
 the file name. Define `invoke(...)` to make the extension callable through
 `/invoke`.
 
@@ -88,7 +88,7 @@ object. They run on daemon workers so a callback that waits or speaks does not
 block Celune's state transitions. Unregistering an extension removes its event
 handlers and closes its Lua runtime. Lua extensions use the core `lupa`
 dependency. Python evaluation and built-ins are disabled in Lua, but the
-`celune` object exposes the live engine; this is not a security sandbox. Only
+`celune` object exposes the live engine. This is not a security sandbox. Only
 load Lua scripts you trust.
 
 Lua scripts can subscribe to `ready`, `shutdown`, `fatal`, `error`,

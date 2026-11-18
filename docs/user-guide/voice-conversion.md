@@ -17,7 +17,7 @@ Seed-VC's primary controls are:
 | diffusion steps | 20 | Quality/latency tradeoff. |
 | length adjust | 1 | Timing adjustment. |
 | inference CFG rate | 0.5 | Diffusion guidance. |
-| F0 condition | `false` | Talk mode by default; singing/intonation path when enabled. |
+| F0 condition | `false` | Uses talk mode by default and the singing/intonation path when enabled. |
 | automatic F0 adjust | `false` | Aligns pitch for conversion. |
 
 The active CEVOICE/CECHAR pack supplies the target reference WAV. A pack with
@@ -41,7 +41,7 @@ upload. The optional `f0_condition` form field overrides the runtime default
 for that request.
 
 The engine plays converted audio with 2 dB attenuation to bring the playback
-level closer to TTS. This affects file and live VC playback only; conversion
+level closer to TTS. This affects file and live VC playback only. Conversion
 results returned to Python or the REST API retain the backend's original level.
 
 ## Live microphone conversion
@@ -49,8 +49,8 @@ results returned to Python or the REST API retain the backend's original level.
 Press `CTRL+R` in VC mode to start or stop microphone capture. The capture path
 uses preroll, hangover, voice-activity checks, and a bounded submission queue
 so the first phonemes are not cut off and stale audio cannot grow without
-limit. With the optional `live-vc-ai` extra, the application uses Silero VAD;
-otherwise, the application uses the built-in energy detector. VAD is always
+limit. With the optional `live-vc-ai` extra, the application uses Silero VAD.
+Otherwise, the application uses the built-in energy detector. VAD is always
 active during live capture.
 
 Use `/vcmode talk` for ordinary speech and `/vcmode sing` for F0-conditioned
@@ -62,22 +62,22 @@ capture and converted output as `microphone.flac` and `converted.flac` in a
 temporary folder under the application's AppData directory. Both files use 48 kHz, 24-bit
 FLAC. Debug capture writes asynchronously and does not change the audio sent to
 the converter or playback. Turn it off to finish exporting the files. The files
-remain there for inspection; delete the temporary folder when they are no
+remain there for inspection. Delete the temporary folder when they are no
 longer needed.
 
 The live backend keeps overlap state between blocks. Call
 `convert_live_audio()` for each low-latency block and `stop_live_audio()` when
 the stream ends so that backend state is flushed. Stopping live conversion
 clears its stream buffers but keeps the loaded models available. A later
-non-F0 file conversion can reuse those cached native models; F0-conditioned
+non-F0 file conversion can reuse those cached native models. F0-conditioned
 conversion continues to use its wrapper path.
 
 ## Audio and rate behavior
 
 Input arrays may be mono or stereo and are normalized to float32. Seed-VC's
-non-F0 conversion path returns 22,050 Hz audio; its F0 path returns 44,100 Hz
+non-F0 conversion path returns 22,050 Hz audio. Its F0 path returns 44,100 Hz
 audio before Celune resamples for the shared 48 kHz playback path. Do not infer
-the sample rate from the number of samples; use the returned metadata.
+the sample rate from the number of samples. Use the returned metadata.
 
 Feedback protection stops a live capture when playback leakage creates a large
 RMS spike. If live capture stops unexpectedly, move the microphone away from

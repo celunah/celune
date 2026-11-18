@@ -272,7 +272,7 @@ def validate_model_state(
                 backend=backend,
                 filename=checkpoint_filename,
                 path=checkpoint_path,
-                reason=f"{name} tensor has dtype {dtype}; expected one of {expected}",
+                reason=f"{name} tensor has dtype {dtype}, expected one of {expected}",
                 tensor_name=tensor_name,
                 shape=_shape,
                 dtype=tensor.dtype,

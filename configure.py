@@ -375,7 +375,7 @@ def _recreate_virtual_environment(uv: Path, root: Path = PROJECT_ROOT) -> bool:
     virtual_environment = (root / ".venv").resolve()
     if Path(sys.prefix).resolve() == virtual_environment:
         print(
-            "Cannot repair the active Python environment; run configure.py outside .venv."
+            "Cannot repair the active Python environment. Run configure.py outside .venv."
         )
         return False
 
@@ -432,7 +432,7 @@ def main() -> int:
 
         if package_key == "apk":
             print(
-                "Alpine Linux support is experimental; some packages may potentially be unsupported."
+                "Alpine Linux support is experimental. Some packages may potentially be unsupported."
             )
 
     repair_requested = False

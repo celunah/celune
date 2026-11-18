@@ -999,7 +999,7 @@ def _doctor_checks() -> list[DoctorCheck]:
             checks,
             "Python environment",
             False,
-            f"project virtual environment not found; running {current_python}",
+            f"project virtual environment not found. Running {current_python}",
             hint="Run `uv sync` to create or repair a compatible environment.",
         )
 

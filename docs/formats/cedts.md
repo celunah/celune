@@ -107,11 +107,11 @@ supported media types, a `describe` result, and capability flags. The worker
 replies with `hello_ack` containing the selected `[1, 3]` version and the
 negotiated capability intersection, then sends `ready` after backend setup.
 Limits are negotiated by taking the smaller peer limit. Current capability
-flags cover streaming, cancellation, and callbacks; the core callback
+flags cover streaming, cancellation, and callbacks. The core callback
 capability is currently false. Version selection currently requires an exact
 major/minor pair match. Version 1.2 adds optional `source_start` and
 `source_end` integer fields to error response data. They are zero-based,
-half-open CESN source offsets and must appear together; other error responses
+half-open CESN source offsets and must appear together. Other error responses
 may omit them. Version 1.3 adds the worker-to-core `metadata` event. Since peers
 require an exact version match, peers on different minor versions cannot
 exchange packets.
@@ -151,8 +151,8 @@ and `uint8`. Typed values include `numpy_array`,
 Audio descriptors declare dtype, shape, sample rate, and channel count. Float
 audio must already be normalized to -1 through 1 and is peak-limited to 0.95
 when encoded. Signed 16-bit audio is converted to float32 using `/32768` when
-decoded. The application-level canonical format remains 48 kHz stereo float32;
-the descriptor's sample rate is authoritative at the worker boundary.
+decoded. The application-level canonical format remains 48 kHz stereo float32.
+The descriptor's sample rate is authoritative at the worker boundary.
 
 ## Limits
 
@@ -186,17 +186,17 @@ terminal response/event.
 `call` accepts only the methods registered by the worker. The
 `cesn_to_model` call requires a string `text` and accepts an optional
 `voice_bundle` string. Omitting `voice_bundle` or sending JSON `null` keeps the
-worker's currently selected bundle; a string selects that bundle before the
-backend converts the notation. CEDTS transports the bundle path; the CECHAR
+worker's currently selected bundle. A string selects that bundle before the
+backend converts the notation. CEDTS transports the bundle path. The CECHAR
 manifest remains in the file and is validated by the backend's CECHAR loader.
 
 Progress packets require a non-negative integer `step`. Their optional `total`
-is a non-negative integer when known; omission means the total is unknown.
+is a non-negative integer when known. Omission means the total is unknown.
 
 Worker stderr is retained for failure diagnostics, but CEDTS applies the same
 known-benign runtime-message suppression list used by Celune's local runtime
 log redirect. This keeps isolated workers from reintroducing filtered model,
-Transformers, tqdm, and Triton notices into the UI log; actionable worker
+Transformers, tqdm, and Triton notices into the UI log. Actionable worker
 messages remain visible and retained for error reporting. Known multiline
 diagnostics are suppressed as a block, including their unprefixed continuation
 lines. Backend output that is redirected from stdout is write-through and
@@ -216,7 +216,7 @@ unknown framing state.
 If a CEDTS stream reaches EOF or reports another transport, protocol, or
 payload failure, the proxy stores the typed error, wakes the active request
 waiter, and emits the failure through Celune's log callback immediately. The
-worker is then torn down; the caller does not wait for the operation's normal
+worker is then torn down. The caller does not wait for the operation's normal
 timeout boundary.
 
 Worker exceptions and JSON response-encoding failures are returned to the

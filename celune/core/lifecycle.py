@@ -566,13 +566,13 @@ def finish_test_mode(
 
     if cleanup_errors:
         success = False
-        detail = detail or "; ".join(cleanup_errors)
+        detail = detail or ", ".join(cleanup_errors)
         if checks is not None:
             checks.append(
                 {
                     "name": "cleanup",
                     "status": "failed",
-                    "detail": "; ".join(cleanup_errors),
+                    "detail": ", ".join(cleanup_errors),
                 }
             )
 
