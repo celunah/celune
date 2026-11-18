@@ -3,17 +3,19 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Union, Optional, Protocol
+
 from pathlib import Path
 from collections.abc import Callable, Iterator, Mapping
+from typing import TYPE_CHECKING, Union, Optional, Protocol
 
 import torch
 from transformers.modeling_utils import PreTrainedModel
 from transformers.tokenization_utils_base import BatchEncoding, PreTrainedTokenizerBase
 
-from .modes import BackendMode, OperationMode, OperationState
-from .common import JSON, Config, JSONSerializable
+
 from .aliases import LogLevel
+from .common import JSON, Config, JSONSerializable
+from .modes import BackendMode, OperationMode, OperationState
 
 if TYPE_CHECKING:
     import queue
@@ -21,26 +23,29 @@ if TYPE_CHECKING:
 
     import sounddevice as sd
 
-    from ..api import CloudflaredQuickTunnel
-    from .locks import ComponentLockOwner, ComponentBusyResult
-    from ..chroma import AudioRGBGlow
     from .aliases import AudioChunks
-    from ..audio.dsp import StreamingPedalboardReverb
+    from ..chroma import AudioRGBGlow
     from ..constants import PipelineStates
-    from ..backends.vc import CeluneVCBackend
-    from ..backends.tts import BackendModel, CeluneBackend
+    from ..api import CloudflaredQuickTunnel
     from ..persona.impl import PersonaClient
+    from ..backends.vc import CeluneVCBackend
+    from ..agent.routing import AgentInputRouter
+    from ..persona.memory import PersonaMemoryStore
+    from ..extensions.events import EventDispatcher
+    from ..dataclasses.cevoice import CEVoicePersona
+    from ..audio.dsp import StreamingPedalboardReverb
+    from ..persona.emotion import PersonaEmotionAnalyzer
+    from ..backends.tts import BackendModel, CeluneBackend
+    from ..extensions.manager import CeluneExtensionManager
+    from ..dataclasses.pipeline import CaptionPlaybackState
+    from .locks import ComponentLockOwner, ComponentBusyResult
+    from ..core.concurrency import ComponentLockManager, PriorityInferenceScheduler
     from ..agent.runtime import (
         AgentRuntime,
         AgentTool,
         AgentToolSchema,
         AgentToolSelector,
     )
-    from ..agent.routing import AgentInputRouter
-    from ..persona.memory import PersonaMemoryStore
-    from ..persona.emotion import PersonaEmotionAnalyzer
-    from ..core.concurrency import ComponentLockManager, PriorityInferenceScheduler
-    from ..extensions.events import EventDispatcher
     from ..dataclasses.celune import (
         CeluneAudioState,
         CeluneModelState,
@@ -49,11 +54,6 @@ if TYPE_CHECKING:
         CeluneRuntimeState,
         CeluneCallbackState,
         CelunePipelineState,
-    )
-    from ..extensions.manager import CeluneExtensionManager
-    from ..dataclasses.cevoice import CEVoicePersona
-    from ..dataclasses.pipeline import (
-        CaptionPlaybackState,
     )
 
 

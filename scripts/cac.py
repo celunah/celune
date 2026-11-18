@@ -5,9 +5,9 @@ import io
 import sys
 import argparse
 from math import gcd
-from typing import TYPE_CHECKING, Union, Optional, TypedDict, cast
 from pathlib import Path
 from collections.abc import Mapping
+from typing import TYPE_CHECKING, Union, Optional, TypedDict, cast
 
 import numpy as np
 import soundfile as sf

@@ -2,20 +2,21 @@
 """Tests for the shared Persona runtime helpers."""
 
 import contextlib
+from unittest import mock
 from types import SimpleNamespace
 from typing import Union, Optional, cast
-from unittest import mock
+
 
 import pytest
 
 from celune.utils import discard
+from celune.typing.common import JSON
 from celune.persona import impl, runtime
 from celune.registry import get_model_metadata
 from celune.exceptions import ModelConsentRequired
-from celune.registry.llm import LLM_MODELS, PERSONA_DEFAULT_MODEL_ID, persona_model_tier
-from celune.typing.common import JSON
 from celune.typing.aliases import RecordedKwargValue
 from celune.registry.revisions import remote_code_model_revision
+from celune.registry.llm import LLM_MODELS, PERSONA_DEFAULT_MODEL_ID, persona_model_tier
 
 
 class _FakeEncoded:

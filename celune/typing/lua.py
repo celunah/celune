@@ -1,8 +1,8 @@
 """Type aliases exchanged with the embedded Lua runtime."""
 
-from typing import TYPE_CHECKING, Union, Protocol
 from pathlib import Path
 from collections.abc import Callable
+from typing import TYPE_CHECKING, Union, Protocol
 
 if TYPE_CHECKING:
     # unused my ass

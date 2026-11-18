@@ -8,16 +8,30 @@ import os
 import time
 import threading
 import contextlib
-from typing import Optional, cast
 from functools import partial
+from collections import deque
+from typing import Optional, cast
 
 import torch
 from transformers.modeling_utils import PreTrainedModel
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 
 from . import lifecycle
+from ..constants import APP_NAME
+from ..typing.aliases import LogLevel
 from ..i18n import string, tagged_string
+from ..backends.tts import CeluneBackend
+from ..persona.impl import persona_enabled
+from ..dataclasses.events import ReadyEvent
+from .concurrency import run_in_daemon_thread
+from ..registry.other import NORMALIZER_MODEL_ID
+from ..pipeline.output import saved_output_speech_seconds
+from ..runtime import validate_runtime, log_runtime_banner
+from ..typing.celune import Generative, NormalizerTokenizer
+from ..modeling import normalizer_device, load_normalizer_components
+from ..pipeline.playback import force_stop_speech as force_stop_pipeline
 from ..vram import vram_profile_fits, resolve_vram_preset, validate_vram_preset
+from ..cevoice import default_loader, bundle_display_name, announce_default_bundle
 from ..utils import (
     discard,
     format_error,
@@ -26,10 +40,6 @@ from ..utils import (
     is_port_usable,
     format_error_message,
 )
-from ..cevoice import default_loader, bundle_display_name, announce_default_bundle
-from ..runtime import validate_runtime, log_runtime_banner
-from ..modeling import normalizer_device, load_normalizer_components
-from ..constants import APP_NAME
 from ..exceptions import (
     WarmupError,
     BackendError,
@@ -38,15 +48,6 @@ from ..exceptions import (
     ModelConsentRequired,
     InvalidCharacterError,
 )
-from .concurrency import run_in_daemon_thread
-from ..backends.tts import CeluneBackend
-from ..persona.impl import persona_enabled
-from ..typing.celune import Generative, NormalizerTokenizer
-from ..registry.other import NORMALIZER_MODEL_ID
-from ..typing.aliases import LogLevel
-from ..pipeline.output import saved_output_speech_seconds
-from ..pipeline.playback import force_stop_speech as force_stop_pipeline
-from ..dataclasses.events import ReadyEvent
 
 
 async def force_stop_speech_async(self) -> bool:
@@ -597,15 +598,20 @@ def warmup(
                 if active_backend.singing
                 else warmup_text
             )
-            for _, _, _ in active_backend.generate_stream(
-                candidate_model,
-                text=backend_text,
-                language=self.language,
-                chunk_size=self.chunk_size,
-                instruct=self.effective_voice_prompt(),
-                voice=active_voice,
-            ):
-                pass
+            deque(
+                (
+                    chunk
+                    for chunk, _, _ in active_backend.generate_stream(
+                        candidate_model,
+                        text=backend_text,
+                        language=self.language,
+                        chunk_size=self.chunk_size,
+                        instruct=self.effective_voice_prompt(),
+                        voice=active_voice,
+                    )
+                ),
+                maxlen=0,
+            )
 
     try:
         warmup_start = time.perf_counter()

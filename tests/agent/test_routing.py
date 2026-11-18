@@ -4,10 +4,10 @@
 from __future__ import annotations
 
 import json
-from types import SimpleNamespace
-from typing import TYPE_CHECKING, cast
 from unittest import mock
+from types import SimpleNamespace
 from contextlib import nullcontext
+from typing import TYPE_CHECKING, cast
 
 from celune.i18n import string
 from celune.agent import (

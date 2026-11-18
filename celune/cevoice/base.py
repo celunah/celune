@@ -13,10 +13,10 @@ import hashlib
 import tempfile
 import threading
 import contextlib
-from typing import Final, Union, BinaryIO, Optional, cast
 from pathlib import Path
 from dataclasses import field, dataclass
 from collections.abc import Mapping, Callable, Sequence
+from typing import Final, Union, BinaryIO, Optional, cast
 
 from ..i18n import string
 from ..paths import project_root, temp_data_dir, voices_data_dir
@@ -1553,7 +1553,7 @@ def bundled_voices_dir() -> Path:
         return user_directory
 
     if user_directory.is_dir():
-        try:
+        with contextlib.suppress(OSError):
             for repository_pack in repository_directory.glob("*.cevoice"):
                 user_pack = user_directory / repository_pack.name
                 if repository_pack.is_file() and (
@@ -1561,8 +1561,6 @@ def bundled_voices_dir() -> Path:
                     or bundle_sha256(user_pack) != bundle_sha256(repository_pack)
                 ):
                     shutil.copy2(repository_pack, user_pack)
-        except OSError:
-            pass
         return user_directory
 
     try:

@@ -6,13 +6,19 @@ from __future__ import annotations
 import re
 import json
 from uuid import uuid4
-from typing import TYPE_CHECKING, Optional, cast
+
 from collections.abc import Mapping
+from typing import TYPE_CHECKING, Optional, cast
 
 from ..i18n import string
-from ..vram import agent_vram_compatible
-from ..modes import mode_allows_agents
 from .runtime import AgentRuntime
+from ..modes import mode_allows_agents
+from ..vram import agent_vram_compatible
+from ..exceptions import EmptyClassifierOutput
+from ..typing.common import JSON, JSONSerializable
+from ..typing.persona import PersonaClientResponse
+from ..persona.prompts import PersonaPromptBuilder
+from ..persona.conversation import build_persona_context
 from ..constants import (
     AGENT_CONTEXT_SPACE,
     AGENT_ROUTING_CONTEXT_SPACE,
@@ -20,7 +26,6 @@ from ..constants import (
     AGENT_ROUTING_HISTORY_MESSAGES,
     AGENT_ROUTING_HISTORY_CHARACTERS,
 )
-from ..exceptions import EmptyClassifierOutput
 from ..persona.impl import (
     persona_model_id,
     persona_quantization,
@@ -49,10 +54,6 @@ from ..typing.locks import (
     ComponentLockOwner,
     ComponentLockRequirement,
 )
-from ..typing.common import JSON, JSONSerializable
-from ..typing.persona import PersonaClientResponse
-from ..persona.prompts import PersonaPromptBuilder
-from ..persona.conversation import build_persona_context
 
 if TYPE_CHECKING:
     from ..celune import Celune

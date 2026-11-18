@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import os
 import json
+import contextlib
 import hashlib
 from uuid import uuid4
 from pathlib import Path
@@ -486,7 +487,7 @@ def prepare_needle_checkpoint(
         converter_version=converter_version,
     ):
         assert cached_metadata is not None
-        try:
+        with contextlib.suppress(NeedleCheckpointError):
             inventory = validate_needle_safetensors(artifact_path, config)
             if (
                 _sha256(artifact_path) == cached_metadata.canonical_sha256
@@ -498,9 +499,6 @@ def prepare_needle_checkpoint(
                     resolved_config,
                     cached_metadata,
                 )
-        except NeedleCheckpointError:
-            pass
-
     artifact_dir.mkdir(parents=True, exist_ok=True)
     temporary = artifact_dir / f".{artifact_path.name}.{uuid4().hex}.tmp"
     try:

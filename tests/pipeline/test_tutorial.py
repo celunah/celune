@@ -27,7 +27,6 @@ from celune.pipeline.submission import (
 )
 
 from .helpers import reload_callback
-
 from ..support import make_pipeline_engine
 
 

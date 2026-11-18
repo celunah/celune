@@ -5,11 +5,11 @@ import os
 import sys
 import json
 import ctypes
-import locale as _locale  # else it gets shadowed
 import contextlib
-from types import SimpleNamespace
-from typing import Optional
+import locale as _locale  # else it gets shadowed
 from pathlib import Path
+from typing import Optional
+from types import SimpleNamespace
 
 DEFAULT_LOCALE = "en"
 _LANG_DIR = Path(__file__).resolve().parent / "lang"

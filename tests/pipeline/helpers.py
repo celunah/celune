@@ -4,24 +4,24 @@
 from __future__ import annotations
 
 import threading
-from types import SimpleNamespace
-from typing import TYPE_CHECKING, Union, Optional, cast
 from pathlib import Path
 from unittest import mock
 from functools import partial
+from types import SimpleNamespace
+from typing import TYPE_CHECKING, Union, Optional, cast
 from collections.abc import Callable, Iterator, Sequence
 
 import numpy as np
 
 from celune.utils import discard
-from celune.pipeline import playback, generation
-from celune.core.reload import reload_model_for_language
-from celune.typing.agent import AgentInputClassification, AgentClassificationResult
-from celune.agent.routing import AgentInputRouter
+from celune.typing.aliases import AudioChunk
 from celune.agent.runtime import AgentRuntime
+from celune.pipeline import playback, generation
+from celune.agent.routing import AgentInputRouter
 from celune.typing.common import JSONSerializable
 from celune.persona.memory import PersonaMemoryStore
-from celune.typing.aliases import AudioChunk
+from celune.core.reload import reload_model_for_language
+from celune.typing.agent import AgentInputClassification, AgentClassificationResult
 
 if TYPE_CHECKING:
     from celune.celune import Celune

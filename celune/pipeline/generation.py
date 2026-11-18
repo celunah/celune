@@ -7,24 +7,33 @@ import queue
 import pathlib
 import datetime
 import collections.abc
-from typing import TYPE_CHECKING, Optional, cast
 from dataclasses import replace
+from typing import TYPE_CHECKING, Optional, cast
 
-import numpy as np
 import torch
+import numpy as np
 import pyrubberband as rb
 
-from ..cesn import format_cesn_error, prepare_synthesis_chunks
-from ..i18n import string, tagged_string
-from ..vram import is_cuda_out_of_memory, release_cuda_after_oom
 from ..paths import outputs_dir
+from .timing import monotonic_time
+from ..i18n import string, tagged_string
+from ..constants import BASE_SR, APP_NAME
+from ..typing.common import JSONSerializable
+from ..typing.aliases import AudioChunk, AudioChunks
 from ..utils import format_number, format_error_message
+from ..persona.conversation import effective_voice_prompt
+from ..audio.dsp import soften, to_48khz, is_silent_utterance
+from ..cesn import format_cesn_error, prepare_synthesis_chunks
+from ..dataclasses.pipeline import SpeechTiming, SpeechRequest
+from ..vram import is_cuda_out_of_memory, release_cuda_after_oom
+from ..metadata import write_celune_flac, celune_metadata_payload
+from ..exceptions import CESNError, BackendError, NotAvailableError
+from ..core.concurrency import InferencePriority, run_in_daemon_thread
 from .output import (
     format_stat_duration,
     _output_filename_prefix,
     _output_filename_fragment,
 )
-from .timing import monotonic_time
 from .captions import (
     playback_source_meta,
     caption_tracking_modes,
@@ -37,7 +46,6 @@ from .captions import (
     build_caption_alignment_sections,
     record_caption_playback_audio_chunk,
 )
-from ..metadata import write_celune_flac, celune_metadata_payload
 from .buffering import (
     release_pipeline,
     queue_playback_done,
@@ -46,19 +54,11 @@ from .buffering import (
     smart_buffer_target_seconds,
     flush_buffered_speech_chunks,
 )
-from ..audio.dsp import soften, to_48khz, is_silent_utterance
-from ..constants import BASE_SR, APP_NAME
 from .submission import (
     split_text,
     play_prepared_speech,
     finish_tutorial_audio_capture,
 )
-from ..exceptions import CESNError, BackendError, NotAvailableError
-from ..typing.common import JSONSerializable
-from ..typing.aliases import AudioChunk, AudioChunks
-from ..core.concurrency import InferencePriority, run_in_daemon_thread
-from ..dataclasses.pipeline import SpeechTiming, SpeechRequest
-from ..persona.conversation import effective_voice_prompt
 
 if TYPE_CHECKING:
     from ..celune import Celune

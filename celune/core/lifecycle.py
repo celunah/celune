@@ -12,19 +12,35 @@ import shutil
 import asyncio
 import threading
 import contextlib
-from typing import Union, Optional, cast
 from pathlib import Path
 from functools import partial
+from typing import Union, Optional, cast
 from collections.abc import Mapping, Callable, Generator
 
 import torch
 
-from ..i18n import string, set_locale, get_system_locale
-from ..vram import backend_allowed, resolve_vram_preset, resolve_backend_name
-from ..modes import resolve_operation_mode
-from ..paths import api_key_path, temp_data_dir
-from ..utils import discard, available, clear_queue, format_error_message
 from ..chroma import AudioRGBGlow
+from ..exceptions import BackendError
+from ..typing.aliases import LogLevel
+from ..agent.runtime import AgentRuntime
+from ..modes import resolve_operation_mode
+from .callbacks import _buffer_startup_log
+from .concurrency import ComponentLockLease
+from ..agent.routing import AgentInputRouter
+from ..agent.needle import NeedleToolSelector
+from ..dataclasses.events import ShutdownEvent
+from ..extensions.events import EventDispatcher
+from ..agent.persona import PersonaAgentBridge
+from ..paths import api_key_path, temp_data_dir
+from ..typing.common import JSON, JSONSerializable
+from ..backends.tts import BACKENDS, CeluneBackend
+from ..persona.emotion import PersonaEmotionAnalyzer
+from ..backends.vc import VC_BACKENDS, CeluneVCBackend
+from ..typing.modes import BackendMode, OperationState
+from ..i18n import string, set_locale, get_system_locale
+from ..utils import discard, available, clear_queue, format_error_message
+from ..vram import backend_allowed, resolve_vram_preset, resolve_backend_name
+from ..typing.agent import AgentTaskConfig, AgentToolSelector, AgentCancellationReason
 from ..config import (
     Config,
     config_bool,
@@ -32,8 +48,6 @@ from ..config import (
     config_api_settings,
     normalize_log_level,
     config_backend_options,
-)
-from ..config import (
     config_int as _config_int,
 )
 from ..cevoice import (
@@ -42,24 +56,18 @@ from ..cevoice import (
     close_default_loader,
     is_protected_temp_path,
 )
-from .callbacks import _buffer_startup_log
 from ..constants import (
     APP_NAME,
     AGENT_MAX_LOOPS,
     AGENT_CONTEXT_SPACE,
     DEFAULT_TARGET_CHUNK_LENGTH_SECONDS,
 )
-from ..exceptions import BackendError
-from .concurrency import ComponentLockLease
 from ..agent.tools import (
     agent_test_tools,
     production_agent_tools,
     agent_test_tool_schemas,
     production_agent_tool_schemas,
 )
-from ..backends.vc import VC_BACKENDS, CeluneVCBackend
-from ..agent.needle import NeedleToolSelector
-from ..backends.tts import BACKENDS, CeluneBackend
 from ..persona.impl import (
     PersonaClient,
     persona_enabled,
@@ -69,16 +77,11 @@ from ..persona.impl import (
     persona_quantization,
     create_persona_client,
 )
-from ..typing.agent import AgentTaskConfig, AgentToolSelector, AgentCancellationReason
 from ..typing.locks import (
     ComponentLockName,
     ComponentLockOwner,
     ComponentLockRequirement,
 )
-from ..typing.modes import BackendMode, OperationState
-from ..agent.persona import PersonaAgentBridge
-from ..agent.routing import AgentInputRouter
-from ..agent.runtime import AgentRuntime
 from ..typing.celune import (
     ToastCallback,
     VCBackendSpec,
@@ -91,10 +94,6 @@ from ..typing.celune import (
     VoiceLockStateCallback,
     CaptionProgressCallback,
 )
-from ..typing.common import JSON, JSONSerializable
-from ..typing.aliases import LogLevel
-from ..persona.emotion import PersonaEmotionAnalyzer
-from ..extensions.events import EventDispatcher
 from ..dataclasses.celune import (
     CeluneAudioState,
     CeluneModelState,
@@ -104,7 +103,6 @@ from ..dataclasses.celune import (
     CeluneCallbackState,
     CelunePipelineState,
 )
-from ..dataclasses.events import ShutdownEvent
 
 TTS_KV_CACHE_BACKENDS = frozenset({"qwen3", "fireredtts3", "voxcpm2"})
 

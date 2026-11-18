@@ -17,9 +17,9 @@ import torch
 import psutil
 
 from ..i18n import string
-from ..utils import lunar_info, lunar_phase, celune_day_status
 from ..constants import APP_NAME, COST_EQUIVALENTS
 from ..persona.impl import persona_talkback_enabled
+from ..utils import lunar_info, lunar_phase, celune_day_status
 
 if TYPE_CHECKING:
     from ..celune import Celune

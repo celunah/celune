@@ -11,10 +11,13 @@ import lzma
 import wave
 import struct
 import hashlib
-from typing import Final, Union, Optional, cast
+
 from pathlib import Path
+from typing import Final, Union, Optional, cast
 from collections.abc import Mapping, Sequence
 
+from ..typing.cevoice import Manifest, ManifestValue, VoiceManifest
+from ..exceptions import CEVoiceError, CEVoiceDependencyUnavailableError
 from .base import (
     ALLOWED_ASSET_KINDS,
     SUPPORTED_ENTRY_SUFFIXES,
@@ -25,8 +28,6 @@ from .base import (
     _is_hex_color,
     _validate_persona_metadata,
 )
-from ..exceptions import CEVoiceError, CEVoiceDependencyUnavailableError
-from ..typing.cevoice import Manifest, ManifestValue, VoiceManifest
 
 FORMAT_NAME: Final[str] = "CECHAR"
 V4_MAGIC: Final[bytes] = b"CECHAR\0"

@@ -3,15 +3,20 @@
 
 from __future__ import annotations
 
-from types import SimpleNamespace
-from typing import Union, Optional, cast
 from pathlib import Path
 from unittest import mock
+from types import SimpleNamespace
 from contextlib import nullcontext
+from typing import Union, Optional, cast
 
 import torch
 import pytest
 
+from celune.utils import discard
+from celune.typing.common import JSONSerializable
+from celune.agent.needle.models import NeedleModel
+from celune.agent.needle.impl import parse_single_selection
+from celune.persona.capabilities import PersonaCapabilities
 from celune.agent import (
     AgentTool,
     AgentContext,
@@ -48,11 +53,6 @@ from celune.typing.agent import (
     NeedleToolSelection,
     ToolExecutionResult,
 )
-from celune.typing.common import JSONSerializable
-from celune.agent.needle.impl import parse_single_selection
-from celune.agent.needle.models import NeedleModel
-from celune.persona.capabilities import PersonaCapabilities
-from celune.utils import discard
 
 
 def _tool(name: str) -> AgentTool:

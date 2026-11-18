@@ -5,19 +5,20 @@ import time
 import tempfile
 import textwrap
 import threading
-from types import SimpleNamespace
-from typing import TYPE_CHECKING, cast
 from pathlib import Path
+from types import SimpleNamespace
 from collections.abc import Iterator
+from typing import TYPE_CHECKING, cast
+
 
 import pytest
 
-from celune.lua import LuaExtension
 from celune.utils import discard
+from celune.lua import LuaExtension
 from celune.extensions.events import EventDispatcher
-from celune.dataclasses.events import ReadyEvent, VoiceChangedEvent
-from celune.extensions.manager import CeluneExtensionManager
 from celune.dataclasses.extensions import CeluneContext
+from celune.extensions.manager import CeluneExtensionManager
+from celune.dataclasses.events import ReadyEvent, VoiceChangedEvent
 
 if TYPE_CHECKING:
     from celune.celune import Celune

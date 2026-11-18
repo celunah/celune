@@ -9,16 +9,6 @@ import threading
 from pathlib import Path
 from typing import Union, Optional
 
-from ..cevoice import (
-    CEVoice,
-    default_loader,
-    active_bundle_path,
-    resolve_bundle_path,
-    select_voice_bundle,
-    bundle_character_name,
-    persona_metadata_from_manifest,
-    bundle_matches_default_pack_checksum,
-)
 from .. import __version__
 from ..paths import project_root
 from ..constants import APP_NAME
@@ -38,6 +28,16 @@ from ..backends.vc import VC_BACKENDS, CeluneVCBackend
 from ..extensions.manager import CeluneExtensionManager
 from ..typing.celune import BundleWithPath, CoreBackendSpec
 from ..pipeline.playback import force_stop_speech as force_stop_pipeline
+from ..cevoice import (
+    CEVoice,
+    default_loader,
+    active_bundle_path,
+    resolve_bundle_path,
+    select_voice_bundle,
+    bundle_character_name,
+    persona_metadata_from_manifest,
+    bundle_matches_default_pack_checksum,
+)
 
 
 def set_voices(self, voices: tuple[str, ...]) -> None:

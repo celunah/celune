@@ -6,10 +6,10 @@ import sys
 import time
 import logging
 import threading
-from collections import deque
-from collections.abc import Callable, Collection, Mapping, Sequence
 from typing import Literal, Optional
 from dataclasses import replace, dataclass
+from collections import deque
+from collections.abc import Callable, Collection, Mapping, Sequence
 
 from rich.text import Text
 from rich.cells import cell_len

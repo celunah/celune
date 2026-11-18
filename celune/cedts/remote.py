@@ -10,13 +10,20 @@ import time
 import select
 import threading
 import subprocess
+import contextlib
 from uuid import uuid4
-from typing import IO, TYPE_CHECKING, Optional, cast
-from contextlib import suppress
-from collections import OrderedDict, abc, deque
 from dataclasses import replace, dataclass
+from collections import OrderedDict, abc, deque
+from typing import IO, TYPE_CHECKING, Optional, cast
 
 from ..i18n import string
+from ..typing.common import JSON
+from ..utils import format_error_message
+from ..cevoice import active_bundle_path
+from ..backends.tts.base import CeluneBackend
+from ..backends.vc.base import CeluneVCBackend
+from ..typing.aliases import LogLevel, LogCallback
+from ..dataclasses.pipeline import AudioOutput, VoiceConversionRequest
 from ..paths import (
     project_root,
     huggingface_home_dir,
@@ -24,8 +31,6 @@ from ..paths import (
     huggingface_hub_cache_dir,
     temp_directory_environment,
 )
-from ..utils import format_error_message
-from ..cevoice import active_bundle_path
 from .protocol import (
     CEDTS_VERSION,
     CORE_CAPABILITIES,
@@ -55,28 +60,24 @@ from ..exceptions import (
     CEDTSProtocolError,
     CESNValidationError,
 )
-from ..typing.common import JSON
 from ..typing.worker import (
     WorkerValue,
     WorkerMessage,
     WorkerResponse,
     WorkerPayloadDescriptor,
 )
-from ..typing.aliases import LogLevel, LogCallback
 from ..typing.backends import (
     BackendArguments,
     BackendGeneration,
     BackendDescription,
     BackendArgumentValue,
 )
-from ..backends.vc.base import CeluneVCBackend
-from ..backends.tts.base import CeluneBackend
 from ..backends.environment import (
     BackendManifest,
     BackendEnvironment,
     BackendEnvironmentManager,
 )
-from ..dataclasses.pipeline import AudioOutput, VoiceConversionRequest
+
 
 __all__ = ["RemoteBackendProxy", "RemoteModelHandle", "RemoteVCBackendProxy"]
 
@@ -455,7 +456,7 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
             self._start_packet_reader()
             self._load_description()
         except Exception:
-            with suppress(Exception):
+            with contextlib.suppress(Exception):
                 self.close()
             raise
 
@@ -545,10 +546,10 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
                     pass_fds=(worker_binary_input, worker_binary_output),
                 )
             for handle in windows_binary_handles:
-                with suppress(OSError):
+                with contextlib.suppress(OSError):
                     _set_windows_handle_inheritable(handle, False)
             for descriptor in (worker_binary_input, worker_binary_output):
-                with suppress(OSError):
+                with contextlib.suppress(OSError):
                     os.close(descriptor)
             worker_binary_input = -1
             worker_binary_output = -1
@@ -573,7 +574,7 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
                 self._stderr_thread.start()
         except Exception:
             for handle in windows_binary_handles:
-                with suppress(OSError):
+                with contextlib.suppress(OSError):
                     _set_windows_handle_inheritable(handle, False)
             for descriptor in (
                 worker_binary_input,
@@ -582,15 +583,15 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
                 worker_binary_output,
             ):
                 if descriptor >= 0:
-                    with suppress(OSError):
+                    with contextlib.suppress(OSError):
                         os.close(descriptor)
             process = self._process
             self._process = None
             if process is not None:
-                with suppress(Exception):
+                with contextlib.suppress(Exception):
                     if process.poll() is None:
                         self._terminate_process(process)
-                with suppress(Exception):
+                with contextlib.suppress(Exception):
                     self._close_process_streams(process)
             raise
 
@@ -681,7 +682,7 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
             and stderr_thread is not None
             and stderr_thread is not threading.current_thread()
         ):
-            with suppress(RuntimeError):
+            with contextlib.suppress(RuntimeError):
                 stderr_thread.join(timeout=_WORKER_THREAD_JOIN_TIMEOUT_SECONDS)
 
         lines = self._worker_error_detail().splitlines()
@@ -729,7 +730,7 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
             reported_errors.add(error_id)
         log_callback = getattr(self, "_log_callback", None)
         if callable(log_callback):
-            with suppress(Exception):
+            with contextlib.suppress(Exception):
                 _emit_log(
                     cast(abc.Callable[..., None], log_callback),
                     f"[IPC] CEDTS transport error operation={operation}: {error}",
@@ -741,7 +742,7 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
         process = getattr(self, "_process", None)
         if process is None or not callable(getattr(process, "poll", None)):
             return
-        with suppress(Exception):
+        with contextlib.suppress(Exception):
             self.abort()
 
     def _notify_fatal(self) -> None:
@@ -935,7 +936,7 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
                         else:
                             log_callback = getattr(self, "_log_callback", None)
                             if callable(log_callback):
-                                with suppress(Exception):
+                                with contextlib.suppress(Exception):
                                     _emit_log(
                                         cast(abc.Callable[..., None], log_callback),
                                         format_error_message(
@@ -953,7 +954,7 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
                     return
         finally:
             if not self._reader_stop.is_set():
-                with suppress(Exception):
+                with contextlib.suppress(Exception):
                     if process.poll() is not None:
                         self._close_process_streams(process)
 
@@ -1556,7 +1557,7 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
                         )
                 except CEDTSTimeoutError as error:
                     self._report_transport_error(operation, error)
-                    with suppress(Exception):
+                    with contextlib.suppress(Exception):
                         self.abort()
                     raise
                 except CEDTSError as error:
@@ -1565,7 +1566,7 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
                 except TimeoutError as error:
                     if response_timeout is None:
                         raise
-                    with suppress(Exception):
+                    with contextlib.suppress(Exception):
                         self.abort()
                     timeout_error = CEDTSTimeoutError(operation, response_timeout)
                     self._report_transport_error(operation, timeout_error)
@@ -2043,7 +2044,7 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
             )
             for stream in process_streams + owned_streams:
                 if stream is not None:
-                    with suppress(OSError, ValueError):
+                    with contextlib.suppress(OSError, ValueError):
                         stream.close()
         finally:
             self._binary_input = None
@@ -2067,14 +2068,14 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
     def _terminate_process(self, process: subprocess.Popen[bytes]) -> None:
         """Escalate a worker that did not complete its graceful shutdown."""
         self._stop_packet_reader()
-        with suppress(OSError):
+        with contextlib.suppress(OSError):
             process.terminate()
         try:
             process.wait(timeout=1)
         except subprocess.TimeoutExpired:
-            with suppress(OSError):
+            with contextlib.suppress(OSError):
                 process.kill()
-            with suppress(subprocess.TimeoutExpired):
+            with contextlib.suppress(subprocess.TimeoutExpired):
                 process.wait(timeout=1)
 
     def close(self) -> None:

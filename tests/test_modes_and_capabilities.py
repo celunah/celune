@@ -1,18 +1,18 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for global operation modes and Persona capabilities."""
 
-from types import SimpleNamespace
 from typing import cast
 from unittest import mock
+from types import SimpleNamespace
 
-from celune.agent import AgentOutput, agent_mode_enabled
-from celune.modes import resolve_operation_mode, has_explicit_operation_mode
-from celune.celune import agent_task_config
-from celune.persona.impl import persona_enabled, persona_context_size
 from celune.typing.common import Config
-from celune.typing.persona import PersonaModel, PersonaProcessor, PersonaTokenizer
+from celune.celune import agent_task_config
 from celune.persona.runtime import PersonaBackend
 from celune.persona.capabilities import PersonaCapabilities
+from celune.agent import AgentOutput, agent_mode_enabled
+from celune.persona.impl import persona_enabled, persona_context_size
+from celune.modes import resolve_operation_mode, has_explicit_operation_mode
+from celune.typing.persona import PersonaModel, PersonaProcessor, PersonaTokenizer
 
 
 class TestOperationMode:

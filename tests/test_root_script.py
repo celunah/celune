@@ -8,8 +8,8 @@ from pathlib import Path
 from unittest import mock
 
 from scripts import root
-from celune.vcs import git_checkout_hint
 from celune.i18n import string
+from celune.vcs import git_checkout_hint
 
 
 class TestRootScript:

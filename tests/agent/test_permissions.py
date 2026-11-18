@@ -1,7 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Focused tests for Phase 6 agent permission evaluation and approval gates."""
+"""Focused tests for agent permission evaluation and approval gates."""
 
 from __future__ import annotations
+
 from typing import Optional
 
 import pytest

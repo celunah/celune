@@ -16,8 +16,8 @@ import queue as queue_module
 from uuid import uuid4
 from copy import deepcopy
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional, cast
 from collections.abc import Callable, Iterator
+from typing import TYPE_CHECKING, Optional, cast
 
 from . import app as _app
 from .toast import CeluneToast

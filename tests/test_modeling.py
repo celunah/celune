@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for model loading helpers."""
 
-from types import SimpleNamespace
 from typing import cast
 from unittest import mock
+from types import SimpleNamespace
 
 import torch
 

@@ -17,16 +17,10 @@ from typing import TYPE_CHECKING, Optional
 import soundfile as sf
 
 from ..i18n import string
+from ..constants import APP_SLUG
 from .buffering import config_value_lines
-from ..constants import (
-    APP_SLUG,
-)
-from ..cesn import (
-    contains_cesn_note_event,
-)
-from .timing import (
-    MAX_YOUTUBE_DOWNLOAD_RETRIES,
-)
+from ..cesn import contains_cesn_note_event
+from .timing import MAX_YOUTUBE_DOWNLOAD_RETRIES
 from ..utils import (
     discard,
     available,

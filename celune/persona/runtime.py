@@ -12,6 +12,9 @@ from typing import TYPE_CHECKING, Union, Optional, cast
 from collections.abc import Mapping, Callable, Sequence, Generator
 
 import torch
+from transformers.cache_utils import Cache
+from transformers.configuration_utils import PreTrainedConfig
+from transformers.tokenization_utils_base import BatchEncoding
 from transformers import (
     AutoConfig,
     AutoProcessor,
@@ -21,20 +24,20 @@ from transformers import (
     StoppingCriteriaList,
     Qwen3VLForConditionalGeneration,
 )
-from transformers.cache_utils import Cache
-from transformers.configuration_utils import PreTrainedConfig
-from transformers.tokenization_utils_base import BatchEncoding
 
-from ..vram import resolve_vram_preset, is_cuda_out_of_memory, release_cuda_after_oom
+from ..typing.common import JSONSerializable
+from .capabilities import PersonaCapabilities
+from ..exceptions import ModelConsentRequired
 from ..utils import normalize_special_characters
 from ..modeling import create_quantized_kv_cache
+from ..registry.llm import PERSONA_DEFAULT_MODEL_ID
+from ..registry.consent import require_model_consent
+from ..dataclasses.persona import ChatMessage, GenerateRequest, GenerateResponse
+from ..vram import resolve_vram_preset, is_cuda_out_of_memory, release_cuda_after_oom
 from ..constants import (
     N_A_STR,
     PERSONA_CONTEXT_SPACE,
 )
-from .capabilities import PersonaCapabilities
-from ..registry.llm import PERSONA_DEFAULT_MODEL_ID
-from ..typing.common import JSONSerializable
 from ..typing.persona import (
     Role,
     ContentItem,
@@ -52,9 +55,6 @@ from ..typing.persona import (
     VisionProcessorOutput,
     ModelGenerateKwargValue,
 )
-from ..registry.consent import require_model_consent
-from ..exceptions import ModelConsentRequired
-from ..dataclasses.persona import ChatMessage, GenerateRequest, GenerateResponse
 
 _LOGGER = logging.getLogger(__name__)
 

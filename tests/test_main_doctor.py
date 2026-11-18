@@ -5,10 +5,11 @@ import io
 import sys
 import contextlib
 import subprocess
-from types import SimpleNamespace
-from typing import Optional
-from pathlib import Path, PureWindowsPath
 from unittest import mock
+from typing import Optional
+from types import SimpleNamespace
+from pathlib import Path, PureWindowsPath
+
 
 import pytest
 

@@ -6,19 +6,28 @@ import queue
 import asyncio
 import tempfile
 import threading
-from types import TracebackType, SimpleNamespace
-from typing import Self, Optional, cast
 from pathlib import Path
 from unittest import mock
+from typing import Self, Optional, cast
+from types import TracebackType, SimpleNamespace
 
-import numpy as np
 import pytest
+import numpy as np
 
-from celune.core import speech as core_speech
-from celune.core import conversation as core_conversation
-from celune.agent import routing as agent_routing
-from celune.utils import discard, clear_queue
 from celune.celune import Celune
+
+from celune.typing.aliases import AudioChunk
+from celune.core import speech as core_speech
+from celune.utils import discard, clear_queue
+from celune.audio.speakers import SpeakerChannel
+from celune.agent import routing as agent_routing
+from celune.typing.locks import ComponentLockName
+from celune.constants import BASE_SR, PipelineStates
+from celune.typing.common import JSON, JSONSerializable
+from celune.core.concurrency import run_in_daemon_thread
+from celune.dataclasses import pipeline as pipeline_types
+from celune.core import conversation as core_conversation
+from celune.persona.capabilities import PersonaCapabilities
 from celune.persona import conversation as persona_conversation
 from celune.pipeline import (
     output,
@@ -28,18 +37,11 @@ from celune.pipeline import (
     generation,
     submission,
 )
-from celune.constants import BASE_SR, PipelineStates
-from celune.dataclasses import pipeline as pipeline_types
 from celune.typing.agent import (
     AgentTask,
     AgentContext,
     AgentRequest,
 )
-from celune.typing.locks import ComponentLockName
-from celune.typing.common import JSON, JSONSerializable
-from celune.audio.speakers import SpeakerChannel
-from celune.typing.aliases import AudioChunk
-from celune.core.concurrency import run_in_daemon_thread
 from celune.dataclasses.cevoice import (
     CEVoicePersona,
     PersonaIdentity,
@@ -49,7 +51,6 @@ from celune.dataclasses.pipeline import (
     SpeechRequest,
     AudioInputRequest,
 )
-from celune.persona.capabilities import PersonaCapabilities
 
 from .helpers import (
     reload_callback,

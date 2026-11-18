@@ -5,16 +5,19 @@ from __future__ import annotations
 
 import os
 import datetime
+
+from pathlib import Path
+from unittest import mock
 from types import SimpleNamespace
 from typing import Optional, cast
-from pathlib import Path
-from tempfile import TemporaryDirectory
-from unittest import mock
 from contextlib import nullcontext
+from tempfile import TemporaryDirectory
 
 import pytest
 
 from celune.celune import Celune
+from celune.typing.modes import OperationMode
+from celune.persona.capabilities import PersonaCapabilities
 from celune.agent.tools import (
     OfflineAgentTool,
     local_management_tools,
@@ -29,8 +32,6 @@ from celune.typing.agent import (
     AgentRequest,
     AgentToolExecutionStatus,
 )
-from celune.typing.modes import OperationMode
-from celune.persona.capabilities import PersonaCapabilities
 
 from ..platform import WINDOWS_ONLY
 

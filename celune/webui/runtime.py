@@ -916,11 +916,8 @@ def api_log(
     ui = CeluneUI.get_instance()
     if ui is None or not getattr(ui, "_runtime_log_capture_enabled", False):
         append_webui_log(f"{action} {preview!r}{suffix}", session=session)
-    try:
+    with contextlib.suppress(ValueError):
         print(f"[{timestamp}] {action} {preview!r}{suffix}", flush=True)
-    except ValueError:
-        # Celune has no stdout attached, but WebUI wants to display a message
-        pass
 
 
 def normalized_audio(audio: npt.NDArray[np.float32]) -> npt.NDArray[np.float32]:

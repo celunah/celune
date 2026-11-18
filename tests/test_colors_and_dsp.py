@@ -5,8 +5,8 @@ from typing import cast
 from unittest import mock
 from collections.abc import Iterator
 
-import numpy as np
 import pytest
+import numpy as np
 
 from celune.audio import dsp
 from celune.theme import colors

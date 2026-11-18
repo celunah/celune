@@ -4,33 +4,40 @@
 import json
 import tempfile
 import threading
-from types import MappingProxyType
-from typing import Optional, cast
 from pathlib import Path
 from unittest import mock
 from functools import partial
+from typing import Optional, cast
+from types import MappingProxyType
 
-import numpy as np
 import pytest
+import numpy as np
 
 from celune import i18n, cevoice
-from celune.api import CloudflaredQuickTunnel
+from celune.utils import discard
+from celune.celune import Celune
+from celune.config import Config
 from celune.core import voice as core_voice
 from celune.core import reload as core_reload
+from celune.api import CloudflaredQuickTunnel
+from celune.typing.modes import OperationState
 from celune.core import loading as core_loading
+from celune.pipeline.playback import play_signal
+from celune.typing.common import JSONSerializable
 from celune.core import lifecycle as core_lifecycle
+from celune.persona.impl import persona_quantization
+from celune.pipeline.buffering import release_pipeline
+from celune.dataclasses.events import StateChangedEvent
 from celune.core import conversation as core_conversation
+from celune.persona.emotion import PersonaEmotionAnalyzer
+from celune.exceptions import BackendError, CEDTSTimeoutError
+from celune.pipeline.submission import handle_audio_input, convert_audio_input
 from celune.agent import (
     AgentRequest,
     AgentSession,
     AgentTaskState,
     AgentCancellationReason,
 )
-from celune.utils import discard
-from celune.celune import Celune
-from celune.config import Config
-from celune.exceptions import BackendError, CEDTSTimeoutError
-from celune.persona.impl import persona_quantization
 from celune.typing.agent import (
     AgentRoute,
     AgentInputClassification,
@@ -43,16 +50,9 @@ from celune.typing.locks import (
     ComponentLockOwner,
     ComponentLockRequirement,
 )
-from celune.typing.modes import OperationState
-from celune.typing.common import JSONSerializable
-from celune.persona.emotion import PersonaEmotionAnalyzer
-from celune.pipeline.playback import play_signal
-from celune.dataclasses.events import StateChangedEvent
-from celune.pipeline.buffering import release_pipeline
-from celune.pipeline.submission import handle_audio_input, convert_audio_input
 
-from ..support import FakeGlow, FakeBackend, FakeVCBackend, patch_owner
 from .fixtures import CeluneCoreTestSupport
+from ..support import FakeGlow, FakeBackend, FakeVCBackend, patch_owner
 
 
 class TestCeluneRuntime(CeluneCoreTestSupport):

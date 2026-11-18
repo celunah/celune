@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for supported TTS KV-cache quantization adapters."""
 
-from typing import Union, Optional, cast
 from unittest.mock import patch
+from typing import Union, Optional, cast
 
 import torch
 from torch import nn

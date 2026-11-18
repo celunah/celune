@@ -2,6 +2,7 @@
 """Persistent long-term memory helpers for the Persona system."""
 
 from __future__ import annotations
+
 import re
 import json
 import uuid
@@ -20,9 +21,9 @@ from transformers import (
     PreTrainedTokenizerBase,
 )
 
-from .paths import persona_character_slug
 
 from ..paths import persona_data_dir
+from .paths import persona_character_slug
 from ..typing.common import JSON, JSONSerializable
 from ..registry.consent import require_model_consent
 from ..registry.other import PERSONA_MEMORY_EMBEDDING_MODEL

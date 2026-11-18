@@ -7,8 +7,8 @@ from typing import Optional, cast
 from dataclasses import dataclass
 from collections.abc import Mapping, Sequence
 
-import numpy as np
 import torch
+import numpy as np
 from transformers.modeling_utils import PreTrainedModel
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 

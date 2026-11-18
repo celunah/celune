@@ -2,16 +2,15 @@
 """Configuration helpers for Celune."""
 
 import os
-from copy import deepcopy
-
-# noinspection PyProtectedMember
-from typing import Optional, cast
 from pathlib import Path
+from copy import deepcopy
+from typing import Optional, cast
 from collections.abc import Mapping, Callable, Sequence
 
 from .i18n import string
 from .paths import api_key_path
 from .constants import APP_NAME
+from .typing.aliases import LogLevel
 from .typing.common import Config, JSONSerializable
 from .typing.config import (
     AudioHostApi,
@@ -20,7 +19,6 @@ from .typing.config import (
     AudioDeviceInfoValue,
     AudioDeviceQueryResult,
 )
-from .typing.aliases import LogLevel
 
 ENABLED_ENV_VALUES = {"1", "true", "on", "yes", "enabled"}
 LOG_LEVELS: tuple[LogLevel, ...] = ("info", "verbose", "debug")

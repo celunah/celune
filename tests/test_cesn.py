@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for CESN directives, IPA alignment, sections, and rendering."""
 
-from types import SimpleNamespace
 from pathlib import Path
 from fractions import Fraction
+from types import SimpleNamespace
 
 import pytest
 

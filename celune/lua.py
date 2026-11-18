@@ -4,27 +4,23 @@
 from __future__ import annotations
 
 import threading
-
-# noinspection PyProtectedMember
-from typing import TYPE_CHECKING, Optional, cast
 from pathlib import Path
 from importlib import import_module
-
-# noinspection PyProtectedMember
-from dataclasses import fields, is_dataclass
 from collections.abc import Callable
+from dataclasses import fields, is_dataclass
+from typing import TYPE_CHECKING, Optional, cast
 
 from .utils import format_error
+from .typing.common import JSONSerializable
+from .extensions.base import CeluneExtension
+from .typing.events import EventName, EventPayload
+from .extensions.events import RegisteredEventHandler
 from .typing.lua import (
     LuaTable as _LuaTable,
     LuaValue as _LuaValue,
     LuaScalar as _LuaScalar,
     LuaRuntimeProtocol as _LuaRuntimeProtocol,
 )
-from .typing.common import JSONSerializable
-from .typing.events import EventName, EventPayload
-from .extensions.base import CeluneExtension
-from .extensions.events import RegisteredEventHandler
 
 if TYPE_CHECKING:
     from .celune import Celune

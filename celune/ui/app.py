@@ -4,13 +4,16 @@
 from __future__ import annotations
 
 import sys
-import queue as queue_module
 import asyncio
 import logging
 import itertools
 import threading
+import queue as queue_module
+from pathlib import Path
 from io import TextIOWrapper
 from types import ModuleType
+from dataclasses import field, dataclass
+from collections.abc import Callable, Iterator, Awaitable
 from typing import (
     TYPE_CHECKING,
     Never,
@@ -23,10 +26,8 @@ from typing import (
     cast,
     final,
 )
-from pathlib import Path
-from dataclasses import field, dataclass
-from collections.abc import Callable, Iterator, Awaitable
 
+from rich.text import Text
 from textual import (
     app,
     css,
@@ -40,52 +41,39 @@ from textual import (
 )
 from textual import (
     color as textual_color,
-)
-from textual import (
     screen as textual_screen,
-)
-from textual import (
     widget as textual_widget,
-)
-from textual import (
     message as textual_message,
 )
-from rich.text import Text
 
-from . import (
-    debug as _debug,
-)
-from . import (
-    capture as _capture,
-)
-from . import (
-    runtime as _runtime,
-)
-from . import (
-    interaction as _interaction,
-)
-from ..i18n import string, tagged_string
-from .theme import CELUNE_CSS, severity_color, with_brightness
-from .compat import install_textual_timer_sleep
 from .buttons import CeluneButton
 from .loading import CeluneLoadingScreen
-from .terminal import SelectMenuOption, SelectMenuWidget
+from ..i18n import string, tagged_string
+from ..typing.agent import AgentTaskState
+from ..typing.modes import OperationState
+from ..typing.registry import ModelMetadata
+from ..typing.common import JSONSerializable
 
 # noinspection PyUnresolvedReferences
 from ..watchdog import launcher_loss_requested
+from .compat import install_textual_timer_sleep
+from ..typing.config import AudioDeviceInfoValue
+from ..core.concurrency import run_in_daemon_thread
+from .terminal import SelectMenuOption, SelectMenuWidget
 from ..constants import BASE_SR, SIGTSTP, APP_NAME, ExitCodes
-from ..typing.agent import AgentTaskState
+from .theme import CELUNE_CSS, severity_color, with_brightness
+from ..theme.defaults import default_theme_family, default_error_theme_family
 from ..typing.locks import (
     ComponentLockName,
     ComponentLockOwner,
     ComponentLockRequirement,
 )
-from ..typing.modes import OperationState
-from ..typing.common import JSONSerializable
-from ..typing.config import AudioDeviceInfoValue
-from ..theme.defaults import default_theme_family, default_error_theme_family
-from ..typing.registry import ModelMetadata
-from ..core.concurrency import run_in_daemon_thread
+from . import (
+    debug as _debug,
+    capture as _capture,
+    runtime as _runtime,
+    interaction as _interaction,
+)
 
 App = app.App
 ReturnType = app.ReturnType

@@ -3,9 +3,9 @@
 # TODO: merge this into test_backends_and_extensions.py
 
 import sys
-from types import ModuleType, SimpleNamespace
 from pathlib import Path
 from unittest import mock
+from types import ModuleType, SimpleNamespace
 
 from celune.utils import discard
 

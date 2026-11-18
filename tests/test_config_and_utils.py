@@ -3,10 +3,10 @@
 
 import math
 import datetime
-from types import SimpleNamespace
-from typing import Literal, Optional, cast
 from unittest import mock
+from types import SimpleNamespace
 from collections.abc import Mapping
+from typing import Literal, Optional, cast
 
 import pytest
 

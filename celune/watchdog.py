@@ -3,6 +3,9 @@
 
 import os
 import threading
+import contextlib
+from collections import deque
+from functools import partial
 
 _LAUNCHER_LOST = threading.Event()
 
@@ -17,21 +20,22 @@ def launcher_loss_requested() -> bool:
     return _LAUNCHER_LOST.is_set()
 
 
+def _drain_posix_pipe(pipe_fd: int) -> None:
+    """Discard launcher pipe data until its writer closes the pipe."""
+    deque(iter(partial(os.read, pipe_fd, 1), b""), maxlen=0)
+
+
 def _watch_posix_pipe(pipe_fd_text: str) -> None:
     """Block until the launcher closes the inherited POSIX pipe."""
     pipe_fd = -1
     try:
-        pipe_fd = int(pipe_fd_text)
-        while os.read(pipe_fd, 1):
-            pass
-    except (OSError, ValueError):
-        pass
+        with contextlib.suppress(OSError, ValueError):
+            pipe_fd = int(pipe_fd_text)
+            _drain_posix_pipe(pipe_fd)
     finally:
         if pipe_fd >= 0:
-            try:
+            with contextlib.suppress(OSError):
                 os.close(pipe_fd)
-            except OSError:
-                pass
 
     _request_launcher_lost()
 
@@ -90,17 +94,15 @@ def _watch_windows_pipe(pipe_name: str) -> None:
     try:
         buffer = ctypes.create_string_buffer(1)
         bytes_read = wintypes.DWORD()  # pylint: disable=E1120
-        while (
-            kernel32.ReadFile(
-                handle,
-                buffer,
-                1,
-                ctypes.byref(bytes_read),
-                None,
-            )
-            and bytes_read.value > 0
+        while kernel32.ReadFile(
+            handle,
+            buffer,
+            1,
+            ctypes.byref(bytes_read),
+            None,
         ):
-            pass
+            if bytes_read.value == 0:
+                break
     finally:
         kernel32.CloseHandle(handle)
 

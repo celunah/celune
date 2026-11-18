@@ -10,22 +10,31 @@ import textwrap
 import importlib
 import threading
 import contextlib
-from types import ModuleType, SimpleNamespace
-from typing import Union, Optional, cast
 from pathlib import Path
 from unittest import mock
 from collections import abc as cabc
 from collections.abc import Iterator
+from typing import Union, Optional, cast
+from types import ModuleType, SimpleNamespace
 
-import numpy as np
 import torch
 import pytest
+import numpy as np
 import soundfile as sf
 
-from celune.cesn import CESNSinger
+
 from celune.i18n import string
-from celune.utils import discard
 from celune.celune import Celune
+from celune.utils import discard
+from celune.cesn import CESNSinger
+from celune.typing.aliases import AudioChunk
+from celune.backends.tts.base import CeluneBackend
+from celune.backends.vc.seedvc import CeluneSeedVCBackend
+from celune.extensions.manager import CeluneExtensionManager
+from celune.dataclasses.pipeline import VoiceConversionRequest
+from celune.extensions.base import CeluneContext, CeluneExtension
+from celune.backends.tts import BACKEND_MANIFESTS, resolve_backend
+from celune.registry.tts import QWEN3_DEFAULT_MODEL_ID, SOULX_SINGER_CODE_REVISION
 from celune.registry import MODEL_BY_ID
 from celune.exceptions import (
     CESNValidationError,
@@ -38,19 +47,11 @@ from celune.backends.vc import (
 from celune.backends.vc import (
     resolve_vc_backend,
 )
-from celune.backends.tts import BACKEND_MANIFESTS, resolve_backend
-from celune.registry.tts import QWEN3_DEFAULT_MODEL_ID, SOULX_SINGER_CODE_REVISION
-from celune.typing.aliases import AudioChunk
-from celune.extensions.base import CeluneContext, CeluneExtension
 from celune.typing.backends import (
     BackendModel,
     SeedVCModelValue,
     SeedVCRealtimeModule,
 )
-from celune.backends.tts.base import CeluneBackend
-from celune.backends.vc.seedvc import CeluneSeedVCBackend
-from celune.extensions.manager import CeluneExtensionManager
-from celune.dataclasses.pipeline import VoiceConversionRequest
 from celune.backends.tts.fireredtts3 import (
     FireRedTTS3,
     FireRedModel,
@@ -1908,9 +1909,8 @@ class TestBackend:
                 mock.patch("celune.backends.tts.dotstts.loguru.logger", fake_loguru),
                 dotstts_cls.suppress_backend_output(),
             ):
-                pass
+                fake_loguru.disable.assert_called_once_with("dots_tts")
 
-        fake_loguru.disable.assert_called_once_with("dots_tts")
         fake_loguru.enable.assert_called_once_with("dots_tts")
 
     @staticmethod
@@ -2184,11 +2184,9 @@ class TestExtension:
         assert self.play_calls[-1] == ("quiet.wav", True, 0.25)
         assert extension.set_voice("bold")
         with extension.with_backend("mini"):
-            pass
+            self.backend_override.assert_called_once_with("mini")
         with extension.with_cevoice("nova"):
-            pass
-        self.backend_override.assert_called_once_with("mini")
-        self.cevoice_override.assert_called_once_with("nova")
+            self.cevoice_override.assert_called_once_with("nova")
 
     def test_manager_registers_invokes_and_autoloads_extensions(self) -> None:
         """Verify registration, duplicate handling, and directory autoloading.

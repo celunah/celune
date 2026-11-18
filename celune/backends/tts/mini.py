@@ -5,22 +5,29 @@ import time
 import inspect
 import tempfile
 import contextlib
-from typing import Union, Optional, cast
 from pathlib import Path
+from typing import Union, Optional, cast
 from collections.abc import Mapping, Callable, Iterator
 
 import yaml
-import numpy as np
 import torch
+import numpy as np
 import soundfile as sf
 from pocket_tts import TTSModel
 from huggingface_hub import snapshot_download
 
-from .base import CeluneBackend, cached_hf_snapshot_path
 from ...i18n import string
-from ...paths import temp_data_dir, huggingface_progress, huggingface_hub_cache_dir
 from ...utils import custom_assert
+from ...typing.registry import ModelMetadata
 from ...cevoice import CEVoiceLoader, default_loader
+from ...typing.aliases import AudioChunk, AudioChunks
+from ...registry.consent import require_model_consent
+from .base import CeluneBackend, cached_hf_snapshot_path
+from ...registry.audio_cpp import audio_cpp_model_artifact
+from ...typing.backends import MiniModel, MiniPromptState, BackendArgumentValue
+from ...paths import temp_data_dir, huggingface_progress, huggingface_hub_cache_dir
+
+
 from .audio_cpp import (
     AudioCppRuntime,
     ensure_audio_cpp_server,
@@ -38,11 +45,6 @@ from ...registry.tts import (
 from ...registry.tts import (
     model_contract as resolve_model_contract,
 )
-from ...typing.aliases import AudioChunk, AudioChunks
-from ...typing.backends import MiniModel, MiniPromptState, BackendArgumentValue
-from ...typing.registry import ModelMetadata
-from ...registry.consent import require_model_consent
-from ...registry.audio_cpp_models import audio_cpp_model_artifact
 
 
 class Mini(CeluneBackend[Union[TTSModel, AudioCppRuntime]]):

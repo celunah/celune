@@ -16,9 +16,9 @@ from collections.abc import Iterator
 import pytest
 
 from celune import cevoice
+from celune.exceptions import CEVoiceError
 from celune.cevoice import v4 as cevoice_v4
 from celune.cevoice import base as cevoice_base
-from celune.exceptions import CEVoiceError
 
 
 class TestCEVoice:

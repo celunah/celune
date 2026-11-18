@@ -6,6 +6,9 @@ from unittest import mock
 import torch
 from torch import nn
 
+from celune.typing.common import Config
+from celune.constants import VRAM_BUDGETS
+from celune.celune import tts_quantization_enabled
 from celune.vram import (
     VRAM_PROFILES,
     VramProfile,
@@ -22,9 +25,6 @@ from celune.vram import (
     windows_shared_memory_capacity_bytes,
     windows_shared_memory_headroom_bytes,
 )
-from celune.celune import tts_quantization_enabled
-from celune.constants import VRAM_BUDGETS
-from celune.typing.common import Config
 
 
 class TestVram:

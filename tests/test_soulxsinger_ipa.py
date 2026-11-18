@@ -2,16 +2,17 @@
 """Tests for explicit CESN IPA syllable alignment."""
 
 import json
-from types import SimpleNamespace
-from typing import Optional, cast
 from pathlib import Path
 from unittest import mock
+from types import SimpleNamespace
+from typing import Optional, cast
 
-import numpy as np
 import pytest
+import numpy as np
 
-from celune.cesn import CESNSinger, CESNVibrato, format_cesn_error, parse_cesn
+
 from celune.cevoice import CEVoiceLoader
+from celune.cesn import CESNSinger, CESNVibrato, format_cesn_error, parse_cesn
 from celune.exceptions import (
     CESNIPAError,
     CESNRangeError,

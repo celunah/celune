@@ -8,6 +8,9 @@ import queue
 import importlib
 import threading
 import contextlib
+from pathlib import Path
+from unittest import mock
+from collections.abc import Callable, Iterator
 from types import ModuleType, SimpleNamespace, MappingProxyType
 from typing import (
     TYPE_CHECKING,
@@ -16,9 +19,6 @@ from typing import (
     TypedDict,
     cast,
 )
-from pathlib import Path
-from unittest import mock
-from collections.abc import Callable, Iterator
 
 import numpy as np
 import numpy.typing as npt
@@ -26,12 +26,12 @@ import pytest
 
 from celune.utils import discard
 from celune.constants import PipelineStates
-from celune.typing.common import JSONSerializable
 from celune.typing.aliases import AudioChunk
-from celune.backends.vc.base import CeluneVCBackend
-from celune.core.concurrency import ComponentLockManager, PriorityInferenceScheduler
+from celune.typing.common import JSONSerializable
 from celune.backends.tts.base import CeluneBackend
+from celune.backends.vc.base import CeluneVCBackend
 from celune.dataclasses.pipeline import AudioOutput, VoiceConversionRequest
+from celune.core.concurrency import ComponentLockManager, PriorityInferenceScheduler
 
 if TYPE_CHECKING:
     from celune.celune import Celune

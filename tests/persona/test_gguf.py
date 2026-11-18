@@ -2,19 +2,20 @@
 """Tests for Persona GGUF package selection and runtime fallback."""
 
 import hashlib
-import threading
 import zipfile
-from pathlib import Path
-from types import SimpleNamespace
+import threading
 from typing import cast
+from pathlib import Path
 from unittest import mock
+from types import SimpleNamespace
+
 
 import pytest
 
-from celune.dataclasses.persona import ChatMessage, GenerateRequest
-from celune.exceptions import ModelConsentRequired
 from celune.persona import gguf, runtime
 from celune.registry import get_model_metadata
+from celune.exceptions import ModelConsentRequired
+from celune.dataclasses.persona import ChatMessage, GenerateRequest
 from celune.registry.llm import LLM_MODELS, PERSONA_DEFAULT_MODEL_ID
 
 

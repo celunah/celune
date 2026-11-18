@@ -4,15 +4,43 @@
 from __future__ import annotations
 
 import threading
-from typing import Optional, cast
 from pathlib import Path
 from unittest import mock
+from typing import Optional, cast
 from contextlib import nullcontext
 from collections.abc import Mapping, Sequence
 
 import pytest
 
+from celune.utils import discard
+from celune.celune import Celune
+from celune.typing.aliases import LogLevel
 from celune.core import agent as core_agent
+from celune.persona.impl import PersonaClient
+from celune.typing.modes import OperationMode
+from celune.typing.common import JSONSerializable
+from celune.typing.persona import PersonaClientResponse
+from celune.registry.llm import PERSONA_DEFAULT_MODEL_ID
+from celune.persona.capabilities import PersonaCapabilities
+from celune.typing.agent import NeedleToolCall, NeedleToolCatalog
+from celune.agent.tools import AgentStatusTool, recall, production_agent_tool_schemas
+from celune.typing.locks import (
+    ComponentLockName,
+    ComponentLockOwner,
+    ComponentLockRequirement,
+)
+from celune.agent.needle.impl import (
+    NeedleHandler,
+    NeedleToolSelector,
+)
+from celune.core.conversation import (
+    deliver_persona_response as celune_deliver_persona_response,
+)
+from celune.dataclasses.events import (
+    AgentTaskFinishedEvent,
+    AgentTaskStateChangedEvent,
+    AgentApprovalRequestedEvent,
+)
 from celune.agent import (
     ToolCall,
     AgentTool,
@@ -37,34 +65,6 @@ from celune.agent import (
     AgentToolExecutionStatus,
     AgentClassificationResult,
 )
-from celune.utils import discard
-from celune.celune import Celune
-from celune.agent.tools import AgentStatusTool, recall, production_agent_tool_schemas
-from celune.persona.impl import PersonaClient
-from celune.registry.llm import PERSONA_DEFAULT_MODEL_ID
-from celune.typing.agent import NeedleToolCall, NeedleToolCatalog
-from celune.typing.locks import (
-    ComponentLockName,
-    ComponentLockOwner,
-    ComponentLockRequirement,
-)
-from celune.typing.modes import OperationMode
-from celune.typing.common import JSONSerializable
-from celune.typing.aliases import LogLevel
-from celune.typing.persona import PersonaClientResponse
-from celune.agent.needle.impl import (
-    NeedleHandler,
-    NeedleToolSelector,
-)
-from celune.core.conversation import (
-    deliver_persona_response as celune_deliver_persona_response,
-)
-from celune.dataclasses.events import (
-    AgentTaskFinishedEvent,
-    AgentTaskStateChangedEvent,
-    AgentApprovalRequestedEvent,
-)
-from celune.persona.capabilities import PersonaCapabilities
 
 from ..support import FakeGlow, FakeBackend
 

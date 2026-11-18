@@ -5,8 +5,8 @@ from __future__ import annotations
 
 import time
 import queue
-from typing import Union, Optional
 from pathlib import Path
+from typing import Union, Optional
 from dataclasses import field, dataclass
 
 import numpy as np

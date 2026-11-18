@@ -6,22 +6,29 @@ import sqlite3
 import warnings
 import threading
 import contextlib
-
-# noinspection PyProtectedMember
-from typing import Optional, cast
 from pathlib import Path
+from typing import Optional, cast
 from collections.abc import Callable
 
-import numpy as np
 import torch
 import librosa
 import matplotlib
+import numpy as np
 from numpy import typing as npt
-from matplotlib import colors as mcolors
 from matplotlib import pyplot as plt
-from matplotlib import rcParams, font_manager
+from matplotlib import colors as mcolors
 from matplotlib.projections import PolarAxes
+from matplotlib import rcParams, font_manager
 
+from .i18n import string
+from .utils import run_async
+from .constants import N_A_NUMERIC
+from .typing.aliases import AudioChunk
+from .paths import huggingface_progress
+from .compat import torchao_compatibility
+from .registry.other import VOICE_EMBEDDING_MODEL
+from .cevoice import ManifestValue, default_loader
+from .registry.consent import require_model_consent
 from .cvs import (
     language_key,
     calculate_cvs,
@@ -29,16 +36,6 @@ from .cvs import (
     word_error_counts,
     supports_word_error_rate,
 )
-from .i18n import string
-from .paths import huggingface_progress
-from .utils import run_async
-from .compat import torchao_compatibility
-from .cevoice import ManifestValue, default_loader
-from .constants import (
-    N_A_NUMERIC,
-)
-from .registry.other import VOICE_EMBEDDING_MODEL
-from .typing.aliases import AudioChunk
 from .typing.analysis import (
     TextConfig,
     VoiceMatch,
@@ -47,7 +44,6 @@ from .typing.analysis import (
     EmbeddingPayload,
     EmbeddingProcessor,
 )
-from .registry.consent import require_model_consent
 
 matplotlib.use("Agg")
 

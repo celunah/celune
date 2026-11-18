@@ -7,10 +7,11 @@ import io
 import sys
 import contextlib
 import importlib.util
-from types import ModuleType
 from pathlib import Path
-from tempfile import TemporaryDirectory
 from unittest import mock
+from types import ModuleType
+from tempfile import TemporaryDirectory
+
 
 import numpy as np
 import soundfile as sf

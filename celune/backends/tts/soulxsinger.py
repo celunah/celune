@@ -12,17 +12,24 @@ import shutil
 import tempfile
 import importlib
 import unicodedata
-from types import ModuleType
-from typing import Union, NoReturn, Optional, Protocol, cast
 from pathlib import Path
+from types import ModuleType
 from dataclasses import field, replace, dataclass
 from collections.abc import Mapping, Callable, Iterator
+from typing import Union, NoReturn, Optional, Protocol, cast
 
 import numpy as np
 import numpy.typing as npt
 import torch
 from huggingface_hub import snapshot_download
 
+from ...utils import discard
+from ...typing.common import JSON
+from ..environment import exclusive_lock
+from ...typing.aliases import AudioChunk
+from ...registry.consent import require_model_consent
+from ...registry.other import SOULX_SINGER_RMVPE_MODEL_ID
+from ...constants import DEFAULT_TARGET_CHUNK_LENGTH_SECONDS
 from .base import CeluneBackend, to_numpy_audio, cached_hf_snapshot_path
 from ...cesn import (
     CESNSection,
@@ -39,7 +46,6 @@ from ...paths import (
     backend_environments_dir,
     huggingface_hub_cache_dir,
 )
-from ...utils import discard
 from ...cevoice import (
     V5_VERSION,
     SINGING_VOICE_NAME,
@@ -48,7 +54,6 @@ from ...cevoice import (
     default_loader,
     bundle_character_name,
 )
-from ...constants import DEFAULT_TARGET_CHUNK_LENGTH_SECONDS
 from ...exceptions import (
     BackendError,
     CESNIPAError,
@@ -59,7 +64,6 @@ from ...exceptions import (
     CESNBackendFormatError,
     CESNUnsupportedFeatureError,
 )
-from ..environment import exclusive_lock
 from ...registry.tts import (
     TTS_DEFAULT_VOICE,
     SOULX_SINGER_MODEL_ID,
@@ -67,10 +71,6 @@ from ...registry.tts import (
     SOULX_SINGER_CODE_REVISION,
     SOULX_SINGER_CODE_REPOSITORY,
 )
-from ...typing.common import JSON
-from ...registry.other import SOULX_SINGER_RMVPE_MODEL_ID
-from ...typing.aliases import AudioChunk
-from ...registry.consent import require_model_consent
 
 __all__ = [
     "SoulXSinger",

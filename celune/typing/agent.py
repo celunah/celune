@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 from enum import Enum
+from collections.abc import Sequence
+from dataclasses import field, dataclass
 from typing import (
     TYPE_CHECKING,
     Union,
@@ -13,11 +15,9 @@ from typing import (
     NotRequired,
     cast,
 )
-from dataclasses import field, dataclass
-from collections.abc import Sequence
 
-from .locks import ComponentBusyResult
 from .modes import OperationMode
+from .locks import ComponentBusyResult
 from .common import JSON, JSONSerializable
 from ..constants import AGENT_MAX_LOOPS, PERSONA_COMPACT_AT, AGENT_CONTEXT_SPACE
 

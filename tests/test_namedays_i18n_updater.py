@@ -200,8 +200,8 @@ class TestUpdater:
             zip_path = root / "artifact.zip"
             destination = root / "destination"
             destination.mkdir()
-            with zipfile.ZipFile(zip_path, "w"):
-                pass
+            with zipfile.ZipFile(zip_path, "w") as archive:
+                archive.writestr("unrelated.txt", "")
 
             with pytest.raises(
                 updater.UpdateError,

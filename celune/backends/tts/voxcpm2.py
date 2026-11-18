@@ -4,19 +4,30 @@
 import os
 import time
 import contextlib
+from pathlib import Path
 from types import MethodType
 from typing import Union, Optional, Protocol, cast
-from pathlib import Path
 from collections.abc import Mapping, Callable, Iterator, Generator
 
-import numpy as np
 import torch
+import numpy as np
 from voxcpm import VoxCPM
 from transformers import AutoTokenizer
 from huggingface_hub import snapshot_download
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 
 from . import get_version
+from ...i18n import string
+from ...constants import BASE_SR
+from ...typing.backends import BackendArgumentValue
+from ...cevoice import CEVoiceLoader, default_loader
+from ...typing.aliases import AudioChunk, AudioChunks
+from ...registry.consent import require_model_consent
+from ...utils import discard, available, custom_assert
+from ...registry.audio_cpp import audio_cpp_model_artifact
+from ...registry.tts import TTS_DEFAULT_VOICE, VOXCPM2_VOICE_MODELS
+from ...paths import huggingface_progress, huggingface_hub_cache_dir
+from ...modeling import QuantizedKVCacheMode, quantized_kv_cache_mode
 from .base import (
     CeluneBackend,
     local_hf_offline_mode,
@@ -25,22 +36,11 @@ from .base import (
 from .base import (
     to_numpy_audio as normalize_streamed_audio,
 )
-from ...i18n import string
-from ...paths import huggingface_progress, huggingface_hub_cache_dir
-from ...utils import discard, available, custom_assert
-from ...cevoice import CEVoiceLoader, default_loader
 from .audio_cpp import (
     AudioCppRuntime,
     ensure_audio_cpp_server,
     load_audio_cpp_tts_model,
 )
-from ...modeling import QuantizedKVCacheMode, quantized_kv_cache_mode
-from ...constants import BASE_SR
-from ...registry.tts import TTS_DEFAULT_VOICE, VOXCPM2_VOICE_MODELS
-from ...typing.aliases import AudioChunk, AudioChunks
-from ...typing.backends import BackendArgumentValue
-from ...registry.consent import require_model_consent
-from ...registry.audio_cpp_models import audio_cpp_model_artifact
 
 _VOXCPM_RUNTIME_KV_CACHE_LENGTH = 2048
 

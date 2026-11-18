@@ -5,9 +5,13 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Optional, cast
 
+from ..utils import format_error_message
 from .paths import persona_override_files
 from .emotion import PersonaEmotionAnalyzer
 from .capabilities import PersonaCapabilities
+from ..typing.common import JSON, JSONSerializable
+from ..registry.other import PERSONA_MEMORY_EMBEDDING_MODEL
+from ..typing.persona import PersonaModel, PersonaTokenizer
 from .memory import (
     MEMORY_CLASSIFIER_SYSTEM_PROMPT,
     PersonaMemoryStore,
@@ -40,11 +44,6 @@ from .impl import (
     persona_active_character_name,
     persona_debug_overrides_enabled,
 )
-
-from ..utils import format_error_message
-from ..typing.common import JSON, JSONSerializable
-from ..registry.other import PERSONA_MEMORY_EMBEDDING_MODEL
-from ..typing.persona import PersonaModel, PersonaTokenizer
 from ..typing.agent import (
     ToolCall,
     AgentContext,

@@ -16,15 +16,15 @@ import pytest
 import numpy as np
 
 from celune.cedts import worker
+from celune.typing.worker import WorkerRequest
+from celune.typing.backends import BackendRuntime
+from celune.backends.tts.ming3 import Ming3, MingRuntime
 from celune.registry.tts import (
     MING3_TTS_BF16_FILE,
     MING3_TTS_GGUF_REPO,
     MING3_TTS_MODEL_ID,
     MING3_TTS_Q8_FILE,
 )
-from celune.typing.worker import WorkerRequest
-from celune.typing.backends import BackendRuntime
-from celune.backends.tts.ming3 import Ming3, MingRuntime
 
 
 def _backend(quantize: bool) -> Ming3:

@@ -2,6 +2,7 @@
 """Engine-level speech entry points coordinated with the pipeline."""
 
 from __future__ import annotations
+
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Optional
 

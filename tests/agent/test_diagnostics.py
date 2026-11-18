@@ -4,14 +4,14 @@
 from __future__ import annotations
 
 import os
-from types import SimpleNamespace
 from unittest import mock
+from types import SimpleNamespace
 
 import pytest
 
 from celune.celune import Celune
-from celune.agent.tools import production_agent_tools, production_agent_tool_schemas
 from celune.typing.agent import AgentToolSchema, AgentToolBehavior
+from celune.agent.tools import production_agent_tools, production_agent_tool_schemas
 from celune.typing.common import JSON
 from celune.agent.diagnostics import (
     run_agent_feature_checks,

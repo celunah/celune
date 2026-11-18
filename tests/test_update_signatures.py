@@ -31,6 +31,11 @@ def _trusted_test_key(monkeypatch: pytest.MonkeyPatch) -> Ed25519PrivateKey:
     return private_key
 
 
+def test_source_release_key_catalog_loads_from_assets() -> None:
+    """Load the source release-key catalog from its assets directory."""
+    signature._load_source_release_keys()
+
+
 def test_appended_keyring_requires_root_signature(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

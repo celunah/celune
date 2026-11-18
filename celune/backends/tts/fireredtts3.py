@@ -10,35 +10,36 @@ import tempfile
 import threading
 import contextlib
 import urllib.request
-from typing import TYPE_CHECKING, ClassVar, Optional, Protocol, cast
 from pathlib import Path
 from collections import OrderedDict
 from collections.abc import Callable, Iterator, Generator
+from typing import TYPE_CHECKING, ClassVar, Optional, Protocol, cast
 
-import numpy as np
+
 import torch
 import torchaudio
+import numpy as np
 from huggingface_hub import snapshot_download
 
+from ...i18n import string
+from ...utils import discard
+from ...typing.aliases import AudioChunk
+from ...typing.backends import BackendModel
+from ...modeling import create_quantized_kv_cache
+from ...cevoice import CEVoiceLoader, default_loader
+from ...registry.consent import require_model_consent
+from ...registry.tts import TTS_DEFAULT_VOICE, FIREREDTTS3_MODEL_ID
 from .base import (
     CeluneBackend,
     to_numpy_audio,
     local_hf_offline_mode,
     cached_hf_snapshot_path,
 )
-from ...i18n import string
 from ...paths import (
     runtime_data_dir,
     huggingface_progress,
     huggingface_hub_cache_dir,
 )
-from ...utils import discard
-from ...cevoice import CEVoiceLoader, default_loader
-from ...modeling import create_quantized_kv_cache
-from ...registry.tts import TTS_DEFAULT_VOICE, FIREREDTTS3_MODEL_ID
-from ...typing.aliases import AudioChunk
-from ...typing.backends import BackendModel
-from ...registry.consent import require_model_consent
 
 if TYPE_CHECKING:
     from transformers.cache_utils import Cache

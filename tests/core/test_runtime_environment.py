@@ -9,9 +9,7 @@ import pytest
 from celune import runtime
 from celune.utils import discard
 from celune.celune import Celune
-from celune.ui.app import (
-    CeluneUI,
-)
+from celune.ui.app import CeluneUI
 from celune.exceptions import RuntimeCheckError
 from celune.ui.headless import CeluneHeadlessUI
 from celune.typing.aliases import LogLevel, LogCallback

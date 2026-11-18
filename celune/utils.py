@@ -12,11 +12,12 @@ import inspect
 import datetime
 import platform
 import traceback
+import contextlib
 import importlib.util
 import multiprocessing
-from typing import Any, Union, TextIO, Literal, Optional, overload
 from pathlib import Path
 from collections.abc import Callable, Iterator, Container
+from typing import Any, Union, TextIO, Literal, Optional, overload
 
 import psutil
 
@@ -36,12 +37,12 @@ except ModuleNotFoundError as module:
     )
     _LANGUAGE_DETECTOR = None
 
-from .vcs import get_revision as _get_repository_revision
 from .paths import traceback_path
-from .terminal import supports_ansi as terminal_supports_ansi
+from .typing.aliases import LogLevel
 from .constants import REFERENCE_NEW_MOON
 from .typing.utils import CallerInfo, LanguageResult
-from .typing.aliases import LogLevel
+from .vcs import get_revision as _get_repository_revision
+from .terminal import supports_ansi as terminal_supports_ansi
 
 
 def clear_queue(q: queue.Queue) -> None:
@@ -50,11 +51,9 @@ def clear_queue(q: queue.Queue) -> None:
     Args:
         q: The queue to empty.
     """
-    try:
+    with contextlib.suppress(queue.Empty):
         while True:
             q.get_nowait()
-    except queue.Empty:
-        pass
 
 
 def get_revision() -> str:

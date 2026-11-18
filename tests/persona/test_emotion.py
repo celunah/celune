@@ -5,8 +5,8 @@ from types import SimpleNamespace
 from typing import Union, Optional
 from collections.abc import Sequence
 
-import numpy as np
 import torch
+import numpy as np
 from transformers.tokenization_utils_base import BatchEncoding
 
 from celune.utils import discard

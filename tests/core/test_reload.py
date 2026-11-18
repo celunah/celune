@@ -4,28 +4,28 @@
 import weakref
 import threading
 import contextlib
-from types import SimpleNamespace, MappingProxyType
-from typing import Optional, cast
 from pathlib import Path
 from unittest import mock
 from functools import partial
+from typing import Optional, cast
+from types import SimpleNamespace, MappingProxyType
 
 import pytest
 from transformers.modeling_utils import PreTrainedModel
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 
+from celune.utils import discard
+from celune.celune import Celune
 from celune.core import sleep as core_sleep
 from celune.core import voice as core_voice
 from celune.core import reload as core_reload
 from celune.core import loading as core_loading
-from celune.core import lifecycle as core_lifecycle
-from celune.utils import discard
-from celune.celune import Celune
-from celune.exceptions import WarmupError, BackendError
 from celune.typing.common import JSONSerializable
+from celune.core import lifecycle as core_lifecycle
+from celune.exceptions import WarmupError, BackendError
 
-from ..support import FakeGlow, FakeBackend, FakeVCBackend, patch_owner
 from .fixtures import CeluneCoreTestSupport
+from ..support import FakeGlow, FakeBackend, FakeVCBackend, patch_owner
 
 
 class TestCeluneReload(CeluneCoreTestSupport):

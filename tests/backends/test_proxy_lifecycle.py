@@ -6,18 +6,18 @@ import os
 import time
 import threading
 import subprocess
-from types import SimpleNamespace
-from typing import IO, Optional, cast
+import contextlib
 from pathlib import Path
 from unittest import mock
-from contextlib import suppress
+from types import SimpleNamespace
+from typing import IO, Optional, cast
 from collections import OrderedDict, deque
 from collections.abc import Callable, Generator
 
 import pytest
 
-from celune.cedts import remote, worker
 from celune.utils import discard
+from celune.cedts import remote, worker
 from celune.exceptions import (
     CEDTSError,
     BackendError,
@@ -561,7 +561,7 @@ class TestBackendProxyLifecycle:
         finally:
             generator.close()
             writer_thread.join(timeout=2)
-            with suppress(OSError, ValueError):
+            with contextlib.suppress(OSError, ValueError):
                 worker_input.close()
 
     def test_remote_proxy_escalates_when_shutdown_ack_is_missing(self) -> None:
@@ -1105,7 +1105,7 @@ class TestBackendProxyLifecycle:
             )
         finally:
             proxy._reader_stop.set()
-            with suppress(OSError, ValueError):
+            with contextlib.suppress(OSError, ValueError):
                 reader.close()
             reader_thread = proxy._reader_thread
             if reader_thread is not None:

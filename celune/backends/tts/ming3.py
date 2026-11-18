@@ -2,22 +2,26 @@
 """Streaming Ming 3.0 TTS backend powered by audio.cpp."""
 
 import os
-from typing import Union, Optional
+import contextlib
 from pathlib import Path
+from typing import Union, Optional
 from collections.abc import Callable, Iterator
 
 import torch
 from huggingface_hub import hf_hub_download, try_to_load_from_cache
 
-from .base import CeluneBackend
 from ...i18n import string
+from ...utils import discard
+from .base import CeluneBackend
+from ...typing.aliases import AudioChunk
+from ...typing.backends import BackendArgumentValue
+from ...cevoice import CEVoiceLoader, default_loader
+from ...registry.consent import require_model_consent
 from ...paths import (
     app_data_dir,
     huggingface_progress,
     huggingface_hub_cache_dir,
 )
-from ...utils import discard
-from ...cevoice import CEVoiceLoader, default_loader
 from .audio_cpp import (
     AudioCppRuntime,
     archive_sha256,
@@ -41,9 +45,6 @@ from ...registry.tts import (
 from ...registry.tts import (
     model_contract as resolve_model_contract,
 )
-from ...typing.aliases import AudioChunk
-from ...typing.backends import BackendArgumentValue
-from ...registry.consent import require_model_consent
 
 _AUDIOCPP_RELEASE = "v0.9.3"
 _SAMPLE_RATE = 44_100
@@ -222,11 +223,11 @@ class Ming3(CeluneBackend[MingRuntime]):
         filename, expected_size, expected_sha256 = self._package()
         if available and cached_path is not None:
             path = Path(cached_path)
-            try:
+            artifact_verified = False
+            with contextlib.suppress(RuntimeError):
                 self._verify_model_artifact(path, expected_size, expected_sha256)
-            except RuntimeError:
-                pass
-            else:
+                artifact_verified = True
+            if artifact_verified:
                 return self._model_runtime_path(path, filename)
         self.log(
             string("tts.model_downloading", model_id=MING3_TTS_MODEL_ID),

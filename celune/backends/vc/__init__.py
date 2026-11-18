@@ -3,10 +3,10 @@
 
 from typing import Union, Optional
 
-from .base import CeluneVCBackend
 from ...utils import discard
-from ..environment import BACKEND_MANIFESTS, BackendManifest, backend_manifest
+from .base import CeluneVCBackend
 from ...typing.aliases import LogLevel, LogCallback
+from ..environment import BACKEND_MANIFESTS, BackendManifest, backend_manifest
 
 __all__ = [
     "BACKEND_MANIFESTS",

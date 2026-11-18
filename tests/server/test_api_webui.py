@@ -6,37 +6,34 @@ import shutil
 import asyncio
 import tempfile
 from queue import Queue
-from types import SimpleNamespace
-from typing import (
-    Optional,
-    cast,
-)
 from pathlib import Path
 from unittest import mock
+from types import SimpleNamespace
+from typing import Optional, cast
 from collections import abc, deque
 from collections.abc import Iterator
 
-import numpy as np
 import pytest
+import numpy as np
 import soundfile as sf
 import fastapi.testclient
-from starlette.types import Send, Scope, Message, Receive
 from starlette.requests import Request
 from starlette.responses import Response
+from starlette.types import Send, Scope, Message, Receive
 
 from celune import api
 from celune.i18n import string
 from celune.theme import colors
-from celune.webui import actions as webui_actions
-from celune.webui import runtime as webui
 from celune.celune import Celune
+from celune.webui import runtime as webui
 from celune.server import auth as server_auth
-from celune.server import constants as server_constants
 from celune.typing.agent import AgentTaskState
-from celune.typing.celune import ChunkCaptionProgressCallback
 from celune.dataclasses.ui import UiTimedUpdate
 from celune.server.session import ServerSession
+from celune.webui import actions as webui_actions
 from celune.typing.pipeline import SpeechStreamQueue
+from celune.server import constants as server_constants
+from celune.typing.celune import ChunkCaptionProgressCallback
 from celune.server.constants import WEBUI_CONVERT_API_NAME, WEBUI_SPEAK_INPUT_API_NAME
 
 from ..celtest import celtest

@@ -5,10 +5,8 @@ import re
 import sys
 import base64
 import ctypes
-
-# noinspection PyProtectedMember
-from typing import IO, Optional, cast
 from collections.abc import Callable
+from typing import IO, Optional, cast
 
 from .i18n import string
 

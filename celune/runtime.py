@@ -8,12 +8,6 @@ from collections.abc import Callable
 
 import torch
 
-from .utils import (
-    available,
-    format_number,
-    current_platform,
-    cuda_architecture,
-)
 from .i18n import string
 from ._version import DEVELOPMENT
 from .typing.modes import BackendMode
@@ -24,6 +18,12 @@ from .typing.aliases import LogLevel, LogCallback
 from . import __comment__, __version__, __codename__
 from .vcs import get_branch, is_git_checkout, git_checkout_hint
 from .constants import APP_NAME, NVIDIA_DEVICE_KEYWORDS, SUPPORTED_CUDA_VERSIONS
+from .utils import (
+    available,
+    format_number,
+    current_platform,
+    cuda_architecture,
+)
 
 
 def log_runtime_banner(

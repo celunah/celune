@@ -1,23 +1,23 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for pipeline helpers that do not perform real synthesis."""
 
-import json as _json
 import tempfile
 import threading
-from types import SimpleNamespace
+import json as _json
 from typing import cast
 from pathlib import Path
 from unittest import mock
+from types import SimpleNamespace
 
-import numpy as np
 import pytest
+import numpy as np
 import soundfile as sf
 
 from celune import cesn
-from celune import metadata as celune_metadata
 from celune.celune import Celune
-from celune.pipeline import output, playback, submission
 from celune.constants import APP_SLUG
+from celune import metadata as celune_metadata
+from celune.pipeline import output, playback, submission
 from celune.dataclasses import pipeline as pipeline_types
 
 from ..support import FakeStream, make_pipeline_engine

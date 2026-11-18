@@ -291,7 +291,7 @@ def make_signing_key(
         ValueError: if key paths, trust pins, or the key catalog are invalid.
     """
     repository = project_root or _repository_root()
-    key_catalog = repository / "celune" / "release_keyring.json"
+    key_catalog = repository / "celune" / "assets" / "release_keyring.json"
     release_destination = _validated_destination(
         output_path,
         repository,

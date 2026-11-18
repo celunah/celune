@@ -9,19 +9,25 @@ from typing import Optional
 from collections.abc import Mapping, Generator
 
 from ..i18n import string
+from ..config import Config
 from ..vram import resolve_vram_preset
+from ..typing.aliases import LogCallback
+from .capabilities import PersonaCapabilities
+from ..dataclasses.cevoice import CEVoicePersona
+from ..terminal import RUNTIME_LOG_FILTER_MESSAGES
+from ..typing.common import JSON, JSONSerializable
+from ..registry.llm import PERSONA_DEFAULT_MODEL_ID, persona_model_tier
+from .runtime import PersonaRuntime, response_to_json, request_from_json
+from ..core.concurrency import InferencePriority, PriorityInferenceScheduler
 from ..modes import (
     mode_allows_persona,
     resolve_operation_mode,
 )
-from ..config import Config
-from .runtime import PersonaRuntime, response_to_json, request_from_json
 from ..cevoice import (
     default_loader,
     merge_persona_metadata,
     persona_metadata_from_voice,
 )
-from ..terminal import RUNTIME_LOG_FILTER_MESSAGES
 from ..constants import (
     PERSONA_COMPACT_AT,
     PERSONA_CONTEXT_SPACE,
@@ -29,18 +35,12 @@ from ..constants import (
     PERSONA_HISTORY_MESSAGES,
     DEFAULT_PERSONA_DESCRIPTION,
 )
-from .capabilities import PersonaCapabilities
-from ..registry.llm import PERSONA_DEFAULT_MODEL_ID, persona_model_tier
-from ..typing.common import JSON, JSONSerializable
-from ..typing.aliases import LogCallback
 from ..typing.persona import (
     PersonaModel,
     PersonaTokenizer,
     PersonaEngineView,
     PersonaClientResponse,
 )
-from ..core.concurrency import InferencePriority, PriorityInferenceScheduler
-from ..dataclasses.cevoice import CEVoicePersona
 
 PERSONA_QUANTIZATION = "4bit"
 _CONVERSATION_SUMMARY_SYSTEM_PROMPT = (

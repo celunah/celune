@@ -13,23 +13,30 @@ import pathlib
 import threading
 import contextlib
 import collections.abc
-from typing import TYPE_CHECKING, Union, Optional, cast
 from collections import deque
 from dataclasses import dataclass
+from typing import TYPE_CHECKING, Union, Optional, cast
 
-import numpy as np
 import torch
+import numpy as np
 import sounddevice as sd
 
 from ..i18n import string
+from ..typing.aliases import AudioChunk
+from ..config import resolve_audio_device
+from ..constants import BASE_SR, APP_NAME
+from ..exceptions import NotAvailableError
+from ..analysis import schedule_voice_analysis
+from ..core.concurrency import run_in_daemon_thread
 from ..utils import discard, clear_queue, format_number, format_error_message
+from ..dataclasses.pipeline import SpeechTiming, PlaybackChunk, PlaybackSourceDone
+from ..audio.dsp import error_signal, working_signal, sleeping_signal, readiness_signal
 from .timing import (
     SFX_DUCK_GAIN,
     SFX_DUCK_FADE_SECONDS,
     PIPELINE_CPU_YIELD_SECONDS,
     monotonic_time,
 )
-from ..config import resolve_audio_device
 from .captions import (
     playback_source_meta,
     next_playback_source_id,
@@ -41,7 +48,6 @@ from .captions import (
     clear_playback_source_status,
     notify_speech_playback_finished,
 )
-from ..analysis import schedule_voice_analysis
 from .buffering import (
     PlaybackContentionMonitor,
     acquire_pipeline,
@@ -52,12 +58,6 @@ from .buffering import (
     dequeue_playback_item,
     should_apply_contention_buffering,
 )
-from ..audio.dsp import error_signal, working_signal, sleeping_signal, readiness_signal
-from ..constants import BASE_SR, APP_NAME
-from ..exceptions import NotAvailableError
-from ..typing.aliases import AudioChunk
-from ..core.concurrency import run_in_daemon_thread
-from ..dataclasses.pipeline import SpeechTiming, PlaybackChunk, PlaybackSourceDone
 
 if TYPE_CHECKING:
     from ..celune import Celune

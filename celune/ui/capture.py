@@ -1495,10 +1495,8 @@ def _enqueue_vc_submission_chunk(
         submission_queue.put_nowait(item)
         return
     except queue_module.Full:
-        pass
-
-    with contextlib.suppress(queue_module.Empty):
-        submission_queue.get_nowait()
+        with contextlib.suppress(queue_module.Empty):
+            submission_queue.get_nowait()
 
     with contextlib.suppress(queue_module.Full):
         submission_queue.put_nowait(item)

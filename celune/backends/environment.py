@@ -10,11 +10,12 @@ import hashlib
 import platform
 import importlib
 import subprocess
+import contextlib
 from pathlib import Path
 from typing import Optional
 from collections.abc import Generator
 from dataclasses import asdict, dataclass
-from contextlib import suppress, contextmanager
+
 
 from ..paths import backend_environments_dir, temp_directory_environment
 from ..exceptions import BackendEnvironmentError as _BackendEnvironmentError
@@ -277,7 +278,7 @@ def backend_manifest(backend_id: str) -> BackendManifest:
     return BACKEND_MANIFESTS[backend_id.strip().lower()]
 
 
-@contextmanager
+@contextlib.contextmanager
 def exclusive_lock(path: Path, timeout: float) -> Generator[None, None, None]:
     """Acquire a process-released cross-process lock backed by one file."""
     started = time.monotonic()
@@ -310,7 +311,7 @@ def exclusive_lock(path: Path, timeout: float) -> Generator[None, None, None]:
     try:
         yield
     finally:
-        with suppress(OSError):
+        with contextlib.suppress(OSError):
             if os.name == "nt":
                 import msvcrt  # pylint: disable=E0401
 
@@ -476,7 +477,7 @@ class BackendEnvironmentManager:
             ):
                 continue
 
-            with suppress(OSError):
+            with contextlib.suppress(OSError):
                 shutil.rmtree(candidate)
 
     @staticmethod

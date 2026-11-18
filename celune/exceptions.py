@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Celune exception classes."""
 
-from typing import TYPE_CHECKING, Union, Optional, Protocol
 from pathlib import Path
+from typing import TYPE_CHECKING, Union, Optional, Protocol
 
 from .typing.common import JSON
 

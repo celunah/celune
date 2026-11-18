@@ -15,6 +15,8 @@ import asyncio
 import threading
 import contextlib
 import subprocess
+from pathlib import Path
+from collections import abc
 from hmac import compare_digest
 from typing import (
     Union,
@@ -22,43 +24,46 @@ from typing import (
     Optional,
     Annotated,
 )
-from pathlib import Path
-from collections import abc
 
-import numpy as np
-import gradio as gr
 import fastapi
 import uvicorn
+import numpy as np
+import gradio as gr
 from pydantic import Field, BaseModel
 from starlette import types, concurrency, datastructures
 from starlette.middleware import base as middleware_base
 
+from .i18n import string
 from . import __version__
+from .celune import Celune
+from .paths import project_root
+
+from .webui import runtime as webui
+from .audio.dsp import resample_audio
+from .typing.api import TaskCommandName
+from .server import auth as server_auth
+from .server import jobs as server_jobs
+from .constants import BASE_SR, APP_NAME
+from .webui import actions as webactions
 from .ui import resources as ui_resources
+from .typing.registry import ModelMetadata
+from .cesn import validate_singing_notation
+from .typing.pipeline import SpeechStreamQueue
+from .utils import discard, format_error_message
+from .pipeline.submission import prepare_playback_audio
+from .server.session import ServerSession, server_session
+from .pipeline.playback import force_stop_streamed_speech
+from .server.jobs import SpeechJob, TaskEvent, TaskSubscription
 from .mcp import (
     mcp_app,
     mcp_lifespan,
     configure_mcp_host_allowlist,
 )
-from .cesn import validate_singing_notation
-from .i18n import string
-from .paths import project_root
-from .utils import discard, format_error_message
-from .webui import actions as webactions
-from .webui import runtime as webui
-from .celune import Celune
-from .server import auth as server_auth
-from .server import jobs as server_jobs
-from .audio.dsp import resample_audio
-from .constants import BASE_SR, APP_NAME
 from .exceptions import (
     ModelConsentDeclined,
     ModelConsentRequired,
     TaskSubscriptionClosed,
     ModelCommercialUseRestricted,
-)
-from .typing.api import (
-    TaskCommandName,
 )
 from .server.auth import (
     clean_token,
@@ -77,7 +82,6 @@ from .server.auth import (
     remember_webui_auth_client,
     is_webui_generation_request,
 )
-from .server.jobs import SpeechJob, TaskEvent, TaskSubscription
 from .webui.actions import (
     build_webui,
     decode_uploaded_audio,
@@ -98,9 +102,6 @@ from .webui.runtime import (
     get_webui_input_placeholder,
     subscribe_webui_timed_updates,
 )
-from .server.session import ServerSession, server_session
-from .typing.pipeline import SpeechStreamQueue
-from .typing.registry import ModelMetadata
 from .registry.consent import (
     consent_status,
     consent_details,
@@ -117,8 +118,6 @@ from .server.constants import (
     WEBUI_AUTH_PATH,
     MAX_PENDING_SPEECH_JOBS,
 )
-from .pipeline.playback import force_stop_streamed_speech
-from .pipeline.submission import prepare_playback_audio
 
 Callable = abc.Callable
 Iterator = abc.Iterator

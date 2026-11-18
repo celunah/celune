@@ -11,13 +11,18 @@ import queue
 import argparse
 import threading
 import traceback
-from typing import IO, Never, Optional, cast
-from contextlib import suppress
+import contextlib
 from collections import OrderedDict, abc
+from typing import IO, Never, Optional, cast
 
-from ..vram import is_cuda_out_of_memory, release_cuda_after_oom
+from ..constants import APP_NAME
+from ..typing.aliases import LogLevel
 from ..paths import configure_numba_cache
 from ..cevoice import select_voice_bundle
+from ..typing.common import JSONSerializable
+from ..dataclasses.pipeline import VoiceConversionRequest
+from ..vram import is_cuda_out_of_memory, release_cuda_after_oom
+from ..backends.environment import BackendManifest, backend_manifest
 from .protocol import (
     CEDTS_VERSION,
     WORKER_CAPABILITIES,
@@ -35,7 +40,6 @@ from .protocol import (
     receive_payloads,
     limits_from_capabilities,
 )
-from ..constants import APP_NAME
 from ..exceptions import (
     CESNError,
     CEDTSError,
@@ -47,7 +51,6 @@ from ..exceptions import (
     CEDTSBadInvocationError,
     CESNUnsupportedFeatureError,
 )
-from ..typing.common import JSONSerializable
 from ..typing.worker import (
     WorkerValue,
     WorkerMessage,
@@ -55,15 +58,12 @@ from ..typing.worker import (
     WorkerResponse,
     WorkerPayloadDescriptor,
 )
-from ..typing.aliases import LogLevel
 from ..typing.backends import (
     BackendModel,
     BackendRuntime,
     BackendArguments,
     BackendDescription,
 )
-from ..backends.environment import BackendManifest, backend_manifest
-from ..dataclasses.pipeline import VoiceConversionRequest
 
 _WORKER_STDERR = sys.stderr
 _MESSAGE_ID_REPLAY_WINDOW = 4096
@@ -248,11 +248,11 @@ def _open_binary_streams(args: argparse.Namespace) -> tuple[IO[bytes], IO[bytes]
     except Exception as error:
         for stream in (binary_input, binary_output):
             if stream is not None:
-                with suppress(OSError, ValueError):
+                with contextlib.suppress(OSError, ValueError):
                     stream.close()
         for descriptor in (binary_input_fd, binary_output_fd):
             if descriptor is not None:
-                with suppress(OSError):
+                with contextlib.suppress(OSError):
                     os.close(descriptor)
         if isinstance(error, OSError) and getattr(error, "errno", None) == errno.EBADF:
             raise CEDTSStreamError(f"not connected to {APP_NAME}") from error
@@ -429,7 +429,7 @@ def _release_worker_models(models: dict[int, BackendModel]) -> None:
         except Exception:
             close = None
         if callable(close):
-            with suppress(Exception):
+            with contextlib.suppress(Exception):
                 close()
             continue
 
@@ -439,7 +439,7 @@ def _release_worker_models(models: dict[int, BackendModel]) -> None:
         except Exception:
             unload = None
         if callable(unload):
-            with suppress(Exception):
+            with contextlib.suppress(Exception):
                 unload()
     models.clear()
 
@@ -464,10 +464,8 @@ def _stream_value_summary(value: WorkerValue) -> str:
     nonzero: Optional[bool] = None
     any_method = getattr(audio, "any", None)
     if callable(any_method):
-        try:
+        with contextlib.suppress(RuntimeError, TypeError, ValueError):
             nonzero = bool(any_method())
-        except (RuntimeError, TypeError, ValueError):
-            pass
     return (
         f"type={audio_type} shape={shape!s} dtype={getattr(audio, 'dtype', None)!s} "
         f"samples={sample_count} nonzero={nonzero!s}"
@@ -666,7 +664,7 @@ def _run_request(
             model = backend.load_model(**cast(BackendArguments, arguments))
         except Exception as error:
             if is_cuda_out_of_memory(error):
-                with suppress(Exception):
+                with contextlib.suppress(Exception):
                     backend.unload_model()
                 _release_worker_models(models)
                 release_cuda_after_oom()
@@ -768,7 +766,7 @@ def _run_request(
             if cancellation_event is not None and cancellation_event.is_set():
                 close = getattr(generator, "close", None)
                 if callable(close):
-                    with suppress(Exception):
+                    with contextlib.suppress(Exception):
                         close()
                 return {"ok": False, "cancelled": True, "done": True}, next_model_id
             stream_frame_count += 1
@@ -1040,7 +1038,7 @@ def main() -> int:
         else:
             handshake_results.put(((initial_hello_id, negotiated), None))
         finally:
-            with suppress(OSError, ValueError):
+            with contextlib.suppress(OSError, ValueError):
                 handshake_input.close()
 
     threading.Thread(
@@ -1171,7 +1169,7 @@ def main() -> int:
         progress_data: dict[str, WorkerValue] = {"step": step}
         if total_value is not None:
             progress_data["total"] = total_value
-        with suppress(BrokenPipeError, CEDTSError, OSError):
+        with contextlib.suppress(BrokenPipeError, CEDTSError, OSError):
             _send_message(
                 protocol_stream,
                 binary_output,
@@ -1197,7 +1195,7 @@ def main() -> int:
             binary_output,
             sys.stdin.buffer,
         ):
-            with suppress(OSError, ValueError):
+            with contextlib.suppress(OSError, ValueError):
                 stream.close()
 
     def _run_active_request(

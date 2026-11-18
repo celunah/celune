@@ -5,19 +5,20 @@ from __future__ import annotations
 
 import re
 import threading
-from typing import Union, Optional, cast
 from collections.abc import Sequence
+from typing import Union, Optional, cast
 
 from ..i18n import string
 from ..paths import huggingface_progress
+from ..typing.locks import ComponentLockName
+from ..agent.needle import NeedleToolSelector
 from ..utils import discard, format_error_message
+from .conversation import deliver_persona_response, wait_for_persona_playback
 from ..exceptions import (
     ModelConsentDeclined,
     ModelConsentRequired,
     NeedleSelectionError,
 )
-from .conversation import deliver_persona_response, wait_for_persona_playback
-from ..agent.needle import NeedleToolSelector
 from ..typing.agent import (
     ToolCall,
     AgentOutput,
@@ -32,7 +33,6 @@ from ..typing.agent import (
     AgentToolExecutionStatus,
     AgentClassificationResult,
 )
-from ..typing.locks import ComponentLockName
 
 _UNSAFE_AGENT_PREAMBLE_RE = re.compile(
     r"\b(?:i\s+will|i['’]ll|let\s+me|ready|available|standing|"

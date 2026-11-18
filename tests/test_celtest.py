@@ -7,9 +7,9 @@ import os
 import sys
 import time
 import subprocess
-from types import SimpleNamespace
 from typing import cast
 from pathlib import Path
+from types import SimpleNamespace
 
 import tests.celtest as celtest_plugin
 from celune.utils import discard
@@ -282,7 +282,7 @@ from tests.celtest import celtest
 
 @celtest("friendly pass")
 def test_pass():
-    pass
+    return None
 
 @celtest("friendly warning")
 def test_warning():
@@ -291,7 +291,7 @@ def test_warning():
 @pytest.mark.skip(reason="not part of this run")
 @celtest("hidden skip")
 def test_skip():
-    pass
+    return None
 
 @celtest("friendly failure", hint="The sample assertion was false.")
 def test_failure():
@@ -360,7 +360,7 @@ from tests.celtest import celtest
 
 @celtest("friendly pass")
 def test_pass():
-    pass
+    return None
 
 @celtest("friendly warning")
 def test_warning():
@@ -369,7 +369,7 @@ def test_warning():
 @pytest.mark.skip(reason="not part of this run")
 @celtest("hidden skip")
 def test_skip():
-    pass
+    return None
 
 @celtest("friendly failure", hint="The sample assertion was false.")
 def test_failure():
@@ -444,11 +444,11 @@ def pytest_report_teststatus(report, config):
         test_file.write_text(
             """
 def test_first():
-    pass
+    return None
 
 
 def test_second():
-    pass
+    return None
 """,
             encoding="utf-8",
         )
@@ -497,7 +497,7 @@ def test_failure():
 
 @celtest("unstarted test")
 def test_unstarted():
-    pass
+    return None
 """,
             encoding="utf-8",
         )
@@ -588,7 +588,7 @@ from tests.celtest import celtest
 
 @celtest("completed test")
 def test_completed():
-    pass
+    return None
 
 @celtest("interrupted test")
 def test_interrupted():
@@ -600,7 +600,7 @@ def test_interrupted():
 
 @celtest("unstarted test")
 def test_unstarted():
-    pass
+    return None
 """,
             encoding="utf-8",
         )

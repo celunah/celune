@@ -5,9 +5,9 @@ import os
 import atexit
 import shutil
 import tempfile
-from typing import Union, Literal, Optional
 from pathlib import Path
 from collections.abc import Iterator
+from typing import Union, Literal, Optional
 
 import pytest
 

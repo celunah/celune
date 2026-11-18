@@ -10,35 +10,35 @@ import threading
 import contextlib
 import importlib.util
 import importlib.metadata
-from types import ModuleType, TracebackType
-from typing import Optional, cast
 from pathlib import Path
+from typing import Optional, cast
 from dataclasses import dataclass
+from types import ModuleType, TracebackType
 from collections.abc import Callable, Generator
 
-import numpy as np
 import torch
-import soundfile as sf
 import torchaudio
+import numpy as np
+import soundfile as sf
 
-from .base import CeluneVCBackend
 from ...i18n import string
+from ...utils import available
+from .base import CeluneVCBackend
+from ...registry import OTHER_MODELS
+from ...registry.consent import require_model_consent
+from ...typing.aliases import AudioChunk, SeedVCGenerator
+from ...dataclasses.pipeline import AudioOutput, VoiceConversionRequest
 from ...paths import (
     temp_data_dir,
     huggingface_progress,
     configure_numba_cache,
     huggingface_hub_cache_dir,
 )
-from ...utils import available
-from ...registry import OTHER_MODELS
-from ...typing.aliases import AudioChunk, SeedVCGenerator
 from ...typing.backends import (
     SeedVCWrapper,
     SeedVCModelValue,
     SeedVCRealtimeModule,
 )
-from ...registry.consent import require_model_consent
-from ...dataclasses.pipeline import AudioOutput, VoiceConversionRequest
 
 __all__ = ["CeluneSeedVCBackend"]
 
@@ -328,14 +328,12 @@ class CeluneSeedVCBackend(CeluneVCBackend):
             with contextlib.suppress(ValueError):
                 sys.path.remove(source_root)
 
-        try:
+        with contextlib.suppress(ImportError):
             hf_utils = __import__("hf_utils", fromlist=["*"])
             cls._configure_seedvc_downloads(hf_utils, hf_utils)
             vars(module)["load_custom_model_from_hf"] = (
                 hf_utils.load_custom_model_from_hf
             )
-        except ImportError:
-            pass
         return cast(SeedVCRealtimeModule, module)
 
     @staticmethod

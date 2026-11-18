@@ -5,12 +5,13 @@ import re
 import json
 import contextlib
 from typing import Optional, cast
-from dataclasses import field, dataclass
 from collections.abc import Sequence
+from dataclasses import field, dataclass
 
+from ..typing.common import JSON
 from ..paths import temp_data_dir
 from ..typing.agent import ToolCall, AgentContext, AgentTaskState, AgentToolSchema
-from ..typing.common import JSON
+
 
 _MARKDOWN_HEADING = re.compile(r"^\s{0,3}#{1,6}(?:\s|$)")
 

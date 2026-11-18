@@ -20,15 +20,15 @@ import contextlib
 import subprocess
 import http.client
 import urllib.request
-from typing import Optional
 from pathlib import Path
+from typing import Optional
 from collections import deque
 from dataclasses import dataclass
 from urllib.parse import unquote, urlparse
 
 from ..paths import app_data_dir, huggingface_hub_cache_dir
 from ..dataclasses.persona import GenerateRequest, GenerateResponse
-from ..registry.gguf_catalog import (
+from ..registry.gguf import (
     PERSONA_GGUF_VARIANTS_BY_MODEL,
     PersonaGGUFFile,
     PersonaGGUFVariant,
@@ -476,7 +476,7 @@ class LlamaCppPersonaRuntime:
                     "llama-server exited before loading the Persona model: "
                     + self._diagnostic_tail()
                 )
-            try:
+            with contextlib.suppress(OSError):
                 connection = http.client.HTTPConnection(
                     "127.0.0.1", self._port, timeout=1.0
                 )
@@ -486,8 +486,6 @@ class LlamaCppPersonaRuntime:
                 connection.close()
                 if response.status == 200:
                     return
-            except OSError:
-                pass
             time.sleep(0.25)
         self.close()
         raise TimeoutError(

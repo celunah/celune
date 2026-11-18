@@ -5,8 +5,8 @@ import math
 import hashlib
 import sqlite3
 import unicodedata
-from typing import Optional
 from pathlib import Path
+from typing import Optional
 from dataclasses import dataclass
 
 from .paths import app_data_dir

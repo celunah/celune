@@ -5,12 +5,13 @@ from typing import TYPE_CHECKING
 from importlib import import_module
 
 if TYPE_CHECKING:
+    from .api import WEBUI_UNSET, WebUiUnset
+    from .modes import BackendMode, OperationMode
     from .ui import (
         CeluneBaseUI,
         CeluneTextualUI,
         CeluneHeadlessBaseUI,
     )
-    from .api import WEBUI_UNSET, WebUiUnset
     from .lua import (
         LuaTable,
         LuaValue,
@@ -83,7 +84,6 @@ if TYPE_CHECKING:
         ComponentLockAcquisition,
         ComponentLockRequirement,
     )
-    from .modes import BackendMode, OperationMode
     from .utils import (
         CallerInfo,
         LanguageResult,

@@ -7,20 +7,20 @@ import time
 import queue
 import asyncio
 import threading
-from types import SimpleNamespace
 from typing import cast
 from unittest import mock
+from types import SimpleNamespace
 
-import numpy as np
 import pytest
+import numpy as np
 import soundfile as sf
 from fastapi import UploadFile
-from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
+from fastapi.responses import JSONResponse
 
 from celune import api
-from celune.celune import Celune
 from celune.server import jobs
+from celune.celune import Celune
 from celune.typing.pipeline import SpeechStreamQueue
 
 from ..celtest import celtest

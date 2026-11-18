@@ -2,6 +2,7 @@
 """Focused lifecycle tests for Celune's Phase 2 agent runtime."""
 
 from __future__ import annotations
+
 import threading
 from unittest import mock
 from types import SimpleNamespace

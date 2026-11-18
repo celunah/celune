@@ -29,6 +29,8 @@ import numpy as np
 from huggingface_hub import hf_hub_download
 
 from ...i18n import string
+from ...typing import JSONSerializable
+from ...typing.aliases import AudioChunk
 from ...paths import (
     app_data_dir,
     temp_data_dir,
@@ -36,9 +38,7 @@ from ...paths import (
     huggingface_hub_cache_dir,
     temp_directory_environment,
 )
-from ...typing import JSONSerializable
-from ...typing.aliases import AudioChunk
-from ...registry.audio_cpp_models import (
+from ...registry.audio_cpp import (
     AUDIOCPP_GGUF_REPO,
     AUDIOCPP_GGUF_REVISION,
     AudioCppModelArtifact,
@@ -786,7 +786,12 @@ def start_audio_cpp_server(
                     "audio.cpp exited before the model became ready "
                     f"(exit code {process.returncode}):\n{server_log_tail(log_path)}"
                 )
-            try:
+            with contextlib.suppress(
+                OSError,
+                urllib.error.URLError,
+                ValueError,
+                json.JSONDecodeError,
+            ):
                 health = server_json(base_url, "/health", timeout=2.0)
                 if health.get("status") != "ok":
                     time.sleep(0.25)
@@ -812,13 +817,6 @@ def start_audio_cpp_server(
                                     ),
                                 )
                             break
-            except (
-                OSError,
-                urllib.error.URLError,
-                ValueError,
-                json.JSONDecodeError,
-            ):
-                pass
             time.sleep(0.25)
 
         raise TimeoutError(
@@ -1006,12 +1004,15 @@ def start_shared_audio_cpp_server(
                     "audio.cpp exited before the shared server became ready "
                     f"(exit code {process.returncode}):\n{server_log_tail(log_path)}"
                 )
-            try:
+            with contextlib.suppress(
+                OSError,
+                urllib.error.URLError,
+                ValueError,
+                json.JSONDecodeError,
+            ):
                 health = server_json(base_url, "/health", timeout=2.0)
                 if health.get("status") == "ok":
                     return _SharedAudioCppServer(process, base_url, log_path)
-            except (OSError, urllib.error.URLError, ValueError, json.JSONDecodeError):
-                pass
             time.sleep(0.25)
         raise TimeoutError(
             "audio.cpp shared server did not become ready within "

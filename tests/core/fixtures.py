@@ -3,16 +3,17 @@
 
 import queue
 import threading
-from typing import Optional
 from unittest import mock
+from typing import Optional
 from functools import partial
 from collections.abc import Callable
 
 import pytest
 
-from celune.core import lifecycle as core_lifecycle
+
 from celune.celune import Celune
 from celune.typing.celune import ToastCallback
+from celune.core import lifecycle as core_lifecycle
 from celune.core.lifecycle import _close_speech_pipeline as close_pipeline
 from celune.dataclasses.celune import (
     CeluneAudioState,

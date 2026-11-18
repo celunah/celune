@@ -3,12 +3,13 @@
 
 from __future__ import annotations
 
-from typing import Final, Union, Optional, cast
+
 from pathlib import Path
 from collections.abc import Mapping
+from typing import Final, Union, Optional, cast
 
-from .v4 import V4_COMPRESSION_NONE
 from .base import CEVoice
+from .v4 import V4_COMPRESSION_NONE
 from ..exceptions import CEVoiceError
 from ..typing.cevoice import Manifest, ManifestValue
 

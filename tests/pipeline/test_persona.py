@@ -1,32 +1,38 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for pipeline helpers that do not perform real synthesis."""
 
-import json as _json
 import tempfile
 import threading
-from types import SimpleNamespace
-from typing import Optional, cast
+import json as _json
 from pathlib import Path
 from unittest import mock
+from types import SimpleNamespace
+from typing import Optional, cast
 from collections.abc import Iterator
 
-import numpy as np
 import pytest
+import numpy as np
 
-from celune.core import conversation as core_conversation
+
 from celune.i18n import string
 from celune.utils import discard
 from celune.celune import Celune
+from celune.constants import PipelineStates
+from celune.typing.aliases import AudioChunk
+from celune.typing.common import JSON, JSONSerializable
+from celune.persona.impl import compact_persona_history
+from celune.core import conversation as core_conversation
+from celune.pipeline import captions, playback, buffering
+from celune.dataclasses import pipeline as pipeline_types
+from celune.persona.capabilities import PersonaCapabilities
+from celune.persona import conversation as persona_conversation
+from celune.dataclasses.pipeline import CaptionAlignmentSection
+from celune.persona.prompts import PersonaPromptBuilder, render_markdown_subsection
 from celune.cevoice import (
     CEVoice,
     CEVoiceLoader,
     persona_files_from_bundle,
 )
-from celune.persona import conversation as persona_conversation
-from celune.pipeline import captions, playback, buffering
-from celune.constants import PipelineStates
-from celune.dataclasses import pipeline as pipeline_types
-from celune.persona.impl import compact_persona_history
 from celune.typing.agent import (
     ToolCall,
     AgentTask,
@@ -40,16 +46,11 @@ from celune.typing.agent import (
     AgentToolDangerLevel,
     AgentToolArgumentSchema,
 )
-from celune.typing.common import JSON, JSONSerializable
-from celune.typing.aliases import AudioChunk
-from celune.persona.prompts import PersonaPromptBuilder, render_markdown_subsection
 from celune.dataclasses.cevoice import (
     CEVoicePersona,
     PersonaIdentity,
     PersonaStyleValues,
 )
-from celune.dataclasses.pipeline import CaptionAlignmentSection
-from celune.persona.capabilities import PersonaCapabilities
 
 from .helpers import (
     LanguageAwareBackend,

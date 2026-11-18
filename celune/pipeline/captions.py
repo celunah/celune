@@ -7,7 +7,6 @@ import re
 import json
 import math
 import queue
-import string as string_module
 import inspect
 import logging
 import importlib
@@ -15,27 +14,28 @@ import itertools
 import threading
 import subprocess
 import unicodedata
-from types import ModuleType
-from typing import TYPE_CHECKING, Union, Optional, Protocol, cast
-from difflib import SequenceMatcher
+import string as string_module
 from pathlib import Path
+from types import ModuleType
 from collections import abc, deque
+from difflib import SequenceMatcher
+from typing import TYPE_CHECKING, Union, Optional, Protocol, cast
 
 import numpy as np
 from iso639.exceptions import InvalidLanguageValue, DeprecatedLanguageValue
 
 from ..i18n import string
-from ..utils import format_error_message
-from .timing import monotonic_time
 from ..constants import BASE_SR
-from ..exceptions import OnnxRuntimeNotFound, EspeakExecutableNotFound
 from ..typing.common import JSON
+from .timing import monotonic_time
+from ..utils import format_error_message
+from ..audio.resampling import resample_audio
+from ..typing.pipeline import SpeechStreamQueue
+from ..dataclasses.events import StateChangedEvent
+from ..registry.consent import require_model_consent
 from ..registry.other import CAPTION_ALIGNMENT_MODEL_ID
 from ..typing.aliases import LogLevel, AudioChunk, AudioChunks
-from ..typing.pipeline import SpeechStreamQueue
-from ..audio.resampling import resample_audio
-from ..registry.consent import require_model_consent
-from ..dataclasses.events import StateChangedEvent
+from ..exceptions import OnnxRuntimeNotFound, EspeakExecutableNotFound
 from ..dataclasses.pipeline import (
     SpeechTiming,
     CaptionPlaybackState,

@@ -7,8 +7,8 @@ import threading
 from typing import cast
 from collections.abc import Callable
 
-from .protocol import build_packet, decode_message, encode_message
 from ..typing.worker import WorkerValue
+from .protocol import build_packet, decode_message, encode_message
 from ..dataclasses.ui import UiTimedUpdate as _UiTimedUpdate
 
 UiTimedUpdateCallback = Callable[["_UiTimedUpdate"], None]

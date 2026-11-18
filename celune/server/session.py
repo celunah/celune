@@ -2,10 +2,11 @@
 """Process-wide state shared by the API and mounted WebUI."""
 
 from __future__ import annotations
+
 import threading
-from collections import deque, defaultdict
-from collections.abc import Callable
 from dataclasses import field, dataclass
+from collections.abc import Callable
+from collections import deque, defaultdict
 from typing import TYPE_CHECKING, Optional, Protocol
 
 from ..i18n import string
@@ -14,7 +15,6 @@ from ..typing.events import EventName, EventCallback
 
 if TYPE_CHECKING:
     from .jobs import SpeechJob
-
     from ..celune import Celune
 
 

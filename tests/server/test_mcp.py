@@ -4,16 +4,16 @@
 import queue
 import base64
 import asyncio
-from types import SimpleNamespace
 from typing import cast
 from pathlib import Path
 from unittest import mock
+from types import SimpleNamespace
 
-import numpy as np
 import pytest
+import numpy as np
+from fastapi.testclient import TestClient
 import mcp.types as mcp_types
 import mcp.server.mcpserver.exceptions as mcp_exceptions
-from fastapi.testclient import TestClient
 
 from celune import api, mcp
 from celune.typing.pipeline import SpeechStreamQueue

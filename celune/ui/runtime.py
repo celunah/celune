@@ -16,8 +16,8 @@ import itertools
 import threading
 import contextlib
 from io import TextIOWrapper
-from typing import Union, Optional, cast
 from collections.abc import Callable
+from typing import Union, Optional, cast
 
 from rich.cells import cell_len
 
@@ -107,10 +107,8 @@ def _run_on_ui_thread(self, callback: Callable[[], None]) -> None:
     if threading.current_thread() is threading.main_thread():
         callback()
     else:
-        try:
+        with contextlib.suppress(RuntimeError):
             self.call_from_thread(callback)
-        except RuntimeError:
-            pass
 
 
 def _severity_color(self, severity: str = "info") -> str:
@@ -1188,10 +1186,8 @@ def _load_deferred_runtime(self) -> None:
             celune = self._startup_loader()
         _app.ensure_ui_runtime_dependencies()
     except BaseException as exc:
-        try:
+        with contextlib.suppress(RuntimeError):
             self.call_from_thread(self._handle_deferred_runtime_error, exc)
-        except RuntimeError:
-            pass
         return
     if celune is not None:
         try:

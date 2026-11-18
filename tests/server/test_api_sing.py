@@ -4,9 +4,9 @@
 import json
 import queue
 import asyncio
-from types import SimpleNamespace
 from typing import cast
 from unittest import mock
+from types import SimpleNamespace
 
 import numpy as np
 from starlette.responses import Response

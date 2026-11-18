@@ -7,20 +7,23 @@ import json
 import tempfile
 import threading
 import subprocess
-from types import SimpleNamespace
-from typing import IO, Optional, cast
 from pathlib import Path
 from unittest import mock
 from collections import abc
 from dataclasses import replace
+from types import SimpleNamespace
+from typing import IO, Optional, cast
 
-import numpy as np
+
 import pytest
+import numpy as np
 
-from celune.cedts import remote, worker
-from celune.paths import temp_data_dir
+
 from celune.utils import discard
+from celune.paths import temp_data_dir
+from celune.cedts import remote, worker
 from celune.backends import environment
+from celune.dataclasses.pipeline import AudioOutput, VoiceConversionRequest
 from celune.exceptions import (
     CEDTSError,
     CEDTSEOFError,
@@ -61,7 +64,6 @@ from celune.backends.environment import (
     exclusive_lock,
     backend_manifest,
 )
-from celune.dataclasses.pipeline import AudioOutput, VoiceConversionRequest
 
 
 class TestBackendEnvironment:
@@ -800,7 +802,7 @@ class TestBackendEnvironment:
                 pytest.raises(BackendEnvironmentError),
                 exclusive_lock(lock_path, timeout=0.01),
             ):
-                pass
+                raise AssertionError("the held installation lock was acquired")
 
     def test_uv_timeout_becomes_backend_environment_error(self) -> None:
         """Verify stalled uv operations release installation with a clear error."""

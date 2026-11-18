@@ -21,12 +21,6 @@ from dataclasses import dataclass
 from typing import Optional, Union
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
-from .vcs import (
-    UPSTREAM_REPOSITORY_URL,
-    is_git_checkout,
-    open_repository,
-    git_checkout_hint,
-)
 from .i18n import string
 from . import __version__
 from .exceptions import UpdateError
@@ -34,6 +28,12 @@ from .constants import APP_NAME, CELUNE_UA
 from .typing.common import JSONSerializable
 from .paths import project_root, running_compiled, temp_data_dir
 from .signature import SIGNATURE_NAME, load_signature, verify_manifest_signature
+from .vcs import (
+    UPSTREAM_REPOSITORY_URL,
+    is_git_checkout,
+    open_repository,
+    git_checkout_hint,
+)
 
 REMOTE_URL = f"{UPSTREAM_REPOSITORY_URL}.git"
 RELEASES_API_URL = "https://api.github.com/repos/celunah/celune/releases?per_page=100"

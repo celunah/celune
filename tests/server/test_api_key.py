@@ -7,13 +7,13 @@ import stat
 from pathlib import Path
 
 from celune.config import config_api_settings
+from celune.server.session import server_session
 from celune.server.auth import (
     generate_api_key,
     resolve_api_host,
     get_or_create_api_key,
     configure_api_security,
 )
-from celune.server.session import server_session
 
 
 def test_generate_api_key_uses_the_celune_base36_format() -> None:

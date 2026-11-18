@@ -7,10 +7,10 @@ import io
 import warnings
 import threading
 import contextlib
-from types import SimpleNamespace
-from typing import ClassVar, Optional, cast
 from unittest import mock
 from functools import partial
+from types import SimpleNamespace
+from typing import ClassVar, Optional, cast
 from collections.abc import Mapping, Callable, Sequence
 
 import pytest

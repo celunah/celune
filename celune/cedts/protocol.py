@@ -3,16 +3,19 @@
 
 import json
 import struct
-from math import isfinite
+
 from uuid import uuid4
-from typing import IO, Optional, cast
 from pathlib import Path
+from math import isfinite
 from dataclasses import dataclass
+from typing import IO, Optional, cast
 from collections.abc import Mapping, Sequence
 
 import numpy as np
 
 from ..i18n import string
+from ..typing.common import JSON, JSONSerializable
+from ..dataclasses.pipeline import AudioOutput, VoiceConversionRequest
 from ..exceptions import (
     CEDTSError,
     CEDTSEOFError,
@@ -20,14 +23,12 @@ from ..exceptions import (
     CEDTSPayloadError,
     CEDTSProtocolError,
 )
-from ..typing.common import JSON, JSONSerializable
 from ..typing.worker import (
     WorkerValue,
     WorkerMessage,
     WorkerControlMessage,
     WorkerPayloadDescriptor,
 )
-from ..dataclasses.pipeline import AudioOutput, VoiceConversionRequest
 
 __all__ = [
     "CALL_ARGUMENT_SCHEMAS",

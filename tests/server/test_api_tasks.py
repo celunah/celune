@@ -3,18 +3,18 @@
 
 import asyncio
 import threading
-from types import SimpleNamespace
-from typing import Literal, Optional, cast
 from unittest import mock
+from types import SimpleNamespace
 from collections.abc import Iterator
+from typing import Literal, Optional, cast
 
 import pytest
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
 from celune import api
-from celune.celune import Celune
 from celune.server import jobs
+from celune.celune import Celune
 from celune.typing.api import TaskStatus, TaskEventName
 
 

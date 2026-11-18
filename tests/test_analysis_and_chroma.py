@@ -5,14 +5,14 @@ import datetime
 from pathlib import Path
 from unittest import mock
 
-import numpy as np
 import torch
 import pytest
+import numpy as np
 
 from celune import i18n, analysis
+from celune.theme.colors import RGB
 from celune.chroma import AudioRGBGlow
 from celune.constants import BASE_SR, N_A_NUMERIC
-from celune.theme.colors import RGB
 
 
 class TestAnalysis:

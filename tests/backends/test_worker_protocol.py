@@ -9,11 +9,11 @@ import select
 import argparse
 import threading
 import subprocess
-from types import SimpleNamespace
-from typing import Optional, cast
+import contextlib
 from pathlib import Path
 from unittest import mock
-from contextlib import suppress
+from types import SimpleNamespace
+from typing import Optional, cast
 from collections import OrderedDict, deque
 
 import numpy as np
@@ -490,12 +490,12 @@ raise SystemExit(worker.main())
                 core_binary_input,
             ):
                 if descriptor >= 0:
-                    with suppress(OSError):
+                    with contextlib.suppress(OSError):
                         os.close(descriptor)
             if process is not None:
                 if process.poll() is None:
                     process.terminate()
-                    with suppress(subprocess.TimeoutExpired):
+                    with contextlib.suppress(subprocess.TimeoutExpired):
                         process.wait(timeout=2)
                 if process.stdin is not None:
                     process.stdin.close()
@@ -548,10 +548,10 @@ protocol_stream.close()
             assert process.returncode == 0
         finally:
             if process.poll() is None:
-                with suppress(Exception):
+                with contextlib.suppress(Exception):
                     process.stdin.write(b"\n")
                     process.stdin.flush()
-                with suppress(subprocess.TimeoutExpired):
+                with contextlib.suppress(subprocess.TimeoutExpired):
                     process.wait(timeout=2)
             if process.stdin is not None:
                 process.stdin.close()
@@ -738,14 +738,14 @@ raise SystemExit(worker.main())
                 core_binary_input,
             ):
                 if descriptor >= 0:
-                    with suppress(OSError):
+                    with contextlib.suppress(OSError):
                         os.close(descriptor)
-            with suppress(OSError, ValueError):
+            with contextlib.suppress(OSError, ValueError):
                 core_binary_input_stream.close()
             if process is not None:
                 if process.poll() is None:
                     process.terminate()
-                    with suppress(subprocess.TimeoutExpired):
+                    with contextlib.suppress(subprocess.TimeoutExpired):
                         process.wait(timeout=2)
                 for stream in (process.stdin, process.stdout, process.stderr):
                     if stream is not None:
@@ -924,9 +924,9 @@ finally:
             nonlocal release_write
             if release_write < 0:
                 return
-            with suppress(OSError):
+            with contextlib.suppress(OSError):
                 os.write(release_write, b"r")
-            with suppress(OSError):
+            with contextlib.suppress(OSError):
                 os.close(release_write)
             release_write = -1
 
@@ -1109,13 +1109,13 @@ finally:
                 started_write,
             ):
                 if descriptor >= 0:
-                    with suppress(OSError):
+                    with contextlib.suppress(OSError):
                         os.close(descriptor)
             release_blocked_operation()
             if process is not None:
                 if process.poll() is None:
                     process.terminate()
-                    with suppress(subprocess.TimeoutExpired):
+                    with contextlib.suppress(subprocess.TimeoutExpired):
                         process.wait(timeout=2)
                 for stream in (process.stdin, process.stdout, process.stderr):
                     if stream is not None:
@@ -1358,12 +1358,12 @@ raise SystemExit(worker.main())
                 core_binary_input,
             ):
                 if descriptor >= 0:
-                    with suppress(OSError):
+                    with contextlib.suppress(OSError):
                         os.close(descriptor)
             if process is not None:
                 if process.poll() is None:
                     process.terminate()
-                    with suppress(subprocess.TimeoutExpired):
+                    with contextlib.suppress(subprocess.TimeoutExpired):
                         process.wait(timeout=2)
                 for stream in (process.stdin, process.stdout, process.stderr):
                     if stream is not None:

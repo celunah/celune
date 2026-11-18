@@ -142,7 +142,7 @@ own. It is the index to use when a feature needs a precise code entrypoint.
 | `scripts/celune-bin.cmd` | Windows compiled-binary handoff. |
 | `scripts/ci_warnings.py` | CI warning annotations. |
 | `scripts/write_update_manifest.py` | Release update metadata. |
-| `celune/release_keyring.json` | Public manifest-signing key catalog embedded in signed launcher trailers. |
+| `celune/assets/release_keyring.json` | Public manifest-signing key catalog embedded in signed launcher trailers. |
 | `launcher/release_keys.h` | Pinned keyring root trust anchor for the C launcher. |
 | `celune/lang/` | Localized runtime strings. |
 | `voices/` | Bundled CEVOICE packs. |

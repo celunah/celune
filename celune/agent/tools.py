@@ -11,13 +11,15 @@ import shutil
 import datetime
 import platform
 import subprocess
-from typing import TYPE_CHECKING, Optional, cast
 from pathlib import Path
 from dataclasses import dataclass
 from collections.abc import Mapping, Callable
+from typing import TYPE_CHECKING, Optional, cast
 
 import psutil
 
+from ..typing.modes import OperationMode
+from ..typing.common import JSON, JSONSerializable
 from ..utils import clear_queue, format_error_message
 from ..exceptions import LocalManagementError as _LocalManagementError
 from ..typing.agent import (
@@ -32,8 +34,6 @@ from ..typing.agent import (
     AgentToolArgumentSchema,
     AgentToolExecutionStatus,
 )
-from ..typing.modes import OperationMode
-from ..typing.common import JSON, JSONSerializable
 
 if TYPE_CHECKING:
     from ..celune import Celune

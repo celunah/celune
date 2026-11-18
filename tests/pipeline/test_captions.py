@@ -3,10 +3,10 @@
 
 import json
 import threading
-from types import ModuleType, SimpleNamespace
 from typing import cast
 from pathlib import Path
 from unittest import mock
+from types import ModuleType, SimpleNamespace
 
 import numpy as np
 

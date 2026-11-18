@@ -4,12 +4,18 @@
 from __future__ import annotations
 
 from uuid import uuid4
-from typing import TYPE_CHECKING, Union, Optional, cast
 from dataclasses import replace
 from collections.abc import Mapping, Sequence
+from typing import TYPE_CHECKING, Union, Optional, cast
 
 from ..i18n import string
+from ..typing.aliases import LogLevel
 from ..utils import format_error_message
+from ..typing.modes import OperationMode
+from ..extensions.events import EventDispatcher
+from ..typing.common import JSON, JSONSerializable
+from ..typing.events import EventName, EventPayload
+from ..persona.capabilities import PersonaCapabilities
 from ..typing.agent import (
     ToolCall,
     AgentTask,
@@ -60,18 +66,12 @@ from ..typing.locks import (
     ComponentBusyResult,
     ComponentLockRequirement,
 )
-from ..typing.modes import OperationMode
-from ..typing.common import JSON, JSONSerializable
-from ..typing.events import EventName, EventPayload
-from ..typing.aliases import LogLevel
-from ..extensions.events import EventDispatcher
 from ..dataclasses.events import (
     AgentTaskFinishedEvent,
     AgentChoiceRequestedEvent,
     AgentTaskStateChangedEvent,
     AgentApprovalRequestedEvent,
 )
-from ..persona.capabilities import PersonaCapabilities
 
 if TYPE_CHECKING:
     from ..celune import Celune

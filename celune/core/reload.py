@@ -6,21 +6,28 @@ from __future__ import annotations
 
 import time
 import contextlib
-from typing import TYPE_CHECKING, Union, Optional, cast
 from pathlib import Path
 from dataclasses import dataclass
+from typing import TYPE_CHECKING, Union, Optional, cast
 
 from transformers.modeling_utils import PreTrainedModel
 
 from . import lifecycle
+from ..constants import APP_NAME
 from ..i18n import string, tagged_string
+from ..typing.backends import BackendModel
+from ..typing.common import JSONSerializable
+from ..dataclasses.cevoice import CEVoicePersona
+from ..utils import available, format_error_message
+from ..backends.environment import backend_manifest
+from ..backends.tts import CeluneBackend, resolve_backend
+from ..exceptions import WarmupError, BackendError, NotAvailableError
 from ..vram import (
     VramPreset,
     resolve_vram_preset,
     is_cuda_out_of_memory,
     release_cuda_after_oom,
 )
-from ..utils import available, format_error_message
 from ..config import (
     config_bool,
     config_value,
@@ -40,14 +47,10 @@ from .lifecycle import (
     _core_backend_target,
     tts_quantization_enabled,
 )
-from ..constants import APP_NAME
-from ..exceptions import WarmupError, BackendError, NotAvailableError
 from ..backends.vc import (
     CeluneVCBackend,
     resolve_vc_backend as create_vc_backend,
 )
-from ..backends.environment import backend_manifest
-from ..backends.tts import CeluneBackend, resolve_backend
 from ..typing.celune import (
     VCBackendSpec,
     TTSBackendSpec,
@@ -55,15 +58,12 @@ from ..typing.celune import (
     MessageCallback,
     ReleasableObject,
 )
-from ..typing.common import JSONSerializable
-from ..typing.backends import BackendModel
 from ..dataclasses.events import (
     VoiceChangedEvent,
     CharacterLoadedEvent,
     CharacterChangedEvent,
     CharacterUnloadedEvent,
 )
-from ..dataclasses.cevoice import CEVoicePersona
 
 
 if TYPE_CHECKING:

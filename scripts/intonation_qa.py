@@ -6,8 +6,8 @@ import os
 import argparse
 from pathlib import Path
 
-import numpy as np
 import librosa
+import numpy as np
 import soundfile as sf
 
 type DualIntonation = tuple[

@@ -6,21 +6,23 @@ from __future__ import annotations
 import os
 import sys
 import tempfile
-from types import SimpleNamespace
-from typing import TYPE_CHECKING, Optional, cast
 from pathlib import Path
 from contextlib import ExitStack
 from dataclasses import dataclass
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 from collections.abc import Mapping, Callable
+from typing import TYPE_CHECKING, Optional, cast
 
 from ..i18n import string
-from .tools import production_agent_tools, production_agent_tool_schemas
-from ..paths import temp_data_dir
 from ..utils import discard
+from ..typing.common import JSON
+from ..paths import temp_data_dir
 from .routing import AgentInputRouter
-from .runtime import AgentRuntime, DefaultAgentPermissionPolicy
 from ..exceptions import NeedleSelectionError
+from ..extensions.events import EventDispatcher
+from .runtime import AgentRuntime, DefaultAgentPermissionPolicy
+from .tools import production_agent_tools, production_agent_tool_schemas
 from ..typing.agent import (
     ToolCall,
     AgentTask,
@@ -53,8 +55,6 @@ from ..typing.agent import (
     AgentCancellationReason,
     AgentPermissionDecision,
 )
-from ..typing.common import JSON
-from ..extensions.events import EventDispatcher
 
 if TYPE_CHECKING:
     from ..celune import Celune

@@ -6,7 +6,9 @@ from importlib import import_module
 
 if TYPE_CHECKING:
     from .ui import UiTimedUpdate
+    from .extensions import CeluneContext
     from .asr import WhisperWord, WhisperSegment
+    from .cevoice import CEVoicePersona, PersonaIdentity, PersonaStyleValues
     from .celune import (
         CELUNE_CONSTANT_PROPERTIES,
         CELUNE_FORWARDED_PROPERTIES,
@@ -18,7 +20,6 @@ if TYPE_CHECKING:
         CeluneCallbackState,
         CelunePipelineState,
     )
-    from .cevoice import CEVoicePersona, PersonaIdentity, PersonaStyleValues
     from .persona import (
         ChatMessage,
         GenerateRequest,
@@ -36,7 +37,6 @@ if TYPE_CHECKING:
         CaptionPlaybackSegment,
         VoiceConversionRequest,
     )
-    from .extensions import CeluneContext
     from .properties import (
         ConstantPropertySpec,
         ForwardedPropertySpec,

@@ -10,33 +10,29 @@ import secrets
 import threading
 import contextlib
 import unittest.mock
-from abc import ABC, abstractmethod
-from typing import (
-    Union,
-    Optional,
-    cast,
-)
 from pathlib import Path
+from abc import ABC, abstractmethod
+from typing import Union, Optional, cast
 from collections.abc import Mapping, Callable, Iterator, Generator
 
-import numpy as np
 import torch
+import numpy as np
 import soundfile as sf
 from huggingface_hub import snapshot_download
 
 from ...i18n import string
-from ...vram import backend_vram_report, is_cuda_out_of_memory, release_cuda_after_oom
-from ...paths import temp_data_dir, huggingface_progress, huggingface_hub_cache_dir
 from ...utils import discard
-from ...cevoice import CEVoiceLoader, default_loader
-from ...constants import N_A_NUMERIC
-from ...exceptions import BackendError, ModelConsentRequired
-from .quantization import QuantizationMode, quantization_mode, quantize_component
-from ...registry.tts import ModelContract
-from ...registry.tts import model_contract as resolve_model_contract
 from ...typing.common import JSON
-from ...typing.aliases import LogLevel, AudioChunk, RuntimeValue
+from ...constants import N_A_NUMERIC
+from ...registry.tts import ModelContract
 from ...typing.backends import BackendModel
+from ...cevoice import CEVoiceLoader, default_loader
+from ...exceptions import BackendError, ModelConsentRequired
+from ...typing.aliases import LogLevel, AudioChunk, RuntimeValue
+from ...registry.tts import model_contract as resolve_model_contract
+from .quantization import QuantizationMode, quantization_mode, quantize_component
+from ...paths import temp_data_dir, huggingface_progress, huggingface_hub_cache_dir
+from ...vram import backend_vram_report, is_cuda_out_of_memory, release_cuda_after_oom
 
 __all__ = [
     "BackendModel",

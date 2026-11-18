@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Public CEVOICE and CECHAR APIs."""
 
+from ..exceptions import CEVoiceError
+from ..typing.cevoice import Manifest, ManifestValue, VoiceManifest
 from .v1 import (
     MAGIC as LEGACY_MAGIC,
     VERSION as LEGACY_VERSION,
@@ -73,8 +75,6 @@ from .registry import (
     LEGACY_DEFAULT_CEVOICE_PACK_SHA256,
     PREVIOUS_DEFAULT_CEVOICE_PACK_SHA256,
 )
-from ..exceptions import CEVoiceError
-from ..typing.cevoice import Manifest, ManifestValue, VoiceManifest
 
 COMPATIBLE_CECHAR_VERSIONS = frozenset({2, VERSION})
 INDEXED_CECHAR_VERSIONS = frozenset({V4_VERSION, V5_VERSION})

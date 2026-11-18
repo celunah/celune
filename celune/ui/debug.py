@@ -14,6 +14,11 @@ import sysconfig
 import threading
 import contextlib
 from enum import Enum
+from pathlib import Path
+from datetime import datetime
+from collections import abc, deque
+from dataclasses import field, dataclass
+from typing import Literal, ClassVar, Optional, cast, TYPE_CHECKING
 from types import (
     CodeType,
     FrameType,
@@ -22,12 +27,8 @@ from types import (
     FunctionType,
     BuiltinFunctionType,
 )
-from typing import Literal, ClassVar, Optional, cast, TYPE_CHECKING
-from pathlib import Path
-from datetime import datetime
-from collections import abc, deque
-from dataclasses import field, dataclass
 
+from rich.text import Text
 from textual import (
     app,
     events,
@@ -39,20 +40,15 @@ from textual import (
 from textual import (
     validation as textual_validation,
 )
-from rich.text import Text
 
 from ..i18n import string
+from ..constants import APP_NAME
+from .buttons import CeluneButton
 from ..paths import running_compiled
 from .invoke import invoke_expression
-from .buttons import CeluneButton
-from ..constants import APP_NAME
 from ..exceptions import (
     InvokeCallError as _InvokeCallError,
-)
-from ..exceptions import (
     InvokeParseError as _InvokeParseError,
-)
-from ..exceptions import (
     InvokeResolutionError as _InvokeResolutionError,
 )
 
@@ -1816,10 +1812,8 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
                 )
             detail = f"{string('debug.invoke_result')}\n{rendered_result}"
 
-        try:
+        with contextlib.suppress(RuntimeError):
             self.app.call_from_thread(self._finish_invocation, generation, detail)
-        except RuntimeError:
-            pass
 
     def _finish_invocation(self, generation: int, detail: str) -> None:
         """Display an invocation result if it belongs to the current request."""

@@ -4,12 +4,13 @@
 import re
 import math
 import warnings
+import contextlib
 import unicodedata
-from typing import TYPE_CHECKING, Union, Optional, NamedTuple, cast
 from pathlib import Path
 from fractions import Fraction
-from dataclasses import field, dataclass
 from collections.abc import Callable
+from dataclasses import field, dataclass
+from typing import TYPE_CHECKING, Union, Optional, NamedTuple, cast
 
 from iso639 import Lang, exceptions
 
@@ -460,11 +461,8 @@ def _parse_cesn(
             location[:] = pending_note_span
         following_rest_only = False
         if following_tag is not None:
-            try:
+            with contextlib.suppress(CESNValidationError):
                 following_events = _parse_note_events(following_tag)
-            except CESNValidationError:
-                pass
-            else:
                 following_rest_only = bool(following_events) and all(
                     isinstance(event, CESNRestEvent) for event in following_events
                 )
@@ -536,11 +534,8 @@ def _parse_cesn(
             "v",
             "x-sampa",
         }:
-            try:
+            with contextlib.suppress(CESNValidationError):
                 _parse_note_events(tag)
-            except CESNValidationError:
-                pass
-            else:
                 is_note_event_tag = True
         continues_note_group = (
             is_note_event_tag

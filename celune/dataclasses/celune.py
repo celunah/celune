@@ -10,18 +10,24 @@ import sounddevice as sd
 from transformers.modeling_utils import PreTrainedModel
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 
-from ..chroma import AudioRGBGlow
+
 from ..config import Config
+from ..chroma import AudioRGBGlow
 from .cevoice import CEVoicePersona
-from .pipeline import CaptionPlaybackState
-from ..audio.dsp import StreamingPedalboardReverb
 from ..constants import PipelineStates
-from .properties import ConstantPropertySpec, ForwardedPropertySpec
-from ..backends.vc import CeluneVCBackend
 from ..backends.tts import CeluneBackend
 from ..persona.impl import PersonaClient
-from ..typing.locks import ComponentLockOwner, ComponentBusyResult
+from ..backends.vc import CeluneVCBackend
+from .pipeline import CaptionPlaybackState
+from ..typing.backends import BackendModel
+from ..audio.dsp import StreamingPedalboardReverb
+from ..typing.common import JSON, JSONSerializable
+from ..typing.aliases import LogLevel, AudioChunks
 from ..typing.modes import BackendMode, OperationState
+from ..extensions.manager import CeluneExtensionManager
+from ..typing.locks import ComponentLockOwner, ComponentBusyResult
+from .properties import ConstantPropertySpec, ForwardedPropertySpec
+from ..core.concurrency import ComponentLockManager, PriorityInferenceScheduler
 from ..typing.celune import (
     IdleCallback,
     ErrorCallback,
@@ -37,11 +43,6 @@ from ..typing.celune import (
     VoiceLockStateCallback,
     CaptionProgressCallback,
 )
-from ..typing.common import JSON, JSONSerializable
-from ..typing.aliases import LogLevel, AudioChunks
-from ..typing.backends import BackendModel
-from ..core.concurrency import ComponentLockManager, PriorityInferenceScheduler
-from ..extensions.manager import CeluneExtensionManager
 
 
 @dataclass

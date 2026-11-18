@@ -185,7 +185,7 @@ signature is present, the C launcher allows startup and Python warns that the
 copy is unsigned. This keeps legacy JSON-manifest bundles usable. The updater
 still rejects unsigned remote release ZIPs.
 
-The public keys that sign manifests live in `celune/release_keyring.json`.
+The public keys that sign manifests live in `celune/assets/release_keyring.json`.
 Only the Ed25519 keyring root remains pinned in the C and Python verifier
 sources. The root signs the catalog before the builder appends it to the
 launcher. A missing or invalid trailer rejects a signed bundle. This lets a
@@ -214,7 +214,7 @@ key at
 `~/.celune/release-keyring-root.pem` on Linux. If the root key is missing, the
 script generates it and updates the public root pin in `celune/constants.py`
 and `launcher/release_keys.h`, along with the root entry in
-`celune/release_keyring.json`. Existing root keys that match both verifier pins
+`celune/assets/release_keyring.json`. Existing root keys that match both verifier pins
 are reused. If an existing key does not match, the script stops unless
 `--trust-existing-root` is supplied. That option updates the checkout's trust
 pins to the existing key. A root-key change means launchers compiled with the
@@ -224,7 +224,7 @@ the updated public files with the release.
 The script restricts generated key-file access to the current account, rejects
 destinations inside the checkout, never overwrites an existing file, and does
 not print private-key contents. It adds both public keys to
-`celune/release_keyring.json`, preserving other catalogued release keys. It then
+`celune/assets/release_keyring.json`, preserving other catalogued release keys. It then
 configures the signed CMake preset with both private-key paths. `--no-configure`
 prepares the keys and trust data without running CMake. A cached root path left
 over from older configurations is reset to the separate default path when it

@@ -3,30 +3,30 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Callable
 from typing import TYPE_CHECKING, Any, Union, Literal, Optional, cast
 
-# noinspection PyProtectedMember
-from collections.abc import Mapping, Callable
-
 import torch
-from transformers import AutoTokenizer, AutoModelForCausalLM
-from transformers.cache_utils import Cache, CacheLayerMixin
-from transformers.modeling_utils import PreTrainedModel
-from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 
-from .i18n import string
-from .vram import resolve_vram_preset
-from .paths import huggingface_progress
-from .utils import discard
-from .backends.tts import CeluneBackend
-from .typing.common import JSONSerializable
-from .registry.other import NORMALIZER_MODEL_ID
-from .registry.consent import require_model_consent
+from transformers.modeling_utils import PreTrainedModel
+from transformers.cache_utils import Cache, CacheLayerMixin
+from transformers import AutoTokenizer, AutoModelForCausalLM
+from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 
 try:
     from transformers.cache_utils import LinearAttentionCacheLayerMixin
 except ImportError:
     LinearAttentionCacheLayerMixin = CacheLayerMixin
+
+from .i18n import string
+from .utils import discard
+from .vram import resolve_vram_preset
+from .paths import huggingface_progress
+from .backends.tts import CeluneBackend
+from .typing.common import JSONSerializable
+from .registry.other import NORMALIZER_MODEL_ID
+from .registry.consent import require_model_consent
+
 
 if TYPE_CHECKING:
     from transformers.configuration_utils import PreTrainedConfig

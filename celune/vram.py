@@ -6,11 +6,7 @@ import os
 import sys
 import math
 import contextlib
-
-# noinspection PyProtectedMember
 from dataclasses import dataclass
-
-# noinspection PyProtectedMember
 from typing import Optional, cast
 from collections.abc import Mapping, Iterator
 
@@ -18,6 +14,13 @@ import torch
 import psutil
 from torch import nn
 
+from .i18n import string
+from .registry.other import NORMALIZER_MODEL_ID
+from .registry.asr import DEFAULT_PERSONA_SPEECH_MODEL_ID
+from .registry.revisions import remote_code_model_revision
+from .typing.common import JSON, VramTier, JSONSerializable
+from .registry.tts import QWEN3_06B_MODEL_ID, QWEN3_17B_MODEL_ID
+from .registry.llm import PERSONA_DEFAULT_MODEL_ID, persona_model_tier
 from .constants import (
     TIERS,
     APP_NAME,
@@ -27,13 +30,6 @@ from .constants import (
     PERSONA_CONTEXT_SPACE,
     VRAM_SYSTEM_RESERVE_GIB,
 )
-from .i18n import string
-from .registry.other import NORMALIZER_MODEL_ID
-from .registry.asr import DEFAULT_PERSONA_SPEECH_MODEL_ID
-from .registry.revisions import remote_code_model_revision
-from .typing.common import JSON, VramTier, JSONSerializable
-from .registry.tts import QWEN3_06B_MODEL_ID, QWEN3_17B_MODEL_ID
-from .registry.llm import PERSONA_DEFAULT_MODEL_ID, persona_model_tier
 
 TEST_BACKENDS = ("fake", "counting")
 KNOWN_TTS_BACKENDS = (
@@ -235,11 +231,9 @@ def vram_profile_key(
     gpu_name = "unavailable"
     capability: tuple[int, int] = (0, 0)
     if torch.cuda.is_available():
-        try:
+        with contextlib.suppress(RuntimeError, AssertionError):
             gpu_name = torch.cuda.get_device_name(0)
             capability = torch.cuda.get_device_capability(0)
-        except (RuntimeError, AssertionError):
-            pass
     agent_active = (
         mode_name == "agent" and persona_active and agent_vram_compatible(config)
     )

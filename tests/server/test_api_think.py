@@ -2,9 +2,9 @@
 """Tests for Persona think API control routes."""
 
 import json
-from types import SimpleNamespace
 from typing import cast
 from unittest import mock
+from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException

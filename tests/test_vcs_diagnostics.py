@@ -1,13 +1,13 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for Git checkout diagnostics shown by Celune."""
 
-from types import SimpleNamespace
 from typing import cast
 from unittest import mock
+from types import SimpleNamespace
 
 from celune import runtime
-from celune.vcs import git_checkout_hint
 from celune.i18n import string
+from celune.vcs import git_checkout_hint
 
 
 class TestRuntimeGitDiagnostics:

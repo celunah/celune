@@ -3,10 +3,10 @@
 
 import datetime
 import tempfile
-from typing import Union, Optional
 from pathlib import Path
 from unittest import mock
 from dataclasses import replace
+from typing import Union, Optional
 from collections.abc import Sequence
 
 import numpy as np

@@ -8,18 +8,18 @@ import re
 import json
 import tempfile
 import threading
-from typing import Optional
 from pathlib import Path
-from contextvars import Token, ContextVar
+from typing import Optional
 from collections.abc import Callable
+from contextvars import Token, ContextVar
 
 from ..paths import model_consent_path
+from ..typing.registry import ModelMetadata
 from ..exceptions import (
     ModelConsentDeclined,
     ModelConsentRequired,
     ModelCommercialUseRestricted,
 )
-from ..typing.registry import ModelMetadata
 
 _COMMIT_SHA_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 _STORE_LOCK = threading.RLock()

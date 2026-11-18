@@ -16,6 +16,12 @@ import psutil
 
 from ..i18n import string
 from ..utils import discard
+from ..typing.common import JSONSerializable
+from ..typing.pipeline import SpeechStreamQueue
+from ..dataclasses.events import StateChangedEvent
+from ..core.concurrency import ComponentLockManager
+from ..typing.aliases import AudioChunk, AudioChunks
+from ..constants import BASE_SR, APP_NAME, PipelineStates
 from .timing import (
     LEGACY_BUFFER_SECONDS,
     SMART_BUFFER_SMOOTHING,
@@ -45,7 +51,6 @@ from .captions import (
     playback_source_meta,
     set_playback_source_status,
 )
-from ..constants import BASE_SR, APP_NAME, PipelineStates
 from ..typing.locks import (
     ComponentLockName,
     ComponentLockOwner,
@@ -53,11 +58,6 @@ from ..typing.locks import (
     ComponentLockAcquisition,
     ComponentLockRequirement,
 )
-from ..typing.common import JSONSerializable
-from ..typing.aliases import AudioChunk, AudioChunks
-from ..typing.pipeline import SpeechStreamQueue
-from ..core.concurrency import ComponentLockManager
-from ..dataclasses.events import StateChangedEvent
 from ..dataclasses.pipeline import (
     SpeechTiming,
     PlaybackChunk,

@@ -2,14 +2,15 @@
 """Shared runtime helpers for Celune voice conversion."""
 
 from __future__ import annotations
+
 import math
 import shutil
 import tempfile
 import importlib
 import threading
 import contextlib
-import queue as queue_module
 from pathlib import Path
+import queue as queue_module
 from dataclasses import dataclass
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Literal, Optional, cast

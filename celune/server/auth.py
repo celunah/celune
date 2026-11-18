@@ -12,16 +12,17 @@ import binascii
 import datetime
 import tempfile
 import ipaddress
-from hmac import new as hmac_new
-from hmac import compare_digest
-from typing import Union, Optional
-from hashlib import sha256
+import contextlib
 from pathlib import Path
+from hashlib import sha256
+from hmac import compare_digest
+from hmac import new as hmac_new
 from urllib.parse import urlsplit
+from typing import Union, Optional
 
 from fastapi import Request, WebSocket
-from starlette.responses import Response, JSONResponse
 from starlette.datastructures import Headers
+from starlette.responses import Response, JSONResponse
 
 from ..i18n import string
 from ..paths import api_key_path, app_data_dir
@@ -373,10 +374,8 @@ def _persist_webui_auth_clients_locked(clients: dict[str, int]) -> None:
             os.chmod(temporary_path, 0o600)
         os.replace(temporary_path, path)
     except OSError:
-        try:
+        with contextlib.suppress(OSError):
             temporary_path.unlink(missing_ok=True)
-        except OSError:
-            pass
 
 
 def _webui_auth_client_fingerprint(

@@ -14,8 +14,8 @@ import threading
 import contextlib
 import contextvars
 from pathlib import Path
-from typing import Union, Literal, Optional, cast, NamedTuple
 from collections.abc import Callable, Generator
+from typing import Union, Literal, Optional, cast, NamedTuple
 
 from .constants import APP_NAME, APP_SLUG
 

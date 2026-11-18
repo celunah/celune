@@ -11,13 +11,13 @@ from collections import Counter, abc
 
 import torch
 
+from ...exceptions import InvalidCheckpoint, ModelContractError
 from ...registry.tts import (
     QuantizationRule,
     RuntimeDtypeRule,
     WeightArtifactContract,
     TensorInventoryContract,
 )
-from ...exceptions import InvalidCheckpoint, ModelContractError
 
 __all__ = [
     "canonical_inventory",

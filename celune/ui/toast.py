@@ -3,11 +3,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from typing import Optional
+from collections.abc import Callable
 
-from textual.events import Resize
 from textual.timer import Timer
+from textual.events import Resize
 from textual.widgets import Static
 
 

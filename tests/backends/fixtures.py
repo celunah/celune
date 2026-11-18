@@ -2,6 +2,7 @@
 """Shared fixtures for isolated backend tests."""
 
 from __future__ import annotations
+
 import io
 import threading
 import subprocess

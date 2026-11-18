@@ -4,12 +4,15 @@
 from __future__ import annotations
 
 from uuid import uuid4
-from typing import TYPE_CHECKING, Optional, cast
 from dataclasses import replace
 from collections.abc import Mapping
+from typing import TYPE_CHECKING, Optional, cast
 
 from ..utils import discard
+from ..typing.common import JSON, JSONSerializable
+from ..typing.persona import PersonaClientResponse
 from ..persona.impl import compact_persona_history, persona_history_messages
+from ..persona.conversation import extract_persona_text, build_persona_request
 from ..typing.agent import (
     ToolCall,
     ToolResult,
@@ -23,9 +26,6 @@ from ..typing.locks import (
     ComponentLockOwner,
     ComponentLockRequirement,
 )
-from ..typing.common import JSON, JSONSerializable
-from ..typing.persona import PersonaClientResponse
-from ..persona.conversation import extract_persona_text, build_persona_request
 
 
 def _repair_persona_request(payload: JSON) -> JSON:

@@ -4,11 +4,11 @@
 import sys
 import tempfile
 import textwrap
-from types import SimpleNamespace
 from typing import cast
 from pathlib import Path
 from unittest import mock
 from functools import partial
+from types import SimpleNamespace
 from collections.abc import Iterator
 
 import pytest

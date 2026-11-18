@@ -5,10 +5,8 @@ from __future__ import annotations
 
 import time
 import threading
-
-# noinspection PyProtectedMember
-from typing import TYPE_CHECKING, Optional, cast
 from collections.abc import Callable
+from typing import TYPE_CHECKING, Optional, cast
 
 from .i18n import string
 from .constants import APP_NAME

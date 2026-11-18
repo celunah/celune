@@ -9,11 +9,12 @@ from pathlib import Path
 from unittest import mock
 from contextlib import nullcontext
 
-import numpy as np
 import torch
 import pytest
+import numpy as np
 
 from celune import analysis
+from celune.persona.asr import WhisperTranscriber, _GenerationConfigWarningFilter
 from celune.cvs import (
     CVS_DATABASE_NAME,
     language_key,
@@ -23,7 +24,6 @@ from celune.cvs import (
     word_error_rate_percent,
     supports_word_error_rate,
 )
-from celune.persona.asr import WhisperTranscriber, _GenerationConfigWarningFilter
 
 
 @pytest.mark.parametrize(

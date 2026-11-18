@@ -5,15 +5,20 @@ import os
 import sys
 import tempfile
 import threading
-from typing import Optional, cast
 from pathlib import Path
 from unittest import mock
+from typing import Optional, cast
 from collections.abc import Iterator
 
 import yaml
 import pytest
 from textual.widgets import RichLog
 
+from celune.utils import discard, format_error
+from celune.ui.app import CeluneUI, UILogMessage
+from celune.cevoice import bundled_voices_dir, default_bundle_path
+from celune.constants import APP_SLUG
+from celune.persona.memory import default_memory_dir
 from celune.paths import (
     project_root,
     voices_data_dir,
@@ -30,11 +35,6 @@ from celune.paths import (
     configure_huggingface_runtime,
     configure_huggingface_cache_environment,
 )
-from celune.utils import discard, format_error
-from celune.ui.app import CeluneUI, UILogMessage
-from celune.cevoice import bundled_voices_dir, default_bundle_path
-from celune.constants import APP_SLUG
-from celune.persona.memory import default_memory_dir
 
 from .platform import LINUX_ONLY, WINDOWS_ONLY
 

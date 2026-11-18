@@ -11,6 +11,8 @@ from typing import TYPE_CHECKING
 from ..i18n import string
 from ..utils import format_error_message
 from .concurrency import run_in_daemon_thread
+from ..pipeline.submission import say, queue_speech
+from ..pipeline.buffering import notify_component_busy
 from ..persona.impl import persona_enabled, compact_persona_history
 from ..typing.agent import AgentRoute, AgentClassificationFailureKind
 from ..typing.locks import (
@@ -18,8 +20,6 @@ from ..typing.locks import (
     ComponentLockOwner,
     ComponentLockRequirement,
 )
-from ..pipeline.buffering import notify_component_busy
-from ..pipeline.submission import say, queue_speech
 from ..persona.conversation import (
     extract_persona_text,
     build_persona_request,

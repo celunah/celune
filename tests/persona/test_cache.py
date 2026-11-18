@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for Persona's compact attention-cache storage."""
 
-from typing import ClassVar, cast
 from unittest.mock import patch
+from typing import ClassVar, cast
 
 import torch
 import pytest

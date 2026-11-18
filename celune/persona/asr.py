@@ -8,15 +8,16 @@ import threading
 from collections.abc import Mapping, Callable, Sequence
 from typing import TYPE_CHECKING, Union, Optional, cast
 
-import numpy as np
 import torch
+import numpy as np
 
+from ..audio.dsp import resample_audio
+from ..typing.aliases import AudioChunk
 from ..paths import huggingface_progress
 from ..registry import get_model_metadata
-from ..audio.dsp import resample_audio
-from ..exceptions import ModelConsentDeclined, ModelConsentRequired
+from ..registry.consent import require_model_consent
 from ..registry.asr import DEFAULT_PERSONA_SPEECH_MODEL_ID
-from ..typing.aliases import AudioChunk
+from ..exceptions import ModelConsentDeclined, ModelConsentRequired
 from ..typing.persona import (
     WhisperModel,
     WhisperScalar,
@@ -30,7 +31,6 @@ from ..dataclasses.asr import (
 from ..dataclasses.asr import (
     WhisperSegment as _WhisperSegment,
 )
-from ..registry.consent import require_model_consent
 
 if TYPE_CHECKING:
     # noinspection PyPep8Naming

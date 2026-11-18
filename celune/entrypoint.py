@@ -12,24 +12,27 @@ import platform
 import warnings
 import contextlib
 import subprocess
+from dataclasses import dataclass
+from collections.abc import Callable
+from importlib import util, import_module
 from types import ModuleType, SimpleNamespace
 from typing import TYPE_CHECKING, NoReturn, Optional
 from pathlib import Path, PurePosixPath, PureWindowsPath
-from importlib import util, import_module
-from dataclasses import dataclass
-from collections.abc import Callable
 
+
+from celune.i18n import string
+from celune.typing.common import Config
+from celune.terminal import set_terminal_status
 from celune import REVISION, __tagline__, __version__
 from celune.vcs import is_git_checkout, git_checkout_hint
-from celune.i18n import string
+from celune.config import config_log_level, normalize_log_level
+from celune.exceptions import CEVoiceDependencyUnavailableError
 from celune.paths import (
     project_root,
     running_compiled,
     migrate_legacy_app_data,
     configure_huggingface_runtime,
 )
-from celune.config import config_log_level, normalize_log_level
-from celune.terminal import set_terminal_status
 from celune.constants import (
     APP_NAME,
     APP_SLUG,
@@ -37,8 +40,6 @@ from celune.constants import (
     SUPPORTED_CUDA_VERSIONS,
     ExitCodes,
 )
-from celune.exceptions import CEVoiceDependencyUnavailableError
-from celune.typing.common import Config
 
 if TYPE_CHECKING:
     from celune.celune import Celune
@@ -1905,18 +1906,17 @@ def handle_tar_command(arguments: list[str], program: str) -> int:
 
     operation = arguments[0]
     insertion_position: Optional[int] = None
-    if operation in {"-tf", "-xf", "-rf", "-df"}:
-        pass
-    elif re.fullmatch(r"-af[0-9]+", operation):
+    if operation not in {"-tf", "-xf", "-rf", "-df"}:
+        match = re.fullmatch(r"-af([0-9]+)", operation)
+        if match is None:
+            return _syntax_error(program, "tar")
         try:
-            insertion_position = int(operation[3:])
+            insertion_position = int(match[1])
         except ValueError:
             return _syntax_error(program, "tar")
         if insertion_position < 1:
             return _syntax_error(program, "tar")
         operation = "-af"
-    else:
-        return _syntax_error(program, "tar")
 
     values = arguments[1:]
     if operation == "-tf":

@@ -3,13 +3,18 @@
 
 from __future__ import annotations
 
+from unittest import mock
 from types import SimpleNamespace
 from typing import Optional, cast
-from unittest import mock
 from contextlib import nullcontext
 
 import pytest
 
+from celune.celune import Celune
+from celune.agent.persona import PersonaAgentBridge
+from celune.extensions.events import EventDispatcher
+from celune.typing.persona import PersonaClientResponse
+from celune.dataclasses.events import AgentTaskStateChangedEvent
 from celune.agent import (
     ToolCall,
     AgentTool,
@@ -37,11 +42,6 @@ from celune.agent import (
     AgentToolArgumentSchema,
     AgentToolExecutionStatus,
 )
-from celune.celune import Celune
-from celune.agent.persona import PersonaAgentBridge
-from celune.typing.persona import PersonaClientResponse
-from celune.extensions.events import EventDispatcher
-from celune.dataclasses.events import AgentTaskStateChangedEvent
 
 
 def _request(session_id: str = "session-1") -> AgentRequest:

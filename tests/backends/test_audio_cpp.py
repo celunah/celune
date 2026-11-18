@@ -5,17 +5,19 @@ import json
 import base64
 import hashlib
 import subprocess
-from types import SimpleNamespace
-from typing import Self, Optional, cast
 from pathlib import Path
 from unittest import mock
 from dataclasses import replace
+from types import SimpleNamespace
 from collections.abc import Iterator
+from typing import Self, Optional, cast
 
-import numpy as np
 import pytest
+import numpy as np
 
+from celune.typing.registry import ModelMetadata
 from celune.exceptions import ModelConsentRequired
+from celune.backends.tts.base import CeluneBackend
 from celune.registry.tts import (
     VOXCPM2_MODEL_ID,
     DOTS_TTS_MODEL_ID,
@@ -23,14 +25,12 @@ from celune.registry.tts import (
     QWEN3_TTS_0_6B_MODEL_ID,
     QWEN3_TTS_1_7B_MODEL_ID,
 )
-from celune.typing.registry import ModelMetadata
-from celune.backends.tts.base import CeluneBackend
 from celune.backends.tts.audio_cpp import (
     AudioCppRuntime,
     load_audio_cpp_tts_model,
     materialize_audio_cpp_gguf,
 )
-from celune.registry.audio_cpp_models import (
+from celune.registry.audio_cpp import (
     AUDIOCPP_GGUF_REVISION,
     audio_cpp_model_artifact,
 )
