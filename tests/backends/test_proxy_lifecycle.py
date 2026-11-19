@@ -1374,8 +1374,8 @@ class TestBackendProxyLifecycle:
             if reader_thread is not None:
                 reader_thread.join(timeout=2)
 
-    def test_remote_proxy_bounds_paused_stream_response_queue_items(self) -> None:
-        """Verify a paused stream flood fails instead of growing without bound."""
+    def test_remote_proxy_backpressures_paused_stream_response_queue(self) -> None:
+        """Verify a paused stream resumes after its bounded queue is drained."""
         proxy, reader, writer = self._make_packet_reader_proxy()
         request_id = "paused-stream"
         with proxy._response_condition:
@@ -1397,28 +1397,52 @@ class TestBackendProxyLifecycle:
                             message_id=f"frame-{index}",
                         ),
                     )
-                for _ in range(200):
+                send_message(
+                    writer,
+                    build_packet(
+                        "response",
+                        "generate_stream",
+                        {"ok": True, "done": True},
+                        reply_to=request_id,
+                        message_id="stream-done",
+                    ),
+                )
+
+                def wait_for_queue_size(size: int) -> None:
+                    """Wait until the bounded response queue reaches a target size."""
                     with proxy._response_condition:
-                        reader_error = proxy._reader_error
-                    if reader_error is not None:
-                        break
-                    threading.Event().wait(0.01)
+                        assert proxy._response_condition.wait_for(
+                            lambda: (
+                                len(proxy._response_queues.get(request_id, ())) >= size
+                                or proxy._reader_error is not None
+                            ),
+                            timeout=2,
+                        )
+                        assert proxy._reader_error is None
 
-            assert isinstance(reader_error, CEDTSError)
-            with proxy._response_condition:
-                assert len(proxy._response_queues[request_id]) == 2
-                queued_bytes = proxy._response_queue_bytes[request_id]
-            assert queued_bytes > 0
+                wait_for_queue_size(2)
+                reader_thread = proxy._reader_thread
+                assert reader_thread is not None
+                assert reader_thread.is_alive()
+                with proxy._response_condition:
+                    assert proxy._response_queue_bytes[request_id] > 0
 
-            process = cast(subprocess.Popen[bytes], proxy._process)
-            assert proxy._read_response(process, request_id)["value"] == "chunk-0"
-            assert proxy._read_response(process, request_id)["value"] == "chunk-1"
-            with proxy._response_condition:
-                assert request_id not in proxy._response_queues
-                assert request_id not in proxy._response_queue_item_sizes
-                assert request_id not in proxy._response_queue_bytes
+                process = cast(subprocess.Popen[bytes], proxy._process)
+                for index in range(3):
+                    assert proxy._read_response(process, request_id)["value"] == (
+                        f"chunk-{index}"
+                    )
+                    if index < 2:
+                        wait_for_queue_size(2)
+                assert proxy._read_response(process, request_id)["done"]
+
+                with proxy._response_condition:
+                    assert proxy._reader_error is None
+                    assert request_id not in proxy._response_queues
+                    assert request_id not in proxy._response_queue_item_sizes
+                    assert request_id not in proxy._response_queue_bytes
         finally:
-            proxy._reader_stop.set()
+            proxy._stop_packet_reader()
             writer.close()
             reader.close()
             reader_thread = proxy._reader_thread

@@ -107,7 +107,8 @@ _WORKER_THREAD_JOIN_TIMEOUT_SECONDS = 2.0
 _SHUTDOWN_ACK_TIMEOUT_SECONDS = 5.0
 _BACKEND_MODEL_OPERATION_TIMEOUT_SECONDS = 900.0
 _BACKEND_MODEL_LOAD_TIMEOUT_SECONDS = _BACKEND_MODEL_OPERATION_TIMEOUT_SECONDS
-_MAX_RESPONSE_QUEUE_ITEMS = 128
+# Buffer about 4 seconds at 10x for typical 40 ms frames; the byte cap bounds memory.
+_MAX_RESPONSE_QUEUE_ITEMS = 1024
 _MAX_RESPONSE_QUEUE_BYTES = 16 * 1024 * 1024
 _MAX_WORKER_ERROR_MESSAGE_LENGTH = 512
 _MESSAGE_ID_REPLAY_WINDOW = 4096
@@ -756,6 +757,10 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
         reader_stop = getattr(self, "_reader_stop", None)
         if reader_stop is not None:
             reader_stop.set()
+        response_condition = getattr(self, "_response_condition", None)
+        if response_condition is not None:
+            with response_condition:
+                response_condition.notify_all()
 
     def _start_packet_reader(self) -> None:
         """Start the sole reader for the worker control and binary streams."""
@@ -988,14 +993,29 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
         with self._response_condition:
             if reply_to not in self._pending_reply_ids:
                 raise _worker_protocol_error("worker_response_correlation_is_unknown")
-            response_queue = self._response_queues.get(reply_to)
             response_size = _approximate_response_size(response)
-            queued_bytes = self._response_queue_bytes.get(reply_to, 0)
-            if (
-                response_queue is not None
-                and len(response_queue) >= _MAX_RESPONSE_QUEUE_ITEMS
-            ) or queued_bytes + response_size > _MAX_RESPONSE_QUEUE_BYTES:
+            if response_size > _MAX_RESPONSE_QUEUE_BYTES:
                 raise _worker_protocol_error("worker_response_queue_limit_exceeded")
+            response_queue = self._response_queues.get(reply_to)
+            queued_bytes = self._response_queue_bytes.get(reply_to, 0)
+            while response_queue is not None and (
+                len(response_queue) >= _MAX_RESPONSE_QUEUE_ITEMS
+                or queued_bytes + response_size > _MAX_RESPONSE_QUEUE_BYTES
+            ):
+                if not response_queue:
+                    raise _worker_protocol_error("worker_response_queue_limit_exceeded")
+                reader_stop = getattr(self, "_reader_stop", None)
+                if reader_stop is not None and reader_stop.is_set():
+                    return
+                self._response_condition.wait()
+                if reader_stop is not None and reader_stop.is_set():
+                    return
+                if reply_to not in self._pending_reply_ids:
+                    raise _worker_protocol_error(
+                        "worker_response_correlation_is_unknown"
+                    )
+                response_queue = self._response_queues.get(reply_to)
+                queued_bytes = self._response_queue_bytes.get(reply_to, 0)
             if response_queue is None:
                 response_queue = deque()
                 self._response_queues[reply_to] = response_queue
@@ -1291,6 +1311,7 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
                     )
                     if not response_queue:
                         self._clear_response_queue_locked(reply_to)
+                    self._response_condition.notify_all()
                     return response
                 if self._reader_error is not None:
                     raise self._reader_error
