@@ -1,6 +1,6 @@
 # Backends
 
-This page describes how Celune resolves, launches, and extends its
+This page describes how the application resolves, launches, and extends its
 text-to-speech and voice-conversion backends.
 
 ## Application environment
@@ -9,7 +9,7 @@ Registered backends run through CEDTS worker environments. Core modules must
 not import backend-specific packages at startup. Before resolving the selected
 backend and configuring its worker environment, Celune validates the active
 runtime's hardware requirements. GPU backends fail before dependency setup on
-unsupported systems; Mini remains usable on CPU-only systems and bypasses the
+unsupported systems. Mini remains usable on CPU-only systems and bypasses the
 GPU requirement.
 
 `BackendEnvironmentManager` in `celune/backends/environment.py` stores each
@@ -20,11 +20,9 @@ Worker setup gives uv a 300-second HTTP read timeout for package downloads and
 a separate 900-second timeout for the full uv operation.
 `tests/backends/test_environment.py` covers this cleanup behavior.
 
-If a CEDTS worker exits before its first handshake frame, Celune reports the
-unexpected end of the protocol stream. When worker stderr contains an
-exception, the early-startup error also includes its final exception line;
-traceback frames remain in the worker diagnostics rather than the error
-screen.
+CEDTS worker startup distinguishes a missing initial handshake from invalid
+client input and reports the typed stream error. See [CEDTS transport](../formats/cedts.md#handshake)
+for the timeout and invalid-client conditions.
 
 ## Registered manifests
 
@@ -32,11 +30,11 @@ screen.
 | --- | --- | --- | --- |
 | `mini` | TTS | `celune.backends.tts.mini:Mini` | `pocket-tts>=3.2.0` |
 | `qwen3` | TTS | `celune.backends.tts.qwen3:Qwen3` | `faster-qwen3-tts>=0.2.4` |
-| `fireredtts3` | TTS | `celune.backends.tts.fireredtts3:FireRedTTS3` | FireRedTTS3 source, Transformers 5.6.2, and TorchCodec 0.16.0; BF16 transformer path with PyTorch SDPA and latent streaming. |
-| `dotstts` | TTS | `celune.backends.tts.dotstts:DotsTtsMF` | Celune's `dots.tts` fork; Python 3.12. |
-| `voxcpm2` | TTS | `celune.backends.tts.voxcpm2:VoxCPM2` | `voxcpm>=2.0.0`; Python 3.12. |
+| `fireredtts3` | TTS | `celune.backends.tts.fireredtts3:FireRedTTS3` | FireRedTTS3 source, Transformers 5.6.2, and TorchCodec 0.16.0. BF16 transformer path with PyTorch SDPA and latent streaming. |
+| `dotstts` | TTS | `celune.backends.tts.dotstts:DotsTtsMF` | Celune's `dots.tts` fork. Python 3.12. |
+| `voxcpm2` | TTS | `celune.backends.tts.voxcpm2:VoxCPM2` | Celune's VoxCPM `fix/latent-consistency` branch. Python 3.12. |
 | `ming3` | TTS | `celune.backends.tts.ming3:Ming3` | Multilingual Ming 3.0 voice cloning through audio.cpp v0.9.3's native streaming CUDA server. |
-| `soulxsinger` | TTS | `celune.backends.tts.soulxsinger:SoulXSinger` | Score-conditioned singing; Python 3.12, pinned upstream source and Transformers 4.41.2, `iso639-lang` for CESN, explicit English IPA, CUDA. |
+| `soulxsinger` | TTS | `celune.backends.tts.soulxsinger:SoulXSinger` | Score-conditioned singing. Python 3.12, pinned upstream source and Transformers 4.41.2, `iso639-lang` for CESN, explicit English IPA, CUDA. |
 | `seed-vc` | VC | `celune.backends.vc.seedvc:CeluneSeedVCBackend` | Celune's Seed-VC fork. |
 
 Most workers share a compatibility baseline that includes GitPython for
@@ -46,20 +44,20 @@ sounddevice, soundfile, and Zstandard. They also use the CEDTS-compatible
 PyTorch 2.11 CUDA 12.8 worker stack.
 Ming3 uses the shared worker environment for Celune integration and starts a
 pinned audio.cpp v0.9.3 CUDA server as a child process. On Windows it downloads
-the CUDA 13.3 binary and runtime archives; on Linux it uses the CUDA 12.8
+the CUDA 13.3 binary and runtime archives. On Linux it uses the CUDA 12.8
 release. The server runs only on loopback and is stopped when the backend
 runtime is released. The Ming weights are converted GGUF packages from
 [audio-cpp](https://huggingface.co/audio-cpp/Ming-3.0-TTS-0.5B-GGUF), pinned
 separately from the official
 [Ming 3.0 model card](https://huggingface.co/inclusionAI/Ming-3.0-tts-0.5B).
-The model's MIT license applies to the weights; Celune's source license does not
+The model's MIT license applies to the weights. Celune's source license does not
 replace third-party model terms.
 FireRedTTS3 is intentionally separate from that Hugging Face portion: its
 manifest uses `huggingface-hub>=1.5.0,<2.0.0` and `transformers==5.6.2`, which
 cannot be resolved alongside the shared Hub-below-1 and Transformers-below-5
 constraints. The core project pins PyTorch 2.15 with CUDA 13.2, and the core and
 backend environments are intentionally not the same lockfile. Its `pyproject.toml`
-declares explicit PyTorch indexes for CUDA 12.8, 13.0, 13.2, and 13.4; the
+declares explicit PyTorch indexes for CUDA 12.8, 13.0, 13.2, and 13.4. The
 current `tool.uv.sources` entries select CUDA 13.2. An index declaration does
 not widen the exact version pins. When evaluating another release, update the
 `torch`, `torchaudio`, and `torchvision` pins and source entries together to
@@ -67,11 +65,11 @@ use matching CUDA suffixes. PyTorch does not publish every release for every
 CUDA index, so check the [release compatibility matrix](https://github.com/pytorch/pytorch/blob/main/RELEASE.md)
 and resolve the complete stack before changing the lockfile. For PyTorch 2.15,
 CUDA 13.2 is stable and CUDA 13.4 is experimental. SoulX-Singer pins
-Transformers 4.41.2 to match its upstream requirements; its custom Llama
+Transformers 4.41.2 to match its upstream requirements. Its custom Llama
 decoder omits the `position_embeddings` argument required by newer
 `LlamaAttention` implementations. Its worker uses Python 3.12 because
 Transformers 4.41.2 selects `tokenizers==0.19.1`, whose Windows wheel is
-available for Python 3.12; Python 3.13 falls back to a source distribution that
+available for Python 3.12. Python 3.13 falls back to a source distribution that
 fails to parse its incomplete project metadata.
 
 ## Backend behavior
@@ -80,9 +78,10 @@ fails to parse its incomplete project metadata.
 
 `qwen3` streams at 12.5 chunks per second and supports `zh-cn`, `en`, `ja`,
 `ko`, `de`, `fr`, `ru`, `pt`, `es`, and `it`. Medium and larger VRAM presets use
-the 1.7B clone model; low VRAM can select the 0.6B model. It reads a CEVOICE
-reference WAV and per-voice transcript. `qwen3_x_vector_only` favors identity
-stability over full reference expressiveness.
+the 1.7B clone model. Low VRAM can select the 0.6B model. It reads a CEVOICE
+reference WAV and per-voice transcript. The backend-specific
+`backend_options.qwen3.x_vector_only` setting favors identity stability over
+full reference expressiveness.
 
 ### Mini
 
@@ -90,14 +89,15 @@ stability over full reference expressiveness.
 supports English, French, German, Italian, Portuguese, and Spanish. Version
 3.2.0 adds the 24-layer French model used by Celune's pinned snapshot
 ([upstream release](https://github.com/kyutai-labs/pocket-tts/releases/tag/v3.2.0)).
-Celune matches each snapshot language variant to its corresponding package
-config, which keeps the model architecture aligned with its weights. It uses
-`lsd_decode_steps=2` with the pre-3.0.0 API and `sampler_decode_steps=2` with the
-3.0.0-or-newer API. Generated model configs select the matching tokenizer
-loader for either the JSON tokenizer or SentencePiece model stored in the
+The application matches each snapshot language variant to its corresponding
+package config, which keeps the model architecture aligned with its weights.
+The Mini adapter uses `lsd_decode_steps=2` with the pre-3.0.0 API and
+`sampler_decode_steps=2` with the 3.0.0-or-newer API. Generated model configs
+select the matching tokenizer loader for either the JSON tokenizer or
+SentencePiece model stored in the
 snapshot. Mini remains the supported CPU-friendly path and uses pack reference
 data for cloning. If a language-specific reload fails during generation,
-Celune clears the model reference and enters its fatal state instead of
+The runtime clears the model reference and enters a fatal state instead of
 continuing with a stale model.
 
 ### FireRedTTS3
@@ -106,24 +106,23 @@ continuing with a stale model.
 across 24 languages and 21 Chinese dialect tags. It consumes the active voice's
 complete reference WAV and exact `reference_text`, then streams progressive 24 kHz
 audio chunks to the CEDTS worker. FireRed's autoregressive core emits four
-RedAE frames per generation step; Celune keeps the RedAE decoder's Qwen3 KV
-cache and incrementally overlap-adds its ISTFT frames, forwarding each newly
-stable audio segment without waiting for the final waveform. Celune loads the
-RedAE and transformer checkpoints directly in BF16 before moving them to CUDA
-and runs the FireRed
-generation path under BF16 autocast so its FP32 prompt tensors remain
-compatible with the loaded model. During construction,
+RedAE frames per generation step. The backend runtime keeps the RedAE decoder's
+Qwen3 KV cache and incrementally overlap-adds the decoder's ISTFT frames,
+forwarding each newly stable audio segment without waiting for the final
+waveform. The runtime loads the RedAE and transformer checkpoints directly in
+BF16 before moving them to CUDA, then runs FireRed generation under BF16 autocast
+to keep the FP32 prompt tensors compatible with the loaded model. During construction,
 every FireRed Qwen configuration that requests `flash_attention_2` is replaced
 with PyTorch SDPA. The backend reports model-construction stages through the
 CEDTS progress and log callbacks, so a blocking load remains observable. The
 source and Transformers modules are primed before the worker announces
-readiness; this keeps their native SciPy imports out of the CEDTS request
+readiness. This keeps their native SciPy imports out of the CEDTS request
 thread on Windows without loading model weights during worker startup. The
 official source-only repository is downloaded into Celune runtime data on first
 use, and the model snapshot is cached through Hugging Face Hub. This backend
 therefore does not build or require the unsupported `flash-attn` package.
 Its redundant upstream text-front-end completion notice is filtered through
-Celune's shared runtime log suppression list; fallback warnings and failures
+Celune's shared runtime log suppression list. Fallback warnings and failures
 remain visible.
 
 ### VoxCPM2
@@ -132,35 +131,37 @@ remain visible.
 implemented by the adapter, including Polish, English, Chinese, Japanese,
 Korean, and many European and Southeast Asian languages. It uses reference WAV
 plus a positive per-voice `cfg_scale`. Native build tooling may be required by
-its dependencies.
+its dependencies. The isolated backend environment installs Celune's
+`fix/latent-consistency` branch, which provides the streaming and voice-anchor
+interfaces used by the adapter.
 
 ### dots.tts MF
 
 `dotstts` is a 6.25-chunk-per-second diffusion backend using Celune's fork of
 the upstream package. It receives the complete reference WAV because the
-runtime identifies and removes its prompt span before yielding generated audio;
-truncating the WAV while keeping its full transcript can make the prompt tail
-appear in the response. Use the fork declared by the manifest; the upstream
+runtime identifies and removes its prompt span before yielding generated audio.
+Truncating the WAV while keeping its full transcript can make the prompt tail
+appear in the response. Use the fork declared by the manifest. The upstream
 package can carry incompatible build requirements.
 
 ### Ming3
 
-`ming3` adapts the official [Ming 3.0 TTS 0.5B model](https://huggingface.co/inclusionAI/Ming-3.0-tts-0.5B) and the pinned [audio.cpp v0.9.3 runtime](https://github.com/0xShug0/audio.cpp/tree/v0.9.3). The official Python wrapper collects the complete waveform before returning; Celune instead uses audio.cpp's `streaming` session and server-sent PCM deltas, which arrive while acoustic generation is active. This meets the backend's model-time streaming contract without patching the Python package.
+`ming3` adapts the official [Ming 3.0 TTS 0.5B model](https://huggingface.co/inclusionAI/Ming-3.0-tts-0.5B) and the pinned [audio.cpp v0.9.3 runtime](https://github.com/0xShug0/audio.cpp/tree/v0.9.3). The official Python wrapper collects the complete waveform before returning. Celune instead uses audio.cpp's `streaming` session and server-sent PCM deltas, which arrive while acoustic generation is active. This meets the backend's model-time streaming contract without patching the Python package.
 
 The backend supports Chinese, English, Japanese, Korean, German, French, and
 Spanish. It clones from the active CEVOICE/CECHAR voice's reference WAV and exact
 `reference_text`. The server runs one request at a time on the active CUDA
 device, binds only to loopback, eagerly loads one selected GGUF, and is owned by
-the CEDTS backend runtime. Celune downloads and verifies the pinned Windows CUDA
-13.3 binary and CUDA runtime packages or the Linux CUDA 12.8 package, then stores
-them under application data. It selects Q8_0 weights when `quantize: true` and
-BF16 weights when quantization is disabled. A load failure does not silently
-switch the selected precision. The model card is MIT-licensed; its usage
+the CEDTS backend runtime. The application downloads and verifies the pinned
+Windows CUDA 13.3 binary and CUDA runtime packages or the Linux CUDA 12.8 package,
+then stores them under application data. The backend selects Q8_0 weights when
+`quantize: true` and BF16 weights when quantization is disabled. A load failure
+does not silently switch the selected precision. The model card is MIT-licensed. Its usage
 disclaimer does not mark it research-only or non-commercial.
 
 When Celune's language is `Auto`, the submission pipeline uses Lingua to detect
 the text language. Ming receives that detected language when supported and falls
-back to English for unsupported or unrecognized values; it does not use Qwen3's
+back to English for unsupported or unrecognized values. It does not use Qwen3's
 `Auto` language token.
 
 | Celune quantization | Package | Download size |
@@ -169,9 +170,9 @@ back to English for unsupported or unrecognized values; it does not use Qwen3's
 | Disabled (`false`) | BF16 GGUF | 3.00 GB |
 
 Startup downloads the selected model package and native runtime during
-`preload_models`; `load_model` waits for the server to report that the model is
-resident. Generation decodes SSE PCM deltas into Celune's normalized float32
-44.1 kHz audio chunks and rejects an empty, incomplete, too-short, or
+`preload_models`. The `load_model` call waits for the server to report that the
+model is resident. Generation decodes SSE PCM deltas into Celune's normalized
+float32 44.1 kHz audio chunks and rejects an empty, incomplete, too-short, or
 implausibly long response. The runtime log is retained in Celune's temporary
 data directory when server startup or inference fails.
 
@@ -180,7 +181,7 @@ data directory when server startup or inference fails.
 `soulxsinger` implements the score-controlled path from the
 [SoulX-Singer model](https://huggingface.co/Soul-AILab/SoulX-Singer) and its
 [pinned upstream source](https://github.com/Soul-AILab/SoulX-Singer/tree/81aeb3ae772c70093c3de74dc23c92d983801ae4).
-The model repository is licensed under Apache-2.0; its terms are separate from
+The model repository is licensed under Apache-2.0. Its terms are separate from
 Celune's source license. The registry pins both model weights and source code.
 The worker downloads only `config.yaml` and `model.pt` from the reviewed model
 revision, then strictly loads the checkpoint state dictionary. Preloading also
@@ -220,7 +221,7 @@ the model synthesizes each section in one call and Celune concatenates the
 resulting audio. With `backend_options.soulxsinger.streaming: true`, Celune
 splits sections at event boundaries around 1.92 seconds (three default TTS
 chunk lengths), keeping ties and slurs intact, then yields each completed chunk
-for playback. Every chunk remains a complete SoulX inference call; Celune does
+for playback. Every chunk remains a complete SoulX inference call. Celune does
 not stream from inside the model's reverse-diffusion pass. This mode can reset
 expression at chunk boundaries and adds a model call plus onset context for
 each chunk, so it is opt-in. See
@@ -256,8 +257,24 @@ scheduler wait, backend chunk aggregation, conversion, and DSP. Backend
 `first_chunk_time` metadata does not override this value. Generation speed and
 RTF use a separate timer that begins when the worker starts processing, so
 request-queue delay does not make model throughput appear slower. `TTFC`
-measures audio ready for the playback buffer; it does not measure when playback
+measures audio ready for the playback buffer. It does not measure when playback
 becomes audible.
+
+`TTFP` records when the output writer begins writing the first mixed block.
+Device playback and audible onset follow that marker.
+
+At the debug log level, Celune also reports request wait, text preparation,
+normalization, inference wait, language resolution and reload, backend first
+frame, core audio processing, adaptive buffering, playback dispatch, and output
+queue wait. Request wait runs from submission until generation starts, including
+any wait for model readiness. Backend first-frame time includes backend and
+worker transport latency. Core audio processing runs from that frame until
+Celune has the first usable chunk. Adaptive buffering then runs until the audio
+enters the playback queue. Playback dispatch runs from there until the mixed
+block is queued for output, and output queue wait measures until the writer
+starts writing it. These breakdown lines and the generation duration/speed
+summary are hidden at info and verbose levels. `TTFC` and `TTFP` remain the
+latency summaries there.
 
 Streaming adapters retain their configured chunk batches and final-chunk
 metadata. Once the first batch is ready, they release it when the next
@@ -276,8 +293,8 @@ on model unload.
 weight inventory for every supported TTS backend. Each safetensors artifact is
 identified by its expected size and SHA-256 digest, then described by its
 tensor count, parameter count, dtype distribution, and canonical tensor
-inventory digest. The inventory digest covers tensor names, shapes, and dtypes;
-it lets a worker reject missing, unexpected, or structurally changed weights
+inventory digest. The inventory digest covers tensor names, shapes, and dtypes.
+It lets a worker reject missing, unexpected, or structurally changed weights
 without embedding a several-thousand-name list in the source tree.
 
 The contract includes the currently supported model variants:
@@ -292,23 +309,23 @@ The contract includes the currently supported model variants:
   runtime dtype rules: the Qwen backbone, stop head, and RedAE encoder are
   BF16, while the flow and decoder paths remain F32.
 - Ming3 uses separate pinned BF16 and Q8_0 GGUF artifacts from the audio.cpp
-  package repository; the source model card remains the consent and license
+  package repository. The source model card remains the consent and license
   identity.
 
 `validate_safetensors_artifact` validates a cached artifact without loading
 its tensors into VRAM. `validate_model_state` validates a loaded component's
 exact structural inventory, runtime dtypes, parameter count, and finite values.
 Both validators raise `celune.exceptions.InvalidCheckpoint` on failure. The
-exception exposes the backend, checkpoint filename and path, and—when a
-specific tensor is responsible—the tensor name, owning layer, shape, dtype,
-expected dtype, and actual dtype. Contract lookup failures remain
+exception exposes the backend, checkpoint filename and path, and when a
+specific tensor is responsible, the tensor name, owning layer, shape, dtype,
+expected dtype and actual dtype. Contract lookup failures remain
 `ModelContractError` because they indicate a missing Celune contract rather
 than a corrupt checkpoint.
 Each quantizable component also carries a `QuantizationRule`. It lists the
 linear-module suffixes that are safe for weight-only conversion and explicit
 module names that must remain at their contract dtype. The runtime validates
 the BF16 state before conversion and calls `validate_model_state` again with
-`allow_quantized=True` afterward; that mode permits only approved INT8/FP8
+`allow_quantized=True` afterward. That mode permits only approved INT8/FP8
 weights and continues checking counts, parameter totals, runtime dtypes for
 other tensors, and finite values. `celune.backends.tts.quantization` selects
 INT8 for Ampere (`sm80`/`sm86`) and FP8 for `sm89` or newer, using TorchAO's
@@ -324,8 +341,8 @@ unreferenced CUDA cache blocks, so the runtime retains only the quantized model
 storage and backend-required unquantized components in VRAM.
 Component resolution checks the contract component name on the backend wrapper
 and its nested `model` before falling back to a native root module. This keeps
-TorchAO scoped to the declared component—for example, Pocket TTS's `flow_lm`
-or dots.tts's `core`—instead of quantizing a wrapper that also owns a vocoder
+TorchAO scoped to the declared component, for example, Pocket TTS's `flow_lm`
+or dots.tts's `core` instead of quantizing a wrapper that also owns a vocoder
 or speaker encoder.
 
 When importing or using integrations that may load TorchAO, Celune skips only
@@ -337,7 +354,7 @@ Transformers imports are also deferred into this boundary because its
 quantizer registry can import TorchAO eagerly. The same boundary covers the
 lazy Qwen3 voice-embedding model used by post-speech voice analysis.
 The isolated worker log bridge also suppresses the known TorchAO invalid-escape
-source warning and PyTorch's Windows/macOS redirect-support note; backend
+source warning and PyTorch's Windows/macOS redirect-support note. Backend
 tracebacks and actionable errors remain visible.
 
 Runtime KV-cache quantization is separate from TorchAO's weight-only policy.
@@ -347,8 +364,8 @@ caches store older full-attention keys and values as INT8 on Ampere or FP8 on
 Attention receives dequantized values in that dtype. Qwen3 uses its dynamic
 quantized cache for prompt prefill and transfers it into fixed-capacity
 quantized storage for CUDA-graph decoding. The graph cache keeps the recent
-tail in the compute dtype and uses a shared dense workspace for attention;
-older keys and values remain INT8 or FP8 in resident cache storage. When cache
+tail in the compute dtype and uses a shared dense workspace for attention.
+Older keys and values remain INT8 or FP8 in resident cache storage. When cache
 construction is unsupported by the device or cache layout, Qwen3 keeps its
 native graph cache. If an installed Qwen API lacks Celune's graph-cache adapter
 surface, Qwen3 retains the dynamic quantized-cache fallback.
@@ -363,7 +380,7 @@ MiniCPM caches are therefore bounded at the adapter boundary to 2048 positions
 before the model is used, and are rebuilt at that capacity when a CPU-quantized
 runtime moves to CUDA. This removes the unused 8192-position resident
 allocation without modifying the isolated upstream package. The cap is sized
-for Celune's ten-second reference limit and 512-step speech chunks; extending
+for Celune's ten-second reference limit and 512-step speech chunks. Extending
 those limits requires revisiting the adapter cap and checking the model's
 position budget.
 
@@ -378,9 +395,9 @@ immediately.
 opts in by passing `singing=True` to the base initializer. For a request with
 CESN tags, Celune parses the original notation, validates the explicit language
 against the backend's `supported_languages`, and records warnings in the runtime
-log before calling `cesn_to_model(text)`. It passes the user's original source
-so backend validation can report exact line and character locations. The hook
-is called once before generation chunking.
+log before calling `cesn_to_model(text)`. The hook receives the user's original
+source so backend validation can report exact line and character locations. It
+runs once before generation chunking.
 
 `celune/cesn.py` owns X-SAMPA conversion, parsing, singing validation,
 syllabification, synthesis preparation, and canonical rendering. It calls the
@@ -395,7 +412,7 @@ SoulX-Singer emits each generated section as a separate audio chunk and includes
 uses the queued frame span to switch the caption when playback reaches that
 section. A backend that combines multiple sections into one chunk cannot provide
 section-specific captions. Parsed blocks retain note/IPA pairs and positioned
-rests; out-of-scale notes remain available after a `CESNNotationWarning` is
+rests. Out-of-scale notes remain available after a `CESNNotationWarning` is
 displayed.
 
 `[tuplet:a,b]` scales the next `a` pitched-note or rest events by `b/a` and
@@ -406,7 +423,7 @@ overlap or cross a section boundary.
 
 The core parser requires an explicit `[lang:...]` tag and rejects languages
 unsupported by the selected model. Each note group uses the order
-`[extra tags][notes][raw IPA] lyrics`; the author supplies one dot-separated
+`[extra tags][notes][raw IPA] lyrics`. The author supplies one dot-separated
 IPA syllable per pitched note. `[singer:...]` resolves a character name to a
 CECHAR v5 pack with a hidden `sing` voice. See
 [`parse_cesn()` and the CESN format](../formats/cesn.md) for tag syntax, data

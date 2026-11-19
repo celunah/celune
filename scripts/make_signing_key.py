@@ -88,12 +88,12 @@ def _load_root_pin_sources(
     header_source = header_path.read_text(encoding="utf-8")
     python_match = re.search(
         r"(?m)^RELEASE_KEYRING_ROOT_PUBLIC_KEY_HEX = \(\r?\n"
-        r'    "([0-9a-fA-F]{64})"\r?\n\)',
+        r'\s{4}"([0-9a-fA-F]{64})"\r?\n\)',
         python_source,
     )
     header_match = re.search(
-        r"(?ms)^static const unsigned char launcher_release_keyring_root\[32\] = \{\n"
-        r"(.*?)\n\};",
+        r"(?ms)^static const unsigned char launcher_release_keyring_root\[32] = \{\n"
+        r"(.*?)\n};",
         header_source,
     )
     if python_match is None or header_match is None:
@@ -124,7 +124,7 @@ def _render_root_pin_sources(
     public_key_hex = public_key.hex()
     python_source, python_count = re.subn(
         r"(?m)^RELEASE_KEYRING_ROOT_PUBLIC_KEY_HEX = \(\r?\n"
-        r'    "[0-9a-fA-F]{64}"\r?\n\)',
+        r'\s{4}"[0-9a-fA-F]{64}"\r?\n\)',
         f'RELEASE_KEYRING_ROOT_PUBLIC_KEY_HEX = (\n    "{public_key_hex}"\n)',
         python_source,
         count=1,
@@ -141,8 +141,8 @@ def _render_root_pin_sources(
         + ","
     )
     header_source, header_count = re.subn(
-        r"(?ms)^static const unsigned char launcher_release_keyring_root\[32\] = \{\n"
-        r".*?\n\};",
+        r"(?ms)^static const unsigned char launcher_release_keyring_root\[32] = \{\n"
+        r".*?\n};",
         "static const unsigned char launcher_release_keyring_root[32] = {\n"
         + formatted_bytes
         + "\n};",
@@ -277,9 +277,9 @@ def make_signing_key(
     """Prepare protected release and root keys and synchronize their trust data.
 
     Args:
-        output_path: Release private-key path; an existing Ed25519 key is reused.
+        output_path: Release private-key path. An existing Ed25519 key is reused.
         project_root: Checkout whose release catalog and verifier pins are updated.
-        root_key_path: Root private-key path; a missing root is generated.
+        root_key_path: Root private-key path. A missing root is generated.
         trust_existing_root: Update verifier pins to trust an existing root key.
 
     Returns:
@@ -291,7 +291,7 @@ def make_signing_key(
         ValueError: if key paths, trust pins, or the key catalog are invalid.
     """
     repository = project_root or _repository_root()
-    key_catalog = repository / "celune" / "release_keyring.json"
+    key_catalog = repository / "celune" / "assets" / "release_keyring.json"
     release_destination = _validated_destination(
         output_path,
         repository,
@@ -326,7 +326,7 @@ def make_signing_key(
         root_is_new or trust_existing_root
     ):
         raise ValueError(
-            "the existing root key differs from the pinned verifier key; "
+            "the existing root key differs from the pinned verifier key. "
             "use --trust-existing-root to update the trust anchor"
         )
     release_is_new = not release_destination.exists()

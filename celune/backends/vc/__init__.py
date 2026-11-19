@@ -2,9 +2,10 @@
 """Celune voice-conversion backend initialization manager."""
 
 from typing import Union, Optional
-from collections.abc import Callable
 
+from ...utils import discard
 from .base import CeluneVCBackend
+from ...typing.aliases import LogLevel, LogCallback
 from ..environment import BACKEND_MANIFESTS, BackendManifest, backend_manifest
 
 __all__ = [
@@ -24,13 +25,21 @@ VC_BACKENDS = {
 }
 
 
-def _default_log(_msg: str, _severity: str = "info") -> None:
+def _default_log(
+    msg: str,
+    severity: str = "info",
+    *,
+    loglevel: LogLevel = "info",
+) -> None:
     """Default log signature for type checking."""
+    discard(msg)
+    discard(severity)
+    discard(loglevel)
 
 
 def resolve_vc_backend(
     backend_name: Union[str, type[CeluneVCBackend], CeluneVCBackend],
-    log: Optional[Callable[[str, str], None]] = None,
+    log: Optional[LogCallback] = None,
 ) -> CeluneVCBackend:
     """Resolve a voice-conversion backend specification into an instance.
 
@@ -45,7 +54,8 @@ def resolve_vc_backend(
         ValueError: The named backend is unknown.
         TypeError: The backend specification is not a supported type.
     """
-    log = log or _default_log
+    if log is None:
+        log = _default_log
 
     if isinstance(backend_name, CeluneVCBackend):
         return backend_name

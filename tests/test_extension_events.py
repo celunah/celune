@@ -7,14 +7,16 @@ import textwrap
 from typing import cast
 from pathlib import Path
 from unittest import mock
+from functools import partial
 from types import SimpleNamespace
+from collections.abc import Iterator
+
+import pytest
 
 from celune import subscribe
 from celune.celune import Celune
-from celune.extensions.base import CeluneExtension
 from celune.typing.events import ReadyEventCallback
-from celune.dataclasses.extensions import CeluneContext
-from celune.extensions.manager import CeluneExtensionManager
+from celune.extensions.base import CeluneExtension
 from celune.extensions.events import EventDispatcher, iter_subscriptions
 from celune.dataclasses.events import (
     ReadyEvent,
@@ -27,19 +29,24 @@ from celune.dataclasses.events import (
     CharacterChangedEvent,
     CharacterUnloadedEvent,
 )
+from celune.extensions.manager import CeluneExtensionManager
+from celune.dataclasses.extensions import CeluneContext
 
-from .support import FakeGlow, FakeBackend, CeluneTestCase
+from .support import FakeGlow, FakeBackend
 
 
-class TestDispatcher(CeluneTestCase):
+class TestDispatcher:
     """Tests for low-level event dispatch behavior."""
 
-    def setUp(self) -> None:
+    @pytest.fixture(autouse=True)
+    def _pytest_setup_and_teardown(self) -> Iterator[None]:
+        # pylint: disable=W0201
         """Create an isolated event dispatcher for each test."""
         self.logs: list[tuple[str, str]] = []
         self.dispatcher = EventDispatcher(
             log_warning=lambda msg, severity="info": self.logs.append((msg, severity))
         )
+        yield
 
     def test_dispatcher_registers_dispatches_and_unregisters_handlers(self) -> None:
         """Verify handlers receive events until they are unsubscribed."""
@@ -99,10 +106,12 @@ class TestDispatcher(CeluneTestCase):
         assert "Event callback failed" in self.logs[-1][0]
 
 
-class TestManagerEvent(CeluneTestCase):
+class TestManagerEvent:
     """Tests for extension-manager event integration."""
 
-    def setUp(self) -> None:
+    @pytest.fixture(autouse=True)
+    def _pytest_setup_and_teardown(self) -> Iterator[None]:
+        # pylint: disable=W0201
         """Create an isolated extension context for each test."""
         self.logs: list[tuple[str, str]] = []
         self.context = CeluneContext(
@@ -121,6 +130,7 @@ class TestManagerEvent(CeluneTestCase):
         self.dispatcher = EventDispatcher(
             log_warning=lambda msg, severity="info": self.logs.append((msg, severity))
         )
+        yield
 
     def test_decorator_stores_subscription_metadata(self) -> None:
         """Verify the decorator only records metadata until registration time."""
@@ -235,7 +245,7 @@ class TestManagerEvent(CeluneTestCase):
         assert module.EVENTS == ["ReadyEvent"]
 
 
-class TestEngineEventIntegration(CeluneTestCase):
+class TestEngineEventIntegration:
     """Tests for Celune runtime event emission."""
 
     @staticmethod
@@ -244,7 +254,7 @@ class TestEngineEventIntegration(CeluneTestCase):
         if Celune._instance is celune:
             celune.close()
 
-    def _make_celune(self) -> Celune:
+    def _make_celune(self, request: pytest.FixtureRequest) -> Celune:
         """Create a lightweight Celune instance for event tests."""
         with (
             mock.patch("celune.core.lifecycle.AudioRGBGlow", FakeGlow),
@@ -254,12 +264,16 @@ class TestEngineEventIntegration(CeluneTestCase):
             ),
         ):
             celune = Celune(config={}, tts_backend=FakeBackend)
-            self.addCleanup(self._close_celune, celune)
+            request.addfinalizer(partial(self._close_celune, celune))
             return celune
 
-    def test_state_and_shutdown_events_are_emitted(self) -> None:
+    def test_state_and_shutdown_events_are_emitted(
+        self, request: pytest.FixtureRequest
+    ) -> None:
         """Verify runtime state transitions and shutdown emit typed payloads."""
-        celune = self._make_celune()
+        celune = self._make_celune(
+            request,
+        )
         state_events: list[StateChangedEvent] = []
         shutdown_events: list[ShutdownEvent] = []
         celune._event_dispatcher.subscribe("state_changed", state_events.append)
@@ -273,9 +287,13 @@ class TestEngineEventIntegration(CeluneTestCase):
         assert state_events[-1].new_state == "speaking"
         assert len(shutdown_events) == 1
 
-    def test_voice_change_emits_typed_event(self) -> None:
+    def test_voice_change_emits_typed_event(
+        self, request: pytest.FixtureRequest
+    ) -> None:
         """Verify successful voice changes emit a ``VoiceChangedEvent`` payload."""
-        celune = self._make_celune()
+        celune = self._make_celune(
+            request,
+        )
         celune.current_voice = "balanced"
         celune.voices = ("balanced", "bold")
         celune.model_name = "shared-model"
@@ -292,9 +310,13 @@ class TestEngineEventIntegration(CeluneTestCase):
         assert events[0].old_voice == "balanced"
         assert events[0].new_voice == "bold"
 
-    def test_character_bundle_events_emit_typed_payloads(self) -> None:
+    def test_character_bundle_events_emit_typed_payloads(
+        self, request: pytest.FixtureRequest
+    ) -> None:
         """Verify CEVOICE lifecycle transitions emit load, unload, and change events."""
-        celune = self._make_celune()
+        celune = self._make_celune(
+            request,
+        )
         celune.backend.uses_voice_bundles = True
         loaded_events: list[CharacterLoadedEvent] = []
         unloaded_events: list[CharacterUnloadedEvent] = []
@@ -342,9 +364,13 @@ class TestEngineEventIntegration(CeluneTestCase):
         assert len(unloaded_events) == 1
         assert unloaded_events[0].character_name == "Nova"
 
-    def test_typed_event_payloads_expose_expected_attributes(self) -> None:
+    def test_typed_event_payloads_expose_expected_attributes(
+        self, request: pytest.FixtureRequest
+    ) -> None:
         """Verify runtime event payload dataclasses carry the documented fields."""
-        celune = self._make_celune()
+        celune = self._make_celune(
+            request,
+        )
         audio_start = AudioStartEvent(
             celune=celune,
             source_id=1,

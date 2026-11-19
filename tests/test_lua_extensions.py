@@ -6,10 +6,14 @@ import tempfile
 import textwrap
 import threading
 from pathlib import Path
-from unittest import TestCase
 from types import SimpleNamespace
+from collections.abc import Iterator
 from typing import TYPE_CHECKING, cast
 
+
+import pytest
+
+from celune.utils import discard
 from celune.lua import LuaExtension
 from celune.extensions.events import EventDispatcher
 from celune.dataclasses.extensions import CeluneContext
@@ -20,10 +24,12 @@ if TYPE_CHECKING:
     from celune.celune import Celune
 
 
-class LuaExtensionTests(TestCase):
+class TestLuaExtension:
     """Verify Lua extensions use the existing extension manager lifecycle."""
 
-    def setUp(self) -> None:
+    @pytest.fixture(autouse=True)
+    def _pytest_setup_and_teardown(self) -> Iterator[None]:
+        # pylint: disable=W0201
         self.logs: list[tuple[str, str]] = []
 
         def capture_log(
@@ -32,7 +38,7 @@ class LuaExtensionTests(TestCase):
             *,
             loglevel: str = "info",
         ) -> None:
-            del loglevel
+            discard(loglevel)
             self.logs.append((msg, severity))
 
         self.dispatcher = EventDispatcher(
@@ -50,12 +56,18 @@ class LuaExtensionTests(TestCase):
             get_state=lambda: "idle",
             wait_until_ready=lambda timeout=30.0: True,
         )
+        yield
 
     def test_manager_injects_core_and_invokes_lua_extension(self) -> None:
         """Verify Lua can call the injected Celune singleton through ``invoke``."""
         invoked = threading.Event()
+
+        def say(text: str) -> None:
+            assert text == "hello"
+            invoked.set()
+
         core = SimpleNamespace(
-            say=lambda text: (self.assertEqual(text, "hello"), invoked.set()),
+            say=say,
             version="test",
         )
         manager = CeluneExtensionManager(
@@ -80,9 +92,9 @@ class LuaExtensionTests(TestCase):
             )
             manager.autoload(temp_dir)
 
-        self.assertEqual(manager.list_extensions(), ["Lua fixture"])
+        assert (manager.list_extensions()) == (["Lua fixture"])
         manager.invoke("Lua fixture", "hello")
-        self.assertTrue(invoked.wait(timeout=5))
+        assert invoked.wait(timeout=5)
 
     def test_lua_event_callbacks_receive_serialized_payloads(self) -> None:
         """Verify Lua callbacks receive event fields without the raw core object."""
@@ -122,21 +134,21 @@ class LuaExtensionTests(TestCase):
                 new_voice="bold",
             ),
         )
-        self.assertTrue(callback_complete.wait(timeout=5))
+        assert callback_complete.wait(timeout=5)
 
         lua_extension = cast(LuaExtension, extension)
-        self.assertEqual(lua_extension.runtime._globals["observed"], "balanced->bold")
-        self.assertFalse(lua_extension.runtime._globals["has_core"])
+        assert (lua_extension.runtime._globals["observed"]) == "balanced->bold"
+        assert not lua_extension.runtime._globals["has_core"]
 
         manager.unregister("events")
-        self.assertEqual(manager.list_extensions(), [])
+        assert not manager.list_extensions()
 
     def test_manager_without_core_rejects_lua_registration(self) -> None:
         """Verify standalone extension managers cannot load Lua core bindings."""
         manager = CeluneExtensionManager(self.context, self.dispatcher)
         with (
             tempfile.TemporaryDirectory() as temp_dir,
-            self.assertRaises(RuntimeError),
+            pytest.raises(RuntimeError),
         ):
             manager.register_lua(Path(temp_dir) / "missing.lua")
 
@@ -168,7 +180,7 @@ class LuaExtensionTests(TestCase):
             ReadyEvent(celune=cast("Celune", core)),
         )
         lua_extension = cast(LuaExtension, manager.extensions["disabled"])
-        self.assertIsNone(lua_extension.runtime._globals["called"])
+        assert (lua_extension.runtime._globals["called"]) is None
 
     def test_closing_lua_extension_stops_new_callbacks(self) -> None:
         """Verify unloading a Lua extension removes callbacks before later events run."""
@@ -201,7 +213,7 @@ class LuaExtensionTests(TestCase):
         )
         time.sleep(0.05)
 
-        self.assertIsNone(extension.runtime._globals["called"])
+        assert (extension.runtime._globals["called"]) is None
 
     def test_lua_ready_callbacks_do_not_block_core_loading(self) -> None:
         """Verify blocking Lua startup work runs outside the ready dispatcher."""
@@ -246,14 +258,14 @@ class LuaExtensionTests(TestCase):
         )
         dispatch_thread.start()
         try:
-            self.assertTrue(callback_started.wait(timeout=5.0))
+            assert callback_started.wait(timeout=5.0)
             dispatch_thread.join(timeout=5.0)
-            self.assertFalse(dispatch_thread.is_alive())
+            assert not dispatch_thread.is_alive()
         finally:
             release_callback.set()
             dispatch_thread.join(timeout=5.0)
 
-        self.assertTrue(completed.wait(timeout=5))
+        assert completed.wait(timeout=5)
 
     def test_nested_lua_events_do_not_deadlock_a_reload(self) -> None:
         """Verify a reload-triggered Lua event cannot block its completion signal."""
@@ -304,4 +316,4 @@ class LuaExtensionTests(TestCase):
             "ready",
             ReadyEvent(celune=cast("Celune", core)),
         )
-        self.assertTrue(completed.wait(timeout=5))
+        assert completed.wait(timeout=5)

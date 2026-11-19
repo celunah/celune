@@ -612,7 +612,7 @@ def _webui_select_voice(
         if (
             bundle is not None
             and set_bundle_async is not None
-            and not await set_bundle_async(bundle)  # pylint: disable=not-callable
+            and not await set_bundle_async(bundle)  # pylint: disable=E1102
         ):
             return False
         if set_voice_async is not None:
@@ -667,7 +667,7 @@ def _webui_stop(
     else:
         stop_sync = getattr(celune, "force_stop_speech", None)
         stopped = (
-            cast(Callable[[], bool], stop_sync)()  # pylint: disable=not-callable
+            cast(Callable[[], bool], stop_sync)()  # pylint: disable=E1102
             if callable(stop_sync)
             else False
         )

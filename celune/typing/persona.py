@@ -3,12 +3,14 @@
 
 from __future__ import annotations
 
+
 from collections.abc import Mapping, Iterator, Sequence
 from typing import TYPE_CHECKING, Union, Literal, Optional, Protocol, TypedDict
 
 import torch
 import numpy as np
 import numpy.typing as npt
+
 from transformers.cache_utils import Cache
 from transformers import StoppingCriteriaList
 from transformers.tokenization_utils_base import BatchEncoding
@@ -21,7 +23,7 @@ if TYPE_CHECKING:
 
     from .common import Config
     from .aliases import AudioChunk
-    from ..cevoice import CEVoicePersona
+    from ..dataclasses.cevoice import CEVoicePersona
 
 type Role = Literal["system", "user", "assistant"]
 type VisionInput = Union[JSONSerializable, torch.Tensor, bytes, memoryview]
@@ -133,8 +135,6 @@ class ChatTemplateRenderer(Protocol):
             truncation: Whether to truncate tokenized input.
             max_length: Maximum number of input tokens when truncating.
 
-        Raises:
-            NotImplementedError: If `NotImplementedError` needs to be raised.
         """
         raise NotImplementedError("protocol not defined")
 
@@ -163,8 +163,6 @@ class PersonaTokenizer(Protocol):
             token_ids: Generated token IDs to decode.
             skip_special_tokens: Whether special tokens should be omitted.
 
-        Raises:
-            NotImplementedError: If `NotImplementedError` needs to be raised.
         """
         raise NotImplementedError("protocol not defined")
 
@@ -199,17 +197,11 @@ class PersonaModel(Protocol):
         Args:
             kwargs: Prepared model inputs and generation options.
 
-        Raises:
-            NotImplementedError: If `NotImplementedError` needs to be raised.
         """
         raise NotImplementedError("protocol not defined")
 
     def eval(self) -> None:
-        """Switch the model into eval mode.
-
-        Raises:
-            NotImplementedError: If `NotImplementedError` needs to be raised.
-        """
+        """Switch the model into eval mode."""
         raise NotImplementedError("protocol not defined")
 
 

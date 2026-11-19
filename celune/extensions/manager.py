@@ -11,16 +11,16 @@ from dataclasses import dataclass
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Optional, cast
 
-from .events import (
-    EventDispatcher,
-    RegisteredEventHandler,
-    iter_subscriptions,
-)
 from ..i18n import string
 from ..utils import format_error_message
 from .base import CeluneContext, CeluneExtension
 from ..typing.events import EventName, EventPayload
 from ..exceptions import InvalidExtensionError, ExtensionAlreadyRegisteredError
+from .events import (
+    EventDispatcher,
+    RegisteredEventHandler,
+    iter_subscriptions,
+)
 
 if TYPE_CHECKING:
     from ..celune import Celune

@@ -1,16 +1,17 @@
 # SPDX-License-Identifier: Apache-2.0
 """Core Celune protocols and callback types."""
 
-# pylint: disable=unused-argument,unnecessary-ellipsis
-
 from __future__ import annotations
+
+
 from pathlib import Path
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from typing import TYPE_CHECKING, Union, Optional, Protocol
 
 import torch
 from transformers.modeling_utils import PreTrainedModel
 from transformers.tokenization_utils_base import BatchEncoding, PreTrainedTokenizerBase
+
 
 from .aliases import LogLevel
 from .common import JSON, Config, JSONSerializable
@@ -22,20 +23,29 @@ if TYPE_CHECKING:
 
     import sounddevice as sd
 
-    from ..api import CloudflaredQuickTunnel
-    from .locks import ComponentLockOwner, ComponentBusyResult
-    from ..chroma import AudioRGBGlow
     from .aliases import AudioChunks
-    from ..cevoice import CEVoicePersona
-    from ..audio.dsp import StreamingPedalboardReverb
+    from ..chroma import AudioRGBGlow
     from ..constants import PipelineStates
-    from ..backends.vc import CeluneVCBackend
-    from ..backends.tts import BackendModel, CeluneBackend
+    from ..api import CloudflaredQuickTunnel
     from ..persona.impl import PersonaClient
-    from ..agent.runtime import AgentRuntime
+    from ..backends.vc import CeluneVCBackend
+    from ..agent.routing import AgentInputRouter
     from ..persona.memory import PersonaMemoryStore
-    from ..persona.emotion import PersonaEmotionAnalyzer
     from ..extensions.events import EventDispatcher
+    from ..dataclasses.cevoice import CEVoicePersona
+    from ..audio.dsp import StreamingPedalboardReverb
+    from ..persona.emotion import PersonaEmotionAnalyzer
+    from ..backends.tts import BackendModel, CeluneBackend
+    from ..extensions.manager import CeluneExtensionManager
+    from ..dataclasses.pipeline import CaptionPlaybackState
+    from .locks import ComponentLockOwner, ComponentBusyResult
+    from ..core.concurrency import ComponentLockManager, PriorityInferenceScheduler
+    from ..agent.runtime import (
+        AgentRuntime,
+        AgentTool,
+        AgentToolSchema,
+        AgentToolSelector,
+    )
     from ..dataclasses.celune import (
         CeluneAudioState,
         CeluneModelState,
@@ -45,11 +55,6 @@ if TYPE_CHECKING:
         CeluneCallbackState,
         CelunePipelineState,
     )
-    from ..extensions.manager import CeluneExtensionManager
-    from ..dataclasses.pipeline import (
-        CaptionPlaybackState,
-    )
-    from ..core.concurrency import ComponentLockManager, PriorityInferenceScheduler
 
 
 type GenerationKwarg = Union[torch.Tensor, int, bool, None]
@@ -59,11 +64,7 @@ class SupportsClose(Protocol):
     """Protocol for objects that can be closed."""
 
     def close(self) -> None:
-        """Release any resources owned by the object.
-
-        Raises:
-            NotImplementedError: If `NotImplementedError` needs to be raised.
-        """
+        """Release any resources owned by the object."""
         raise NotImplementedError("protocol not defined")
 
 
@@ -71,11 +72,7 @@ class SupportsUnload(Protocol):
     """Protocol for objects that can unload their runtime state."""
 
     def unload(self) -> None:
-        """Unload any optional runtime state owned by the object.
-
-        Raises:
-            NotImplementedError: If `NotImplementedError` needs to be raised.
-        """
+        """Unload any optional runtime state owned by the object."""
         raise NotImplementedError("protocol not defined")
 
 
@@ -88,25 +85,15 @@ class Generative(Protocol):
         Args:
             kwargs: Backend-specific generation keyword arguments.
 
-        Raises:
-            NotImplementedError: If `NotImplementedError` needs to be raised.
         """
         raise NotImplementedError("protocol not defined")
 
     def device(self) -> Union[torch.device, str]:
-        """Return the device used by the generative model.
-
-        Raises:
-            NotImplementedError: If `NotImplementedError` needs to be raised.
-        """
+        """Return the device used by the generative model."""
         raise NotImplementedError("protocol not defined")
 
     def parameters(self) -> Iterator[torch.nn.Parameter]:
-        """Iterate over the model parameters.
-
-        Raises:
-            NotImplementedError: If `NotImplementedError` needs to be raised.
-        """
+        """Iterate over the model parameters."""
         raise NotImplementedError("protocol not defined")
 
 
@@ -131,8 +118,6 @@ class NormalizerTokenizer(Protocol):
         Args:
             tokens: Token text to resolve into an integer ID.
 
-        Raises:
-            NotImplementedError: If `NotImplementedError` needs to be raised.
         """
         raise NotImplementedError("protocol not defined")
 
@@ -158,8 +143,6 @@ class NormalizerTokenizer(Protocol):
             token_ids: Generated token IDs to decode.
             skip_special_tokens: Whether special tokens should be omitted.
 
-        Raises:
-            NotImplementedError: If `NotImplementedError` needs to be raised.
         """
         raise NotImplementedError("protocol not defined")
 
@@ -175,6 +158,20 @@ class MessageCallback(Protocol):
         loglevel: LogLevel = "info",
     ) -> None:
         """Handle a message emitted by Celune."""
+        raise NotImplementedError("protocol not defined")
+
+
+class ToastCallback(Protocol):
+    """Callback accepting a toast message, severity, and optional duration."""
+
+    def __call__(
+        self,
+        msg: str,
+        *,
+        severity: str = "info",
+        duration: Optional[float] = None,
+    ) -> None:
+        """Display one transient message in the active UI."""
         raise NotImplementedError("protocol not defined")
 
 
@@ -241,6 +238,7 @@ class CeluneStateAccessors:
     """Typed runtime state contract implemented by ``Celune``."""
 
     log_callback: MessageCallback
+    toast_callback: ToastCallback
     status_callback: MessageCallback
     error_callback: Callable[[str], None]
     idle_callback: Callable[[], None]
@@ -317,6 +315,8 @@ class CeluneStateAccessors:
     _playback_generation: int
     _next_playback_source_id: int
     _playback_source_statuses: dict[int, str]
+    _speech_status_restore: dict[int, str]
+    _maintain_status_after_playback: bool
     _playback_source_meta: dict[int, dict[str, Union[str, float]]]
     _playback_caption_states: dict[int, CaptionPlaybackState]
     _caption_source_id: Optional[int]
@@ -394,14 +394,14 @@ class CeluneStateAccessors:
     last_component_busy: Optional[ComponentBusyResult]
     audio_unavailable: bool
     current_sr: Optional[int]
+    _agent_tools: tuple[AgentTool, ...]
+    _agent_tool_schemas: Mapping[str, AgentToolSchema]
+    _agent_router: AgentInputRouter
+    _agent_needle_selector: Optional[AgentToolSelector]
 
     @property
     def cur_state(self) -> str:
-        """Return the current runtime-state label.
-
-        Raises:
-            NotImplementedError: If `NotImplementedError` needs to be raised.
-        """
+        """Return the current runtime-state label."""
         raise NotImplementedError("typing surface only")
 
     @cur_state.setter
@@ -411,8 +411,6 @@ class CeluneStateAccessors:
         Args:
             value: The runtime-state label to store.
 
-        Raises:
-            NotImplementedError: If `NotImplementedError` needs to be raised.
         """
         raise NotImplementedError("typing surface only")
 
@@ -433,6 +431,26 @@ class CeluneStateAccessors:
             int: Celune's current speech-generation counter.
         """
         return self._speech_generation
+
+    @property
+    def persona_thread(self):
+        """Property for Celune's current Persona thread."""
+        return self._persona_thread
+
+    @property
+    def model_lock(self):
+        """Property for Celune's model lock."""
+        return self._model_lock
+
+    @property
+    def reload_pending(self):
+        """Property for Celune's pending reload flag."""
+        return self._reload_pending
+
+    @property
+    def inference_scheduler(self):
+        """Property for Celune's inference scheduler."""
+        return self._inference_scheduler
 
 
 class BundleWithPath(Protocol):

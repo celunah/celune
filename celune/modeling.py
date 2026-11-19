@@ -3,28 +3,30 @@
 
 from __future__ import annotations
 
-# noinspection PyProtectedMember
 from collections.abc import Mapping, Callable
 from typing import TYPE_CHECKING, Any, Union, Literal, Optional, cast
 
 import torch
-from transformers.cache_utils import Cache, CacheLayerMixin
+
 from transformers.modeling_utils import PreTrainedModel
+from transformers.cache_utils import Cache, CacheLayerMixin
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
-
-from .i18n import string
-from .vram import resolve_vram_preset
-from .backends.tts import CeluneBackend
-from .paths import huggingface_progress
-from .typing.common import JSONSerializable
-from .registry.other import NORMALIZER_MODEL_ID
-from .registry.consent import require_model_consent
 
 try:
     from transformers.cache_utils import LinearAttentionCacheLayerMixin
 except ImportError:
     LinearAttentionCacheLayerMixin = CacheLayerMixin
+
+from .i18n import string
+from .utils import discard
+from .vram import resolve_vram_preset
+from .paths import huggingface_progress
+from .backends.tts import CeluneBackend
+from .typing.common import JSONSerializable
+from .registry.other import NORMALIZER_MODEL_ID
+from .registry.consent import require_model_consent
+
 
 if TYPE_CHECKING:
     from transformers.configuration_utils import PreTrainedConfig
@@ -231,7 +233,8 @@ class QuantizedKVCacheLayer(CacheLayerMixin):
         **kwargs: object,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """Append new states and return the dequantized attention view."""
-        del args, kwargs
+        discard(args)
+        discard(kwargs)
         if not self.is_initialized:
             self.lazy_initialization(key_states, value_states)
 
@@ -789,7 +792,7 @@ class GraphQuantizedKVCacheLayer(QuantizedKVCacheLayer):
         query_length: Union[int, torch.Tensor],
     ) -> tuple[int, int]:
         """Return the fixed attention length used by the graph cache."""
-        del query_length
+        discard(query_length)
         return self.max_cache_len, 0
 
     def get_seq_length(self) -> int:

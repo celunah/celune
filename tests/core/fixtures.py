@@ -5,9 +5,14 @@ import queue
 import threading
 from unittest import mock
 from typing import Optional
+from functools import partial
 from collections.abc import Callable
 
+import pytest
+
+
 from celune.celune import Celune
+from celune.typing.celune import ToastCallback
 from celune.core import lifecycle as core_lifecycle
 from celune.core.lifecycle import _close_speech_pipeline as close_pipeline
 from celune.dataclasses.celune import (
@@ -20,10 +25,10 @@ from celune.dataclasses.celune import (
     CelunePipelineState,
 )
 
-from ..support import FakeGlow, FakeBackend, CeluneTestCase
+from ..support import FakeGlow, FakeBackend
 
 
-class CeluneCoreTestSupport(CeluneTestCase):
+class CeluneCoreTestSupport:
     """Shared engine construction and cleanup helpers without test methods."""
 
     _cached_celune: Optional[Celune] = None
@@ -63,6 +68,7 @@ class CeluneCoreTestSupport(CeluneTestCase):
         backend = FakeBackend(log=core_lifecycle._noop_message, fatal=celune.fatal)
         celune._callbacks = CeluneCallbackState(
             log_callback=core_lifecycle._noop_message,
+            toast_callback=core_lifecycle._noop_toast,
             status_callback=core_lifecycle._noop_message,
             error_callback=lambda _error: None,
             idle_callback=lambda: None,
@@ -117,21 +123,15 @@ class CeluneCoreTestSupport(CeluneTestCase):
         celune.close = close_cached
         cls._cached_celune = celune
 
-    @classmethod
-    def tearDownClass(cls) -> None:
-        """Close the cached default test instance after the core suite."""
-        if cls._cached_celune is not None:
-            cached_celune = cls._cached_celune
-            cls._cached_celune = None
-            cached_celune.close()
-
     def _make_celune(
         self,
+        request: pytest.FixtureRequest,
         config: dict,
         startup_callback: Optional[Callable[[str], None]] = None,
+        toast_callback: Optional[ToastCallback] = None,
     ) -> Celune:
         """Build a Celune instance with lightweight fakes."""
-        if not config and startup_callback is None:
+        if not config and startup_callback is None and toast_callback is None:
             cached_celune = type(self)._cached_celune
             if cached_celune is not None:
                 type(self)._reset_cached_celune(cached_celune)
@@ -149,14 +149,15 @@ class CeluneCoreTestSupport(CeluneTestCase):
                 config=config,
                 tts_backend=FakeBackend,
                 startup_callback=startup_callback,
+                toast_callback=toast_callback,
             )
-            if not config and startup_callback is None:
+            if not config and startup_callback is None and toast_callback is None:
                 owner = type(self)
                 owner._cached_instance_keys = frozenset(celune.__dict__)
                 owner._cache_celune(celune)
                 Celune._instance = None
             else:
-                self.addCleanup(self._close_celune, celune)
+                request.addfinalizer(partial(self._close_celune, celune))
             return celune
 
     @staticmethod

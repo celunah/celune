@@ -8,14 +8,22 @@ import contextlib
 from typing import Optional
 from collections.abc import Mapping, Generator
 
+from ..i18n import string
+from ..config import Config
+from ..vram import resolve_vram_preset
+from ..typing.aliases import LogCallback
 from .capabilities import PersonaCapabilities
+from ..dataclasses.cevoice import CEVoicePersona
+from ..terminal import RUNTIME_LOG_FILTER_MESSAGES
+from ..typing.common import JSON, JSONSerializable
+from ..registry.llm import PERSONA_DEFAULT_MODEL_ID, persona_model_tier
 from .runtime import PersonaRuntime, response_to_json, request_from_json
+from ..core.concurrency import InferencePriority, PriorityInferenceScheduler
 from ..modes import (
     mode_allows_persona,
     resolve_operation_mode,
 )
 from ..cevoice import (
-    CEVoicePersona,
     default_loader,
     merge_persona_metadata,
     persona_metadata_from_voice,
@@ -27,19 +35,12 @@ from ..constants import (
     PERSONA_HISTORY_MESSAGES,
     DEFAULT_PERSONA_DESCRIPTION,
 )
-from ..i18n import string
-from ..config import Config
 from ..typing.persona import (
     PersonaModel,
     PersonaTokenizer,
     PersonaEngineView,
     PersonaClientResponse,
 )
-from ..vram import resolve_vram_preset
-from ..typing.aliases import LogCallback
-from ..typing.common import JSON, JSONSerializable
-from ..registry.llm import PERSONA_DEFAULT_MODEL_ID, persona_model_tier
-from ..core.concurrency import InferencePriority, PriorityInferenceScheduler
 
 PERSONA_QUANTIZATION = "4bit"
 _CONVERSATION_SUMMARY_SYSTEM_PROMPT = (
@@ -51,9 +52,7 @@ _CONVERSATION_SUMMARY_SYSTEM_PROMPT = (
     "no XML tags, role labels, or heading."
 )
 _SUMMARY_PREFIX = "Conversation context:"
-_SUMMARY_SPLIT_RE = re.compile(
-    r"(?:\r?\n+|(?<=[.!?\u3002\uff01\uff1f\u061f])\s*|[;\uff1b]\s*)"
-)
+_SUMMARY_SPLIT_RE = re.compile(r"\r?\n+|(?<=[.!?。！？؟])\s*|[;；]\s*")
 _SUMMARY_WRAPPER_RE = re.compile(r"</?(?:conversation_summary|summary)>", re.IGNORECASE)
 _SUMMARY_LABEL_RE = re.compile(
     r"^\s*(?:summary|earlier summary|conversation summary|conversation context|"
@@ -71,9 +70,9 @@ class PersonaClient:
         log: Optional[LogCallback] = None,
         log_dev: Optional[LogCallback] = None,
     ) -> None:
-        self.runtime = PersonaRuntime(config=config)
         self.config = config
         self.log = log or log_dev
+        self.runtime = PersonaRuntime(config=config, log=self.log)
         self.inference_scheduler: Optional[PriorityInferenceScheduler] = None
 
     @contextlib.contextmanager
@@ -89,8 +88,12 @@ class PersonaClient:
 
         for line in stderr_buffer.getvalue().splitlines():
             text = line.strip()
-            if text:
-                self.log(f"[PERSONA] {text}", "warning", loglevel="verbose")
+            if not text or any(
+                filtered_message in text
+                for filtered_message in RUNTIME_LOG_FILTER_MESSAGES
+            ):
+                continue
+            self.log(f"[PERSONA] {text}", "warning", loglevel="verbose")
 
     def load(
         self,
@@ -218,6 +221,10 @@ class PersonaClient:
     def capabilities(self) -> PersonaCapabilities:
         """Return the capabilities of the active Persona architecture."""
         return self.runtime.capabilities()
+
+    def inference_metadata(self) -> dict[str, str]:
+        """Return the effective Persona model and inference metadata."""
+        return self.runtime.inference_metadata()
 
 
 def persona_config(config: Mapping[str, JSONSerializable]) -> Config:
@@ -652,6 +659,7 @@ def _vlm_persona_summary(
     if not callable(summarize_history):
         return ""
 
+    # noinspection PyBroadException
     try:
         generated = summarize_history(
             old_messages,
@@ -910,6 +918,8 @@ def persona_is_available() -> bool:
     Returns:
         bool: Whether the in-process Persona is usable.
     """
+
+    # noinspection PyBroadException
     try:
         PersonaRuntime()
         return True
@@ -927,6 +937,7 @@ def create_persona_client(
     Args:
         config: Celune's current configuration.
         log: The logging callback to Celune's UI.
+        log_dev: The developer-facing logging callback to Celune's UI.
 
     Returns:
         Optional[PersonaClient]: ``PersonaClient`` if Persona is enabled, else ``None``.

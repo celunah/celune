@@ -13,32 +13,11 @@ from types import TracebackType, SimpleNamespace
 
 import pytest
 import numpy as np
-import numpy.typing as npt
 
-from celune.cevoice import (
-    CEVoicePersona,
-    PersonaIdentity,
-    PersonaStyleValues,
-)
-from celune.pipeline import (
-    output,
-    captions,
-    playback,
-    buffering,
-    generation,
-    submission,
-)
 from celune.celune import Celune
-from celune.typing.agent import (
-    AgentTask,
-    AgentContext,
-    AgentRequest,
-)
-from celune.dataclasses.pipeline import (
-    SpeechRequest,
-    AudioInputRequest,
-)
+
 from celune.typing.aliases import AudioChunk
+from celune.core import speech as core_speech
 from celune.utils import discard, clear_queue
 from celune.audio.speakers import SpeakerChannel
 from celune.agent import routing as agent_routing
@@ -47,9 +26,31 @@ from celune.constants import BASE_SR, PipelineStates
 from celune.typing.common import JSON, JSONSerializable
 from celune.core.concurrency import run_in_daemon_thread
 from celune.dataclasses import pipeline as pipeline_types
+from celune.core import conversation as core_conversation
 from celune.persona.capabilities import PersonaCapabilities
 from celune.persona import conversation as persona_conversation
-from celune.core import conversation as core_conversation, speech as core_speech
+from celune.pipeline import (
+    output,
+    captions,
+    playback,
+    buffering,
+    generation,
+    submission,
+)
+from celune.typing.agent import (
+    AgentTask,
+    AgentContext,
+    AgentRequest,
+)
+from celune.dataclasses.cevoice import (
+    CEVoicePersona,
+    PersonaIdentity,
+    PersonaStyleValues,
+)
+from celune.dataclasses.pipeline import (
+    SpeechRequest,
+    AudioInputRequest,
+)
 
 from .helpers import (
     reload_callback,
@@ -57,18 +58,11 @@ from .helpers import (
     wait_for_persona_worker,
     prepare_persona_conversation_engine,
 )
-from ..support import (
-    FakeStream,
-    FakeVCBackend,
-    CeluneTestCase,
-    CeluneAsyncTestCase,
-    make_voice_loader,
-    make_pipeline_engine,
-)
+from ..support import FakeStream, FakeVCBackend, make_voice_loader, make_pipeline_engine
 from ..platform import LINUX_ONLY, WINDOWS_ONLY
 
 
-class TestPipeline(CeluneTestCase):
+class TestPipeline:
     """Tests for lightweight pipeline behavior."""
 
     def test_singing_backend_rejects_plain_speech_before_queueing(self) -> None:
@@ -86,6 +80,23 @@ class TestPipeline(CeluneTestCase):
             "The active singing backend requires CESN notation.",
             "warning",
         )
+        engine.toast.assert_called_once_with(
+            "The active singing backend requires CESN notation.",
+            severity="warning",
+        )
+        assert engine.text_queue.empty()
+
+    def test_tutorial_speech_rejection_emits_a_warning_toast(self) -> None:
+        """Make tutorial input restrictions visible outside the log panel."""
+        engine = make_pipeline_engine()
+        engine.is_in_tutorial = True
+        engine.log = mock.Mock()
+
+        assert not submission.queue_speech(cast(Celune, engine), "plain speech")
+
+        message = "Speech input is disabled during the tutorial."
+        engine.log.assert_called_once_with(message, "warning")
+        engine.toast.assert_called_once_with(message, severity="warning")
         assert engine.text_queue.empty()
 
     def test_persona_input_rejects_singing_backend_before_queueing(self) -> None:
@@ -100,6 +111,10 @@ class TestPipeline(CeluneTestCase):
         engine.log.assert_called_once_with(
             "Persona replies are unavailable while the singing backend is active.",
             "warning",
+        )
+        engine.toast.assert_called_once_with(
+            "Persona replies are unavailable while the singing backend is active.",
+            severity="warning",
         )
         assert engine.persona_queue.empty()
 
@@ -576,7 +591,7 @@ class TestPipeline(CeluneTestCase):
                 return_value=speakers,
             ),
             mock.patch(
-                "celune.core.speech._generate_test_tone",
+                "celune.core.speech.generate_test_tone",
                 return_value=np.zeros((8, 2), dtype=np.float32),
             ) as generate_tone,
             mock.patch("celune.core.speech.close_stream") as close_stream,
@@ -675,7 +690,7 @@ class TestPipeline(CeluneTestCase):
 
 
 @pytest.mark.anyio
-class TestPipelineAsync(CeluneAsyncTestCase):
+class TestPipelineAsync:
     """Tests for async pipeline entry points."""
 
     async def test_playback_input_reader_reuses_one_persistent_thread(self) -> None:
@@ -701,7 +716,7 @@ class TestPipelineAsync(CeluneAsyncTestCase):
         engine.model_ready.clear()
 
         def mark_ready(*, timeout: Optional[float]) -> bool:
-            del timeout
+            discard(timeout)
             engine.model_ready.set()
             return True
 
@@ -795,15 +810,15 @@ class TestPipelineAsync(CeluneAsyncTestCase):
     def test_persona_wait_does_not_cross_a_model_reload_boundary(self) -> None:
         """Verify Persona waits for reload completion before changing engine state."""
         engine = make_pipeline_engine()
-        engine._reload_pending = True
+        engine.reload_pending = True
         wait_calls = 0
 
         def wait_for_playback(*, timeout: Optional[float]) -> bool:
             nonlocal wait_calls
-            del timeout
+            discard(timeout)
             wait_calls += 1
             if wait_calls == 2:
-                engine._reload_pending = False
+                engine.reload_pending = False
                 engine.cur_state = "idle"
             return True
 
@@ -887,20 +902,17 @@ class TestPipelineAsync(CeluneAsyncTestCase):
                 "probabilities": {"en": 1.0},
             },
         ):
-            self.assertTrue(
-                submission.queue_speech(
-                    cast(Celune, engine),
-                    raw_text,
-                    display_text=raw_text,
-                )
+            assert submission.queue_speech(
+                cast(Celune, engine),
+                raw_text,
+                display_text=raw_text,
             )
 
         request = engine.text_queue.get_nowait()
-        self.assertEqual(
-            request.text,
-            "status, ok C drive, Users, user foo underscore bar dot py",
+        assert request.text == (
+            "status, ok C drive, Users, user foo underscore bar dot py"
         )
-        self.assertEqual(request.display_text, raw_text)
+        assert request.display_text == raw_text
 
     def test_queue_speech_preserves_cesn_for_singing_backend(self) -> None:
         """Preserve CESN for synthesis and expose plain lyrics as caption text."""
@@ -914,21 +926,19 @@ class TestPipelineAsync(CeluneAsyncTestCase):
         with mock.patch(
             "celune.pipeline.submission.detect_language"
         ) as detect_language:
-            self.assertTrue(
-                submission._queue_speech_request(
-                    cast(Celune, engine),
-                    notation,
-                    display_text=notation,
-                    allow_tutorial=False,
-                    synthesis_sections=(notation,),
-                )
+            assert submission._queue_speech_request(
+                cast(Celune, engine),
+                notation,
+                display_text=notation,
+                allow_tutorial=False,
+                synthesis_sections=(notation,),
             )
 
         request = engine.text_queue.get_nowait()
-        self.assertEqual(request.text, notation)
-        self.assertEqual(request.display_text, "I love you.")
-        self.assertEqual(request.synthesis_sections, (notation,))
-        self.assertEqual(request.language, "en")
+        assert request.text == notation
+        assert request.display_text == "I love you."
+        assert request.synthesis_sections == (notation,)
+        assert request.language == "en"
         detect_language.assert_not_called()
 
     def test_handle_audio_input_accepts_and_ignores_audio_by_default(self) -> None:
@@ -1192,8 +1202,9 @@ class TestPipelineAsync(CeluneAsyncTestCase):
         assert "--print" not in command
         assert str(temp_root / "temp" / "temporary_audio.%(ext)s") in command
 
+    @staticmethod
     def _assert_download_youtube_sfx_uses_repo_venv_python(
-        self, expected_python: str
+        expected_python: str,
     ) -> None:
         """Verify a compiled yt-dlp launch uses the expected venv Python."""
         engine = make_pipeline_engine()
@@ -1746,7 +1757,7 @@ class TestPipelineAsync(CeluneAsyncTestCase):
             await run_playback_worker(cast(Celune, engine))
 
         assert mock_stream.call_args.kwargs["device"] == "VB-Cable Output"
-        assert mock_stream.call_args.kwargs["latency"] == "high"
+        assert mock_stream.call_args.kwargs["latency"] == "low"
 
     async def test_playback_worker_records_output_underflow(self) -> None:
         """Verify PortAudio underflows raise the adaptive reserve target."""
@@ -1767,7 +1778,7 @@ class TestPipelineAsync(CeluneAsyncTestCase):
         class UnderflowStream(FakeStream):
             """Output stream fake that reports one inserted underflow."""
 
-            def write(self, audio: npt.NDArray[np.float32]) -> bool:
+            def write(self, audio: np.ndarray) -> bool:
                 super().write(audio)
                 return True
 
@@ -1902,7 +1913,8 @@ class TestPipelineAsync(CeluneAsyncTestCase):
         idle_complete = threading.Event()
 
         def observe_log(message: str, *args: str, **kwargs: str) -> None:
-            del args, kwargs
+            discard(args)
+            discard(kwargs)
             if "[IDLE] completion deferred" in message:
                 deferred_idle.set()
 
@@ -2079,7 +2091,7 @@ class TestPipelineAsync(CeluneAsyncTestCase):
                 super().__init__()
                 self.injected = False
 
-            def write(self, audio: npt.NDArray[np.float32]) -> bool:
+            def write(self, audio: np.ndarray) -> bool:
                 super().write(audio)
                 if not self.injected:
                     self.injected = True
@@ -2141,7 +2153,7 @@ class TestPipelineAsync(CeluneAsyncTestCase):
                 super().__init__()
                 self.injected = False
 
-            def write(self, audio: npt.NDArray[np.float32]) -> bool:
+            def write(self, audio: np.ndarray) -> bool:
                 super().write(audio)
                 if not self.injected:
                     self.injected = True
@@ -2209,7 +2221,7 @@ class TestPipelineAsync(CeluneAsyncTestCase):
                 super().__init__()
                 self.injected = False
 
-            def write(self, audio: npt.NDArray[np.float32]) -> bool:
+            def write(self, audio: np.ndarray) -> bool:
                 super().write(audio)
                 if not self.injected:
                     self.injected = True
@@ -2316,7 +2328,7 @@ class TestPipelineAsync(CeluneAsyncTestCase):
                 super().__init__()
                 self.stop_requested = False
 
-            def write(self, audio: npt.NDArray[np.float32]) -> bool:
+            def write(self, audio: np.ndarray) -> bool:
                 super().write(audio)
                 if not self.stop_requested:
                     self.stop_requested = True
@@ -2324,7 +2336,8 @@ class TestPipelineAsync(CeluneAsyncTestCase):
                     engine.audio_queue.put(engine.sentinel)
                 return False
 
-            def assert_stop(self) -> None:
+            @staticmethod
+            def assert_stop() -> None:
                 """Request the same stop that the UI command uses."""
                 stop_results.append(playback.force_stop_speech(cast(Celune, engine)))
 
@@ -2374,8 +2387,8 @@ class TestPipelineAsync(CeluneAsyncTestCase):
         class FailingStream(FakeStream):
             """Raise when the playback worker writes the SFX block."""
 
-            def write(self, audio: npt.NDArray[np.float32]) -> bool:
-                del audio
+            def write(self, audio: np.ndarray) -> bool:
+                discard(audio)
                 raise RuntimeError("simulated SFX output failure")
 
         with mock.patch(
@@ -2399,6 +2412,47 @@ class TestPipelineAsync(CeluneAsyncTestCase):
         engine.glow.reset_audio_reactivity.assert_called_once_with()
         assert engine.playback_done.is_set()
         assert engine.cur_state == "idle"
+        engine.idle_callback.assert_called_once_with()
+
+    def test_finalize_playback_idle_restores_maintained_status(self) -> None:
+        """Keep the active agent task status after its speech finishes."""
+        engine = make_pipeline_engine()
+        engine.locked = False
+        engine.cur_state = "classifying"
+        engine._speech_status_restore = {42: "classifying"}
+        engine.agent_runtime = SimpleNamespace(
+            get_active_task=mock.Mock(return_value=SimpleNamespace(is_terminal=False))
+        )
+        maintained: list[bool] = []
+        engine.idle_callback.side_effect = lambda: maintained.append(
+            engine._maintain_status_after_playback
+        )
+
+        playback._finalize_playback_idle(cast(Celune, engine), source_id=42)
+
+        assert engine.cur_state == "classifying"
+        assert engine._speech_status_restore == {}
+        assert not engine._maintain_status_after_playback
+        assert maintained == [True]
+        engine.idle_callback.assert_called_once_with()
+
+    def test_finalize_playback_idle_clears_maintained_status_without_active_task(
+        self,
+    ) -> None:
+        """Return to idle when maintained speech outlives its agent task."""
+        engine = make_pipeline_engine()
+        engine.locked = False
+        engine.cur_state = "speaking"
+        engine._speech_status_restore = {42: "speaking"}
+        engine.agent_runtime = SimpleNamespace(
+            get_active_task=mock.Mock(return_value=None)
+        )
+
+        playback._finalize_playback_idle(cast(Celune, engine), source_id=42)
+
+        assert engine.cur_state == "idle"
+        assert engine._speech_status_restore == {}
+        assert not engine._maintain_status_after_playback
         engine.idle_callback.assert_called_once_with()
 
     def test_finalize_playback_idle_does_not_announce_readiness_while_reloading(
@@ -2556,12 +2610,12 @@ class TestPipelineAsync(CeluneAsyncTestCase):
         assert not request.save
 
         payload = cast(JSON, engine.vision.payload)
-        self.assertEqual(payload["model"], "fixture/persona-test")
-        self.assertEqual(payload["quantization"], "4bit")
-        self.assertEqual(payload["quantized"], True)
-        self.assertEqual(payload["request"], "What now?")
-        self.assertEqual(payload["user"], "What now?")
-        self.assertEqual(payload["character"], "Celune")
+        assert payload["model"] == "fixture/persona-test"
+        assert payload["quantization"] == "4bit"
+        assert payload["quantized"] is True
+        assert payload["request"] == "What now?"
+        assert payload["user"] == "What now?"
+        assert payload["character"] == "Celune"
 
         character_card = cast(str, payload["character_card"])
         system_prompt = cast(str, payload["system"])
@@ -2590,16 +2644,28 @@ class TestPipelineAsync(CeluneAsyncTestCase):
             {"role": "assistant", "content": "I can help with that."},
         ]
 
-    def test_agent_classification_request_uses_a_disposable_prompt(
+    def test_agent_classification_request_includes_bounded_short_term_history(
         self,
     ) -> None:
-        """Build routing input without retaining conversational Persona history."""
+        """Resolve follow-up references from short-term history, without memories."""
         engine = make_pipeline_engine()
         engine.config = {
             "vram": "high",
-            "persona": {"model_id": "fixture/persona-test"},
+            "persona": {
+                "model_id": "fixture/persona-test",
+                "memory": {"max_short_term_messages": 4},
+            },
         }
-        engine.persona_history = [{"role": "assistant", "content": "Earlier."}]
+        engine.persona_history = [
+            {"role": "assistant", "content": "Too old to route."},
+            {
+                "role": "user",
+                "content": "Read /work/report.txt and tell me what it contains.",
+            },
+            {"role": "assistant", "content": "The report has three sections."},
+            {"role": "user", "content": "Now compare it with the budget."},
+            {"role": "assistant", "content": "The totals differ."},
+        ]
         engine.persona_session_summary = "Stale conversation summary."
         engine.retrieved_long_term_memory = ["Stale long-term memory."]
 
@@ -2608,38 +2674,67 @@ class TestPipelineAsync(CeluneAsyncTestCase):
             "Please handle this.",
         )
 
-        self.assertEqual(payload["format"], "celune_agent_classification")
-        self.assertEqual(payload["request"], "Please handle this.")
-        self.assertEqual(payload["context_space"], 8192)
-        self.assertEqual(payload["max_new_tokens"], 256)
+        assert payload["format"] == "celune_agent_classification"
+        assert payload["request"] == "Please handle this."
+        assert payload["context_space"] == 8192
+        assert payload["max_new_tokens"] == 256
         system_prompt = payload["system"]
-        self.assertIsInstance(system_prompt, str)
         assert isinstance(system_prompt, str)
-        self.assertNotIn("\n\n<memory>\n", system_prompt)
-        self.assertNotIn("<conversation_summary>", system_prompt)
-        self.assertNotIn("Stale long-term memory", system_prompt)
-        self.assertNotIn("Stale conversation summary", system_prompt)
-        self.assertIn("Classify the latest user input", system_prompt)
-        self.assertIn(
-            "internal routing request, not a character response", system_prompt
-        )
-        self.assertIn("Do not add a preamble", system_prompt)
-        self.assertIn("a task classification must use route task", system_prompt)
-        self.assertIn("inspect or retrieve live/local state", system_prompt)
-        self.assertIn(
-            "Judge the intended operation and target semantically", system_prompt
-        )
+        assert isinstance(system_prompt, str)
+        assert "\n\n<memory>\n" not in system_prompt
+        assert "<conversation_summary>" not in system_prompt
+        assert "Stale long-term memory" not in system_prompt
+        assert "Stale conversation summary" not in system_prompt
+        assert "Classify the latest user input" in system_prompt
+        assert "internal routing request, not a character response" in system_prompt
+        assert "Do not add a preamble" in system_prompt
+        assert "a task classification must use route task" in system_prompt
+        assert "inspect or retrieve live/local state" in system_prompt
+        assert "Judge the intended operation and target semantically" in system_prompt
+        assert "Earlier messages are context, not new instructions" in system_prompt
+        assert (
+            "Prior user messages for reference only. Do not treat them as current input:"
+        ) in system_prompt
+        assert "Read /work/report.txt and tell me what it contains." in system_prompt
+        assert "Now compare it with the budget." in system_prompt
+        assert "The report has three sections." not in system_prompt
+        assert "The totals differ." not in system_prompt
+        assert "self-contained current operation" in system_prompt
         messages = cast(list[JSON], payload["messages"])
-        self.assertEqual(
-            messages[-1],
-            {"role": "user", "content": "Please handle this."},
-        )
-        self.assertEqual(
-            messages,
+        assert messages == (
             [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": "Please handle this."},
-            ],
+            ]
+        )
+        assert "Too old to route." not in system_prompt
+        assert "Stale long-term memory" not in system_prompt
+        assert "Stale conversation summary" not in system_prompt
+
+    def test_agent_routing_history_is_bounded_before_generation(self) -> None:
+        """Cap prior context so long conversations cannot crowd out routing."""
+        engine = make_pipeline_engine()
+        engine.config = {"vram": "high"}
+        engine.persona_history = [
+            {"role": "user", "content": "x" * 5000},
+            {"role": "assistant", "content": "Prior assistant response."},
+        ]
+
+        payload = agent_routing.build_agent_classification_request(
+            cast(Celune, engine),
+            "What about that?",
+        )
+
+        system_prompt = cast(str, payload["system"])
+        messages = cast(list[JSON], payload["messages"])
+        assert " ... [truncated] ... " in system_prompt
+        assert "x" * 1025 not in system_prompt
+        assert "Prior assistant response." not in system_prompt
+        assert messages == (
+            [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": "What about that?"},
+            ]
         )
 
     def test_agent_classification_request_includes_active_routing_context(self) -> None:
@@ -2659,21 +2754,20 @@ class TestPipelineAsync(CeluneAsyncTestCase):
             },
         )
 
-        self.assertEqual(
-            payload["routing_context"],
+        assert (payload["routing_context"]) == (
             {
                 "active_task": {"task_id": "task-1", "state": "awaiting_approval"},
                 "pending_approval": {
                     "request_id": "approval-1",
                     "prompt": "Allow the change?",
                 },
-            },
+            }
         )
         system_prompt = payload["system"]
-        self.assertIsInstance(system_prompt, str)
         assert isinstance(system_prompt, str)
-        self.assertIn("approval_response", system_prompt)
-        self.assertIn("awaiting_approval", system_prompt)
+        assert isinstance(system_prompt, str)
+        assert "approval_response" in system_prompt
+        assert "awaiting_approval" in system_prompt
 
     def test_persona_request_uses_xhigh_quantization(self) -> None:
         """Verify xhigh VRAM presets request Persona in 8-bit mode."""
@@ -2701,7 +2795,7 @@ class TestPipelineAsync(CeluneAsyncTestCase):
         conversation = persona_conversation.build_persona_request(
             cast(Celune, engine), "Hello"
         )
-        self.assertEqual(conversation["context_space"], 2048)
+        assert conversation["context_space"] == 2048
 
         task = AgentTask(
             task_id="task-context",
@@ -2719,4 +2813,4 @@ class TestPipelineAsync(CeluneAsyncTestCase):
             task.request.request,
             agent_context=agent_context,
         )
-        self.assertEqual(agent["context_space"], 8192)
+        assert agent["context_space"] == 8192

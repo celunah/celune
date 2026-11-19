@@ -19,7 +19,7 @@ Only these top-level files are recognized:
 | `examples.md` | Example dialogue and response patterns. |
 
 An empty optional file can be omitted. The v4/v5 manifest stores only safe file
-names; byte offsets and lengths live in the binary jump table.
+names. Byte offsets and lengths live in the binary jump table.
 
 ## Content rules
 
@@ -45,7 +45,7 @@ Persona combines the sources in this order:
 
 The shared identity remains active when a voice changes. Voice-level speaking
 style, boundaries, examples, and style values refine or extend the shared
-character; they do not silently create a second character.
+character. They do not silently create a second character.
 
 ## Debug override directory
 
@@ -66,4 +66,4 @@ the pack itself.
 The Markdown loader does not treat Markdown as a plugin mechanism. It rejects
 path traversal, unsupported filenames, malformed text types, and unsupported
 declarations. Do not use Persona Markdown as a way to grant an agent new
-tools; tool availability is defined by the typed agent catalog and configuration.
+tools. Tool availability is defined by the typed agent catalog and configuration.

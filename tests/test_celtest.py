@@ -12,11 +12,11 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import tests.celtest as celtest_plugin
-from tests.support import CeluneTestCase
+from celune.utils import discard
 from tests.celtest import CeltestMetadata, celtest
 
 
-class TestCeltest(CeluneTestCase):
+class TestCeltest:
     """Tests for the Celtest decorator and pytest presentation."""
 
     def test_celtest_attaches_metadata_without_wrapping_the_test(self) -> None:
@@ -94,18 +94,20 @@ version = "4.5.6"
 
             hasmarkup = True
 
+            @staticmethod
             def write(
-                self,
                 message: str,
                 *,
                 flush: bool = False,
                 **markup: bool,
             ) -> None:
                 """Capture a terminal write."""
-                del flush, markup
+                discard(flush)
+                discard(markup)
                 messages.append(message)
 
-            def line(self) -> None:
+            @staticmethod
+            def line() -> None:
                 """Capture a terminal newline."""
                 messages.append("\n")
 
@@ -134,18 +136,20 @@ version = "4.5.6"
         class Writer:
             """Capture compact output writes."""
 
+            @staticmethod
             def write(
-                self,
                 message: str,
                 *,
                 flush: bool = False,
                 **markup: bool,
             ) -> None:
                 """Capture one compact output write."""
-                del flush, markup
+                discard(flush)
+                discard(markup)
                 messages.append(message)
 
-            def line(self) -> None:
+            @staticmethod
+            def line() -> None:
                 """Capture a terminal newline."""
                 messages.append("\n")
 
@@ -177,15 +181,15 @@ version = "4.5.6"
 
             hasmarkup = False
 
+            @staticmethod
             def write(
-                self,
                 message: str,
                 *,
                 flush: bool = False,
                 **markup: bool,
             ) -> None:
                 """Capture one output write and its markup."""
-                del flush
+                discard(flush)
                 writes.append((message, markup))
 
             def line(self) -> None:
@@ -219,18 +223,20 @@ version = "4.5.6"
 
             hasmarkup = False
 
+            @staticmethod
             def write(
-                self,
                 message: str,
                 *,
                 flush: bool = False,
                 **markup: bool,
             ) -> None:
                 """Capture unexpected direct writer output."""
-                del flush, markup
+                discard(flush)
+                discard(markup)
                 writes.append(message)
 
-            def line(self) -> None:
+            @staticmethod
+            def line() -> None:
                 """Capture an unexpected direct writer newline."""
                 writes.append("\n")
 
@@ -239,7 +245,8 @@ version = "4.5.6"
 
             _tw = Writer()
 
-            def write_line(self, value: str) -> None:
+            @staticmethod
+            def write_line(value: str) -> None:
                 """Capture one newline-terminated reporter line."""
                 lines.append(f"{value}\n")
 
@@ -275,7 +282,7 @@ from tests.celtest import celtest
 
 @celtest("friendly pass")
 def test_pass():
-    pass
+    return None
 
 @celtest("friendly warning")
 def test_warning():
@@ -284,7 +291,7 @@ def test_warning():
 @pytest.mark.skip(reason="not part of this run")
 @celtest("hidden skip")
 def test_skip():
-    pass
+    return None
 
 @celtest("friendly failure", hint="The sample assertion was false.")
 def test_failure():
@@ -353,7 +360,7 @@ from tests.celtest import celtest
 
 @celtest("friendly pass")
 def test_pass():
-    pass
+    return None
 
 @celtest("friendly warning")
 def test_warning():
@@ -362,7 +369,7 @@ def test_warning():
 @pytest.mark.skip(reason="not part of this run")
 @celtest("hidden skip")
 def test_skip():
-    pass
+    return None
 
 @celtest("friendly failure", hint="The sample assertion was false.")
 def test_failure():
@@ -426,7 +433,7 @@ def test_error():
         plugin_file.write_text(
             """
 def pytest_report_teststatus(report, config):
-    del config
+    discard(config)
     if report.when == "call" and report.passed:
         return "unknown", "u", "UNKNOWN"
     return None
@@ -437,11 +444,11 @@ def pytest_report_teststatus(report, config):
         test_file.write_text(
             """
 def test_first():
-    pass
+    return None
 
 
 def test_second():
-    pass
+    return None
 """,
             encoding="utf-8",
         )
@@ -490,7 +497,7 @@ def test_failure():
 
 @celtest("unstarted test")
 def test_unstarted():
-    pass
+    return None
 """,
             encoding="utf-8",
         )
@@ -581,7 +588,7 @@ from tests.celtest import celtest
 
 @celtest("completed test")
 def test_completed():
-    pass
+    return None
 
 @celtest("interrupted test")
 def test_interrupted():
@@ -593,7 +600,7 @@ def test_interrupted():
 
 @celtest("unstarted test")
 def test_unstarted():
-    pass
+    return None
 """,
             encoding="utf-8",
         )

@@ -7,6 +7,7 @@
 #include <sys/wait.h>
 #include <sys/stat.h>
 #include <dirent.h>
+#include <errno.h>
 #include <signal.h>
 
 #include <ctype.h>
@@ -38,6 +39,22 @@ static int search_status_started = 0;
 static int search_status_ansi = 0;
 static int search_status_level = 0;
 static enum search_limit_reason search_limit = SEARCH_LIMIT_NONE;
+
+static int wait_for_child(pid_t child_pid, int *status) {
+    pid_t result;
+
+    do {
+        result = waitpid(child_pid, status, 0);
+    } while (result == -1 && errno == EINTR);
+
+    if (result == -1) {
+        perror("waitpid failed");
+        launcher_child_failed = 1;
+        return 0;
+    }
+
+    return 1;
+}
 
 int launcher_cpu_supports_avx(void) {
 #if defined(__x86_64__) || defined(__amd64__)
@@ -877,8 +894,11 @@ int launcher_run(int argc, char **argv) {
         } else {
             close(launcher_pipe[0]);
             int status;
-            waitpid(pid, &status, 0);
+            int wait_succeeded = wait_for_child(pid, &status);
             close(launcher_pipe[1]);
+            if (!wait_succeeded) {
+                return 1;
+            }
 
             if (WIFEXITED(status)) {
                 int exit_code = WEXITSTATUS(status);
@@ -936,8 +956,7 @@ int launcher_run(int argc, char **argv) {
                 _exit(127);
             }
 
-            if (waitpid(setup_pid, &setup_status, 0) == -1) {
-                perror("waitpid failed");
+            if (!wait_for_child(setup_pid, &setup_status)) {
                 return 1;
             }
 
@@ -996,7 +1015,9 @@ int launcher_run(int argc, char **argv) {
         _exit(1);
     } else {
         int status;
-        waitpid(pid, &status, 0);
+        if (!wait_for_child(pid, &status)) {
+            return 1;
+        }
 
         if (WIFEXITED(status)) {
             launcher_child_failed = WEXITSTATUS(status) != 0;

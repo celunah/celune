@@ -4,31 +4,50 @@
 import time
 import inspect
 import contextlib
-from typing import Optional
+from typing import Union, Optional, Protocol, cast
+from pathlib import Path
 from collections.abc import Callable, Iterator
 
 import torch
 from huggingface_hub import snapshot_download
-from faster_qwen3_tts import FasterQwen3TTS, __version__ as qwen3_ver
+from faster_qwen3_tts import FasterQwen3TTS
+from faster_qwen3_tts import __version__ as qwen3_ver
 
+
+from ...i18n import string
+from ...typing.aliases import AudioChunk
+from ...utils import discard, custom_assert
+from ...typing.backends import BackendArgumentValue
+from ...cevoice import CEVoiceLoader, default_loader
+from ...registry.consent import require_model_consent
+from ...registry.audio_cpp import audio_cpp_model_artifact
+from ...registry.tts import TTS_DEFAULT_VOICE, QWEN3_DEFAULT_MODEL_ID
 from .base import CeluneBackend, local_hf_offline_mode, cached_hf_snapshot_path
 from ...paths import (
     huggingface_progress,
     configure_numba_cache,
     huggingface_hub_cache_dir,
 )
-from ...modeling import (
-    GraphQuantizedKVCache,
-    QuantizedKVCache,
-    create_graph_quantized_kv_cache,
-    create_quantized_kv_cache,
+from .audio_cpp import (
+    AudioCppRuntime,
+    ensure_audio_cpp_server,
+    load_audio_cpp_tts_model,
 )
-from ...i18n import string
-from ...typing.aliases import AudioChunk
-from ...utils import available, custom_assert
-from ...cevoice import CEVoiceLoader, default_loader
-from ...registry.consent import require_model_consent
-from ...registry.tts import TTS_DEFAULT_VOICE, QWEN3_DEFAULT_MODEL_ID
+from ...modeling import (
+    QuantizedKVCache,
+    GraphQuantizedKVCache,
+    create_quantized_kv_cache,
+    create_graph_quantized_kv_cache,
+)
+
+
+class _Qwen3TalkerGraph(Protocol):
+    """Runtime graph attributes patched by the installed Qwen3 implementation."""
+
+    model: torch.nn.Module
+    max_seq_len: int
+    prefill_kv: Callable[..., object]
+    static_cache: object
 
 
 def _quantized_talker_cache(
@@ -78,13 +97,17 @@ def _install_graph_quantized_cache(
     enabled: bool,
 ) -> bool:
     """Install fixed-capacity quantized storage into Qwen's talker graph."""
-    talker_graph = getattr(model, "talker_graph", None)
+    talker_graph = cast(
+        Optional[_Qwen3TalkerGraph],
+        getattr(model, "talker_graph", None),
+    )
     talker_model = getattr(talker_graph, "model", None)
     config = getattr(talker_model, "config", None)
     max_cache_len = getattr(talker_graph, "max_seq_len", None)
     prefill = getattr(talker_graph, "prefill_kv", None)
     if (
         not enabled
+        or talker_graph is None
         or config is None
         or not isinstance(max_cache_len, int)
         or not callable(prefill)
@@ -118,10 +141,11 @@ def _install_graph_quantized_cache(
     return True
 
 
-class Qwen3(CeluneBackend[FasterQwen3TTS]):
+class Qwen3(CeluneBackend[Union[FasterQwen3TTS, AudioCppRuntime]]):
     """Celune Qwen3-TTS backend."""
 
     name: str = "qwen3"
+    supports_audio_cpp = True
 
     uses_voice_bundles: bool = True
     chunk_rate: float = 12.5
@@ -234,11 +258,33 @@ class Qwen3(CeluneBackend[FasterQwen3TTS]):
 
         return self.clone_model_id
 
-    def prepare_model_loading(self) -> None:
+    @staticmethod
+    def prepare_model_loading() -> None:
         """Import Qwen's lazy model dependencies before request execution."""
         from qwen_tts import Qwen3TTSModel
 
-        del Qwen3TTSModel
+        discard(Qwen3TTSModel)
+
+    def preload_models(self) -> None:
+        """Prepare audio.cpp when selected, or preload native Qwen weights."""
+        if self.effective_inference_mode != "audio_cpp":
+            super().preload_models()
+            return
+
+        for model_id in self.all_model_ids:
+            require_model_consent(model_id)
+        try:
+            if not torch.cuda.is_available():
+                raise RuntimeError("audio.cpp requires an available CUDA device")
+            ensure_audio_cpp_server(
+                report_progress=self.report_progress,
+                log=self.log,
+                backend_name=self.name,
+            )
+        except Exception as error:
+            self.fallback_audio_cpp_to_native(error)
+        if self.effective_inference_mode == "native":
+            super().preload_models()
 
     def model_is_available_locally(
         self, model: str, lang: Optional[str] = None
@@ -262,7 +308,9 @@ class Qwen3(CeluneBackend[FasterQwen3TTS]):
             ],
         )
 
-    def load_model(self, model_id: str, **kwargs) -> FasterQwen3TTS:
+    def load_model(
+        self, model_id: str, **kwargs
+    ) -> Union[FasterQwen3TTS, AudioCppRuntime]:
         """Load the given voice model.
 
         Args:
@@ -270,9 +318,62 @@ class Qwen3(CeluneBackend[FasterQwen3TTS]):
             kwargs: Additional keyword arguments to use.
 
         Returns:
-            FasterQwen3TTS: The loaded Qwen3 TTS model instance.
+            Union[FasterQwen3TTS, AudioCppRuntime]: The loaded native or GGUF model.
         """
         metadata = require_model_consent(model_id)
+        if self.effective_inference_mode == "audio_cpp":
+            artifact = audio_cpp_model_artifact(
+                self.name,
+                model_id,
+                quantize=self.quantization_requested,
+            )
+            bundle = self._require_compatible_bundle()
+            transcript_missing = False
+            if bundle is not None and not self.x_vector_only:
+                loader, _ = bundle
+                for voice_settings in loader.bundle.voices.values():
+                    reference_text = voice_settings.get("reference_text")
+                    if (
+                        not isinstance(reference_text, str)
+                        or not reference_text.strip()
+                    ):
+                        transcript_missing = True
+                        break
+            if artifact is None:
+                self.fallback_audio_cpp_to_native(
+                    RuntimeError(
+                        f"audio.cpp has no verified Qwen3 TTS package for '{model_id}'"
+                    )
+                )
+            elif transcript_missing:
+                self.fallback_audio_cpp_to_native(
+                    RuntimeError(
+                        "audio.cpp Qwen3 Base requires transcripts for every configured voice"
+                    )
+                )
+            else:
+                try:
+                    if not torch.cuda.is_available():
+                        raise RuntimeError(
+                            "audio.cpp requires an available CUDA device"
+                        )
+                    runtime = load_audio_cpp_tts_model(
+                        artifact,
+                        backend_id=self.name,
+                        sample_rate=24_000,
+                        torch_root=Path(torch.__file__).resolve().parent,
+                        device=torch.cuda.current_device(),
+                        log=self.log,
+                        report_progress=self.report_progress,
+                    )
+                except Exception as error:
+                    self.fallback_audio_cpp_to_native(error)
+                else:
+                    self.quantization_attempted = self.quantization_requested
+                    self.quantization_active = artifact.quantization == "Q8_0"
+                    self.model = runtime
+                    return runtime
+
         available, path = self.model_is_available_locally(model_id)
         if not available or path is None:
             self.log(string("tts.model_download_start"), "info")
@@ -291,12 +392,12 @@ class Qwen3(CeluneBackend[FasterQwen3TTS]):
         return self.model
 
     def generate_stream(
-        self, model: FasterQwen3TTS, **kwargs
+        self, model: Union[FasterQwen3TTS, AudioCppRuntime], **kwargs
     ) -> Iterator[tuple[AudioChunk, int, Optional[dict]]]:
         """Generate Celune compatible audio chunks.
 
         Args:
-            model: The loaded Qwen3 model instance.
+            model: The loaded native or audio.cpp Qwen3 model.
             kwargs: Streaming generation keyword arguments to use.
 
         Returns:
@@ -307,6 +408,10 @@ class Qwen3(CeluneBackend[FasterQwen3TTS]):
         """
         if not kwargs.get("text", None):
             raise ValueError("expected text to say")
+
+        if isinstance(model, AudioCppRuntime):
+            yield from self._generate_audio_cpp_stream(model, kwargs)
+            return
 
         kwargs.setdefault("max_new_tokens", self.max_new_tokens)
         self._apply_seed()
@@ -359,7 +464,14 @@ class Qwen3(CeluneBackend[FasterQwen3TTS]):
                     getattr(getattr(model, "talker_graph", None), "static_cache", None),
                     GraphQuantizedKVCache,
                 )
-            stream = model.generate_voice_clone_streaming(
+            stream_generator = cast(
+                Callable[
+                    ...,
+                    Iterator[tuple[AudioChunk, int, Optional[dict]]],
+                ],
+                model.generate_voice_clone_streaming,
+            )
+            stream = stream_generator(
                 ref_audio=ref_wav,
                 ref_text=ref_text,
                 non_streaming_mode=False,  # VERY IMPORTANT ON >=0.2.5
@@ -382,8 +494,83 @@ class Qwen3(CeluneBackend[FasterQwen3TTS]):
                     timing = {"first_chunk_time": first_chunk_time}
                 yield audio_chunk, sample_rate, timing
         finally:
-            if stream is not None and available("close", obj=stream):
+            close_stream = getattr(stream, "close", None)
+            if callable(close_stream):
                 with contextlib.suppress(Exception):
-                    stream.close()
+                    close_stream()
             if cache_target is not None and original_talker_forward is not None:
                 cache_target[0].forward = original_talker_forward
+
+    def _generate_audio_cpp_stream(
+        self,
+        model: AudioCppRuntime,
+        kwargs: dict[str, BackendArgumentValue],
+    ) -> Iterator[tuple[AudioChunk, int, Optional[dict]]]:
+        """Stream Qwen3 TTS GGUF audio using Celune's reference voice."""
+        text = kwargs.pop("text", None)
+        if not isinstance(text, str) or not text.strip():
+            raise ValueError("expected text to say")
+        voice_value = kwargs.pop("voice", self.default_voice)
+        voice = (
+            voice_value
+            if isinstance(voice_value, str)
+            else self.default_voice or TTS_DEFAULT_VOICE
+        )
+        kwargs.pop("chunk_size", None)
+        instruct = kwargs.pop("instruct", None)
+        language = kwargs.pop("language", None)
+        temperature = kwargs.pop("temperature", None)
+        top_k = kwargs.pop("top_k", None)
+        top_p = kwargs.pop("top_p", None)
+        repetition_penalty = kwargs.pop("repetition_penalty", None)
+        max_tokens = kwargs.pop("max_new_tokens", self.max_new_tokens)
+        kwargs.pop("seed", None)
+
+        compatible_bundle = self._require_compatible_bundle()
+        if compatible_bundle is None:
+            return
+        loader, _ = compatible_bundle
+        try:
+            ref_wav = self._truncate_reference(loader.materialize(voice, "wav"))
+            configured_ref_text = loader.bundle.voices[voice].get("reference_text")
+        except KeyError as error:
+            raise ValueError(
+                f"unknown voice '{voice}' for backend '{self.name}'"
+            ) from error
+        ref_text = (
+            configured_ref_text.strip() if isinstance(configured_ref_text, str) else ""
+        )
+        if not ref_text and not self.x_vector_only:
+            raise ValueError(
+                "Qwen3 GGUF requires a reference transcript unless x-vector-only mode is enabled"
+            )
+
+        self._apply_seed()
+        options: dict[str, object] = {
+            "x_vector_only_mode": self.x_vector_only,
+        }
+        for key, value in (
+            ("temperature", temperature),
+            ("top_k", top_k),
+            ("top_p", top_p),
+            ("repetition_penalty", repetition_penalty),
+            ("max_tokens", max_tokens),
+        ):
+            if value is not None:
+                options[key] = value
+        if self.current_seed is not None:
+            options["seed"] = self.current_seed
+        if instruct:
+            options["instruct"] = instruct
+        request_body: dict[str, object] = {
+            "model": model.server_model_id,
+            "input": text,
+            "voice_ref": ref_wav.resolve().as_posix(),
+            "reference_text": ref_text,
+            "response_format": "pcm",
+            "stream_format": "sse",
+            "options": options,
+        }
+        if isinstance(language, str) and language:
+            request_body["language"] = language
+        yield from model.stream_speech(request_body, default_sample_rate=24_000)

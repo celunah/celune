@@ -223,12 +223,24 @@ def pad_note(
     )
 
 
-def _generate_test_tone(
+def generate_test_tone(
     frequency: float,
     duration: float,
     sample_rate: int = BASE_SR,
 ) -> AudioChunk:
-    """Generate an unfiltered sine tone with short fades for speaker testing."""
+    """Generate an unfiltered sine tone with short fades for speaker testing.
+
+    Args:
+        frequency: Positive tone frequency in hertz, below the Nyquist rate.
+        duration: Tone duration in seconds.
+        sample_rate: Output sample rate in hertz.
+
+    Returns:
+        AudioChunk: Contiguous stereo float32 audio with short fades.
+
+    Raises:
+        BadAudioError: The frequency, duration, or sample rate is invalid.
+    """
     if frequency <= 0 or frequency >= sample_rate / 2:
         raise BadAudioError("tone frequency must be between zero and the Nyquist rate")
     if duration <= 0:

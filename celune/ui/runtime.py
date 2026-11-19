@@ -8,13 +8,13 @@ import sys
 import math
 import time
 import signal
-import inspect
 import asyncio
+import inspect
 import logging
-import contextlib
 import datetime
 import itertools
 import threading
+import contextlib
 from io import TextIOWrapper
 from collections.abc import Callable
 from typing import Union, Optional, cast
@@ -22,6 +22,7 @@ from typing import Union, Optional, cast
 from rich.cells import cell_len
 
 from . import app as _app
+from .toast import CeluneToast
 
 __all__ = (
     "_agent_status_text",
@@ -106,10 +107,8 @@ def _run_on_ui_thread(self, callback: Callable[[], None]) -> None:
     if threading.current_thread() is threading.main_thread():
         callback()
     else:
-        try:
+        with contextlib.suppress(RuntimeError):
             self.call_from_thread(callback)
-        except RuntimeError:
-            pass
 
 
 def _severity_color(self, severity: str = "info") -> str:
@@ -340,6 +339,7 @@ def _bind_runtime_callbacks(self) -> None:
 
     callbacks: tuple[tuple[str, Callable[..., None]], ...] = (
         ("log_callback", self.tts_log),
+        ("toast_callback", self.show_toast),
         ("status_callback", self.safe_status),
         ("error_callback", self.error),
         ("idle_callback", self.tts_idle),
@@ -447,7 +447,8 @@ def _publish_webui_timed_update(self) -> None:
         return
 
     try:
-        from ..cedts.ui import UiTimedUpdate, ui_timed_update_channel
+        from ..cedts.ui import ui_timed_update_channel
+        from ..dataclasses.ui import UiTimedUpdate
     except ImportError:
         return
 
@@ -599,6 +600,15 @@ def _on_agent_choice_requested(
 
 def _on_agent_task_finished(self, event: _app.AgentTaskFinishedEvent) -> None:
     """Refresh the UI once a task reaches its terminal lifecycle state."""
+    celune = self.celune
+    runtime = getattr(celune, "agent_runtime", None)
+    active_task = runtime.get_active_task("default") if runtime is not None else None
+    playback_done = getattr(celune, "playback_done", None)
+    playback_done_check = getattr(playback_done, "is_set", None)
+    if active_task is None and callable(playback_done_check) and playback_done_check():
+        self._agent_task_id = None
+        self._run_on_ui_thread(lambda: self.safe_status(_app.string("status.idle")))
+        return
     self._agent_task_id = event.task_id
     self._run_on_ui_thread(self._refresh_agent_status)
 
@@ -913,6 +923,14 @@ def _persist_log_entry(self, msg: str, severity: str) -> None:
             handle.write(f"[{timestamp}] [{severity.upper()}] {msg}\n")
 
 
+def _duplicate_terminal_fd(fileno: Callable[[], int]) -> Optional[int]:
+    """Duplicate a terminal stream's file descriptor when it is available."""
+    try:
+        return os.dup(fileno())
+    except (OSError, TypeError, ValueError):
+        return None
+
+
 def _prepare_terminal_output_stream(self) -> Optional[TextIOWrapper]:
     """Give Textual an independent terminal stream before stderr capture starts."""
     if os.name == "nt" or self._terminal_output_stream is not None:
@@ -926,10 +944,16 @@ def _prepare_terminal_output_stream(self) -> Optional[TextIOWrapper]:
     if not callable(fileno):
         return None
 
-    output_fd: Optional[int] = None
+    duplicated_fd = _duplicate_terminal_fd(cast(Callable[[], int], fileno))
+    if duplicated_fd is None:
+        return None
+    output_fd = cast(int, duplicated_fd)  # type: ignore[redundant-cast]
+
+    from ..utils import discard
+
     output_stream: Optional[TextIOWrapper] = None
+    discard(output_stream)
     try:
-        output_fd = os.dup(cast(Callable[[], int], fileno)())
         output_stream = os.fdopen(
             output_fd,
             "w",
@@ -938,11 +962,9 @@ def _prepare_terminal_output_stream(self) -> Optional[TextIOWrapper]:
             buffering=1,
         )
     except (OSError, TypeError, ValueError):
-        if output_fd is not None:
-            with contextlib.suppress(OSError):
-                os.close(output_fd)
+        with contextlib.suppress(OSError):
+            os.close(output_fd)
         return None
-
     if output_stream is None:
         return None
 
@@ -1034,6 +1056,7 @@ def compose() -> _app.ComposeResult:
             yield _app.Label("", id="status")
             yield _app.Label("", id="resources")
     yield _app.CeluneLoadingScreen(widget_id="loading-overlay")
+    yield CeluneToast()
 
 
 def on_mount(self) -> None:
@@ -1075,6 +1098,7 @@ def on_mount(self) -> None:
     if self._startup_messages:
         terminal_status = self._startup_terminal_status_for(self._startup_messages[-1])
         if terminal_status is not None:
+            self._pending_terminal_status_message = self._startup_messages[-1]
             self._set_terminal_status(*terminal_status)
         else:
             self._set_terminal_status(
@@ -1128,6 +1152,7 @@ def receive_startup_diagnostic(self, message: str) -> None:
     self._startup_messages.append(message)
     terminal_status = self._startup_terminal_status_for(message)
     if terminal_status is not None:
+        self._pending_terminal_status_message = message
         self._set_terminal_status(*terminal_status)
 
     def update() -> None:
@@ -1145,6 +1170,7 @@ def _emit_startup_diagnostic(self, message: str) -> None:
     """
     terminal_status = self._startup_terminal_status_for(message)
     if terminal_status is not None:
+        self._pending_terminal_status_message = message
         self._set_terminal_status(*terminal_status)
     if self._startup_log_level != "info":
         self.receive_startup_diagnostic(message)
@@ -1160,10 +1186,8 @@ def _load_deferred_runtime(self) -> None:
             celune = self._startup_loader()
         _app.ensure_ui_runtime_dependencies()
     except BaseException as exc:
-        try:
+        with contextlib.suppress(RuntimeError):
             self.call_from_thread(self._handle_deferred_runtime_error, exc)
-        except RuntimeError:
-            pass
         return
     if celune is not None:
         try:
@@ -1204,6 +1228,8 @@ def _handle_deferred_runtime_error(self, error: BaseException) -> None:
         _app.string("osc.state_error"),
         terminal_action,
     )
+    self._terminal_status_message = failure_status
+    self._terminal_program_state = "error"
     self._write_terminal_title(self._terminal_status)
     message = _app.format_error_message(
         _app.tagged_string("ui.init_error", "INIT ERROR"),
@@ -1305,27 +1331,61 @@ def _write_terminal_escape(self, escape: str) -> None:
         self._old_stdout.flush()
 
 
-def _write_terminal_title(self, status: tuple[str, str, str]) -> None:
-    """Write one structured state title to the real terminal."""
+def _write_terminal_title(
+    self,
+    status: tuple[str, str, str],
+    *,
+    program_state: Optional[str] = None,
+    message: Optional[str] = None,
+) -> None:
+    """Write the title and structured program status to the real terminal."""
+    if message is None:
+        message = (
+            self._terminal_status_message
+            if status == getattr(self, "_terminal_status", None)
+            else status[2]
+        )
+    if program_state is None and status == getattr(self, "_terminal_status", None):
+        program_state = self._terminal_program_state
+    escape = _app.terminal_status_escape(
+        status,
+        program_state=program_state,
+        message=message,
+    )
     if self._log_stdout is not None:
-        self._log_stdout.ansi(_app.terminal_title_escape(status))
+        self._log_stdout.ansi(escape)
         return
 
     if self._old_stdout is not None:
-        _app.set_terminal_title(status, self._old_stdout)
+        self._old_stdout.write(escape)
+        self._old_stdout.flush()
 
 
 def _set_terminal_status(self, state: str, action: str) -> None:
-    """Publish a stable state and action in the terminal title."""
+    """Publish a stable state, action, and current status to the terminal."""
     status = (_app.APP_NAME, _app.string(f"osc.state_{state}"), action)
-    if getattr(self, "_terminal_status", None) == status:
+    message = getattr(self, "_pending_terminal_status_message", None)
+    self._pending_terminal_status_message = None
+    if message is None:
+        message = action
+    if (
+        getattr(self, "_terminal_status", None) == status
+        and getattr(self, "_terminal_status_message", None) == message
+        and getattr(self, "_terminal_program_state", None) == state
+    ):
         return
 
     self._terminal_status = status
+    self._terminal_status_message = message
+    self._terminal_program_state = state
 
     def update() -> None:
         if _app.supports_ansi(self._old_stdout):
-            self._write_terminal_title(status)
+            self._write_terminal_title(
+                status,
+                program_state=state,
+                message=message,
+            )
 
     self._run_on_ui_thread(update)
 
@@ -2297,9 +2357,20 @@ class RuntimeHooks:
         """Delegate to the runtime implementation."""
         return _write_terminal_escape(self, escape)
 
-    def _write_terminal_title(self, status: tuple[str, str, str]) -> None:
+    def _write_terminal_title(
+        self,
+        status: tuple[str, str, str],
+        *,
+        program_state: Optional[str] = None,
+        message: Optional[str] = None,
+    ) -> None:
         """Delegate to the runtime implementation."""
-        return _write_terminal_title(self, status)
+        return _write_terminal_title(
+            self,
+            status,
+            program_state=program_state,
+            message=message,
+        )
 
     def advance_resources(self) -> None:
         """Delegate to the runtime implementation."""
@@ -2309,7 +2380,8 @@ class RuntimeHooks:
         """Delegate to the runtime implementation."""
         return attach_celune(self, celune)
 
-    def compose(self) -> _app.ComposeResult:
+    @staticmethod
+    def compose() -> _app.ComposeResult:
         """Delegate to the runtime implementation."""
         return compose()
 

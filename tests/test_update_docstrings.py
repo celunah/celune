@@ -8,8 +8,6 @@ from pathlib import Path
 from types import SimpleNamespace
 from tempfile import TemporaryDirectory
 
-from .support import CeluneTestCase
-
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT_PATH = ROOT / "scripts" / "update_docstrings.py"
 SPEC = importlib.util.spec_from_file_location("update_docstrings_script", SCRIPT_PATH)
@@ -19,7 +17,7 @@ sys.modules[SPEC.name] = UPDATE_DOCSTRINGS
 SPEC.loader.exec_module(UPDATE_DOCSTRINGS)
 
 
-class TestUpdateDocstrings(CeluneTestCase):
+class TestUpdateDocstrings:
     """Verify nested docstring rewriting behavior."""
 
     def test_existing_docstrings_are_not_reformatted(self) -> None:

@@ -3,9 +3,10 @@
 
 import json
 import threading
+from typing import cast
 from pathlib import Path
 from unittest import mock
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 
 import numpy as np
 
@@ -78,6 +79,36 @@ def test_build_caption_alignment_sections_merges_empty_display_ranges() -> None:
         captions.CaptionAlignmentSection(0, 48_000, 0, 1, 0, 1),
         captions.CaptionAlignmentSection(48_000, 144_000, 1, 3, 1, 2),
     )
+
+
+def test_build_caption_alignment_sections_ignores_standalone_punctuation_chunks() -> (
+    None
+):
+    """Keep transcript ranges aligned with the words passed to eSpeak."""
+    transcript, sections = captions.build_caption_alignment_sections(
+        "first second",
+        (
+            (0, 48_000, "first"),
+            (48_000, 72_000, ":"),
+            (72_000, 120_000, "second"),
+        ),
+    )
+
+    assert transcript == "first second"
+    assert sections == (
+        captions.CaptionAlignmentSection(0, 48_000, 0, 1, 0, 1),
+        captions.CaptionAlignmentSection(72_000, 120_000, 1, 2, 1, 2),
+    )
+
+
+def test_merge_empty_caption_alignment_sections_into_adjacent_words() -> None:
+    """Keep punctuation-only prepared speech inside a neighboring passage."""
+    assert captions.merge_empty_caption_alignment_sections(
+        (
+            captions.CaptionAlignmentSection(0, 24_000, 0, 0, 0, 1),
+            captions.CaptionAlignmentSection(24_000, 72_000, 0, 2, 1, 3),
+        )
+    ) == (captions.CaptionAlignmentSection(0, 72_000, 0, 2, 0, 3),)
 
 
 def test_caption_aligner_constrains_ctc_to_tutorial_passages() -> None:
@@ -278,6 +309,7 @@ def test_caption_aligner_loads_model_lazily_and_aligns_ipa(
     download = mock.Mock(side_effect=("model.onnx", str(vocab_path)))
     hub = SimpleNamespace(hf_hub_download=download)
     runtime = SimpleNamespace(
+        get_available_providers=mock.Mock(return_value=("CPUExecutionProvider",)),
         InferenceSession=inference_session,
         SessionOptions=mock.Mock(return_value=session_options),
     )
@@ -339,4 +371,76 @@ def test_caption_aligner_loads_model_lazily_and_aligns_ipa(
         "-v",
         "en-us",
         "hello",
+    ]
+
+
+def test_caption_session_prefers_available_cuda_provider() -> None:
+    """Preload CUDA libraries and place CUDA before the CPU fallback."""
+    session = mock.Mock()
+    session_options = cast(
+        captions._SessionOptions,
+        SimpleNamespace(log_severity_level=3),
+    )
+    runtime = cast(
+        ModuleType,
+        SimpleNamespace(
+            get_available_providers=mock.Mock(
+                return_value=("CUDAExecutionProvider", "CPUExecutionProvider")
+            ),
+            preload_dlls=mock.Mock(),
+            InferenceSession=mock.Mock(return_value=session),
+        ),
+    )
+
+    assert (
+        captions._create_caption_session(runtime, "model.onnx", session_options)
+        is session
+    )
+
+    runtime.preload_dlls.assert_called_once_with()
+    runtime.InferenceSession.assert_called_once_with(
+        "model.onnx",
+        sess_options=session_options,
+        providers=["CUDAExecutionProvider", "CPUExecutionProvider"],
+    )
+
+
+def test_caption_session_retries_with_cpu_when_cuda_initialization_fails() -> None:
+    """Keep caption alignment available when the CUDA runtime cannot load."""
+    session = mock.Mock()
+    session_options = cast(
+        captions._SessionOptions,
+        SimpleNamespace(log_severity_level=3),
+    )
+    inference_session = mock.Mock(
+        side_effect=(RuntimeError("missing CUDA DLL"), session)
+    )
+    runtime = cast(
+        ModuleType,
+        SimpleNamespace(
+            get_available_providers=mock.Mock(
+                return_value=("CUDAExecutionProvider", "CPUExecutionProvider")
+            ),
+            preload_dlls=mock.Mock(),
+            InferenceSession=inference_session,
+        ),
+    )
+
+    assert (
+        captions._create_caption_session(runtime, "model.onnx", session_options)
+        is session
+    )
+
+    runtime.preload_dlls.assert_called_once_with()
+    assert inference_session.call_args_list == [
+        mock.call(
+            "model.onnx",
+            sess_options=session_options,
+            providers=["CUDAExecutionProvider", "CPUExecutionProvider"],
+        ),
+        mock.call(
+            "model.onnx",
+            sess_options=session_options,
+            providers=["CPUExecutionProvider"],
+        ),
     ]

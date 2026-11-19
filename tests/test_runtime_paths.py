@@ -8,11 +8,17 @@ import threading
 from pathlib import Path
 from unittest import mock
 from typing import Optional, cast
+from collections.abc import Iterator
 
 import yaml
 import pytest
 from textual.widgets import RichLog
 
+from celune.utils import discard, format_error
+from celune.ui.app import CeluneUI, UILogMessage
+from celune.cevoice import bundled_voices_dir, default_bundle_path
+from celune.constants import APP_SLUG
+from celune.persona.memory import default_memory_dir
 from celune.paths import (
     project_root,
     voices_data_dir,
@@ -25,21 +31,15 @@ from celune.paths import (
     migrate_legacy_app_data,
     backend_environments_dir,
     huggingface_hub_cache_dir,
+    configure_temp_environment,
     configure_huggingface_runtime,
     configure_huggingface_cache_environment,
-    configure_temp_environment,
 )
-from celune.constants import APP_SLUG
-from celune.utils import discard, format_error
-from celune.ui.app import CeluneUI, UILogMessage
-from celune.persona.memory import default_memory_dir
-from celune.cevoice import bundled_voices_dir, default_bundle_path
 
-from .support import CeluneTestCase
 from .platform import LINUX_ONLY, WINDOWS_ONLY
 
 
-class TestRuntimePath(CeluneTestCase):
+class TestRuntimePath:
     """Verify runtime files are written into the user data directory."""
 
     def test_format_error_uses_log_level_detail_tiers(self) -> None:
@@ -57,8 +57,9 @@ class TestRuntimePath(CeluneTestCase):
             assert "RuntimeError: tiered failure" in output
             assert trace_path.exists()
 
-    def tearDown(self) -> None:
-        """Reset singleton UI guards after each test."""
+    @pytest.fixture(autouse=True)
+    def _pytest_setup_and_teardown(self) -> Iterator[None]:
+        yield
         CeluneUI._instance = None
 
     def test_default_memory_dir_uses_persona_runtime_directory(self) -> None:
@@ -253,7 +254,7 @@ class TestRuntimePath(CeluneTestCase):
         # noinspection PyProtectedMember
         import importlib
 
-        from huggingface_hub import _snapshot_download, file_download
+        from huggingface_hub import file_download, _snapshot_download
 
         callback = mock.Mock()
         progress_module = importlib.import_module("huggingface_hub.utils.tqdm")
@@ -273,14 +274,204 @@ class TestRuntimePath(CeluneTestCase):
                 initial=0,
                 desc="aggregate",
                 disable=True,
+                name="huggingface_hub.snapshot_download.transfer",
             )
             aggregate_bar.update(50)
             aggregate_bar.close()
+            unrelated_bar = _snapshot_download.hf_tqdm(
+                total=3,
+                initial=0,
+                desc="Fetching 3 files",
+                disable=True,
+                name="huggingface_hub.snapshot_download",
+            )
+            unrelated_bar.update(2)
+            unrelated_bar.close()
 
         assert progress_module.__dict__["tqdm"] is previous_tqdm
         assert _snapshot_download.hf_tqdm is previous_hf_tqdm
         callback.assert_any_call(25.0, 100.0)
         callback.assert_any_call(50.0, 200.0)
+
+    def test_huggingface_progress_aggregates_concurrent_file_bars(self) -> None:
+        """Combine parallel file transfers into one monotonic byte count."""
+        import importlib
+
+        callback = mock.Mock()
+        progress_module = importlib.import_module("huggingface_hub.utils.tqdm")
+        with huggingface_progress(callback):
+            first_bar = progress_module.tqdm(
+                total=100,
+                initial=0,
+                desc="first.safetensors",
+                disable=True,
+                name="huggingface_hub.http_get",
+            )
+            second_bar = progress_module.tqdm(
+                total=200,
+                initial=0,
+                desc="second.safetensors",
+                disable=True,
+                name="huggingface_hub.http_get",
+            )
+            first_bar.update(25)
+            second_bar.update(50)
+            first_bar.close()
+            second_bar.close()
+
+        callback.assert_any_call(75.0, 300.0)
+
+    def test_huggingface_progress_forwards_generic_tqdm_bars(self) -> None:
+        """Forward generic tqdm progress without library-specific integration."""
+        from io import StringIO
+
+        from tqdm.std import tqdm
+
+        callback = mock.Mock()
+        with huggingface_progress(callback):
+            progress_bar = tqdm(
+                total=100,
+                initial=0,
+                desc="generic model loading",
+                disable=False,
+                file=StringIO(),
+            )
+            progress_bar.update(25)
+            progress_bar.close()
+
+        callback.assert_any_call(25.0, 100.0)
+
+    def test_huggingface_progress_keeps_one_generic_bar_primary(self) -> None:
+        """Keep concurrent generic bars from making progress jump between totals."""
+        from io import StringIO
+
+        from tqdm.std import tqdm
+
+        callback = mock.Mock()
+        with huggingface_progress(callback):
+            first_bar = tqdm(total=100, initial=0, disable=False, file=StringIO())
+            second_bar = tqdm(total=1000, initial=0, disable=False, file=StringIO())
+            first_bar.update(25)
+            second_bar.update(500)
+
+            assert mock.call(500.0, 1000.0) not in callback.call_args_list
+            first_bar.close()
+
+            callback.assert_any_call(500.0, 1000.0)
+            second_bar.close()
+
+    def test_huggingface_progress_resumes_generic_bars_after_transfers_close(
+        self,
+    ) -> None:
+        """Resume generic progress after active Hub transfers have closed."""
+        import importlib
+        from io import StringIO
+
+        from tqdm.std import tqdm
+
+        callback = mock.Mock()
+        progress_module = importlib.import_module("huggingface_hub.utils.tqdm")
+        with huggingface_progress(callback):
+            transfer_bar = progress_module.tqdm(
+                total=100,
+                initial=0,
+                desc="transfer.safetensors",
+                disable=True,
+                name="huggingface_hub.http_get",
+            )
+            generic_bar = tqdm(
+                total=1000,
+                initial=0,
+                disable=False,
+                file=StringIO(),
+            )
+            generic_bar.update(500)
+            assert mock.call(500.0, 1000.0) not in callback.call_args_list
+
+            transfer_bar.update(100)
+            transfer_bar.close()
+            generic_bar.update(1)
+            generic_bar.close()
+
+        callback.assert_any_call(501.0, 1000.0)
+
+    def test_huggingface_progress_removes_closed_generic_primary_during_transfer(
+        self,
+    ) -> None:
+        """Do not leave a closed generic primary blocking later progress bars."""
+        import importlib
+        from io import StringIO
+
+        from tqdm.std import tqdm
+
+        callback = mock.Mock()
+        progress_module = importlib.import_module("huggingface_hub.utils.tqdm")
+        with huggingface_progress(callback):
+            generic_bar = tqdm(
+                total=1000,
+                initial=0,
+                disable=False,
+                file=StringIO(),
+            )
+            transfer_bar = progress_module.tqdm(
+                total=100,
+                initial=0,
+                desc="transfer.safetensors",
+                disable=True,
+                name="huggingface_hub.http_get",
+            )
+            generic_bar.close()
+            transfer_bar.update(100)
+            transfer_bar.close()
+
+            resumed_bar = tqdm(
+                total=20,
+                initial=0,
+                disable=False,
+                file=StringIO(),
+            )
+            resumed_bar.update(10)
+            resumed_bar.close()
+
+        callback.assert_any_call(10.0, 20.0)
+
+    def test_huggingface_progress_routes_overlapping_scopes_to_their_callbacks(
+        self,
+    ) -> None:
+        """Keep overlapping Hub operations bound to their own progress receiver."""
+        import importlib
+
+        callbacks = (mock.Mock(), mock.Mock())
+        barrier = threading.Barrier(2)
+
+        def download(callback: mock.Mock, progress: float) -> None:
+            progress_module = importlib.import_module("huggingface_hub.utils.tqdm")
+            with huggingface_progress(callback):
+                progress_bar = progress_module.tqdm(
+                    total=100,
+                    initial=0,
+                    desc="model.safetensors",
+                    disable=True,
+                    name="huggingface_hub.http_get",
+                )
+                barrier.wait(timeout=2)
+                progress_bar.update(progress)
+                progress_bar.close()
+
+        threads = tuple(
+            threading.Thread(target=download, args=(callback, progress))
+            for callback, progress in zip(callbacks, (10.0, 20.0), strict=True)
+        )
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=2)
+
+        assert all(not thread.is_alive() for thread in threads)
+        callbacks[0].assert_any_call(10.0, 100.0)
+        callbacks[1].assert_any_call(20.0, 100.0)
+        assert mock.call(20.0, 100.0) not in callbacks[0].call_args_list
+        assert mock.call(10.0, 100.0) not in callbacks[1].call_args_list
 
     def test_format_error_writes_traceback_to_runtime_directory(self) -> None:
         """Verify developer tracebacks are saved via the runtime path helper.
@@ -405,8 +596,9 @@ class TestRuntimePath(CeluneTestCase):
             else:
                 delattr(main_module, "__compiled__")
 
+    @staticmethod
     def _assert_compiled_project_root_and_bundled_paths(
-        self, expected_root: Path, executable: Path
+        expected_root: Path, executable: Path
     ) -> None:
         """Verify bundled files resolve beside a compiled executable."""
         fake_main = type("CompiledMain", (), {"__compiled__": True})()
@@ -445,8 +637,9 @@ class TestRuntimePath(CeluneTestCase):
             Path("/Apps/Celune/celune"),
         )
 
+    @staticmethod
     def _assert_compiled_project_root_from_bin(
-        self, expected_root: Path, executable: Path
+        expected_root: Path, executable: Path
     ) -> None:
         """Verify a compiled launch from bin/ resolves the repository root."""
         fake_main = type("CompiledMain", (), {"__compiled__": True})()

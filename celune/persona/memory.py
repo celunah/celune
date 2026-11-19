@@ -2,6 +2,7 @@
 """Persistent long-term memory helpers for the Persona system."""
 
 from __future__ import annotations
+
 import re
 import json
 import uuid
@@ -20,9 +21,9 @@ from transformers import (
     PreTrainedTokenizerBase,
 )
 
-from .paths import persona_character_slug
 
 from ..paths import persona_data_dir
+from .paths import persona_character_slug
 from ..typing.common import JSON, JSONSerializable
 from ..registry.consent import require_model_consent
 from ..registry.other import PERSONA_MEMORY_EMBEDDING_MODEL
@@ -149,6 +150,47 @@ def _tokenize(text: str) -> set[str]:
     }
 
 
+def _literal_relevance_bonus(request_text: str, content: str) -> float:
+    """Score shared terms and their longest in-order phrase for memory ranking."""
+    request_tokens = [
+        token
+        for token in _WORD_RE.findall(request_text.casefold())
+        if token and token not in _STOPWORDS
+    ]
+    content_tokens = [
+        token
+        for token in _WORD_RE.findall(content.casefold())
+        if token and token not in _STOPWORDS
+    ]
+    if not request_tokens or not content_tokens:
+        return 0.0
+
+    overlap = len(set(request_tokens) & set(content_tokens))
+    if overlap == 0:
+        return 0.0
+
+    longest_phrase = 0
+    for request_index, request_token in enumerate(request_tokens):
+        for content_index, content_token in enumerate(content_tokens):
+            if request_token != content_token:
+                continue
+            phrase_length = 1
+            while (
+                request_index + phrase_length < len(request_tokens)
+                and content_index + phrase_length < len(content_tokens)
+                and request_tokens[request_index + phrase_length]
+                == content_tokens[content_index + phrase_length]
+            ):
+                phrase_length += 1
+            longest_phrase = max(longest_phrase, phrase_length)
+
+    query_coverage = overlap / len(set(request_tokens))
+    score = longest_phrase * 30.0 + query_coverage * 50.0
+    if request_text.casefold() in content.casefold():
+        score += 50.0
+    return score
+
+
 def _clamp_similarity_threshold(
     value: JSONSerializable, fallback: float = 0.62
 ) -> float:
@@ -186,8 +228,10 @@ def _load_transformer_text_embedder(model_name: str) -> Optional[EmbeddingBacken
 
     metadata = require_model_consent(model_name)
     try:
-        load_options: dict[str, Union[bool, str]] = {"local_files_only": True}
-        load_options["revision"] = metadata.revision
+        load_options: dict[str, Union[bool, str]] = {
+            "local_files_only": True,
+            "revision": metadata.revision,
+        }
         tokenizer = AutoTokenizer.from_pretrained(model_name, **load_options)
 
         if tokenizer is None:
@@ -582,9 +626,27 @@ class PersonaMemoryStore:
         if not request_text:
             return []
 
-        ranked = self._semantic_rank_records(records, request_text)
-        if ranked is None or ranked == []:
-            ranked = self._fallback_rank_records(records, request_text)
+        semantic_ranked = self._semantic_rank_records(records, request_text)
+        lexical_ranked = self._fallback_rank_records(records, request_text)
+        semantic_by_id = (
+            {record.id: score for score, _, record in semantic_ranked}
+            if semantic_ranked is not None
+            else {}
+        )
+        lexical_by_id = {record.id: score for score, _, record in lexical_ranked}
+        ranked: list[tuple[float, int, MemoryRecord]] = []
+        for index, record in enumerate(records):
+            semantic_score = semantic_by_id.get(record.id)
+            lexical_score = lexical_by_id.get(record.id)
+            if semantic_score is not None:
+                score = semantic_score
+            elif lexical_score is not None:
+                score = lexical_score
+            else:
+                continue
+            if lexical_score is not None:
+                score += _literal_relevance_bonus(request_text, record.content)
+            ranked.append((score, index, record))
 
         if not ranked:
             return []

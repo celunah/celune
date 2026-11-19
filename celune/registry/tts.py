@@ -6,8 +6,8 @@ from __future__ import annotations
 from typing import Optional
 from dataclasses import dataclass
 
-from .types import ModelMetadata
 from ..exceptions import ModelContractError
+from ..typing.registry import ModelMetadata
 
 __all__ = [
     "DOTS_TTS_CANONICAL_MODEL_ID",
@@ -50,7 +50,6 @@ __all__ = [
     "VOXCPM2_VOICE_MODELS",
     "ModelComponentContract",
     "ModelContract",
-    "ModelMetadata",
     "QuantizationRule",
     "RuntimeDtypeRule",
     "TensorInventoryContract",

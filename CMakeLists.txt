@@ -4,6 +4,10 @@ cmake_minimum_required(VERSION 3.25)
 cmake_policy(SET CMP0091 NEW)
 cmake_policy(SET CMP0135 NEW)
 
+set_property(
+    DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/pyproject.toml"
+)
 file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/pyproject.toml" _version_line REGEX "^version = ")
 if(NOT _version_line)
     message(FATAL_ERROR "Could not determine the project version from pyproject.toml")
@@ -19,6 +23,10 @@ set(CELUNE_BUILD_MODE "unsigned" CACHE STRING "Release signature mode")
 set_property(CACHE CELUNE_BUILD_MODE PROPERTY STRINGS unsigned signed)
 if(NOT CELUNE_BUILD_MODE STREQUAL "unsigned" AND NOT CELUNE_BUILD_MODE STREQUAL "signed")
     message(FATAL_ERROR "CELUNE_BUILD_MODE must be unsigned or signed")
+endif()
+
+if(CELUNE_BUILD_MODE STREQUAL "unsigned")
+    message(AUTHOR_WARNING "Unsigned builds of Celune cannot be tamper protected.")
 endif()
 
 set(_require_signature_default OFF)

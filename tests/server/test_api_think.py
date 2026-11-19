@@ -2,9 +2,9 @@
 """Tests for Persona think API control routes."""
 
 import json
-from types import SimpleNamespace
 from typing import cast
 from unittest import mock
+from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
@@ -12,10 +12,8 @@ from fastapi import HTTPException
 from celune import api
 from celune.celune import Celune
 
-from ..support import CeluneTestCase
 
-
-class TestApiThink(CeluneTestCase):
+class TestApiThink:
     """Tests for the ``/v1/think`` API endpoint."""
 
     def test_think_returns_accepted_when_persona_request_starts(self) -> None:

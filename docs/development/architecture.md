@@ -1,7 +1,7 @@
 # Architecture
 
 Celune is organized as one core engine with several frontends and isolated
-model workers. The important rule is that frontends share the engine; they do
+model workers. The important rule is that frontends share the engine. They do
 not implement separate speech pipelines.
 
 ## Runtime layers
@@ -36,9 +36,9 @@ workflows. Core modules keep their private helpers with the workflow that owns
 them instead of installing them onto `Celune` dynamically.
 
 Feature packages own their implementations. `celune.pipeline` owns request
-submission, generation, buffering, playback, caption tracking, and output;
+submission, generation, buffering, playback, caption tracking, and output.
 `celune.persona` owns prompt construction, inference, history, memory, and
-emotion; `celune.agent` owns routing, tools, permissions, Needle, and task
+emotion. `celune.agent` owns routing, tools, permissions, Needle, and task
 runtime. Core coordinates those packages without making them import the
 concrete façade at runtime. Narrow contracts in `celune.typing` and explicit
 callbacks carry engine operations such as language reload across that boundary.
@@ -48,14 +48,14 @@ request preparation and playback work to `celune.pipeline`.
 `celune.api` owns documented API entrypoints, FastAPI wiring, and the public
 Cloudflared tunnel lifecycle. Shared transport state, authentication, jobs,
 subscriptions, and transport audio helpers belong to `celune.server`. Textual
-and Gradio presentation stay in `celune.ui` and `celune.webui`; WebUI builders
+and Gradio presentation stay in `celune.ui` and `celune.webui`. WebUI builders
 receive the shared server session instead of importing API globals. `CeluneUI`
 composes typed hooks from its runtime, recording, and interaction modules.
 Frontend startup remains lazy so theme registration and the loading screen
 precede core and feature imports.
 
 The 100 KB Python source recommendation is a review signal. Group modules by
-cohesive subsystem ownership; retain a substantial standalone module or a
+cohesive subsystem ownership. Retain a substantial standalone module or a
 larger cohesive file when splitting it would create artificial boundaries.
 
 ## Startup and lazy imports
@@ -67,7 +67,7 @@ processes such as `uv` use `%LOCALAPPDATA%\Celune\temp` on Windows and
 Celune binary registers the default Celune palette and mounts the loading screen
 before importing or initializing the engine, Persona, agent runtime, backend
 environments, audio backends, or model libraries. The first-frame path is
-limited to launcher state and lightweight Textual/loading/theme primitives; the
+limited to launcher state and lightweight Textual/loading/theme primitives. The
 existing post-frame worker loads the selected runtime and later applies
 pack-derived colors. This keeps startup responsive and lets `CTRL+C` use the UI
 shutdown path even while runtime loading fails.
@@ -85,7 +85,7 @@ single-instance runtime classes.
 
 Celune modules use public functions and properties when they share state or
 behavior across module boundaries. Underscore-prefixed members stay inside
-their owning module or class; adapters around third-party APIs isolate any
+their owning module or class. Adapters around third-party APIs isolate any
 necessary access to upstream protected members.
 
 Playback source identifiers, statuses, metadata, and caption timing live on the
@@ -103,8 +103,15 @@ message while initialization is in progress.
 
 The terminal title follows the same startup and runtime transitions using the
 format `Celune ・ state ・ action`. The state and action portion is limited to
-20 characters, so titles remain visible in narrow terminal tabs; detailed
-status and diagnostic text stays in the loading screen or main log.
+20 characters, so titles remain visible in narrow terminal tabs. ANSI-capable
+terminals also receive [OSC 9;4 progress updates](https://docs.otty.sh/vt/osc/osc-9-4)
+and [OSC 7501 program status](https://docs.otty.sh/vt/osc/osc-7501):
+Celune shows an indeterminate progress spinner while working, clears it while
+idle or blocked, and marks errors. OSC 7501 carries `app=Celune`, the protocol
+state (`working`, `idle`, `blocked`, `done`, or `error`), and the current status
+message as base64-encoded UTF-8 in `msg`. OSC 7501 support is experimental and
+terminals that do not recognize it ignore the sequence. Detailed diagnostics
+remain in the loading screen or main log.
 
 ## Speech pipeline
 
@@ -157,7 +164,7 @@ renderers read the latest cached sample.
 Model inference, audio devices, voice conversion, Persona transcription, VAD,
 CEDTS IPC, and other blocking or native operations remain on their
 dedicated threads or processes. An async-facing method for one of those
-operations does not make the operation native async; it only keeps the caller's
+operations does not make the operation native async. It only keeps the caller's
 event loop responsive while the synchronous work runs elsewhere.
 
 Celune-owned async wrappers run blocking callables in daemon threads rather
@@ -194,7 +201,7 @@ See [CEDTS](../formats/cedts.md).
 
 Persona keeps bounded short-term history and character-scoped long-term memory.
 Agent mode adds planning, schema validation, approvals, and task lifecycle on
-top of Persona. The agent can choose only registered tools; local management is
+top of Persona. The agent can choose only registered tools. Local management is
 an explicit opt-in catalog, not a hidden fallback.
 
 ## VRAM budgets and profiles
@@ -203,7 +210,7 @@ an explicit opt-in catalog, not a hidden fallback.
 subtracts a fixed 2 GiB system reserve to derive Celune's budget. On Windows,
 hardware capacity includes the adapter's dedicated memory plus the WDDM
 shared-memory limit. Microsoft's formula is
-`min(80% of RAM, max(RAM - 16 GiB, 50% of RAM))`; see the [graphics memory
+`min(80% of RAM, max(RAM - 16 GiB, 50% of RAM))`. See the [graphics memory
 calculation](https://learn.microsoft.com/en-us/windows-hardware/drivers/display/calculating-graphics-memory).
 Admission uses current dedicated GPU free memory and shared-memory headroom above
 the system reserve.
@@ -215,7 +222,7 @@ dtype, quantization, revision, and component metadata.
 At startup, Celune looks for that exact key in `VRAM_PROFILES`. A known profile
 is rejected if its peak exceeds the preset budget or the current free memory
 after subtracting this process's current allocations and the 2 GiB reserve. A
-missing profile only produces a localized warning; Celune proceeds and handles
+missing profile only produces a localized warning. Celune proceeds and handles
 a runtime CUDA out-of-memory error by releasing partial allocations and
 returning generation to an idle state. Windows profile peaks sum the Celune
 process tree's dedicated and shared allocations. The stored peak is rounded up
@@ -243,13 +250,13 @@ Emotion analysis calls the Qwen text decoder directly with hidden-state
 collection and KV caching disabled, retaining only `last_hidden_state`.
 Whisper is loaded for a Persona recording session and unloaded after its final
 queued transcription or cancellation. Profile keys include the cached Whisper
-revision; the default model is pinned to the measured commit, while custom
+revision. The default model is pinned to the measured commit, while custom
 model IDs without a fixed revision cannot match a measured profile.
 
 An interrupted 8,192-token agent diagnostic reached 20.35 GiB during Persona's
 context prefill, before the Needle selector was loaded. The standalone Needle
 max-length run used 168 MiB of peak CUDA allocations and 200 MiB reserved. This
-does not establish a complete agent profile; agent configurations remain
+does not establish a complete agent profile. Agent configurations remain
 unprofiled until Celune can control the Persona context-prefill peak.
 
 TTS quantization defaults to enabled for supported TorchAO backends. Ming3
@@ -258,8 +265,8 @@ trigger BF16 recovery, which could require more memory. The active request fails
 with a warning while the runtime remains usable.
 
 Validation uses `python scripts/run_ci.py`. GPU profile records require
-sequential measurements of load, warmup, and inference on the target hardware;
-static tests verify profile matching, preset budgets, unknown-profile behavior,
+sequential measurements of load, warmup, and inference on the target hardware.
+Static tests verify profile matching, preset budgets, unknown-profile behavior,
 and out-of-memory cleanup without requiring a GPU.
 
 ## Shutdown
@@ -278,3 +285,5 @@ startup work or timer threads. CEDTS backends receive an abort/shutdown request
 before their daemon caller is abandoned. A fatal state can stop generation
 without pretending that the engine is healthy. The fatal WebUI hook requests a
 normal Uvicorn shutdown so the ASGI lifespan can complete its cleanup.
+The TUI and API await cancellation of the GPU usage sampler so an active
+`nvidia-smi` subprocess and its pipes are drained before their event loop stops.

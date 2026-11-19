@@ -5,10 +5,15 @@
 #include <stdlib.h>
 #include <string.h>
 
+// if you see these strings you are looking at the proper Celune launcher
 const volatile char launcher_id[] =
     CELUNE_LAUNCHER_ID CELUNE_LAUNCHER_VERSION;
+const volatile char lurker[] = "Hey lurker, why are you poking at her? Leave her alone.";
 
-void retain_launcher_id(void) { (void)launcher_id[0]; }
+void retain_launcher_id(void) {
+    (void)launcher_id[0];
+    (void)lurker[0];
+}
 
 static int launcher_is_main_operation(int argc, char **argv) {
     for (int index = 1; index < argc; index++) {

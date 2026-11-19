@@ -5,10 +5,10 @@ from __future__ import annotations
 
 import re
 import time
-import contextlib
 import threading
-from uuid import uuid4
+import contextlib
 import queue as queue_module
+from uuid import uuid4
 from collections.abc import Callable
 from typing import Union, Optional, cast
 
@@ -17,7 +17,8 @@ from textual.color import Color
 from . import app as _app
 from .theme import with_brightness
 from ..typing.modes import OperationState
-from .constants import CAPTION_FADE_SECONDS
+
+CAPTION_FADE_SECONDS = 0.36
 
 __all__ = (
     "_acquire_recording_component_lease",
@@ -86,6 +87,13 @@ __all__ = (
 )
 
 
+def _discard_unused(value: object) -> None:
+    """Use Celune's unused-value marker without eager core imports."""
+    from ..utils import discard
+
+    discard(value)
+
+
 def _reset_playback_widgets(self) -> None:
     """Clear transient caption state and restore the normal playback bar."""
     self._clear_caption_timers()
@@ -118,8 +126,7 @@ def safe_caption_progress(
     ):
         return
 
-    # Keep the callback contract; aligned word counts now drive caption timing.
-    del progress
+    _discard_unused(progress)
     if visible_words is None:
         self._run_on_ui_thread(self._hide_caption_widgets)
         return
@@ -325,7 +332,7 @@ def tts_caption(self, caption: Optional[str]) -> None:
     sentences = tuple(
         tuple(sentence.split())
         for sentence in re.split(
-            r"(?:(?<=[.!?])\s+|\n+)",
+            r"(?<=[.!?])\s+|\n+",
             caption.strip(),
         )
         if sentence.strip()
@@ -638,6 +645,7 @@ def safe_status(self, msg: str, severity: str = "info") -> None:
         self._update_status_label()
         if self._loading_screen is not None:
             self._loading_screen.set_status_message(msg)
+        self._pending_terminal_status_message = msg
         self._set_terminal_status(terminal_state, terminal_action)
         self.update_resources()
         if not ui_test_mode:
@@ -703,7 +711,7 @@ def on_uilog_message(self, message: _app.UILogMessage) -> None:
     Args:
         message: Background log message that woke the reconciliation handler.
     """
-    del message
+    _discard_unused(message)
     self._refresh_logs()
 
 
@@ -1015,17 +1023,17 @@ def _persona_transcription_worker(
             component_lease.release()
 
         def complete_transcription(
-            transcript: str = transcript,
-            prefix: str = prefix,
-            error: Optional[Exception] = error,
-            partial_error_reported: bool = partial_error_reported,
+            _transcript: str = transcript,
+            _prefix: str = prefix,
+            _error: Optional[Exception] = error,
+            _partial_error_reported: bool = partial_error_reported,
         ) -> None:
             """Complete the captured Persona transcription on the UI thread."""
             self._complete_persona_transcription(
-                transcript,
-                prefix,
-                error,
-                error_already_reported=partial_error_reported and error is not None,
+                _transcript,
+                _prefix,
+                _error,
+                error_already_reported=_partial_error_reported and _error is not None,
             )
 
         self._run_on_ui_thread(complete_transcription)
@@ -1118,11 +1126,9 @@ def _start_persona_recording(self) -> bool:
         time_info: Optional[tuple[float, float, float]],
         status: Optional[_app.sd.CallbackFlags],
     ) -> None:
-        from ..utils import discard
-
-        discard(frames)
-        discard(time_info)
-        discard(status)
+        _discard_unused(frames)
+        _discard_unused(time_info)
+        _discard_unused(status)
         nonlocal should_stop
 
         callback_audio = _app.np.asarray(indata, dtype=_app.np.float32).copy()
@@ -1182,6 +1188,7 @@ def _start_persona_recording(self) -> bool:
             samplerate=sample_rate,
             channels=channel_count,
             dtype="float32",
+            latency="low",
             callback=callback,
             device=input_device,
         )
@@ -1488,10 +1495,8 @@ def _enqueue_vc_submission_chunk(
         submission_queue.put_nowait(item)
         return
     except queue_module.Full:
-        pass
-
-    with contextlib.suppress(queue_module.Empty):
-        submission_queue.get_nowait()
+        with contextlib.suppress(queue_module.Empty):
+            submission_queue.get_nowait()
 
     with contextlib.suppress(queue_module.Full):
         submission_queue.put_nowait(item)

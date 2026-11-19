@@ -2,6 +2,8 @@
 """Tests for the typed Needle selector adapter."""
 
 from __future__ import annotations
+
+from pathlib import Path
 from unittest import mock
 from types import SimpleNamespace
 from contextlib import nullcontext
@@ -10,18 +12,11 @@ from typing import Union, Optional, cast
 import torch
 import pytest
 
+from celune.utils import discard
 from celune.typing.common import JSONSerializable
 from celune.agent.needle.models import NeedleModel
 from celune.agent.needle.impl import parse_single_selection
 from celune.persona.capabilities import PersonaCapabilities
-from celune.typing.agent import (
-    ToolCall,
-    AgentOutput,
-    NeedleToolCall,
-    NeedleToolCatalog,
-    NeedleToolSelection,
-    ToolExecutionResult,
-)
 from celune.agent import (
     AgentTool,
     AgentContext,
@@ -45,6 +40,18 @@ from celune.agent import (
     AgentToolArgumentSchema,
     NeedleToolParameterSpec,
     AgentToolExecutionStatus,
+)
+from celune.agent.tools import (
+    production_agent_tools,
+    production_agent_tool_schemas,
+)
+from celune.typing.agent import (
+    ToolCall,
+    AgentOutput,
+    NeedleToolCall,
+    NeedleToolCatalog,
+    NeedleToolSelection,
+    ToolExecutionResult,
 )
 
 
@@ -87,12 +94,16 @@ def _schemas() -> dict[str, AgentToolSchema]:
     }
 
 
-def _context() -> AgentContext:
+def _context(
+    request: str = "Set the requested timer.",
+    original_request: Optional[str] = None,
+) -> AgentContext:
     """Build one selector context without a running task."""
     return AgentContext(
         request=AgentRequest(
-            request="Set the requested timer.",
+            request=request,
             session=AgentSession(session_id="session-1"),
+            original_request=original_request,
         ),
         mode="agent",
         persona_capabilities=PersonaCapabilities(),
@@ -149,6 +160,47 @@ class _FakeNeedleHandler:
 class TestNeedleSelector:
     """Verify strict selection, schema validation, and metadata preservation."""
 
+    def test_filesystem_requests_narrow_to_the_matching_operation(self) -> None:
+        """Keep similar filesystem tools out of a clear operation's catalog."""
+        tools = production_agent_tools(include_local_management=True)
+        schemas = production_agent_tool_schemas(include_local_management=True)
+        catalog = NeedleHandler.catalog_for_tools(
+            tools,
+            schemas=schemas,
+            available_only=True,
+        )
+        cases = (
+            (
+                "List the directory of C:/Games/XSanity/Program64.",
+                "List the requested directory.",
+                "local_list_directory",
+            ),
+            (
+                "Get file metadata for C:/Games/XSanity/game.exe.",
+                "Read metadata for the requested file.",
+                "local_file_metadata",
+            ),
+            (
+                "Copy C:/Games/XSanity/game.exe to C:/Games/Backup/game.exe.",
+                "Copy the requested file to the destination.",
+                "local_copy",
+            ),
+            (
+                "Move C:/Games/XSanity/game.exe to C:/Games/Backup/game.exe.",
+                "Move the requested file to the destination.",
+                "local_move",
+            ),
+        )
+
+        for request, intent, expected_name in cases:
+            candidates = NeedleToolSelector._candidate_catalog(
+                catalog,
+                request,
+                intent,
+            )
+
+            assert [tool["name"] for tool in candidates] == [expected_name]
+
     def test_action_intent_and_available_schema_reach_needle(self) -> None:
         """Pass the planner intent and current available catalog to Needle."""
         tools = (_tool("SetTimer"), _tool("DisabledTool"))
@@ -164,7 +216,9 @@ class TestNeedleSelector:
         result = selector(_context(), _output())
 
         assert result is not None
-        assert selection.query == "Set a timer for five minutes"
+        assert (
+            selection.query == "Set the requested timer.\nSet a timer for five minutes"
+        )
         assert [item["name"] for item in selection.catalog] == ["SetTimer"]
         minutes = cast(
             NeedleToolParameterSpec,
@@ -216,6 +270,273 @@ class TestNeedleSelector:
 
         assert isinstance(result, list)
         assert [call["arguments"]["minutes"] for call in result] == [5, 10]
+
+    def test_duplicate_calls_collapse_to_one_registered_call(self) -> None:
+        """Do not ask the user to choose between identical model calls."""
+        duplicate: NeedleToolCall = {
+            "name": "SetTimer",
+            "arguments": {"minutes": 5},
+        }
+        handler = _FakeNeedleHandler([duplicate, duplicate])
+        selector = NeedleToolSelector(
+            cast(NeedleHandler, handler),
+            (_tool("SetTimer"),),
+            schemas=_schemas(),
+        )
+
+        result = selector(_context(), _output())
+
+        assert isinstance(result, dict)
+        assert result["name"] == "SetTimer"
+        assert result["arguments"] == {"minutes": 5}
+
+    def test_explicit_tool_request_repairs_unknown_model_alias(self) -> None:
+        """Restrict an explicit tool-ID command and repair its generated alias."""
+        handler = _FakeNeedleHandler(
+            {"name": "local_de_directory", "arguments": {"path": "C:/tmp"}}
+        )
+        make_directory = _tool("local_make_directory")
+        list_directory = _tool("local_list_directory")
+        make_schema = AgentToolSchema(
+            tool_id="local_make_directory",
+            display_name="Make directory",
+            description="Create one directory.",
+            arguments=(AgentToolArgumentSchema("path", AgentToolValueType.STRING),),
+            behavior=AgentToolBehavior.MUTATING,
+        )
+        list_schema = AgentToolSchema(
+            tool_id="local_list_directory",
+            display_name="List directory",
+            description="List one directory.",
+            arguments=(AgentToolArgumentSchema("path", AgentToolValueType.STRING),),
+        )
+        selector = NeedleToolSelector(
+            cast(NeedleHandler, handler),
+            (make_directory, list_directory),
+            schemas={
+                make_directory.name: make_schema,
+                list_directory.name: list_schema,
+            },
+        )
+
+        result = selector(
+            _context(
+                "Create the requested directory.",
+                "Use local_make_directory to create C:/tmp.",
+            ),
+            _output("Create the requested directory."),
+        )
+
+        assert isinstance(result, dict)
+        assert result["name"] == "local_make_directory"
+        assert [tool["name"] for tool in handler.catalog] == ["local_make_directory"]
+        assert "Use local_make_directory to create C:/tmp." in cast(str, handler.query)
+
+    def test_explicit_remember_chooses_the_most_complete_valid_call(self) -> None:
+        """Prefer the explicit remember call that includes requested importance."""
+        memory = "Celune agent smoke test 20261106"
+        handler = _FakeNeedleHandler(
+            [
+                {"name": "remember", "arguments": {}},
+                {"name": "remember", "arguments": {"content": memory}},
+                {
+                    "name": "remember",
+                    "arguments": {"content": memory, "importance": 1},
+                },
+            ]
+        )
+        schema = AgentToolSchema(
+            tool_id="remember",
+            display_name="Remember",
+            description="Persist a character-scoped memory.",
+            arguments=(
+                AgentToolArgumentSchema("content", AgentToolValueType.STRING),
+                AgentToolArgumentSchema(
+                    "importance",
+                    AgentToolValueType.INTEGER,
+                    required=False,
+                ),
+            ),
+            behavior=AgentToolBehavior.MUTATING,
+        )
+        selector = NeedleToolSelector(
+            cast(NeedleHandler, handler),
+            (_tool("remember"),),
+            schemas={"remember": schema},
+        )
+
+        result = selector(
+            _context(
+                f'Use remember to save "{memory}" with importance 1.',
+            ),
+            _output("Save the requested memory."),
+        )
+
+        assert isinstance(result, dict)
+        assert result["name"] == "remember"
+        assert result["arguments"] == {"content": memory, "importance": 1}
+
+    def test_explicit_set_voice_uses_the_exact_installed_name(self) -> None:
+        """Remove generated commentary appended to a requested installed voice."""
+        voice = "Easton (en-us)"
+        voice_tool = cast(
+            AgentTool,
+            SimpleNamespace(
+                name="set_voice",
+                description="Switch the active Celune voice.",
+                _engine=SimpleNamespace(voices=(voice,)),
+            ),
+        )
+        handler = _FakeNeedleHandler(
+            [
+                {
+                    "name": "set_voice",
+                    "arguments": {"voice": f"{voice} Ready when you are"},
+                },
+                {"name": "set_voice", "arguments": {"voice": voice}},
+            ]
+        )
+        schema = AgentToolSchema(
+            tool_id="set_voice",
+            display_name="Set voice",
+            description="Switch the active Celune voice.",
+            arguments=(AgentToolArgumentSchema("voice", AgentToolValueType.STRING),),
+            behavior=AgentToolBehavior.MUTATING,
+        )
+        selector = NeedleToolSelector(
+            cast(NeedleHandler, handler),
+            (voice_tool,),
+            schemas={"set_voice": schema},
+        )
+
+        result = selector(
+            _context(f"Use set_voice to switch to {voice}."),
+            _output("Switch to the requested voice."),
+        )
+
+        assert isinstance(result, dict)
+        assert result["name"] == "set_voice"
+        assert result["arguments"] == {"voice": voice}
+
+    def test_empty_needle_selection_retries_with_compact_registered_tool_prompt(
+        self,
+    ) -> None:
+        """Retry empty model output using the already narrowed tool registry."""
+        handler = _FakeNeedleHandler([])
+        make_directory = _tool("local_make_directory")
+        schema = AgentToolSchema(
+            tool_id="local_make_directory",
+            display_name="Make directory",
+            description="Create one directory.",
+            arguments=(AgentToolArgumentSchema("path", AgentToolValueType.STRING),),
+            behavior=AgentToolBehavior.MUTATING,
+        )
+        selector = NeedleToolSelector(
+            cast(NeedleHandler, handler),
+            (make_directory,),
+            schemas={make_directory.name: schema},
+        )
+        selected = {
+            "name": "local_make_directory",
+            "arguments": {"path": "C:/tmp/new"},
+        }
+
+        with mock.patch.object(
+            handler,
+            "select_tools",
+            side_effect=[[], [], [selected]],
+        ) as select_tools:
+            result = selector(
+                _context("Use local_make_directory to create C:/tmp/new."),
+                _output("Create the requested directory."),
+            )
+
+        assert isinstance(result, dict)
+        assert result["name"] == "local_make_directory"
+        assert select_tools.call_count == 3
+        retry_query = select_tools.call_args.args[0]
+        assert "Return exactly one valid call" in retry_query
+        assert "C:/tmp/new" in retry_query
+
+    def test_empty_selection_recovers_one_exact_local_file_path(self) -> None:
+        """Use the unambiguous registered file tool and path after empty output."""
+        tools = production_agent_tools(include_local_management=True)
+        schemas = production_agent_tool_schemas(include_local_management=True)
+        path = (Path.cwd() / "agent-selector-metadata.txt").resolve()
+        handler = _FakeNeedleHandler([])
+        selector = NeedleToolSelector(
+            cast(NeedleHandler, handler),
+            tools,
+            schemas=schemas,
+        )
+
+        with mock.patch.object(handler, "select_tools", return_value=[]):
+            result = selector(
+                _context(f"Get file metadata for {path}."),
+                _output("Read the metadata for the requested file."),
+            )
+
+        assert isinstance(result, dict)
+        assert result["name"] == "local_file_metadata"
+        assert result["arguments"] == {"path": str(path)}
+
+    def test_empty_selection_recovers_exact_local_copy_paths(self) -> None:
+        """Recover ordered source and destination paths when Needle emits no call."""
+        tools = production_agent_tools(include_local_management=True)
+        schemas = production_agent_tool_schemas(include_local_management=True)
+        source = (Path.cwd() / "agent-selector-source.txt").resolve()
+        destination = (Path.cwd() / "agent-selector-destination.txt").resolve()
+        handler = _FakeNeedleHandler([])
+        selector = NeedleToolSelector(
+            cast(NeedleHandler, handler),
+            tools,
+            schemas=schemas,
+        )
+
+        with mock.patch.object(handler, "select_tools", return_value=[]):
+            result = selector(
+                _context(f"Copy {source} to {destination}."),
+                _output("Copy the requested file."),
+            )
+
+        assert isinstance(result, dict)
+        assert result["name"] == "local_copy"
+        assert result["arguments"] == {
+            "source": str(source),
+            "destination": str(destination),
+        }
+
+    def test_invalid_optional_integer_argument_is_omitted(self) -> None:
+        """Use registered defaults when Needle invents an optional value type."""
+        schema = AgentToolSchema(
+            tool_id="read_text",
+            display_name="Read text",
+            description="Read one file.",
+            arguments=(
+                AgentToolArgumentSchema("path", AgentToolValueType.STRING),
+                AgentToolArgumentSchema(
+                    "max_bytes",
+                    AgentToolValueType.INTEGER,
+                    required=False,
+                ),
+            ),
+        )
+        handler = _FakeNeedleHandler(
+            {
+                "name": "ReadText",
+                "arguments": {"path": "README.md", "max_bytes": "large"},
+            }
+        )
+        selector = NeedleToolSelector(
+            cast(NeedleHandler, handler),
+            (_tool("ReadText"),),
+            schemas={"ReadText": schema},
+        )
+
+        result = selector(_context(), _output())
+
+        assert isinstance(result, dict)
+        assert result["arguments"] == {"path": "README.md"}
 
     def test_invalid_selection_shapes_and_arguments_are_rejected(self) -> None:
         """Reject unknown tools, unavailable tools, and schema-invalid arguments."""
@@ -278,7 +599,8 @@ class TestNeedleSelector:
                 self.encoded.append(value)
                 return [2, 3]
 
-            def decode(self, _values: list[int]) -> str:
+            @staticmethod
+            def decode(_values: list[int]) -> str:
                 """Return one deterministic JSON tool call."""
                 return '{"name":"set_timer","arguments":{"minutes":5}}'
 
@@ -287,13 +609,13 @@ class TestNeedleSelector:
 
             config = SimpleNamespace(max_seq_len=16)
 
+            @staticmethod
             def generate(
-                self,
                 input_ids: torch.Tensor,
                 max_new_tokens: int,
             ) -> torch.Tensor:
                 """Return deterministic generated token IDs."""
-                if max_new_tokens != 96 or input_ids.shape[0] != 1:
+                if max_new_tokens != 256 or input_ids.shape[0] != 1:
                     raise AssertionError("unexpected Needle generation request")
                 return torch.tensor([[1, 2]])
 
@@ -392,6 +714,7 @@ class TestNeedleSelector:
         )
 
         result = runtime.run(task.request)
+        discard(result)
 
         assert task.failure_reason is None
         assert task.state.value == "awaiting_approval"
@@ -479,13 +802,13 @@ class TestNeedleSelector:
                     ) -> NeedleToolSelection:
                         """Cancel or interrupt before returning a model call."""
                         assert self.runtime is not None
-                        task = self.runtime.get_active_task("session-1")
-                        assert task is not None
+                        active_task = self.runtime.get_active_task("session-1")
+                        assert active_task is not None
                         if self.action_name == "cancel":
-                            self.runtime.cancel_task(task.task_id)
+                            self.runtime.cancel_task(active_task.task_id)
                         else:
                             self.runtime.interrupt_task(
-                                task.task_id,
+                                active_task.task_id,
                                 AgentInterruption(
                                     AgentInterruptionKind.USER_INTERRUPT,
                                 ),

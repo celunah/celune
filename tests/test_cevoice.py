@@ -11,25 +11,39 @@ import tempfile
 from typing import cast
 from pathlib import Path
 from unittest import mock
+from collections.abc import Iterator
 
 import pytest
 
 from celune import cevoice
+from celune.exceptions import CEVoiceError
 from celune.cevoice import v4 as cevoice_v4
 from celune.cevoice import base as cevoice_base
-from celune.exceptions import CEVoiceError
-
-from .support import CeluneTestCase
 
 
-class TestCEVoice(CeluneTestCase):
+class TestCEVoice:
     """Tests for CEVOICE bundle serialization and loader behavior."""
 
-    def setUp(self) -> None:
+    @pytest.fixture(autouse=True)
+    def _pytest_setup_and_teardown(
+        self, request: pytest.FixtureRequest
+    ) -> Iterator[None]:
+        # pylint: disable=W0201
         """Create an isolated temporary directory for one test."""
         self.temp_dir = Path(tempfile.mkdtemp())
-        self.addCleanup(self._cleanup_temp_dir)
+        request.addfinalizer(self._cleanup_temp_dir)
         self.path = self.temp_dir / "sample.cevoice"
+        yield
+        loader = cevoice_base._DEFAULT_LOADER
+        if loader is not None:
+            loader.close()
+        cevoice_base._DEFAULT_LOADER = None
+        cevoice_base._DEFAULT_LOADER_INITIALIZED = False
+        cevoice_base._DEFAULT_LOADER_ANNOUNCED = False
+        cevoice_base._DEFAULT_LOADER_FAILED = False
+        cevoice_base._SELECTED_BUNDLE = None
+        cevoice_base._SELECTED_BUNDLE_IS_NAMED = False
+        cevoice_base._DEFAULT_LOADER_FELL_BACK_FROM = None
 
     def _cleanup_temp_dir(self) -> None:
         """Remove the temporary fixture directory."""
@@ -46,19 +60,6 @@ class TestCEVoice(CeluneTestCase):
         output.writeframes(b"\0\0" * 240)
         output.close()
         return buffer.getvalue()
-
-    def tearDown(self) -> None:
-        """Reset shared CEVOICE loader globals after one test."""
-        loader = cevoice_base._DEFAULT_LOADER
-        if loader is not None:
-            loader.close()
-        cevoice_base._DEFAULT_LOADER = None
-        cevoice_base._DEFAULT_LOADER_INITIALIZED = False
-        cevoice_base._DEFAULT_LOADER_ANNOUNCED = False
-        cevoice_base._DEFAULT_LOADER_FAILED = False
-        cevoice_base._SELECTED_BUNDLE = None
-        cevoice_base._SELECTED_BUNDLE_IS_NAMED = False
-        cevoice_base._DEFAULT_LOADER_FELL_BACK_FROM = None
 
     def _write_bundle(self) -> cevoice.CEVoice:
         """Write and reopen one tiny valid CEVOICE fixture."""
@@ -123,7 +124,9 @@ class TestCEVoice(CeluneTestCase):
         )
         return cevoice.CEVoice.open(self.path)
 
-    def test_write_open_read_and_materialize_bundle_assets(self) -> None:
+    def test_write_open_read_and_materialize_bundle_assets(
+        self, request: pytest.FixtureRequest
+    ) -> None:
         """Verify CEVOICE writes, reads, ordering, and materialization.
 
         Raises:
@@ -154,7 +157,7 @@ class TestCEVoice(CeluneTestCase):
         assert cevoice.bundle_character_name(bundle) == "Fixture"
         assert bundle.read_asset("balanced", "wav") == b"wav"
         loader = cevoice.CEVoiceLoader(bundle)
-        self.addCleanup(loader.close)
+        request.addfinalizer(loader.close)
         path = loader.materialize("balanced", "wav")
         assert path.read_bytes() == b"wav"
         assert loader.materialize("balanced", "wav") == path
@@ -171,11 +174,13 @@ class TestCEVoice(CeluneTestCase):
         assert magic == cevoice.MAGIC
         assert version == cevoice.VERSION
 
-    def test_materialize_recreates_missing_cached_asset_after_cleanup(self) -> None:
+    def test_materialize_recreates_missing_cached_asset_after_cleanup(
+        self, request: pytest.FixtureRequest
+    ) -> None:
         """Verify cached CEVOICE temp assets are rebuilt if cleanup removed them."""
         bundle = self._write_bundle()
         loader = cevoice.CEVoiceLoader(bundle)
-        self.addCleanup(loader.close)
+        request.addfinalizer(loader.close)
 
         first_path = loader.materialize("balanced", "wav")
         assert first_path.read_bytes() == b"wav"
@@ -219,7 +224,7 @@ class TestCEVoice(CeluneTestCase):
         """Verify compressed CECHAR v4 payloads are bounded before parsing."""
         with (
             mock.patch.object(cevoice_v4, "V4_MAX_DECOMPRESSED_BYTES", 3),
-            self.assertRaisesRegex(CEVoiceError, "too large"),
+            pytest.raises(CEVoiceError, match="too large"),
         ):
             cevoice_v4._decompress_v4_payload(
                 gzip.compress(b"four"),
@@ -723,12 +728,9 @@ class TestCEVoice(CeluneTestCase):
                 return_value=user_dir,
             ),
         ):
-            self.assertEqual(cevoice.bundled_voices_dir(), user_dir)
+            assert cevoice.bundled_voices_dir() == user_dir
 
-        self.assertEqual(
-            (user_dir / "default.cevoice").read_bytes(),
-            b"new-default",
-        )
+        assert (user_dir / "default.cevoice").read_bytes() == b"new-default"
 
     def test_all_repository_cevoice_packs_are_synced_to_user_data(self) -> None:
         """Verify repository-provided official packs are available to the loader."""
@@ -780,14 +782,16 @@ class TestCEVoice(CeluneTestCase):
 
         assert logs[-1][1] == "warning"
 
-    def test_materialize_rejects_unsafe_names(self) -> None:
+    def test_materialize_rejects_unsafe_names(
+        self, request: pytest.FixtureRequest
+    ) -> None:
         """Verify unsafe voice and asset names cannot be materialized.
 
         Raises:
             AssertionError: Path safety behavior changes unexpectedly.
         """
         loader = cevoice.CEVoiceLoader(self._write_bundle())
-        self.addCleanup(loader.close)
+        request.addfinalizer(loader.close)
         with pytest.raises(CEVoiceError, match="invalid voice name"):
             loader.materialize("../bad", "wav")
         with pytest.raises(CEVoiceError, match="invalid asset kind"):

@@ -6,11 +6,7 @@ import os
 import sys
 import math
 import contextlib
-
-# noinspection PyProtectedMember
 from dataclasses import dataclass
-
-# noinspection PyProtectedMember
 from typing import Optional, cast
 from collections.abc import Mapping, Iterator
 
@@ -18,6 +14,13 @@ import torch
 import psutil
 from torch import nn
 
+from .i18n import string
+from .registry.other import NORMALIZER_MODEL_ID
+from .registry.asr import DEFAULT_PERSONA_SPEECH_MODEL_ID
+from .registry.revisions import remote_code_model_revision
+from .typing.common import JSON, VramTier, JSONSerializable
+from .registry.tts import QWEN3_06B_MODEL_ID, QWEN3_17B_MODEL_ID
+from .registry.llm import PERSONA_DEFAULT_MODEL_ID, persona_model_tier
 from .constants import (
     TIERS,
     APP_NAME,
@@ -27,13 +30,6 @@ from .constants import (
     PERSONA_CONTEXT_SPACE,
     VRAM_SYSTEM_RESERVE_GIB,
 )
-from .i18n import string
-from .registry.other import NORMALIZER_MODEL_ID
-from .registry.asr import DEFAULT_PERSONA_SPEECH_MODEL_ID
-from .registry.revisions import remote_code_model_revision
-from .typing.common import JSON, VramTier, JSONSerializable
-from .registry.tts import QWEN3_06B_MODEL_ID, QWEN3_17B_MODEL_ID
-from .registry.llm import PERSONA_DEFAULT_MODEL_ID, persona_model_tier
 
 TEST_BACKENDS = ("fake", "counting")
 KNOWN_TTS_BACKENDS = (
@@ -235,11 +231,9 @@ def vram_profile_key(
     gpu_name = "unavailable"
     capability: tuple[int, int] = (0, 0)
     if torch.cuda.is_available():
-        try:
+        with contextlib.suppress(RuntimeError, AssertionError):
             gpu_name = torch.cuda.get_device_name(0)
             capability = torch.cuda.get_device_capability(0)
-        except (RuntimeError, AssertionError):
-            pass
     agent_active = (
         mode_name == "agent" and persona_active and agent_vram_compatible(config)
     )
@@ -492,39 +486,39 @@ VRAM_PROFILES.update(
             _QWEN3_XHIGH_KEY,
             (4.53, 4.91, 4.91),
             model_revision="no-persona",
-            quantization="fp8 requested; backend inactive",
+            quantization="FP8 requested, but the backend is inactive",
             components=("tts:qwen3", "speech_tokenizer", "talker"),
         ),
         _DOTSTTS_XHIGH_KEY: _measured_vram_profile(
             _DOTSTTS_XHIGH_KEY,
             (5.43, 6.26, 6.26),
             model_revision="no-persona",
-            quantization="fp8 requested; backend inactive",
+            quantization="FP8 requested, but the backend is inactive",
             components=("tts:dotstts", "core", "speaker_encoder", "vocoder"),
         ),
         _FIREREDTTS3_XHIGH_KEY: _measured_vram_profile(
             _FIREREDTTS3_XHIGH_KEY,
             (6.39, 6.39, 6.39),
             model_revision="no-persona",
-            quantization="fp8 requested; backend inactive",
+            quantization="FP8 requested, but the backend is inactive",
             components=("tts:fireredtts3", "redae", "tts_core"),
         ),
         _MINI_XHIGH_KEY: _measured_vram_profile(
             _MINI_XHIGH_KEY,
             (0.46, 0.46, 0.46),
             model_revision="no-persona",
-            quantization="CPU model; not applicable",
+            quantization="Not applicable to CPU models",
             components=("tts:mini", "flow_lm"),
         ),
         _QWEN3_PERSONA_WHISPER_HIGH_KEY: _measured_vram_profile(
             _QWEN3_PERSONA_WHISPER_HIGH_KEY,
             (8.67, 9.00, 9.98),
             model_revision=(
-                "ce72a7c22aacb493fb94478de3bfbe834c61844a; "
+                "ce72a7c22aacb493fb94478de3bfbe834c61844a, "
                 "Whisper 41f01f3fe87f28c78e2fbf8b568835947dd65ed9"
             ),
-            dtype="TTS mixed; Persona bfloat16 compute; Whisper bfloat16 compute",
-            quantization="Persona 4bit; Whisper int8; TTS fp8 requested but inactive",
+            dtype="TTS mixed, Persona bfloat16 compute, Whisper bfloat16 compute",
+            quantization="Persona 4bit, Whisper int8, TTS FP8 requested but inactive",
             components=("tts:qwen3", "persona:qwen3-vl-4b", "whisper"),
             context_size=2048,
         ),

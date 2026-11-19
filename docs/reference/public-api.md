@@ -26,8 +26,8 @@ The root lazily resolves `Celune`, `CeluneContext`, `CeluneExtension`, and
 ## `Celune` construction
 
 The constructor accepts a configuration mapping plus optional backend, VC,
-device, callback, log-level, agent-selector, and test-mode arguments. The
-common integration shape is:
+device, log, toast, and lifecycle callbacks, log-level, agent-selector, and
+test-mode arguments. The common integration shape is:
 
 ```python
 from celune import Celune
@@ -50,7 +50,7 @@ Persona state, events, and audio lifecycle until `close()`.
 | --- | --- |
 | `load() -> bool` | Load the configured character, backend, model, and audio runtime. |
 | `close() -> None` | Stop work, release backend/model/audio state, and make shutdown idempotent. |
-| `fatal(*, semi_fatal=False) -> None` | Enter the fatal runtime path and notify listeners; configuration failures can preserve settings access. |
+| `fatal(*, semi_fatal=False) -> None` | Enter the fatal runtime path and notify listeners. Configuration failures can preserve settings access. |
 | `wait_until_idle_async(timeout=None) -> bool` | Await the shared playback/generation idle condition. |
 | `sleep_enabled` | Whether configured sleep is active. |
 | `sleep_timeout_seconds` | Resolved idle timeout. |
@@ -76,11 +76,11 @@ inside an event loop should prefer the async reload methods below.
 speaking, sleeping, or reloading. It starts as `OperationState.NORMAL`, becomes
 `OperationState.STOPPED` after engine shutdown or test completion, and records
 fatal failures as `OperationState.FATAL`. Set `semi_fatal=True` when calling
-`fatal()` for a configuration failure that leaves the settings manager useful;
-this records `OperationState.SEMI_FATAL`. The `/settings` command is accepted in
-`NORMAL` and `SEMI_FATAL`; during `SEMI_FATAL`, other commands and speech input
-are unavailable. Fatal and stopped states reject submitted text and commands;
-the TUI still permits editing a draft. Import the enum from
+`fatal()` for a configuration failure that leaves the settings manager useful.
+This records `OperationState.SEMI_FATAL`. The `/settings` command is accepted in
+`NORMAL` and `SEMI_FATAL`. During `SEMI_FATAL`, other commands and speech input
+are unavailable. Fatal and stopped states reject submitted text and commands.
+The TUI still permits editing a draft. Import the enum from
 `celune.typing.modes`.
 
 ```python
@@ -106,7 +106,7 @@ The engine exposes typed collaborators and event helpers for Celune's split
 runtime modules. Integrations should normally use the higher-level speech,
 agent, and lifecycle methods above. When a runtime extension needs to publish a
 state transition directly, `update_cur_state(value: str) -> Optional[StateChangedEvent]`
-stores the state and returns an event only when the value changed;
+stores the state and returns an event only when the value changed.
 `emit_event(event_name: EventName, event: EventPayload) -> None` dispatches a
 typed event to subscribers. `run_pipeline_jobs() -> None` is the worker-thread
 entry point for generation and playback. The
@@ -123,13 +123,32 @@ if event is not None:
 Assigning `engine.cur_state` performs the state update and event dispatch
 together. The `agent_tools`, `agent_tool_schemas`, `agent_router`, and
 `agent_needle_selector` properties expose the engine's typed agent
-collaborators; replace them only during controlled runtime setup.
+collaborators. Replace them only during controlled runtime setup.
 
 Playback coordination exposes its source identifier, status, metadata, and
 caption maps through `next_playback_source_id`, `playback_source_statuses`,
 `playback_source_meta`, and `playback_caption_states`. These properties let
-Celune's pipeline modules share engine-owned state; integrations should use the
+Celune's pipeline modules share engine-owned state. Integrations should use the
 playback methods and callbacks instead of mutating the maps directly.
+
+## Notifications
+
+`toast(msg: str, severity: str = "info", *, duration: Optional[float] = None) -> None`
+asks the active UI to display a transient message. It returns immediately and
+does nothing when the engine has no interactive toast callback. `severity` may
+be `info`, `warning`, or `error`. Unsupported values use the info
+style in the TUI. The TUI renders warning messages in the theme's warning color
+and errors in its error color. `duration` is the visible time in seconds before
+the toast fades. Omitting it uses the TUI's three-second default.
+
+```python
+engine.toast("Settings saved")
+engine.toast("Check the selected path", severity="warning")
+engine.toast("The operation failed", severity="error", duration=5.0)
+```
+
+The constructor's optional `toast_callback` receives the message, severity, and
+optional duration. The Textual UI registers this callback automatically.
 
 ## Backends, voices, and character packs
 
@@ -163,13 +182,13 @@ async form.
 
 | Call | Contract |
 | --- | --- |
-| `say(text, save=True, display_text=None) -> bool` | Queue literal text for TTS. `display_text` changes only logs/captions. |
+| `say(text, save=True, display_text=None, maintain_status=False) -> bool` | Queue literal text for TTS. `display_text` changes only logs/captions. When `maintain_status=True`, playback completion restores the status active when speech was queued. |
 | `say_async(text, save=True, display_text=None) -> bool` | Non-blocking async form of `say`. |
 | `say_stream(text, save=True) -> SpeechStreamQueue` | Queue speech and mirror generated audio chunks to a bounded queue. |
 | `say_stream_async(text, save=True) -> SpeechStreamQueue` | Async form of streaming speech. |
 | `think(text) -> bool` | Route text through Persona and the shared speech pipeline. |
 | `think_async(text) -> bool` | Async Persona turn. |
-| `normalize(text) -> Optional[str]` | Apply the optional text normalizer; returns `None` when unavailable/rejected. |
+| `normalize(text) -> Optional[str]` | Apply the optional text normalizer. Returns `None` when unavailable/rejected. |
 | `force_stop_speech() -> bool` | Interrupt active speech and queued generation. |
 | `force_stop_speech_async() -> bool` | Async interruption path. |
 | `try_play_signal(name) -> bool` | Play a readiness/sleep/working/error signal. |
@@ -205,7 +224,7 @@ Most integrations should assign `engine.cur_state`, which performs both steps.
 | `stop_live_audio() -> None` | Reset live VC backend state. |
 | `play(sound_path, keep=False, volume=1.0) -> bool` | Queue an SFX file, optionally prepending it to the next saved utterance. |
 | `play_audio(audio, sample_rate, label="uploaded SFX", keep=False) -> bool` | Queue decoded SFX data. |
-| `test_audio() -> bool` | Speak each detected speaker position on its own output channel; use an unfiltered 60 Hz tone for the subwoofer. |
+| `test_audio() -> bool` | Speak each detected speaker position on its own output channel. Use an unfiltered 60 Hz tone for the subwoofer. |
 | `speed` | Get/set playback speed. |
 | `reverb.strength` | Get/set DSP reverb strength from 0 through 1. |
 | `playback_buffer_seconds` | Read the application-side seconds currently reserved for output. |
@@ -219,9 +238,21 @@ Most integrations should assign `engine.cur_state`, which performs both steps.
 | `playback_rebuffer_wait_seconds` | Read cumulative time spent waiting for the adaptive reserve target. |
 | `vc_f0_condition` | Read/write VC F0 conditioning state. |
 
-Arrays passed to audio calls should be numeric mono/stereo data; Celune converts
+Arrays passed to audio calls should be numeric mono/stereo data. Celune converts
 them to normalized float32. The returned `AudioOutput` includes the actual
 sample rate and channel data.
+
+The DSP module also exposes
+`generate_test_tone(frequency: float, duration: float, sample_rate: int = BASE_SR) -> AudioChunk`.
+It returns contiguous stereo float32 audio with short fades and raises
+`BadAudioError` when the frequency is not strictly between zero and the Nyquist
+rate, or when the duration or sample rate is not positive.
+
+```python
+from celune.audio.dsp import generate_test_tone
+
+tone = generate_test_tone(440.0, duration=0.5)
+```
 
 `test_audio()` waits for active playback, then uses the operating system's
 speaker map when available to route each localized position label to one output
@@ -250,7 +281,7 @@ def record_audio_end(event) -> None:
 
 `setup_extensions()` initializes the extension manager. `CeluneExtension`
 provides `log`, `say`, `think`, `play`, `status`, `set_voice`,
-`with_backend`, and `with_cevoice`; the `CeluneContext` object contains the
+`with_backend`, and `with_cevoice`. The `CeluneContext` object contains the
 same operations in a narrower form. Event names and payloads are documented in
 [Extensions](../interfaces/extensions.md).
 
@@ -258,7 +289,7 @@ same operations in a narrower form. Event names and payloads are documented in
 
 `celune.utils.available()` provides one predicate for checking a name in a
 scope, an attribute on an object, or the availability of a module import
-specification. It is useful for optional integration capabilities; it does not
+specification. It is useful for optional integration capabilities. It does not
 replace lifecycle flags or required facade assembly checks.
 
 ```python
@@ -276,7 +307,7 @@ available(name, obj=None, scope=None) -> bool
 ```
 
 With no object or scope selected, the caller's local, global, and builtin
-namespaces are searched first; if the name is not bound there, an import
+namespaces are searched first. If the name is not bound there, an import
 specification is searched without importing the module. Passing `scope`
 restricts the lookup to that explicit name container. Passing `obj` checks the
 named attribute using `hasattr()` semantics. A name bound to `None` is still
@@ -291,6 +322,7 @@ from celune.cevoice import (
     CEVoice,
     add_cevoice_entries,
     remove_cevoice_entries,
+    validate_v4_embedding,
     write_cevoice,
     write_cechar_v4,
     write_cechar_v5,
@@ -309,6 +341,7 @@ remove_cevoice_entries("my_pack.cevoice", ["speech_style.md"])
 write_cevoice("legacy-compatible.cevoice", voices, metadata, voice_metadata)
 write_cechar_v4("character.cechar", files, metadata, compression=0)
 write_cechar_v5("character-with-singing.cechar", files, metadata, voice_metadata)
+validate_v4_embedding("balanced.pt", bundle.read_asset("balanced", "pt"))
 ```
 
 `CEVoice.open(path, *, validate_embeddings=True)` validates the header,
@@ -316,19 +349,23 @@ metadata, safe names, ranges, and indexed `.pt` tensor contents by default.
 Set `validate_embeddings=False` for archive operations that do not need tensor
 validation. `read_asset()` and `read_entry()` validate the selected asset
 digest before returning bytes. `write_cevoice()` writes the legacy-compatible
-layout; `write_cechar_v4()` writes indexed v4 archives, and `write_cechar_v5()`
+layout. `write_cechar_v4()` writes indexed v4 archives, and `write_cechar_v5()`
 writes the current schema with an optional hidden `sing` voice.
+`validate_v4_embedding(name, data)` checks one indexed `.pt` asset against the
+restricted float32 speaker-embedding contract. It returns `None`, raises
+`CEVoiceError` for invalid data, and raises
+`CEVoiceDependencyUnavailableError` when PyTorch is missing.
 `CEVoice.singing_voice` returns `"sing"` when a v5 pack defines it, otherwise
 `None`. TTS voice lists
 exclude that reserved singing entry. `CEVoice.singing_pitch_range` returns its
 inclusive `(min_midi, max_midi)` pair, or `(0, 127)` for an older v5 pack with
-no declared range; packs without a singing voice return `None`. New v5 writers
+no declared range. Packs without a singing voice return `None`. New v5 writers
 require a valid `range` object on the singing entry. See
 [CEVOICE and CECHAR](../CEVOICE.md) for the binary schemas and constraints.
 
 `CEVoice.entries` returns a tuple of `CEVoiceEntry` values (`name` and byte
-`size`) in stored order. Legacy packs use payload offsets for this order;
-indexed packs use their `files` list. `read_entry(name)` returns the named
+`size`) in stored order. Legacy packs use payload offsets for this order.
+Indexed packs use their `files` list. `read_entry(name)` returns the named
 entry's bytes after checksum validation and raises `KeyError` when the name is
 absent or `CEVoiceError` when the bytes fail validation.
 
@@ -339,11 +376,11 @@ reopened pack. It raises `CEVoiceError` when an asset is unsupported or the edit
 would leave invalid metadata, `FileNotFoundError` for missing input files, and
 `OSError` for filesystem failures. `remove_cevoice_entries(path, names, *,
 validate_embeddings=True)` removes exact entry names and returns the reopened
-pack; it raises `CEVoiceError` for missing names or an invalid resulting pack.
+pack. It raises `CEVoiceError` for missing names or an invalid resulting pack.
 Both calls validate a temporary sibling pack before atomically replacing
 `path`, preserving its generation and indexed compression.
 `validate_embeddings=False` skips tensor checks on existing indexed `.pt`
-entries; callers adding a new `.pt` asset should leave validation enabled.
+entries. Callers adding a new `.pt` asset should leave validation enabled.
 
 ```python
 bundle = CEVoice.open("my_pack.cevoice")
@@ -359,7 +396,7 @@ None) -> tuple[CESNSection, ...]` parses the section-based notation and aligns
 explicit IPA syllables with pitched notes. A `CESNSection` carries BPM, key,
 scale, explicit language, singer identity, and ordered note blocks. A block
 keeps `CESNNotePair` entries and `CESNRestEvent` values in event order. Each
-note pair stores its IPA syllable and slur state; rests consume no syllable.
+note pair stores its IPA syllable and slur state. Rests consume no syllable.
 Every group follows `[extra tags][notes][raw dot-separated IPA] lyrics`, with
 one IPA syllable per pitched note. `render_cesn(sections:
 tuple[CESNSection, ...]) -> str`
@@ -367,8 +404,8 @@ serializes all sections into one canonical notation string with settings
 repeated at each section boundary. `CESNTuplet(actual_count, normal_count)`
 scales the next `actual_count` note/rest events by `normal_count / actual_count`
 and then expires. Each parsed note/rest exposes its exact `duration_beats` as a
-`fractions.Fraction`; `tuplet_start` identifies where the directive belongs in
-canonical rendering. Language tags are required; providing
+`fractions.Fraction`. `tuplet_start` identifies where the directive belongs in
+canonical rendering. Language tags are required. Providing
 `supported_languages` checks the selected model.
 
 ```python
@@ -418,5 +455,5 @@ api_context = is_api_model_request()
 
 Internal helpers, private backend implementations, UI widget methods, and
 dataclass fields not listed above are implementation details. Extend the
-existing abstractions when a new integration needs one; do not fork the
+existing abstractions when a new integration needs one. Do not fork the
 pipeline or invent a second event/worker protocol.

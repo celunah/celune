@@ -14,12 +14,17 @@ api:
 
 ## Access and authentication
 
-Celune generates a key automatically when `api.token` and
-`CELUNE_API_TOKEN` are unset. The generated key uses the `C-` prefix followed
+Celune generates a key automatically when `api.token` is `null` and
+`CELUNE_API_TOKEN` is unset. A nonempty `CELUNE_API_TOKEN` is used when the
+configuration token is `null`. The generated key uses the `C-` prefix followed
 by 25 uppercase base-36 characters, and persists in Celune's app-data
-`api.key` file. The helper `celune.api.get_or_create_api_key()` returns
-that key to Python integrations; `celune.api.generate_api_key()` creates
-a new key without storing it.
+`api.key` file. Set `api.token: ""` to disable API authentication. This explicit
+empty value also overrides `CELUNE_API_TOKEN`. Any other token value is used as
+the API key. With authentication disabled, requests to the API and WebUI are
+not gated by a key, so keep the listener on localhost unless unauthenticated
+network access is intended. The helper `celune.api.get_or_create_api_key()`
+returns the generated or configured key to Python integrations.
+`celune.api.generate_api_key()` creates a new key without storing it.
 
 Choose `api.access` to control where Celune listens:
 
@@ -31,19 +36,19 @@ Choose `api.access` to control where Celune listens:
 
 The `same_network` mode may need a host-firewall rule for local devices. Router
 port forwarding is needed only if you also want to reach that listener from
-outside the local network. The `everyone` mode requires `cloudflared` on `PATH`;
-Celune stops the quick-tunnel process when it closes. If `cloudflared` is
-unavailable, Celune keeps the API on loopback and reports that the public
-tunnel did not start.
+outside the local network. The `everyone` mode requires `cloudflared` on `PATH`.
+The application stops the quick-tunnel process when it closes. If `cloudflared`
+is unavailable, the application keeps the API on loopback and reports that the
+public tunnel did not start.
 
-When the API starts in `everyone` mode, Celune uses the Cloudflare URL in its
-startup message when `cloudflared` publishes it within ten seconds. If the
-tunnel fails or does not publish a URL by then, the startup message uses the
-loopback API URL; a public URL that appears later is logged separately.
+When the API starts in `everyone` mode, the application uses the Cloudflare URL
+in its startup message when `cloudflared` publishes it within ten seconds. If
+the tunnel fails or does not publish a URL by then, the startup message uses the
+loopback API URL. A public URL that appears later is logged separately.
 
 The API is an optional core extra. Install it with `uv sync --extra api` (or
 include `--all-extras` during Linux development). Keep a network-facing listener
-behind authentication and an appropriate firewall; the API can start speech,
+behind authentication and an appropriate firewall. The API can start speech,
 load voices, and play uploaded audio.
 
 Authenticated requests may send either header:
@@ -93,15 +98,16 @@ api_key = key_file.read_text(encoding="utf-8").strip()
 |--------|------|-------------|
 | `GET` | `/v1` | Return Celune's current status. |
 | `GET` | `/v1/version` | Return the running Celune version. |
-| `GET` | `/` | Redirect to the mounted WebUI at `/ui`. |
-| `GET` | `/ui/key` | Show the WebUI API-key prompt. |
+| `GET` | `/` | Redirect to the mounted WebUI at `/ui/`. |
+| `GET` | `/ui/` | Load the mounted WebUI. |
+| `GET` | `/ui/key` | Show the API-key prompt when authentication is enabled. |
 | `POST` | `/ui/key` | Exchange the API key for a browser WebUI session. |
-| `POST` | `/v1/think` | Ask Celune to think through Persona and reply asynchronously through her normal speech pipeline. |
+| `POST` | `/v1/think` | Ask Celune to think through Persona and reply asynchronously through the application's normal speech pipeline. |
 | `POST` | `/v1/speak` | Queue speech and return one complete `audio/flac` response. |
 | `POST` | `/v1/speak/stream` | Return generated speech progressively as multipart `audio/flac` chunks. |
 | `POST` | `/v1/sing` | Validate CESN, queue singing, and stream the result as `audio/flac`. |
 | `POST` | `/v1/speak/async` | Add speech to the bounded FIFO and return `202 Accepted` with a job ID. |
-| `GET` | `/v1/speak/jobs/{job_id}` | Poll an async speech job; returns `202` while pending and `audio/flac` when complete. |
+| `GET` | `/v1/speak/jobs/{job_id}` | Poll an async speech job. Returns `202` while pending and `audio/flac` when complete. |
 | `POST` | `/v1/speak/jobs/{job_id}/cancel` | Cancel a queued job or stop an active async speech job. |
 | `WebSocket` | `/v1/ws/tasks/{job_id}` | Replay and stream typed lifecycle events for an async speech job. |
 | `POST` | `/v1/voice` | Change the active voice. |
@@ -114,15 +120,15 @@ api_key = key_file.read_text(encoding="utf-8").strip()
 It requires a singing-capable backend and valid CESN notation. It returns
 `409 Conflict` when the backend is not ready for singing and `422 Unprocessable
 Content` with a line and column for malformed notation. The optional MCP server
-is available at `/mcp`; see [MCP server](interfaces/mcp.md).
+is available at `/mcp`. See [MCP server](interfaces/mcp.md).
 
 When a singing backend is active, `/v1/speak` and `/v1/speak/async` return
-`409 Conflict` with instructions to submit CESN to `/v1/sing`; the async route
+`409 Conflict` with instructions to submit CESN to `/v1/sing`. The async route
 does not create a job. `/v1/think` also returns `409 Conflict` because Persona
 replies are spoken prose, not CESN scores.
 
 `/v1` and `/v1/version` are authenticated JSON endpoints. The root redirect is
-useful when a browser opens the API port; programmatic clients should call the
+useful when a browser opens the API port. Programmatic clients should call the
 `/v1` paths directly. `/ui` is the Gradio WebUI mounted by the optional API
 runtime.
 
@@ -164,7 +170,7 @@ The JSON models are intentionally small:
 `ThinkRequest` has `content`. `VoiceRequest` has `voice_name`.
 
 Synchronous speech returns `audio/flac`. Async speech returns a task object
-with `status`, `job_id`, and `location`; polling returns JSON while queued or
+with `status`, `job_id`, and `location`. Polling returns JSON while queued or
 running and FLAC when complete. Task event objects contain `task_id`, `event`,
 `status`, optional `message`, `severity`, `current`, `total`, `location`, and
 `error`. WebSocket commands currently accept:
@@ -174,7 +180,7 @@ running and FLAC when complete. Task event objects contain `task_id`, `event`,
 ```
 
 The server validates the command and returns a typed command result. A socket
-disconnect removes only that subscriber; it does not cancel the job.
+disconnect removes only that subscriber. It does not cancel the job.
 
 ## Think
 
@@ -247,7 +253,7 @@ Response:
 - `409 application/json` when Celune is busy or unavailable.
 
 Submitting another synchronous speech request does not cancel speech that is
-already playing; it receives the busy response until the shared pipeline is
+already playing. It receives the busy response until the shared pipeline is
 available. Use `/v1/speak/async` to wait in the API speech queue.
 
 ## Speak (Streaming)
@@ -256,8 +262,8 @@ Use `/v1/speak/stream` with the same request fields as `/v1/speak` when the
 client can consume multipart responses and wants
 audio before the full utterance has finished. Each part is an independent,
 complete PCM24 FLAC file at 48 kHz stereo. The response uses
-`multipart/mixed; boundary=celune-audio`; clients decode each part and append its
-frames in order. A disconnected client stops the active request; a slow client
+`multipart/mixed; boundary=celune-audio`. Clients decode each part and append its
+frames in order. A disconnected client stops the active request. A slow client
 applies backpressure to audio delivery.
 
 ```bash
@@ -269,7 +275,7 @@ curl -N -X POST http://127.0.0.1:2060/v1/speak/stream \
 
 The synchronous `/v1/speak` endpoint remains a single `audio/flac` response.
 `/v1/speak/stream` returns `409 Conflict` when the shared speech pipeline is
-busy; use the asynchronous endpoint when requests should wait for their turn.
+busy. Use the asynchronous endpoint when requests should wait for their turn.
 
 ## Speak (Asynchronous)
 
@@ -333,13 +339,13 @@ Job responses:
 
 Async jobs are kept in memory for 15 minutes and are not persisted across Celune restarts.
 Queued jobs wait until the shared speech pipeline is available, including while
-local speech is playing. Cancelling a queued job removes it from the FIFO;
-cancelling a running job stops that job.
+local speech is playing. Cancelling a queued job removes it from the FIFO.
+Cancelling a running job stops that job.
 
 ## Request scheduling
 
 TTS and Persona inference share a priority scheduler for the active accelerator.
-When both are waiting, speech inference runs first; an inference already in
+When both are waiting, speech inference runs first. An inference already in
 progress is allowed to finish. This keeps waiting Persona work from starting
 ahead of speech that is ready to use the accelerator.
 
@@ -357,7 +363,7 @@ so clients may connect after speech has already started, then streams live event
 ```
 
 Every event includes its task ID. Terminal events are `completed`, `failed`, or
-`cancelled`. A disconnected WebSocket only removes that client subscription; it
+`cancelled`. A disconnected WebSocket only removes that client subscription. It
 does not stop or alter the Celune task. Cancellation is explicit through
 `POST /v1/speak/jobs/{job_id}/cancel` or by sending this API-layer command through
 the WebSocket:
@@ -450,7 +456,7 @@ X-Celune-Token: YOUR_API_KEY
 
 The configured per-minute rate limit applies independently to API calls and
 WebUI generation actions. WebSocket connection and reconnection events do not
-count toward either request limit; authenticated WebSocket connections still
+count toward either request limit. Authenticated WebSocket connections still
 require a valid session or API key and a same-origin request. Only WebUI speech
 and conversion submissions consume the WebUI generation limit. Polling,
 page-load refreshes, voice and recording controls, and other Gradio transport
@@ -464,43 +470,47 @@ not persisted across a restart.
 The WebUI is a Gradio application mounted at `/ui`. It uses the same engine,
 Persona/agent submission path, slash-command handler, voice state, VC state,
 speech lifecycle callbacks, and one-shot upload/microphone VC conversion. TUI
-timed state updates are delivered through the CEDTS frontend update channel;
-the browser keeps a polling fallback for reconnects and standalone API hosts.
-Browser playback is returned as 16-bit PCM; Celune's engine continues to use
+timed state updates are delivered through the CEDTS frontend update channel.
+The browser keeps a polling fallback for reconnects and standalone API hosts.
+Browser playback is returned as 16-bit PCM. Celune's engine continues to use
 normalized float32 audio internally.
 
 Celune links a standalone stylesheet that applies the active palette as CSS.
 The footer displays Celune's status without a second caption or progress line.
 Polling, page-load refreshes, and voice or recording controls use direct,
 unqueued requests that do not consume the generation limit. Speech and
-conversion submissions remain limited; Gradio's other UI transport requests
+conversion submissions remain limited. Gradio's other UI transport requests
 do not consume that budget.
 
-Celune serves its page scripts, styles, and bundled fonts under `/ui/assets/`.
+The application serves its page scripts, styles, and bundled fonts under
+`/ui/assets/`.
 Gradio serves its own hashed JavaScript and CSS bundles from that same path
 through the mounted application. A reverse proxy or Cloudflare Tunnel must
 forward `/ui/assets/` requests to Celune without rewriting their paths.
 
-Unauthenticated access to `/ui` redirects to `/ui/key`, which displays a
-blocking API-key prompt. Submitting the key sends it to `POST /ui/key` in a
-JSON `api_key` field. A valid key creates an opaque, `HttpOnly`,
-`SameSite=Strict` cookie scoped to `/ui` for 30 days, then the browser returns
-to `/ui`. The signed cookie carries a random browser client ID and expiry, not
-the API key, and remains valid across Celune restarts. Active sessions are
-extended as the browser uses the WebUI. Changing the API key invalidates
-existing sessions; another browser without its own cookie still sees the key
-prompt. The API key is not stored in the URL or browser storage. The API
-security middleware checks the session on WebUI HTTP actions and WebSocket
-connections; requests without a valid API key or session receive `401`, even
-if the prompt is removed from the page with browser developer tools. API
+When an API key is configured, unauthenticated access to `/ui` redirects to
+`/ui/key`, which displays a blocking API-key prompt. Submitting the key sends it
+to `POST /ui/key` in a JSON `api_key` field. A valid key creates an opaque,
+`HttpOnly`, `SameSite=Strict` cookie scoped to `/ui` for 30 days, then the
+browser returns to `/ui/`. The non-slash `/ui` path redirects to the mounted
+`/ui/` path after authentication. The signed cookie carries a random browser
+client ID and expiry, not the API key, and remains valid across Celune restarts.
+Active sessions are extended as the browser uses the WebUI. Changing the API
+key invalidates existing sessions. Another browser without its own cookie still
+sees the key prompt. When authentication is disabled with `api.token: ""`,
+`/ui/` opens without a key prompt. The API key is not stored in the URL or
+browser storage. The API security middleware checks the session on WebUI HTTP
+actions and WebSocket connections. Requests without a valid API key or session
+receive `401`, even if the prompt is removed from the page with browser
+developer tools. API
 routes, including read-only status and version routes, also require the API
 key. The authentication request is rate limited, and browser writes and
 WebSocket connections must come from the same origin.
 
-Celune also remembers a successful browser authentication for 30 days in its
-app-data directory. The record is a keyed fingerprint of the client's
+The application also remembers a successful browser authentication for 30 days
+in its app-data directory. The record is a keyed fingerprint of the client's
 resolved address (Cloudflare's forwarded address when tunneled) and browser
-request headers; it does not contain the API key, address, or raw headers. This
+request headers. It does not contain the API key, address, or raw headers. This
 lets the same client pass the gate after a Quick Tunnel hostname changes and
 receive a fresh host-scoped cookie. A different address or browser signature
 still receives the key prompt. Changing networks or browser settings can change
@@ -518,16 +528,16 @@ The browser submits this body to `POST /ui/key`:
 `{"authenticated":true}` with the session cookie. An invalid key returns
 `401`, a cross-origin request returns `403`, and an attempt over the configured
 request limit returns `429`. The prompt shows “Invalid API key” for `401`
-responses; other HTTP or network errors show “An error occurred while
+responses. Other HTTP or network errors show “An error occurred while
 authenticating.” The error message expands into view with a `max-height`
 transition when present and collapses to zero height when cleared.
 
-The WebUI exposes the active voice as a compact button beside the text input;
-clicking it cycles through the available voices using the same Core switching
+The WebUI exposes the active voice as a compact button beside the text input.
+Clicking it cycles through the available voices using the same Core switching
 path as the TUI. The voice and VC conversion buttons follow the active Celune
 palette, including their disabled, hover, and keyboard-focus states. The WebUI
 does not expose the TUI's settings editor. When live Persona or VC capture is
-available, press `ALT+R` to toggle recording; the same shortcut is shown in the
+available, press `ALT+R` to toggle recording. The same shortcut is shown in the
 bottom-right resource area. If the API extra is absent, the REST/WebUI surface
 cannot be started, but the core Python/TUI runtime remains separate.
 
@@ -544,13 +554,13 @@ thread = start_api(celune, host="127.0.0.1", port=2060)
 ```
 
 `run_api()` blocks in Uvicorn. `start_api()` starts a daemon thread and waits
-for startup confirmation; its optional `on_started(host, port)` callback runs
+for startup confirmation. Its optional `on_started(host, port)` callback runs
 when the socket starts listening. Startup logging reports the listener URL by
 default. Set `defer_startup_log=True` with an `on_started` callback when that
-callback reports a different public URL; without a callback, Celune still logs
+callback reports a different public URL. Without a callback, Celune still logs
 the listener URL. The supporting calls `bind_celune()`,
 `configure_api_security()`, `resolve_api_host()`, `audio_bytes()`, and
-`stream_headers()` are the existing integration hooks for custom hosts; use
+`stream_headers()` are the existing integration hooks for custom hosts. Use
 them instead of mounting a second FastAPI app around the engine. Core callback
 properties are single-registration slots: assigning the same callable to the
 same callback property again raises `ValueError`, so integrations should

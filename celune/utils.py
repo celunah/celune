@@ -12,6 +12,7 @@ import inspect
 import datetime
 import platform
 import traceback
+import contextlib
 import importlib.util
 import multiprocessing
 from pathlib import Path
@@ -50,11 +51,9 @@ def clear_queue(q: queue.Queue) -> None:
     Args:
         q: The queue to empty.
     """
-    try:
+    with contextlib.suppress(queue.Empty):
         while True:
             q.get_nowait()
-    except queue.Empty:
-        pass
 
 
 def get_revision() -> str:
@@ -224,22 +223,52 @@ def cuda_architecture(capability: tuple[int, int]) -> str:
         ValueError: The CUDA capability is not recognized.
     """
 
-    major, minor = capability
+    architectures = {
+        (12, 1): ("Blackwell", True),  # N1X, HEAT.
+        (12, 0): ("Blackwell", True),
+        (11, 0): ("Blackwell", True),
+        (10, 7): ("Rubin", True),
+        (10, 3): ("Blackwell", True),  # Celine(TM) Blackwell Edition
+        (10, 0): ("Blackwell", True),
+        (9, 0): ("Hopper", True),
+        (8, 9): ("Ada Lovelace", True),
+        (8, 7): ("Ampere", True),
+        (8, 6): ("Ampere", True),
+        (8, 0): ("Ampere", True),
+        # only cards above are supported
+        # cards below are not supported by Celune
+        (7, 5): ("Turing", False),
+        (7, 2): ("Xavier", False),
+        (7, 0): ("Volta", False),
+        (6, 2): ("Pascal", False),
+        (6, 1): ("Pascal", False),
+        (6, 0): ("Pascal", False),
+        (5, 3): ("Maxwell", False),
+        (5, 2): ("Maxwell", False),
+        (5, 0): ("Maxwell", False),
+        (3, 7): ("Kepler", False),
+        (3, 5): ("Kepler", False),
+        (3, 2): ("Kepler", False),
+        (3, 0): ("Kepler", False),
+        (2, 1): ("Fermi", False),
+        (2, 0): ("Fermi", False),
+        (1, 3): ("Tesla", False),
+        (1, 2): ("Tesla", False),
+        (1, 1): ("Tesla", False),
+        (1, 0): ("Tesla", False),
+    }
 
-    if major in [10, 11, 12] and minor == 0:  # recommended family
-        return "Blackwell"
-    if major == 9 and minor == 0:
-        return "Hopper"
-    if major == 8 and minor == 9:
-        return "Ada Lovelace"
-    if major == 8 and minor in [0, 6, 7]:  # CELINE INVADED THE CUDA ZONE!
-        return "Ampere"
-    if major < 8:  # too old
-        raise NotImplementedError("capability not supported")
+    architecture, supported = architectures.get(capability, (None, False))
+    if architecture is None:
+        raise ValueError(
+            "invalid capability"
+        )  # non-CUDA GPU reported a capability not known to Celune
+    if supported:
+        return architecture
 
-    raise ValueError(
-        "invalid capability"
-    )  # non-CUDA GPU reported a capability not known to Celune
+    raise NotImplementedError(
+        "capability not supported"
+    )  # the GPU supports CUDA, but is too old
 
 
 def run_async(
@@ -830,6 +859,7 @@ def normalize_special_characters(text: str, *, for_tts: bool = False) -> str:
 
     normalized = text.translate(special_char_mappings).replace("\x00", ": ")
     normalized = re.sub(r"\s{2,}", " ", normalized)
+    normalized = re.sub(r"\s+:", ":", normalized)
     if not for_tts:
         return normalized
 

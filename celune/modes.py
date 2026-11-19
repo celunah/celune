@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-# noinspection PyProtectedMember
 from typing import Optional, cast
 from collections.abc import Mapping
 

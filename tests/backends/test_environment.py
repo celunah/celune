@@ -10,11 +10,20 @@ import subprocess
 from pathlib import Path
 from unittest import mock
 from collections import abc
+from dataclasses import replace
 from types import SimpleNamespace
 from typing import IO, Optional, cast
 
+
+import pytest
 import numpy as np
 
+
+from celune.utils import discard
+from celune.paths import temp_data_dir
+from celune.cedts import remote, worker
+from celune.backends import environment
+from celune.dataclasses.pipeline import AudioOutput, VoiceConversionRequest
 from celune.exceptions import (
     CEDTSError,
     CEDTSEOFError,
@@ -24,7 +33,6 @@ from celune.exceptions import (
     CEDTSProtocolError,
     BackendEnvironmentError,
 )
-from celune.paths import temp_data_dir
 from celune.typing.worker import (
     WorkerValue,
     WorkerRequest,
@@ -49,8 +57,6 @@ from celune.typing.backends import (
     BackendGeneration,
     BackendArgumentValue,
 )
-from celune.backends import environment
-from celune.cedts import remote, worker
 from celune.backends.environment import (
     BACKEND_MANIFESTS,
     BackendManifest,
@@ -58,13 +64,22 @@ from celune.backends.environment import (
     exclusive_lock,
     backend_manifest,
 )
-from celune.dataclasses.pipeline import AudioOutput, VoiceConversionRequest
-
-from ..support import CeluneTestCase
 
 
-class TestBackendEnvironment(CeluneTestCase):
+class TestBackendEnvironment:
     """Verify backend environment paths and installation transactions."""
+
+    def test_worker_environment_identity_includes_effective_runtime(self) -> None:
+        """Give native and audio.cpp workers separate persistent identities."""
+        manifest = BACKEND_MANIFESTS["ming3"]
+        native = replace(manifest, runtime="native")
+        audio_cpp = replace(manifest, runtime="audio_cpp")
+        manager = BackendEnvironmentManager(root=Path("backend-env-test"))
+
+        assert (native.fingerprint()) != (audio_cpp.fingerprint())
+        assert manager.environment_for(native).root != (
+            manager.environment_for(audio_cpp).root
+        )
 
     def test_worker_description_and_proxy_preserve_singing_capability(self) -> None:
         """Expose the worker's singing capability to the core proxy."""
@@ -74,18 +89,18 @@ class TestBackendEnvironment(CeluneTestCase):
             uses_voice_bundles=True,
         )
         description = worker._describe(cast(BackendRuntime, backend))
-        self.assertTrue(description["singing"])
+        assert description["singing"]
 
         proxy = object.__new__(remote.RemoteBackendProxy)
         proxy.request = mock.Mock(return_value=description)
         proxy._load_description()
-        self.assertTrue(proxy.singing)
+        assert proxy.singing
 
         notation = "[c3:4] hello"
         proxy.request.return_value = "backend-format"
         bundle_path = Path("custom.cevoice")
         with mock.patch.object(remote, "active_bundle_path", return_value=bundle_path):
-            self.assertEqual(proxy.cesn_to_model(notation), "backend-format")
+            assert (proxy.cesn_to_model(notation)) == "backend-format"
         proxy.request.assert_called_with(
             "call",
             method="cesn_to_model",
@@ -99,7 +114,8 @@ class TestBackendEnvironment(CeluneTestCase):
         class SingingBackend:
             """Backend stand-in with an observable CESN conversion hook."""
 
-            def cesn_to_model(self, text: str) -> str:
+            @staticmethod
+            def cesn_to_model(text: str) -> str:
                 """Return a backend-specific marker for the test notation."""
                 return f"converted:{text}"
 
@@ -123,7 +139,7 @@ class TestBackendEnvironment(CeluneTestCase):
                 io.BytesIO(),
             )
 
-        self.assertEqual(response["value"], f"converted:{notation}")
+        assert (response["value"]) == f"converted:{notation}"
         select_bundle.assert_called_once_with("custom.cevoice")
 
     def test_remote_bundle_voice_uses_worker_model_for_custom_name(self) -> None:
@@ -135,7 +151,7 @@ class TestBackendEnvironment(CeluneTestCase):
         proxy.voice_models = {"balanced": "shared-model"}
         proxy.default_voice = "balanced"
 
-        self.assertEqual(proxy.model_id_for_voice("Standard"), "shared-model")
+        assert (proxy.model_id_for_voice("Standard")) == "shared-model"
 
     def test_remote_bundle_voice_switch_passes_active_pack_to_worker(self) -> None:
         """Verify switching from a pack default voice to another voice keeps the worker on that pack."""
@@ -152,11 +168,11 @@ class TestBackendEnvironment(CeluneTestCase):
             list(proxy.generate_stream(model, text="A", voice="Alternate"))
 
         calls = proxy._stream_request.call_args_list
-        self.assertEqual(len(calls), 2)
-        self.assertEqual(calls[0].kwargs["voice"], "Standard")
-        self.assertEqual(calls[1].kwargs["voice"], "Alternate")
-        self.assertEqual(calls[1].kwargs["voice_bundle"], str(bundle_path))
-        self.assertEqual(calls[1].kwargs["model_id"], 1)
+        assert (len(calls)) == 2
+        assert (calls[0].kwargs["voice"]) == "Standard"
+        assert (calls[1].kwargs["voice"]) == "Alternate"
+        assert (calls[1].kwargs["voice_bundle"]) == (str(bundle_path))
+        assert (calls[1].kwargs["model_id"]) == 1
 
     def test_worker_switches_from_pack_default_to_non_default_voice(self) -> None:
         """Verify the worker selects the active pack before each requested voice."""
@@ -175,7 +191,7 @@ class TestBackendEnvironment(CeluneTestCase):
                 **kwargs: BackendArgumentValue,
             ) -> abc.Iterator[BackendGeneration]:
                 """Record one voice request without generating audio."""
-                del model
+                discard(model)
                 self.generated_voices.append(cast(str, kwargs["voice"]))
                 yield from ()
 
@@ -199,12 +215,11 @@ class TestBackendEnvironment(CeluneTestCase):
                     2,
                     io.BytesIO(),
                 )
-                self.assertTrue(response["done"])
+                assert response["done"]
 
-        self.assertEqual(backend.generated_voices, ["Standard", "Alternate"])
-        self.assertEqual(
-            select_bundle.call_args_list,
-            [mock.call("custom.cevoice"), mock.call("custom.cevoice")],
+        assert backend.generated_voices == (["Standard", "Alternate"])
+        assert select_bundle.call_args_list == (
+            [mock.call("custom.cevoice"), mock.call("custom.cevoice")]
         )
 
     def test_worker_diagnostic_text_is_not_localized(self) -> None:
@@ -213,7 +228,7 @@ class TestBackendEnvironment(CeluneTestCase):
             Path("celune/lang/en.json").read_text(encoding="utf-8")
         )
 
-        self.assertFalse(
+        assert not (
             any(
                 key.startswith(("backends.cedts", "backends.worker"))
                 for key in translations
@@ -239,8 +254,7 @@ class TestBackendEnvironment(CeluneTestCase):
 
     def test_worker_registry_contains_only_approved_backends(self) -> None:
         """Verify worker construction is limited to the registered CEDTS backends."""
-        self.assertEqual(
-            set(worker._BACKEND_REGISTRY),
+        assert (set(worker._BACKEND_REGISTRY)) == (
             {
                 "mini",
                 "qwen3",
@@ -250,13 +264,14 @@ class TestBackendEnvironment(CeluneTestCase):
                 "ming3",
                 "soulxsinger",
                 "seed-vc",
-            },
+            }
         )
-        self.assertEqual(
+        assert (
             {
                 backend_id: kind
                 for backend_id, (kind, _loader) in worker._BACKEND_REGISTRY.items()
-            },
+            }
+        ) == (
             {
                 "mini": "tts",
                 "qwen3": "tts",
@@ -266,7 +281,7 @@ class TestBackendEnvironment(CeluneTestCase):
                 "ming3": "tts",
                 "soulxsinger": "tts",
                 "seed-vc": "vc",
-            },
+            }
         )
 
     def test_worker_registry_rejects_unregistered_backend_ids(self) -> None:
@@ -278,7 +293,7 @@ class TestBackendEnvironment(CeluneTestCase):
             "attacker.module",
             "AttackerBackend",
         )
-        with self.assertRaises(CEDTSProtocolError):
+        with pytest.raises(CEDTSProtocolError):
             worker._load_backend(manifest, mock.Mock(), mock.Mock(), {})
 
     def test_worker_registry_ignores_manifest_constructor_strings(self) -> None:
@@ -299,8 +314,58 @@ class TestBackendEnvironment(CeluneTestCase):
             log = mock.Mock()
             fatal = mock.Mock()
             result = worker._load_backend(manifest, log, fatal, {"setting": True})
-        self.assertIs(result, mock.sentinel.backend)
+        assert result is mock.sentinel.backend
         constructor.assert_called_once_with(log=log, fatal=fatal, setting=True)
+
+    def test_worker_receives_and_checks_resolved_audio_cpp_runtime(self) -> None:
+        """Configure the worker from the resolved implementation identity."""
+
+        class AudioCppBackend:
+            """Small runtime stand-in for an audio.cpp capable TTS backend."""
+
+            def __init__(self, **kwargs: object) -> None:
+                """Retain ordinary options and start with the native runtime."""
+                self.kwargs = kwargs
+                self.supports_audio_cpp = True
+                self.requires_audio_cpp = False
+                self.effective_inference_mode = "native"
+
+            def configure_inference_mode(
+                self,
+                inference_mode: str,
+                *,
+                log: bool,
+            ) -> None:
+                """Resolve this fake backend to its supported implementation."""
+                discard(log)
+                self.effective_inference_mode = (
+                    "audio_cpp" if inference_mode == "gguf" else "native"
+                )
+
+        manifest = BACKEND_MANIFESTS["mini"]
+        with mock.patch.dict(
+            worker._BACKEND_REGISTRY,
+            {"mini": ("tts", lambda: AudioCppBackend)},
+            clear=False,
+        ):
+            backend = cast(
+                AudioCppBackend,
+                worker._load_backend(
+                    manifest,
+                    mock.Mock(),
+                    mock.Mock(),
+                    {
+                        "inference_mode": "gguf",
+                        "effective_inference_mode": "audio_cpp",
+                        "custom_option": True,
+                    },
+                ),
+            )
+
+        assert backend.effective_inference_mode == "audio_cpp"
+        assert backend.kwargs["custom_option"]
+        assert "inference_mode" not in backend.kwargs
+        assert "effective_inference_mode" not in backend.kwargs
 
     def test_manifests_use_the_main_branch_pytorch_stack(self) -> None:
         """Verify isolated backends use the main branch's CUDA 12.8 stack."""
@@ -371,6 +436,13 @@ class TestBackendEnvironment(CeluneTestCase):
             in BACKEND_MANIFESTS["dotstts"].requirements
         )
 
+    def test_voxcpm2_uses_the_celune_latent_consistency_branch(self) -> None:
+        """Verify VoxCPM2 is installed from Celune's maintained branch."""
+        assert (
+            "voxcpm @ git+https://github.com/celunah/VoxCPM.git@fix/latent-consistency"
+            in BACKEND_MANIFESTS["voxcpm2"].requirements
+        )
+
     def test_fireredtts3_uses_its_isolated_huggingface_contract(self) -> None:
         """Verify FireRedTTS3 gets an isolated Transformers 5 worker contract."""
         requirements = BACKEND_MANIFESTS["fireredtts3"].requirements
@@ -389,6 +461,32 @@ class TestBackendEnvironment(CeluneTestCase):
         assert ming3_manifest.backend_module == "celune.backends.tts.ming3"
         assert ming3_manifest.backend_class == "Ming3"
         assert "torch==2.11.0+cu128" in ming3_manifest.requirements
+        assert ming3_manifest.supports_audio_cpp
+        assert ming3_manifest.requires_audio_cpp
+
+    def test_audio_cpp_manifest_eligibility_matches_verified_adapters(self) -> None:
+        """Advertise only TTS backends with verified streaming adapters."""
+        for backend_id in ("mini", "qwen3", "dotstts", "voxcpm2"):
+            manifest = BACKEND_MANIFESTS[backend_id]
+            assert manifest.supports_audio_cpp
+            assert not manifest.requires_audio_cpp
+
+        for backend_id in ("fireredtts3", "soulxsinger"):
+            manifest = BACKEND_MANIFESTS[backend_id]
+            assert not manifest.supports_audio_cpp
+            assert not manifest.requires_audio_cpp
+
+    def test_manifest_rejects_required_audio_cpp_without_support(self) -> None:
+        """Keep required runtimes within the advertised implementation set."""
+        with pytest.raises(ValueError, match="requires audio.cpp"):
+            BackendManifest(
+                "invalid",
+                "tts",
+                (),
+                "module",
+                "Backend",
+                requires_audio_cpp=True,
+            )
 
     def test_dotstts_manifest_omits_wetextprocessing(self) -> None:
         """Verify dots.tts keeps its unsupported WeTextProcessing extra omitted."""
@@ -502,10 +600,8 @@ class TestBackendEnvironment(CeluneTestCase):
 
             def fake_run(command: list[str], **_kwargs) -> None:
                 if command[1] == "venv":
-                    backend_environment = manager.environment_for(manifest)
-                    relative_python = backend_environment.python.relative_to(
-                        backend_environment.virtualenv
-                    )
+                    env = manager.environment_for(manifest)
+                    relative_python = env.python.relative_to(env.virtualenv)
                     virtualenv_python = Path(command[-1]) / relative_python
                     virtualenv_python.parent.mkdir(parents=True, exist_ok=True)
                     virtualenv_python.touch()
@@ -515,9 +611,9 @@ class TestBackendEnvironment(CeluneTestCase):
             ) as run:
                 result = manager.ensure(manifest)
 
-            self.assertEqual(result, backend_environment)
-            self.assertTrue(result.is_ready)
-            self.assertTrue(
+            assert result == backend_environment
+            assert result.is_ready
+            assert (
                 json.loads(result.metadata_path.read_text(encoding="utf-8"))[
                     "fingerprint"
                 ]
@@ -526,12 +622,9 @@ class TestBackendEnvironment(CeluneTestCase):
             assert run.call_count == 2
             install_command = run.call_args_list[1].args[0]
             strategy_index = install_command.index("--index-strategy")
-            self.assertEqual(
-                install_command[strategy_index + 1],
-                "unsafe-best-match",
-            )
-            self.assertIn("--index-url", install_command)
-            self.assertFalse(
+            assert (install_command[strategy_index + 1]) == "unsafe-best-match"
+            assert "--index-url" in install_command
+            assert not (
                 any(
                     path.name.startswith(f"{backend_environment.root.name}.install-")
                     for path in root.rglob("*")
@@ -551,7 +644,7 @@ class TestBackendEnvironment(CeluneTestCase):
             backend_environment.metadata_path.write_text("{}", encoding="utf-8")
 
             with mock.patch("celune.backends.environment.subprocess.run") as run:
-                self.assertEqual(manager.ensure(manifest), backend_environment)
+                assert (manager.ensure(manifest)) == backend_environment
 
             run.assert_not_called()
 
@@ -593,9 +686,9 @@ class TestBackendEnvironment(CeluneTestCase):
             ):
                 current_environment = manager.ensure(manifest)
 
-            self.assertTrue(current_environment.is_ready)
-            self.assertFalse(old_environment.root.exists())
-            self.assertTrue(unrelated_directory.is_dir())
+            assert current_environment.is_ready
+            assert not old_environment.root.exists()
+            assert unrelated_directory.is_dir()
 
     def test_ensure_uses_the_backend_python_by_default(self) -> None:
         """Verify backend environments do not inherit the core interpreter."""
@@ -627,7 +720,7 @@ class TestBackendEnvironment(CeluneTestCase):
     def test_soulx_worker_defaults_openblas_to_one_thread_on_windows(self) -> None:
         """Keep SoulX's Windows worker from oversubscribing OpenBLAS threads."""
         if os.name != "nt":
-            self.skipTest("SoulX OpenBLAS worker default is Windows-specific")
+            pytest.skip("SoulX OpenBLAS worker default is Windows-specific")
 
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
@@ -647,15 +740,14 @@ class TestBackendEnvironment(CeluneTestCase):
                 mock.patch.dict(os.environ, {}, clear=True),
             ):
                 worker_environment = remote._worker_environment(backend_environment)
-                self.assertEqual(worker_environment["OPENBLAS_NUM_THREADS"], "1")
+                assert (worker_environment["OPENBLAS_NUM_THREADS"]) == "1"
 
                 mini_environment = environment.BackendEnvironment(
                     manifest=BackendManifest("mini", "tts", (), "module", "Backend"),
                     root=root,
                 )
-                self.assertNotIn(
-                    "OPENBLAS_NUM_THREADS",
-                    remote._worker_environment(mini_environment),
+                assert "OPENBLAS_NUM_THREADS" not in (
+                    remote._worker_environment(mini_environment)
                 )
 
                 with mock.patch.dict(
@@ -663,11 +755,13 @@ class TestBackendEnvironment(CeluneTestCase):
                     {"OPENBLAS_NUM_THREADS": "4"},
                     clear=True,
                 ):
-                    self.assertEqual(
-                        remote._worker_environment(backend_environment)[
-                            "OPENBLAS_NUM_THREADS"
-                        ],
-                        "4",
+                    assert (
+                        (
+                            remote._worker_environment(backend_environment)[
+                                "OPENBLAS_NUM_THREADS"
+                            ]
+                        )
+                        == "4"
                     )
 
     def test_worker_environment_uses_celune_temp_directory(self) -> None:
@@ -705,10 +799,10 @@ class TestBackendEnvironment(CeluneTestCase):
             lock_path = Path(temporary_directory) / "install.lock"
             with (
                 exclusive_lock(lock_path, timeout=1.0),
-                self.assertRaises(BackendEnvironmentError),
+                pytest.raises(BackendEnvironmentError),
                 exclusive_lock(lock_path, timeout=0.01),
             ):
-                pass
+                raise AssertionError("the held installation lock was acquired")
 
     def test_uv_timeout_becomes_backend_environment_error(self) -> None:
         """Verify stalled uv operations release installation with a clear error."""
@@ -718,10 +812,7 @@ class TestBackendEnvironment(CeluneTestCase):
                 "celune.backends.environment.subprocess.run",
                 side_effect=subprocess.TimeoutExpired("uv", 1.5),
             ) as run,
-            self.assertRaisesRegex(
-                BackendEnvironmentError,
-                "uv operation timed out",
-            ),
+            pytest.raises(BackendEnvironmentError, match="uv operation timed out"),
         ):
             manager._run_uv("venv")
 
@@ -737,7 +828,7 @@ class TestBackendEnvironment(CeluneTestCase):
                 "celune.backends.environment.subprocess.run",
                 side_effect=subprocess.CalledProcessError(1, "uv", stderr=diagnostic),
             ) as run,
-            self.assertRaisesRegex(BackendEnvironmentError, "× No solution found"),
+            pytest.raises(BackendEnvironmentError, match="× No solution found"),
         ):
             manager._run_uv("pip", "install")
 
@@ -811,27 +902,25 @@ class TestBackendEnvironment(CeluneTestCase):
         )
 
         for error in errors:
-            with self.subTest(error=type(error).__name__):
-                self.assertIsInstance(error, CEDTSError)
-        self.assertIsInstance(errors[1], TimeoutError)
-        self.assertIsInstance(errors[4], OSError)
-        self.assertEqual(str(errors[0]), "unexpected EOF while reading stream")
-        self.assertEqual(str(errors[1]), "load_model timed out after 180 seconds")
-        self.assertEqual(str(errors[2]), "invalid packet hello")
-        self.assertEqual(
-            str(errors[3]),
-            "invalid binary payload received while processing generate_stream",
+            assert isinstance(error, CEDTSError)
+        assert isinstance(errors[1], TimeoutError)
+        assert isinstance(errors[4], OSError)
+        assert (str(errors[0])) == "unexpected EOF while reading stream"
+        assert (str(errors[1])) == "load_model timed out after 180 seconds"
+        assert (str(errors[2])) == "invalid packet hello"
+        assert (str(errors[3])) == (
+            "invalid binary payload received while processing generate_stream"
         )
 
     def test_worker_protocol_distinguishes_eof_protocol_and_payload_errors(
         self,
     ) -> None:
         """Verify CEDTS classifies its three packet-boundary failure families."""
-        with self.assertRaises(CEDTSEOFError):
+        with pytest.raises(CEDTSEOFError):
             receive_message(io.BytesIO())
-        with self.assertRaises(CEDTSProtocolError):
+        with pytest.raises(CEDTSProtocolError):
             build_packet("invalid", "protocol")
-        with self.assertRaises(CEDTSPayloadError):
+        with pytest.raises(CEDTSPayloadError):
             validate_payload_descriptors(
                 cast(
                     list[WorkerPayloadDescriptor],
@@ -853,21 +942,22 @@ class TestBackendEnvironment(CeluneTestCase):
         """Verify a closed CEDTS output pipe becomes a stream error."""
 
         class _ClosedStream:
-            def write(self, value: bytes) -> int:
+            @staticmethod
+            def write(value: bytes) -> int:
                 """Reject every write as a closed-pipe failure."""
-                del value
+                discard(value)
                 raise OSError("pipe is closed")
 
             def flush(self) -> None:
                 """Provide the flush method required by the CEDTS writer."""
                 return
 
-        with self.assertRaises(CEDTSStreamError) as context:
+        with pytest.raises(CEDTSStreamError) as context:
             send_message(
                 cast(IO[bytes], _ClosedStream()),
                 build_packet("ping", "protocol"),
             )
-        self.assertIn("pipe is closed", str(context.exception))
+        assert "pipe is closed" in (str(context.value))
 
     def test_worker_protocol_uses_utf8_json_control_framing(self) -> None:
         """Verify control frames contain only length-prefixed UTF-8 JSON."""
@@ -884,18 +974,18 @@ class TestBackendEnvironment(CeluneTestCase):
         frame = stream.getvalue()
         payload_size = int.from_bytes(frame[:4], "big")
         payload = frame[4:]
-        self.assertEqual(payload_size, len(payload))
-        self.assertEqual(json.loads(payload.decode("utf-8")), message)
+        assert payload_size == (len(payload))
+        assert (json.loads(payload.decode("utf-8"))) == message
 
         stream.seek(0)
-        self.assertEqual(receive_message(stream), message)
+        assert (receive_message(stream)) == message
 
     def test_worker_protocol_rejects_non_json_control_bytes(self) -> None:
         """Verify non-JSON control bytes become a CEDTS protocol error."""
         payload = b"not a CEDTS control object"
         stream = io.BytesIO(len(payload).to_bytes(4, "big") + payload)
 
-        with self.assertRaises(CEDTSError):
+        with pytest.raises(CEDTSError):
             receive_message(stream)
 
     def test_worker_protocol_normalizes_malformed_control_frames(self) -> None:
@@ -916,8 +1006,7 @@ class TestBackendEnvironment(CeluneTestCase):
         )
         for raw_frame in malformed_frames:
             with (
-                self.subTest(raw_frame=raw_frame),
-                self.assertRaises(CEDTSError),
+                pytest.raises(CEDTSError),
             ):
                 receive_message(io.BytesIO(raw_frame))
 
@@ -938,7 +1027,7 @@ class TestBackendEnvironment(CeluneTestCase):
             + b"}}}"
         )
         oversized_collection = {
-            "cedts_version": [1, 2],
+            "cedts_version": [1, 3],
             "kind": "request",
             "message_id": "collection",
             "reply_to": None,
@@ -946,7 +1035,7 @@ class TestBackendEnvironment(CeluneTestCase):
             "data": {"arguments": {"value": list(range(1025))}},
         }
         unknown_packet_field = {
-            "cedts_version": [1, 2],
+            "cedts_version": [1, 3],
             "kind": "request",
             "message_id": "unknown-field",
             "reply_to": None,
@@ -959,12 +1048,14 @@ class TestBackendEnvironment(CeluneTestCase):
             json.dumps(oversized_collection).encode(),
             json.dumps(unknown_packet_field).encode(),
         ):
-            with self.subTest(value=value), self.assertRaises(CEDTSError):
+            with (
+                pytest.raises(CEDTSError),
+            ):
                 receive_message(io.BytesIO(frame(value)))
 
         oversized_string = json.dumps(
             {
-                "cedts_version": [1, 2],
+                "cedts_version": [1, 3],
                 "kind": "request",
                 "message_id": "string",
                 "reply_to": None,
@@ -972,7 +1063,7 @@ class TestBackendEnvironment(CeluneTestCase):
                 "data": {"arguments": {"value": "x" * (1024 * 1024 + 1)}},
             }
         ).encode()
-        with self.assertRaises(CEDTSError):
+        with pytest.raises(CEDTSError):
             receive_message(io.BytesIO(frame(oversized_string)))
 
     def test_worker_request_validation_rejects_unknown_operations_and_methods(
@@ -983,12 +1074,13 @@ class TestBackendEnvironment(CeluneTestCase):
         class FakeBackend:
             """Backend stand-in for dispatch validation."""
 
-            def describe_secret(self) -> str:
+            @staticmethod
+            def describe_secret() -> str:
                 """Represent a method that must never be remotely exposed."""
                 return "secret"
 
         backend = cast(BackendRuntime, FakeBackend())
-        with self.assertRaises(CEDTSError):
+        with pytest.raises(CEDTSError):
             worker._run_request(
                 backend,
                 {"operation": "unknown", "arguments": {}},
@@ -996,7 +1088,7 @@ class TestBackendEnvironment(CeluneTestCase):
                 1,
                 io.BytesIO(),
             )
-        with self.assertRaises(CEDTSError):
+        with pytest.raises(CEDTSError):
             worker._run_request(
                 backend,
                 {
@@ -1014,7 +1106,8 @@ class TestBackendEnvironment(CeluneTestCase):
         class FakeBackend:
             """Backend stand-in for VRAM callback dispatch."""
 
-            def vram_report(self) -> dict[str, WorkerValue]:
+            @staticmethod
+            def vram_report() -> dict[str, WorkerValue]:
                 """Return a minimal JSON-compatible VRAM report."""
                 return {"process_scope": "worker"}
 
@@ -1030,9 +1123,9 @@ class TestBackendEnvironment(CeluneTestCase):
             io.BytesIO(),
         )
 
-        self.assertTrue(response["ok"])
-        self.assertEqual(response["value"], {"process_scope": "worker"})
-        self.assertEqual(next_model_id, 1)
+        assert response["ok"]
+        assert (response["value"]) == ({"process_scope": "worker"})
+        assert next_model_id == 1
 
     def test_protocol_accepts_registered_backend_callbacks(self) -> None:
         """Verify registered callbacks pass the parent packet validator."""
@@ -1052,13 +1145,12 @@ class TestBackendEnvironment(CeluneTestCase):
             },
         )
         for arguments in calls:
-            with self.subTest(arguments=arguments):
-                packet = build_packet(
-                    "request",
-                    "call",
-                    {"arguments": arguments},
-                )
-                send_message(io.BytesIO(), packet)
+            packet = build_packet(
+                "request",
+                "call",
+                {"arguments": arguments},
+            )
+            send_message(io.BytesIO(), packet)
 
     def test_worker_request_validation_normalizes_malformed_arguments(self) -> None:
         """Verify non-object and invalid operation arguments become protocol errors."""
@@ -1072,7 +1164,9 @@ class TestBackendEnvironment(CeluneTestCase):
             },
         )
         for request in malformed_requests:
-            with self.subTest(request=request), self.assertRaises(CEDTSError):
+            with (
+                pytest.raises(CEDTSError),
+            ):
                 worker._run_request(
                     backend,
                     cast(WorkerRequest, request),
@@ -1090,7 +1184,7 @@ class TestBackendEnvironment(CeluneTestCase):
                 cast(
                     dict[str, WorkerValue],
                     {
-                        "versions": [[1, 2]],
+                        "versions": [[1, 3]],
                         "capabilities": remote.CORE_CAPABILITIES,
                         "unexpected": True,
                     },
@@ -1112,7 +1206,9 @@ class TestBackendEnvironment(CeluneTestCase):
             ),
         )
         for packet in invalid_packets:
-            with self.subTest(packet=packet), self.assertRaises(CEDTSError):
+            with (
+                pytest.raises(CEDTSError),
+            ):
                 send_message(io.BytesIO(), packet)
 
     def test_worker_operation_schemas_require_handles_and_bound_backend_kwargs(
@@ -1133,7 +1229,7 @@ class TestBackendEnvironment(CeluneTestCase):
             ),
         )
         send_message(io.BytesIO(), valid_wire_packet)
-        with self.assertRaises(CEDTSError):
+        with pytest.raises(CEDTSError):
             send_message(
                 io.BytesIO(),
                 build_packet(
@@ -1190,12 +1286,12 @@ class TestBackendEnvironment(CeluneTestCase):
             1,
             io.BytesIO(),
         )
-        self.assertTrue(loaded["ok"])
-        self.assertEqual(backend.loaded[0], "mini")
+        assert loaded["ok"]
+        assert (backend.loaded[0]) == "mini"
         loaded_settings = cast(
             dict[str, BackendArgumentValue], backend.loaded[1]["settings"]
         )
-        self.assertEqual(loaded_settings["voice"], "celune")
+        assert (loaded_settings["voice"]) == "celune"
 
         generated, _ = worker._run_request(
             cast(BackendRuntime, backend),
@@ -1214,11 +1310,11 @@ class TestBackendEnvironment(CeluneTestCase):
             next_model_id,
             io.BytesIO(),
         )
-        self.assertTrue(generated["done"])
+        assert generated["done"]
         generated_decoding = cast(
             dict[str, BackendArgumentValue], backend.generated[1]["decoding"]
         )
-        self.assertEqual(generated_decoding["top_k"], 20)
+        assert (generated_decoding["top_k"]) == 20
 
         malformed_arguments = (
             {"operation": "load_model", "arguments": {"temperature": 0.7}},
@@ -1232,7 +1328,9 @@ class TestBackendEnvironment(CeluneTestCase):
             },
         )
         for request in malformed_arguments:
-            with self.subTest(request=request), self.assertRaises(CEDTSError):
+            with (
+                pytest.raises(CEDTSError),
+            ):
                 worker._run_request(
                     cast(BackendRuntime, backend),
                     cast(WorkerRequest, request),
@@ -1251,9 +1349,10 @@ class TestBackendEnvironment(CeluneTestCase):
         class FakeBackend:
             """Backend stand-in whose stream blocks before exhausting."""
 
-            def generate_stream(self, model: BackendModel):
+            @staticmethod
+            def generate_stream(model: BackendModel):
                 """Block the generator until cancellation has been requested."""
-                del model
+                discard(model)
                 started.set()
                 release.wait(timeout=2)
                 yield {"audio": [0.0], "sample_rate": 48000}
@@ -1274,13 +1373,13 @@ class TestBackendEnvironment(CeluneTestCase):
 
         thread = threading.Thread(target=run_stream)
         thread.start()
-        self.assertTrue(started.wait(timeout=1))
+        assert started.wait(timeout=1)
         cancellation.set()
         release.set()
         thread.join(timeout=2)
 
-        self.assertFalse(thread.is_alive())
-        self.assertEqual(responses, [{"ok": False, "cancelled": True, "done": True}])
+        assert not thread.is_alive()
+        assert responses == ([{"ok": False, "cancelled": True, "done": True}])
 
     def test_worker_stream_cancellation_after_final_chunk_is_terminal(self) -> None:
         """Verify cancellation requested after the final chunk cannot complete normally."""
@@ -1289,9 +1388,10 @@ class TestBackendEnvironment(CeluneTestCase):
         class FakeBackend:
             """Backend stand-in that requests cancellation while exhausting."""
 
-            def generate_stream(self, model: BackendModel):
+            @staticmethod
+            def generate_stream(model: BackendModel):
                 """Yield one chunk, then request cancellation before exhaustion."""
-                del model
+                discard(model)
                 yield {"audio": [0.0], "sample_rate": 48000}
                 cancellation.set()
 
@@ -1307,7 +1407,7 @@ class TestBackendEnvironment(CeluneTestCase):
             cancellation_event=cancellation,
         )
 
-        self.assertEqual(response, {"ok": False, "cancelled": True, "done": True})
+        assert response == ({"ok": False, "cancelled": True, "done": True})
 
     def test_worker_protocol_round_trips_audio_on_the_binary_channel(self) -> None:
         """Verify audio metadata stays in JSON while samples use binary framing."""
@@ -1323,10 +1423,8 @@ class TestBackendEnvironment(CeluneTestCase):
         send_message(control_stream, control)
         send_payloads(binary_stream, payloads)
 
-        self.assertEqual(
-            cast(list, control["payloads"])[0]["media_type"], "audio/pcm_f32le"
-        )
-        self.assertNotIn(audio.tobytes(), control_stream.getvalue())
+        assert (cast(list, control["payloads"])[0]["media_type"]) == "audio/pcm_f32le"
+        assert (audio.tobytes()) not in (control_stream.getvalue())
         control_stream.seek(0)
         binary_stream.seek(0)
         received_control = receive_message(control_stream)
@@ -1337,7 +1435,7 @@ class TestBackendEnvironment(CeluneTestCase):
         decoded = decode_message(received_control, received_payloads)
         output = cast(AudioOutput, cast(dict, decoded["data"])["value"])
         np.testing.assert_array_equal(output.audio, audio)
-        self.assertEqual(output.sample_rate, 48000)
+        assert output.sample_rate == 48000
 
     def test_worker_protocol_preflights_payload_limits_before_materializing_arrays(
         self,
@@ -1349,7 +1447,7 @@ class TestBackendEnvironment(CeluneTestCase):
             mock.patch.object(
                 np, "ascontiguousarray", wraps=np.ascontiguousarray
             ) as contiguous,
-            self.assertRaises(CEDTSError),
+            pytest.raises(CEDTSError),
         ):
             encode_message({"value": array}, limits=limits)
         contiguous.assert_not_called()
@@ -1361,12 +1459,12 @@ class TestBackendEnvironment(CeluneTestCase):
             mock.patch.object(
                 np, "ascontiguousarray", wraps=np.ascontiguousarray
             ) as contiguous,
-            self.assertRaises(CEDTSError),
+            pytest.raises(CEDTSError),
         ):
             encode_message(
                 {"values": cast(list[WorkerValue], [first, second])}, limits=limits
             )
-        self.assertEqual(contiguous.call_count, 1)
+        assert contiguous.call_count == 1
 
         limits = CEDTSLimits(max_aggregate_payload_size=8, max_payload_descriptors=2)
         audio = AudioOutput(np.zeros(3, dtype=np.float32), 48000)
@@ -1374,7 +1472,7 @@ class TestBackendEnvironment(CeluneTestCase):
             mock.patch.object(
                 np, "ascontiguousarray", wraps=np.ascontiguousarray
             ) as contiguous,
-            self.assertRaises(CEDTSError),
+            pytest.raises(CEDTSError),
         ):
             encode_message({"value": audio}, limits=limits)
         contiguous.assert_not_called()
@@ -1384,7 +1482,7 @@ class TestBackendEnvironment(CeluneTestCase):
             mock.patch.object(
                 np, "ascontiguousarray", wraps=np.ascontiguousarray
             ) as contiguous,
-            self.assertRaises(CEDTSError),
+            pytest.raises(CEDTSError),
         ):
             encode_message({"value": np.zeros(1, dtype=np.float32)}, limits=limits)
         contiguous.assert_not_called()
@@ -1398,7 +1496,7 @@ class TestBackendEnvironment(CeluneTestCase):
             "__cedts_type__": "tuple",
             "items": [typed_array, typed_array],
         }
-        with self.assertRaises(CEDTSError):
+        with pytest.raises(CEDTSError):
             decode_message(
                 control,
                 {payload.descriptor["id"]: payload for payload in payloads},
@@ -1413,7 +1511,7 @@ class TestBackendEnvironment(CeluneTestCase):
             "__cedts_type__": "tuple",
             "items": [typed_audio, typed_audio],
         }
-        with self.assertRaises(CEDTSError):
+        with pytest.raises(CEDTSError):
             decode_message(
                 control,
                 {payload.descriptor["id"]: payload for payload in payloads},
@@ -1438,19 +1536,16 @@ class TestBackendEnvironment(CeluneTestCase):
                 "audio",
             ),
         )
-        for wrapper_name, message, reference_field in cases:
-            with self.subTest(wrapper=wrapper_name):
-                control, payloads = encode_message(
-                    cast(dict[str, WorkerValue], message)
+        for _wrapper_name, message, reference_field in cases:
+            control, payloads = encode_message(cast(dict[str, WorkerValue], message))
+            wrapper = cast(dict, control["value"])
+            reference = cast(dict, wrapper[reference_field])
+            reference["unexpected"] = "rejected"
+            with pytest.raises(CEDTSError):
+                decode_message(
+                    control,
+                    {payload.descriptor["id"]: payload for payload in payloads},
                 )
-                wrapper = cast(dict, control["value"])
-                reference = cast(dict, wrapper[reference_field])
-                reference["unexpected"] = "rejected"
-                with self.assertRaises(CEDTSError):
-                    decode_message(
-                        control,
-                        {payload.descriptor["id"]: payload for payload in payloads},
-                    )
 
     def test_worker_protocol_rejects_duplicate_typed_mixed_wrapper_references(
         self,
@@ -1475,7 +1570,7 @@ class TestBackendEnvironment(CeluneTestCase):
                 },
             ],
         }
-        with self.assertRaises(CEDTSError):
+        with pytest.raises(CEDTSError):
             decode_message(
                 control,
                 {payload.descriptor["id"]: payload for payload in payloads},
@@ -1491,7 +1586,7 @@ class TestBackendEnvironment(CeluneTestCase):
             payload_map,
             limits=CEDTSLimits(max_aggregate_payload_size=8),
         )
-        with self.assertRaises(CEDTSError):
+        with pytest.raises(CEDTSError):
             decode_message(
                 control,
                 payload_map,
@@ -1506,7 +1601,7 @@ class TestBackendEnvironment(CeluneTestCase):
                 )
             }
         )
-        with self.assertRaises(CEDTSError):
+        with pytest.raises(CEDTSError):
             decode_message(
                 audio_control,
                 {payload.descriptor["id"]: payload for payload in audio_payloads},
@@ -1548,18 +1643,18 @@ class TestBackendEnvironment(CeluneTestCase):
         np.testing.assert_array_equal(
             decoded_request.source_audio, request.source_audio
         )
-        self.assertEqual(decoded_request.sample_rate, request.sample_rate)
-        self.assertEqual(decoded_request.target_voice, request.target_voice)
+        assert decoded_request.sample_rate == request.sample_rate
+        assert decoded_request.target_voice == request.target_voice
 
     def test_worker_protocol_rejects_binary_after_zero_payload_message(self) -> None:
         """Verify an undeclared binary frame cannot desynchronize later messages."""
         unexpected_frame = (10).to_bytes(4, "big") + (b"x" * 10)
         binary_stream = io.BytesIO(unexpected_frame + (0).to_bytes(4, "big"))
 
-        with self.assertRaises(CEDTSError):
+        with pytest.raises(CEDTSError):
             receive_payloads(binary_stream, [])
 
-        self.assertEqual(receive_payloads(binary_stream, []), {})
+        assert not receive_payloads(binary_stream, [])
 
     def test_worker_protocol_round_trips_empty_and_multiple_payload_boundaries(
         self,
@@ -1589,7 +1684,7 @@ class TestBackendEnvironment(CeluneTestCase):
         try:
             send_payloads(writer, ())
             send_payloads(writer, payloads)
-            self.assertEqual(receive_payloads(reader, []), {})
+            assert not receive_payloads(reader, [])
             received = receive_payloads(
                 reader, [payload.descriptor for payload in payloads]
             )
@@ -1597,10 +1692,9 @@ class TestBackendEnvironment(CeluneTestCase):
             reader.close()
             writer.close()
 
-        self.assertEqual(
-            {payload_id: payload.data for payload_id, payload in received.items()},
-            {"first": b"one", "second": b"two"},
-        )
+        assert (
+            {payload_id: payload.data for payload_id, payload in received.items()}
+        ) == ({"first": b"one", "second": b"two"})
 
     def test_worker_protocol_validates_audio_wrapper_metadata(self) -> None:
         """Verify audio wrappers agree with their binary payload descriptors."""
@@ -1629,29 +1723,28 @@ class TestBackendEnvironment(CeluneTestCase):
             ),
         )
         for value, packet_kind, data in cases:
-            with self.subTest(value_type=type(value).__name__):
-                control, payloads = encode_message(
-                    build_packet(packet_kind, "convert", data)
+            control, payloads = encode_message(
+                build_packet(packet_kind, "convert", data)
+            )
+            decoded = decode_message(
+                control,
+                {payload.descriptor["id"]: payload for payload in payloads},
+            )
+            decoded_data = cast(dict[str, WorkerValue], decoded["data"])
+            if isinstance(value, AudioOutput):
+                decoded_value = cast(AudioOutput, decoded_data["value"])
+                assert decoded_value.sample_rate == 48000
+                assert decoded_value.audio.shape == audio.shape
+            else:
+                decoded_arguments = cast(
+                    dict[str, WorkerValue], decoded_data["arguments"]
                 )
-                decoded = decode_message(
-                    control,
-                    {payload.descriptor["id"]: payload for payload in payloads},
+                decoded_value = cast(
+                    VoiceConversionRequest,
+                    decoded_arguments["request"],
                 )
-                decoded_data = cast(dict[str, WorkerValue], decoded["data"])
-                if isinstance(value, AudioOutput):
-                    decoded_value = cast(AudioOutput, decoded_data["value"])
-                    self.assertEqual(decoded_value.sample_rate, 48000)
-                    self.assertEqual(decoded_value.audio.shape, audio.shape)
-                else:
-                    decoded_arguments = cast(
-                        dict[str, WorkerValue], decoded_data["arguments"]
-                    )
-                    decoded_value = cast(
-                        VoiceConversionRequest,
-                        decoded_arguments["request"],
-                    )
-                    self.assertEqual(decoded_value.sample_rate, 24000)
-                    self.assertEqual(decoded_value.source_audio.shape, audio.shape)
+                assert decoded_value.sample_rate == 24000
+                assert decoded_value.source_audio.shape == audio.shape
 
         generation_control, generation_payloads = encode_message(
             build_packet(
@@ -1664,8 +1757,8 @@ class TestBackendEnvironment(CeluneTestCase):
             dict[str, WorkerValue],
             cast(dict[str, WorkerValue], generation_control["data"])["value"],
         )
-        self.assertEqual(encoded_generation["channels"], 2)
-        self.assertEqual(encoded_generation["shape"], [2, 2])
+        assert (encoded_generation["channels"]) == 2
+        assert (encoded_generation["shape"]) == ([2, 2])
         decoded_generation_value = cast(
             tuple[np.ndarray, int, WorkerValue],
             cast(
@@ -1679,35 +1772,31 @@ class TestBackendEnvironment(CeluneTestCase):
                 )["data"],
             )["value"],
         )
-        self.assertEqual(decoded_generation_value[1], 48000)
-        self.assertEqual(decoded_generation_value[0].shape, audio.shape)
+        assert (decoded_generation_value[1]) == 48000
+        assert decoded_generation_value[0].shape == audio.shape
 
         for field_name, invalid_value in (
             ("sample_rate", 44100),
             ("channels", 1),
             ("shape", [4]),
         ):
-            with self.subTest(backend_generation_field=field_name):
-                invalid_control, invalid_payloads = encode_message(
-                    build_packet(
-                        "response",
-                        "generate_stream",
-                        {"value": (audio, 48000, None)},
-                    )
+            invalid_control, invalid_payloads = encode_message(
+                build_packet(
+                    "response",
+                    "generate_stream",
+                    {"value": (audio, 48000, None)},
                 )
-                invalid_value_wrapper = cast(
-                    dict[str, WorkerValue],
-                    cast(dict[str, WorkerValue], invalid_control["data"])["value"],
+            )
+            invalid_value_wrapper = cast(
+                dict[str, WorkerValue],
+                cast(dict[str, WorkerValue], invalid_control["data"])["value"],
+            )
+            invalid_value_wrapper[field_name] = cast(WorkerValue, invalid_value)
+            with pytest.raises(CEDTSError):
+                decode_message(
+                    invalid_control,
+                    {payload.descriptor["id"]: payload for payload in invalid_payloads},
                 )
-                invalid_value_wrapper[field_name] = cast(WorkerValue, invalid_value)
-                with self.assertRaises(CEDTSError):
-                    decode_message(
-                        invalid_control,
-                        {
-                            payload.descriptor["id"]: payload
-                            for payload in invalid_payloads
-                        },
-                    )
 
         output_control, output_payloads = encode_message(
             build_packet(
@@ -1717,7 +1806,7 @@ class TestBackendEnvironment(CeluneTestCase):
             )
         )
         cast(dict, cast(dict, output_control["data"])["value"])["sample_rate"] = 44100
-        with self.assertRaises(CEDTSError):
+        with pytest.raises(CEDTSError):
             decode_message(
                 output_control,
                 {payload.descriptor["id"]: payload for payload in output_payloads},
@@ -1742,7 +1831,7 @@ class TestBackendEnvironment(CeluneTestCase):
             dict,
             cast(dict, cast(dict, request_control["data"])["arguments"])["request"],
         )["sample_rate"] = 22050
-        with self.assertRaises(CEDTSError):
+        with pytest.raises(CEDTSError):
             decode_message(
                 request_control,
                 {payload.descriptor["id"]: payload for payload in request_payloads},
@@ -1770,22 +1859,21 @@ class TestBackendEnvironment(CeluneTestCase):
             ),
         )
         for packet_kind, data in audio_cases:
-            with self.subTest(packet_kind=packet_kind, wrapper=data):
-                control, payloads = encode_message(
-                    build_packet(packet_kind, "convert", cast(dict, data))
+            control, payloads = encode_message(
+                build_packet(packet_kind, "convert", cast(dict, data))
+            )
+            payload = payloads[0]
+            descriptor = dict(payload.descriptor)
+            descriptor["media_type"] = "application/x-tensor"
+            with pytest.raises(CEDTSError):
+                decode_message(
+                    control,
+                    {
+                        payload.descriptor["id"]: WorkerPayload(
+                            cast(WorkerPayloadDescriptor, descriptor), payload.data
+                        )
+                    },
                 )
-                payload = payloads[0]
-                descriptor = dict(payload.descriptor)
-                descriptor["media_type"] = "application/x-tensor"
-                with self.assertRaises(CEDTSError):
-                    decode_message(
-                        control,
-                        {
-                            payload.descriptor["id"]: WorkerPayload(
-                                cast(WorkerPayloadDescriptor, descriptor), payload.data
-                            )
-                        },
-                    )
 
         control, payloads = encode_message(
             build_packet("response", "convert", {"value": audio})
@@ -1799,7 +1887,7 @@ class TestBackendEnvironment(CeluneTestCase):
                 "channels": 1,
             }
         )
-        with self.assertRaises(CEDTSError):
+        with pytest.raises(CEDTSError):
             decode_message(
                 control,
                 {
@@ -1833,7 +1921,7 @@ class TestBackendEnvironment(CeluneTestCase):
         )
         output = cast(AudioOutput, cast(dict, decoded["data"])["value"])
 
-        self.assertEqual(output.audio.dtype, np.float32)
+        assert output.audio.dtype == np.float32
         np.testing.assert_allclose(
             output.audio,
             np.array([-1.0, 0.0, 32767 / 32768], dtype=np.float32),
@@ -1865,8 +1953,7 @@ class TestBackendEnvironment(CeluneTestCase):
         )
         for descriptor in invalid_descriptors:
             with (
-                self.subTest(descriptor=descriptor),
-                self.assertRaises(CEDTSError),
+                pytest.raises(CEDTSError),
             ):
                 validate_payload_descriptors(cast(list, [descriptor]))
 
@@ -1880,27 +1967,26 @@ class TestBackendEnvironment(CeluneTestCase):
             np.array([-1.000001], dtype=np.float32),
         )
         for audio in invalid_audio:
-            with self.subTest(audio=audio):
-                control, payloads = encode_message(
-                    build_packet(
-                        "response",
-                        "convert",
-                        {
-                            "ok": True,
-                            "value": AudioOutput(np.zeros(1, dtype=np.float32), 48000),
-                        },
-                    )
+            control, payloads = encode_message(
+                build_packet(
+                    "response",
+                    "convert",
+                    {
+                        "ok": True,
+                        "value": AudioOutput(np.zeros(1, dtype=np.float32), 48000),
+                    },
                 )
-                payload = payloads[0]
-                invalid_payload = WorkerPayload(
-                    payload.descriptor,
-                    audio.tobytes(),
+            )
+            payload = payloads[0]
+            invalid_payload = WorkerPayload(
+                payload.descriptor,
+                audio.tobytes(),
+            )
+            with pytest.raises(CEDTSError):
+                decode_message(
+                    control,
+                    {invalid_payload.descriptor["id"]: invalid_payload},
                 )
-                with self.assertRaises(CEDTSError):
-                    decode_message(
-                        control,
-                        {invalid_payload.descriptor["id"]: invalid_payload},
-                    )
 
     def test_worker_protocol_normalizes_float_audio_before_transmission(self) -> None:
         """Verify worker-produced float audio cannot poison the response stream."""
@@ -1939,7 +2025,7 @@ class TestBackendEnvironment(CeluneTestCase):
         raw.extend((4).to_bytes(8, "big"))
         raw.extend(b"audio-1")
         raw.extend(b"\x00\x00\x00\x00")
-        with self.assertRaises(CEDTSError):
+        with pytest.raises(CEDTSError):
             receive_payloads(io.BytesIO(raw), [descriptor])
 
     def test_worker_protocol_rejects_unexpected_binary_payload_identity(self) -> None:
@@ -1959,7 +2045,7 @@ class TestBackendEnvironment(CeluneTestCase):
             + payload
         )
 
-        with self.assertRaises(CEDTSError):
+        with pytest.raises(CEDTSError):
             receive_payloads(io.BytesIO(binary_frame), [descriptor])
 
     def test_worker_protocol_rejects_invalid_binary_metadata_and_limits(self) -> None:
@@ -1988,8 +2074,7 @@ class TestBackendEnvironment(CeluneTestCase):
         )
         for descriptor in invalid_descriptors:
             with (
-                self.subTest(descriptor=descriptor),
-                self.assertRaises(CEDTSError),
+                pytest.raises(CEDTSError),
             ):
                 validate_payload_descriptors(cast(list, [descriptor]))
 
@@ -2001,7 +2086,7 @@ class TestBackendEnvironment(CeluneTestCase):
             }
             for index in range(10)
         ]
-        with self.assertRaises(CEDTSError):
+        with pytest.raises(CEDTSError):
             validate_payload_descriptors(descriptors)
 
     def test_worker_protocol_rejects_payload_data_length_before_transmission(
@@ -2016,7 +2101,7 @@ class TestBackendEnvironment(CeluneTestCase):
             },
             b"short",
         )
-        with self.assertRaises(CEDTSError):
+        with pytest.raises(CEDTSError):
             send_payloads(io.BytesIO(), [payload])
 
     def test_worker_stream_uses_protocol_stdout_during_backend_redirects(self) -> None:
@@ -2028,7 +2113,8 @@ class TestBackendEnvironment(CeluneTestCase):
             @staticmethod
             def generate_stream(model: object, **kwargs: object):
                 """Yield one protocol-compatible fake audio frame."""
-                del model, kwargs
+                discard(model)
+                discard(kwargs)
                 yield {"audio": [0.0], "sample_rate": 48000}
 
         protocol_stream = io.BytesIO()
@@ -2055,12 +2141,11 @@ class TestBackendEnvironment(CeluneTestCase):
         assert response["done"]
         protocol_stream.seek(0)
         frame = receive_message(protocol_stream)
-        self.assertTrue(cast(dict, frame["data"])["stream"])
-        self.assertEqual(
-            cast(dict, frame["data"])["value"],
-            {"audio": [0.0], "sample_rate": 48000},
+        assert cast(dict, frame["data"])["stream"]
+        assert (cast(dict, frame["data"])["value"]) == (
+            {"audio": [0.0], "sample_rate": 48000}
         )
-        self.assertTrue(cast(dict, receive_message(protocol_stream)["data"])["done"])
+        assert cast(dict, receive_message(protocol_stream)["data"])["done"]
 
     def test_worker_stream_stops_before_backend_next_chunk_when_cancelled(self) -> None:
         """Verify a request-scoped cancellation event terminates a worker stream."""
@@ -2071,7 +2156,8 @@ class TestBackendEnvironment(CeluneTestCase):
             @staticmethod
             def generate_stream(model: object, **kwargs: object):
                 """Yield a chunk only when the request was not already cancelled."""
-                del model, kwargs
+                discard(model)
+                discard(kwargs)
                 yield {"audio": [0.0], "sample_rate": 48000}
 
         cancellation = threading.Event()
@@ -2085,8 +2171,8 @@ class TestBackendEnvironment(CeluneTestCase):
             cancellation_event=cancellation,
         )
 
-        self.assertTrue(response["cancelled"])
-        self.assertTrue(response["done"])
+        assert response["cancelled"]
+        assert response["done"]
 
     def test_remote_cancellation_targets_active_request_without_protocol_lock(
         self,
@@ -2108,11 +2194,9 @@ class TestBackendEnvironment(CeluneTestCase):
         proxy._send_packet = mock.Mock(return_value="cancel-packet")
 
         with proxy._protocol_lock:
-            self.assertTrue(
-                proxy.cancel_active_request(
-                    "active-request",
-                    wait_for_ack=False,
-                )
+            assert proxy.cancel_active_request(
+                "active-request",
+                wait_for_ack=False,
             )
 
         proxy._send_packet.assert_called_once_with(
@@ -2135,5 +2219,5 @@ class TestBackendEnvironment(CeluneTestCase):
         proxy._cancel_sent = False
         proxy._send_packet = mock.Mock()
 
-        self.assertFalse(proxy.cancel_active_request("old-request"))
+        assert not proxy.cancel_active_request("old-request")
         proxy._send_packet.assert_not_called()

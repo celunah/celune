@@ -2,6 +2,7 @@
 """Engine-level speech entry points coordinated with the pipeline."""
 
 from __future__ import annotations
+
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Optional
 
@@ -9,7 +10,8 @@ import numpy as np
 
 from ..i18n import string
 from ..constants import BASE_SR
-from ..audio.dsp import _generate_test_tone
+
+from ..audio.dsp import generate_test_tone
 from ..pipeline import buffering, submission
 from ..pipeline.playback import close_stream
 from ..typing.pipeline import SpeechStreamQueue
@@ -27,8 +29,11 @@ def say(
     text: str,
     save: bool = True,
     display_text: Optional[str] = None,
+    maintain_status: bool = False,
 ) -> bool:
     """Submit text for ordinary buffered speech generation."""
+    if maintain_status:
+        return submission.say(engine, text, save, display_text, maintain_status=True)
     return submission.say(engine, text, save, display_text)
 
 
@@ -160,7 +165,7 @@ def test_audio(engine: Celune) -> bool:
         for channel_index, speaker in enumerate(speakers):
             engine._audio_test_route = (len(speakers), channel_index)
             if speaker.position == "lfe":
-                audio = _generate_test_tone(
+                audio = generate_test_tone(
                     _SUBWOOFER_TEST_FREQUENCY,
                     duration=1.5,
                     sample_rate=BASE_SR,

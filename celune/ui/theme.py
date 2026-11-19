@@ -7,7 +7,7 @@ from textual.color import Color
 CELUNE_CSS = """
     Screen {
         layout: vertical;
-        layers: base menu loading;
+        layers: base menu loading toast;
         background: $background;
     }
 
@@ -41,6 +41,36 @@ CELUNE_CSS = """
         offset: 0 0;
         align: center middle;
         background: $background;
+    }
+
+    #celune-toast {
+        layer: toast;
+        dock: bottom;
+        width: auto;
+        max-width: 1fr;
+        height: 3;
+        margin-bottom: 1;
+        padding: 0 2;
+        border: round $primary;
+        background: $background;
+        color: $foreground;
+        text-wrap: nowrap;
+        text-overflow: ellipsis;
+        text-align: center;
+        content-align: center middle;
+        opacity: 0;
+        offset: 0 0;
+        constrain: inside;
+    }
+
+    #celune-toast.severity-warning {
+        border: round $warning;
+        color: $warning;
+    }
+
+    #celune-toast.severity-error {
+        border: round $error;
+        color: $error;
     }
 
     #loading-center {
@@ -282,7 +312,7 @@ CELUNE_CSS = """
         width: 1fr;
         height: 1;
         border-top: solid $primary;
-        margin: 0 2;  /* when zero two works, arno would be proud */
+        margin: 0 2;  /* when zero two works, Arno would be proud */
     }
 
     #controls {
@@ -327,7 +357,6 @@ CELUNE_CSS = """
         color: $primary;
         background: $accent;
     }
-
 """
 
 

@@ -8,17 +8,29 @@ import re
 import time
 import queue
 import pathlib
-from typing import TYPE_CHECKING, Union, Optional, cast
 from collections.abc import Callable
+from typing import TYPE_CHECKING, Union, Optional, cast
 
 import numpy as np
 import soundfile as sf
 from iso639 import Lang
 from iso639.exceptions import InvalidLanguageValue, DeprecatedLanguageValue
 
-from ..vc import VC_PLAYBACK_GAIN, normalize_vc_audio
-from ..cesn import contains_cesn_note_event
+from ..cevoice import default_loader
 from ..i18n import string, tagged_string
+from ..constants import BASE_SR, APP_NAME
+from ..exceptions import NotAvailableError
+from ..cesn import contains_cesn_note_event
+from ..typing.pipeline import SpeechStreamQueue
+from ..core.concurrency import run_in_daemon_thread
+from ..typing.aliases import AudioChunk, AudioChunks
+from ..vc import VC_PLAYBACK_GAIN, normalize_vc_audio
+from ..audio.dsp import split, resample_audio, is_silent_utterance
+from .output import (
+    is_youtube_sfx_url,
+    download_youtube_sfx,
+    format_stat_duration,
+)
 from ..utils import (
     rng_replace,
     cesn_to_text,
@@ -26,20 +38,6 @@ from ..utils import (
     detect_language,
     format_error_message,
     normalize_special_characters,
-)
-from .output import (
-    is_youtube_sfx_url,
-    download_youtube_sfx,
-    format_stat_duration,
-)
-from ..cevoice import default_loader
-from .captions import (
-    playback_source_meta,
-    next_playback_source_id,
-    register_playback_source,
-    set_playback_source_status,
-    clear_playback_source_status,
-    register_overlay_playback_state,
 )
 from .buffering import (
     acquire_pipeline,
@@ -49,12 +47,6 @@ from .buffering import (
     acquire_pipeline_result,
     flush_buffered_speech_chunks,
 )
-from ..audio.dsp import split, resample_audio, is_silent_utterance
-from ..constants import BASE_SR, APP_NAME
-from ..exceptions import NotAvailableError
-from ..typing.aliases import AudioChunk, AudioChunks
-from ..typing.pipeline import SpeechStreamQueue
-from ..core.concurrency import run_in_daemon_thread
 from ..dataclasses.pipeline import (
     AudioOutput,
     SpeechTiming,
@@ -63,6 +55,16 @@ from ..dataclasses.pipeline import (
     PreparedSpeechAudio,
     VoiceConversionRequest,
     CaptionAlignmentSection,
+)
+from .captions import (
+    caption_alignment_word_count,
+    merge_empty_caption_alignment_sections,
+    playback_source_meta,
+    next_playback_source_id,
+    register_playback_source,
+    set_playback_source_status,
+    clear_playback_source_status,
+    register_overlay_playback_state,
 )
 
 if TYPE_CHECKING:
@@ -75,6 +77,7 @@ def say(
     text: str,
     save: bool = True,
     display_text: Optional[str] = None,
+    maintain_status: bool = False,
 ) -> bool:
     """Queue text for Celune to say.
 
@@ -83,6 +86,7 @@ def say(
         text: The input text to queue for synthesis.
         save: Whether to save generated output artifacts.
         display_text: Optional text to show in logs instead of the synthesis text.
+        maintain_status: Whether the engine should restore the previous status message after the call completes.
 
     Returns:
         bool: ``True`` when the text was queued successfully, otherwise ``False``.
@@ -103,6 +107,15 @@ def say(
         engine.progress_callback(0, 1)
         return False
 
+    if maintain_status:
+        return queue_speech(
+            engine,
+            text,
+            save=save,
+            stream_queue=None,
+            display_text=display_text,
+            maintain_status=True,
+        )
     return queue_speech(
         engine,
         text,
@@ -239,10 +252,11 @@ def play_tutorial_sections(
     silence = np.zeros(silence_shape, dtype=np.float32)
     for index, section_audio in enumerate(normalized_audio):
         section_starts.append(total_frames)
-        transcript_words = normalize_special_characters(
+        transcript_text = normalize_special_characters(
             sections[index],
             for_tts=True,
-        ).split()
+        )
+        transcript_alignment_words = caption_alignment_word_count(transcript_text)
         display_words = visible_sections[index].split()
         combined_parts.append(section_audio)
         alignment_sections.append(
@@ -250,17 +264,23 @@ def play_tutorial_sections(
                 audio_start_frame=total_frames,
                 audio_end_frame=total_frames + len(section_audio),
                 transcript_word_start=transcript_word_start,
-                transcript_word_end=transcript_word_start + len(transcript_words),
+                transcript_word_end=(
+                    transcript_word_start + transcript_alignment_words
+                ),
                 display_word_start=display_word_start,
                 display_word_end=display_word_start + len(display_words),
             )
         )
-        transcript_word_start += len(transcript_words)
+        transcript_word_start += transcript_alignment_words
         display_word_start += len(display_words)
         total_frames += len(section_audio)
         if index < len(audio_sections) - 1:
             combined_parts.append(silence)
             total_frames += pause_samples
+
+    alignment_sections = list(
+        merge_empty_caption_alignment_sections(alignment_sections)
+    )
 
     transcript = " ".join(sections)
     display_transcript = " ".join(visible_sections)
@@ -450,6 +470,7 @@ def convert_audio_input(
     Args:
         engine: The Celune engine receiving the audio input.
         request: The submitted audio input request.
+        live: Whether live voice conversion is enabled.
 
     Returns:
         Optional[AudioOutput]: The converted audio output, or ``None`` when voice conversion is unavailable.
@@ -519,6 +540,7 @@ def queue_speech(
     save: bool = True,
     stream_queue: Optional[SpeechStreamQueue] = None,
     display_text: Optional[str] = None,
+    maintain_status: bool = False,
 ) -> bool:
     """Queue text for Celune to say and optionally mirror audio chunks.
 
@@ -528,6 +550,7 @@ def queue_speech(
         save: Whether to save generated output artifacts.
         stream_queue: Optional queue receiving generated 48 kHz float32 chunks.
         display_text: Optional text to show in logs instead of the synthesis text.
+        maintain_status: Whether the engine should restore the previous status message after the call completes.
 
     Returns:
         bool: ``True`` when the text was queued successfully, otherwise ``False``.
@@ -541,6 +564,7 @@ def queue_speech(
         save=save,
         stream_queue=stream_queue,
         display_text=display_text,
+        maintain_status=maintain_status,
         allow_tutorial=False,
     )
 
@@ -551,6 +575,7 @@ def _queue_speech_request(
     save: bool = True,
     stream_queue: Optional[SpeechStreamQueue] = None,
     display_text: Optional[str] = None,
+    maintain_status: bool = False,
     *,
     allow_tutorial: bool,
     normalize: Optional[bool] = None,
@@ -576,7 +601,9 @@ def _queue_speech_request(
         bool: ``True`` when the request was queued successfully.
     """
     if getattr(engine.backend, "singing", False) and not contains_cesn_note_event(text):
-        engine.log(string("celune.singing_backend_requires_cesn"), "warning")
+        message = string("celune.singing_backend_requires_cesn")
+        engine.log(message, "warning")
+        engine.toast(message, severity="warning")
         return False
 
     if engine.exit_requested or not _prepare_speech_readiness(
@@ -596,6 +623,7 @@ def _queue_speech_request(
         save=save,
         stream_queue=stream_queue,
         display_text=display_text,
+        maintain_status=maintain_status,
         normalize=normalize,
         synthesis_sections=synthesis_sections,
         audio_capture_queue=audio_capture_queue,
@@ -622,7 +650,9 @@ def _prepare_speech_readiness(
     if getattr(engine, "test_finished", False):
         return False
     if engine.is_in_tutorial and not allow_tutorial:
-        engine.log(string("celune.speech_input_disabled_tutorial"), "warning")
+        message = string("celune.speech_input_disabled_tutorial")
+        engine.log(message, "warning")
+        engine.toast(message, severity="warning")
         return False
 
     if getattr(engine, "sleeping", False):
@@ -690,6 +720,7 @@ def _queue_speech_after_ready(
     save: bool = True,
     stream_queue: Optional[SpeechStreamQueue] = None,
     display_text: Optional[str] = None,
+    maintain_status: bool = False,
     *,
     normalize: Optional[bool] = None,
     synthesis_sections: tuple[str, ...] = (),
@@ -779,6 +810,7 @@ def _queue_speech_after_ready(
             engine.progress_callback(0, 1)
             return False
 
+        restore_status = engine.cur_state if maintain_status else None
         engine.cur_state = "generating"
         request_rejected = False
         with engine.queue_lock:
@@ -808,6 +840,7 @@ def _queue_speech_after_ready(
                         prepared_audio=prepared_audio,
                         playback_source_queue=playback_source_queue,
                         caption_alignment_sections=caption_alignment_sections,
+                        restore_status=restore_status,
                     )
                 )
                 engine.log(
@@ -1234,24 +1267,33 @@ def play_prepared_speech(
                 if callable(language_resolver)
                 else item.language
             )
-            caption_worker.submit_chunk(
+            playback_audio = [audio]
+            audio_queued = flush_buffered_speech_chunks(
                 engine,
                 source_id,
-                [audio],
+                playback_audio,
                 speech_timing,
+                False,
                 item.stream_queue,
-                item.display_text,
-                item.text,
-                words,
-                language if isinstance(language, str) else None,
-                0,
-                len(words),
-                tuple(item.text.split()),
-                [False],
-                [False],
-                BASE_SR,
-                item.caption_alignment_sections,
             )
+            if audio_queued:
+                caption_worker.submit_alignment(
+                    engine,
+                    source_id,
+                    [audio],
+                    item.display_text,
+                    item.text,
+                    words,
+                    language if isinstance(language, str) else None,
+                    0,
+                    len(words),
+                    tuple(item.text.split()),
+                    [False],
+                    0,
+                    len(audio),
+                    BASE_SR,
+                    item.caption_alignment_sections,
+                )
             caption_worker.submit_done(
                 engine,
                 source_id,

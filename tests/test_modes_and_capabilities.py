@@ -8,23 +8,21 @@ from types import SimpleNamespace
 from celune.typing.common import Config
 from celune.celune import agent_task_config
 from celune.persona.runtime import PersonaBackend
-from celune.agent import AgentOutput, agent_mode_enabled
 from celune.persona.capabilities import PersonaCapabilities
+from celune.agent import AgentOutput, agent_mode_enabled
 from celune.persona.impl import persona_enabled, persona_context_size
-from celune.modes import has_explicit_operation_mode, resolve_operation_mode
+from celune.modes import resolve_operation_mode, has_explicit_operation_mode
 from celune.typing.persona import PersonaModel, PersonaProcessor, PersonaTokenizer
 
-from .support import CeluneTestCase
 
-
-class TestOperationMode(CeluneTestCase):
+class TestOperationMode:
     """Verify global modes provide the requested feature gates."""
 
     def test_operation_modes_are_resolved_directly(self) -> None:
         """Verify the active global modes include the production agent mode."""
-        self.assertEqual(resolve_operation_mode({"mode": "performance"}), "performance")
-        self.assertEqual(resolve_operation_mode({"mode": "converse"}), "converse")
-        self.assertEqual(resolve_operation_mode({"mode": "agent"}), "agent")
+        assert resolve_operation_mode({"mode": "performance"}) == "performance"
+        assert resolve_operation_mode({"mode": "converse"}) == "converse"
+        assert resolve_operation_mode({"mode": "agent"}) == "agent"
 
     def test_legacy_speak_mode_resolves_to_performance(self) -> None:
         """Keep existing configs using the former speak mode operational."""
@@ -52,21 +50,21 @@ class TestOperationMode(CeluneTestCase):
         agent_xhigh_config: Config = {"mode": "agent", "vram": "xhigh"}
 
         with mock.patch("celune.vram.torch.cuda.is_available", return_value=False):
-            self.assertFalse(persona_enabled(speak_config))
-            self.assertTrue(persona_enabled(converse_config))
-            self.assertFalse(persona_enabled(converse_low_config))
-            self.assertTrue(persona_enabled(agent_high_config))
-            self.assertTrue(persona_enabled(agent_xhigh_config))
-            self.assertTrue(agent_mode_enabled(agent_high_config))
-            self.assertTrue(agent_mode_enabled(agent_xhigh_config))
+            assert not persona_enabled(speak_config)
+            assert persona_enabled(converse_config)
+            assert not persona_enabled(converse_low_config)
+            assert persona_enabled(agent_high_config)
+            assert persona_enabled(agent_xhigh_config)
+            assert agent_mode_enabled(agent_high_config)
+            assert agent_mode_enabled(agent_xhigh_config)
             smart_agent_config: Config = {
                 "mode": "agent",
                 "vram": "high",
                 "persona": {"model_id": "Qwen/Qwen3-VL-8B-Instruct"},
             }
-            self.assertFalse(agent_mode_enabled(smart_agent_config))
-            self.assertFalse(persona_enabled(smart_agent_config))
-            self.assertFalse(agent_mode_enabled({"mode": "converse"}))
+            assert not agent_mode_enabled(smart_agent_config)
+            assert not persona_enabled(smart_agent_config)
+            assert not agent_mode_enabled({"mode": "converse"})
 
     def test_persona_and_agent_context_sizes_are_capped(self) -> None:
         """Verify configured context values cannot exceed the VRAM policy caps."""
@@ -77,8 +75,18 @@ class TestOperationMode(CeluneTestCase):
         )
         assert agent_task_config({}).context_size == 8192
 
+    def test_agent_compaction_uses_the_shared_persona_setting(self) -> None:
+        """Use Persona's compaction percentage for agent context pressure."""
+        config: Config = {
+            "persona": {"compact_at": 40},
+            "agent": {"compact_at": 25},
+        }
 
-class TestPersonaCapabilities(CeluneTestCase):
+        assert agent_task_config(config).compact_at == 40
+        assert agent_task_config(config).context_compaction_threshold == 3276
+
+
+class TestPersonaCapabilities:
     """Verify Persona capability declarations are explicit and architecture-aware."""
 
     def test_unloaded_backend_is_text_only(self) -> None:

@@ -9,14 +9,10 @@ import hashlib
 import secrets
 import threading
 import contextlib
-from typing import (
-    Union,
-    Optional,
-    cast,
-)
 import unittest.mock
 from pathlib import Path
 from abc import ABC, abstractmethod
+from typing import Union, Optional, cast
 from collections.abc import Mapping, Callable, Iterator, Generator
 
 import torch
@@ -28,15 +24,15 @@ from ...i18n import string
 from ...utils import discard
 from ...typing.common import JSON
 from ...constants import N_A_NUMERIC
-from ...exceptions import BackendError
+from ...registry.tts import ModelContract
 from ...typing.backends import BackendModel
 from ...cevoice import CEVoiceLoader, default_loader
+from ...exceptions import BackendError, ModelConsentRequired
 from ...typing.aliases import LogLevel, AudioChunk, RuntimeValue
+from ...registry.tts import model_contract as resolve_model_contract
 from .quantization import QuantizationMode, quantization_mode, quantize_component
 from ...paths import temp_data_dir, huggingface_progress, huggingface_hub_cache_dir
-from ...registry.tts import ModelContract, model_contract as resolve_model_contract
 from ...vram import backend_vram_report, is_cuda_out_of_memory, release_cuda_after_oom
-
 
 __all__ = [
     "BackendModel",
@@ -63,14 +59,18 @@ def to_numpy_audio(chunk: Union[torch.Tensor, np.ndarray]) -> AudioChunk:
     else:
         audio = np.asarray(chunk)
 
+    normalized: AudioChunk
     if np.issubdtype(audio.dtype, np.integer):
         limits = np.iinfo(audio.dtype)
         if np.issubdtype(audio.dtype, np.unsignedinteger):
             scale = (limits.max + 1) / 2
-            normalized = (audio.astype(np.float32) - scale) / scale
+            normalized = np.asarray(
+                (audio.astype(np.float32) - scale) / scale,
+                dtype=np.float32,
+            )
         else:
             scale = max(abs(limits.min), abs(limits.max))
-            normalized = audio.astype(np.float32) / scale
+            normalized = np.asarray(audio.astype(np.float32) / scale, dtype=np.float32)
     else:
         normalized = np.asarray(audio, dtype=np.float32)
     return np.ascontiguousarray(normalized.reshape(-1), dtype=np.float32)
@@ -247,6 +247,10 @@ class CeluneBackend[ModelT](ABC):
     max_new_tokens: int = 512
     is_fake: bool = False
     log_level: LogLevel = "info"
+    supports_audio_cpp: bool = False
+    requires_audio_cpp: bool = False
+    requested_inference_mode: str = "native"
+    effective_inference_mode: str = "native"
 
     def __init__(
         self,
@@ -256,6 +260,7 @@ class CeluneBackend[ModelT](ABC):
         quantize: bool = True,
         quantize_kv_cache: bool = True,
         singing: bool = False,
+        inference_mode: str = "native",
     ) -> None:
         self.model_name: Optional[str]
         if model_name is not None:
@@ -271,6 +276,8 @@ class CeluneBackend[ModelT](ABC):
         self.quantization_requested = quantize
         self.quantize_kv_cache = quantize_kv_cache
         self.singing = singing
+        self.configure_inference_mode(inference_mode, log=False)
+        self._audio_cpp_fallback_logged = False
         self.quantization_mode: Optional[QuantizationMode] = quantization_mode(quantize)
         self.quantization_active = False
         self.quantization_attempted = False
@@ -280,6 +287,107 @@ class CeluneBackend[ModelT](ABC):
         self.current_seed: Optional[int] = None
         self.random_seed = True
         self._truncated_reference_paths: set[Path] = set()
+
+    def configure_inference_mode(
+        self, inference_mode: str, *, log: bool = True
+    ) -> None:
+        """Resolve the effective runtime for this backend."""
+        if not isinstance(inference_mode, str) or inference_mode not in {
+            "native",
+            "gguf",
+        }:
+            raise ValueError("inference_mode must be either 'native' or 'gguf'")
+        if self.requires_audio_cpp and not self.supports_audio_cpp:
+            raise ValueError(
+                f"backend '{self.name}' requires audio.cpp but does not support it"
+            )
+        self.requested_inference_mode = inference_mode
+        self.effective_inference_mode = (
+            "audio_cpp"
+            if self.requires_audio_cpp
+            or (inference_mode == "gguf" and self.supports_audio_cpp)
+            else "native"
+        )
+        if not log:
+            return
+        if inference_mode == "gguf" and not self.supports_audio_cpp:
+            self.log(
+                string("inference.audio_cpp_unavailable", backend=self.name),
+                "warning",
+            )
+        self.log(
+            string(
+                "inference.backend_mode",
+                backend=self.name,
+                requested=inference_mode,
+                effective=self.effective_inference_mode,
+            ),
+            "info",
+        )
+
+    def inference_metadata(self, model: ModelT) -> dict[str, str]:
+        """Describe the loaded model runtime for the Celune core."""
+        dtype = getattr(model, "dtype", None)
+        precision = getattr(model, "precision", None)
+        if isinstance(precision, str):
+            normalized_precision = precision.casefold()
+            if normalized_precision in {"bf16", "bfloat16"}:
+                quantization = "full"
+            elif normalized_precision in {"f16", "fp16", "float16"}:
+                quantization = "float"
+            else:
+                quantization = precision.upper()
+        else:
+            quantization = (
+                "float"
+                if str(dtype).casefold() in {"torch.float16", "float16"}
+                else "full"
+            )
+        return {
+            "model": self.model_name or self.default_model_id,
+            "type": "gguf"
+            if self.effective_inference_mode == "audio_cpp"
+            else "native",
+            "quant": quantization,
+        }
+
+    def fallback_audio_cpp_to_native(self, reason: BaseException) -> None:
+        """Remember the load-level fallback and log it once for this backend."""
+        if isinstance(
+            reason, (ModelConsentRequired, PermissionError, InterruptedError)
+        ):
+            raise reason
+        if self.requires_audio_cpp:
+            raise RuntimeError(
+                f"backend '{self.name}' requires audio.cpp and cannot fall back: "
+                f"{reason}"
+            ) from reason
+        if self.effective_inference_mode != "audio_cpp":
+            return
+        self.effective_inference_mode = "native"
+        if self._audio_cpp_fallback_logged:
+            return
+        self._audio_cpp_fallback_logged = True
+        reason_text = str(reason).strip()
+        if len(reason_text) > 1000:
+            reason_text = reason_text[:997] + "..."
+        self.log(
+            string(
+                "inference.audio_cpp_fallback",
+                backend=self.name,
+                cause=reason_text,
+            ),
+            "warning",
+        )
+        self.log(
+            string(
+                "inference.backend_mode",
+                backend=self.name,
+                requested=self.requested_inference_mode,
+                effective=self.effective_inference_mode,
+            ),
+            "info",
+        )
 
     def __str__(self) -> str:
         """Return the backend name for callers using str(CeluneBackend(...))."""
@@ -377,7 +485,7 @@ class CeluneBackend[ModelT](ABC):
         if info.duration <= _MAX_REFERENCE_SECONDS:
             return reference_wav
 
-        sample_rate = int(info.samplerate)
+        sample_rate = info.samplerate
         frame_limit = int(sample_rate * _MAX_REFERENCE_SECONDS)
         temp_dir = temp_data_dir(create=True)
         source_stat = reference_wav.stat()
@@ -470,11 +578,12 @@ class CeluneBackend[ModelT](ABC):
         Raises:
             ModelContractError: No pinned contract exists for the model.
         """
-        del kwargs
+        discard(kwargs)
         return resolve_model_contract(self.name, model_id)
 
+    @staticmethod
     def quantization_components(
-        self, model: ModelT, contract: ModelContract
+        model: ModelT, contract: ModelContract
     ) -> Mapping[str, torch.nn.Module]:
         """Return loaded module roots corresponding to contract components.
 

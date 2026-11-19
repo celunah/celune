@@ -4,24 +4,26 @@
 import re
 import json
 import asyncio
-from types import SimpleNamespace
 from typing import cast
 from pathlib import Path
 from unittest import mock
+from types import SimpleNamespace
 
+import pytest
 from starlette.requests import Request
 
 from celune import api
 from celune.i18n import string
+from celune.backends.vc import seedvc
+from celune.cedts.remote import RemoteBackendProxy
 from celune.registry import ALL_MODELS, get_model_metadata
+from celune.agent.needle import checkpoints as needle_checkpoints
 from celune.exceptions import (
     ModelConsentDeclined,
     ModelConsentRequired,
     ModelCommercialUseRestricted,
 )
-from celune.backends.vc import seedvc
-from celune.agent.needle import checkpoints as needle_checkpoints
-from celune.cedts.remote import RemoteBackendProxy
+
 from celune.registry.other import (
     OTHER_MODELS,
     SOULX_SINGER_RMVPE_MODEL_ID,
@@ -123,14 +125,8 @@ def test_commercial_mode_requires_reviewed_commercial_terms() -> None:
         with mock.patch(
             "celune.registry.consent._STORE.set_acknowledged"
         ) as save_acknowledgement:
-            try:
+            with pytest.raises(ModelCommercialUseRestricted):
                 record_model_consent(unknown.model_id, unknown.revision, True)
-            except ModelCommercialUseRestricted:
-                pass
-            else:
-                raise AssertionError(
-                    "commercially restricted model consent was recorded"
-                )
             save_acknowledgement.assert_not_called()
     finally:
         set_commercial_mode(False)
@@ -201,16 +197,12 @@ def test_needle_checkpoint_requires_consent_before_downloading() -> None:
         mock.patch.object(needle_checkpoints, "_download") as download,
     ):
         store.has_acknowledged.return_value = False
-        try:
+        with pytest.raises(ModelConsentRequired):
             needle_checkpoints.prepare_needle_checkpoint(
                 "custom/needle",
                 revision,
                 Path("unused-cache"),
             )
-        except ModelConsentRequired:
-            pass
-        else:
-            raise AssertionError("unacknowledged Needle terms were not rejected")
 
     download.assert_not_called()
 
@@ -261,7 +253,7 @@ def test_consent_api_records_and_withdraws_the_exact_revision(tmp_path: Path) ->
         assert accepted["accepted"] is True
         assert store.has_acknowledged(metadata.model_id, metadata.revision)
 
-        try:
+        with pytest.raises(ModelConsentDeclined):
             api.submit_model_consent(
                 api.ModelConsentRequest(
                     model_id=metadata.model_id,
@@ -269,10 +261,6 @@ def test_consent_api_records_and_withdraws_the_exact_revision(tmp_path: Path) ->
                     accepted=False,
                 )
             )
-        except ModelConsentDeclined:
-            pass
-        else:
-            raise AssertionError("declining model terms was not rejected")
 
     assert not store.has_acknowledged(metadata.model_id, metadata.revision)
 
@@ -298,6 +286,8 @@ def test_missing_consent_uses_http_428_and_decline_uses_http_403() -> None:
     required_payload = json.loads(bytes(required.body).decode("utf-8"))
     assert declined.status_code == 403
     assert required_payload["model"]["model_id"] == metadata.model_id
+    declined_payload = json.loads(bytes(declined.body).decode("utf-8"))
+    assert declined_payload["model"]["model_id"] == metadata.model_id
 
 
 def test_commercial_policy_uses_http_403() -> None:
@@ -336,18 +326,10 @@ def test_declining_terms_does_not_create_an_acknowledgement(tmp_path: Path) -> N
         mock.patch("celune.registry.consent._STORE", store),
         mock.patch("celune.registry.consent._PENDING_CONSENTS", {}),
     ):
-        try:
+        with pytest.raises(ModelConsentDeclined):
             record_model_consent(metadata.model_id, metadata.revision, False)
-        except ModelConsentDeclined:
-            pass
-        else:
-            raise AssertionError("a declined consent decision was accepted")
-        try:
+        with pytest.raises(ModelConsentRequired):
             require_model_consent(metadata.model_id, metadata.revision)
-        except ModelConsentRequired:
-            pass
-        else:
-            raise AssertionError("a declined model was allowed to load")
 
 
 def test_worker_proxy_does_not_load_before_consent(tmp_path: Path) -> None:
@@ -364,13 +346,9 @@ def test_worker_proxy_does_not_load_before_consent(tmp_path: Path) -> None:
             "celune.registry.consent.resolve_model_metadata",
             return_value=metadata,
         ),
+        pytest.raises(ModelConsentRequired),
     ):
-        try:
-            proxy.load_model(metadata.model_id)
-        except ModelConsentRequired:
-            pass
-        else:
-            raise AssertionError("worker-backed load proceeded without consent")
+        proxy.load_model(metadata.model_id)
 
     proxy.request.assert_not_called()
 
@@ -382,16 +360,14 @@ def test_worker_proxy_blocks_commercially_restricted_models() -> None:
     metadata = resolve_model_metadata("custom/restricted-model", "d" * 40)
     set_commercial_mode(True)
     try:
-        try:
-            with mock.patch(
+        with (
+            pytest.raises(ModelCommercialUseRestricted),
+            mock.patch(
                 "celune.registry.consent.resolve_model_metadata",
                 return_value=metadata,
-            ):
-                proxy.load_model(metadata.model_id)
-        except ModelCommercialUseRestricted:
-            pass
-        else:
-            raise AssertionError("commercially restricted worker model was loaded")
+            ),
+        ):
+            proxy.load_model(metadata.model_id)
     finally:
         set_commercial_mode(False)
 

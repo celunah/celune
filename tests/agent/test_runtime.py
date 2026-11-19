@@ -2,6 +2,7 @@
 """Focused lifecycle tests for Celune's Phase 2 agent runtime."""
 
 from __future__ import annotations
+
 import threading
 from unittest import mock
 from types import SimpleNamespace
@@ -60,9 +61,10 @@ def _validated_call() -> ValidatedToolCall:
     }
 
 
-class TestAgentRuntimeLifecycle:  # pylint: disable=attribute-defined-outside-init
+class TestAgentRuntimeLifecycle:
     """Verify lifecycle ownership without invoking a model or local tool."""
 
+    # pylint: disable=W0201
     def setup_method(self) -> None:
         """Create a fresh runtime and event recorder for each test."""
         self.event_names: list[str] = []
@@ -101,7 +103,8 @@ class TestAgentRuntimeLifecycle:  # pylint: disable=attribute-defined-outside-in
         self.event_names.append("finished")
         self.finished_events.append(event)
 
-    def _request(self, session_id: str = "session-1") -> AgentRequest:
+    @staticmethod
+    def _request(session_id: str = "session-1") -> AgentRequest:
         """Build an explicit action request for one test session."""
         return AgentRequest(
             request="Perform the requested action.",
@@ -576,7 +579,7 @@ class TestAgentRuntimeLifecycle:  # pylint: disable=attribute-defined-outside-in
         assert self.event_names.count("finished") == 1
 
     def test_legacy_session_flags_follow_explicit_task_state(self) -> None:
-        """Keep paused and cancelled compatibility fields synchronized."""
+        """Keep paused and canceled compatibility fields synchronized."""
         task = self._working_task()
         self.runtime.pause(task.session_id)
         paused = self.runtime.get_session(task.session_id)

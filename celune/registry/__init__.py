@@ -1,13 +1,17 @@
 # SPDX-License-Identifier: Apache-2.0
 """Central catalogs for model metadata and pinned runtime selections."""
 
-from typing import Optional
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Optional
 
 from .asr import ASR_MODELS
 from .llm import LLM_MODELS
 from .tts import TTS_MODELS
 from .other import OTHER_MODELS
-from .types import ModelCategory, ModelMetadata
+
+if TYPE_CHECKING:
+    from ..typing.registry import ModelMetadata
 
 __all__ = [
     "ALL_MODELS",
@@ -16,8 +20,6 @@ __all__ = [
     "MODEL_BY_ID",
     "OTHER_MODELS",
     "TTS_MODELS",
-    "ModelCategory",
-    "ModelMetadata",
     "get_model_metadata",
 ]
 

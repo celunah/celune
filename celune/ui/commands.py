@@ -14,23 +14,23 @@ from typing import TYPE_CHECKING, Optional, cast
 
 import soundfile as sf
 
-from ..utils import (
-    available,
-    replace_ipa,
-    format_number,
-    format_error_message,
-)
 from ..constants import APP_NAME
 from ..i18n import string, tagged_string
 from ..typing.modes import OperationState
-from ..exceptions import InvalidExtensionError
 from ..pipeline.playback import close_stream
+from ..exceptions import InvalidExtensionError
 from ..audio.server import restart_audio_server
 from ..core.concurrency import run_in_daemon_thread
 from ..persona.capabilities import PersonaCapabilities
 from ..core.lifecycle import active_runtime_backend_name
 from ..cevoice import active_bundle_path, resolve_bundle_path
 from ..vram import vram_report_int, format_vram_bytes, runtime_vram_report
+from ..utils import (
+    available,
+    replace_ipa,
+    format_number,
+    format_error_message,
+)
 
 if TYPE_CHECKING:
     from .app import CeluneUI
@@ -495,6 +495,7 @@ def _handle_restartaudio(ui: CeluneUI, _args: list[str]) -> None:
         audio_test_succeeded = False
         if celune is not None:
             close_stream(celune, abort=True)
+            # noinspection PyBroadException
             try:
                 test_audio = getattr(celune, "test_audio", None)
                 audio_test_succeeded = callable(test_audio) and bool(test_audio())

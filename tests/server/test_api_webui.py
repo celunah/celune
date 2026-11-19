@@ -5,17 +5,17 @@ import re
 import shutil
 import asyncio
 import tempfile
-from typing import (
-    Optional,
-    cast,
-)
 from queue import Queue
 from pathlib import Path
 from unittest import mock
 from types import SimpleNamespace
+from typing import Optional, cast
 from collections import abc, deque
+from collections.abc import Iterator
 
+import pytest
 import numpy as np
+import soundfile as sf
 import fastapi.testclient
 from starlette.requests import Request
 from starlette.responses import Response
@@ -27,19 +27,24 @@ from celune.theme import colors
 from celune.celune import Celune
 from celune.webui import runtime as webui
 from celune.server import auth as server_auth
+from celune.typing.agent import AgentTaskState
+from celune.dataclasses.ui import UiTimedUpdate
 from celune.server.session import ServerSession
 from celune.webui import actions as webui_actions
 from celune.typing.pipeline import SpeechStreamQueue
 from celune.server import constants as server_constants
 from celune.typing.celune import ChunkCaptionProgressCallback
+from celune.server.constants import WEBUI_CONVERT_API_NAME, WEBUI_SPEAK_INPUT_API_NAME
 
-from ..support import CeluneTestCase
+from ..celtest import celtest
 
 
-class TestApiWebUI(CeluneTestCase):
+class TestApiWebUI:
     """Tests for the mounted Gradio browser UI helpers."""
 
-    def setUp(self) -> None:
+    @pytest.fixture(autouse=True)
+    def _pytest_setup_and_teardown(self) -> Iterator[None]:
+        # pylint: disable=W0201
         """Snapshot global WebUI state before each test."""
         self.previous_celune = api.server_session.bound_celune
         self.previous_status_text = api.server_session.webui_status_text
@@ -108,12 +113,11 @@ class TestApiWebUI(CeluneTestCase):
         api.server_session.webui_timed_update_received_at = 0.0
         api.server_session.webui_timed_update_source = "fallback"
         api.set_webui_status("Starting up")
-
-    def tearDown(self) -> None:
-        """Restore global WebUI state after each test."""
+        yield
         api._unsubscribe_webui_events()
-        if api.server_session.webui_timed_update_unsubscribe is not None:
-            api.server_session.webui_timed_update_unsubscribe()
+        unsubscribe_timed_update = api.server_session.webui_timed_update_unsubscribe
+        if unsubscribe_timed_update is not None:
+            unsubscribe_timed_update()
             api.server_session.webui_timed_update_unsubscribe = None
         api.server_session.bound_celune = self.previous_celune
         api.server_session.webui_status_text = self.previous_status_text
@@ -193,11 +197,42 @@ class TestApiWebUI(CeluneTestCase):
             receive,
         )
 
+    @staticmethod
+    def _run_webui_event(api_name: str, inputs: list[object]) -> list[object]:
+        """Run one registered Gradio event through its component processors."""
+        blocks = webui_actions.build_webui(api.server_session)
+        dependencies = blocks.config["dependencies"]
+        dependency = next(
+            dependency
+            for dependency in dependencies
+            if dependency.get("api_name") == api_name
+        )
+        function_index = cast(int, dependency["id"])
+
+        async def process_event() -> list[object]:
+            result = await blocks.process_api(
+                function_index,
+                inputs,
+                session_hash="celune-e2e-session",
+            )
+            output = cast(list[object], result["data"])
+            while result["iterator"] is not None:
+                result = await blocks.process_api(
+                    function_index,
+                    [],
+                    iterator=result["iterator"],
+                    session_hash="celune-e2e-session",
+                )
+                output = cast(list[object], result["data"])
+            return output
+
+        return asyncio.run(process_event())
+
     def test_root_redirects_to_browser_ui(self) -> None:
         """Verify the fallback root now forwards users to the browser UI."""
         response = api.root()
         assert response.status_code == 307
-        assert response.headers["location"] == "/ui"
+        assert response.headers["location"] == "/ui/"
 
     def test_browser_ui_requests_bypass_api_security_detection(self) -> None:
         """Verify mounted browser UI paths are recognized by the API middleware."""
@@ -258,6 +293,37 @@ class TestApiWebUI(CeluneTestCase):
         assert response.headers["location"] == "/ui/key"
         assert response.headers["cache-control"] == "no-store"
 
+    def test_authenticated_webui_root_redirects_to_the_mounted_path(self) -> None:
+        """Verify the successful key flow lands on Gradio's slash-terminated mount."""
+        api.server_session.auth_token = "secret"
+
+        with fastapi.testclient.TestClient(api.api) as client:
+            login_response = client.post(
+                "/ui/key",
+                json={"api_key": "secret"},
+                headers={"origin": "http://testserver"},
+            )
+            root_response = client.get("/ui", follow_redirects=False)
+            ui_response = client.get("/ui/")
+
+        assert login_response.status_code == 200
+        assert root_response.status_code == 307
+        assert root_response.headers["location"] == "/ui/"
+        assert ui_response.status_code == 200
+
+    def test_webui_without_api_token_opens_without_a_key_prompt(self) -> None:
+        """Verify an unprotected API serves the mounted WebUI directly."""
+        api.server_session.auth_token = None
+
+        with fastapi.testclient.TestClient(api.api) as client:
+            root_response = client.get("/ui", follow_redirects=False)
+            ui_response = client.get("/ui/")
+
+        assert root_response.status_code == 307
+        assert root_response.headers["location"] == "/ui/"
+        assert ui_response.status_code == 200
+        assert "API key required" not in ui_response.text
+
     def test_key_prompt_is_served_from_the_ui_key_path(self) -> None:
         """Verify the standalone key prompt is served at the documented path."""
         api.server_session.auth_token = "secret"
@@ -312,7 +378,7 @@ class TestApiWebUI(CeluneTestCase):
     def test_api_security_accepts_a_webui_session_cookie(self) -> None:
         """Verify an authenticated browser session can use WebUI actions."""
         api.server_session.auth_token = "secret"
-        session_id = server_auth._new_ui_session()
+        session_id = server_auth.new_ui_session()
 
         response = asyncio.run(
             api.api_security(
@@ -367,7 +433,7 @@ class TestApiWebUI(CeluneTestCase):
         )
         resumed_response = asyncio.run(
             api.api_security(
-                self._request("/ui", headers=next_host_headers),
+                self._request("/ui/", headers=next_host_headers),
                 self._passthrough_response,
             )
         )
@@ -395,7 +461,7 @@ class TestApiWebUI(CeluneTestCase):
     ) -> None:
         """Verify automatic Gradio callbacks do not consume the generation quota."""
         api.server_session.auth_token = "secret"
-        session_id = server_auth._new_ui_session()
+        session_id = server_auth.new_ui_session()
         browser_headers = (
             ("cookie", f"{server_constants.WEBUI_AUTH_COOKIE}={session_id}"),
             ("origin", "http://127.0.0.1:2060"),
@@ -507,7 +573,7 @@ class TestApiWebUI(CeluneTestCase):
     def test_webui_websocket_limit_does_not_block_actions(self) -> None:
         """Verify WebSocket reconnects cannot consume the WebUI action budget."""
         api.server_session.auth_token = "secret"
-        session_id = server_auth._new_ui_session()
+        session_id = server_auth.new_ui_session()
         reached_gradio = False
 
         async def downstream(
@@ -579,7 +645,7 @@ class TestApiWebUI(CeluneTestCase):
     def test_webui_session_survives_restart_but_is_bound_to_the_api_key(self) -> None:
         """Verify signed browser sessions persist until the application key changes."""
         api.server_session.auth_token = "secret"
-        session_id = server_auth._new_ui_session()
+        session_id = server_auth.new_ui_session()
 
         api.configure_api_security(token="secret")
         assert server_auth._ui_session_valid(session_id)
@@ -612,7 +678,7 @@ class TestApiWebUI(CeluneTestCase):
         response = asyncio.run(
             api.api_security(
                 self._request(
-                    "/ui",
+                    "/ui/",
                     headers=(
                         (
                             "cookie",
@@ -634,7 +700,7 @@ class TestApiWebUI(CeluneTestCase):
     def test_api_security_rejects_cross_origin_webui_actions(self) -> None:
         """Verify browser sessions cannot authorize cross-origin actions."""
         api.server_session.auth_token = "secret"
-        session_id = server_auth._new_ui_session()
+        session_id = server_auth.new_ui_session()
 
         response = asyncio.run(
             api.api_security(
@@ -723,7 +789,7 @@ class TestApiWebUI(CeluneTestCase):
         assert not reached_gradio
         assert sent_messages == [{"type": "websocket.close", "code": 4401}]
 
-        session_id = server_auth._new_ui_session()
+        session_id = server_auth.new_ui_session()
         scope["headers"] = [
             (
                 b"cookie",
@@ -996,6 +1062,63 @@ class TestApiWebUI(CeluneTestCase):
         assert api.server_session.webui_caption_text == ""
         assert api.server_session.webui_progress_total is None
 
+    def test_webui_idle_keeps_active_agent_status_after_speech(self) -> None:
+        """Keep task progress visible when the wrapped idle callback consumes its flag."""
+        task = SimpleNamespace(
+            task_id="active-task",
+            state=AgentTaskState.WORKING,
+            iterations=2,
+            config=SimpleNamespace(max_loops=20),
+            needs_context_compaction=False,
+        )
+        session = ServerSession()
+        celune = cast(
+            Celune,
+            SimpleNamespace(
+                current_voice="balanced",
+                voices=("balanced",),
+                backend=SimpleNamespace(singing=False),
+                is_in_tutorial=False,
+                locked=False,
+                sleeping=False,
+                cur_state="speaking",
+                _maintain_status_after_playback=True,
+                agent_runtime=SimpleNamespace(
+                    get_active_task=mock.Mock(return_value=task),
+                    get_task=mock.Mock(return_value=task),
+                ),
+                log_callback=lambda *_args, **_kwargs: None,
+                status_callback=lambda *_args, **_kwargs: None,
+                error_callback=lambda _message: None,
+                idle_callback=lambda: setattr(
+                    celune, "_maintain_status_after_playback", False
+                ),
+                queue_avail_callback=lambda: None,
+                progress_callback=lambda *_args: None,
+                caption_progress_callback=lambda *_args: None,
+                caption_callback=lambda _caption: None,
+                voice_changed_callback=lambda _name: None,
+                change_input_state_callback=lambda _locked: None,
+                change_voice_lock_state_callback=lambda _locked: None,
+            ),
+        )
+        session.bound_celune = celune
+
+        with mock.patch(
+            "celune.webui.runtime.main_window_log_path",
+            return_value=mock.Mock(exists=lambda: False),
+        ):
+            webui.wrap_celune_callbacks(celune, session)
+
+        celune.idle_callback()
+
+        assert session.webui_status_text == string(
+            "agent.status.working",
+            iteration=2,
+            maximum=20,
+        )
+        assert session.webui_agent_task_id == "active-task"
+
     def test_webui_caption_progress_preserves_legacy_callback_signature(self) -> None:
         """Forward aligned progress without breaking two-argument callbacks."""
         received: list[tuple[Optional[float], Optional[float]]] = []
@@ -1015,8 +1138,10 @@ class TestApiWebUI(CeluneTestCase):
 
         assert received == [(1.0, 2.0)]
 
+    @pytest.mark.e2e
+    @celtest("E2E: WebUI text submission enters Persona talkback")
     def test_webui_persona_input_uses_think_path(self) -> None:
-        """Verify browser input follows the Persona path when talkback is enabled."""
+        """Submit through the Gradio event and verify Persona receives the text."""
         chunks = Queue()
         think = mock.Mock(return_value=True)
         say_stream = mock.Mock(return_value=chunks)
@@ -1044,10 +1169,11 @@ class TestApiWebUI(CeluneTestCase):
                 return_value=("VRAM: first",),
             ),
         ):
-            list(webui_actions.webui_speak("hello"))
+            outputs = self._run_webui_event(WEBUI_SPEAK_INPUT_API_NAME, ["hello"])
 
         think.assert_called_once_with("hello")
         say_stream.assert_not_called()
+        assert len(outputs) == 7
 
     def test_webui_sings_cesn_instead_of_sending_it_to_persona(self) -> None:
         """Keep CESN submissions on the singing path when Persona talkback is set."""
@@ -1113,7 +1239,7 @@ class TestApiWebUI(CeluneTestCase):
             ),
         )
         api.server_session.bound_celune = celune
-        update = api.UiTimedUpdate(
+        update = UiTimedUpdate(
             runtime_id=str(id(celune)),
             sequence=4,
             emitted_at=1.0,
@@ -1689,8 +1815,10 @@ class TestApiWebUI(CeluneTestCase):
         assert len(updates) == 1
         assert "not currently available" in updates[0][2]
 
+    @pytest.mark.e2e
+    @celtest("E2E: WebUI text submission returns browser-playable speech")
     def test_webui_speak_returns_browser_audio_after_generation(self) -> None:
-        """Verify the browser submit handler returns one browser audio payload."""
+        """Submit through the Gradio event and verify its audio component output."""
         chunks: SpeechStreamQueue = Queue()
         chunks.put(np.zeros((2, 8), dtype=np.float32))
         chunks.put(None)
@@ -1716,20 +1844,20 @@ class TestApiWebUI(CeluneTestCase):
             "celune.webui.runtime.ui_resources.resource_pages",
             return_value=("VRAM: 10.66/11.94 GB available",),
         ):
-            updates = list(webui_actions.webui_speak("hello"))
+            outputs = self._run_webui_event(WEBUI_SPEAK_INPUT_API_NAME, ["hello"])
 
-        assert len(updates) >= 2
-        first_input, first_audio, *_first_rest = updates[0]
-        second_input, second_audio, *_second_rest = updates[1]
-
-        assert first_input["value"] == ""
-        assert first_audio is None
-        assert second_input["value"] == ""
-        assert isinstance(second_audio, tuple)
-        sample_rate, array = cast(tuple[int, np.ndarray], second_audio)
+        assert len(outputs) == 7
+        audio_value = outputs[1]
+        audio_path = (
+            audio_value.get("path")
+            if isinstance(audio_value, dict)
+            else getattr(audio_value, "path", None)
+        )
+        assert isinstance(audio_path, str)
+        assert Path(audio_path).is_file()
+        array, sample_rate = sf.read(audio_path, dtype="float32")
         assert sample_rate == 48000
         assert array.shape == (8, 2)
-        assert array.dtype == np.int16
         assert not np.any(array)
 
     def test_webui_speak_wakes_sleeping_celune_before_speaking(self) -> None:
@@ -1806,9 +1934,16 @@ class TestApiWebUI(CeluneTestCase):
 
         assert calls == ["calm"]
 
-    def test_webui_convert_audio_returns_browser_audio_after_conversion(self) -> None:
-        """Verify browser audio conversion returns one playable Celune-format payload."""
+    @pytest.mark.e2e
+    @celtest("E2E: WebUI audio upload returns converted browser-playable audio")
+    def test_webui_convert_audio_returns_browser_audio_after_conversion(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Upload through the Gradio audio component and inspect its output file."""
         converted_audio = np.ones((10, 2), dtype=np.float32) * 0.5
+        source_path = tmp_path / "source.wav"
+        sf.write(source_path, np.zeros((16, 2), dtype=np.float32), 44100)
         api.server_session.bound_celune = cast(
             Celune,
             SimpleNamespace(
@@ -1833,19 +1968,31 @@ class TestApiWebUI(CeluneTestCase):
             "celune.webui.runtime.ui_resources.resource_pages",
             return_value=("VRAM: 10.66/11.94 GB available",),
         ):
-            source_value, browser_audio, *_rest = webui_actions.webui_convert_audio(
-                (44100, np.zeros((16, 2), dtype=np.float32)),
-                "sing",
+            outputs = self._run_webui_event(
+                WEBUI_CONVERT_API_NAME,
+                [
+                    {
+                        "path": str(source_path),
+                        "orig_name": source_path.name,
+                        "meta": {"_type": "gradio.FileData"},
+                    },
+                    "sing",
+                ],
             )
 
-        assert source_value is None
-        assert isinstance(browser_audio, tuple)
-        sample_rate, array = cast(tuple[int, np.ndarray], browser_audio)
+        assert len(outputs) == 7
+        audio_value = outputs[1]
+        audio_path = (
+            audio_value.get("path")
+            if isinstance(audio_value, dict)
+            else getattr(audio_value, "path", None)
+        )
+        assert isinstance(audio_path, str)
+        assert Path(audio_path).is_file()
+        array, sample_rate = sf.read(audio_path, dtype="float32")
         assert sample_rate == 48000
         assert array.shape == (20, 2)
-        assert array.dtype == np.int16
-        assert np.max(np.abs(array)) == 32767
-        assert browser_audio[0] == 48000
+        assert np.max(np.abs(array)) > 0.1
         celune_convert_audio = cast(
             mock.Mock, api.server_session.bound_celune.convert_audio
         )
@@ -2106,7 +2253,7 @@ class TestApiWebUI(CeluneTestCase):
     def test_start_api_can_defer_its_startup_log_to_the_callback() -> None:
         """Verify deferred startup logging lets callbacks report alternate URLs."""
         celune = SimpleNamespace(log=mock.Mock(), dev=False)
-        on_started = mock.Mock()
+        started_callback = mock.Mock()
 
         def fake_run_api(
             _celune: Optional[Celune],
@@ -2125,10 +2272,10 @@ class TestApiWebUI(CeluneTestCase):
             thread = api.start_api(
                 cast(Celune, celune),
                 host="127.0.0.1",
-                on_started=on_started,
+                on_started=started_callback,
                 defer_startup_log=True,
             )
             thread.join(timeout=1.0)
 
-        on_started.assert_called_once_with("127.0.0.1", 2060)
+        started_callback.assert_called_once_with("127.0.0.1", 2060)
         celune.log.assert_not_called()

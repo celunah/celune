@@ -15,10 +15,8 @@ from celune import api
 from celune.celune import Celune
 from celune.typing.pipeline import SpeechStreamQueue
 
-from ..support import CeluneTestCase
 
-
-class TestApiSing(CeluneTestCase):
+class TestApiSing:
     """Verify `/v1/sing` validates notation and returns the audio stream."""
 
     def test_sing_requires_an_active_singing_backend(self) -> None:

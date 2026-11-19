@@ -579,7 +579,7 @@ The sample lines are intended to make pacing, consistency, and expressiveness ea
 
 ## Verification and limitations
 
-If a player does not start, use its download link and open the file in a local media player. Modern browsers support the FLAC and WAV sources used here; browser codec support can vary by platform. The source files are served from the repository's `main` branch, so a future branch or repository rename requires updating the player URLs.
+If a player does not start, use its download link and open the file in a local media player. Modern browsers support the FLAC and WAV sources used here. Browser codec support can vary by platform. The source files are served from the repository's `main` branch, so a future branch or repository rename requires updating the player URLs.
 
 The recordings demonstrate voice cloning and backend output without Celune's playback pipeline, DSP, Persona, or agent runtime. They should not be treated as a benchmark of end-to-end runtime latency or final playback processing.
 

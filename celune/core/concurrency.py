@@ -250,5 +250,7 @@ async def run_in_daemon_thread[**Parameters, Result](
 __all__ = [
     "ComponentLockLease",
     "ComponentLockManager",
+    "InferencePriority",
+    "PriorityInferenceScheduler",
     "run_in_daemon_thread",
 ]

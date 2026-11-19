@@ -11,20 +11,19 @@ from types import SimpleNamespace
 
 import pytest
 import numpy as np
+from fastapi.testclient import TestClient
 import mcp.types as mcp_types
 import mcp.server.mcpserver.exceptions as mcp_exceptions
-from fastapi.testclient import TestClient
 
 from celune import api, mcp
 from celune.typing.pipeline import SpeechStreamQueue
-from ..support import CeluneTestCase
 
 AudioContent = mcp_types.AudioContent
 CallToolResult = mcp_types.CallToolResult
 ToolError = mcp_exceptions.ToolError
 
 
-class TestMcpServer(CeluneTestCase):
+class TestMcpServer:
     """Verify the registered MCP tools share the Celune runtime."""
 
     def test_server_registers_the_seven_core_tools(self) -> None:

@@ -6,15 +6,33 @@ import inspect
 import tempfile
 import contextlib
 from pathlib import Path
-from typing import Optional, cast
+from typing import Union, Optional, cast
 from collections.abc import Mapping, Callable, Iterator
 
 import yaml
+import torch
 import numpy as np
+import soundfile as sf
 from pocket_tts import TTSModel
 from huggingface_hub import snapshot_download
 
 from ...i18n import string
+from ...utils import custom_assert
+from ...typing.registry import ModelMetadata
+from ...cevoice import CEVoiceLoader, default_loader
+from ...typing.aliases import AudioChunk, AudioChunks
+from ...registry.consent import require_model_consent
+from .base import CeluneBackend, cached_hf_snapshot_path
+from ...registry.audio_cpp import audio_cpp_model_artifact
+from ...typing.backends import MiniModel, MiniPromptState, BackendArgumentValue
+from ...paths import temp_data_dir, huggingface_progress, huggingface_hub_cache_dir
+
+
+from .audio_cpp import (
+    AudioCppRuntime,
+    ensure_audio_cpp_server,
+    load_audio_cpp_tts_model,
+)
 from ...registry.tts import (
     MINI_VOICE_MODELS,
     TTS_DEFAULT_VOICE,
@@ -23,21 +41,17 @@ from ...registry.tts import (
     MINI_SUPPORTED_LANGUAGES,
     MINI_LANGUAGE_MODEL_VARIANTS,
     ModelContract,
+)
+from ...registry.tts import (
     model_contract as resolve_model_contract,
 )
-from ...utils import custom_assert
-from ...cevoice import CEVoiceLoader, default_loader
-from ...registry.consent import require_model_consent
-from ...typing.aliases import AudioChunk, AudioChunks
-from .base import CeluneBackend, cached_hf_snapshot_path
-from ...typing.backends import MiniModel, MiniPromptState
-from ...paths import temp_data_dir, huggingface_progress, huggingface_hub_cache_dir
 
 
-class Mini(CeluneBackend[TTSModel]):
+class Mini(CeluneBackend[Union[TTSModel, AudioCppRuntime]]):
     """Celune Mini (Pocket TTS) backend."""
 
     name: str = "mini"
+    supports_audio_cpp = True
     uses_voice_bundles: bool = True
     chunk_rate: float = 12.5
     supported_languages: tuple[str, ...] = MINI_SUPPORTED_LANGUAGES
@@ -54,6 +68,7 @@ class Mini(CeluneBackend[TTSModel]):
         super().__init__(log=log, fatal=fatal, quantize=quantize)
         self._validate_refs()
         self._voice_states: dict[str, MiniPromptState] = {}
+        self._audio_cpp_reference_paths: dict[str, Path] = {}
         self._generated_config_path: Optional[Path] = None
         self._loaded_language: Optional[str] = None
 
@@ -267,6 +282,40 @@ class Mini(CeluneBackend[TTSModel]):
         loader, _ = compatible_bundle
         return loader.materialize(voice, "wav")
 
+    def _audio_cpp_reference_path(self, voice: str) -> Path:
+        """Prepare a reference WAV with native Pocket TTS pause handling."""
+        from pocket_tts.data.audio import audio_read
+        from pocket_tts.data.audio_utils import end_on_pause, convert_audio
+
+        cached_path = self._audio_cpp_reference_paths.get(voice)
+        if cached_path is not None and cached_path.is_file():
+            return cached_path
+
+        reference_path = self._truncate_reference(self._reference_voice_path(voice))
+        audio, source_sample_rate = audio_read(reference_path)
+        conditioning_audio = convert_audio(audio, source_sample_rate, 24_000, 1)
+        conditioning_audio = end_on_pause(conditioning_audio, 24_000)
+        audio_array = np.asarray(
+            conditioning_audio.squeeze(0).detach().cpu().numpy(), dtype=np.float32
+        )
+
+        with tempfile.NamedTemporaryFile(
+            prefix="celune-pocket-reference-",
+            suffix=".wav",
+            dir=str(temp_data_dir(create=True)),
+            delete=False,
+        ) as temporary_file:
+            prepared_path = Path(temporary_file.name)
+        try:
+            sf.write(prepared_path, audio_array, 24_000, subtype="FLOAT")
+        except Exception:
+            with contextlib.suppress(OSError):
+                prepared_path.unlink(missing_ok=True)
+            raise
+
+        self._audio_cpp_reference_paths[voice] = prepared_path
+        return prepared_path
+
     def _get_voice_state(self, model: MiniModel, voice: str) -> MiniPromptState:
         """Return a cached Pocket TTS voice state for the selected voice."""
         if voice in self._voice_states:
@@ -324,7 +373,29 @@ class Mini(CeluneBackend[TTSModel]):
             self.resolve_generation_language(lang) != self._loaded_language
         )
 
-    def load_model(self, model_id: str, **kwargs) -> TTSModel:
+    def preload_models(self) -> None:
+        """Prepare audio.cpp, or fall back before downloading native weights."""
+        if self.effective_inference_mode != "audio_cpp":
+            super().preload_models()
+            return
+        from ...registry.consent import require_model_consent
+
+        for model_id in self.all_model_ids:
+            require_model_consent(model_id)
+        try:
+            if not torch.cuda.is_available():
+                raise RuntimeError("audio.cpp requires an available CUDA device")
+            ensure_audio_cpp_server(
+                report_progress=self.report_progress,
+                log=self.log,
+                backend_name=self.name,
+            )
+        except Exception as error:
+            self.fallback_audio_cpp_to_native(error)
+        if self.effective_inference_mode == "native":
+            super().preload_models()
+
+    def load_model(self, model_id: str, **kwargs) -> Union[TTSModel, AudioCppRuntime]:
         """Load the configured Pocket TTS model snapshot.
 
         Args:
@@ -332,12 +403,59 @@ class Mini(CeluneBackend[TTSModel]):
             kwargs: Additional keyword arguments to use while loading the model.
 
         Returns:
-            Optional[TTSModel]: A Celune-compatible Pocket TTS model object.
+            Union[TTSModel, AudioCppRuntime]: A loaded native or GGUF model.
         """
-        metadata = require_model_consent(model_id)
         requested_language = self.resolve_generation_language(
             cast(Optional[str], kwargs.pop("lang", kwargs.pop("language", None)))
         )
+        require_model_consent(model_id)
+        if self.effective_inference_mode == "audio_cpp":
+            artifact = audio_cpp_model_artifact(
+                self.name,
+                model_id,
+                quantize=self.quantization_requested,
+                language=requested_language,
+            )
+            if artifact is None:
+                self.fallback_audio_cpp_to_native(
+                    RuntimeError(
+                        f"audio.cpp has no verified Pocket TTS package for language "
+                        f"'{requested_language}'"
+                    )
+                )
+            else:
+                try:
+                    runtime = load_audio_cpp_tts_model(
+                        artifact,
+                        backend_id=self.name,
+                        sample_rate=24_000,
+                        torch_root=Path(torch.__file__).resolve().parent,
+                        device=torch.cuda.current_device(),
+                        load_options={
+                            "language": MINI_LANGUAGE_MODEL_VARIANTS[requested_language]
+                        },
+                        log=self.log,
+                        report_progress=self.report_progress,
+                    )
+                except Exception as error:
+                    self.fallback_audio_cpp_to_native(error)
+                else:
+                    self.quantization_attempted = self.quantization_requested
+                    self.quantization_active = artifact.quantization == "Q8_0"
+                    self._loaded_language = requested_language
+                    self._voice_states.clear()
+                    self.model = runtime
+                    return runtime
+
+        return self._load_native_model(model_id, requested_language)
+
+    def _load_native_model(
+        self,
+        model_id: str,
+        requested_language: str,
+    ) -> TTSModel:
+        """Load the verified native Pocket TTS snapshot for one language."""
+        metadata: ModelMetadata = require_model_consent(model_id)
         available, snapshot_path = self.model_is_available_locally(
             model_id, requested_language
         )
@@ -357,24 +475,29 @@ class Mini(CeluneBackend[TTSModel]):
         try:
             load_model_parameters = inspect.signature(TTSModel.load_model).parameters
             if "sampler_decode_steps" in load_model_parameters:
-                self.model = TTSModel.load_model(
+                native_model = TTSModel.load_model(
                     config=generated_config_path, temp=0.15, sampler_decode_steps=2
                 )
             else:
-                self.model = TTSModel.load_model(
+                native_model = TTSModel.load_model(
                     config=generated_config_path, temp=0.15, lsd_decode_steps=2
                 )
-            self.model = self.apply_runtime_quantization(
-                self.model,
-                model_id,
-                lang=requested_language,
+            self.model = native_model
+            native_model = cast(
+                TTSModel,
+                self.apply_runtime_quantization(
+                    native_model,
+                    model_id,
+                    lang=requested_language,
+                ),
             )
+            self.model = native_model
         except Exception:
             self.unload_model(release_cuda_cache=False)
             raise
         self._loaded_language = requested_language
         self._voice_states.clear()
-        return self.model
+        return native_model
 
     def unload_model(self, release_cuda_cache: bool = True) -> None:
         """Release the loaded model and cached voice states.
@@ -384,6 +507,10 @@ class Mini(CeluneBackend[TTSModel]):
         """
         generated_config_path = self._generated_config_path
         self._voice_states.clear()
+        for reference_path in self._audio_cpp_reference_paths.values():
+            with contextlib.suppress(OSError):
+                reference_path.unlink(missing_ok=True)
+        self._audio_cpp_reference_paths.clear()
         self._generated_config_path = None
         self._loaded_language = None
         if generated_config_path is not None:
@@ -393,7 +520,7 @@ class Mini(CeluneBackend[TTSModel]):
         super().unload_model(release_cuda_cache=release_cuda_cache)
 
     def generate_stream(
-        self, model: TTSModel, **kwargs
+        self, model: Union[TTSModel, AudioCppRuntime], **kwargs
     ) -> Iterator[tuple[AudioChunk, int, Optional[dict]]]:
         """Generate Celune-compatible audio chunks from Pocket TTS.
 
@@ -404,6 +531,10 @@ class Mini(CeluneBackend[TTSModel]):
         Raises:
             ValueError: Received an empty input to be generated.
         """
+        if isinstance(model, AudioCppRuntime):
+            yield from self._generate_audio_cpp_stream(model, kwargs)
+            return
+
         text = kwargs.pop("text", None)
         if not text:
             raise ValueError("expected text to say")
@@ -490,6 +621,7 @@ class Mini(CeluneBackend[TTSModel]):
                     "is_final": True,
                 },
             )
+
         elif pending_audio is not None:
             total_steps += pending_steps
             if first_chunk_time is None:
@@ -506,3 +638,35 @@ class Mini(CeluneBackend[TTSModel]):
                     "is_final": True,
                 },
             )
+
+    def _generate_audio_cpp_stream(
+        self,
+        model: AudioCppRuntime,
+        kwargs: dict[str, BackendArgumentValue],
+    ) -> Iterator[tuple[AudioChunk, int, Optional[dict]]]:
+        """Stream Pocket TTS GGUF audio using the active CEVOICE reference."""
+        text = kwargs.pop("text", None)
+        if not isinstance(text, str) or not text.strip():
+            raise ValueError("expected text to say")
+        voice = kwargs.pop("voice", self.default_voice)
+        if not isinstance(voice, str):
+            voice = self.default_voice or TTS_DEFAULT_VOICE
+        reference_path = self._audio_cpp_reference_path(voice)
+        self._apply_seed()
+        temperature_value = kwargs.pop("temperature", 0.15)
+        if not isinstance(temperature_value, (int, float)) or isinstance(
+            temperature_value, bool
+        ):
+            raise TypeError("temperature must be numeric")
+        request_body: dict[str, object] = {
+            "model": model.server_model_id,
+            "input": text,
+            "voice_ref": reference_path.resolve().as_posix(),
+            "response_format": "pcm",
+            "stream_format": "sse",
+            "options": {
+                "temperature": float(temperature_value),
+                "seed": self.current_seed or 0,
+            },
+        }
+        yield from model.stream_speech(request_body)

@@ -18,6 +18,9 @@ selection, and the checks that confirm Celune is ready to speak.
 The default configuration enables the REST API on loopback port 2060 and keeps
 isolated backend environments enabled. A first launch can therefore spend time
 creating a backend environment and downloading models before the ready state.
+The speech pipeline and ready event become available after backend warmup. When
+Persona initializes in the background, Celune waits for that worker to finish
+before playing the readiness cue, so the cue does not overlap that startup work.
 
 ## Select a backend
 
@@ -51,10 +54,10 @@ active capabilities.
 ## Verify speech
 
 In performance mode, type text and press `CTRL+ENTER`. In converse mode, the same
-action sends the text through Persona; use `CTRL+R` for Persona speech input.
+action sends the text through Persona. Use `CTRL+R` for Persona speech input.
 Generated files are placed in the repository
 `outputs/` directory when saving is enabled. Celune writes 48 kHz, 24-bit FLAC
-outputs; the runtime keeps audio arrays as normalized float32.
+outputs. The runtime keeps audio arrays as normalized float32.
 
 For a headless first check, set `headless: true` and use the REST API or an
 extension. To let Celune choose based on the environment, set `headless: null`.
@@ -72,10 +75,10 @@ uv run python main.py doctor
 
 If the loading screen changes to the red `Failed to start` state, read the
 diagnostic shown there. When engine initialization returns a failure without
-raising an exception, Celune shows the most recent error-level startup log
+raising an exception, the application shows the most recent error-level startup log
 instead of only the generic startup message. The screen keeps the final error
-message concise; traceback detail remains in the application log. Celune remains
-open so the error can be read; press `CTRL+Q` to close it. A missing required
+message concise. Traceback detail remains in the application log. The application
+remains open so the error can be read. Press `CTRL+Q` to close it. A missing required
 dependency returns exit code `4` to the launcher, which can then report or
 repair the environment.
 

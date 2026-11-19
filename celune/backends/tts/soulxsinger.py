@@ -14,14 +14,23 @@ import importlib
 import unicodedata
 from pathlib import Path
 from types import ModuleType
-from dataclasses import dataclass, field, replace
-from typing import Union, Optional, Protocol, cast
+from dataclasses import field, replace, dataclass
 from collections.abc import Mapping, Callable, Iterator
+from typing import Union, NoReturn, Optional, Protocol, cast
 
-import torch
 import numpy as np
+import numpy.typing as npt
+import torch
 from huggingface_hub import snapshot_download
 
+from ...utils import discard
+from ...typing.common import JSON
+from ..environment import exclusive_lock
+from ...typing.aliases import AudioChunk
+from ...registry.consent import require_model_consent
+from ...registry.other import SOULX_SINGER_RMVPE_MODEL_ID
+from ...constants import DEFAULT_TARGET_CHUNK_LENGTH_SECONDS
+from .base import CeluneBackend, to_numpy_audio, cached_hf_snapshot_path
 from ...cesn import (
     CESNSection,
     CESNVibrato,
@@ -32,10 +41,10 @@ from ...cesn import (
     contains_cesn_note_event,
 )
 from ...paths import (
+    temp_data_dir,
     huggingface_progress,
     backend_environments_dir,
     huggingface_hub_cache_dir,
-    temp_data_dir,
 )
 from ...cevoice import (
     V5_VERSION,
@@ -62,14 +71,6 @@ from ...registry.tts import (
     SOULX_SINGER_CODE_REVISION,
     SOULX_SINGER_CODE_REPOSITORY,
 )
-from ...typing.common import JSON
-from ...typing.aliases import AudioChunk
-from ..environment import exclusive_lock
-from ...registry.consent import require_model_consent
-from ...registry.other import SOULX_SINGER_RMVPE_MODEL_ID
-from ...constants import DEFAULT_TARGET_CHUNK_LENGTH_SECONDS
-from .base import CeluneBackend, to_numpy_audio, cached_hf_snapshot_path
-
 
 __all__ = [
     "SoulXSinger",
@@ -193,6 +194,12 @@ class _SoulXDataProcessor(Protocol):
         metadata: dict[str, str],
         wav_path: Optional[str] = None,
     ) -> dict[str, Optional[torch.Tensor]]: ...
+
+
+class _SoulXDataProcessorModule(Protocol):
+    """Module function replaced to decode reference audio through soundfile."""
+
+    load_wav: Callable[[str, int], torch.Tensor]
 
 
 class _SoulXF0Extractor(Protocol):
@@ -336,7 +343,7 @@ def _ipa_to_arpabet_symbols(ipa: str) -> tuple[tuple[str, int, int], ...]:
 def _raise_unrepresentable_ipa(
     event: _ScoreEvent,
     error: _UnrepresentableIPASymbol,
-) -> None:
+) -> NoReturn:
     """Raise a localized CESN error and attach the source IPA location."""
     error_character = error.character
     failure = CESNIPAError(error_character)
@@ -406,8 +413,8 @@ def _serialize_section(section: CESNSection) -> _ScoreSection:
     events_list: list[_ScoreEvent] = []
     for block in section.blocks:
         for index, event in enumerate(block.events):
-            note_spans = block._source_note_spans
-            ipa_spans = block._source_ipa_spans
+            note_spans = block.source_note_spans
+            ipa_spans = block.source_ipa_spans
             note_span = note_spans[index] if index < len(note_spans) else None
             ipa_span = ipa_spans[index] if index < len(ipa_spans) else None
             score_event = _score_event(
@@ -675,7 +682,7 @@ def decode_score(text: str) -> tuple[_ScoreSection, ...]:
                     duration_numerator=duration[0],
                     duration_denominator=duration[1],
                     rest=rest,
-                    ipa=cast(Optional[str], ipa),
+                    ipa=ipa,
                     slur_from_previous=slur_from_previous,
                     tie_from_previous=tie_from_previous,
                     vibrato=vibrato,
@@ -869,7 +876,9 @@ def _natural_f0_contour(
         end_frame = frame_ranges[group_end - 1][1]
         event_contour = contour[start_frame:end_frame]
         delay_seconds = float(vibrato.delay_beats) * 60.0 / bpm
-        frame_times = np.arange(len(event_contour), dtype=np.float64) / frame_rate
+        frame_times: npt.NDArray[np.float64] = (
+            np.arange(len(event_contour), dtype=np.float64) / frame_rate
+        )
         vibrato_mask = (frame_times >= delay_seconds) & (event_contour > 0)
         if np.any(vibrato_mask):
             vibrato_seconds = frame_times[vibrato_mask] - delay_seconds
@@ -996,6 +1005,24 @@ def _load_soulx_reference_wav(
     return waveform
 
 
+def _configuration_int(value: object, name: str) -> int:
+    """Convert an integer field from the pinned SoulX configuration."""
+    if isinstance(value, bool):
+        raise TypeError(f"SoulX-Singer configuration field '{name}' must be numeric")
+    if isinstance(value, (int, float, str)):
+        return int(value)
+    raise TypeError(f"SoulX-Singer configuration field '{name}' must be numeric")
+
+
+def _configuration_float(value: object, name: str) -> float:
+    """Convert a numeric field from the pinned SoulX configuration."""
+    if isinstance(value, bool):
+        raise TypeError(f"SoulX-Singer configuration field '{name}' must be numeric")
+    if isinstance(value, (int, float, str)):
+        return float(value)
+    raise TypeError(f"SoulX-Singer configuration field '{name}' must be numeric")
+
+
 class SoulXSinger(CeluneBackend[_SoulXRuntime]):
     """Score- or F0-controlled singing backend using a CECHAR v5 ``sing`` voice."""
 
@@ -1030,7 +1057,8 @@ class SoulXSinger(CeluneBackend[_SoulXRuntime]):
             TypeError: If ``high_precision`` is not a boolean.
             TypeError: If ``streaming`` is not a boolean.
         """
-        del quantize, quantize_kv_cache
+        discard(quantize)
+        discard(quantize_kv_cache)
         if not isinstance(high_precision, bool):
             raise TypeError("high_precision must be a boolean")
         if not isinstance(streaming, bool):
@@ -1060,7 +1088,9 @@ class SoulXSinger(CeluneBackend[_SoulXRuntime]):
 
         model_module = importlib.import_module("soulxsinger.models.soulxsinger")
         processor_module = importlib.import_module("soulxsinger.utils.data_processor")
-        processor_module.load_wav = _load_soulx_reference_wav
+        cast(
+            _SoulXDataProcessorModule, processor_module
+        ).load_wav = _load_soulx_reference_wav
         f0_module = (
             importlib.import_module("preprocess.tools.f0_extraction")
             if getattr(self, "high_precision", False)
@@ -1099,7 +1129,7 @@ class SoulXSinger(CeluneBackend[_SoulXRuntime]):
             or not str(voice.get("cesn", "")).strip()
         ):
             raise InvalidCharacterError(character)
-        return str(voice["cesn"]), loader.materialize(SINGING_VOICE_NAME, "wav")
+        return voice["cesn"], loader.materialize(SINGING_VOICE_NAME, "wav")
 
     def _validate_refs(self) -> None:
         """Validate the active pack's hidden CECHAR v5 singing reference."""
@@ -1121,7 +1151,7 @@ class SoulXSinger(CeluneBackend[_SoulXRuntime]):
         lang: Optional[str] = None,
     ) -> tuple[bool, Optional[str]]:
         """Check the pinned model snapshot without contacting Hugging Face."""
-        del lang
+        discard(lang)
         if model != SOULX_SINGER_MODEL_ID:
             return False, None
         available, snapshot_path = cached_hf_snapshot_path(
@@ -1225,6 +1255,10 @@ class SoulXSinger(CeluneBackend[_SoulXRuntime]):
         config_values = cast(Mapping[str, object], config)
         audio_config = cast(Mapping[str, object], config_values["audio"])
         inference_config = cast(Mapping[str, object], config_values["infer"])
+        sample_rate = _configuration_int(audio_config["sample_rate"], "sample_rate")
+        hop_size = _configuration_int(audio_config["hop_size"], "hop_size")
+        inference_steps = _configuration_int(inference_config["n_steps"], "n_steps")
+        cfg = _configuration_float(inference_config["cfg"], "cfg")
         device = torch.device("cuda")
         model_type = cast(Callable[..., torch.nn.Module], module.SoulXSinger)
         report_stage(2)
@@ -1254,8 +1288,8 @@ class SoulXSinger(CeluneBackend[_SoulXRuntime]):
         )
         report_stage(6)
         processor = processor_type(
-            hop_size=int(audio_config["hop_size"]),
-            sample_rate=int(audio_config["sample_rate"]),
+            hop_size=hop_size,
+            sample_rate=sample_rate,
             phoneset_path=str(
                 source_root / "soulxsinger" / "utils" / "phoneme" / "phone_set.json"
             ),
@@ -1275,17 +1309,17 @@ class SoulXSinger(CeluneBackend[_SoulXRuntime]):
                 str(self._ensure_f0_checkpoint()),
                 device=str(device),
                 is_half=True,
-                target_sr=int(audio_config["sample_rate"]),
-                hop_size=int(audio_config["hop_size"]),
+                target_sr=sample_rate,
+                hop_size=hop_size,
                 verbose=False,
             )
         report_stage(7)
         runtime = _SoulXRuntime(
             model=cast(_SoulXInferenceModel, model),
             processor=processor,
-            sample_rate=int(audio_config["sample_rate"]),
-            inference_steps=int(inference_config["n_steps"]),
-            cfg=float(inference_config["cfg"]),
+            sample_rate=sample_rate,
+            inference_steps=inference_steps,
+            cfg=cfg,
             f0_extractor=f0_extractor,
         )
         self.model = runtime

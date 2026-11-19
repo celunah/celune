@@ -2,16 +2,18 @@
 """Agent routing and tool execution methods."""
 
 from __future__ import annotations
-from collections.abc import Sequence
-from typing import Optional, cast
-from typing import Union
 
-from .conversation import deliver_persona_response
+import re
+import threading
+from collections.abc import Sequence
+from typing import Union, Optional, cast
 
 from ..i18n import string
 from ..paths import huggingface_progress
-from ..utils import format_error_message
+from ..typing.locks import ComponentLockName
 from ..agent.needle import NeedleToolSelector
+from ..utils import discard, format_error_message
+from .conversation import deliver_persona_response, wait_for_persona_playback
 from ..exceptions import (
     ModelConsentDeclined,
     ModelConsentRequired,
@@ -21,8 +23,6 @@ from ..typing.agent import (
     ToolCall,
     AgentOutput,
     AgentContext,
-    AgentRequest,
-    AgentSession,
     AgentTaskState,
     AgentAbortReason,
     AgentInterruption,
@@ -32,13 +32,74 @@ from ..typing.agent import (
     AgentInputClassification,
     AgentToolExecutionStatus,
     AgentClassificationResult,
-    AgentClassificationFailure,
 )
+
+_UNSAFE_AGENT_PREAMBLE_RE = re.compile(
+    r"\b(?:i\s+will|i['’]ll|let\s+me|ready|available|standing|"
+    r"start(?:ed|ing)?|begin(?:ning)?|check(?:ed|ing)?|"
+    r"look|found|verif(?:y|ied|ying)|confirm(?:ed|ing)?|result|work(?:ing|ed)?|"
+    r"access(?:ible)?|permission|exist(?:s|ed)?)\b",
+    re.IGNORECASE,
+)
+
+
+def _is_plain_agent_preamble(text: str) -> bool:
+    """Reject generated openings that claim status, facts, or task progress."""
+    normalized = " ".join(text.split())
+    sentence_count = len(re.findall(r"[.!?](?:[\"'”’)]*)?(?=\s|$)", normalized))
+    return (
+        bool(normalized)
+        and any(character.isalnum() for character in normalized)
+        and len(normalized) <= 100
+        and len(normalized.split()) <= 12
+        and sentence_count <= 1
+        and not any(
+            character.isdigit() or character in "\\/:" for character in normalized
+        )
+        and _UNSAFE_AGENT_PREAMBLE_RE.search(normalized) is None
+    )
+
+
+def _include_approval_choices(text: str) -> str:
+    """Ensure spoken approval requests name both recognized reply words."""
+    choices = {
+        match.group(0).casefold()
+        for match in re.finditer(r"\b(?:approve|deny)\b", text, re.IGNORECASE)
+    }
+    if {"approve", "deny"}.issubset(choices):
+        return text
+    return f"{text.rstrip()} {string('agent.approval_reply_hint')}"
+
+
+def _wait_for_persona_initialization(self) -> bool:
+    """Wait for Persona initialization and VLM ownership to settle."""
+    from .lifecycle import start_persona_background_load
+
+    waiter = threading.Event()
+    while not self.exit_requested:
+        with self._model_lock:
+            persona_ready = self.persona_ready
+            persona_loading = self.persona_loading
+            vision = self.vision
+        component_locks = self.component_locks
+        persona_busy = (
+            component_locks is not None
+            and component_locks.owner_for(ComponentLockName.VLM) is not None
+        )
+        if persona_ready and not persona_busy:
+            return True
+        if not persona_loading and not persona_busy:
+            if self.loaded and vision is not None and not persona_ready:
+                start_persona_background_load(self)
+            else:
+                return True
+        waiter.wait(0.05)
+    return False
 
 
 def interrupt_active_agent_for_input(self, text: str) -> bool:
     """Invalidate active agent work before accepting replacement user input."""
-    del text
+    discard(text)
     task = self.agent_runtime.get_active_task("default")
     if task is None or task.state in {
         AgentTaskState.IDLE,
@@ -59,6 +120,7 @@ def interrupt_active_agent_for_input(self, text: str) -> bool:
 
 
 def classify_input(
+    # me when PyCharm bugs me to docstring `self` because we're not working with a class method
     self,
     text: str,
     *,
@@ -170,7 +232,14 @@ def select_agent_tool(
     output: AgentOutput,
 ) -> Optional[Union[ToolCall, Sequence[ToolCall]]]:
     """Select and validate one registered tool through the Needle boundary."""
-    return _load_agent_tool_selector(self)(context, output)
+    from ..agent.tools import recover_local_tool_call
+
+    selection = _load_agent_tool_selector(self)(context, output)
+    if isinstance(selection, Sequence):
+        return [recover_local_tool_call(call, context) for call in selection]
+    return (
+        recover_local_tool_call(selection, context) if selection is not None else None
+    )
 
 
 def execute_agent_tool(
@@ -228,15 +297,80 @@ def run_agent_route(self, route: AgentClassificationResult) -> bool:
         active_task = self.agent_runtime.get_active_task(request.session.session_id)
         task_id = active_task.task_id if active_task is not None else None
     delivery_failed = False
+    initial_task = (
+        self.agent_runtime.get_task(task_id) if isinstance(task_id, str) else None
+    )
+    if initial_task is None:
+        initial_task = self.agent_runtime.create_task(request)
+        task_id = initial_task.task_id
+    opening_pending = initial_task.state == AgentTaskState.IDLE
+    suppress_initial_plan = opening_pending
+    if opening_pending:
+        if not _wait_for_persona_initialization(self):
+            return False
+        try:
+            self.agent_runtime.start_task(initial_task.task_id)
+        except ValueError:
+            opening_pending = False
+    if opening_pending:
+        opening_preamble = None
+        if isinstance(task_id, str):
+            try:
+                opening_context = self.agent_runtime.get_context(task_id)
+                opening = self._agent_persona_bridge.opening(opening_context)
+                generated_preamble = opening.get("response")
+                if (
+                    not isinstance(generated_preamble, str)
+                    or not _is_plain_agent_preamble(generated_preamble)
+                ) and not opening.get("paused"):
+                    opening = self._agent_persona_bridge.opening(
+                        opening_context,
+                        retry=True,
+                    )
+                    generated_preamble = opening.get("response")
+                if isinstance(generated_preamble, str) and _is_plain_agent_preamble(
+                    generated_preamble
+                ):
+                    opening_preamble = generated_preamble
+            except Exception as exc:
+                self.log(
+                    format_error_message(
+                        "[AGENT] opening_response_generation_failed",
+                        exc,
+                        self.log_level,
+                    ),
+                    "warning",
+                    loglevel="verbose",
+                )
+        if opening_preamble is not None:
+            try:
+                if self.say(opening_preamble, maintain_status=True):
+                    wait_for_persona_playback(self)
+            except Exception as exc:
+                self.log(
+                    format_error_message(
+                        "[AGENT] opening_speech_failed",
+                        exc,
+                        self.log_level,
+                    ),
+                    "warning",
+                    loglevel="verbose",
+                )
 
-    def deliver_output(output: AgentOutput) -> None:
+    def deliver_output(out: AgentOutput) -> None:
         """Deliver generated agent responses through the shared speech path."""
-        nonlocal delivery_failed
-        if output.get("tool_call") is not None:
+        nonlocal delivery_failed, suppress_initial_plan
+        terminal = out.get("terminal")
+        if suppress_initial_plan and terminal is None:
+            suppress_initial_plan = False
             return
-        terminal = output.get("terminal")
+        if out.get("tool_call") is not None:
+            return
         if terminal is not None:
             if terminal.state == AgentTaskState.COMPLETED:
+                return
+            if not wait_for_persona_playback(self):
+                delivery_failed = True
                 return
             if task_id is None:
                 delivery_failed = True
@@ -247,13 +381,15 @@ def run_agent_route(self, route: AgentClassificationResult) -> bool:
                 response = response_output.get("response")
                 if not isinstance(response, str) or not response.strip():
                     raise RuntimeError("agent failure response was empty")
-                if not deliver_persona_response(self, request.request, response):
+                if not deliver_persona_response(
+                    self, request.request, response, maintain_status=True
+                ):
                     raise RuntimeError("agent failure response could not be queued")
-            except Exception as exc:
+            except Exception as exception:
                 self.log(
                     format_error_message(
                         "[AGENT] failure_response_generation_failed",
-                        exc,
+                        exception,
                         self.log_level,
                     ),
                     "warning",
@@ -269,65 +405,85 @@ def run_agent_route(self, route: AgentClassificationResult) -> bool:
                     fallback = string("agent.stuck_final")
                 elif terminal.state == AgentTaskState.ABORTED:
                     fallback = string("agent.limit_final")
-                if not self.say(fallback):
+                if not self.say(fallback, maintain_status=True):
                     delivery_failed = True
             return
-        if self.backend_mode == "agent_test" and not output.get("end"):
+        if self.backend_mode == "agent_test" and not out.get("end"):
             return
-        response = output.get("response")
+        response = out.get("response")
         if not isinstance(response, str) or not response.strip():
             return
-        if self.cur_state in {"generating", "speaking"}:
-            from .conversation import wait_for_persona_playback
-
-            if not wait_for_persona_playback(self):
-                delivery_failed = True
-                raise RuntimeError("agent response speech was interrupted")
-        if not deliver_persona_response(self, request.request, response):
+        if self.cur_state in {
+            "generating",
+            "speaking",
+        } and not wait_for_persona_playback(self):
+            delivery_failed = True
+            raise RuntimeError("agent response speech was interrupted")
+        if not deliver_persona_response(
+            self, request.request, response, maintain_status=True
+        ):
             delivery_failed = True
             raise RuntimeError("agent response speech could not be queued")
 
     output = self.agent_runtime.run(request, callback=deliver_output)
+    if output["paused"] and isinstance(task_id, str):
+        task = self.agent_runtime.get_task(task_id)
+        if task.state == AgentTaskState.AWAITING_APPROVAL:
+            approval = self.agent_runtime.get_pending_approval(task_id)
+            if approval is not None:
+                approval_text = approval.prompt
+                try:
+                    approval_output = self._agent_persona_bridge.approval(
+                        self.agent_runtime.get_context(task_id),
+                        approval,
+                    )
+                    generated_text = approval_output.get("response")
+                    if isinstance(generated_text, str) and generated_text.strip():
+                        approval_text = generated_text
+                except Exception as exc:
+                    self.log(
+                        format_error_message(
+                            "[AGENT] approval_response_generation_failed",
+                            exc,
+                            self.log_level,
+                        ),
+                        "warning",
+                        loglevel="verbose",
+                    )
+                approval_text = _include_approval_choices(approval_text)
+                if not deliver_persona_response(
+                    self,
+                    request.request,
+                    approval_text,
+                    maintain_status=True,
+                ):
+                    self.log(
+                        "[AGENT] approval_response_speech_failed",
+                        "warning",
+                        loglevel="verbose",
+                    )
+    if output["end"] and isinstance(task_id, str):
+        task = self.agent_runtime.get_task(task_id)
+        if (
+            task.is_terminal
+            and self.playback_done.is_set()
+            and not self.locked
+            and self.cur_state
+            not in {
+                "idle",
+                "error",
+                "reloading",
+                "exiting",
+                "sleeping",
+                "stopped",
+                "waking",
+            }
+        ):
+            self.cur_state = "idle"
+            self.idle_callback()
     return output["end"] and not delivery_failed
 
 
-def speak_agent_classification_failure(
-    self,
-    request: str,
-    failure: AgentClassificationFailure,
-    route: AgentClassificationResult,
-) -> bool:
-    """Ask the active Persona to explain a classifier failure naturally."""
-    metadata = route.routing_metadata
-    task_id = metadata.get("task_id") if isinstance(metadata, dict) else None
-    if isinstance(task_id, str):
-        try:
-            context = self.agent_runtime.get_context(task_id)
-        except ValueError:
-            context = None
-    else:
-        context = None
-    if context is None:
-        context = self.agent_runtime.create_context(
-            AgentRequest(
-                request=request,
-                session=AgentSession(session_id="default"),
-            ),
-            classification_failure=failure,
-        )
-    try:
-        output = self._agent_persona_bridge.respond(context)
-        response = output.get("response")
-        if isinstance(response, str) and response.strip():
-            return deliver_persona_response(self, request, response)
-    except Exception as exc:
-        self.log(
-            format_error_message(
-                "[AGENT] failure_response_generation_failed",
-                exc,
-                self.log_level,
-            ),
-            "warning",
-            loglevel="verbose",
-        )
-    return self.say(string("agent.classifier_unavailable"))
+def say_agent_classification_fallback(self, request: str) -> bool:
+    """Speak the original input directly when semantic classification fails."""
+    return self.say(request, maintain_status=True)

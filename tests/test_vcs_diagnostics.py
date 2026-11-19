@@ -9,10 +9,8 @@ from celune import runtime
 from celune.i18n import string
 from celune.vcs import git_checkout_hint
 
-from .support import CeluneTestCase
 
-
-class TestRuntimeGitDiagnostics(CeluneTestCase):
+class TestRuntimeGitDiagnostics:
     """Verify source launches explain when Git metadata is unavailable."""
 
     def test_source_runtime_banner_shows_upstream_clone_instructions(self) -> None:

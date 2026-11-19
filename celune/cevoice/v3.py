@@ -3,9 +3,10 @@
 
 from __future__ import annotations
 
-from typing import Final, Union, Optional
+
 from pathlib import Path
 from collections.abc import Mapping
+from typing import Final, Union, Optional
 
 from .base import _write_legacy_cevoice
 from ..typing.cevoice import ManifestValue

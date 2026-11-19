@@ -19,9 +19,10 @@ from celune.agent.needle.impl import (
 )
 
 
-class TestNeedleModel:  # pylint: disable=attribute-defined-outside-init
+class TestNeedleModel:
     """Verify the model's inference and cache semantics."""
 
+    # pylint: disable=W0201
     def setup_method(self) -> None:
         """Create a small deterministic model for fast structural checks."""
         torch.manual_seed(7)

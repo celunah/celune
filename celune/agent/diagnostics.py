@@ -6,20 +6,23 @@ from __future__ import annotations
 import os
 import sys
 import tempfile
-from types import SimpleNamespace
-from typing import TYPE_CHECKING, Optional, cast
 from pathlib import Path
 from contextlib import ExitStack
 from dataclasses import dataclass
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 from collections.abc import Mapping, Callable
+from typing import TYPE_CHECKING, Optional, cast
 
 from ..i18n import string
+from ..utils import discard
+from ..typing.common import JSON
 from ..paths import temp_data_dir
-from .tools import production_agent_tools, production_agent_tool_schemas
 from .routing import AgentInputRouter
-from .runtime import AgentRuntime, DefaultAgentPermissionPolicy
 from ..exceptions import NeedleSelectionError
+from ..extensions.events import EventDispatcher
+from .runtime import AgentRuntime, DefaultAgentPermissionPolicy
+from .tools import production_agent_tools, production_agent_tool_schemas
 from ..typing.agent import (
     ToolCall,
     AgentTask,
@@ -52,8 +55,6 @@ from ..typing.agent import (
     AgentCancellationReason,
     AgentPermissionDecision,
 )
-from ..typing.common import JSON
-from ..extensions.events import EventDispatcher
 
 if TYPE_CHECKING:
     from ..celune import Celune
@@ -69,9 +70,6 @@ _AGENT_TOOL_ARGUMENTS: dict[str, JSON] = {
     "query_agent_task": {},
     "run_health_check": {},
     "speak": {"text": "Agent diagnostic speech"},
-    "stop_speech": {},
-    "pause_speech": {},
-    "resume_speech": {"text": "Agent diagnostic speech"},
     "set_voice": {"voice": "diagnostic"},
     "set_voice_prompt": {"prompt": "Agent diagnostic"},
     "set_playback_speed": {"speed": 1.0},
@@ -88,9 +86,6 @@ _AGENT_TOOL_ARGUMENTS: dict[str, JSON] = {
     "forget": {"record_id": "agent-diagnostic-memory"},
     "clear_recent_context": {},
     "summarize_context": {},
-    "pause_task": {},
-    "resume_task": {},
-    "cancel_task": {},
     "query_task": {},
     "query_task_history": {},
     "local_current_working_directory": {},
@@ -110,7 +105,6 @@ _AGENT_TOOL_ARGUMENTS: dict[str, JSON] = {
     "local_discover_application": {"name": "python"},
     "local_running_applications": {"limit": 1},
     "local_launch_application": {"executable": "python"},
-    "local_close_application": {"pid": 1, "expected_name": "diagnostic"},
 }
 
 _LOCAL_TOOL_NAMES = {
@@ -121,7 +115,8 @@ _LOCAL_TOOL_NAMES = {
 class _DiagnosticMemoryRecord:
     """Small in-memory record used to keep diagnostics away from user memory."""
 
-    def to_json(self) -> JSON:
+    @staticmethod
+    def to_json() -> JSON:
         """Return the fixed temporary record in the normal JSON shape."""
         return {
             "record_id": "agent-diagnostic-memory",
@@ -133,8 +128,8 @@ class _DiagnosticMemoryRecord:
 class _DiagnosticMemoryStore:
     """In-memory substitute for persistent Persona memory operations."""
 
+    @staticmethod
     def remember(
-        self,
         _character: str,
         _content: str,
         *,
@@ -146,8 +141,8 @@ class _DiagnosticMemoryStore:
             return None
         return _DiagnosticMemoryRecord()
 
+    @staticmethod
     def retrieve(
-        self,
         _character: str,
         _request: str,
         _limit: int,
@@ -155,7 +150,8 @@ class _DiagnosticMemoryStore:
         """Return the one temporary record expected by the diagnostic."""
         return [_DiagnosticMemoryRecord()]
 
-    def forget(self, _character: str, _record_id: str) -> bool:
+    @staticmethod
+    def forget(_character: str, _record_id: str) -> bool:
         """Accept removal of the temporary record."""
         return True
 
@@ -189,7 +185,7 @@ class _DiagnosticProcess:
     @staticmethod
     def wait(timeout: float) -> None:
         """Accept a no-op wait request."""
-        del timeout
+        discard(timeout)
 
 
 @dataclass
@@ -399,20 +395,6 @@ def _run_runtime_checks(
             string("test.agent_local_management_disabled"),
         ),
         _run_check(
-            "runtime.application_close_gate",
-            lambda: _check_mutation_gate(
-                engine,
-                schemas,
-                "local_close_application",
-            ),
-        )
-        if include_local_management
-        else _record(
-            "runtime.application_close_gate",
-            "skipped",
-            string("test.agent_local_management_disabled"),
-        ),
-        _run_check(
             "runtime.lifecycle.pause_resume",
             lambda: _check_lifecycle_pause_resume(engine),
         ),
@@ -461,7 +443,7 @@ def _run_runtime_checks(
 
 def _dispatcher(engine: Celune) -> EventDispatcher:
     """Create an event dispatcher detached from the user's extension listeners."""
-    del engine
+    discard(engine)
     return EventDispatcher(
         log_warning=lambda _message, _severity: None,
         log_level="debug",
@@ -742,7 +724,7 @@ def _check_lifecycle_steering(engine: Celune) -> str:
 
 
 def _check_lifecycle_cancellation(engine: Celune) -> str:
-    """Check cancellation reaches a typed cancelled terminal state."""
+    """Check cancellation reaches a typed canceled terminal state."""
     runtime, task = _lifecycle_task(engine, "cancellation")
     runtime.cancel_task(task.task_id, AgentCancellationReason.USER_REQUEST)
     if (
@@ -1298,8 +1280,6 @@ def _run_tool_checks(
                         )
                     arguments = _tool_arguments(tool_root, engine)[name]
                     context_task = _working_task(runtime, name)
-                    if name == "resume_task":
-                        runtime.pause_task(context_task.task_id)
                     context = runtime.get_context(context_task.task_id)
                     call = {
                         "id": f"agent-diagnostic-{name}",
@@ -1325,7 +1305,6 @@ def _run_tool_checks(
                             )
                     if name in {
                         "local_terminate_process",
-                        "local_close_application",
                     } and (effects.process is None or not effects.process.terminated):
                         raise RuntimeError(
                             "termination did not use the process test double"
@@ -1340,7 +1319,7 @@ def _run_tool_checks(
                     elif status != "succeeded":
                         raise RuntimeError(execution_result.get("error") or status)
                     else:
-                        detail = f"status={status}; result={_tool_output_text(execution_result)}"
+                        detail = f"status={status}, result={_tool_output_text(execution_result)}"
                         spoken_status = "passed"
                     _append_tool_result(
                         checks,
@@ -1468,10 +1447,6 @@ def _tool_arguments(root: Path, engine: Celune) -> dict[str, JSON]:
                 "arguments": [],
                 "cwd": str(root),
             },
-            "local_close_application": {
-                "pid": 1,
-                "expected_name": "diagnostic",
-            },
         }
     )
     return arguments
@@ -1487,10 +1462,6 @@ def _patch_tool_side_effects(
     effects = _ExternalEffects()
     if name == "speak":
         stack.enter_context(patch.object(engine, "say", return_value=True))
-    elif name == "stop_speech":
-        stack.enter_context(
-            patch.object(engine, "force_stop_speech", return_value=True)
-        )
     elif name == "set_voice":
         stack.enter_context(
             patch.object(engine, "set_voice_and_wait", return_value=True)
@@ -1532,7 +1503,6 @@ def _patch_tool_side_effects(
     elif name in {
         "local_inspect_process",
         "local_terminate_process",
-        "local_close_application",
     }:
         effects.process = _DiagnosticProcess()
         stack.enter_context(

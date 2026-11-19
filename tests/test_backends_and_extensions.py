@@ -13,6 +13,7 @@ import contextlib
 from pathlib import Path
 from unittest import mock
 from collections import abc as cabc
+from collections.abc import Iterator
 from typing import Union, Optional, cast
 from types import ModuleType, SimpleNamespace
 
@@ -21,7 +22,20 @@ import pytest
 import numpy as np
 import soundfile as sf
 
+
 from celune.i18n import string
+from celune.celune import Celune
+from celune.utils import discard
+from celune.cesn import CESNSinger
+from celune.typing.aliases import AudioChunk
+from celune.backends.tts.base import CeluneBackend
+from celune.backends.vc.seedvc import CeluneSeedVCBackend
+from celune.extensions.manager import CeluneExtensionManager
+from celune.dataclasses.pipeline import VoiceConversionRequest
+from celune.extensions.base import CeluneContext, CeluneExtension
+from celune.backends.tts import BACKEND_MANIFESTS, resolve_backend
+from celune.registry.tts import QWEN3_DEFAULT_MODEL_ID, SOULX_SINGER_CODE_REVISION
+from celune.registry import MODEL_BY_ID
 from celune.exceptions import (
     CESNValidationError,
     InvalidExtensionError,
@@ -33,16 +47,11 @@ from celune.backends.vc import (
 from celune.backends.vc import (
     resolve_vc_backend,
 )
-from celune.celune import Celune
-from celune.utils import discard
-from celune.cesn import CESNSinger
 from celune.typing.backends import (
     BackendModel,
     SeedVCModelValue,
     SeedVCRealtimeModule,
 )
-from celune.registry import MODEL_BY_ID
-from celune.typing.aliases import AudioChunk
 from celune.backends.tts.fireredtts3 import (
     FireRedTTS3,
     FireRedModel,
@@ -56,18 +65,10 @@ from celune.backends.tts.soulxsinger import (
     pitch_to_midi,
     load_upstream_source,
 )
-from celune.backends.tts.base import CeluneBackend
-from celune.backends.vc.seedvc import CeluneSeedVCBackend
-from celune.extensions.manager import CeluneExtensionManager
-from celune.dataclasses.pipeline import VoiceConversionRequest
-from celune.extensions.base import CeluneContext, CeluneExtension
-from celune.backends.tts import BACKEND_MANIFESTS, resolve_backend
-from celune.registry.tts import QWEN3_DEFAULT_MODEL_ID, SOULX_SINGER_CODE_REVISION
 
 from .support import (
     FakeBackend,
     FakeVCBackend,
-    CeluneTestCase,
     make_voice_loader,
     mock_mini_backend,
     mock_qwen3_backend,
@@ -76,16 +77,20 @@ from .support import (
 )
 
 
-class TestBackend(CeluneTestCase):
+class TestBackend:
     """Tests for backend base behavior and backend resolution."""
 
-    def setUp(self) -> None:
+    @pytest.fixture(autouse=True)
+    def _pytest_setup_and_teardown(
+        self, request: pytest.FixtureRequest
+    ) -> Iterator[None]:
         """Keep synthetic Seed-VC backend tests independent of model consent."""
         consent_patch = mock.patch(
             "celune.backends.vc.seedvc._require_seedvc_model_consents"
         )
         consent_patch.start()
-        self.addCleanup(consent_patch.stop)
+        request.addfinalizer(consent_patch.stop)
+        yield
 
     def test_singing_capability_defaults_off_and_base_cesn_is_noop(self) -> None:
         """Keep ordinary TTS unchanged until a singing backend opts in."""
@@ -94,11 +99,11 @@ class TestBackend(CeluneTestCase):
             "[c3:4d,d3:8,e3:16][tɛkst.tu.sɪŋ] Text to sing."
         )
         backend = FakeBackend()
-        self.assertFalse(backend.singing)
-        self.assertEqual(backend.cesn_to_model(notation), notation)
+        assert not backend.singing
+        assert backend.cesn_to_model(notation) == notation
 
         singing_backend = FakeBackend(singing=True)
-        self.assertTrue(singing_backend.singing)
+        assert singing_backend.singing
 
     def test_soulxsinger_encodes_cesn_defaults_and_reports_missing_notation(
         self,
@@ -114,16 +119,16 @@ class TestBackend(CeluneTestCase):
         ):
             section = decode_score(backend.cesn_to_model(notation))[0]
 
-        self.assertEqual((section.bpm, section.key, section.scale), (120, "c", "major"))
-        self.assertEqual(section.singer_path, str(singer.bundle_path))
-        self.assertEqual(pitch_to_midi("a4"), 69)
-        with self.assertRaises(CESNValidationError) as error:
+        assert (section.bpm, section.key, section.scale) == (120, "c", "major")
+        assert section.singer_path == str(singer.bundle_path)
+        assert pitch_to_midi("a4") == 69
+        with pytest.raises(CESNValidationError) as error:
             backend.cesn_to_model("[#comment only]")
-        self.assertEqual(str(error.exception), "No CESN notation found")
+        assert str(error.value) == "No CESN notation found"
 
     def test_soulxsinger_description_uses_a_finite_chunk_rate(self) -> None:
         """Give CEDTS a finite rate for SoulX's complete-score audio chunk."""
-        self.assertEqual(SoulXSinger.chunk_rate, 1.0)
+        assert SoulXSinger.chunk_rate == 1.0
 
     def test_soulxsinger_source_install_rechecks_after_lock(self) -> None:
         """Reuse the pinned checkout another backend worker just installed."""
@@ -156,7 +161,7 @@ class TestBackend(CeluneTestCase):
                 repository_type.return_value.head.commit.hexsha = source_root.name
                 repository_type.return_value.is_dirty.return_value = False
 
-                self.assertEqual(load_upstream_source(), source_root)
+                assert load_upstream_source() == source_root
 
             acquire_lock.assert_called_once_with(
                 source_root.parent / ".install.lock",
@@ -179,10 +184,10 @@ class TestBackend(CeluneTestCase):
             converted = backend.cesn_to_model(notation)
 
         section = decode_score(converted)[0]
-        self.assertEqual((section.bpm, section.key, section.scale), (120, "c", "major"))
-        self.assertEqual(section.singer_path, str(singer.bundle_path))
-        self.assertEqual(section.display_text, "Ah")
-        self.assertEqual(pitch_to_midi("a4"), 69)
+        assert (section.bpm, section.key, section.scale) == (120, "c", "major")
+        assert section.singer_path == str(singer.bundle_path)
+        assert section.display_text == "Ah"
+        assert pitch_to_midi("a4") == 69
 
     def test_tts_load_oom_does_not_retry_unquantized_model(self) -> None:
         """Verify CUDA OOM releases a partial load without retrying BF16."""
@@ -544,7 +549,7 @@ class TestBackend(CeluneTestCase):
                 cls, pretrained_model_dir: str, **kwargs: object
             ) -> "FakeRedAE":
                 """Record the loader arguments and return a fake model."""
-                del pretrained_model_dir
+                discard(pretrained_model_dir)
                 redae_load_kwargs.update(kwargs)
                 return cls()
 
@@ -556,7 +561,7 @@ class TestBackend(CeluneTestCase):
                 cls, pretrained_model_dir: str, **kwargs: object
             ) -> "FakeFireRedTTS3BaseCore":
                 """Record the loader arguments and return a fake model."""
-                del pretrained_model_dir
+                discard(pretrained_model_dir)
                 core_load_kwargs.update(kwargs)
                 return cls()
 
@@ -754,7 +759,7 @@ class TestBackend(CeluneTestCase):
                 use_cache: bool,
             ) -> SimpleNamespace:
                 """Return hidden states and a new cache marker."""
-                del attention_mask
+                discard(attention_mask)
                 assert use_cache
                 cache = SimpleNamespace()
                 self.seen_caches.append(past_key_values)
@@ -1090,7 +1095,7 @@ class TestBackend(CeluneTestCase):
                 nonlocal load_count
                 load_count += 1
                 captured["cwd"] = Path.cwd()
-                return ("model", "semantic", "vocoder", "campplus", "mel", {})
+                return "model", "semantic", "vocoder", "campplus", "mel", {}
 
             setattr(module, "load_models", load_models)  # noqa: B010
             captured_stdout = io.StringIO()
@@ -1101,10 +1106,10 @@ class TestBackend(CeluneTestCase):
                 backend._get_live_runtime()
                 backend._get_live_runtime()
 
-        self.assertEqual(captured["cwd"], source_root)
-        self.assertEqual(Path.cwd(), original_cwd)
-        self.assertEqual(load_count, 1)
-        self.assertEqual(captured_stdout.getvalue(), "")
+        assert captured["cwd"] == source_root
+        assert Path.cwd() == original_cwd
+        assert load_count == 1
+        assert captured_stdout.getvalue() == ""
 
     def test_seedvc_live_inference_keeps_native_stdout_off_the_worker_stream(
         self,
@@ -1904,9 +1909,8 @@ class TestBackend(CeluneTestCase):
                 mock.patch("celune.backends.tts.dotstts.loguru.logger", fake_loguru),
                 dotstts_cls.suppress_backend_output(),
             ):
-                pass
+                fake_loguru.disable.assert_called_once_with("dots_tts")
 
-        fake_loguru.disable.assert_called_once_with("dots_tts")
         fake_loguru.enable.assert_called_once_with("dots_tts")
 
     @staticmethod
@@ -2120,10 +2124,12 @@ class TestBackend(CeluneTestCase):
             assert chunks[-1][2]["missing_eos"]
 
 
-class TestExtension(CeluneTestCase):
+class TestExtension:
     """Tests for extension context and manager behavior."""
 
-    def setUp(self) -> None:
+    @pytest.fixture(autouse=True)
+    def _pytest_setup_and_teardown(self) -> Iterator[None]:
+        # pylint: disable=W0201
         """Reset extension-manager state before each extension test."""
         self.backend_override = mock.Mock(
             side_effect=lambda backend_name: contextlib.nullcontext(
@@ -2156,6 +2162,7 @@ class TestExtension(CeluneTestCase):
             backend_override=self.backend_override,
             cevoice_override=self.cevoice_override,
         )
+        yield
 
     def test_context_and_extension_helpers_delegate_calls(self) -> None:
         """Verify extension helper methods delegate through their context.
@@ -2177,11 +2184,9 @@ class TestExtension(CeluneTestCase):
         assert self.play_calls[-1] == ("quiet.wav", True, 0.25)
         assert extension.set_voice("bold")
         with extension.with_backend("mini"):
-            pass
+            self.backend_override.assert_called_once_with("mini")
         with extension.with_cevoice("nova"):
-            pass
-        self.backend_override.assert_called_once_with("mini")
-        self.cevoice_override.assert_called_once_with("nova")
+            self.cevoice_override.assert_called_once_with("nova")
 
     def test_manager_registers_invokes_and_autoloads_extensions(self) -> None:
         """Verify registration, duplicate handling, and directory autoloading.

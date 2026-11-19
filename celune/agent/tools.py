@@ -4,18 +4,22 @@
 from __future__ import annotations
 
 import os
+import re
 import sys
 import time
 import shutil
+import datetime
 import platform
 import subprocess
-from typing import TYPE_CHECKING, Optional, cast
 from pathlib import Path
 from dataclasses import dataclass
 from collections.abc import Mapping, Callable
+from typing import TYPE_CHECKING, Optional, cast
 
 import psutil
 
+from ..typing.modes import OperationMode
+from ..typing.common import JSON, JSONSerializable
 from ..utils import clear_queue, format_error_message
 from ..exceptions import LocalManagementError as _LocalManagementError
 from ..typing.agent import (
@@ -30,8 +34,6 @@ from ..typing.agent import (
     AgentToolArgumentSchema,
     AgentToolExecutionStatus,
 )
-from ..typing.modes import OperationMode
-from ..typing.common import JSON, JSONSerializable
 
 if TYPE_CHECKING:
     from ..celune import Celune
@@ -352,16 +354,14 @@ def _health(engine: Celune, _call: ToolCall, _context: AgentContext) -> JSON:
 
 
 def _speak(engine: Celune, call: ToolCall, _context: AgentContext) -> JSON:
-    """Queue speech through the normal Celune pipeline."""
-    queued = engine.say(_string(call, "text"))
+    """Queue speech and wait for playback before another agent utterance."""
+    queued = engine.say(_string(call, "text"), maintain_status=True)
     if not queued:
         raise RuntimeError("speech could not be queued")
-    return {"queued": True}
+    from ..core.conversation import wait_for_persona_playback
 
-
-def _stop_speech(engine: Celune, _call: ToolCall, _context: AgentContext) -> JSON:
-    """Stop speech through the normal interruption path."""
-    return {"stopped": engine.force_stop_speech()}
+    played = wait_for_persona_playback(engine)
+    return {"queued": True, "played": played}
 
 
 def _set_voice(engine: Celune, call: ToolCall, _context: AgentContext) -> JSON:
@@ -479,10 +479,14 @@ def _recall(engine: Celune, call: ToolCall, _context: AgentContext) -> JSON:
     limit = _integer(call, "limit", 5)
     if not 1 <= limit <= 20:
         raise ValueError("limit must be between 1 and 20")
-    records = _memory_store(engine).retrieve(
-        _character(engine), _string(call, "request"), limit
-    )
+    request = _recall_search_request(_string(call, "request"), _context)
+    records = _memory_store(engine).retrieve(_character(engine), request, limit)
     return {"memories": [record.to_json() for record in records]}
+
+
+def recall(engine: Celune, call: ToolCall, _context: AgentContext) -> JSON:
+    """Retrieve semantically relevant character-scoped memories."""
+    return _recall(engine, call, _context)
 
 
 def _forget(engine: Celune, call: ToolCall, _context: AgentContext) -> JSON:
@@ -506,27 +510,6 @@ def _summarize(engine: Celune, _call: ToolCall, _context: AgentContext) -> JSON:
     }
 
 
-def _pause_task(engine: Celune, _call: ToolCall, context: AgentContext) -> JSON:
-    """Pause the current task through AgentRuntime."""
-    task = _task(context)
-    engine.agent_runtime.pause_task(task.task_id)
-    return {"task": task.to_json()}
-
-
-def _resume_task(engine: Celune, _call: ToolCall, context: AgentContext) -> JSON:
-    """Resume the current task through AgentRuntime."""
-    task = _task(context)
-    engine.agent_runtime.resume(task.session_id)
-    return {"task": task.to_json()}
-
-
-def _cancel_task(engine: Celune, _call: ToolCall, context: AgentContext) -> JSON:
-    """Cancel the current task through AgentRuntime."""
-    task = _task(context)
-    engine.agent_runtime.cancel_task(task.task_id)
-    return {"task": task.to_json()}
-
-
 def _query_task(_engine: Celune, _call: ToolCall, context: AgentContext) -> JSON:
     """Read the current task."""
     return _task(context).to_json()
@@ -543,17 +526,67 @@ def _query_history(_engine: Celune, _call: ToolCall, context: AgentContext) -> J
 
 _MAX_LOCAL_READ_BYTES = 1_048_576
 _MAX_LOCAL_ITEMS = 1_000
+_QUOTED_LOCAL_PATH_RE = re.compile(
+    r"(?i)[\"'`]((?:[a-z]:[\\/]|\\\\|/)[^\"'`<>\r\n|?*]+)[\"'`]"
+)
+_WINDOWS_LOCAL_PATH_RE = re.compile(r"(?i)(?:[a-z]:[\\/]|\\\\)[^\s\"'`<>|?*]*")
+_POSIX_LOCAL_PATH_RE = re.compile(r"(?<![\w/:])/(?:[^\s\"'`<>|?*]+/)*[^\s\"'`<>|?*]*")
+_LOCAL_PATH_ARGUMENTS = {
+    "local_list_directory": ("path",),
+    "local_file_metadata": ("path",),
+    "local_read_text": ("path",),
+    "local_write_text": ("path",),
+    "local_make_directory": ("path",),
+    "local_copy": ("source", "destination"),
+    "local_move": ("source", "destination"),
+    "local_delete": ("path",),
+}
+_LOCAL_LAUNCH_TOOL_NAMES = {"local_launch_process", "local_launch_application"}
+_RECALL_TOOL_REQUEST_RE = re.compile(
+    r"(?i)^\s*(?:please\s+)?use\s+recall\s+(?:to\s+)?"
+    r"(?:find|search(?:\s+for)?|retrieve|look\s+for)\s+(.+?)\s*[.!?]*$"
+)
+_LAUNCH_EXECUTABLE_RE = re.compile(
+    r"(?i)\b(?:launch|run|start)\s+(?:the\s+)?"
+    r"(?:(?:application|app|process|executable)\s+)?"
+    r"(?:\"([^\"]+)\"|'([^']+)'|`([^`]+)`|([^\s,;]+))"
+)
+_NO_LAUNCH_ARGUMENTS_RE = re.compile(r"(?i)\bno\s+(?:command[- ]line\s+)?arguments?\b")
+_LAUNCH_WORKING_DIRECTORY_RE = re.compile(
+    r"(?i)\b(?:working\s+directory|cwd)\s*(?:(?:to|is)\s*)?[:=]?\s*"
+    r"(?:\"([^\"]+)\"|'([^']+)'|`([^`]+)`|((?:[a-z]:[\\/]|\\\\|/)\S+))"
+)
 
 
-def _local_path(call: ToolCall, name: str) -> Path:
-    """Validate and normalize one absolute local-management path."""
+def _local_path(
+    call: ToolCall,
+    name: str,
+    *,
+    allow_relative: bool = False,
+) -> Path:
+    """Resolve a local target, optionally anchoring relative paths to the CWD.
+
+    Args:
+        call: Structured tool arguments containing the path value.
+        name: Argument name that contains the path.
+        allow_relative: Whether to resolve relative paths against the process CWD.
+
+    Returns:
+        Path: The normalized target path.
+
+    Raises:
+        LocalManagementError: If the path is invalid or relative paths are
+            disallowed.
+    """
     raw = _string(call, name)
     path = Path(raw).expanduser()
     if not path.is_absolute():
-        raise _LocalManagementError(
-            "invalid_path",
-            "local-management paths must be absolute",
-        )
+        if not allow_relative:
+            raise _LocalManagementError(
+                "invalid_path",
+                "local-management paths must be absolute",
+            )
+        path = Path.cwd() / path
     try:
         return path.resolve(strict=False)
     except OSError as exc:
@@ -573,16 +606,278 @@ def _local_missing(path: Path) -> _LocalManagementError:
     return _LocalManagementError("missing", "target does not exist", path)
 
 
+def _local_request_texts(context: AgentContext) -> tuple[str, ...]:
+    """Return the latest wording and its self-contained routed task request."""
+    requests = (context.request.original_request or "", context.request.request)
+    return tuple(dict.fromkeys(request for request in requests if request.strip()))
+
+
+def _absolute_paths_in_request(request: str) -> tuple[Path, ...]:
+    """Find unique absolute paths in one request, preserving their written order."""
+    quoted_matches = list(_QUOTED_LOCAL_PATH_RE.finditer(request))
+    quoted_spans = [match.span(1) for match in quoted_matches]
+    matches = [(match.start(1), match.group(1), True) for match in quoted_matches]
+    for pattern in (_WINDOWS_LOCAL_PATH_RE, _POSIX_LOCAL_PATH_RE):
+        matches.extend(
+            (match.start(), match.group(0), False)
+            for match in pattern.finditer(request)
+            if not any(
+                start <= match.start() and match.end() <= end
+                for start, end in quoted_spans
+            )
+        )
+
+    requested: dict[str, Path] = {}
+    for _, raw_path, is_quoted in sorted(matches, key=lambda match: match[0]):
+        candidates = (raw_path,) if is_quoted else (raw_path.rstrip(".,;:!?)]}"),)
+        for candidate in candidates:
+            if not candidate:
+                continue
+            try:
+                path = Path(candidate).expanduser().resolve(strict=False)
+            except OSError:
+                continue
+            if path.is_absolute():
+                requested.setdefault(os.path.normcase(str(path)), path)
+    return tuple(requested.values())
+
+
+def _requested_local_paths(
+    context: AgentContext,
+    *,
+    expected_count: int,
+) -> tuple[Path, ...]:
+    """Resolve paths from the latest request or its history-resolved task form."""
+    first_nonempty: Optional[tuple[Path, ...]] = None
+    for request in _local_request_texts(context):
+        paths = _absolute_paths_in_request(request)
+        if len(paths) == expected_count:
+            return paths
+        if paths and first_nonempty is None:
+            first_nonempty = paths
+    return first_nonempty or ()
+
+
+def _requested_local_path(context: AgentContext) -> Optional[Path]:
+    """Find one unambiguous absolute local path in the task request."""
+    paths = _requested_local_paths(context, expected_count=1)
+    return paths[0] if len(paths) == 1 else None
+
+
+def _recall_search_request(selected_request: str, context: AgentContext) -> str:
+    """Prefer the literal search phrase in an explicit recall command."""
+    requests = (
+        context.request.original_request or "",
+        context.request.request,
+    )
+    for user_request in dict.fromkeys(requests):
+        match = _RECALL_TOOL_REQUEST_RE.match(user_request)
+        if match is None:
+            continue
+        query = match.group(1).strip()
+        if len(query) > 1 and query[0] == query[-1] and query[0] in "\"'`":
+            query = query[1:-1].strip()
+        return query.rstrip(" \t\r\n.!?")
+    return selected_request
+
+
+def _requested_launch_executable(context: AgentContext) -> Optional[str]:
+    """Return the executable in the latest or history-resolved task request."""
+    for user_request in _local_request_texts(context):
+        match = _LAUNCH_EXECUTABLE_RE.search(user_request)
+        if match is None:
+            continue
+        executable = next((group for group in match.groups() if group), None)
+        if executable:
+            return executable.strip()
+    return None
+
+
+def _requested_launch_working_directory(context: AgentContext) -> Optional[str]:
+    """Return the working directory named in the latest or resolved request."""
+    for request in _local_request_texts(context):
+        match = _LAUNCH_WORKING_DIRECTORY_RE.search(request)
+        if match is None:
+            continue
+        directory = next((group for group in match.groups() if group), None)
+        if directory is None or match.group(4) is None:
+            return directory
+        return directory.rstrip(".,;:!?)]}")
+    return None
+
+
+def _recover_local_launch_call(call: ToolCall, context: AgentContext) -> ToolCall:
+    """Restore launch values from the request and discard invented options."""
+    executable = _requested_launch_executable(context)
+    arguments = dict(call["arguments"])
+    if executable is not None:
+        arguments["executable"] = executable
+    working_directory = _requested_launch_working_directory(context)
+    if working_directory is None:
+        arguments.pop("cwd", None)
+    else:
+        arguments["cwd"] = working_directory
+    if any(
+        _NO_LAUNCH_ARGUMENTS_RE.search(request)
+        for request in _local_request_texts(context)
+    ):
+        arguments["arguments"] = []
+    return {**call, "arguments": arguments}
+
+
+def _resolve_local_executable(executable: str) -> Optional[str]:
+    """Resolve an executable through PATH and standard Windows search folders."""
+    resolved = shutil.which(executable)
+    if resolved is not None:
+        return resolved
+
+    candidate = Path(executable).expanduser()
+    if candidate.is_absolute() and candidate.is_file():
+        return str(candidate.resolve(strict=True))
+
+    if os.name != "nt" or Path(executable).name != executable:
+        return None
+    windows_directory = os.environ.get("WINDIR") or os.environ.get("SystemRoot") or ""
+    if not windows_directory:
+        return None
+    windows_root = Path(windows_directory)
+    search_path = os.pathsep.join(
+        str(windows_root / directory) for directory in ("System32", ".")
+    )
+    return shutil.which(executable, path=search_path)
+
+
+def _requested_local_path_pair(
+    context: AgentContext,
+) -> Optional[tuple[Path, Path]]:
+    """Find exactly two absolute paths in source-to-destination request order."""
+    paths = _requested_local_paths(context, expected_count=2)
+    return (paths[0], paths[1]) if len(paths) == 2 else None
+
+
+def recover_local_tool_call(call: ToolCall, context: AgentContext) -> ToolCall:
+    """Replace selected filesystem paths with the exact paths in the request."""
+    if call["name"] == "local_terminate_process":
+        return _recover_local_terminate_process(call, context)
+    if call["name"] in _LOCAL_LAUNCH_TOOL_NAMES:
+        return _recover_local_launch_call(call, context)
+    path_arguments = _LOCAL_PATH_ARGUMENTS.get(call["name"])
+    if path_arguments is None:
+        return call
+
+    if len(path_arguments) == 1:
+        requested_path = _requested_local_path(context)
+        if requested_path is None:
+            return call
+        recovered_paths = (requested_path,)
+    else:
+        requested_pair = _requested_local_path_pair(context)
+        if requested_pair is None:
+            return call
+        recovered_paths = requested_pair
+
+    arguments = dict(call["arguments"])
+    for name, path in zip(path_arguments, recovered_paths, strict=True):
+        arguments[name] = str(path)
+    return {**call, "arguments": arguments}
+
+
+def infer_local_tool_arguments(
+    tool_name: str,
+    context: AgentContext,
+) -> Optional[dict[str, JSONSerializable]]:
+    """Recover required path arguments for an unambiguous filesystem action."""
+    if tool_name in _LOCAL_LAUNCH_TOOL_NAMES:
+        executable = _requested_launch_executable(context)
+        if executable and any(
+            _NO_LAUNCH_ARGUMENTS_RE.search(request)
+            for request in _local_request_texts(context)
+        ):
+            return {"executable": executable, "arguments": []}
+        return None
+    path_arguments = {
+        "local_list_directory": ("path",),
+        "local_file_metadata": ("path",),
+        "local_read_text": ("path",),
+        "local_make_directory": ("path",),
+        "local_copy": ("source", "destination"),
+        "local_move": ("source", "destination"),
+    }.get(tool_name)
+    if path_arguments is None:
+        return None
+    paths = _requested_local_paths(context, expected_count=len(path_arguments))
+    if len(paths) != len(path_arguments):
+        return None
+    return {name: str(path) for name, path in zip(path_arguments, paths, strict=True)}
+
+
+def _recover_local_terminate_process(
+    call: ToolCall,
+    context: AgentContext,
+) -> ToolCall:
+    """Use one verified listed process when Needle supplied a mismatched PID."""
+    expected_name = call["arguments"].get("expected_name")
+    result = context.last_tool_result
+    if not isinstance(expected_name, str) or result is None:
+        return call
+    result_metadata = cast(dict[str, JSONSerializable], result)
+    if (
+        result_metadata.get("tool_id")
+        not in {
+            "local_list_processes",
+            "local_running_applications",
+        }
+        or result_metadata.get("status") != "succeeded"
+    ):
+        return call
+    output = result.get("output")
+    processes = output.get("processes") if isinstance(output, dict) else None
+    if (
+        not isinstance(output, dict)
+        or output.get("truncated") is not False
+        or not isinstance(processes, list)
+    ):
+        return call
+
+    request = context.request.original_request or context.request.request
+    if re.search(
+        r"\b(?:pid|process(?:\s+id)?)\s*(?:of|=|:)?\s*\d+\b",
+        request,
+        re.IGNORECASE,
+    ):
+        return call
+
+    matching: list[int] = []
+    current_pid = call["arguments"].get("pid")
+    current_matches = False
+    for process in processes:
+        if not isinstance(process, dict):
+            continue
+        name = process.get("name")
+        pid = process.get("pid")
+        if not isinstance(name, str) or name.casefold() != expected_name.casefold():
+            continue
+        if isinstance(pid, int) and not isinstance(pid, bool) and pid > 0:
+            matching.append(pid)
+            current_matches = current_matches or pid == current_pid
+    if current_matches or len(set(matching)) != 1:
+        return call
+    arguments = dict(call["arguments"])
+    arguments["pid"] = matching[0]
+    return {**call, "arguments": arguments}
+
+
 def _local_access(path: Path, error: OSError) -> _LocalManagementError:
     """Build a consistent access-denied error."""
     return _LocalManagementError("access_denied", str(error), path)
 
 
 def _local_list_directory(
-    _engine: Celune, call: ToolCall, _context: AgentContext
+    _engine: Celune, call: ToolCall, context: AgentContext
 ) -> JSON:
     """List one exact directory without recursive traversal."""
-    path = _local_path(call, "path")
+    call = recover_local_tool_call(call, context)
+    path = _local_path(call, "path", allow_relative=True)
     limit = _local_limit(call, "limit", 100, _MAX_LOCAL_ITEMS)
     if not path.exists():
         raise _local_missing(path)
@@ -609,28 +904,46 @@ def _local_list_directory(
 
 
 def _local_file_metadata(
-    _engine: Celune, call: ToolCall, _context: AgentContext
+    _engine: Celune, call: ToolCall, context: AgentContext
 ) -> JSON:
-    """Return metadata for one exact local filesystem target."""
-    path = _local_path(call, "path")
+    """Return metadata with explicit local creation and modification timestamps."""
+    call = recover_local_tool_call(call, context)
+    path = _local_path(call, "path", allow_relative=True)
     if not path.exists():
         raise _local_missing(path)
     try:
         stat = path.stat()
     except OSError as exc:
         raise _local_access(path, exc) from exc
+    created_timestamp = getattr(stat, "st_birthtime", None)
     return {
         "result": "success",
         "path": str(path),
         "kind": "directory" if path.is_dir() else "file",
         "size": stat.st_size,
-        "modified": stat.st_mtime,
+        "created_at": _local_iso_timestamp(created_timestamp),
+        "modified_at": _local_iso_timestamp(stat.st_mtime),
     }
 
 
-def _local_read_text(_engine: Celune, call: ToolCall, _context: AgentContext) -> JSON:
+def _local_iso_timestamp(timestamp: Optional[float]) -> Optional[str]:
+    """Format one file timestamp as local ISO 8601 with its UTC offset."""
+    if timestamp is None:
+        return None
+    return (
+        datetime.datetime.fromtimestamp(
+            timestamp,
+            tz=datetime.UTC,
+        )
+        .astimezone()
+        .isoformat(timespec="seconds")
+    )
+
+
+def _local_read_text(_engine: Celune, call: ToolCall, context: AgentContext) -> JSON:
     """Read a bounded UTF-8 text file from one exact path."""
-    path = _local_path(call, "path")
+    call = recover_local_tool_call(call, context)
+    path = _local_path(call, "path", allow_relative=True)
     limit = _local_limit(
         call, "max_bytes", _MAX_LOCAL_READ_BYTES, _MAX_LOCAL_READ_BYTES
     )
@@ -647,8 +960,9 @@ def _local_read_text(_engine: Celune, call: ToolCall, _context: AgentContext) ->
     return {"result": "success", "path": str(path), "text": text}
 
 
-def _local_write_text(_engine: Celune, call: ToolCall, _context: AgentContext) -> JSON:
+def _local_write_text(_engine: Celune, call: ToolCall, context: AgentContext) -> JSON:
     """Write bounded UTF-8 text to one exact existing-parent path."""
+    call = recover_local_tool_call(call, context)
     path = _local_path(call, "path")
     text = _text(call, "text")
     if len(text.encode("utf-8")) > _MAX_LOCAL_READ_BYTES:
@@ -669,9 +983,10 @@ def _local_write_text(_engine: Celune, call: ToolCall, _context: AgentContext) -
 
 
 def _local_make_directory(
-    _engine: Celune, call: ToolCall, _context: AgentContext
+    _engine: Celune, call: ToolCall, context: AgentContext
 ) -> JSON:
     """Create one exact directory path without implicit parent creation."""
+    call = recover_local_tool_call(call, context)
     path = _local_path(call, "path")
     if path.exists():
         if path.is_dir():
@@ -690,8 +1005,9 @@ def _local_make_directory(
     return {"result": "success", "path": str(path), "created": True}
 
 
-def _local_copy(_engine: Celune, call: ToolCall, _context: AgentContext) -> JSON:
+def _local_copy(_engine: Celune, call: ToolCall, context: AgentContext) -> JSON:
     """Copy one exact file to one exact non-existing destination."""
+    call = recover_local_tool_call(call, context)
     source = _local_path(call, "source")
     destination = _local_path(call, "destination")
     if not source.exists():
@@ -713,8 +1029,9 @@ def _local_copy(_engine: Celune, call: ToolCall, _context: AgentContext) -> JSON
     return {"result": "success", "source": str(source), "destination": str(destination)}
 
 
-def _local_move(_engine: Celune, call: ToolCall, _context: AgentContext) -> JSON:
+def _local_move(_engine: Celune, call: ToolCall, context: AgentContext) -> JSON:
     """Move one exact file to one exact non-existing destination."""
+    call = recover_local_tool_call(call, context)
     source = _local_path(call, "source")
     destination = _local_path(call, "destination")
     if not source.exists():
@@ -734,8 +1051,9 @@ def _local_move(_engine: Celune, call: ToolCall, _context: AgentContext) -> JSON
     return {"result": "success", "source": str(source), "destination": str(destination)}
 
 
-def _local_delete(_engine: Celune, call: ToolCall, _context: AgentContext) -> JSON:
+def _local_delete(_engine: Celune, call: ToolCall, context: AgentContext) -> JSON:
     """Delete one exact file or empty directory, never recursively by default."""
+    call = recover_local_tool_call(call, context)
     path = _local_path(call, "path")
     recursive = call["arguments"].get("recursive", False)
     if not isinstance(recursive, bool):
@@ -850,15 +1168,12 @@ def _argument_list(call: ToolCall, name: str) -> list[str]:
 
 
 def _local_launch_process(
-    _engine: Celune, call: ToolCall, _context: AgentContext
+    _engine: Celune, call: ToolCall, context: AgentContext
 ) -> JSON:
     """Launch one explicit executable with structured arguments and no shell."""
+    call = recover_local_tool_call(call, context)
     executable = _string(call, "executable")
-    resolved = shutil.which(executable)
-    if resolved is None:
-        candidate = Path(executable).expanduser()
-        if candidate.is_absolute() and candidate.exists():
-            resolved = str(candidate.resolve(strict=True))
+    resolved = _resolve_local_executable(executable)
     if resolved is None:
         raise _LocalManagementError("missing", "executable was not found")
     cwd_value = _optional_string(call, "cwd")
@@ -866,7 +1181,7 @@ def _local_launch_process(
     if cwd is not None and not cwd.is_dir():
         raise _LocalManagementError("invalid_target", "cwd is not a directory", cwd)
     try:
-        # pylint: disable=consider-using-with
+        # pylint: disable=R1732
         process = subprocess.Popen(
             [resolved, *_argument_list(call, "arguments")],
             cwd=str(cwd) if cwd is not None else None,
@@ -881,9 +1196,10 @@ def _local_launch_process(
 
 
 def _local_terminate_process(
-    _engine: Celune, call: ToolCall, _context: AgentContext
+    _engine: Celune, call: ToolCall, context: AgentContext
 ) -> JSON:
     """Terminate one process only after verifying its requested identity."""
+    call = recover_local_tool_call(call, context)
     pid = _integer(call, "pid", 0)
     if pid <= 0:
         raise ValueError("argument 'pid' must be positive")
@@ -918,11 +1234,43 @@ def _local_system_info(
         "cpu_count": os.cpu_count(),
         "memory": {"total": memory.total, "available": memory.available},
         "disk": {"path": root, "total": disk.total, "free": disk.free},
-        "gpu": {"cuda_visible_devices": os.environ.get("CUDA_VISIBLE_DEVICES")},
+        "gpu": {
+            **_local_gpu_info(),
+            "cuda_visible_devices": os.environ.get("CUDA_VISIBLE_DEVICES"),
+        },
         "cuda": {"path": os.environ.get("CUDA_PATH")},
         "uptime_seconds": max(0.0, time.time() - psutil.boot_time()),
         "local_time": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
     }
+
+
+def _local_gpu_info() -> JSON:
+    """Return detected CUDA devices without failing system diagnostics."""
+    # noinspection PyBroadException
+    try:
+        import torch
+
+        cuda_available = torch.cuda.is_available()
+        device_count = torch.cuda.device_count() if cuda_available else 0
+        devices: list[JSONSerializable] = []
+        for index in range(device_count):
+            major, minor = torch.cuda.get_device_capability(index)
+            properties = torch.cuda.get_device_properties(index)
+            devices.append(
+                {
+                    "index": index,
+                    "name": str(properties.name),
+                    "total_memory": int(properties.total_memory),
+                    "compute_capability": f"{major}.{minor}",
+                }
+            )
+        return {
+            "cuda_available": cuda_available,
+            "device_count": device_count,
+            "devices": devices,
+        }
+    except Exception:
+        return {"cuda_available": False, "device_count": 0, "devices": []}
 
 
 def _local_current_working_directory(
@@ -945,7 +1293,7 @@ def _local_discover_application(
 ) -> JSON:
     """Resolve one application executable without launching it."""
     name = _string(call, "name")
-    executable = shutil.which(name)
+    executable = _resolve_local_executable(name)
     if executable is None:
         raise _LocalManagementError("missing", "application executable was not found")
     return {"result": "success", "name": name, "executable": executable}
@@ -963,13 +1311,6 @@ def _local_launch_application(
 ) -> JSON:
     """Launch an explicitly named application through the process executor."""
     return _local_launch_process(engine, call, context)
-
-
-def _local_close_application(
-    engine: Celune, call: ToolCall, context: AgentContext
-) -> JSON:
-    """Close an application only after process-name verification."""
-    return _local_terminate_process(engine, call, context)
 
 
 def _arg(
@@ -1058,30 +1399,6 @@ _SPECS = (
         arguments=(_arg("text", AgentToolValueType.STRING, "Text to speak."),),
         behavior=AgentToolBehavior.MUTATING,
         end_task_on_success=True,
-    ),
-    _spec(
-        "stop_speech",
-        "Stop speech",
-        "Stop active speech playback.",
-        _stop_speech,
-        behavior=AgentToolBehavior.MUTATING,
-    ),
-    _spec(
-        "pause_speech",
-        "Pause speech",
-        "Pause speech when supported.",
-        _stop_speech,
-        behavior=AgentToolBehavior.MUTATING,
-        available=False,
-    ),
-    _spec(
-        "resume_speech",
-        "Resume speech",
-        "Resume paused speech when supported.",
-        _speak,
-        arguments=(_arg("text", AgentToolValueType.STRING, "Text to resume."),),
-        behavior=AgentToolBehavior.MUTATING,
-        available=False,
     ),
     _spec(
         "set_voice",
@@ -1217,27 +1534,6 @@ _SPECS = (
         "Read the current context summary.",
         _summarize,
     ),
-    _spec(
-        "pause_task",
-        "Pause task",
-        "Pause the current agent task.",
-        _pause_task,
-        behavior=AgentToolBehavior.MUTATING,
-    ),
-    _spec(
-        "resume_task",
-        "Resume task",
-        "Resume the current agent task.",
-        _resume_task,
-        behavior=AgentToolBehavior.MUTATING,
-    ),
-    _spec(
-        "cancel_task",
-        "Cancel task",
-        "Cancel the current agent task.",
-        _cancel_task,
-        behavior=AgentToolBehavior.MUTATING,
-    ),
     _spec("query_task", "Query task", "Read the current agent task.", _query_task),
     _spec(
         "query_task_history",
@@ -1261,7 +1557,11 @@ _LOCAL_SPECS = (
         "List entries in one exact local directory.",
         _local_list_directory,
         arguments=(
-            _arg("path", AgentToolValueType.STRING, "Absolute directory path."),
+            _arg(
+                "path",
+                AgentToolValueType.STRING,
+                "Exact absolute path or path relative to Celune's working directory.",
+            ),
             _arg(
                 "limit", AgentToolValueType.INTEGER, "Maximum entries.", required=False
             ),
@@ -1270,9 +1570,15 @@ _LOCAL_SPECS = (
     _spec(
         "local_file_metadata",
         "File metadata",
-        "Read metadata for one exact local path.",
+        "Read size and local ISO creation and modification times for one exact local path.",
         _local_file_metadata,
-        arguments=(_arg("path", AgentToolValueType.STRING, "Absolute file path."),),
+        arguments=(
+            _arg(
+                "path",
+                AgentToolValueType.STRING,
+                "Absolute path or path relative to Celune's working directory.",
+            ),
+        ),
     ),
     _spec(
         "local_read_text",
@@ -1280,7 +1586,11 @@ _LOCAL_SPECS = (
         "Read a bounded UTF-8 text file from one exact local path.",
         _local_read_text,
         arguments=(
-            _arg("path", AgentToolValueType.STRING, "Absolute file path."),
+            _arg(
+                "path",
+                AgentToolValueType.STRING,
+                "Absolute path or path relative to Celune's working directory.",
+            ),
             _arg(
                 "max_bytes",
                 AgentToolValueType.INTEGER,
@@ -1485,18 +1795,6 @@ _LOCAL_SPECS = (
                 "Absolute working directory.",
                 required=False,
             ),
-        ),
-        behavior=AgentToolBehavior.MUTATING,
-        danger=AgentToolDangerLevel.HIGH,
-    ),
-    _spec(
-        "local_close_application",
-        "Close application",
-        "Close one application only after process-name verification.",
-        _local_close_application,
-        arguments=(
-            _arg("pid", AgentToolValueType.INTEGER, "Process ID."),
-            _arg("expected_name", AgentToolValueType.STRING, "Expected process name."),
         ),
         behavior=AgentToolBehavior.MUTATING,
         danger=AgentToolDangerLevel.HIGH,

@@ -20,8 +20,6 @@ from celune.persona.emotion import (
     compute_emotion_directions,
 )
 
-from ..support import CeluneTestCase
-
 
 class StubPersonaEmotionAnalyzer(PersonaEmotionAnalyzer):
     """Analyzer with deterministic embeddings and labels for emotion tests."""
@@ -115,7 +113,7 @@ class FakePersonaModel:
         """Evaluate mock tokens."""
 
 
-class TestPersonaEmotion(CeluneTestCase):
+class TestPersonaEmotion:
     """Verify weighted Persona emotion blending stays stable."""
 
     @staticmethod

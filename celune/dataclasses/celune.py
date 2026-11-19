@@ -10,12 +10,30 @@ import sounddevice as sd
 from transformers.modeling_utils import PreTrainedModel
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 
+
 from ..config import Config
+from ..chroma import AudioRGBGlow
+from .cevoice import CEVoicePersona
+from ..constants import PipelineStates
+from ..backends.tts import CeluneBackend
+from ..persona.impl import PersonaClient
+from ..backends.vc import CeluneVCBackend
+from .pipeline import CaptionPlaybackState
+from ..typing.backends import BackendModel
+from ..audio.dsp import StreamingPedalboardReverb
+from ..typing.common import JSON, JSONSerializable
+from ..typing.aliases import LogLevel, AudioChunks
+from ..typing.modes import BackendMode, OperationState
+from ..extensions.manager import CeluneExtensionManager
+from ..typing.locks import ComponentLockOwner, ComponentBusyResult
+from .properties import ConstantPropertySpec, ForwardedPropertySpec
+from ..core.concurrency import ComponentLockManager, PriorityInferenceScheduler
 from ..typing.celune import (
     IdleCallback,
     ErrorCallback,
     CaptionCallback,
     MessageCallback,
+    ToastCallback,
     VCBackendRecipe,
     ProgressCallback,
     TTSBackendRecipe,
@@ -25,22 +43,6 @@ from ..typing.celune import (
     VoiceLockStateCallback,
     CaptionProgressCallback,
 )
-from ..chroma import AudioRGBGlow
-from ..cevoice import CEVoicePersona
-from ..constants import PipelineStates
-from ..backends.tts import CeluneBackend
-from ..persona.impl import PersonaClient
-from ..backends.vc import CeluneVCBackend
-from ..typing.backends import BackendModel
-from .pipeline import CaptionPlaybackState
-from ..audio.dsp import StreamingPedalboardReverb
-from ..typing.aliases import LogLevel, AudioChunks
-from ..typing.common import JSON, JSONSerializable
-from ..typing.modes import BackendMode, OperationState
-from ..extensions.manager import CeluneExtensionManager
-from ..typing.locks import ComponentLockOwner, ComponentBusyResult
-from .properties import ConstantPropertySpec, ForwardedPropertySpec
-from ..core.concurrency import ComponentLockManager, PriorityInferenceScheduler
 
 
 @dataclass
@@ -48,6 +50,7 @@ class CeluneCallbackState:
     """Callbacks Celune uses to report state outward."""
 
     log_callback: MessageCallback
+    toast_callback: ToastCallback
     status_callback: MessageCallback
     error_callback: ErrorCallback
     idle_callback: IdleCallback
@@ -210,6 +213,9 @@ class CeluneRuntimeState:
 CELUNE_FORWARDED_PROPERTIES = (
     ForwardedPropertySpec(
         "log_callback", "_callbacks", "log_callback", reject_duplicate=True
+    ),
+    ForwardedPropertySpec(
+        "toast_callback", "_callbacks", "toast_callback", reject_duplicate=True
     ),
     ForwardedPropertySpec(
         "status_callback", "_callbacks", "status_callback", reject_duplicate=True

@@ -227,6 +227,41 @@ def test_select_menu_widget_cycles_and_searches_autocomplete_values() -> None:
     assert optional.selected_value == "en-US"
 
 
+def test_nullable_text_input_supports_free_text_and_yaml_null_values() -> None:
+    """Free text stays editable while null spellings retain YAML scalar meaning."""
+    menu = SelectMenuWidget(
+        "Configuration manager",
+        [
+            SelectMenuOption(
+                "Locale",
+                None,
+                autocomplete_values=(None,),
+                allow_free_text=True,
+            )
+        ],
+    )
+
+    for character in "fr-CA":
+        menu.on_key(Key(character, character))
+    entered_locale = menu.selected_value
+    assert entered_locale == "fr-CA"
+
+    menu.set_value(0, None)
+    for character in "None":
+        menu.on_key(Key(character, character))
+    assert menu.selected_value is None
+
+    menu.set_value(0, None)
+    for character in '"null"':
+        menu.on_key(Key(character, character))
+    assert menu.selected_value == "null"
+
+    menu.set_value(0, None)
+    for character in "'None'":
+        menu.on_key(Key(character, character))
+    assert menu.selected_value == "None"
+
+
 def test_select_menu_widget_rejects_invalid_keybinds() -> None:
     """Navigation and duplicate keybinds fail during widget construction."""
     with pytest.raises(ValueError, match="navigation keys"):

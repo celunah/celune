@@ -3,12 +3,13 @@
 
 from __future__ import annotations
 
-from typing import Final, Union, Optional, cast
+
 from pathlib import Path
 from collections.abc import Mapping
+from typing import Final, Union, Optional, cast
 
-from .v4 import V4_COMPRESSION_NONE
 from .base import CEVoice
+from .v4 import V4_COMPRESSION_NONE
 from ..exceptions import CEVoiceError
 from ..typing.cevoice import Manifest, ManifestValue
 
@@ -93,7 +94,7 @@ def singing_pitch_range(bundle: CEVoice) -> Optional[tuple[int, int]]:
         return None
     pitch_range = voice.get("range")
     if pitch_range is None:
-        return (0, 127)
+        return 0, 127
     if not isinstance(pitch_range, dict):
         return None
     minimum = pitch_range.get("min")

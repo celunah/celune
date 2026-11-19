@@ -2,11 +2,13 @@
 """Focused coverage for the explicit Celune test-mode command hierarchy."""
 
 from __future__ import annotations
+
 import io
 import warnings
 import threading
 import contextlib
 from unittest import mock
+from functools import partial
 from types import SimpleNamespace
 from typing import ClassVar, Optional, cast
 from collections.abc import Mapping, Callable, Sequence
@@ -16,14 +18,13 @@ from textual.widgets import TextArea
 
 from celune import entrypoint
 from celune.i18n import string
-from celune.celune import Celune
-from celune.ui.app import CeluneUI
-from celune.typing.common import JSON
-from celune.config import config_log_level
-from celune.persona.impl import PersonaClient
-from celune.typing.persona import PersonaClientResponse
 from celune.test import run_agent_test, agent_test_succeeded
+from celune.utils import discard
+from celune.celune import Celune
+from celune.config import config_log_level
+from celune.ui.app import CeluneUI
 from celune.agent.needle import NeedleHandler, NeedleToolSelector
+from celune.persona.impl import PersonaClient
 from celune.typing.agent import (
     AgentTool,
     AgentRoute,
@@ -35,8 +36,10 @@ from celune.typing.agent import (
     AgentClassificationFailure,
     AgentClassificationFailureKind,
 )
+from celune.typing.common import JSON
+from celune.typing.persona import PersonaClientResponse
 
-from .support import FakeGlow, FakeBackend, CeluneTestCase
+from .support import FakeGlow, FakeBackend
 
 
 class _TestPersonaClient:
@@ -76,14 +79,16 @@ class _TestNeedleHandler:
             available_only=available_only,
         )
 
+    @staticmethod
     def select_tools(
-        self,
         query: str,
         tools: NeedleToolCatalog,
         max_new_tokens: int = 96,
     ) -> list[NeedleToolCall]:
         """Return the one safe tool selected by this controlled adapter."""
-        del query, tools, max_new_tokens
+        discard(query)
+        discard(tools)
+        discard(max_new_tokens)
         return [{"name": "local_current_working_directory", "arguments": {}}]
 
     def close(self) -> None:
@@ -188,7 +193,7 @@ class TestCommandTests:
                     [TestCore, bool, Optional[str]], None
                 ],
             ) -> None:
-                del startup_messages
+                discard(startup_messages)
                 self.test_completion_callback = test_completion_callback
                 self.return_code = 0
                 self.celune: Optional[TestCore] = None
@@ -247,10 +252,11 @@ class TestCommandTests:
         assert TestUI.instances[0].closed
 
 
-class TestFinishedLifecycleTests(CeluneTestCase):
+class TestFinishedLifecycleTests:
     """Verify the stopped-but-alive boundary shared by explicit test modes."""
 
-    def _make_core(self) -> Celune:
+    @staticmethod
+    def _make_core(request: pytest.FixtureRequest) -> Celune:
         """Create a lightweight core for test-mode lifecycle coverage."""
         with (
             mock.patch("celune.core.lifecycle.AudioRGBGlow", FakeGlow),
@@ -264,12 +270,16 @@ class TestFinishedLifecycleTests(CeluneTestCase):
                 tts_backend=FakeBackend,
                 backend_mode="agent_test",
             )
-        self.addCleanup(core.close)
+        request.addfinalizer(core.close)
         return core
 
-    def test_success_is_recorded_once_and_stops_new_work(self) -> None:
+    def test_success_is_recorded_once_and_stops_new_work(
+        self, request: pytest.FixtureRequest
+    ) -> None:
         """A successful result leaves the core stopped without closing it."""
-        core = self._make_core()
+        core = self._make_core(
+            request,
+        )
         with (
             mock.patch.object(core, "stop_live_audio"),
             mock.patch.object(core, "log") as log,
@@ -307,9 +317,13 @@ class TestFinishedLifecycleTests(CeluneTestCase):
             core.route_input("Check the current agent status.")
         assert core.finish_test_mode("ui", False) is result
 
-    def test_failure_is_recorded_and_explicit_close_remains_available(self) -> None:
+    def test_failure_is_recorded_and_explicit_close_remains_available(
+        self, request: pytest.FixtureRequest
+    ) -> None:
         """Failures still stop the engine and allow the explicit shutdown path."""
-        core = self._make_core()
+        core = self._make_core(
+            request,
+        )
         with mock.patch.object(core, "stop_live_audio"):
             result = core.finish_test_mode(
                 "agent",
@@ -325,9 +339,13 @@ class TestFinishedLifecycleTests(CeluneTestCase):
         core.close()
         assert core._closed
 
-    def test_agent_report_totals_include_failures_and_skips(self) -> None:
+    def test_agent_report_totals_include_failures_and_skips(
+        self, request: pytest.FixtureRequest
+    ) -> None:
         """Summarize every check and make any failed check fail the report."""
-        core = self._make_core()
+        core = self._make_core(
+            request,
+        )
         checks: list[JSON] = [
             {"name": "catalog", "status": "passed", "detail": "covered"},
             {"name": "optional", "status": "skipped", "detail": "disabled"},
@@ -353,9 +371,13 @@ class TestFinishedLifecycleTests(CeluneTestCase):
             in messages
         )
 
-    def test_cleanup_exception_still_reaches_stopped_state(self) -> None:
+    def test_cleanup_exception_still_reaches_stopped_state(
+        self, request: pytest.FixtureRequest
+    ) -> None:
         """A cleanup failure is recorded as a failed test without stranding the core."""
-        core = self._make_core()
+        core = self._make_core(
+            request,
+        )
         with mock.patch.object(
             core,
             "stop_live_audio",
@@ -366,9 +388,13 @@ class TestFinishedLifecycleTests(CeluneTestCase):
         assert not result["success"]
         assert core.cur_state == "stopped"
 
-    def test_agent_workflow_uses_the_real_core_runtime_boundaries(self) -> None:
+    def test_agent_workflow_uses_the_real_core_runtime_boundaries(
+        self, request: pytest.FixtureRequest
+    ) -> None:
         """The controlled agent task completes through routing and production tools."""
-        core = self._make_core()
+        core = self._make_core(
+            request,
+        )
         assert core.backend_mode == "agent_test"
         assert tuple(tool.name for tool in core.agent_tools) == (
             "local_current_working_directory",
@@ -382,7 +408,9 @@ class TestFinishedLifecycleTests(CeluneTestCase):
             schemas=core.agent_tool_schemas,
         )
         with (
-            mock.patch("celune.test.run_agent_feature_checks", return_value=[]),
+            mock.patch(
+                "celune.agent.diagnostics.run_agent_feature_checks", return_value=[]
+            ),
             mock.patch.object(
                 NeedleToolSelector,
                 "from_pretrained",
@@ -412,9 +440,13 @@ class TestFinishedLifecycleTests(CeluneTestCase):
         assert core.cur_state == "stopped"
         assert not core.say("queued after test")
 
-    def test_agent_test_speaks_each_tool_result_before_user_prompts(self) -> None:
+    def test_agent_test_speaks_each_tool_result_before_user_prompts(
+        self, request: pytest.FixtureRequest
+    ) -> None:
         """Keep tool announcements and spoken requests in the requested order."""
-        core = self._make_core()
+        core = self._make_core(
+            request,
+        )
         sequence: list[str] = []
 
         def feature_checks(_engine, *, tool_result_callback=None):
@@ -430,10 +462,10 @@ class TestFinishedLifecycleTests(CeluneTestCase):
                 },
             ]
 
-        def interaction_checks(_engine, request_user):
-            assert request_user is not None
-            assert request_user("Choice question") == "any answer"
-            assert request_user("Approval question") == "any answer"
+        def interaction_checks(_engine, user):
+            assert user is not None
+            assert user("Choice question") == "any answer"
+            assert user("Approval question") == "any answer"
             return [
                 {"name": "choice", "status": "passed", "detail": "processed"},
                 {"name": "approval", "status": "passed", "detail": "processed"},
@@ -446,11 +478,11 @@ class TestFinishedLifecycleTests(CeluneTestCase):
         with (
             mock.patch("celune.test._run_live_checks", return_value=([], None)),
             mock.patch(
-                "celune.test.run_agent_feature_checks",
+                "celune.agent.diagnostics.run_agent_feature_checks",
                 side_effect=feature_checks,
             ),
             mock.patch(
-                "celune.test.run_agent_interaction_checks",
+                "celune.agent.diagnostics.run_agent_interaction_checks",
                 side_effect=interaction_checks,
             ),
             mock.patch(
@@ -486,10 +518,12 @@ class TestFinishedLifecycleTests(CeluneTestCase):
         assert sequence[4] == "spoken:Approval question"
         assert sequence[5] == "shown:Approval question"
 
-    def test_agent_test_ui_response_channel_processes_typed_answer(self) -> None:
+    def test_agent_test_ui_response_channel_processes_typed_answer(
+        self, request: pytest.FixtureRequest
+    ) -> None:
         """Unlock input only for a prompt and deliver one typed response."""
         ui = CeluneUI()
-        self.addCleanup(setattr, CeluneUI, "_instance", None)
+        request.addfinalizer(partial(setattr, CeluneUI, "_instance", None))
         ui.input_box = TextArea()
         ui.celune = cast(
             Celune,
@@ -523,9 +557,13 @@ class TestFinishedLifecycleTests(CeluneTestCase):
         ui.safe_status.assert_any_call(string("ui.agent_test_prompt_ready"))
         ui.safe_status.assert_any_call(string("ui.agent_test_answer_received"))
 
-    def test_agent_test_reports_no_task_detected(self) -> None:
+    def test_agent_test_reports_no_task_detected(
+        self, request: pytest.FixtureRequest
+    ) -> None:
         """Distinguish an ordinary conversation result from a test crash."""
-        core = self._make_core()
+        core = self._make_core(
+            request,
+        )
         route = AgentClassificationResult(
             classification=AgentInputClassification.CONVERSATION,
             confidence=0.98,
@@ -534,7 +572,9 @@ class TestFinishedLifecycleTests(CeluneTestCase):
         with (
             mock.patch("celune.test._wait_for_persona"),
             mock.patch("celune.test._start_agent_test_pipeline"),
-            mock.patch("celune.test.run_agent_feature_checks", return_value=[]),
+            mock.patch(
+                "celune.agent.diagnostics.run_agent_feature_checks", return_value=[]
+            ),
             mock.patch.object(core, "stop_live_audio"),
             mock.patch.object(core, "route_input", return_value=route),
         ):
@@ -545,9 +585,13 @@ class TestFinishedLifecycleTests(CeluneTestCase):
         routing = next(check for check in checks if check["name"] == "live.routing")
         assert routing["detail"] == "no task detected"
 
-    def test_agent_test_reports_classification_failure(self) -> None:
+    def test_agent_test_reports_classification_failure(
+        self, request: pytest.FixtureRequest
+    ) -> None:
         """Preserve the typed classifier failure category in the test result."""
-        core = self._make_core()
+        core = self._make_core(
+            request,
+        )
         route = AgentClassificationResult(
             classification=AgentInputClassification.CONVERSATION,
             confidence=0.0,
@@ -560,7 +604,9 @@ class TestFinishedLifecycleTests(CeluneTestCase):
         with (
             mock.patch("celune.test._wait_for_persona"),
             mock.patch("celune.test._start_agent_test_pipeline"),
-            mock.patch("celune.test.run_agent_feature_checks", return_value=[]),
+            mock.patch(
+                "celune.agent.diagnostics.run_agent_feature_checks", return_value=[]
+            ),
             mock.patch.object(core, "stop_live_audio"),
             mock.patch.object(core, "route_input", return_value=route),
         ):
@@ -571,9 +617,13 @@ class TestFinishedLifecycleTests(CeluneTestCase):
         routing = next(check for check in checks if check["name"] == "live.routing")
         assert routing["detail"] == "classification failed: malformed_output"
 
-    def test_agent_test_reports_task_detected_but_not_started(self) -> None:
+    def test_agent_test_reports_task_detected_but_not_started(
+        self, request: pytest.FixtureRequest
+    ) -> None:
         """Distinguish a task route without a runtime task identity."""
-        core = self._make_core()
+        core = self._make_core(
+            request,
+        )
         route = AgentClassificationResult(
             classification=AgentInputClassification.TASK,
             confidence=0.9,
@@ -586,7 +636,9 @@ class TestFinishedLifecycleTests(CeluneTestCase):
         with (
             mock.patch("celune.test._wait_for_persona"),
             mock.patch("celune.test._start_agent_test_pipeline"),
-            mock.patch("celune.test.run_agent_feature_checks", return_value=[]),
+            mock.patch(
+                "celune.agent.diagnostics.run_agent_feature_checks", return_value=[]
+            ),
             mock.patch.object(core, "stop_live_audio"),
             mock.patch.object(core, "route_input", return_value=route),
         ):

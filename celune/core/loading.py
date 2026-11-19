@@ -9,12 +9,29 @@ import time
 import threading
 import contextlib
 from functools import partial
+from collections import deque
 from typing import Optional, cast
 
 import torch
 from transformers.modeling_utils import PreTrainedModel
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 
+from . import lifecycle
+from ..constants import APP_NAME
+from ..typing.aliases import LogLevel
+from ..i18n import string, tagged_string
+from ..backends.tts import CeluneBackend
+from ..persona.impl import persona_enabled
+from ..dataclasses.events import ReadyEvent
+from .concurrency import run_in_daemon_thread
+from ..registry.other import NORMALIZER_MODEL_ID
+from ..pipeline.output import saved_output_speech_seconds
+from ..runtime import validate_runtime, log_runtime_banner
+from ..typing.celune import Generative, NormalizerTokenizer
+from ..modeling import normalizer_device, load_normalizer_components
+from ..pipeline.playback import force_stop_speech as force_stop_pipeline
+from ..vram import vram_profile_fits, resolve_vram_preset, validate_vram_preset
+from ..cevoice import default_loader, bundle_display_name, announce_default_bundle
 from ..utils import (
     discard,
     format_error,
@@ -31,23 +48,6 @@ from ..exceptions import (
     ModelConsentRequired,
     InvalidCharacterError,
 )
-from ..constants import APP_NAME
-from ..typing.aliases import LogLevel
-from ..backends.tts import CeluneBackend
-from ..i18n import string, tagged_string
-from ..persona.impl import persona_enabled
-from ..dataclasses.events import ReadyEvent
-from ..registry.other import NORMALIZER_MODEL_ID
-from ..pipeline.output import saved_output_speech_seconds
-from ..runtime import log_runtime_banner, validate_runtime
-from ..typing.celune import Generative, NormalizerTokenizer
-from ..modeling import normalizer_device, load_normalizer_components
-from ..pipeline.playback import force_stop_speech as force_stop_pipeline
-from ..vram import vram_profile_fits, resolve_vram_preset, validate_vram_preset
-from ..cevoice import default_loader, bundle_display_name, announce_default_bundle
-
-from . import lifecycle
-from .concurrency import run_in_daemon_thread
 
 
 async def force_stop_speech_async(self) -> bool:
@@ -98,7 +98,7 @@ def load(self, raise_on_error: bool = False, skip_runtime_check: bool = False) -
     Raises:
         NotAvailableError: If no usable voice or backend is available.
         Exception: If an unexpected loading failure occurs and `raise_on_error` is enabled.
-        RuntimeCheckError: If runtime validation fails; the message contains its diagnostics.
+        RuntimeCheckError: If runtime validation fails. The message contains its diagnostics.
         BackendError: If backend initialization fails.
     """
     if self._startup_callback is not None:
@@ -277,7 +277,13 @@ def load(self, raise_on_error: bool = False, skip_runtime_check: bool = False) -
         self.model_name = ""
         self.log(string("celune.ready_for_vc"))
     else:
-        self.backend.preload_models()
+        try:
+            self.backend.preload_models()
+        except (ModelConsentRequired, PermissionError):
+            raise
+        except Exception as error:
+            _report_tts_runtime_failure(self, error, raise_on_error)
+            return False
 
         self.log(string("celune.all_voices_available"))
         try:
@@ -286,20 +292,10 @@ def load(self, raise_on_error: bool = False, skip_runtime_check: bool = False) -
             self.model_name = self.backend.model_id_for_voice(active_voice)
         except ModelConsentRequired:
             raise
+        except PermissionError:
+            raise
         except Exception as e:
-            self.fatal()
-            self.log(
-                format_error_message(
-                    string("celune.default_model_load_failed", app_name=APP_NAME),
-                    e,
-                    self.log_level,
-                ),
-                "error",
-            )
-            self.error_callback(string("celune.default_model_failed_short"))
-            self.progress_callback(0, 1)
-            if raise_on_error:
-                raise
+            _report_tts_runtime_failure(self, e, raise_on_error)
             return False
 
     pipeline_thread = threading.Thread(target=self.run_pipeline_jobs, daemon=True)
@@ -343,6 +339,36 @@ def load(self, raise_on_error: bool = False, skip_runtime_check: bool = False) -
             "warning",
         )
 
+    if self.backend_mode == "normal":
+        _play_readiness_signal_after_persona_load(self)
+    self.emit_event("ready", ReadyEvent(celune=self))
+
+    return True
+
+
+def _play_readiness_signal_after_persona_load(self) -> None:
+    """Play the readiness cue after background Persona initialization settles."""
+    with self._model_lock:
+        persona_thread = self._persona_load_thread
+
+    if persona_thread is None or not persona_thread.is_alive():
+        _play_readiness_signal(self)
+        return
+
+    def _wait_for_persona_and_announce() -> None:
+        persona_thread.join()
+        if not self.exit_requested:
+            _play_readiness_signal(self)
+
+    threading.Thread(
+        target=_wait_for_persona_and_announce,
+        name="celune-readiness-signal",
+        daemon=True,
+    ).start()
+
+
+def _play_readiness_signal(self) -> None:
+    """Play the readiness cue and log a failure without blocking startup."""
     from .voice import try_play_signal
 
     if self.backend_mode == "normal" and not try_play_signal(self, "readiness"):
@@ -352,9 +378,35 @@ def load(self, raise_on_error: bool = False, skip_runtime_check: bool = False) -
             loglevel="verbose",
         )
 
-    self.emit_event("ready", ReadyEvent(celune=self))
 
-    return True
+def _report_tts_runtime_failure(
+    self,
+    error: BaseException,
+    raise_on_error: bool,
+) -> None:
+    """Enter the recoverable startup error state when TTS cannot initialize."""
+    backend_name = self.backend.name
+    self.fatal(semi_fatal=True)
+    detail = format_error_message(
+        string(
+            "inference.tts_startup_failed", backend=backend_name, failure=str(error)
+        ),
+        error,
+        self.log_level,
+    )
+    self.log(detail, "error")
+    self.error_callback(
+        string(
+            "inference.tts_startup_failed",
+            backend=backend_name,
+            failure=str(error),
+        )
+    )
+    self.progress_callback(0, 1)
+    if raise_on_error:
+        raise BackendError(
+            f"runtime for backend '{backend_name}' failed to initialize"
+        ) from error
 
 
 def _start_configured_api(self) -> None:
@@ -406,6 +458,7 @@ def _start_configured_api(self) -> None:
                     string(
                         "celune.api_started",
                         app_name=APP_NAME,
+                        # why should I bother with HTTPS?
                         url=f"http://{api_host}:{api_port}",
                     )
                 )
@@ -545,15 +598,20 @@ def warmup(
                 if active_backend.singing
                 else warmup_text
             )
-            for _, _, _ in active_backend.generate_stream(
-                candidate_model,
-                text=backend_text,
-                language=self.language,
-                chunk_size=self.chunk_size,
-                instruct=self.effective_voice_prompt(),
-                voice=active_voice,
-            ):
-                pass
+            deque(
+                (
+                    chunk
+                    for chunk, _, _ in active_backend.generate_stream(
+                        candidate_model,
+                        text=backend_text,
+                        language=self.language,
+                        chunk_size=self.chunk_size,
+                        instruct=self.effective_voice_prompt(),
+                        voice=active_voice,
+                    )
+                ),
+                maxlen=0,
+            )
 
     try:
         warmup_start = time.perf_counter()

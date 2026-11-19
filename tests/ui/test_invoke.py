@@ -4,14 +4,14 @@
 import asyncio
 from types import SimpleNamespace
 
-import pytest
 import numpy as np
+import pytest
 
-from celune.ui.invoke import (
+from celune.ui.invoke import invoke_expression
+from celune.exceptions import (
     InvokeCallError,
     InvokeParseError,
     InvokeResolutionError,
-    invoke_expression,
 )
 
 

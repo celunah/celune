@@ -2,20 +2,33 @@
 """Offline integration coverage for Celune's core-owned agent workflow."""
 
 from __future__ import annotations
+
+import threading
+from pathlib import Path
 from unittest import mock
 from typing import Optional, cast
 from contextlib import nullcontext
 from collections.abc import Mapping, Sequence
 
+import pytest
+
+from celune.utils import discard
 from celune.celune import Celune
 from celune.typing.aliases import LogLevel
 from celune.core import agent as core_agent
 from celune.persona.impl import PersonaClient
+from celune.typing.modes import OperationMode
 from celune.typing.common import JSONSerializable
 from celune.typing.persona import PersonaClientResponse
 from celune.registry.llm import PERSONA_DEFAULT_MODEL_ID
+from celune.persona.capabilities import PersonaCapabilities
 from celune.typing.agent import NeedleToolCall, NeedleToolCatalog
-from celune.agent.tools import AgentStatusTool, production_agent_tool_schemas
+from celune.agent.tools import AgentStatusTool, recall, production_agent_tool_schemas
+from celune.typing.locks import (
+    ComponentLockName,
+    ComponentLockOwner,
+    ComponentLockRequirement,
+)
 from celune.agent.needle.impl import (
     NeedleHandler,
     NeedleToolSelector,
@@ -51,11 +64,9 @@ from celune.agent import (
     AgentInputClassification,
     AgentToolExecutionStatus,
     AgentClassificationResult,
-    AgentClassificationFailure,
-    AgentClassificationFailureKind,
 )
 
-from ..support import FakeGlow, FakeBackend, CeluneTestCase
+from ..support import FakeGlow, FakeBackend
 
 
 class _PersonaResponse:
@@ -82,6 +93,7 @@ class _PersonaFixture:
                 '{"classification":"task","route":"task",'
                 '"confidence":0.98,"task_request":"Check the current agent status."}'
             ),
+            _PersonaResponse("One moment."),
             _PersonaResponse("Read the current agent status."),
             _PersonaResponse("The agent task completed successfully."),
         ]
@@ -101,7 +113,7 @@ class _RoutingFixture(PersonaClient):
 
     def post(self, json: dict[str, JSONSerializable]) -> PersonaClientResponse:
         """Return the next classifier payload and ignore request details."""
-        del json
+        discard(json)
         return PersonaClientResponse({"response": self.payloads.pop(0)})
 
 
@@ -115,7 +127,9 @@ class _SpeakPersonaFixture:
                 '{"classification":"task","route":"task",'
                 '"confidence":0.98,"task_request":"Say hello."}'
             ),
-            _PersonaResponse("I will say hello."),
+            _PersonaResponse("I hear you."),
+            _PersonaResponse("Say hello."),
+            _PersonaResponse("May I speak the line 'hello' now?"),
             _PersonaResponse(
                 '{"classification":"task","route":"approval_response",'
                 '"confidence":0.99,"approval_decision":"approved"}'
@@ -167,25 +181,170 @@ class _SpeakNeedleHandler:
             available_only=available_only,
         )
 
+    @staticmethod
     def select_tools(
-        self,
         query: str,
         tools: NeedleToolCatalog,
         max_new_tokens: int = 96,
     ) -> list[NeedleToolCall]:
         """Return the registered speak call without model or network work."""
-        del query, tools, max_new_tokens
+        discard(query)
+        discard(tools)
+        discard(max_new_tokens)
         return [{"name": "speak", "arguments": {"text": "hello"}}]
 
     def close(self) -> None:
         """Match the lifecycle method of a loaded Needle handler."""
 
 
-class TestAgentCoreIntegration(CeluneTestCase):
+class TestAgentCoreIntegration:
     """Run a complete routed task through a real lightweight Celune core."""
 
+    def test_generated_agent_preambles_must_be_plain_acknowledgments(self) -> None:
+        """Reject opening text that claims progress or current status."""
+        assert core_agent._is_plain_agent_preamble("One moment.")
+        assert core_agent._is_plain_agent_preamble("I hear you.")
+        assert core_agent._is_plain_agent_preamble(
+            "I understand you want the directory listed."
+        )
+        assert core_agent._is_plain_agent_preamble("I can help with that.")
+        assert not core_agent._is_plain_agent_preamble('"')
+        assert not core_agent._is_plain_agent_preamble("Ready to assist.")
+        assert not core_agent._is_plain_agent_preamble("The directory exists.")
+        assert not core_agent._is_plain_agent_preamble("I found the folder.")
+        assert not core_agent._is_plain_agent_preamble(
+            "I'm checking that directory now. I'll return the contents."
+        )
+
+    def test_selected_file_paths_are_recovered_before_approval(
+        self, request: pytest.FixtureRequest
+    ) -> None:
+        """Pass exact requested paths to approval before running a local tool."""
+        core = self._make_core(
+            request,
+        )
+        source = Path.cwd() / "source.txt"
+        destination = Path.cwd() / "destination.txt"
+        agent_request = AgentRequest(
+            "Copy the requested file.",
+            original_request=f'Copy "{source}" to "{destination}".',
+        )
+        context = core.agent_runtime.create_context(agent_request)
+        output: AgentOutput = {
+            "tool_call": None,
+            "response": "Copy the requested file.",
+            "end": False,
+            "paused": False,
+        }
+        call: ToolCall = {
+            "id": "needle-copy-call",
+            "name": "local_copy",
+            "arguments": {
+                "source": "relative/source.txt",
+                "destination": "relative/destination.txt",
+            },
+        }
+
+        def select_call(
+            _context: AgentContext,
+            _output: AgentOutput,
+        ) -> ToolCall:
+            """Return a file call with the same malformed paths as Needle."""
+            return call
+
+        with mock.patch.object(
+            core_agent, "_load_agent_tool_selector", return_value=select_call
+        ):
+            selected = core_agent.select_agent_tool(core, context, output)
+
+        assert isinstance(selected, dict)
+        assert selected["arguments"] == {
+            "source": str(source.resolve()),
+            "destination": str(destination.resolve()),
+        }
+
+    def test_new_agent_task_waits_for_persona_initialization(
+        self, request: pytest.FixtureRequest
+    ) -> None:
+        """Hold an initial task idle until Persona releases its VLM lock."""
+        core = self._make_core(request, agent_tool_selector=_NeedleFixture())
+        persona = _PersonaFixture()
+        persona.responses = [
+            _PersonaResponse("I hear you."),
+            _PersonaResponse("Read the current agent status."),
+            _PersonaResponse("The agent task completed successfully."),
+        ]
+        core.vision = cast(PersonaClient, persona)
+        core.persona_loading = True
+        core.persona_ready = False
+        acquired, lease = core.component_locks.try_acquire_lease(
+            (ComponentLockRequirement(ComponentLockName.VLM),),
+            ComponentLockOwner(operation_id="persona-load:fixture"),
+        )
+        assert acquired.acquired
+        assert lease is not None
+        route = core.route_input(
+            "Use read_agent_status to report the current task state."
+        )
+        waiting = threading.Event()
+        finished = threading.Event()
+        result: list[bool] = []
+        errors: list[Exception] = []
+        wait_for_initialization = core_agent._wait_for_persona_initialization
+
+        def run_task() -> None:
+            """Run the task on a worker so Persona initialization can finish."""
+            try:
+                result.append(core.run_agent_route(route))
+            except Exception as error:
+                errors.append(error)
+            finally:
+                finished.set()
+
+        def signal_waiting(engine: Celune) -> bool:
+            """Expose that task startup reached the initialization barrier."""
+            waiting.set()
+            return wait_for_initialization(engine)
+
+        worker = threading.Thread(target=run_task)
+        try:
+            with (
+                mock.patch.object(
+                    core_agent,
+                    "_wait_for_persona_initialization",
+                    side_effect=signal_waiting,
+                ),
+                mock.patch(
+                    "celune.core.agent.deliver_persona_response", return_value=True
+                ),
+                mock.patch.object(core, "say", return_value=True),
+            ):
+                worker.start()
+                assert waiting.wait(timeout=1)
+                task = core.agent_runtime.get_active_task("default")
+                assert task is not None
+                assert task.state == AgentTaskState.IDLE
+                assert not finished.is_set()
+                with core._model_lock:
+                    core.persona_loading = False
+                    core.persona_ready = True
+                lease.release()
+                worker.join(timeout=2)
+        finally:
+            with core._model_lock:
+                core.persona_loading = False
+                core.persona_ready = True
+            lease.release()
+            worker.join(timeout=2)
+
+        assert not worker.is_alive()
+        assert not errors
+        assert result == [True]
+        assert task.state == AgentTaskState.COMPLETED
+
+    @staticmethod
     def _make_core(
-        self,
+        request: pytest.FixtureRequest,
         *,
         agent_tool_selector: Optional[AgentToolSelector] = None,
     ) -> Celune:
@@ -194,7 +353,7 @@ class TestAgentCoreIntegration(CeluneTestCase):
             "celune.vram.torch.cuda.is_available", return_value=False
         )
         cuda_patch.start()
-        self.addCleanup(cuda_patch.stop)
+        request.addfinalizer(cuda_patch.stop)
         with (
             mock.patch("celune.core.lifecycle.AudioRGBGlow", FakeGlow),
             mock.patch("celune.core.lifecycle.default_loader", return_value=None),
@@ -207,11 +366,17 @@ class TestAgentCoreIntegration(CeluneTestCase):
                 tts_backend=FakeBackend,
                 agent_tool_selector=agent_tool_selector,
             )
-        self.addCleanup(core.close)
+        playback_wait = mock.patch(
+            "celune.core.agent.wait_for_persona_playback",
+            return_value=True,
+        )
+        playback_wait.start()
+        request.addfinalizer(playback_wait.stop)
+        request.addfinalizer(core.close)
         return core
 
     def test_production_catalog_contains_typed_offline_tools(self) -> None:
-        """Expose the complete Appendix B catalog with permission metadata."""
+        """Keep the production catalog limited to stable typed tools."""
         schemas = production_agent_tool_schemas()
         expected = {
             "read_agent_status",
@@ -223,9 +388,6 @@ class TestAgentCoreIntegration(CeluneTestCase):
             "query_agent_task",
             "run_health_check",
             "speak",
-            "stop_speech",
-            "pause_speech",
-            "resume_speech",
             "set_voice",
             "set_voice_prompt",
             "set_playback_speed",
@@ -242,9 +404,6 @@ class TestAgentCoreIntegration(CeluneTestCase):
             "forget",
             "clear_recent_context",
             "summarize_context",
-            "pause_task",
-            "resume_task",
-            "cancel_task",
             "query_task",
             "query_task_history",
         }
@@ -255,7 +414,42 @@ class TestAgentCoreIntegration(CeluneTestCase):
             if schema.behavior == AgentToolBehavior.MUTATING:
                 assert schema.approval_required
 
-    def test_local_management_registry_is_opt_in_and_warns(self) -> None:
+    def test_explicit_recall_uses_the_original_literal_search_phrase(self) -> None:
+        """Keep the requested memory phrase when Needle paraphrases its query."""
+        store = mock.Mock()
+        store.retrieve.return_value = []
+        context = AgentContext(
+            request=AgentRequest(
+                "Find the requested memory.",
+                original_request=(
+                    "Use recall to find the Celune agent smoke test memory."
+                ),
+            ),
+            mode=cast(OperationMode, "agent"),
+            persona_capabilities=PersonaCapabilities(),
+        )
+        call: ToolCall = {
+            "id": "recall",
+            "name": "recall",
+            "arguments": {"request": "assistant project smoke test", "limit": 5},
+        }
+
+        with (
+            mock.patch("celune.agent.tools._memory_store", return_value=store),
+            mock.patch("celune.agent.tools._character", return_value="Celune"),
+        ):
+            result = recall(cast(Celune, object()), call, context)
+
+        assert result == {"memories": []}
+        store.retrieve.assert_called_once_with(
+            "Celune",
+            "the Celune agent smoke test memory",
+            5,
+        )
+
+    def test_local_management_registry_is_opt_in_and_warns(
+        self, request: pytest.FixtureRequest
+    ) -> None:
         """Local-management tools appear only when explicitly enabled."""
         logs: list[str] = []
 
@@ -266,7 +460,8 @@ class TestAgentCoreIntegration(CeluneTestCase):
             loglevel: LogLevel = "info",
         ) -> None:
             """Capture startup diagnostics for the ordering assertion."""
-            del severity, loglevel
+            discard(severity)
+            discard(loglevel)
             logs.append(msg)
 
         with (
@@ -285,7 +480,7 @@ class TestAgentCoreIntegration(CeluneTestCase):
                 tts_backend=FakeBackend,
                 log_callback=capture_log,
             )
-        self.addCleanup(core.close)
+        request.addfinalizer(core.close)
         assert "local_system_info" in core._agent_tool_schemas
 
         with (
@@ -311,9 +506,13 @@ class TestAgentCoreIntegration(CeluneTestCase):
             include_local_management=True
         )
 
-    def test_query_status_executes_against_the_real_core(self) -> None:
+    def test_query_status_executes_against_the_real_core(
+        self, request: pytest.FixtureRequest
+    ) -> None:
         """Execute a read-only catalog tool against the core-owned task context."""
-        core = self._make_core()
+        core = self._make_core(
+            request,
+        )
         task = core.agent_runtime.create_task(AgentRequest("query status"))
         tool = next(tool for tool in core._agent_tools if tool.name == "query_status")
         result = cast(
@@ -329,9 +528,13 @@ class TestAgentCoreIntegration(CeluneTestCase):
         assert output["mode"] == "agent"
         core.agent_runtime.cancel_task(task.task_id)
 
-    def test_query_models_reports_configured_persona_model_id(self) -> None:
+    def test_query_models_reports_configured_persona_model_id(
+        self, request: pytest.FixtureRequest
+    ) -> None:
         """Report the configured Persona model ID through the production tool."""
-        core = self._make_core()
+        core = self._make_core(
+            request,
+        )
         core.config["persona"] = {"model_id": "fixture/persona-custom"}
         task = core.agent_runtime.create_task(AgentRequest("query models"))
         tool = next(tool for tool in core._agent_tools if tool.name == "query_models")
@@ -352,9 +555,12 @@ class TestAgentCoreIntegration(CeluneTestCase):
 
     def test_query_models_uses_the_default_persona_model_without_custom_config(
         self,
+        request: pytest.FixtureRequest,
     ) -> None:
         """Report the canonical default Persona model when none is configured."""
-        core = self._make_core()
+        core = self._make_core(
+            request,
+        )
         task = core.agent_runtime.create_task(AgentRequest("query models"))
         tool = next(tool for tool in core._agent_tools if tool.name == "query_models")
 
@@ -372,9 +578,13 @@ class TestAgentCoreIntegration(CeluneTestCase):
         assert output["persona_model"] == PERSONA_DEFAULT_MODEL_ID
         core.agent_runtime.cancel_task(task.task_id)
 
-    def test_core_routes_approves_and_completes_a_mutating_tool_workflow(self) -> None:
+    def test_core_routes_approves_and_completes_a_mutating_tool_workflow(
+        self, request: pytest.FixtureRequest
+    ) -> None:
         """Route an explicit request through the core, pause, approve, and complete."""
-        core = self._make_core()
+        core = self._make_core(
+            request,
+        )
         executions: list[ToolCall] = []
         event_names: list[str] = []
 
@@ -452,6 +662,8 @@ class TestAgentCoreIntegration(CeluneTestCase):
         core._agent_router = AgentInputRouter(core, runtime)
         core.vision = _RoutingFixture(
             '{"classification":"task","route":"task","confidence":0.98}',
+            "I hear you.",
+            "May I delete the fixture item?",
             '{"classification":"task","route":"approval_response",'
             '"confidence":0.99,"approval_decision":"approved"}',
         )
@@ -464,8 +676,11 @@ class TestAgentCoreIntegration(CeluneTestCase):
 
         with mock.patch(
             "celune.core.agent.deliver_persona_response", return_value=True
-        ):
+        ) as deliver_response:
             core.run_agent_route(route)
+        approval_speech = deliver_response.call_args.args[2]
+        assert "approve" in approval_speech.casefold()
+        assert "deny" in approval_speech.casefold()
         task = runtime.get_active_task("default")
         assert task is not None
         assert task.state == AgentTaskState.AWAITING_APPROVAL
@@ -475,7 +690,7 @@ class TestAgentCoreIntegration(CeluneTestCase):
         assert approval is not None
 
         approval_route = core.route_input(
-            "That is approved; continue.", persona_ready=True
+            "That is approved. Continue.", persona_ready=True
         )
         assert approval_route.route.value == "approval_response"
         with mock.patch(
@@ -492,15 +707,27 @@ class TestAgentCoreIntegration(CeluneTestCase):
         assert event_names.count("finished") == 1
         assert event_names.index("approval") < event_names.index("finished")
 
-    def test_core_owns_production_path_from_persona_to_speech(self) -> None:
+    def test_core_owns_production_path_from_persona_to_speech(
+        self, request: pytest.FixtureRequest
+    ) -> None:
         """Run one safe task through core-owned Persona, Needle, and speech paths."""
         cuda_patch = mock.patch(
             "celune.vram.torch.cuda.is_available", return_value=False
         )
         cuda_patch.start()
-        self.addCleanup(cuda_patch.stop)
+        request.addfinalizer(cuda_patch.stop)
         selector = _NeedleFixture()
         persona = _PersonaFixture()
+        persona.responses = [
+            _PersonaResponse(
+                '{"classification":"task","route":"task",'
+                '"confidence":0.98,"task_request":"Check the current agent status."}'
+            ),
+            _PersonaResponse("I'm checking that now."),
+            _PersonaResponse("I hear you."),
+            _PersonaResponse("Read the current agent status."),
+            _PersonaResponse("The agent task completed successfully."),
+        ]
         with (
             mock.patch("celune.core.lifecycle.AudioRGBGlow", FakeGlow),
             mock.patch("celune.core.lifecycle.default_loader", return_value=None),
@@ -513,7 +740,7 @@ class TestAgentCoreIntegration(CeluneTestCase):
                 tts_backend=FakeBackend,
                 agent_tool_selector=selector,
             )
-        self.addCleanup(core.close)
+        request.addfinalizer(core.close)
         speech_mock = mock.Mock(return_value=True)
         speech_patches = (
             mock.patch("celune.core.conversation.queue_speech", new=speech_mock),
@@ -525,9 +752,15 @@ class TestAgentCoreIntegration(CeluneTestCase):
         )
         for speech_patch in speech_patches:
             speech_patch.start()
-            self.addCleanup(speech_patch.stop)
+            request.addfinalizer(speech_patch.stop)
         delivery_mock = delivery.start()
-        self.addCleanup(delivery.stop)
+        request.addfinalizer(delivery.stop)
+        playback_wait = mock.patch(
+            "celune.core.agent.wait_for_persona_playback",
+            return_value=True,
+        )
+        playback_wait_mock = playback_wait.start()
+        request.addfinalizer(playback_wait.stop)
         core.vision = cast(PersonaClient, persona)
 
         assert core.agent_runtime._planner is not None
@@ -550,12 +783,12 @@ class TestAgentCoreIntegration(CeluneTestCase):
         original_run = core.agent_runtime.run
 
         def record_run(
-            request: AgentRequest,
+            req: AgentRequest,
             *,
             callback: Optional[AgentResponseCallback] = None,
         ) -> AgentOutput:
             """Capture the runtime output while preserving the real call."""
-            output = original_run(request, callback=callback)
+            output = original_run(req, callback=callback)
             outputs.append(output)
             return output
 
@@ -580,23 +813,29 @@ class TestAgentCoreIntegration(CeluneTestCase):
         assert task.state == AgentTaskState.COMPLETED
         assert task.iterations == 1
         assert selector.intents == ["Read the current agent status."]
-        assert len(persona.requests) == 3
-        second_system = persona.requests[2]["system"]
+        assert len(persona.requests) == 5
+        second_system = persona.requests[4]["system"]
         assert isinstance(second_system, str)
         assert "Last tool result" in second_system
         assert "succeeded" in second_system
         assert execute.call_count == 1
-        assert delivery_mock.call_count == 2
+        assert delivery_mock.call_count == 1
+        assert playback_wait_mock.call_count == 1
         assert speech_mock.call_count == 2
+        assert speech_mock.call_args_list[0].args[1] == "I hear you."
         assert (
             speech_mock.call_args.kwargs["display_text"]
             == "The agent task completed successfully."
         )
         assert core.agent_runtime.get_active_task("default") is None
 
-    def test_core_logs_one_typed_route_before_downstream_processing(self) -> None:
+    def test_core_logs_one_typed_route_before_downstream_processing(
+        self, request: pytest.FixtureRequest
+    ) -> None:
         """Expose semantic routing diagnostics only through the debug log gate."""
-        core = self._make_core()
+        core = self._make_core(
+            request,
+        )
         logs: list[str] = []
         core.log_level = "debug"
         core.log_callback = lambda message, *_args, **_kwargs: logs.append(message)
@@ -613,9 +852,13 @@ class TestAgentCoreIntegration(CeluneTestCase):
             == "[ROUTE] request=Check the current agent status. type=agent intent=inspect_status confidence=98%"
         )
 
-    def test_core_route_log_uses_say_for_classifier_fallback(self) -> None:
+    def test_core_route_log_uses_say_for_classifier_fallback(
+        self, request: pytest.FixtureRequest
+    ) -> None:
         """Mark an unavailable semantic route as a direct speech fallback."""
-        core = self._make_core()
+        core = self._make_core(
+            request,
+        )
         logs: list[str] = []
         core.log_level = "debug"
         core.log_callback = lambda message, *_args, **_kwargs: logs.append(message)
@@ -625,9 +868,13 @@ class TestAgentCoreIntegration(CeluneTestCase):
         assert route.failure is not None
         assert logs[-1] == "[ROUTE] request=Please handle this type=say"
 
-    def test_core_route_log_omits_agent_type_when_agent_mode_is_disabled(self) -> None:
+    def test_core_route_log_omits_agent_type_when_agent_mode_is_disabled(
+        self, request: pytest.FixtureRequest
+    ) -> None:
         """Keep disabled agent mode on the ordinary Persona route."""
-        core = self._make_core()
+        core = self._make_core(
+            request,
+        )
         logs: list[str] = []
         core.mode = "converse"
         core.log_level = "debug"
@@ -641,29 +888,55 @@ class TestAgentCoreIntegration(CeluneTestCase):
             == "[ROUTE] request=Check the current agent status. type=persona confidence=100%"
         )
 
-    def test_failed_agent_task_is_explained_by_active_persona(self) -> None:
+    def test_failed_agent_task_is_explained_by_active_persona(
+        self, request: pytest.FixtureRequest
+    ) -> None:
         """Use the active Persona voice for a no-tool-match terminal failure."""
-        core = self._make_core(agent_tool_selector=lambda _context, _output: None)
+        core = self._make_core(
+            request, agent_tool_selector=lambda _context, _output: None
+        )
         persona = _PersonaFixture()
         persona.responses = [
             _PersonaResponse(
                 '{"classification":"task","route":"task",'
                 '"confidence":0.98,"task_request":"Inspect the unavailable thing."}'
             ),
+            _PersonaResponse("I hear you."),
             _PersonaResponse("Inspect the unavailable thing."),
             _PersonaResponse("I could not find a suitable way to do that just now."),
         ]
         core.vision = cast(PersonaClient, persona)
         delivered: list[str] = []
+        delivery_order: list[str] = []
 
-        def record_delivery(_engine: Celune, _request: str, response: str) -> bool:
+        def record_delivery(
+            _engine: Celune,
+            _request: str,
+            response: str,
+            maintain_status: bool = False,
+        ) -> bool:
             """Capture the character-generated terminal response."""
+            discard(maintain_status)
             delivered.append(response)
+            delivery_order.append("delivered")
+            return True
+
+        def wait_for_playback(_engine: Celune) -> bool:
+            """Record the serialization barrier before terminal speech."""
+            delivery_order.append("waited")
             return True
 
         route = core.route_input("Inspect the unavailable thing.", persona_ready=True)
-        with mock.patch(
-            "celune.core.agent.deliver_persona_response", side_effect=record_delivery
+        with (
+            mock.patch(
+                "celune.core.agent.deliver_persona_response",
+                side_effect=record_delivery,
+            ),
+            mock.patch(
+                "celune.core.agent.wait_for_persona_playback",
+                side_effect=wait_for_playback,
+            ),
+            mock.patch.object(core, "say", side_effect=RuntimeError("queue failed")),
         ):
             assert core.run_agent_route(route)
 
@@ -678,56 +951,43 @@ class TestAgentCoreIntegration(CeluneTestCase):
         assert delivered[-1:] == [
             "I could not find a suitable way to do that just now."
         ]
+        assert delivery_order[-2:] == ["waited", "delivered"]
         failure_prompt = persona.requests[-1]["system"]
         assert isinstance(failure_prompt, str)
         assert "Failure response instruction" in failure_prompt
         assert "no_available_tools" in failure_prompt
+        assert "do not offer additional help" in failure_prompt
+        assert "claim that Celune will do more" in failure_prompt
 
-    def test_classification_failure_is_explained_by_active_persona(self) -> None:
-        """Use the active Persona voice when intent classification fails."""
-        core = self._make_core()
-        persona = _PersonaFixture()
-        persona.responses = [
-            _PersonaResponse("I cannot confidently route that request yet."),
-        ]
-        core.vision = cast(PersonaClient, persona)
-        failure = AgentClassificationFailure(
-            AgentClassificationFailureKind.MALFORMED_OUTPUT,
-            "classifier returned malformed output",
+    def test_classification_failure_speaks_original_input_without_persona(
+        self,
+        request: pytest.FixtureRequest,
+    ) -> None:
+        """Send the original text to direct speech without another Persona request."""
+        core = self._make_core(
+            request,
         )
-        route = AgentClassificationResult(
-            classification=AgentInputClassification.CONVERSATION,
-            confidence=0.0,
-            reason="classifier_failure",
-            route=AgentRoute.CONVERSATION,
-            failure=failure,
-        )
-        delivered: list[str] = []
-        with mock.patch(
-            "celune.core.agent.deliver_persona_response",
-            side_effect=lambda _engine, _request, response: (
-                delivered.append(response) or True
-            ),
-        ):
-            assert core_agent.speak_agent_classification_failure(
+        core.vision = mock.Mock()
+        with mock.patch.object(core, "say", return_value=True) as say:
+            assert core_agent.say_agent_classification_fallback(
                 core,
                 "Please handle this ambiguous request.",
-                failure,
-                route,
             )
 
-        assert delivered == ["I cannot confidently route that request yet."]
-        failure_prompt = persona.requests[-1]["system"]
-        assert isinstance(failure_prompt, str)
-        assert "Classification failure" in failure_prompt
-        assert "malformed_output" in failure_prompt
-        assert persona.requests[-1]["context_space"] == 8192
+        say.assert_called_once_with(
+            "Please handle this ambiguous request.",
+            maintain_status=True,
+        )
+        core.vision.post.assert_not_called()
 
     def test_typed_permission_approval_tool_and_cancel_failures_use_persona(
         self,
+        request: pytest.FixtureRequest,
     ) -> None:
         """Use character-generated explanations for common terminal outcomes."""
-        core = self._make_core()
+        core = self._make_core(
+            request,
+        )
         persona = _PersonaFixture()
         responses = {
             "permission": "I could not do that because it is not permitted.",
@@ -741,13 +1001,26 @@ class TestAgentCoreIntegration(CeluneTestCase):
         core.vision = cast(PersonaClient, persona)
         delivered: list[str] = []
 
-        def record_delivery(_engine: Celune, _request: str, response: str) -> bool:
+        def record_delivery(
+            _engine: Celune,
+            _request: str,
+            response: str,
+            maintain_status: bool = False,
+        ) -> bool:
             """Capture one character-generated terminal response."""
+            discard(maintain_status)
             delivered.append(response)
             return True
 
-        with mock.patch(
-            "celune.core.agent.deliver_persona_response", side_effect=record_delivery
+        playback_wait = mock.patch(
+            "celune.core.agent.wait_for_persona_playback", return_value=True
+        )
+        with (
+            mock.patch(
+                "celune.core.agent.deliver_persona_response",
+                side_effect=record_delivery,
+            ),
+            playback_wait as wait_for_playback,
         ):
             for label, reason in (
                 ("permission", AgentFailureReason.PERMISSION_DENIED),
@@ -795,15 +1068,20 @@ class TestAgentCoreIntegration(CeluneTestCase):
             assert core.run_agent_route(route)
 
         assert list(responses.values()) == delivered
-        for request, label in zip(persona.requests, responses):
-            prompt = request["system"]
+        assert wait_for_playback.call_count == len(responses)
+        for persona_request, label in zip(persona.requests, responses):
+            prompt = persona_request["system"]
             assert isinstance(prompt, str)
             assert "Failure response instruction" in prompt
             assert label in prompt
 
-    def test_terminal_speak_tool_is_the_task_result(self) -> None:
+    def test_terminal_speak_tool_is_the_task_result(
+        self, request: pytest.FixtureRequest
+    ) -> None:
         """Run the real registered speak tool without a duplicate final response."""
-        core = self._make_core()
+        core = self._make_core(
+            request,
+        )
         selector = NeedleToolSelector(
             cast(NeedleHandler, _SpeakNeedleHandler()),
             core._agent_tools,
@@ -821,11 +1099,23 @@ class TestAgentCoreIntegration(CeluneTestCase):
             "celune.core.agent.deliver_persona_response",
             wraps=celune_deliver_persona_response,
         )
+        playback_wait = mock.patch(
+            "celune.core.conversation.wait_for_persona_playback",
+        )
+        playback_wait_mock = playback_wait.start()
+
+        def finish_playback(*_args: object, **_kwargs: object) -> bool:
+            """Model playback completing after a speak tool queues its audio."""
+            core.playback_done.set()
+            return True
+
+        playback_wait_mock.side_effect = finish_playback
+        request.addfinalizer(playback_wait.stop)
         for speech_patch in speech_patches:
             speech_patch.start()
-            self.addCleanup(speech_patch.stop)
+            request.addfinalizer(speech_patch.stop)
         delivery_mock = delivery.start()
-        self.addCleanup(delivery.stop)
+        request.addfinalizer(delivery.stop)
 
         route = core.route_input("Please say hello.", persona_ready=True)
         assert route.route.value == "task"
@@ -839,6 +1129,9 @@ class TestAgentCoreIntegration(CeluneTestCase):
 
         approval_route = core.route_input("Approved.", persona_ready=True)
         assert approval_route.route.value == "approval_response"
+        core.playback_done.clear()
+        core.cur_state = "speaking"
+        core.locked = False
         assert core.run_agent_route(approval_route)
 
         assert task.state == AgentTaskState.COMPLETED
@@ -851,20 +1144,34 @@ class TestAgentCoreIntegration(CeluneTestCase):
         assert result["status"] == AgentToolExecutionStatus.SUCCEEDED
         assert result["end_task"] is True
         assert delivery_mock.call_count == 1
-        assert speech_mock.call_count == 2
-        assert [call.args[1] for call in speech_mock.call_args_list] == [
-            "I will say hello.",
-            "hello",
-        ]
-        assert len(persona.requests) == 3
+        assert delivery_mock.call_args.args[2] == (
+            "May I speak the line 'hello' now? "
+            'Say "approve" to proceed or "deny" to reject.'
+        )
+        assert core.cur_state == "idle"
+        assert playback_wait_mock.call_count == 1
+        assert playback_wait_mock.call_args.args == (core,)
+        assert speech_mock.call_count == 3
+        assert speech_mock.call_args_list[-2].args[1] == (
+            "May I speak the line 'hello' now? "
+            'Say "approve" to proceed or "deny" to reject.'
+        )
+        assert speech_mock.call_args_list[-1].args[1] == "hello"
+        assert speech_mock.call_args_list[0].args[1] != "I will say hello."
+        assert len(persona.requests) == 4
 
-    def test_needle_loading_failure_is_recorded_and_task_fails_safely(self) -> None:
+    def test_needle_loading_failure_is_recorded_and_task_fails_safely(
+        self, request: pytest.FixtureRequest
+    ) -> None:
         """Expose a typed terminal failure when production Needle cannot load."""
         with (
             mock.patch("celune.core.lifecycle.AudioRGBGlow", FakeGlow),
             mock.patch("celune.core.lifecycle.default_loader", return_value=None),
             mock.patch(
                 "celune.core.lifecycle.persona_is_available", return_value=False
+            ),
+            mock.patch(
+                "celune.core.agent.wait_for_persona_playback", return_value=True
             ),
             mock.patch("celune.core.conversation.queue_speech", return_value=True),
             mock.patch("celune.vram.torch.cuda.is_available", return_value=False),
@@ -877,9 +1184,10 @@ class TestAgentCoreIntegration(CeluneTestCase):
                 config={"mode": "agent", "vram": "xhigh"},
                 tts_backend=FakeBackend,
             )
-            self.addCleanup(core.close)
+            request.addfinalizer(core.close)
             core.vision = _RoutingFixture(
                 '{"classification":"task","route":"task","confidence":0.98}',
+                "I hear you.",
                 "Check the current agent status.",
             )
             route = core.route_input(

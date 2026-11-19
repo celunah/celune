@@ -4,6 +4,7 @@
 import os
 import time
 import contextlib
+from pathlib import Path
 from types import MethodType
 from typing import Union, Optional, Protocol, cast
 from collections.abc import Mapping, Callable, Iterator, Generator
@@ -15,23 +16,31 @@ from transformers import AutoTokenizer
 from huggingface_hub import snapshot_download
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 
+from . import get_version
+from ...i18n import string
+from ...constants import BASE_SR
+from ...typing.backends import BackendArgumentValue
+from ...cevoice import CEVoiceLoader, default_loader
+from ...typing.aliases import AudioChunk, AudioChunks
+from ...registry.consent import require_model_consent
+from ...utils import discard, available, custom_assert
+from ...registry.audio_cpp import audio_cpp_model_artifact
+from ...registry.tts import TTS_DEFAULT_VOICE, VOXCPM2_VOICE_MODELS
+from ...paths import huggingface_progress, huggingface_hub_cache_dir
+from ...modeling import QuantizedKVCacheMode, quantized_kv_cache_mode
 from .base import (
     CeluneBackend,
     local_hf_offline_mode,
     cached_hf_snapshot_path,
+)
+from .base import (
     to_numpy_audio as normalize_streamed_audio,
 )
-from . import get_version
-from ...i18n import string
-from ...constants import BASE_SR
-from ...utils import available, custom_assert
-from ...cevoice import CEVoiceLoader, default_loader
-from ...registry.consent import require_model_consent
-from ...typing.aliases import AudioChunk, AudioChunks
-from ...registry.tts import TTS_DEFAULT_VOICE, VOXCPM2_VOICE_MODELS
-from ...paths import huggingface_progress, huggingface_hub_cache_dir
-from ...modeling import QuantizedKVCacheMode, quantized_kv_cache_mode
-
+from .audio_cpp import (
+    AudioCppRuntime,
+    ensure_audio_cpp_server,
+    load_audio_cpp_tts_model,
+)
 
 _VOXCPM_RUNTIME_KV_CACHE_LENGTH = 2048
 
@@ -325,7 +334,7 @@ def _voxcpm_quantized_forward_step(
     rotary: Callable[..., tuple[torch.Tensor, torch.Tensor]],
 ) -> torch.Tensor:
     """Run one VoxCPM attention step against quantized prefix storage."""
-    del position_id
+    discard(position_id)
     batch_size = hidden_states.size(0)
     query_states = attention.q_proj(hidden_states)
     key_states = attention.k_proj(hidden_states)
@@ -516,10 +525,11 @@ class _VoxCPMTextTokenizer:
         ]
 
 
-class VoxCPM2(CeluneBackend[VoxCPM]):
+class VoxCPM2(CeluneBackend[Union[VoxCPM, AudioCppRuntime]]):
     """Celune VoxCPM2 backend."""
 
     name: str = "voxcpm2"
+    supports_audio_cpp = True
     uses_voice_bundles: bool = True
     chunk_rate: float = 6.25
     max_new_tokens: int = 512
@@ -597,6 +607,27 @@ class VoxCPM2(CeluneBackend[VoxCPM]):
         loader, voice_names = compatible_bundle
         for name in voice_names:
             loader.materialize(name, "wav")
+
+    def preload_models(self) -> None:
+        """Prepare audio.cpp when selected, or preload native VoxCPM2 weights."""
+        if self.effective_inference_mode != "audio_cpp":
+            super().preload_models()
+            return
+
+        for model_id in self.all_model_ids:
+            require_model_consent(model_id)
+        try:
+            if not torch.cuda.is_available():
+                raise RuntimeError("audio.cpp requires an available CUDA device")
+            ensure_audio_cpp_server(
+                report_progress=self.report_progress,
+                log=self.log,
+                backend_name=self.name,
+            )
+        except Exception as error:
+            self.fallback_audio_cpp_to_native(error)
+        if self.effective_inference_mode == "native":
+            super().preload_models()
 
     @property
     def voices(self) -> list[str]:
@@ -688,7 +719,7 @@ class VoxCPM2(CeluneBackend[VoxCPM]):
             ],
         )
 
-    def load_model(self, model_id: str, **kwargs) -> VoxCPM:
+    def load_model(self, model_id: str, **kwargs) -> Union[VoxCPM, AudioCppRuntime]:
         """Load the given voice model.
 
         Args:
@@ -696,11 +727,58 @@ class VoxCPM2(CeluneBackend[VoxCPM]):
             kwargs: Additional keyword arguments to use while loading VoxCPM2.
 
         Returns:
-            VoxCPM: The loaded VoxCPM2 model instance.
+            Union[VoxCPM, AudioCppRuntime]: The loaded native or GGUF model.
         """
         metadata = require_model_consent(model_id)
-        available, path = self.model_is_available_locally(model_id)
-        if not available or path is None:
+        load_denoiser = kwargs.get("load_denoiser", False)
+        if not isinstance(load_denoiser, bool):
+            raise TypeError("load_denoiser must be a boolean")
+        optimize = bool(kwargs.get("optimize", False))
+
+        if self.effective_inference_mode == "audio_cpp":
+            artifact = audio_cpp_model_artifact(
+                self.name,
+                model_id,
+                quantize=self.quantization_requested,
+            )
+            if artifact is None:
+                self.fallback_audio_cpp_to_native(
+                    RuntimeError(
+                        f"audio.cpp has no verified VoxCPM2 package for '{model_id}'"
+                    )
+                )
+            elif load_denoiser or optimize:
+                self.fallback_audio_cpp_to_native(
+                    RuntimeError(
+                        "audio.cpp cannot honor the configured VoxCPM2 load options"
+                    )
+                )
+            else:
+                try:
+                    if not torch.cuda.is_available():
+                        raise RuntimeError(
+                            "audio.cpp requires an available CUDA device"
+                        )
+                    runtime = load_audio_cpp_tts_model(
+                        artifact,
+                        backend_id=self.name,
+                        sample_rate=BASE_SR,
+                        torch_root=Path(torch.__file__).resolve().parent,
+                        device=torch.cuda.current_device(),
+                        log=self.log,
+                        report_progress=self.report_progress,
+                        default_request_options={"retry_badcase": False},
+                    )
+                except Exception as error:
+                    self.fallback_audio_cpp_to_native(error)
+                else:
+                    self.quantization_attempted = self.quantization_requested
+                    self.quantization_active = artifact.quantization == "Q8_0"
+                    self.model = runtime
+                    return runtime
+
+        is_available, path = self.model_is_available_locally(model_id)
+        if not is_available or path is None:
             self.log(string("tts.model_download_start"), "info")
             with huggingface_progress(self.report_progress):
                 path = snapshot_download(
@@ -709,14 +787,7 @@ class VoxCPM2(CeluneBackend[VoxCPM]):
                     cache_dir=str(huggingface_hub_cache_dir(create=True)),
                 )
         quantize_on_cpu = getattr(self, "quantization_mode", None) is not None
-        optimize = bool(kwargs.get("optimize", False))
         load_optimize = optimize and not quantize_on_cpu
-        load_kwargs: dict[str, Union[bool, str]] = {
-            "load_denoiser": kwargs.get("load_denoiser", False),
-            "optimize": load_optimize,
-        }
-        if quantize_on_cpu:
-            load_kwargs["device"] = "cpu"
 
         # NOTE:
         # this may cause errors in internal ops when switching backends
@@ -740,26 +811,40 @@ class VoxCPM2(CeluneBackend[VoxCPM]):
             huggingface_progress(self.report_progress),
             self._suppress_backend_output(),
         ):
-            self.model = VoxCPM.from_pretrained(
-                path,
-                **load_kwargs,
-            )
-            self._install_checkpoint_tokenizer(self.model, path)
-        self._resize_runtime_caches(self.model)
-        self.model = self.apply_runtime_quantization(self.model, model_id)
+            if quantize_on_cpu:
+                native_model = VoxCPM.from_pretrained(
+                    path,
+                    load_denoiser=load_denoiser,
+                    optimize=load_optimize,
+                    device="cpu",
+                )
+            else:
+                native_model = VoxCPM.from_pretrained(
+                    path,
+                    load_denoiser=load_denoiser,
+                    optimize=load_optimize,
+                )
+            self.model = native_model
+            self._install_checkpoint_tokenizer(native_model, path)
+        self._resize_runtime_caches(native_model)
+        native_model = cast(
+            VoxCPM,
+            self.apply_runtime_quantization(native_model, model_id),
+        )
+        self.model = native_model
         if quantize_on_cpu:
-            self._move_quantized_runtime_to_cuda(self.model)
+            self._move_quantized_runtime_to_cuda(native_model)
             if optimize:
-                self.model.tts_model.optimize()
-                self.model.tts_model.generate(
+                native_model.tts_model.optimize()
+                native_model.tts_model.generate(
                     target_text="Hello, this is the first test sentence.",
                     max_len=10,
                 )
         install_voxcpm_quantized_cache(
-            cast(VoxCPMModel, self.model),
+            cast(VoxCPMModel, native_model),
             self.quantize_kv_cache,
         )
-        return self.model
+        return native_model
 
     @staticmethod
     def _runtime_cache_length(max_length: int) -> int:
@@ -809,12 +894,12 @@ class VoxCPM2(CeluneBackend[VoxCPM]):
             )
 
     def generate_stream(
-        self, model: VoxCPM, **kwargs
+        self, model: Union[VoxCPM, AudioCppRuntime], **kwargs
     ) -> Iterator[tuple[AudioChunk, int, Optional[dict]]]:
         """Generate Celune compatible audio chunks.
 
         Args:
-            model: The loaded VoxCPM model instance.
+            model: The loaded native or audio.cpp VoxCPM2 model.
             kwargs: Streaming generation arguments passed to the backend.
 
         Returns:
@@ -825,6 +910,10 @@ class VoxCPM2(CeluneBackend[VoxCPM]):
             ValueError: The requested voice is unknown or input text is empty.
             NotImplementedError: If streaming support is unavailable.
         """
+        if isinstance(model, AudioCppRuntime):
+            yield from self._generate_audio_cpp_stream(model, kwargs)
+            return
+
         voice = kwargs.pop("voice", self.default_voice)
         instruct = kwargs.pop("instruct", None)
         kwargs.pop("language", None)
@@ -982,3 +1071,74 @@ class VoxCPM2(CeluneBackend[VoxCPM]):
             if stream is not None and available("close", obj=stream):
                 with contextlib.suppress(Exception):
                     stream.close()
+
+    def _generate_audio_cpp_stream(
+        self,
+        model: AudioCppRuntime,
+        kwargs: dict[str, BackendArgumentValue],
+    ) -> Iterator[tuple[AudioChunk, int, Optional[dict]]]:
+        """Stream VoxCPM2 GGUF audio using Celune's voice reference and controls."""
+        voice_value = kwargs.pop("voice", self.default_voice)
+        voice = (
+            voice_value
+            if isinstance(voice_value, str)
+            else self.default_voice or TTS_DEFAULT_VOICE
+        )
+        instruct = kwargs.pop("instruct", None)
+        kwargs.pop("language", None)
+        kwargs.pop("chunk_size", None)
+        for option in ("temperature", "top_k", "top_p", "repetition_penalty"):
+            kwargs.pop(option, None)
+        kwargs.pop("max_new_tokens", None)
+        kwargs.pop("seed", None)
+        text_value = kwargs.pop("text", None)
+        if not isinstance(text_value, str) or not text_value.strip():
+            raise ValueError("expected text to say")
+
+        compatible_bundle = self._require_compatible_bundle()
+        if compatible_bundle is None:
+            return
+        loader, _ = compatible_bundle
+        try:
+            reference_path = self._truncate_reference(loader.materialize(voice, "wav"))
+            voice_metadata = loader.bundle.voices[voice]
+            configured_cfg = voice_metadata.get("cfg_scale")
+            configured_ref_text = voice_metadata.get("reference_text")
+        except KeyError as error:
+            raise ValueError(
+                f"unknown voice '{voice}' for backend '{self.name}'"
+            ) from error
+        cfg = (
+            float(configured_cfg)
+            if isinstance(configured_cfg, (int, float))
+            and not isinstance(configured_cfg, bool)
+            else self.voice_cfg.get(
+                voice, self.voice_cfg[self.default_voice or "balanced"]
+            )
+        )
+        reference_text = (
+            configured_ref_text.strip() if isinstance(configured_ref_text, str) else ""
+        )
+        if instruct:
+            text_value = f"({instruct}) {text_value}"
+
+        self._apply_seed()
+        options: dict[str, object] = {
+            "retry_badcase": False,
+            "guidance_scale": cfg,
+            "num_inference_steps": 4,
+            "max_tokens": self.max_new_tokens,
+        }
+        if self.current_seed is not None:
+            options["seed"] = self.current_seed
+        request_body: dict[str, object] = {
+            "model": model.server_model_id,
+            "input": text_value,
+            "voice_ref": reference_path.resolve().as_posix(),
+            "response_format": "pcm",
+            "stream_format": "sse",
+            "options": options,
+        }
+        if reference_text:
+            request_body["reference_text"] = reference_text
+        yield from model.stream_speech(request_body, default_sample_rate=BASE_SR)

@@ -5,22 +5,21 @@ import io
 import sys
 import contextlib
 import subprocess
-from types import SimpleNamespace
-from typing import Optional
-from pathlib import Path, PureWindowsPath
 from unittest import mock
+from typing import Optional
+from types import SimpleNamespace
+from pathlib import Path, PureWindowsPath
+
 
 import pytest
 
 import main
 from tests.platform import LINUX_ONLY, WINDOWS_ONLY
 
-from .support import CeluneTestCase
-
 entrypoint = main.load_entrypoint_module()
 
 
-class TestDoctorCommand(CeluneTestCase):
+class TestDoctorCommand:
     """Verify `celune doctor` works without booting the full app."""
 
     def test_missing_dependency_help_identifies_launch_environment(self) -> None:
@@ -327,7 +326,7 @@ class TestDoctorCommand(CeluneTestCase):
             exit_code = entrypoint.run_doctor(["celune", "doctor", "--mystery"])
 
         assert exit_code == entrypoint.EXIT_CODES.EXIT_UNKNOWN_ARGS.value
-        assert "Usage: celune doctor [--fix]" in stdout.getvalue()
+        assert "usage: celune doctor [--fix]" in stdout.getvalue()
 
     def test_run_doctor_returns_failure_when_required_checks_fail(self) -> None:
         """Verify failed doctor checks propagate a failing exit status."""

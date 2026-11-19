@@ -2,14 +2,15 @@
 """Shared runtime helpers for Celune voice conversion."""
 
 from __future__ import annotations
+
 import math
 import shutil
 import tempfile
 import importlib
 import threading
 import contextlib
-import queue as queue_module
 from pathlib import Path
+import queue as queue_module
 from dataclasses import dataclass
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Literal, Optional, cast
@@ -217,7 +218,7 @@ def vc_live_chunk_overlap_frames(sample_rate: int) -> int:
 
     Returns:
         int: Zero when no overlap is configured because Seed-VC's native live path
-            owns crossfade alignment; otherwise the configured overlap in frames.
+            owns crossfade alignment. Otherwise, this returns the configured overlap in frames.
     """
     if VC_LIVE_CHUNK_OVERLAP_SECONDS <= 0:
         return 0

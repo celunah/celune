@@ -48,7 +48,7 @@ test failure hint
 ```
 
 When ANSI markup is unavailable, verbose mode omits the processing `?` line and
-emits each final result directly as a plain line terminated by `\n`; it does not
+emits each final result directly as a plain line terminated by `\n`. It does not
 use carriage-return replacement.
 
 `F` marks assertion-style failures, while `E` marks execution, setup, teardown,
@@ -72,7 +72,7 @@ details are emitted without color. ANSI-capable verbose terminals use a raw
 carriage return and fixed-width padding for processing lines, including
 controller output from parallel runs. Non-ANSI verbose output emits only final
 results as plain newline-terminated lines.
-Assertion-style failures are marked `F`; execution, setup, teardown, collection,
+Assertion-style failures are marked `F`. Execution, setup, teardown, collection,
 and other errors are marked `E`, including when a failed test also produces
 warnings. Skipped tests are omitted from the final list, count, and summary.
 Fallback descriptions preserve common Celune acronyms such as `UI`, `TTS`, and
@@ -81,7 +81,7 @@ Collection and other fatal errors use a separate failure block with module names
 and a concise hint. Configured skips appear as blue `S` markers in the
 non-verbose status row, while tests prevented from starting use `N` and are
 reported as `N not run N`. The `test collection failed` block is reserved for
-actual collection failures; interruptions use `interrupted`.
+actual collection failures. Interruptions use `interrupted`.
 
 Decorate tests with a friendly description, and optionally provide a stable
 failure explanation:
@@ -105,7 +105,7 @@ The decorator stores metadata without wrapping the test callable and preserves
 the supplied description exactly, including its capitalization and punctuation.
 Existing tests without metadata use their first non-empty docstring line as the
 friendly description after lowercasing its sentence opener and removing one
-terminal period; names and acronyms elsewhere in that line are preserved.
+terminal period. Names and acronyms elsewhere in that line are preserved.
 
 ## Run the suite
 
@@ -127,15 +127,44 @@ uv run poe test_basic
 The basic task runs the complete `tests/` collection without xdist. Both
 tasks return pytest's exit status and include all selected tests.
 
-GitHub Actions runs `uv run poe test_basic` in the Python checks job. Its
-job-level timeout includes checkout, system packages, dependency installation,
-linting, type checking, and tests. The job allows 30 minutes so a cold uv
-cache, including the CUDA-enabled PyTorch packages, does not cancel the tests
-before they start. Subsequent runs should reuse the uv cache and complete much
-faster.
+## Run end-to-end workflows
+
+The `e2e` marker selects deterministic user-facing smoke tests across Celune's
+HTTP API, mounted Gradio event graph, and Textual startup/shutdown path. These
+tests use fixture audio and fake runtime responses, so they do not download
+models or require a GPU or physical audio device. The normal development and CI
+tasks include them.
+
+Run only the marked workflows with:
+
+```bash
+uv run poe test_e2e
+```
+
+Celtest reports their pass, failure, warning, and skip outcomes like other
+pytest items. Their `E2E:` descriptions identify them in verbose output. The
+marker also supports ordinary pytest selection with `-m e2e`.
+
+GitHub Actions prepares a `Core engine` row and one row for every backend in
+`BACKEND_MANIFESTS`. The core row runs the complete serial suite with
+`uv run poe test_basic`, linting, type checking, and the import smoke check.
+Each backend row provisions that backend's declared CEDTS dependencies and runs
+Ruff, Pylint error checks, Pyrefly, and docstring coverage against its adapter
+source using the manifest's Python version. Pylint's `no-member` and
+`not-callable` diagnostics are disabled for adapters because it cannot resolve
+some Torch callables or source-only classes. Pyrefly checks their types, while
+Ruff checks style and syntax. The core row also checks shared backend support
+modules, which are excluded from the general Pylint and Pyrefly runs. Backend
+rows perform static analysis only: they do not import or start an adapter, load
+model weights, or run inference.
+
+The core row allows 30 minutes for checkout, system packages, dependency
+installation, linting, type checking, and tests. Backend rows allow 60 minutes
+for a cold CEDTS dependency environment and static analysis. At most two matrix
+rows run concurrently to limit pressure from the CUDA-enabled PyTorch packages.
 
 Platform-specific tests use the shared `tests.platform` skip markers. Linux-only
-tests are skipped on Windows, and Windows-only tests are skipped on Linux;
+tests are skipped on Windows, and Windows-only tests are skipped on Linux.
 Celtest reports those configured skips with `S`. Tests that only model another
 platform's branch with mocks remain portable and run on both systems.
 
@@ -148,14 +177,14 @@ to a fixed user directory.
 
 Tests should follow these rules:
 
-- use pytest's `tmp_path` or `tempfile` for generated files;
-- mock audio devices, GPU queries, network ports, and external subprocesses;
+- use pytest's `tmp_path` or `tempfile` for generated files.
+- mock audio devices, GPU queries, network ports, and external subprocesses.
 - restore environment variables, singleton guards, background threads, and
-  process handles during teardown;
+  process handles during teardown.
 - bound asynchronous synchronization waits so a broken test fails instead of
-  waiting indefinitely;
+  waiting indefinitely.
 - pass fake TTS and voice-conversion backends, or patch backend resolution, in
-  orchestration tests so named backends cannot provision model environments;
+  orchestration tests so named backends cannot provision model environments.
 - keep tests within one module when they intentionally share class or module
   fixtures, because `--dist loadfile` does not split a module across workers.
 
@@ -184,7 +213,7 @@ change and in CI.
 The plugin retains setup, call, and teardown failures and writes pytest's
 original failure representation immediately after the failed test's `F` or `E`
 line. It derives the final hint from pytest's assertion or exception message,
-without stack frames; a decorator `hint=` overrides that derived text.
+without stack frames. A decorator `hint=` overrides that derived text.
 
 Collection failures, fatal pytest errors, and interruptions retain pytest's
 non-zero exit status and are reported with a concise explanation instead of a

@@ -3,7 +3,7 @@
 CEDTS is Celune's private **C**elune **E**xtensible **D**ata **T**ransport
 **S**tandard for isolated backend workers and in-process frontend timed-update
 notifications. It is an implementation contract, not a public network API.
-The current protocol version is `(1, 2)`, written as `[1, 2]` in JSON. The
+The current protocol version is `(1, 3)`, written as `[1, 3]` in JSON. The
 pair is ordered as `(major, minor)`.
 
 The design keeps control frames and binary payloads separate, uses explicit
@@ -47,7 +47,7 @@ Control packets use these fields:
 
 | Field | Meaning |
 | --- | --- |
-| `cedts_version` | Two-element `[major, minor]` protocol version, currently `[1, 2]`. |
+| `cedts_version` | Two-element `[major, minor]` protocol version, currently `[1, 3]`. |
 | `kind` | Packet kind. |
 | `message_id` | Unique ID for a request/event. |
 | `reply_to` | Message ID being answered, when applicable. |
@@ -57,8 +57,24 @@ Control packets use these fields:
 
 The packet kinds are `hello`, `hello_ack`, `ready`, `request`, `response`,
 `event`, `callback`, `progress`, `cancel`, `cancel_ack`, `error`, `ping`,
-`pong`, `shutdown`, and `shutdown_ack`. The `event` kind supports the
-`ui_timed_update` operation for TUI-to-WebUI state synchronization.
+`pong`, `shutdown`, and `shutdown_ack`. The `event` kind supports `metadata`
+for worker-to-core model runtime reports and `ui_timed_update` for
+TUI-to-WebUI state synchronization.
+
+### Worker model metadata
+
+After a successful `load_model` request, a backend worker may send an `event`
+with operation `metadata` to the core. Its `data` object has exactly these
+fields:
+
+| Field | Meaning |
+| --- | --- |
+| `model` | Loaded model identifier. |
+| `type` | `native` or `gguf`, identifying the effective inference implementation. |
+| `quant` | `full` for BF16, `float` for FP16, `bnb_8bit` or `bnb_4bit` for Celune's native BitsAndBytes load, or the model's GGUF quantization type (for example, `Q4_K_M`). |
+
+The core validates these values, stores them on the remote backend proxy, and
+logs the effective model runtime.
 
 ### Frontend timed updates
 
@@ -86,17 +102,28 @@ not expose a second public socket or permit arbitrary frontend commands.
 
 ## Handshake
 
-The worker sends `hello` with `versions: [[1, 2]]`, its supported operations,
-supported media types, a `describe` result, and capability flags. The peer
-replies with `hello_ack` containing the selected `[1, 2]` version and the
-negotiated capability intersection. Limits are negotiated by taking the smaller
-peer limit. Current capability flags cover streaming, cancellation, and
-callbacks; the core callback capability is currently false. Version selection
-currently requires an exact major/minor pair match. Version 1.2 adds optional
-`source_start` and `source_end` integer fields to error response data. They are
-zero-based, half-open CESN source offsets and must appear together; other error
-responses may omit them. Since peers require an exact version match, a 1.1 peer
-cannot exchange packets with a 1.2 peer.
+The core sends `hello` with `versions: [[1, 3]]`, its supported operations,
+supported media types, a `describe` result, and capability flags. The worker
+replies with `hello_ack` containing the selected `[1, 3]` version and the
+negotiated capability intersection, then sends `ready` after backend setup.
+Limits are negotiated by taking the smaller peer limit. Current capability
+flags cover streaming, cancellation, and callbacks. The core callback
+capability is currently false. Version selection currently requires an exact
+major/minor pair match. Version 1.2 adds optional `source_start` and
+`source_end` integer fields to error response data. They are zero-based,
+half-open CESN source offsets and must appear together. Other error responses
+may omit them. Version 1.3 adds the worker-to-core `metadata` event. Since peers
+require an exact version match, peers on different minor versions cannot
+exchange packets.
+
+Before reading the initial hello, the worker waits up to ten seconds for the
+complete control packet and its empty binary boundary. If no control bytes
+arrive, it exits with `CEDTSStreamError: timed out waiting for handshake`. If
+bytes arrive but the packet, handshake, or binary boundary is invalid, it exits
+with `CEDTSStreamError: invalid client`. The worker writes these early errors to
+stderr, and the core proxy restores their `CEDTSStreamError` type when reporting
+the worker's exit. If either inherited binary channel descriptor is invalid,
+the worker exits with `CEDTSStreamError: not connected to Celune`.
 
 The supported operation names are:
 
@@ -124,8 +151,8 @@ and `uint8`. Typed values include `numpy_array`,
 Audio descriptors declare dtype, shape, sample rate, and channel count. Float
 audio must already be normalized to -1 through 1 and is peak-limited to 0.95
 when encoded. Signed 16-bit audio is converted to float32 using `/32768` when
-decoded. The application-level canonical format remains 48 kHz stereo float32;
-the descriptor's sample rate is authoritative at the worker boundary.
+decoded. The application-level canonical format remains 48 kHz stereo float32.
+The descriptor's sample rate is authoritative at the worker boundary.
 
 ## Limits
 
@@ -159,17 +186,17 @@ terminal response/event.
 `call` accepts only the methods registered by the worker. The
 `cesn_to_model` call requires a string `text` and accepts an optional
 `voice_bundle` string. Omitting `voice_bundle` or sending JSON `null` keeps the
-worker's currently selected bundle; a string selects that bundle before the
-backend converts the notation. CEDTS transports the bundle path; the CECHAR
+worker's currently selected bundle. A string selects that bundle before the
+backend converts the notation. CEDTS transports the bundle path. The CECHAR
 manifest remains in the file and is validated by the backend's CECHAR loader.
 
 Progress packets require a non-negative integer `step`. Their optional `total`
-is a non-negative integer when known; omission means the total is unknown.
+is a non-negative integer when known. Omission means the total is unknown.
 
 Worker stderr is retained for failure diagnostics, but CEDTS applies the same
 known-benign runtime-message suppression list used by Celune's local runtime
 log redirect. This keeps isolated workers from reintroducing filtered model,
-Transformers, tqdm, and Triton notices into the UI log; actionable worker
+Transformers, tqdm, and Triton notices into the UI log. Actionable worker
 messages remain visible and retained for error reporting. Known multiline
 diagnostics are suppressed as a block, including their unprefixed continuation
 lines. Backend output that is redirected from stdout is write-through and
@@ -189,7 +216,7 @@ unknown framing state.
 If a CEDTS stream reaches EOF or reports another transport, protocol, or
 payload failure, the proxy stores the typed error, wakes the active request
 waiter, and emits the failure through Celune's log callback immediately. The
-worker is then torn down; the caller does not wait for the operation's normal
+worker is then torn down. The caller does not wait for the operation's normal
 timeout boundary.
 
 Worker exceptions and JSON response-encoding failures are returned to the

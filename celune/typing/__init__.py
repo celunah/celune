@@ -5,12 +5,20 @@ from typing import TYPE_CHECKING
 from importlib import import_module
 
 if TYPE_CHECKING:
+    from .api import WEBUI_UNSET, WebUiUnset
+    from .modes import BackendMode, OperationMode
     from .ui import (
         CeluneBaseUI,
         CeluneTextualUI,
         CeluneHeadlessBaseUI,
     )
-    from .api import WEBUI_UNSET, WebUiUnset
+    from .lua import (
+        LuaTable,
+        LuaValue,
+        LuaScalar,
+        LuaGlobalValue,
+        LuaRuntimeProtocol,
+    )
     from .agent import (
         ToolCall,
         AgentTask,
@@ -76,7 +84,6 @@ if TYPE_CHECKING:
         ComponentLockAcquisition,
         ComponentLockRequirement,
     )
-    from .modes import BackendMode, OperationMode
     from .utils import (
         CallerInfo,
         LanguageResult,
@@ -89,6 +96,7 @@ if TYPE_CHECKING:
         SupportsUnload,
         CaptionCallback,
         MessageCallback,
+        ToastCallback,
         ProgressCallback,
         ReleasableObject,
         InputStateCallback,
@@ -256,6 +264,11 @@ _MODULE_EXPORTS = {
     "JSONDict": "persona",
     "JSONSerializable": "common",
     "LanguageResult": "utils",
+    "LuaGlobalValue": "lua",
+    "LuaRuntimeProtocol": "lua",
+    "LuaScalar": "lua",
+    "LuaTable": "lua",
+    "LuaValue": "lua",
     "LogCallable": "extensions",
     "Manifest": "cevoice",
     "ManifestValue": "cevoice",
@@ -303,6 +316,7 @@ _MODULE_EXPORTS = {
     "TextQueueItem": "pipeline",
     "TextContentItem": "persona",
     "ThinkCallable": "extensions",
+    "ToastCallback": "celune",
     "ToolCall": "agent",
     "ToolExecutionResult": "agent",
     "ToolResult": "agent",
@@ -417,6 +431,11 @@ __all__ = [
     "JSONSerializable",
     "LanguageResult",
     "LogCallable",
+    "LuaGlobalValue",
+    "LuaRuntimeProtocol",
+    "LuaScalar",
+    "LuaTable",
+    "LuaValue",
     "Manifest",
     "ManifestValue",
     "MessageCallback",
@@ -455,6 +474,7 @@ __all__ = [
     "TextContentItem",
     "TextQueueItem",
     "ThinkCallable",
+    "ToastCallback",
     "ToolCall",
     "ToolExecutionResult",
     "ToolResult",

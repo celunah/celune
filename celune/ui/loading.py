@@ -3,12 +3,13 @@
 
 from __future__ import annotations
 
+import contextlib
 from typing import Optional
 
-from textual.app import ComposeResult
 from textual.timer import Timer
 from textual.widget import Widget
 from textual.widgets import Static
+from textual.app import ComposeResult
 from textual.css.query import NoMatches
 from textual.containers import Center, Vertical, Horizontal
 
@@ -17,7 +18,7 @@ from ..constants import APP_NAME
 
 
 class CeluneLoadingScreen(Widget):
-    """Display startup progress as an in-place overlay widget."""
+    """Display startup progress as an overlay widget."""
 
     def __init__(self, *, widget_id: Optional[str] = None) -> None:
         super().__init__(id=widget_id)
@@ -117,10 +118,8 @@ class CeluneLoadingScreen(Widget):
             available: Whether the initialized core can report to the main UI.
         """
         self._reveal_available = available
-        try:
+        with contextlib.suppress(NoMatches):
             self.query_one("#loading-footer-quit", Static).update(self._quit_message())
-        except NoMatches:
-            pass
 
     def on_mount(self) -> None:
         """Start the loading spinner after the overlay is mounted."""
@@ -128,17 +127,18 @@ class CeluneLoadingScreen(Widget):
             self.query_one("#loading-spinner", Static).display = False
             self.query_one("#loading-help", Static).display = bool(self._help_message)
             return
-        self._spinner_timer = self.set_interval(0.26, self._advance_spinner)
+
+        # for some reason this spinner originally "spun" at a rate of 13 frames @ 50 FPS
+        # just shy off that zero and, and it would be so celine... never asked for her
+        self._spinner_timer = self.set_interval(5 / 60, self._advance_spinner)
 
     def _advance_spinner(self) -> None:
         """Advance the loading spinner by one frame."""
         self._spinner_index = (self._spinner_index + 1) % len(self._spinner_frames)
-        try:
+        with contextlib.suppress(NoMatches):
             self.query_one("#loading-spinner", Static).update(
                 self._spinner_frames[self._spinner_index]
             )
-        except NoMatches:
-            pass
 
     def set_latest_log_message(self, message: str) -> None:
         """Show the latest useful startup log message.
@@ -149,10 +149,8 @@ class CeluneLoadingScreen(Widget):
         if self._failed:
             return
         self._latest_log_message = message
-        try:
+        with contextlib.suppress(NoMatches):
             self.query_one("#loading-log-message", Static).update(message)
-        except NoMatches:
-            pass
 
     def set_startup_messages(self, messages: list[str]) -> None:
         """Show diagnostic startup messages that occurred before Textual mounted.
@@ -191,10 +189,8 @@ class CeluneLoadingScreen(Widget):
         if self._failed:
             return
         self._status_message = message
-        try:
+        with contextlib.suppress(NoMatches):
             self.query_one("#loading-state-label", Static).update(message)
-        except NoMatches:
-            pass
 
     def show_error(
         self,
@@ -210,6 +206,7 @@ class CeluneLoadingScreen(Widget):
             message: Initialization failure to show to the user.
             status_message: Optional replacement for the failure heading.
             footer_message: Optional status to show in the lower-left footer.
+            help_message: Optional actionable help to display below the error message.
         help_message: Optional recovery steps to show below the failure message.
         """
         self._failed = True
@@ -226,7 +223,7 @@ class CeluneLoadingScreen(Widget):
         )
         if self._spinner_timer is not None:
             self._spinner_timer.pause()
-        try:
+        with contextlib.suppress(NoMatches):
             self.query_one("#loading-state-label", Static).update(self._status_message)
             self.query_one("#loading-log-message", Static).update(message)
             self.query_one("#loading-wait", Static).update(self._wait_message)
@@ -237,5 +234,3 @@ class CeluneLoadingScreen(Widget):
             self.query_one("#loading-footer-starting", Static).update(
                 self._footer_message
             )
-        except NoMatches:
-            pass

@@ -54,7 +54,8 @@ PERSONA_COMPACT_AT = 75
 AGENT_CONTEXT_SPACE = 8192
 AGENT_ROUTING_CONTEXT_SPACE = 8192
 AGENT_ROUTING_MAX_NEW_TOKENS = 256
-AGENT_COMPACT_AT = 75
+AGENT_ROUTING_HISTORY_MESSAGES = 2
+AGENT_ROUTING_HISTORY_CHARACTERS = 2048
 AGENT_MAX_LOOPS = 20
 PERSONA_HISTORY_MESSAGES = 20
 
@@ -167,10 +168,10 @@ COST_EQUIVALENTS = {
 }
 
 # Celune user agent
-# TODO: use in the agent web crawler (v5.1.0)
+# TODO: use in the agent web crawler (v5.2.0)
 CELUNE_UA = f"Celune/{VERSION}"
 
-# Root trust anchor for appended release keyrings.
+# public anti-tamper signing key
 RELEASE_KEYRING_ROOT_PUBLIC_KEY_HEX = (
     "44901708a6e510e8e644f70635f8eead2086eef5b2ddbb91a6928a76de3803bb"
 )

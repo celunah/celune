@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
     from ..celune import Celune
+    from ..typing.common import JSON
     from ..typing.agent import (
         AgentTaskState,
         AgentAbortReason,
@@ -16,7 +17,6 @@ if TYPE_CHECKING:
         AgentApprovalRequest,
         AgentCancellationReason,
     )
-    from ..typing.common import JSON
 
 
 @dataclass(slots=True)

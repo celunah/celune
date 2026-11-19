@@ -11,6 +11,8 @@ from typing import TYPE_CHECKING
 from ..i18n import string
 from ..utils import format_error_message
 from .concurrency import run_in_daemon_thread
+from ..pipeline.submission import say, queue_speech
+from ..pipeline.buffering import notify_component_busy
 from ..persona.impl import persona_enabled, compact_persona_history
 from ..typing.agent import AgentRoute, AgentClassificationFailureKind
 from ..typing.locks import (
@@ -18,8 +20,6 @@ from ..typing.locks import (
     ComponentLockOwner,
     ComponentLockRequirement,
 )
-from ..pipeline.buffering import notify_component_busy
-from ..pipeline.submission import say, queue_speech
 from ..persona.conversation import (
     extract_persona_text,
     build_persona_request,
@@ -38,7 +38,9 @@ def think(engine: Celune, text: str) -> bool:
     if not persona_enabled(engine.config):
         return say(engine, text)
     if getattr(engine.backend, "singing", False):
-        engine.log(string("celune.persona_unavailable_singing"), "warning")
+        message = string("celune.persona_unavailable_singing")
+        engine.log(message, "warning")
+        engine.toast(message, severity="warning")
         return False
     if engine.input_mode != "text_to_speech":
         engine.log(string("celune.text_input_unavailable_vc"), "warning")
@@ -46,18 +48,22 @@ def think(engine: Celune, text: str) -> bool:
         return False
 
     if engine.is_in_tutorial:
-        engine.log(string("celune.speech_input_disabled_tutorial"), "warning")
+        message = string("celune.speech_input_disabled_tutorial")
+        engine.log(message, "warning")
+        engine.toast(message, severity="warning")
         return False
 
     from . import agent as core_agent
 
     with engine.say_lock:
-        if engine._persona_queue.full():
-            engine.log(string("webui.busy_try_again"), "warning")
+        if engine.persona_queue.full():
+            message = string("webui.busy_try_again")
+            engine.log(message, "warning")
+            engine.toast(message, severity="warning")
             return False
         core_agent.interrupt_active_agent_for_input(engine, text)
-        engine._persona_queue.put_nowait(text)
-        thread = engine._persona_thread
+        engine.persona_queue.put_nowait(text)
+        thread = engine.persona_thread
         if thread is not None and thread.is_alive():
             return True
 
@@ -75,8 +81,23 @@ async def think_async(engine: Celune, text: str) -> bool:
     return await run_in_daemon_thread(think, engine, text)
 
 
-def deliver_persona_response(engine: Celune, request: str, response: str) -> bool:
-    """Record and queue one response generated through the agent Persona bridge."""
+def deliver_persona_response(
+    engine: Celune,
+    request: str,
+    response: str,
+    maintain_status: bool = False,
+) -> bool:
+    """Record and queue one response generated through the agent Persona bridge.
+
+    Args:
+        engine: Runtime that owns the Persona response.
+        request: User request associated with the response.
+        response: Generated text to queue for speech.
+        maintain_status: Preserve the action status through playback completion.
+
+    Returns:
+        bool: ``True`` when response speech was queued.
+    """
     if getattr(engine.backend, "singing", False):
         engine.log(string("celune.persona_unavailable_singing"), "warning")
         return False
@@ -100,6 +121,7 @@ def deliver_persona_response(engine: Celune, request: str, response: str) -> boo
         spoken_text,
         save=False,
         display_text=spoken_text,
+        maintain_status=maintain_status,
     )
     if isinstance(history, list):
         compact_persona_history(engine)
@@ -190,12 +212,12 @@ def _think_worker(engine: Celune) -> None:
     try:
         while not engine.exit_requested:
             try:
-                text = engine._persona_queue.get(timeout=0.1)
+                text = engine.persona_queue.get(timeout=0.1)
             except queue.Empty:
                 with engine.say_lock:
-                    if not engine._persona_queue.empty():
+                    if not engine.persona_queue.empty():
                         continue
-                    if engine._persona_thread is current_thread:
+                    if engine.persona_thread is current_thread:
                         engine._persona_thread = None
                     return
 
@@ -206,7 +228,7 @@ def _think_worker(engine: Celune) -> None:
             engine.cur_state = "thinking"
             engine.progress_callback(None, None)
 
-            with engine._model_lock:
+            with engine.model_lock:
                 persona_loading = engine.persona_loading
                 persona_ready = engine.persona_ready
                 vision = engine.vision
@@ -219,9 +241,7 @@ def _think_worker(engine: Celune) -> None:
                     and not persona_ready
                 )
                 if not can_prepare_persona:
-                    core_agent.speak_agent_classification_failure(
-                        engine, text, route.failure, route
-                    )
+                    core_agent.say_agent_classification_fallback(engine, text)
                     continue
             if route.route == AgentRoute.CLARIFICATION:
                 clarification = route.clarification_prompt
@@ -238,7 +258,7 @@ def _think_worker(engine: Celune) -> None:
 
             if not persona_ready:
                 if vision is None:
-                    with engine._model_lock:
+                    with engine.model_lock:
                         if engine.vision is None:
                             engine.vision = persona_conn(engine)
                         vision = engine.vision
@@ -249,12 +269,15 @@ def _think_worker(engine: Celune) -> None:
                 say(engine, text)
                 continue
 
-            if not think_persona(engine, text):
-                engine.log(string("celune.say_instead"), "warning")
-                say(engine, text)
+            if think_persona(engine, text):
+                continue
+            if say(engine, text):
+                message = string("celune.persona_fallback_notice")
+                engine.log(message, "warning")
+                engine.toast(message, severity="warning")
     finally:
         with engine.say_lock:
-            if engine._persona_thread is current_thread:
+            if engine.persona_thread is current_thread:
                 engine._persona_thread = None
 
 
@@ -263,7 +286,7 @@ def wait_for_persona_playback(engine: Celune) -> bool:
     while not engine.exit_requested:
         engine.playback_done.wait(timeout=0.1)
         with engine.say_lock:
-            if engine._reload_pending or engine.cur_state == "reloading":
+            if engine.reload_pending or engine.cur_state == "reloading":
                 continue
             if not engine.locked and engine.cur_state not in {"generating", "speaking"}:
                 return True

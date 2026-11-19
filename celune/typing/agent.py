@@ -19,7 +19,7 @@ from typing import (
 from .modes import OperationMode
 from .locks import ComponentBusyResult
 from .common import JSON, JSONSerializable
-from ..constants import AGENT_MAX_LOOPS, AGENT_COMPACT_AT, AGENT_CONTEXT_SPACE
+from ..constants import AGENT_MAX_LOOPS, PERSONA_COMPACT_AT, AGENT_CONTEXT_SPACE
 
 if TYPE_CHECKING:
     from ..persona.capabilities import PersonaCapabilities
@@ -116,7 +116,7 @@ class AgentToolDangerLevel(str, Enum):
 
 
 class AgentCancellationReason(str, Enum):
-    """Reasons an active agent task can be cancelled."""
+    """Reasons an active agent task can be canceled."""
 
     USER_REQUEST = "user_request"
     SESSION_CANCELLED = "session_cancelled"
@@ -386,26 +386,32 @@ class AgentSession:
 
 @dataclass(frozen=True)
 class AgentRequest:
-    """Input supplied to a future agent run."""
+    """Input and source text supplied to one agent run."""
 
     request: str
     history: tuple[JSON, ...] = ()
     session: AgentSession = field(
         default_factory=lambda: AgentSession(session_id="default")
     )
+    original_request: Optional[str] = None
 
     def __post_init__(self) -> None:
         """Reject empty agent requests while preserving conversation history."""
         if not self.request.strip():
             raise ValueError("agent request must not be empty")
+        if self.original_request is not None and not self.original_request.strip():
+            raise ValueError("original agent request must not be empty")
 
     def to_json(self) -> JSON:
         """Serialize the request and its session into JSON-compatible data."""
-        return {
+        payload: JSON = {
             "request": self.request,
             "history": cast(JSONSerializable, list(self.history)),
             "session": self.session.to_json(),
         }
+        if self.original_request is not None:
+            payload["original_request"] = self.original_request
+        return payload
 
 
 @dataclass(frozen=True)
@@ -524,6 +530,7 @@ class AgentContext:
     task: Optional[AgentTask] = None
     last_tool_result: Optional[ToolResult] = None
     classification_failure: Optional[AgentClassificationFailure] = None
+    opening: bool = False
 
 
 @dataclass(frozen=True)
@@ -582,7 +589,7 @@ class AgentTaskConfig:
     max_loops: int = AGENT_MAX_LOOPS
     max_tokens: Optional[int] = None
     context_size: int = AGENT_CONTEXT_SPACE
-    compact_at: int = AGENT_COMPACT_AT
+    compact_at: int = PERSONA_COMPACT_AT
     stuck_task_threshold: int = 3
 
     def __post_init__(self) -> None:

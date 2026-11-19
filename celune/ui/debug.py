@@ -3,42 +3,66 @@
 
 from __future__ import annotations
 
-import asyncio
 import sys
 import math
 import site
 import time
-import types
+import asyncio
 import inspect
-import sysconfig
 import functools
+import sysconfig
 import threading
 import contextlib
 from enum import Enum
 from pathlib import Path
 from datetime import datetime
 from collections import abc, deque
-from dataclasses import dataclass, field
-from types import CodeType, FrameType, ModuleType
-from typing import ClassVar, Literal, Optional, cast
+from dataclasses import field, dataclass
+from typing import Literal, ClassVar, Optional, cast, TYPE_CHECKING
+from types import (
+    CodeType,
+    FrameType,
+    MethodType,
+    ModuleType,
+    FunctionType,
+    BuiltinFunctionType,
+)
 
 from rich.text import Text
-from textual.validation import Regex
-from textual import app as textual_app
-from textual import events, screen, binding, widgets, containers
+from textual import (
+    app,
+    events,
+    screen,
+    binding,
+    widgets,
+    containers,
+)
+from textual import (
+    validation as textual_validation,
+)
 
 from ..i18n import string
 from ..constants import APP_NAME
 from .buttons import CeluneButton
 from ..paths import running_compiled
-from .invoke import (
-    InvokeCallError,
-    InvokeParseError,
-    InvokeResolutionError,
-    invoke_expression,
+from .invoke import invoke_expression
+from ..exceptions import (
+    InvokeCallError as _InvokeCallError,
+    InvokeParseError as _InvokeParseError,
+    InvokeResolutionError as _InvokeResolutionError,
 )
 
-ComposeResult = textual_app.ComposeResult
+if TYPE_CHECKING:
+    from ..celune import Celune
+
+ComposeResult = app.ComposeResult
+
+
+def _discard_unused(value: object) -> None:
+    """Use Celune's unused-value marker without eager core imports."""
+    from ..utils import discard
+
+    discard(value)
 
 
 def _site_package_roots() -> tuple[Path, ...]:
@@ -317,6 +341,7 @@ class DebugCallTrace:
         if tool_id is None:
             return False
 
+        # noinspection PyBroadException
         try:
             self._monitoring.use_tool_id(tool_id, "celune-debug-inspector")
             self._tool_id = tool_id
@@ -510,9 +535,11 @@ class DebugCallTrace:
         )
 
     def _on_start(self, code: CodeType, instruction_offset: int) -> None:
-        del instruction_offset
+        _discard_unused(instruction_offset)
         if self._failed or self._suspended or not self._recording:
             return
+
+        # noinspection PyBroadException
         try:
             frame = sys._getframe().f_back
             module_name = _frame_module_name(frame, code)
@@ -560,7 +587,7 @@ class DebugCallTrace:
         callable_value: object,
         arg0: object,
     ) -> None:
-        del arg0
+        _discard_unused(arg0)
         if (
             self._failed
             or self._suspended
@@ -568,8 +595,10 @@ class DebugCallTrace:
             or _is_python_callable(callable_value)
         ):
             return
+
+        # noinspection PyBroadException
         try:
-            if isinstance(callable_value, types.BuiltinFunctionType):
+            if isinstance(callable_value, BuiltinFunctionType):
                 module_name, name, special_method = _builtin_callable_metadata(
                     callable_value
                 )
@@ -630,7 +659,7 @@ class DebugCallTrace:
         callable_value: object,
         arg0: object,
     ) -> None:
-        del arg0
+        _discard_unused(arg0)
         self._finish_call(
             code,
             "returned",
@@ -647,7 +676,7 @@ class DebugCallTrace:
         callable_value: object,
         arg0: object,
     ) -> None:
-        del arg0
+        _discard_unused(arg0)
         self._finish_call(
             code,
             "raised",
@@ -663,7 +692,8 @@ class DebugCallTrace:
         instruction_offset: int,
         return_value: object,
     ) -> None:
-        del instruction_offset, return_value
+        _discard_unused(instruction_offset)
+        _discard_unused(return_value)
         if self._suspended or not self._recording:
             return
         self._finish_call(code, "returned", None)
@@ -674,7 +704,7 @@ class DebugCallTrace:
         instruction_offset: int,
         exception: BaseException,
     ) -> None:
-        del instruction_offset
+        _discard_unused(instruction_offset)
         if self._suspended or not self._recording:
             return
         self._finish_call(code, "raised", type(exception).__name__)
@@ -693,6 +723,8 @@ class DebugCallTrace:
             return
         thread_id = threading.get_ident()
         finished_ns = time.perf_counter_ns()
+
+        # noinspection PyBroadException
         try:
             with self._lock:
                 stack = self._stacks.get(thread_id)
@@ -807,6 +839,8 @@ class DebugCallTrace:
         if enabled == (code in self._active_codes):
             return
         event_mask = self._local_event_mask if enabled else monitoring.events.NO_EVENTS
+
+        # noinspection PyBroadException
         try:
             monitoring.set_local_events(tool_id, code, event_mask)
         except Exception:
@@ -837,6 +871,21 @@ class _InspectorComponent:
     label: str
     value: object
     children: list[_InspectorComponent] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class _InspectorCallback:
+    """Current target and source details for one engine callback slot."""
+
+    slot: str
+    target: object
+    handler_name: str
+    handler_label: str
+    signature: str
+    source_category: str
+    source_path: str
+    source_line: Optional[int]
+    chained_handlers: tuple[str, ...]
 
 
 _UI_MODULE_COMPONENTS: tuple[tuple[str, str], ...] = (
@@ -957,7 +1006,7 @@ class _DebugResizeHandle(widgets.Static):
 
     def on_mouse_release(self, event: events.MouseRelease) -> None:
         """Clear drag state if another widget takes mouse capture."""
-        del event
+        _discard_unused(event)
         self._dragging = False
 
 
@@ -1026,6 +1075,7 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
     #debug-components-title,
     #debug-state-title,
     #debug-attributes-title,
+    #debug-callback-detail-title,
     #debug-modal-preview-title,
     #debug-live-title,
     #debug-call-detail-title {
@@ -1073,6 +1123,23 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
     #debug-attributes-table {
         height: 1fr;
         min-height: 3;
+    }
+    #debug-callback-viewer {
+        display: none;
+        height: 1fr;
+        min-height: 3;
+    }
+    #debug-callback-table {
+        width: 68%;
+        height: 1fr;
+        overflow-y: auto;
+        scrollbar-size-vertical: 2;
+    }
+    #debug-callback-detail {
+        width: 1fr;
+        height: 1fr;
+        padding: 0 1;
+        overflow-y: auto;
     }
     #debug-glow-effects {
         display: none;
@@ -1293,6 +1360,10 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
         self._selected_call_id: Optional[int] = None
         self._selected_call_entry: Optional[DebugCallEntry] = None
         self._displayed_call_entries: dict[int, DebugCallEntry] = {}
+        self._selected_callback_name: Optional[str] = None
+        self._callback_entries: dict[str, _InspectorCallback] = {}
+        self._callback_row_values: dict[str, tuple[str, str]] = {}
+        self._shown_callback_detail: Optional[str] = None
         self._component_width_percent = 30.0
         self._live_pane_height = 10
         self._call_table_width_percent = 75.0
@@ -1358,13 +1429,29 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
                         show_row_labels=False,
                         id="debug-attributes-table",
                     )
+                    with containers.Horizontal(id="debug-callback-viewer"):
+                        yield widgets.DataTable(
+                            cursor_type="row",
+                            show_header=True,
+                            show_row_labels=False,
+                            id="debug-callback-table",
+                        )
+                        with containers.Vertical(id="debug-callback-detail"):
+                            yield widgets.Static(
+                                string("debug.callback_details"),
+                                id="debug-callback-detail-title",
+                            )
+                            yield widgets.Static(
+                                string("debug.select_callback"),
+                                id="debug-callback-detail-body",
+                            )
                     with containers.Vertical(id="debug-glow-effects"):
                         with containers.Horizontal(id="debug-glow-color-row"):
                             yield widgets.Static(string("debug.glow_color_label"))
                             yield widgets.Input(
                                 placeholder=string("debug.glow_color_placeholder"),
                                 validators=(
-                                    Regex(
+                                    textual_validation.Regex(
                                         r"^#[0-9A-Fa-f]{6}$",
                                         failure_description=string(
                                             "debug.glow_invalid_color"
@@ -1381,7 +1468,7 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
                             yield widgets.Input(
                                 placeholder=string("debug.glow_duration_placeholder"),
                                 validators=(
-                                    Regex(
+                                    textual_validation.Regex(
                                         r"^\s*(?=.*[1-9])(?:\d+(?:\.\d*)?|\.\d+)\s*[sS]?\s*$",
                                         failure_description=string(
                                             "debug.glow_invalid_duration"
@@ -1546,6 +1633,14 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
         table.add_column(string("debug.call"), width=14)
         table.add_column(string("debug.source"), key="debug-call-source", width=16)
         table.add_column(string("debug.duration"), key="debug-duration", width=18)
+        table = self.query_one("#debug-callback-table", widgets.DataTable)
+        table.add_column(
+            string("debug.callback_slot"), key="debug-callback-slot", width=25
+        )
+        table.add_column(
+            string("debug.callback_handler"), key="debug-callback-handler", width=28
+        )
+        table.add_column(string("debug.source"), key="debug-callback-source", width=16)
         self._refresh_snapshot()
         self._refresh_source_status()
         self._refresh_live_calls()
@@ -1684,22 +1779,22 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
     def _invoke_worker(
         self,
         expression: str,
-        engine: object,
+        engine: Celune,
         generation: int,
     ) -> None:
         """Invoke one expression and return its categorized result to the UI."""
         try:
             result = asyncio.run(invoke_expression(expression, engine))
-        except InvokeCallError as exc:
+        except _InvokeCallError as exc:
             error = exc.error
             detail = string(
                 "debug.invoke_call_error",
                 error_type=f"{type(error).__module__}.{type(error).__qualname__}",
                 message=str(error),
             )
-        except InvokeParseError as exc:
+        except _InvokeParseError as exc:
             detail = f"{string('debug.invoke_parse_error')}\n{exc}"
-        except InvokeResolutionError as exc:
+        except _InvokeResolutionError as exc:
             detail = f"{string('debug.invoke_resolution_error')}\n{exc}"
         except Exception as exc:
             detail = string(
@@ -1717,10 +1812,8 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
                 )
             detail = f"{string('debug.invoke_result')}\n{rendered_result}"
 
-        try:
+        with contextlib.suppress(RuntimeError):
             self.app.call_from_thread(self._finish_invocation, generation, detail)
-        except RuntimeError:
-            pass
 
     def _finish_invocation(self, generation: int, detail: str) -> None:
         """Display an invocation result if it belongs to the current request."""
@@ -1848,9 +1941,11 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
         label.display = False
         label.styles.opacity = 1.0
 
-    def _ignore_modal_preview_result(self, result: object) -> None:
+    @staticmethod
+    # ew, an `object`
+    def _ignore_modal_preview_result(result: object) -> None:
         """Consume a preview modal result without changing application state."""
-        del result
+        _discard_unused(result)
 
     def _open_menu_preview(self, menu_kind: Literal["voice", "settings"]) -> None:
         """Open a no-op preview of the active voice or settings menu."""
@@ -1952,7 +2047,10 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
         self,
         event: widgets.DataTable.RowHighlighted,
     ) -> None:
-        """Show the call path for the highlighted trace entry."""
+        """Select a highlighted callback or call trace entry."""
+        if event.data_table.id == "debug-callback-table":
+            self._select_callback(event.row_key.value)
+            return
         if event.data_table.id != "debug-call-table":
             return
         self._select_call(event.row_key.value)
@@ -1961,10 +2059,20 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
         self,
         event: widgets.DataTable.RowSelected,
     ) -> None:
-        """Show details when a mouse click selects a trace entry."""
+        """Show details when a click selects a callback or trace entry."""
+        if event.data_table.id == "debug-callback-table":
+            self._select_callback(event.row_key.value)
+            return
         if event.data_table.id != "debug-call-table":
             return
         self._select_call(event.row_key.value)
+
+    def _select_callback(self, row_key: Optional[str]) -> None:
+        """Show details for the selected engine callback slot."""
+        if row_key is None or row_key not in self._callback_entries:
+            return
+        self._selected_callback_name = row_key
+        self._render_callback_detail()
 
     def _select_call(self, row_key: Optional[str]) -> None:
         """Keep a stable detail snapshot for the selected trace entry."""
@@ -2224,8 +2332,8 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
             self._compiled_notice_target = _compiled_source_filter(source_filters)
         return self._compiled_notice_target
 
+    @staticmethod
     def _call_table_scroll_anchor(
-        self,
         table: widgets.DataTable,
     ) -> tuple[Optional[int], float]:
         """Return the call at the top of the viewport and its visible offset."""
@@ -2527,9 +2635,15 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
         is_glow_effects = (
             component is not None and component.path == "celune.glow_effects"
         )
-        show_generic_details = not (is_modal_catalog or is_glow_effects)
+        is_engine_callbacks = (
+            component is not None and component.path == "celune._callbacks"
+        )
+        show_generic_details = not (
+            is_modal_catalog or is_glow_effects or is_engine_callbacks
+        )
         self.query_one("#debug-modal-preview").display = is_modal_catalog
         self.query_one("#debug-glow-effects").display = is_glow_effects
+        self.query_one("#debug-callback-viewer").display = is_engine_callbacks
         self.query_one("#debug-selected-component").display = not is_modal_catalog
         self.query_one("#debug-state-title").display = show_generic_details
         self.query_one("#debug-state-table").display = show_generic_details
@@ -2542,6 +2656,9 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
         self.query_one("#debug-selected-component", widgets.Static).update(
             Text(component.label)
         )
+        if is_engine_callbacks:
+            self._render_callback_viewer(component.value)
+            return
         attributes = _object_attributes(component.value)
         states: list[tuple[str, str]] = []
         other_attributes: list[tuple[str, str]] = []
@@ -2566,6 +2683,79 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
             string("debug.no_attributes"),
             component.path,
         )
+
+    def _render_callback_viewer(self, callback_state: object) -> None:
+        """Refresh the callback list and keep its selected detail live."""
+        records = {
+            name: _inspect_callback(name, target)
+            for name, target in _object_attributes(callback_state).items()
+        }
+        rows = {
+            name: (record.handler_label, _source_category_label(record.source_category))
+            for name, record in records.items()
+        }
+        table = self.query_one("#debug-callback-table", widgets.DataTable)
+        previous_rows = self._callback_row_values
+        self._callback_entries = records
+
+        for name in previous_rows.keys() - rows.keys():
+            table.remove_row(name)
+        for name, (handler, source) in rows.items():
+            if name not in previous_rows:
+                table.add_row(
+                    Text(name),
+                    Text(handler, no_wrap=False),
+                    Text(source),
+                    key=name,
+                )
+                continue
+            previous_handler, previous_source = previous_rows[name]
+            if handler != previous_handler:
+                table.update_cell(
+                    name,
+                    "debug-callback-handler",
+                    Text(handler, no_wrap=False),
+                )
+            if source != previous_source:
+                table.update_cell(name, "debug-callback-source", Text(source))
+
+        self._callback_row_values = rows
+        if self._selected_callback_name not in records:
+            self._selected_callback_name = next(iter(records), None)
+        self._render_callback_detail()
+
+    def _render_callback_detail(self) -> None:
+        """Show source and wrapper details for the selected callback slot."""
+        body = self.query_one("#debug-callback-detail-body", widgets.Static)
+        record = self._callback_entries.get(self._selected_callback_name or "")
+        if record is None:
+            content = string("debug.no_callbacks")
+        else:
+            source_location = (
+                f"{record.source_path}:{record.source_line}"
+                if record.source_path and record.source_line is not None
+                else string("debug.not_applicable")
+            )
+            lines = [
+                f"{string('debug.callback_slot')}: {record.slot}",
+                f"{string('debug.callback_handler')}: {record.handler_name}",
+                f"{string('debug.callback_signature')}: {record.signature}",
+                (
+                    f"{string('debug.source_category')}: "
+                    f"{_source_category_label(record.source_category)}"
+                ),
+                f"{string('debug.source')}: {source_location}",
+                f"{string('debug.callback_chained_handlers')}:",
+            ]
+            if record.chained_handlers:
+                lines.extend(f"  {handler}" for handler in record.chained_handlers)
+            else:
+                lines.append(f"  {string('debug.none')}")
+            content = "\n".join(lines)
+
+        if content != self._shown_callback_detail:
+            body.update(Text(content, no_wrap=False))
+            self._shown_callback_detail = content
 
     def _render_attribute_table(
         self,
@@ -2685,15 +2875,15 @@ def _codes_from_value(
     if value_id in visited:
         return
     value_type = type(value)
-    if value_type is types.FunctionType:
-        function = cast(types.FunctionType, value)
+    if value_type is FunctionType:
+        function = cast(FunctionType, value)
         visited.add(value_id)
         if function.__module__ != module_name:
             return
         yield from _walk_code(function.__code__, set())
         wrapped = getattr(function, "__wrapped__", None)
         wrapped_type = type(wrapped)
-        if wrapped_type is types.FunctionType:
+        if wrapped_type is FunctionType:
             yield from _codes_from_value(wrapped, visited, module_name)
         return
     if value_type is staticmethod:
@@ -2774,9 +2964,86 @@ def _qualified_callable_name(module_name: Optional[str], callable_value: object)
     return f"{module_name}.{name}"
 
 
+def _inspect_callback(slot: str, target: object) -> _InspectorCallback:
+    """Build a stable display record for one current callback target."""
+    if not callable(target):
+        unavailable = string("debug.not_applicable")
+        return _InspectorCallback(
+            slot=slot,
+            target=target,
+            handler_name=_format_value(slot, target),
+            handler_label=_format_value(slot, target),
+            signature=unavailable,
+            source_category="unknown",
+            source_path="",
+            source_line=None,
+            chained_handlers=(),
+        )
+
+    name_target = target.func if isinstance(target, functools.partial) else target
+    module_name = _callable_module_name(name_target)
+    handler_name = _qualified_callable_name(module_name, name_target)
+    try:
+        signature = str(inspect.signature(target))
+    except (TypeError, ValueError):
+        signature = string("debug.not_applicable")
+
+    raw_chain = getattr(target, "_celune_callback_chain", ())
+    chain_targets = (
+        tuple(callback for callback in raw_chain if callable(callback))
+        if isinstance(raw_chain, tuple)
+        else ()
+    )
+    chained_handlers = tuple(
+        _qualified_callable_name(
+            _callable_module_name(
+                callback.func if isinstance(callback, functools.partial) else callback
+            ),
+            callback.func if isinstance(callback, functools.partial) else callback,
+        )
+        for callback in chain_targets
+    )
+    display_target = (
+        chain_targets[-1].func
+        if chain_targets and isinstance(chain_targets[-1], functools.partial)
+        else chain_targets[-1]
+        if chain_targets
+        else name_target
+    )
+    handler_label = (
+        chained_handlers[-1].rpartition(".")[2]
+        if chained_handlers
+        else handler_name.rpartition(".")[2]
+    )
+
+    source_module = _callable_module_name(display_target)
+    code_target = (
+        display_target.__func__
+        if isinstance(display_target, MethodType)
+        else display_target
+    )
+    code = getattr(code_target, "__code__", None)
+    if not isinstance(code, CodeType):
+        call_method = inspect.getattr_static(type(code_target), "__call__", None)
+        code = getattr(call_method, "__code__", None)
+    source_path = code.co_filename if isinstance(code, CodeType) else ""
+    source_line = code.co_firstlineno if isinstance(code, CodeType) else None
+    return _InspectorCallback(
+        slot=slot,
+        target=target,
+        handler_name=handler_name,
+        handler_label=handler_label,
+        signature=signature,
+        source_category=_classify_source(source_module, source_path or None),
+        source_path=source_path,
+        source_line=source_line,
+        chained_handlers=chained_handlers,
+    )
+
+
 @functools.lru_cache(maxsize=1024)
 def _builtin_callable_metadata(
-    callable_value: types.BuiltinFunctionType,
+    callable_value: BuiltinFunctionType,
 ) -> tuple[Optional[str], str, bool]:
     """Return cached source and display metadata for a built-in callable."""
     module_name = getattr(callable_value, "__module__", None)
@@ -2790,11 +3057,11 @@ def _builtin_callable_metadata(
 def _has_python_call_method(callable_type: type[object]) -> bool:
     """Return whether instances of this type use a Python ``__call__``."""
     call_method = inspect.getattr_static(callable_type, "__call__", None)
-    return isinstance(call_method, (types.FunctionType, types.MethodType))
+    return isinstance(call_method, (FunctionType, MethodType))
 
 
 def _is_python_callable(callable_value: object) -> bool:
-    if isinstance(callable_value, (types.FunctionType, types.MethodType)):
+    if isinstance(callable_value, (FunctionType, MethodType)):
         return True
     return _has_python_call_method(type(callable_value))
 
@@ -3005,6 +3272,8 @@ def _worker_status(backend: object) -> str:
         or not callable(is_alive)
     ):
         return string("debug.worker_inactive")
+
+    # noinspection PyBroadException
     try:
         active = poll() is None and is_alive()
     except Exception:

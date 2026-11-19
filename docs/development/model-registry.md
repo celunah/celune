@@ -9,13 +9,15 @@ This page is for Celune contributors who add model metadata or change a model lo
 | Module | Contents |
 | --- | --- |
 | `celune.registry.tts` | TTS models, voice selections, model contracts, and related runtime pins. |
+| `celune.registry.audio_cpp_models` | Verified audio.cpp GGUF packages, checksums, and backend compatibility. |
+| `celune.registry.gguf_catalog` | Pinned Persona GGUF model and projector packages. |
 | `celune.registry.llm` | Persona and agent language models, tiers, and revisions. |
 | `celune.registry.asr` | Speech recognition models and revisions. |
 | `celune.registry.other` | Singleton support models such as alignment, embeddings, emotion, normalization, Needle, and voice conversion. |
 
-Each `ModelMetadata` entry records its model ID, display name, category, immutable Hugging Face commit SHA, repository URL, license identifier and source URL, restriction flags, and any runtime roles. A missing license or restriction value is represented by `None`; Celune treats unknown terms as requiring consent. Set `terms_review_required` when the published terms need human review, even if a license identifier exists.
+Shared registry metadata types live in `celune.typing.registry`. Each `ModelMetadata` entry records its model ID, display name, category, immutable Hugging Face commit SHA, repository URL, license identifier and source URL, restriction flags, and any runtime roles. A missing license or restriction value is represented by `None`. Celune treats unknown terms as requiring consent. Set `terms_review_required` when the published terms need human review, even if a license identifier exists.
 
-Set `non_commercial` and `research_only` only when applicable terms restrict those uses; an advisory about intended research use alone does not set either flag or require review. FireRedTTS3 and dots.tts MF have Apache-2.0 entries with `research_only=False` and `terms_review_required=False`. The [ASTRAL Quantization model card](https://huggingface.co/Plachta/ASTRAL-quantization) declares GPL-3.0; its entry uses `non_commercial=False` and `research_only=False` and does not require review.
+Set `non_commercial` and `research_only` only when applicable terms restrict those uses. An advisory about intended research use alone does not set either flag or require review. FireRedTTS3 and dots.tts MF have Apache-2.0 entries with `research_only=False` and `terms_review_required=False`. The [ASTRAL Quantization model card](https://huggingface.co/Plachta/ASTRAL-quantization) declares GPL-3.0. Its entry uses `non_commercial=False` and `research_only=False` and does not require review.
 
 ## Commercial use mode
 
@@ -37,9 +39,11 @@ Keep backend implementation dispatch and dependency environment manifests in the
 
 ## Consent behavior
 
-Celune stores acknowledgement in its app-data directory, keyed by the exact model ID and commit SHA. A later revision requires a new acknowledgement. No prior agreement is inferred for existing installations.
+The application stores acknowledgement in its app-data directory, keyed by the
+exact model ID and commit SHA. A later revision requires a new acknowledgement.
+No prior agreement is inferred for existing installations.
 
-Before any cataloged or custom model is downloaded or loaded, the calling path uses `require_model_consent`. The guard covers startup preload, Textual and browser UI actions, REST requests, and CEDTS worker-backed loads. A missing acknowledgement raises `ModelConsentRequired`; declining raises `ModelConsentDeclined`. Neither path permits the model load to continue.
+Before any cataloged or custom model is downloaded or loaded, the calling path uses `require_model_consent`. The guard covers startup preload, Textual and browser UI actions, REST requests, and CEDTS worker-backed loads. A missing acknowledgement raises `ModelConsentRequired`. Declining raises `ModelConsentDeclined`. Neither path permits the model load to continue.
 
 The main Textual UI displays the localized `registry.consent_prompt` and
 `registry.consent_instruction` messages, and requires the exact phrase from
@@ -76,7 +80,7 @@ python scripts/run_ci.py
 
 For documentation changes, also build MkDocs in strict mode and run MarkdownLint with `.markdownlint.json`.
 
-If an operation returns `428`, read the returned license source and submit consent for its model ID and revision, then retry the operation. If the license is unknown or marked for review, review the repository terms before accepting. If the user declines, select another model or cancel the operation; Celune will continue to require consent for that revision.
+If an operation returns `428`, read the returned license source and submit consent for its model ID and revision, then retry the operation. If the license is unknown or marked for review, review the repository terms before accepting. If the user declines, select another model or cancel the operation. Celune will continue to require consent for that revision.
 
 ## See also
 

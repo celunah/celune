@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+from typing import Optional
+
 from ..typing.aliases import LogLevel
 
 
@@ -42,6 +44,17 @@ def log(
         if "loglevel" not in str(error):
             raise
         self.log_callback(msg, severity)
+
+
+def toast(
+    self,
+    msg: str,
+    severity: str = "info",
+    *,
+    duration: Optional[float] = None,
+) -> None:
+    """Show a transient UI notification through the registered callback."""
+    self.toast_callback(msg, severity=severity, duration=duration)
 
 
 def _buffer_startup_log(

@@ -6,34 +6,28 @@ import os
 import time
 import threading
 import subprocess
+import contextlib
 from pathlib import Path
 from unittest import mock
-from contextlib import suppress
 from types import SimpleNamespace
 from typing import IO, Optional, cast
 from collections import OrderedDict, deque
 from collections.abc import Callable, Generator
 
+import pytest
+
+from celune.utils import discard
 from celune.cedts import remote, worker
-from celune.typing.worker import (
-    WorkerValue,
-    WorkerMessage,
-)
-from celune.typing.backends import (
-    BackendModel,
-    BackendRuntime,
-)
-from celune.backends.environment import (
-    BACKEND_MANIFESTS,
-    BackendManifest,
-    BackendEnvironment,
-)
 from celune.exceptions import (
     CEDTSError,
     BackendError,
     CEDTSEOFError,
     CEDTSTimeoutError,
     CEDTSProtocolError,
+)
+from celune.typing.worker import (
+    WorkerValue,
+    WorkerMessage,
 )
 from celune.cedts.protocol import (
     CEDTSLimits,
@@ -46,15 +40,41 @@ from celune.cedts.protocol import (
     limits_from_capabilities,
     validate_payload_descriptors,
 )
+from celune.typing.backends import (
+    BackendModel,
+    BackendRuntime,
+)
+from celune.backends.environment import (
+    BACKEND_MANIFESTS,
+    BackendManifest,
+    BackendEnvironment,
+)
 
 from .fixtures import make_shutdown_proxy
 from .backend_processes import ShutdownProcess
 
-from ..support import CeluneTestCase
 
-
-class TestBackendProxyLifecycle(CeluneTestCase):
+class TestBackendProxyLifecycle:
     """Exercise remote backend proxy lifecycle behavior."""
+
+    def test_remote_proxy_stores_worker_model_metadata(self) -> None:
+        """Store effective runtime information received from the worker."""
+        proxy = object.__new__(remote.RemoteBackendProxy)
+        proxy.model_metadata = None
+        proxy._log_callback = mock.Mock()
+
+        proxy._dispatch_event(
+            build_packet(
+                "event",
+                "metadata",
+                {"model": "example/model", "type": "native", "quant": "full"},
+            )
+        )
+
+        assert proxy.model_metadata == (
+            {"model": "example/model", "type": "native", "quant": "full"}
+        )
+        proxy._log_callback.assert_called_once()
 
     def test_remote_proxy_aborts_timed_out_model_operation(self) -> None:
         """Verify timed-out model operations terminate their isolated worker."""
@@ -76,9 +96,8 @@ class TestBackendProxyLifecycle(CeluneTestCase):
         )
         proxy.abort = mock.Mock()
 
-        with self.assertRaisesRegex(
-            CEDTSTimeoutError,
-            "preload_models timed out after 0.01 seconds",
+        with pytest.raises(
+            CEDTSTimeoutError, match="preload_models timed out after 0.01 seconds"
         ):
             proxy.request("preload_models", response_timeout=0.01)
 
@@ -101,7 +120,7 @@ class TestBackendProxyLifecycle(CeluneTestCase):
 
         proxy.unload_model()
 
-        self.assertIsNone(proxy.model)
+        assert proxy.model is None
         proxy.request.assert_not_called()
 
     def test_remote_proxy_allows_slow_model_initialization(self) -> None:
@@ -112,7 +131,7 @@ class TestBackendProxyLifecycle(CeluneTestCase):
         with mock.patch("celune.registry.consent.require_model_consent"):
             handle = proxy.load_model("slow-model")
 
-        self.assertEqual(handle.identifier, 7)
+        assert handle.identifier == 7
         proxy.request.assert_called_once_with(
             "load_model",
             response_timeout=900.0,
@@ -165,9 +184,9 @@ class TestBackendProxyLifecycle(CeluneTestCase):
             "active-request",
         )
 
-        self.assertTrue(response["cancelled"])
-        self.assertTrue(proxy._cancel_ack_event.is_set())
-        self.assertTrue(proxy._cancel_ack_result)
+        assert response["cancelled"]
+        assert proxy._cancel_ack_event.is_set()
+        assert proxy._cancel_ack_result
 
     def test_remote_late_cancel_ack_does_not_poison_request_reuse(self) -> None:
         """Verify a terminal request's late acknowledgement is safely ignored."""
@@ -242,8 +261,8 @@ class TestBackendProxyLifecycle(CeluneTestCase):
             "new-request",
         )
 
-        self.assertTrue(terminal["done"])
-        self.assertEqual(reused["value"], "reused")
+        assert terminal["done"]
+        assert (reused["value"]) == "reused"
 
     def test_remote_repeated_cancel_after_terminal_is_a_noop(self) -> None:
         """Verify a completed request cannot emit a stale repeated cancellation."""
@@ -267,7 +286,7 @@ class TestBackendProxyLifecycle(CeluneTestCase):
         }
         proxy._send_packet = mock.Mock()
 
-        self.assertFalse(proxy.cancel_active_request("completed-request"))
+        assert not proxy.cancel_active_request("completed-request")
         proxy._send_packet.assert_not_called()
 
     def test_remote_terminal_request_releases_cancellation_state(self) -> None:
@@ -284,8 +303,8 @@ class TestBackendProxyLifecycle(CeluneTestCase):
         with proxy._active_request_lock:
             proxy._mark_request_terminal_locked("completed-request")
 
-        self.assertFalse(proxy._request_cancellation_states)
-        self.assertFalse(proxy._terminal_cancellation_states)
+        assert not proxy._request_cancellation_states
+        assert not proxy._terminal_cancellation_states
 
     def test_remote_terminal_request_preserves_inflight_cancellation_ack_race(
         self,
@@ -318,11 +337,9 @@ class TestBackendProxyLifecycle(CeluneTestCase):
         with proxy._active_request_lock:
             proxy._mark_request_terminal_locked("active-request")
 
-        self.assertFalse(proxy._request_cancellation_states)
-        self.assertIn("active-request", proxy._terminal_cancellation_states)
-        self.assertFalse(
-            proxy.cancel_active_request("active-request", wait_for_ack=False)
-        )
+        assert not proxy._request_cancellation_states
+        assert "active-request" in proxy._terminal_cancellation_states
+        assert not proxy.cancel_active_request("active-request", wait_for_ack=False)
         proxy._handle_cancel_ack(
             cast(
                 WorkerMessage,
@@ -336,9 +353,9 @@ class TestBackendProxyLifecycle(CeluneTestCase):
             )
         )
 
-        self.assertTrue(cancel_event.is_set())
-        self.assertFalse(proxy._terminal_cancellation_states)
-        self.assertTrue(proxy._cancel_ack_result)
+        assert cancel_event.is_set()
+        assert not proxy._terminal_cancellation_states
+        assert proxy._cancel_ack_result
         proxy._send_packet.assert_not_called()
 
     def test_remote_proxy_gracefully_shuts_down_when_idle(self) -> None:
@@ -354,8 +371,8 @@ class TestBackendProxyLifecycle(CeluneTestCase):
             "shutdown",
             {"active_job_policy": "cancel"},
         )
-        self.assertFalse(process.terminated)
-        self.assertEqual(process.returncode, 0)
+        assert not process.terminated
+        assert process.returncode == 0
 
     def test_remote_proxy_abort_wakes_event_waiters_before_termination(self) -> None:
         """Verify abort releases a consumer blocked on the next worker event."""
@@ -379,19 +396,19 @@ class TestBackendProxyLifecycle(CeluneTestCase):
         proxy.abort()
         waiter.join(timeout=1)
 
-        self.assertFalse(waiter.is_alive())
-        self.assertEqual(len(error), 1)
-        self.assertIsInstance(error[0], CEDTSEOFError)
+        assert not waiter.is_alive()
+        assert (len(error)) == 1
+        assert isinstance(error[0], CEDTSEOFError)
 
     def test_remote_proxy_cancels_active_work_before_graceful_shutdown(self) -> None:
-        """Verify active work is cancelled before the correlated shutdown exchange."""
+        """Verify active work is canceled before the correlated shutdown exchange."""
         proxy, process = make_shutdown_proxy(active_request_id="active-request")
         send_packet = mock.Mock(side_effect=["cancel-id", "shutdown-id"])
         proxy._send_packet = send_packet
 
         proxy.close()
 
-        self.assertEqual(send_packet.call_count, 2)
+        assert send_packet.call_count == 2
         send_packet.assert_has_calls(
             [
                 mock.call(
@@ -409,7 +426,7 @@ class TestBackendProxyLifecycle(CeluneTestCase):
                 ),
             ]
         )
-        self.assertFalse(process.terminated)
+        assert not process.terminated
 
     def test_remote_proxy_closes_paused_stream_without_waiting_for_iteration(
         self,
@@ -502,7 +519,7 @@ class TestBackendProxyLifecycle(CeluneTestCase):
             reply_to: Optional[str] = None,
         ) -> str:
             """Stand in for packet transmission while preserving reply registration."""
-            del reply_to
+            discard(reply_to)
             packet_id = message_id or f"{kind}-id"
             if kind in {"request", "shutdown"}:
                 with proxy._response_condition:
@@ -527,24 +544,24 @@ class TestBackendProxyLifecycle(CeluneTestCase):
         )
 
         try:
-            self.assertEqual(next(generator), "chunk")
-            self.assertFalse(proxy._protocol_lock.acquire(timeout=0.01))
+            assert (next(generator)) == "chunk"
+            assert proxy._protocol_lock.locked()
             close_thread = threading.Thread(target=proxy.close)
             close_thread.start()
             close_thread.join(timeout=2)
 
-            self.assertFalse(close_thread.is_alive())
-            self.assertTrue(shutdown_sent.is_set())
-            self.assertFalse(process.terminated)
-            self.assertEqual(process.returncode, 0)
-            self.assertTrue(process.stdin.closed)
-            self.assertTrue(process.stdout.closed)
+            assert not close_thread.is_alive()
+            assert shutdown_sent.is_set()
+            assert not process.terminated
+            assert process.returncode == 0
+            assert process.stdin.closed
+            assert process.stdout.closed
             sent_kinds = [call.args[1] for call in proxy._send_packet.call_args_list]
-            self.assertEqual(sent_kinds, ["request", "cancel", "shutdown"])
+            assert sent_kinds == (["request", "cancel", "shutdown"])
         finally:
             generator.close()
             writer_thread.join(timeout=2)
-            with suppress(OSError, ValueError):
+            with contextlib.suppress(OSError, ValueError):
                 worker_input.close()
 
     def test_remote_proxy_escalates_when_shutdown_ack_is_missing(self) -> None:
@@ -554,25 +571,23 @@ class TestBackendProxyLifecycle(CeluneTestCase):
             side_effect=TimeoutError("shutdown acknowledgement timed out")
         )
 
-        with self.assertRaises(TimeoutError):
+        with pytest.raises(TimeoutError):
             proxy.close()
 
         proxy._await_shutdown_ack.assert_called_once()
-        self.assertTrue(process.terminated)
-        self.assertEqual(process.returncode, 0)
+        assert process.terminated
+        assert process.returncode == 0
 
     def test_remote_proxy_surfaces_failed_shutdown_acknowledgement(self) -> None:
         """Verify a failed shutdown acknowledgement is not hidden by process exit."""
         proxy, process = make_shutdown_proxy(shutdown_ok=False)
 
-        with self.assertRaises(BackendError) as context:
+        with pytest.raises(BackendError) as context:
             proxy.close()
 
-        self.assertIn(
-            "shutdown acknowledgement reported failure", str(context.exception)
-        )
-        self.assertEqual(process.returncode, 0)
-        self.assertFalse(process.terminated)
+        assert "shutdown acknowledgement reported failure" in (str(context.value))
+        assert process.returncode == 0
+        assert not process.terminated
 
     def test_remote_proxy_close_is_idempotent(self) -> None:
         """Verify repeated close calls do not send another shutdown packet."""
@@ -584,7 +599,7 @@ class TestBackendProxyLifecycle(CeluneTestCase):
         proxy.close()
 
         send_packet.assert_called_once()
-        self.assertFalse(proxy._received_message_ids)
+        assert not proxy._received_message_ids
 
     def test_remote_proxy_close_releases_all_runtime_state(self) -> None:
         """Verify shutdown releases queued responses, requests, cancellation, and events."""
@@ -623,17 +638,17 @@ class TestBackendProxyLifecycle(CeluneTestCase):
         proxy.close()
 
         with proxy._response_condition:
-            self.assertFalse(proxy._pending_reply_ids)
-            self.assertFalse(proxy._response_queues)
-            self.assertFalse(proxy._response_queue_item_sizes)
-            self.assertFalse(proxy._response_queue_bytes)
+            assert not proxy._pending_reply_ids
+            assert not proxy._response_queues
+            assert not proxy._response_queue_item_sizes
+            assert not proxy._response_queue_bytes
         with proxy._event_condition:
-            self.assertFalse(proxy._event_queue)
+            assert not proxy._event_queue
         with proxy._active_request_lock:
-            self.assertIsNone(proxy._active_request_id)
-            self.assertFalse(proxy._request_cancellation_states)
-        self.assertFalse(proxy._stream_active.is_set())
-        self.assertTrue(cancel_event.is_set())
+            assert proxy._active_request_id is None
+            assert not proxy._request_cancellation_states
+        assert not proxy._stream_active.is_set()
+        assert cancel_event.is_set()
 
     def test_remote_proxy_close_wakes_and_cleans_inflight_generator(self) -> None:
         """Verify an in-flight generator finalizes after proxy shutdown clears its state."""
@@ -668,18 +683,18 @@ class TestBackendProxyLifecycle(CeluneTestCase):
             proxy, "_read_stream_frame", side_effect=hold_stream_read
         ):
             consumer.start()
-            self.assertTrue(read_started.wait(1))
+            assert read_started.wait(1)
             proxy.close()
             release_read.set()
             consumer.join(timeout=2)
 
-        self.assertFalse(consumer.is_alive())
-        self.assertEqual(len(generator_errors), 1)
-        self.assertFalse(proxy._stream_active.is_set())
-        self.assertFalse(proxy._pending_reply_ids)
-        self.assertFalse(proxy._response_queues)
-        self.assertFalse(proxy._request_cancellation_states)
-        self.assertEqual(process.returncode, 0)
+        assert not consumer.is_alive()
+        assert (len(generator_errors)) == 1
+        assert not proxy._stream_active.is_set()
+        assert not proxy._pending_reply_ids
+        assert not proxy._response_queues
+        assert not proxy._request_cancellation_states
+        assert process.returncode == 0
 
     def test_remote_proxy_abort_closes_streams_after_worker_exit(self) -> None:
         """Verify abort closes exited-worker streams and reader threads repeatedly."""
@@ -703,15 +718,15 @@ class TestBackendProxyLifecycle(CeluneTestCase):
         proxy.abort()
         proxy.abort()
 
-        self.assertTrue(process.stdin.closed)
-        self.assertTrue(process.stdout.closed)
-        self.assertTrue(process.stderr.closed)
-        self.assertIsNone(proxy._binary_input)
-        self.assertIsNone(proxy._binary_output)
-        self.assertIsNone(proxy._stderr_thread)
-        self.assertIsNone(proxy._reader_thread)
-        self.assertFalse(stderr_thread.is_alive())
-        self.assertFalse(reader_thread.is_alive())
+        assert process.stdin.closed
+        assert process.stdout.closed
+        assert process.stderr.closed
+        assert proxy._binary_input is None
+        assert proxy._binary_output is None
+        assert proxy._stderr_thread is None
+        assert proxy._reader_thread is None
+        assert not stderr_thread.is_alive()
+        assert not reader_thread.is_alive()
 
     def test_remote_proxy_abort_stops_reader_before_termination(self) -> None:
         """Verify intentional process termination cannot be reported as protocol EOF."""
@@ -738,10 +753,10 @@ class TestBackendProxyLifecycle(CeluneTestCase):
         with mock.patch.object(proxy, "_terminate_process", side_effect=terminate):
             proxy.abort()
 
-        self.assertTrue(termination_observed)
-        self.assertTrue(process.stdin.closed)
-        self.assertTrue(process.stdout.closed)
-        self.assertTrue(process.stderr.closed)
+        assert termination_observed
+        assert process.stdin.closed
+        assert process.stdout.closed
+        assert process.stderr.closed
 
     def test_remote_proxy_startup_failure_closes_partial_worker(self) -> None:
         """Verify a partial stream setup terminates the worker and closes ownership."""
@@ -766,7 +781,7 @@ class TestBackendProxyLifecycle(CeluneTestCase):
                 "fdopen",
                 side_effect=[binary_input, OSError("binary output failed")],
             ),
-            self.assertRaises(OSError),
+            pytest.raises(OSError),
         ):
             proxy._start_worker(
                 backend_environment,
@@ -774,14 +789,14 @@ class TestBackendProxyLifecycle(CeluneTestCase):
                 {},
             )
 
-        self.assertTrue(process.terminated)
-        self.assertTrue(process.stdin.closed)
-        self.assertTrue(process.stdout.closed)
-        self.assertTrue(process.stderr.closed)
-        self.assertTrue(binary_input.closed)
-        self.assertIsNone(proxy._process)
-        self.assertIsNone(proxy._binary_input)
-        self.assertIsNone(proxy._binary_output)
+        assert process.terminated
+        assert process.stdin.closed
+        assert process.stdout.closed
+        assert process.stderr.closed
+        assert binary_input.closed
+        assert proxy._process is None
+        assert proxy._binary_input is None
+        assert proxy._binary_output is None
 
     def test_remote_stream_disconnect_sends_cancel_and_drains_terminal_frames(
         self,
@@ -845,10 +860,10 @@ class TestBackendProxyLifecycle(CeluneTestCase):
             Generator[WorkerValue, None, None],
             proxy._stream_request("generate_stream"),
         )
-        self.assertEqual(next(generator), "chunk")
+        assert (next(generator)) == "chunk"
         generator.close()
 
-        self.assertEqual(proxy._send_packet.call_count, 2)
+        assert proxy._send_packet.call_count == 2
         proxy._send_packet.assert_called_with(
             proxy._process.stdin,
             "cancel",
@@ -895,7 +910,7 @@ class TestBackendProxyLifecycle(CeluneTestCase):
             Generator[WorkerValue, None, None],
             proxy._stream_request("generate_stream"),
         )
-        self.assertEqual(next(generator), "chunk")
+        assert (next(generator)) == "chunk"
         with mock.patch.object(proxy, "_drain_stream", return_value=False):
             generator.close()
 
@@ -914,9 +929,9 @@ class TestBackendProxyLifecycle(CeluneTestCase):
         with mock.patch.object(remote, "_STREAM_DRAIN_TIMEOUT_SECONDS", 0.01):
             drained = proxy._drain_stream(process, "request-id")
 
-        self.assertFalse(drained)
+        assert not drained
         read_response.assert_called_once()
-        self.assertGreater(read_response.call_args.kwargs["timeout"], 0)
+        assert (read_response.call_args.kwargs["timeout"]) > 0
 
     def test_worker_unload_closes_runtime_models(self) -> None:
         """Verify worker unload releases models stored outside the backend object."""
@@ -1006,8 +1021,8 @@ class TestBackendProxyLifecycle(CeluneTestCase):
         callback.assert_called_once_with()
         assert response["value"] == "ready"
 
+    @staticmethod
     def _make_packet_reader_proxy(
-        self,
         *,
         event_callback: Optional[Callable[[WorkerMessage], None]] = None,
         fatal_callback: Optional[Callable[[], None]] = None,
@@ -1070,29 +1085,27 @@ class TestBackendProxyLifecycle(CeluneTestCase):
 
         request_thread = threading.Thread(target=request)
         request_thread.start()
-        self.assertTrue(request_sent.wait(timeout=1))
+        assert request_sent.wait(timeout=1)
         writer.close()
         request_thread.join(timeout=1)
 
         try:
-            self.assertFalse(request_thread.is_alive())
-            self.assertEqual(len(errors), 1)
-            self.assertIsInstance(errors[0], CEDTSEOFError)
+            assert not request_thread.is_alive()
+            assert (len(errors)) == 1
+            assert isinstance(errors[0], CEDTSEOFError)
             log_messages = [
                 str(call.args[0])
                 for call in cast(mock.Mock, proxy._log_callback).call_args_list
                 if call.args
             ]
-            self.assertTrue(
-                any(
-                    "CEDTS transport error operation=load_model" in message
-                    and "unexpected EOF" in message
-                    for message in log_messages
-                )
+            assert any(
+                "CEDTS transport error operation=load_model" in message
+                and "unexpected EOF" in message
+                for message in log_messages
             )
         finally:
             proxy._reader_stop.set()
-            with suppress(OSError, ValueError):
+            with contextlib.suppress(OSError, ValueError):
                 reader.close()
             reader_thread = proxy._reader_thread
             if reader_thread is not None:
@@ -1134,11 +1147,10 @@ class TestBackendProxyLifecycle(CeluneTestCase):
             )
 
             events = [proxy.get_worker_event(timeout=2) for _ in range(3)]
-            self.assertEqual(
-                [event["kind"] for event in events if event is not None],
-                ["event", "progress", "callback"],
+            assert ([event["kind"] for event in events if event is not None]) == (
+                ["event", "progress", "callback"]
             )
-            self.assertEqual(event_callback.call_count, 3)
+            assert event_callback.call_count == 3
             fatal_callback.assert_called_once_with()
         finally:
             proxy._reader_stop.set()
@@ -1171,19 +1183,19 @@ class TestBackendProxyLifecycle(CeluneTestCase):
                 timeout=2,
             )
 
-            self.assertTrue(response["ok"])
-            self.assertTrue(proxy._reader_stop.is_set())
+            assert response["ok"]
+            assert proxy._reader_stop.is_set()
             reader_thread = proxy._reader_thread
             if reader_thread is not None:
                 reader_thread.join(timeout=2)
-                self.assertFalse(reader_thread.is_alive())
-            self.assertIsNone(proxy._reader_error)
+                assert not reader_thread.is_alive()
+            assert proxy._reader_error is None
             log_messages = [
                 str(call.args[0])
                 for call in cast(mock.Mock, proxy._log_callback).call_args_list
                 if call.args
             ]
-            self.assertFalse(
+            assert not (
                 any(
                     "worker packet reader failed" in message for message in log_messages
                 )
@@ -1205,40 +1217,39 @@ class TestBackendProxyLifecycle(CeluneTestCase):
             ("callback", "ready", {"state": "ready"}),
         ):
             for reply_to in (None, "unknown-request"):
-                with self.subTest(kind=kind, reply_to=reply_to):
-                    event_callback = mock.Mock()
-                    proxy, reader, writer = self._make_packet_reader_proxy(
-                        event_callback=event_callback,
+                event_callback = mock.Mock()
+                proxy, reader, writer = self._make_packet_reader_proxy(
+                    event_callback=event_callback,
+                )
+                try:
+                    send_message(
+                        writer,
+                        build_packet(
+                            kind,
+                            operation,
+                            data,
+                            reply_to=reply_to,
+                        ),
                     )
-                    try:
-                        send_message(
-                            writer,
-                            build_packet(
-                                kind,
-                                operation,
-                                data,
-                                reply_to=reply_to,
-                            ),
-                        )
-                        reader_error: Optional[Exception] = None
-                        for _ in range(200):
-                            with proxy._response_condition:
-                                reader_error = proxy._reader_error
-                            if reader_error is not None:
-                                break
-                            threading.Event().wait(0.01)
+                    reader_error: Optional[Exception] = None
+                    for _ in range(200):
+                        with proxy._response_condition:
+                            reader_error = proxy._reader_error
+                        if reader_error is not None:
+                            break
+                        threading.Event().wait(0.01)
 
-                        self.assertIsInstance(reader_error, CEDTSError)
-                        event_callback.assert_not_called()
-                        with proxy._event_condition:
-                            self.assertFalse(proxy._event_queue)
-                    finally:
-                        proxy._reader_stop.set()
-                        writer.close()
-                        reader.close()
-                        reader_thread = proxy._reader_thread
-                        if reader_thread is not None:
-                            reader_thread.join(timeout=2)
+                    assert isinstance(reader_error, CEDTSError)
+                    event_callback.assert_not_called()
+                    with proxy._event_condition:
+                        assert not proxy._event_queue
+                finally:
+                    proxy._reader_stop.set()
+                    writer.close()
+                    reader.close()
+                    reader_thread = proxy._reader_thread
+                    if reader_thread is not None:
+                        reader_thread.join(timeout=2)
 
     def test_remote_proxy_event_waiter_ignores_spurious_notifications(self) -> None:
         """Verify a spurious event-condition notification does not end the wait."""
@@ -1263,8 +1274,8 @@ class TestBackendProxyLifecycle(CeluneTestCase):
         received = proxy.get_worker_event(timeout=2)
         notifier.join(timeout=2)
 
-        self.assertEqual(received, event)
-        self.assertFalse(notifier.is_alive())
+        assert received == event
+        assert not notifier.is_alive()
 
     def test_remote_proxy_event_waiter_returns_none_on_timeout(self) -> None:
         """Verify an idle event waiter distinguishes timeout from reader failure."""
@@ -1277,8 +1288,8 @@ class TestBackendProxyLifecycle(CeluneTestCase):
         started = time.monotonic()
         received = proxy.get_worker_event(timeout=0.05)
 
-        self.assertIsNone(received)
-        self.assertGreaterEqual(time.monotonic() - started, 0.04)
+        assert received is None
+        assert time.monotonic() - started >= 0.04
 
     def test_remote_proxy_event_waiter_surfaces_reader_failure(self) -> None:
         """Verify a worker reader failure wakes and fails an idle event waiter."""
@@ -1300,7 +1311,7 @@ class TestBackendProxyLifecycle(CeluneTestCase):
 
         waiter = threading.Thread(target=wait_for_event)
         waiter.start()
-        self.assertTrue(waiter_started.wait(timeout=1))
+        assert waiter_started.wait(timeout=1)
         threading.Event().wait(0.02)
         with proxy._response_condition:
             proxy._reader_error = reader_error
@@ -1308,9 +1319,9 @@ class TestBackendProxyLifecycle(CeluneTestCase):
             proxy._event_condition.notify_all()
         waiter.join(timeout=2)
 
-        self.assertFalse(waiter.is_alive())
-        self.assertEqual(len(errors), 1)
-        self.assertIs(errors[0], reader_error)
+        assert not waiter.is_alive()
+        assert len(errors) == 1
+        assert errors[0] is reader_error
 
     def test_remote_proxy_dispatches_progress_while_waiting_for_response(self) -> None:
         """Verify the reader routes progress independently of a response waiter."""
@@ -1349,10 +1360,10 @@ class TestBackendProxyLifecycle(CeluneTestCase):
                 timeout=2,
             )
             progress = proxy.get_worker_event(timeout=2)
-            self.assertTrue(response["done"])
-            self.assertIsNotNone(progress)
-            self.assertEqual(progress["kind"], "progress")
-            self.assertEqual(progress["reply_to"], request_id)
+            assert response["done"]
+            assert progress is not None
+            assert progress["kind"] == "progress"
+            assert progress["reply_to"] == request_id
             event_callback.assert_called_once()
             progress_callback.assert_called_once_with(1.0, None)
         finally:
@@ -1393,23 +1404,19 @@ class TestBackendProxyLifecycle(CeluneTestCase):
                         break
                     threading.Event().wait(0.01)
 
-            self.assertIsInstance(reader_error, CEDTSError)
+            assert isinstance(reader_error, CEDTSError)
             with proxy._response_condition:
-                self.assertEqual(len(proxy._response_queues[request_id]), 2)
+                assert len(proxy._response_queues[request_id]) == 2
                 queued_bytes = proxy._response_queue_bytes[request_id]
-            self.assertGreater(queued_bytes, 0)
+            assert queued_bytes > 0
 
             process = cast(subprocess.Popen[bytes], proxy._process)
-            self.assertEqual(
-                proxy._read_response(process, request_id)["value"], "chunk-0"
-            )
-            self.assertEqual(
-                proxy._read_response(process, request_id)["value"], "chunk-1"
-            )
+            assert proxy._read_response(process, request_id)["value"] == "chunk-0"
+            assert proxy._read_response(process, request_id)["value"] == "chunk-1"
             with proxy._response_condition:
-                self.assertNotIn(request_id, proxy._response_queues)
-                self.assertNotIn(request_id, proxy._response_queue_item_sizes)
-                self.assertNotIn(request_id, proxy._response_queue_bytes)
+                assert request_id not in proxy._response_queues
+                assert request_id not in proxy._response_queue_item_sizes
+                assert request_id not in proxy._response_queue_bytes
         finally:
             proxy._reader_stop.set()
             writer.close()
@@ -1447,11 +1454,11 @@ class TestBackendProxyLifecycle(CeluneTestCase):
                         break
                     threading.Event().wait(0.01)
 
-            self.assertIsInstance(reader_error, CEDTSError)
+            assert isinstance(reader_error, CEDTSError)
             with proxy._response_condition:
-                self.assertNotIn(request_id, proxy._response_queues)
-                self.assertNotIn(request_id, proxy._response_queue_item_sizes)
-                self.assertNotIn(request_id, proxy._response_queue_bytes)
+                assert request_id not in proxy._response_queues
+                assert request_id not in proxy._response_queue_item_sizes
+                assert request_id not in proxy._response_queue_bytes
         finally:
             proxy._reader_stop.set()
             writer.close()
@@ -1462,23 +1469,23 @@ class TestBackendProxyLifecycle(CeluneTestCase):
 
     def test_worker_handshake_negotiates_the_cedts_capabilities(self) -> None:
         """Verify the worker accepts a compatible hello and rejects requirements it lacks."""
-        self.assertEqual(remote.CEDTS_VERSION, (1, 2))
+        assert remote.CEDTS_VERSION == (1, 3)
         hello = build_packet(
             "hello",
             "handshake",
             cast(
                 dict[str, WorkerValue],
                 {
-                    "versions": [[1, 2]],
+                    "versions": [[1, 3]],
                     "capabilities": remote.CORE_CAPABILITIES,
                     "required_capabilities": {"streaming": True},
                 },
             ),
         )
-        self.assertEqual(hello["cedts_version"], [1, 2])
+        assert (hello["cedts_version"]) == ([1, 3])
         negotiated = worker._negotiate_hello(hello)
-        self.assertEqual(negotiated["streaming"], True)
-        self.assertEqual(negotiated["cancellation"], True)
+        assert (negotiated["streaming"]) is True
+        assert (negotiated["cancellation"]) is True
 
         unsupported_version = build_packet(
             "hello",
@@ -1492,7 +1499,7 @@ class TestBackendProxyLifecycle(CeluneTestCase):
                 },
             ),
         )
-        with self.assertRaises(CEDTSError):
+        with pytest.raises(CEDTSError):
             worker._negotiate_hello(unsupported_version)
 
         incompatible = build_packet(
@@ -1501,13 +1508,13 @@ class TestBackendProxyLifecycle(CeluneTestCase):
             cast(
                 dict[str, WorkerValue],
                 {
-                    "versions": [[1, 2]],
+                    "versions": [[1, 3]],
                     "capabilities": remote.CORE_CAPABILITIES,
                     "required_capabilities": {"callback": True},
                 },
             ),
         )
-        with self.assertRaises(CEDTSError):
+        with pytest.raises(CEDTSError):
             worker._negotiate_hello(incompatible)
 
     def test_cedts_handshake_retains_smaller_peer_frame_limits(self) -> None:
@@ -1530,7 +1537,7 @@ class TestBackendProxyLifecycle(CeluneTestCase):
             cast(
                 dict[str, WorkerValue],
                 {
-                    "versions": [[1, 2]],
+                    "versions": [[1, 3]],
                     "capabilities": offered_capabilities,
                 },
             ),
@@ -1538,17 +1545,14 @@ class TestBackendProxyLifecycle(CeluneTestCase):
 
         negotiated = worker._negotiate_hello(hello)
         limits = limits_from_capabilities(negotiated)
-        self.assertEqual(
-            limits,
-            CEDTSLimits(
-                max_control_frame_size=768,
-                max_binary_frame_size=64,
-                max_aggregate_payload_size=8,
-                max_payload_descriptors=1,
-                max_json_depth=8,
-                max_string_length=1024,
-                max_collection_entries=16,
-            ),
+        assert limits == CEDTSLimits(
+            max_control_frame_size=768,
+            max_binary_frame_size=64,
+            max_aggregate_payload_size=8,
+            max_payload_descriptors=1,
+            max_json_depth=8,
+            max_string_length=1024,
+            max_collection_entries=16,
         )
 
         oversized_control = build_packet(
@@ -1559,12 +1563,12 @@ class TestBackendProxyLifecycle(CeluneTestCase):
                 {"arguments": {"model_id": "model-id-" + "x" * 900}},
             ),
         )
-        with self.assertRaises(CEDTSError):
+        with pytest.raises(CEDTSError):
             send_message(io.BytesIO(), oversized_control, limits=limits)
         control_stream = io.BytesIO()
         send_message(control_stream, oversized_control)
         control_stream.seek(0)
-        with self.assertRaises(CEDTSError):
+        with pytest.raises(CEDTSError):
             receive_message(control_stream, limits=limits)
 
         oversized_payload = WorkerPayload(
@@ -1575,19 +1579,19 @@ class TestBackendProxyLifecycle(CeluneTestCase):
             },
             b"x" * 9,
         )
-        with self.assertRaises(CEDTSError):
+        with pytest.raises(CEDTSError):
             send_payloads(io.BytesIO(), [oversized_payload], limits=limits)
         binary_stream = io.BytesIO()
         send_payloads(binary_stream, [oversized_payload])
         binary_stream.seek(0)
-        with self.assertRaises(CEDTSError):
+        with pytest.raises(CEDTSError):
             receive_payloads(
                 binary_stream,
                 [oversized_payload.descriptor],
                 limits=limits,
             )
 
-        with self.assertRaises(CEDTSError):
+        with pytest.raises(CEDTSError):
             validate_payload_descriptors(
                 [
                     {
@@ -1615,8 +1619,8 @@ class TestBackendProxyLifecycle(CeluneTestCase):
             )
         error_stream.seek(0)
         error_packet = receive_message(error_stream)
-        self.assertEqual(error_packet["kind"], "error")
-        self.assertEqual(error_packet["reply_to"], "hello-id")
+        assert error_packet["kind"] == "error"
+        assert error_packet["reply_to"] == "hello-id"
 
     def test_remote_proxy_requires_hello_ack_then_ready(self) -> None:
         """Verify core handshake packets are correlated before backend requests begin."""
@@ -1629,7 +1633,7 @@ class TestBackendProxyLifecycle(CeluneTestCase):
                 cast(
                     dict[str, WorkerValue],
                     {
-                        "cedts_version": [1, 2],
+                        "cedts_version": [1, 3],
                         "capabilities": remote.CORE_CAPABILITIES,
                     },
                 ),
@@ -1657,7 +1661,7 @@ class TestBackendProxyLifecycle(CeluneTestCase):
         proxy._worker_stderr_lock = threading.Lock()
         with mock.patch.object(proxy, "_send_packet", return_value="hello-id"):
             proxy._handshake()
-        self.assertEqual(proxy._negotiated_capabilities["streaming"], True)
+        assert (proxy._negotiated_capabilities["streaming"]) is True
 
     def test_remote_proxy_forwards_fatal_events_during_handshake(self) -> None:
         """Verify fatal worker events remain out-of-band during capability negotiation."""
@@ -1669,7 +1673,7 @@ class TestBackendProxyLifecycle(CeluneTestCase):
                 cast(
                     dict[str, WorkerValue],
                     {
-                        "cedts_version": [1, 2],
+                        "cedts_version": [1, 3],
                         "capabilities": remote.CORE_CAPABILITIES,
                     },
                 ),
@@ -1701,7 +1705,7 @@ class TestBackendProxyLifecycle(CeluneTestCase):
             proxy._handshake()
 
         fatal_callback.assert_called_once_with()
-        self.assertEqual(proxy._negotiated_capabilities["streaming"], True)
+        assert (proxy._negotiated_capabilities["streaming"]) is True
 
     def test_remote_proxy_surfaces_handshake_error_before_hello_ack(self) -> None:
         """Verify a worker error before hello acknowledgement remains a backend error."""
@@ -1731,14 +1735,14 @@ class TestBackendProxyLifecycle(CeluneTestCase):
         proxy._worker_stderr_lock = threading.Lock()
         with (
             mock.patch.object(proxy, "_send_packet", return_value="hello-id"),
-            self.assertRaises(BackendError) as context,
+            pytest.raises(BackendError) as context,
         ):
             proxy._handshake()
 
-        error = cast(BackendError, context.exception)
-        self.assertEqual(error.error_code, "backend_worker_error")
-        self.assertEqual(error.error_type, "ImportError")
-        self.assertIn("backend dependency missing", str(context.exception))
+        error = context.value
+        assert error.error_code == "backend_worker_error"
+        assert error.error_type == "ImportError"
+        assert "backend dependency missing" in (str(context.value))
 
     def test_remote_proxy_eof_reports_worker_exception_without_traceback(self) -> None:
         """Verify startup EOF includes the worker's final exception line only."""
@@ -1758,12 +1762,11 @@ class TestBackendProxyLifecycle(CeluneTestCase):
 
         error = proxy._worker_exit_error(CEDTSEOFError())
 
-        self.assertEqual(
-            str(error),
+        assert (str(error)) == (
             "unexpected EOF while reading stream: "
-            "ModuleNotFoundError: No module named 'torch'",
+            "ModuleNotFoundError: No module named 'torch'"
         )
-        self.assertNotIn("Traceback", str(error))
+        assert "Traceback" not in str(error)
         proxy._stderr_thread.join.assert_called_once_with(timeout=2.0)
 
     def test_remote_proxy_surfaces_handshake_error_before_ready(self) -> None:
@@ -1777,7 +1780,7 @@ class TestBackendProxyLifecycle(CeluneTestCase):
                 cast(
                     dict[str, WorkerValue],
                     {
-                        "cedts_version": [1, 2],
+                        "cedts_version": [1, 3],
                         "capabilities": remote.CORE_CAPABILITIES,
                     },
                 ),
@@ -1809,14 +1812,14 @@ class TestBackendProxyLifecycle(CeluneTestCase):
         proxy._worker_stderr_lock = threading.Lock()
         with (
             mock.patch.object(proxy, "_send_packet", return_value="hello-id"),
-            self.assertRaises(BackendError) as context,
+            pytest.raises(BackendError) as context,
         ):
             proxy._handshake()
 
-        error = cast(BackendError, context.exception)
-        self.assertEqual(error.error_code, "backend_worker_error")
-        self.assertEqual(error.error_type, "ImportError")
-        self.assertIn("backend dependency missing", str(context.exception))
+        error = context.value
+        assert error.error_code == "backend_worker_error"
+        assert error.error_type == "ImportError"
+        assert "backend dependency missing" in (str(context.value))
 
     def test_remote_proxy_bounds_packet_id_replay_window(self) -> None:
         """Verify recent packet IDs reject duplicates while old IDs are pruned."""
@@ -1826,10 +1829,8 @@ class TestBackendProxyLifecycle(CeluneTestCase):
         for index in range(remote._MESSAGE_ID_REPLAY_WINDOW + 1):
             proxy._register_packet({"message_id": f"packet-{index}"})
 
-        self.assertEqual(
-            len(proxy._received_message_ids), remote._MESSAGE_ID_REPLAY_WINDOW
-        )
-        with self.assertRaises(CEDTSError):
+        assert len(proxy._received_message_ids) == remote._MESSAGE_ID_REPLAY_WINDOW
+        with pytest.raises(CEDTSError):
             proxy._register_packet(
                 {"message_id": f"packet-{remote._MESSAGE_ID_REPLAY_WINDOW}"}
             )
@@ -1840,18 +1841,14 @@ class TestBackendProxyLifecycle(CeluneTestCase):
         received_message_ids: OrderedDict[str, None] = OrderedDict()
 
         for index in range(worker._MESSAGE_ID_REPLAY_WINDOW + 1):
-            self.assertTrue(
-                worker._remember_message_id(received_message_ids, f"packet-{index}")
-            )
+            assert worker._remember_message_id(received_message_ids, f"packet-{index}")
 
-        self.assertEqual(len(received_message_ids), worker._MESSAGE_ID_REPLAY_WINDOW)
-        self.assertFalse(
-            worker._remember_message_id(
-                received_message_ids,
-                f"packet-{worker._MESSAGE_ID_REPLAY_WINDOW}",
-            )
+        assert len(received_message_ids) == worker._MESSAGE_ID_REPLAY_WINDOW
+        assert not worker._remember_message_id(
+            received_message_ids,
+            f"packet-{worker._MESSAGE_ID_REPLAY_WINDOW}",
         )
-        self.assertTrue(worker._remember_message_id(received_message_ids, "packet-0"))
+        assert worker._remember_message_id(received_message_ids, "packet-0")
 
     def test_remote_proxy_retains_smaller_handshake_frame_limits(self) -> None:
         """Verify the proxy applies peer-advertised limits after handshake."""
@@ -1876,7 +1873,7 @@ class TestBackendProxyLifecycle(CeluneTestCase):
                 cast(
                     dict[str, WorkerValue],
                     {
-                        "cedts_version": [1, 2],
+                        "cedts_version": [1, 3],
                         "capabilities": small_capabilities,
                     },
                 ),
@@ -1906,7 +1903,7 @@ class TestBackendProxyLifecycle(CeluneTestCase):
         with mock.patch.object(proxy, "_send_packet", return_value="hello-id"):
             proxy._handshake()
 
-        self.assertEqual(proxy._cedts_limits.max_control_frame_size, 768)
-        self.assertEqual(proxy._cedts_limits.max_binary_frame_size, 64)
-        self.assertEqual(proxy._cedts_limits.max_aggregate_payload_size, 8)
-        self.assertEqual(proxy._cedts_limits.max_payload_descriptors, 1)
+        assert proxy._cedts_limits.max_control_frame_size == 768
+        assert proxy._cedts_limits.max_binary_frame_size == 64
+        assert proxy._cedts_limits.max_aggregate_payload_size == 8
+        assert proxy._cedts_limits.max_payload_descriptors == 1

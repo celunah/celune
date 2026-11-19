@@ -11,10 +11,8 @@ from scripts import root
 from celune.i18n import string
 from celune.vcs import git_checkout_hint
 
-from .support import CeluneTestCase
 
-
-class TestRootScript(CeluneTestCase):
+class TestRootScript:
     """Verify Git-dependent helper commands fail with clone instructions."""
 
     def test_revision_reports_clone_instructions_when_git_checkout_is_missing(

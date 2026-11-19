@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """Name day list derived from Polish name days, translated to English, and with Polish-only names removed."""
 
-# noinspection PyProtectedMember
 from typing import Union
 from datetime import date, datetime
 
@@ -365,7 +364,7 @@ NAME_DAYS: dict[str, list[str]] = {
     "12-12": ["Alexander"],
     "12-13": ["Lucy"],
     "12-14": [],
-    "12-15": ["Celine", "Ignatius", "Nina"],
+    "12-15": ["Celine", "Ignatius", "Nina"],  # Celune decided to shut off.
     "12-16": ["Alina"],
     "12-17": ["Yolanda"],
     "12-18": [],

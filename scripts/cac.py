@@ -5,9 +5,9 @@ import io
 import sys
 import argparse
 from math import gcd
-from typing import TYPE_CHECKING, Union, Optional, TypedDict, cast
 from pathlib import Path
 from collections.abc import Mapping
+from typing import TYPE_CHECKING, Union, Optional, TypedDict, cast
 
 import numpy as np
 import soundfile as sf
@@ -549,7 +549,7 @@ def create_cevoice(data: CharacterData, version: int = 3) -> Path:
 
     Args:
         data: Wizard output containing the destination, assets, and Persona metadata.
-        version: CECHAR generation, either 3, 4, or 5; defaults to legacy v3.
+        version: CECHAR generation, either 3, 4, or 5. Defaults to legacy v3.
 
     Returns:
         Path: The created pack path.

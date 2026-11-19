@@ -14,10 +14,9 @@ from celune import utils, config
 from celune.typing.common import JSON, JSONSerializable
 
 from .platform import WINDOWS_ONLY
-from .support import CeluneTestCase
 
 
-class TestConfig(CeluneTestCase):
+class TestConfig:
     """Tests for configuration value resolution."""
 
     def test_env_bool_uses_fallback_and_strict_enabled_values(self) -> None:
@@ -52,6 +51,15 @@ class TestConfig(CeluneTestCase):
 
         with mock.patch.dict("os.environ", {}, clear=True):
             assert config.config_bool(values, "CELUNE_TEST", "enabled", default=False)
+
+    def test_inference_mode_defaults_normalizes_and_rejects_invalid_values(
+        self,
+    ) -> None:
+        """Keep the persisted inference selection strict and backward compatible."""
+        assert config.inference_mode({}) == "native"
+        assert config.inference_mode({"inference_mode": " GGUF "}) == "gguf"
+        with pytest.raises(ValueError, match="Inference mode must be native or GGUF"):
+            config.inference_mode({"inference_mode": "automatic"})
 
     def test_config_audio_device_supports_null_name_and_index(self) -> None:
         """Verify audio-device config accepts null, trimmed names, and indices."""
@@ -438,6 +446,42 @@ class TestConfig(CeluneTestCase):
             "token": None,
         }
 
+    def test_merge_missing_defaults_migrates_legacy_qwen3_option(self) -> None:
+        """Move the former top-level Qwen3 option into its backend section."""
+        current: Mapping[str, JSONSerializable] = {
+            "qwen3_x_vector_only": True,
+            "backend_options": {"soulxsinger": {"high_precision": True}},
+        }
+        defaults: JSON = {
+            "backend_options": {
+                "qwen3": {"x_vector_only": False},
+                "soulxsinger": {"high_precision": True},
+            },
+        }
+
+        merged, changed = config.merge_missing_defaults(current, defaults)
+
+        assert changed
+        assert "qwen3_x_vector_only" not in merged
+        assert merged["backend_options"] == {
+            "qwen3": {"x_vector_only": True},
+            "soulxsinger": {"high_precision": True},
+        }
+        assert current["qwen3_x_vector_only"] is True
+
+    def test_merge_missing_defaults_prefers_nested_qwen3_option(self) -> None:
+        """Keep the new backend-specific value when both config keys exist."""
+        merged, changed = config.merge_missing_defaults(
+            {
+                "qwen3_x_vector_only": True,
+                "backend_options": {"qwen3": {"x_vector_only": False}},
+            },
+            {"backend_options": {"qwen3": {"x_vector_only": False}}},
+        )
+
+        assert changed
+        assert merged == {"backend_options": {"qwen3": {"x_vector_only": False}}}
+
     def test_merge_missing_defaults_removes_unknown_schema_keys(self) -> None:
         """Verify removed configuration options are pruned at the schema boundary."""
         current: Mapping[str, JSONSerializable] = {
@@ -464,7 +508,7 @@ class TestConfig(CeluneTestCase):
         assert current["gpt_sovits_t2s_weights_path"] == "C:/old-weights.pth"
 
 
-class TestUtils(CeluneTestCase):
+class TestUtils:
     """Tests for lightweight common utility functions."""
 
     def test_available_checks_namespaces_attributes_and_modules(self) -> None:
@@ -497,29 +541,27 @@ class TestUtils(CeluneTestCase):
         self,
     ) -> None:
         """Verify TTS-only formatting handles technical punctuation and Markdown."""
-        self.assertEqual(
-            utils.normalize_special_characters("“hello”—*world*…"),
-            '"hello": world...',
+        assert (utils.normalize_special_characters("“hello”—*world*…")) == (
+            '"hello": world...'
         )
-        self.assertEqual(
-            utils.normalize_special_characters(r"C:\Users\user", for_tts=True),
-            "C drive, Users, user",
+        assert (utils.normalize_special_characters(r"C:\Users\user", for_tts=True)) == (
+            "C drive, Users, user"
         )
-        self.assertEqual(
-            utils.normalize_special_characters("foo_bar.py", for_tts=True),
-            "foo underscore bar dot py",
+        assert (utils.normalize_special_characters("foo_bar.py", for_tts=True)) == (
+            "foo underscore bar dot py"
         )
-        self.assertEqual(
-            utils.normalize_special_characters('{status: "ok"}', for_tts=True),
-            "status, ok",
+        assert (utils.normalize_special_characters('{status: "ok"}', for_tts=True)) == (
+            "status, ok"
         )
-        self.assertEqual(
+        assert (
+            utils.normalize_special_characters("Status\u00a0: ready", for_tts=True)
+        ) == "Status, ready"
+        assert (
             utils.normalize_special_characters(
                 "# **status** / ready - now",
                 for_tts=True,
-            ),
-            "status, ready, now",
-        )
+            )
+        ) == "status, ready, now"
 
     def test_format_number_handles_precision_and_non_finite_values(self) -> None:
         """Verify number formatting and invalid precision handling.

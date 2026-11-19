@@ -6,6 +6,7 @@ import threading
 import contextlib
 from pathlib import Path
 from unittest import mock
+from functools import partial
 from typing import Optional, cast
 from types import SimpleNamespace, MappingProxyType
 
@@ -13,8 +14,8 @@ import pytest
 from transformers.modeling_utils import PreTrainedModel
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 
-from celune.celune import Celune
 from celune.utils import discard
+from celune.celune import Celune
 from celune.core import sleep as core_sleep
 from celune.core import voice as core_voice
 from celune.core import reload as core_reload
@@ -24,14 +25,57 @@ from celune.core import lifecycle as core_lifecycle
 from celune.exceptions import WarmupError, BackendError
 
 from .fixtures import CeluneCoreTestSupport
-from ..support import FakeGlow, FakeBackend, FakeVCBackend
+from ..support import FakeGlow, FakeBackend, FakeVCBackend, patch_owner
 
 
 class TestCeluneReload(CeluneCoreTestSupport):
     """Exercise backend reload behavior of the Celune core."""
 
+    def test_tts_runtime_selection_uses_backend_capabilities(
+        self, request: pytest.FixtureRequest
+    ) -> None:
+        """Keep configured inference mode when a backend is reloaded."""
+
+        class AudioCppFakeBackend(FakeBackend):
+            """Backend fixture that has an audio.cpp implementation."""
+
+            name = "audio-cpp-fake"
+            supports_audio_cpp = True
+
+        celune = self._make_celune(request, {"inference_mode": "gguf"})
+        reload_kwargs = core_reload._backend_reload_kwargs(celune, FakeBackend)
+        assert reload_kwargs["inference_mode"] == "gguf"
+        unsupported = FakeBackend(log=mock.Mock())
+        with mock.patch(
+            "celune.core.reload.resolve_backend",
+            return_value=unsupported,
+        ):
+            core_reload.resolve_tts_backend(
+                celune,
+                FakeBackend,
+                log=celune.log_callback,
+                **reload_kwargs,
+            )
+        assert unsupported.requested_inference_mode == "gguf"
+        assert unsupported.effective_inference_mode == "native"
+
+        supported = AudioCppFakeBackend(log=mock.Mock())
+        with mock.patch(
+            "celune.core.reload.resolve_backend",
+            return_value=supported,
+        ):
+            core_reload.resolve_tts_backend(
+                celune,
+                AudioCppFakeBackend,
+                log=celune.log_callback,
+                **core_reload._backend_reload_kwargs(celune, AudioCppFakeBackend),
+            )
+        assert supported.requested_inference_mode == "gguf"
+        assert supported.effective_inference_mode == "audio_cpp"
+
     def test_hot_backend_reload_unloads_previous_runtime_before_loading_new_one(
         self,
+        request: pytest.FixtureRequest,
     ) -> None:
         """Verify backend swaps release the old runtime before loading the next one."""
 
@@ -48,7 +92,8 @@ class TestCeluneReload(CeluneCoreTestSupport):
                 events.append(f"load:{model_id}")
                 return super().load_model(model_id, **kwargs)
 
-        celune = self._make_celune({})
+        toast_callback = mock.Mock()
+        celune = self._make_celune(request, {}, toast_callback=toast_callback)
         celune.loaded = True
         celune.cur_state = "idle"
         celune.model = {"model_id": "fake/balanced", "kwargs": {}}
@@ -56,7 +101,7 @@ class TestCeluneReload(CeluneCoreTestSupport):
         celune.model_name = "fake/balanced"
         celune.current_voice = "balanced"
         celune.voices = ("balanced", "bold")
-        self.patch_owner(core_loading, "warmup", return_value=True)
+        patch_owner(request, core_loading, "warmup", return_value=True)
         original_unload = celune.backend.unload_model
 
         def record_unload() -> None:
@@ -69,12 +114,18 @@ class TestCeluneReload(CeluneCoreTestSupport):
             assert core_reload.reload_backend(celune, AltFakeBackend, "storm")
 
         assert events[:2] == ["unload:fake", "load:alt/storm"]
+        toast_callback.assert_called_once_with(
+            "Switched backend to altfake.",
+            severity="info",
+            duration=None,
+        )
 
     def test_set_backend_marks_reload_pending_before_playing_working_signal(
         self,
+        request: pytest.FixtureRequest,
     ) -> None:
         """Verify backend switching marks reload pending before the transition signal."""
-        celune = self._make_celune({})
+        celune = self._make_celune(request, {})
         celune.cur_state = "idle"
         celune.loaded = True
         celune.change_input_state_callback = mock.Mock()
@@ -87,7 +138,7 @@ class TestCeluneReload(CeluneCoreTestSupport):
             )
             return True
 
-        self.patch_owner(core_voice, "try_play_signal", side_effect=record_signal)
+        patch_owner(request, core_voice, "try_play_signal", side_effect=record_signal)
 
         with mock.patch("celune.core.voice.threading.Thread") as thread_cls:
             assert celune.set_backend("mini")
@@ -101,9 +152,11 @@ class TestCeluneReload(CeluneCoreTestSupport):
         assert not celune._model_ready.is_set()
         thread_cls.return_value.start.assert_called_once_with()
 
-    def test_set_voice_locks_voice_controls_during_reload(self) -> None:
+    def test_set_voice_locks_voice_controls_during_reload(
+        self, request: pytest.FixtureRequest
+    ) -> None:
         """Lock voice selection for every caller while one voice is reloading."""
-        celune = self._make_celune({})
+        celune = self._make_celune(request, {})
         celune.cur_state = "idle"
         celune.loaded = True
         celune.current_voice = "balanced"
@@ -122,9 +175,12 @@ class TestCeluneReload(CeluneCoreTestSupport):
         celune.change_voice_lock_state_callback.assert_called_once_with(locked=True)
         thread_cls.return_value.start.assert_called_once_with()
 
-    def test_set_backend_rejects_non_singing_character_before_reload(self) -> None:
+    def test_set_backend_rejects_non_singing_character_before_reload(
+        self, request: pytest.FixtureRequest
+    ) -> None:
         """Warn in yellow and leave the active backend untouched without a singer."""
-        celune = self._make_celune({})
+        toast_callback = mock.Mock()
+        celune = self._make_celune(request, {}, toast_callback=toast_callback)
         celune.cur_state = "idle"
         celune.loaded = True
         celune.current_character = "Nol"
@@ -149,6 +205,11 @@ class TestCeluneReload(CeluneCoreTestSupport):
                 "warning",
             ),
         ]
+        toast_callback.assert_called_once_with(
+            "Please switch to a singing-capable pack, then try again.",
+            severity="warning",
+            duration=None,
+        )
         thread_cls.assert_not_called()
         celune.change_input_state_callback.assert_not_called()
         celune.change_voice_lock_state_callback.assert_not_called()
@@ -159,9 +220,11 @@ class TestCeluneReload(CeluneCoreTestSupport):
         assert celune.cur_state == "idle"
         assert celune._model_ready.is_set()
 
-    def test_with_backend_rejects_non_singing_character_before_reload(self) -> None:
+    def test_with_backend_rejects_non_singing_character_before_reload(
+        self, request: pytest.FixtureRequest
+    ) -> None:
         """Apply the singing-pack preflight to temporary backend overrides."""
-        celune = self._make_celune({"cache": {"enabled": False}})
+        celune = self._make_celune(request, {"cache": {"enabled": False}})
         celune.cur_state = "idle"
         celune.loaded = True
         celune.current_character = "Nol"
@@ -188,9 +251,11 @@ class TestCeluneReload(CeluneCoreTestSupport):
             ),
         ]
 
-    def test_load_voice_bundle_rejects_non_singer_under_singing_backend(self) -> None:
+    def test_load_voice_bundle_rejects_non_singer_under_singing_backend(
+        self, request: pytest.FixtureRequest
+    ) -> None:
         """Keep direct voice-bundle selection from invalidating SoulX-Singer."""
-        celune = self._make_celune({"cache": {"enabled": False}})
+        celune = self._make_celune(request, {"cache": {"enabled": False}})
         celune.backend.singing = True
         celune.log_callback = mock.Mock()
         candidate = SimpleNamespace(
@@ -218,9 +283,11 @@ class TestCeluneReload(CeluneCoreTestSupport):
             ),
         ]
 
-    def test_startup_rejects_singing_backend_without_compatible_pack(self) -> None:
+    def test_startup_rejects_singing_backend_without_compatible_pack(
+        self, request: pytest.FixtureRequest
+    ) -> None:
         """Reject an incompatible configured pack before backend model loading."""
-        celune = self._make_celune({"cache": {"enabled": False}})
+        celune = self._make_celune(request, {"cache": {"enabled": False}})
         celune.backend.singing = True
         celune.current_character = "Nol"
         celune.log_callback = mock.Mock()
@@ -247,7 +314,9 @@ class TestCeluneReload(CeluneCoreTestSupport):
             ),
         ]
 
-    def test_set_backend_and_wait_failure_keeps_previous_runtime_loaded(self) -> None:
+    def test_set_backend_and_wait_failure_keeps_previous_runtime_loaded(
+        self, request: pytest.FixtureRequest
+    ) -> None:
         """Verify failed backend switches preserve the previously loaded backend runtime."""
 
         class FailingBackend(FakeBackend):
@@ -258,7 +327,7 @@ class TestCeluneReload(CeluneCoreTestSupport):
             def load_model(self, model_id: str, **kwargs: JSONSerializable):
                 raise RuntimeError("boom")
 
-        celune = self._make_celune({})
+        celune = self._make_celune(request, {})
         celune.loaded = True
         celune.cur_state = "idle"
         celune.model = {"model_id": "fake/balanced", "kwargs": {}}
@@ -282,9 +351,11 @@ class TestCeluneReload(CeluneCoreTestSupport):
         assert celune.model is not None
         assert celune.backend.model is celune.model
 
-    def test_set_backend_and_wait_recovers_when_reload_setup_crashes(self) -> None:
+    def test_set_backend_and_wait_recovers_when_reload_setup_crashes(
+        self, request: pytest.FixtureRequest
+    ) -> None:
         """Verify backend reload setup failures still release the waiting caller."""
-        celune = self._make_celune({})
+        celune = self._make_celune(request, {})
         celune.loaded = True
         celune.cur_state = "idle"
         celune.model = {"model_id": "fake/balanced", "kwargs": {}}
@@ -312,9 +383,11 @@ class TestCeluneReload(CeluneCoreTestSupport):
         assert celune.tts_backend == "fake"
         assert celune.current_voice == "balanced"
 
-    def test_set_backend_rejects_reentrant_reload_requests(self) -> None:
+    def test_set_backend_rejects_reentrant_reload_requests(
+        self, request: pytest.FixtureRequest
+    ) -> None:
         """Verify a second backend switch is refused while reloading is already active."""
-        celune = self._make_celune({})
+        celune = self._make_celune(request, {})
         celune.cur_state = "reloading"
         celune.change_input_state_callback = mock.Mock()
         celune.change_voice_lock_state_callback = mock.Mock()
@@ -331,14 +404,16 @@ class TestCeluneReload(CeluneCoreTestSupport):
             "warning",
         )
 
-    def test_set_backend_and_wait_uses_unbounded_wait_by_default(self) -> None:
+    def test_set_backend_and_wait_uses_unbounded_wait_by_default(
+        self, request: pytest.FixtureRequest
+    ) -> None:
         """Verify direct backend switches wait indefinitely unless a timeout is supplied."""
-        celune = self._make_celune({})
+        celune = self._make_celune(request, {})
         celune.loaded = True
         celune._model_ready.wait = mock.Mock(return_value=True)
-        set_backend = self.patch_owner(core_voice, "set_backend", return_value=True)
-        active_backend_name = self.patch_owner(
-            core_lifecycle, "active_runtime_backend_name", return_value="mini"
+        set_backend = patch_owner(request, core_voice, "set_backend", return_value=True)
+        active_backend_name = patch_owner(
+            request, core_lifecycle, "active_runtime_backend_name", return_value="mini"
         )
 
         assert celune.set_backend_and_wait("mini")
@@ -347,7 +422,9 @@ class TestCeluneReload(CeluneCoreTestSupport):
         celune._model_ready.wait.assert_called_once_with(timeout=None)
         active_backend_name.assert_called_once_with(celune)
 
-    def test_set_backend_and_wait_can_switch_between_tts_and_vc_backends(self) -> None:
+    def test_set_backend_and_wait_can_switch_between_tts_and_vc_backends(
+        self, request: pytest.FixtureRequest
+    ) -> None:
         """Verify backend hot reloads can move across the TTS and VC backend families."""
 
         class CountingBackend(FakeBackend):
@@ -391,7 +468,7 @@ class TestCeluneReload(CeluneCoreTestSupport):
             mock.patch("celune.core.voice.play_signal", return_value=False),
         ):
             celune = Celune(config={}, tts_backend=CountingBackend)
-            self.addCleanup(self._close_celune, celune)
+            request.addfinalizer(partial(self._close_celune, celune))
 
             initial_backend = cast(CountingBackend, celune.backend)
             celune.loaded = True
@@ -422,6 +499,7 @@ class TestCeluneReload(CeluneCoreTestSupport):
 
     def test_set_backend_and_wait_restores_vc_runtime_after_failed_tts_switch(
         self,
+        request: pytest.FixtureRequest,
     ) -> None:
         """Verify failed VC-to-TTS switches rebuild the previous VC runtime."""
 
@@ -461,7 +539,7 @@ class TestCeluneReload(CeluneCoreTestSupport):
             mock.patch("celune.core.voice.play_signal", return_value=False),
         ):
             celune = Celune(config={}, tts_backend=FakeBackend)
-            self.addCleanup(self._close_celune, celune)
+            request.addfinalizer(partial(self._close_celune, celune))
 
             assert celune.set_backend_and_wait(CountingVCBackend)
             previous_vc_backend = cast(CountingVCBackend, celune.vc_backend)
@@ -478,15 +556,17 @@ class TestCeluneReload(CeluneCoreTestSupport):
 
     def test_set_backend_rejects_unknown_backend_before_reload_side_effects(
         self,
+        request: pytest.FixtureRequest,
     ) -> None:
         """Verify unknown backend names do not trigger reload state or working signals."""
-        celune = self._make_celune({})
+        toast_callback = mock.Mock()
+        celune = self._make_celune(request, {}, toast_callback=toast_callback)
         celune.cur_state = "idle"
         celune.loaded = True
         celune.change_input_state_callback = mock.Mock()
         celune.change_voice_lock_state_callback = mock.Mock()
         celune.log_callback = mock.Mock()
-        try_play_signal = self.patch_owner(core_voice, "try_play_signal")
+        try_play_signal = patch_owner(request, core_voice, "try_play_signal")
 
         with mock.patch("celune.core.voice.threading.Thread") as thread_cls:
             assert not celune.set_backend("qwen")
@@ -500,13 +580,21 @@ class TestCeluneReload(CeluneCoreTestSupport):
             "soulxsinger, seed-vc)",
             "warning",
         )
+        toast_callback.assert_called_once_with(
+            "unknown backend: qwen (available: mini, qwen3, fireredtts3, dotstts, voxcpm2, ming3, "
+            "soulxsinger, seed-vc)",
+            severity="warning",
+            duration=None,
+        )
         assert celune.cur_state == "idle"
         assert celune.loaded
         assert not celune._reload_pending
 
-    def test_set_backend_unknown_name_keeps_previous_runtime_live(self) -> None:
+    def test_set_backend_unknown_name_keeps_previous_runtime_live(
+        self, request: pytest.FixtureRequest
+    ) -> None:
         """Verify invalid backend names leave the previously loaded backend fully usable."""
-        celune = self._make_celune({})
+        celune = self._make_celune(request, {})
         celune.loaded = True
         celune.cur_state = "idle"
         celune.model = {"model_id": "fake/balanced", "kwargs": {}}
@@ -524,9 +612,11 @@ class TestCeluneReload(CeluneCoreTestSupport):
         assert celune.backend.model is celune.model
         assert not celune._reload_pending
 
-    def test_set_cevoice_rejects_reentrant_reload_requests(self) -> None:
+    def test_set_cevoice_rejects_reentrant_reload_requests(
+        self, request: pytest.FixtureRequest
+    ) -> None:
         """Verify a second character switch is refused while reloading is already active."""
-        celune = self._make_celune({})
+        celune = self._make_celune(request, {})
         celune.cur_state = "reloading"
         celune.change_input_state_callback = mock.Mock()
         celune.change_voice_lock_state_callback = mock.Mock()
@@ -543,9 +633,11 @@ class TestCeluneReload(CeluneCoreTestSupport):
             "warning",
         )
 
-    def test_set_cevoice_and_wait_uses_unbounded_wait_by_default(self) -> None:
+    def test_set_cevoice_and_wait_uses_unbounded_wait_by_default(
+        self, request: pytest.FixtureRequest
+    ) -> None:
         """Verify direct character switches wait indefinitely unless a timeout is supplied."""
-        celune = self._make_celune({})
+        celune = self._make_celune(request, {})
         target_bundle = Path("celune.cevoice")
         celune.loaded = True
         celune._model_ready.wait = mock.Mock(return_value=True)
@@ -568,9 +660,11 @@ class TestCeluneReload(CeluneCoreTestSupport):
 
     def test_set_cevoice_rejects_missing_bundle_before_reload_side_effects(
         self,
+        request: pytest.FixtureRequest,
     ) -> None:
         """Verify missing CEVOICE bundles do not start a reload or lock the UI."""
-        celune = self._make_celune({})
+        toast_callback = mock.Mock()
+        celune = self._make_celune(request, {}, toast_callback=toast_callback)
         celune.change_input_state_callback = mock.Mock()
         celune.change_voice_lock_state_callback = mock.Mock()
         celune.log_callback = mock.Mock()
@@ -585,13 +679,19 @@ class TestCeluneReload(CeluneCoreTestSupport):
             "Voice pack not found: invalid_character",
             "warning",
         )
+        toast_callback.assert_called_once_with(
+            "Voice pack not found: invalid_character",
+            severity="warning",
+            duration=None,
+        )
         assert not celune._reload_pending
 
     def test_hot_backend_reload_warmup_does_not_publish_candidate_backend_early(
         self,
+        request: pytest.FixtureRequest,
     ) -> None:
         """Verify candidate backend warmup runs before the live backend pointer is swapped."""
-        celune = self._make_celune({})
+        celune = self._make_celune(request, {})
         celune.loaded = True
         celune.cur_state = "idle"
         celune.model = {"model_id": "fake/balanced", "kwargs": {}}
@@ -621,7 +721,9 @@ class TestCeluneReload(CeluneCoreTestSupport):
         assert celune.backend.name == "fake"
         assert celune.loaded
 
-    def test_with_backend_temporarily_switches_and_restores_backend(self) -> None:
+    def test_with_backend_temporarily_switches_and_restores_backend(
+        self, request: pytest.FixtureRequest
+    ) -> None:
         """Verify the backend context manager restores the original backend after use."""
 
         class AltFakeBackend(FakeBackend):
@@ -631,7 +733,7 @@ class TestCeluneReload(CeluneCoreTestSupport):
             voice_models = MappingProxyType({"storm": "alt/storm", "calm": "alt/calm"})
             default_voice = "storm"
 
-        celune = self._make_celune({})
+        celune = self._make_celune(request, {})
         celune.loaded = True
         celune.cur_state = "idle"
         celune.model = {"model_id": "fake/balanced", "kwargs": {}}
@@ -642,7 +744,7 @@ class TestCeluneReload(CeluneCoreTestSupport):
         celune.locked = False
         celune.model_ready.set()
         celune.playback_done.set()
-        self.patch_owner(core_loading, "warmup", return_value=True)
+        patch_owner(request, core_loading, "warmup", return_value=True)
 
         with contextlib.ExitStack() as stack:
             stack.enter_context(
@@ -659,6 +761,7 @@ class TestCeluneReload(CeluneCoreTestSupport):
 
     def test_with_backend_does_not_pin_old_backend_instance_during_override(
         self,
+        request: pytest.FixtureRequest,
     ) -> None:
         """Verify temporary backend overrides do not keep the old backend instance alive."""
 
@@ -679,7 +782,7 @@ class TestCeluneReload(CeluneCoreTestSupport):
             original_backend = FakeBackend()
             backend_ref = weakref.ref(original_backend)
             celune = Celune(config={}, tts_backend=original_backend)
-            self.addCleanup(self._close_celune, celune)
+            request.addfinalizer(partial(self._close_celune, celune))
 
         celune.loaded = True
         celune.cur_state = "idle"
@@ -691,7 +794,7 @@ class TestCeluneReload(CeluneCoreTestSupport):
         celune.locked = False
         celune.model_ready.set()
         celune.playback_done.set()
-        self.patch_owner(core_loading, "warmup", return_value=True)
+        patch_owner(request, core_loading, "warmup", return_value=True)
         del original_backend
 
         with (
@@ -703,9 +806,12 @@ class TestCeluneReload(CeluneCoreTestSupport):
             _gc.collect()
             assert backend_ref() is None
 
-    def test_hot_cevoice_reload_failure_restores_previous_bundle_state(self) -> None:
+    def test_hot_cevoice_reload_failure_restores_previous_bundle_state(
+        self, request: pytest.FixtureRequest
+    ) -> None:
         """Verify failed CEVOICE reloads restore the previous bundle and voice state."""
-        celune = self._make_celune({})
+        toast_callback = mock.Mock()
+        celune = self._make_celune(request, {}, toast_callback=toast_callback)
         celune.log_level = "verbose"
         celune.log_callback = mock.Mock()
         celune.backend.uses_voice_bundles = True
@@ -716,7 +822,7 @@ class TestCeluneReload(CeluneCoreTestSupport):
         celune.backend.load_model = mock.Mock(
             side_effect=lambda model_id: {"model_id": model_id}
         )
-        self.patch_owner(core_loading, "warmup", return_value=True)
+        patch_owner(request, core_loading, "warmup", return_value=True)
         celune.loaded = True
         celune.cur_state = "idle"
         celune.model = {"model_id": "fake/balanced"}
@@ -779,10 +885,17 @@ class TestCeluneReload(CeluneCoreTestSupport):
             for call in celune.log_callback.call_args_list
             if call.args
         )
+        toast_callback.assert_called_once_with(
+            "Could not switch to this character. The previous character was restored.",
+            severity="warning",
+            duration=None,
+        )
 
-    def test_set_cevoice_and_wait_recovers_when_reload_setup_crashes(self) -> None:
+    def test_set_cevoice_and_wait_recovers_when_reload_setup_crashes(
+        self, request: pytest.FixtureRequest
+    ) -> None:
         """Verify CEVOICE reload setup failures still release the waiting caller."""
-        celune = self._make_celune({})
+        celune = self._make_celune(request, {})
         celune.loaded = True
         celune.cur_state = "idle"
         celune.current_voice = "balanced"
@@ -803,9 +916,11 @@ class TestCeluneReload(CeluneCoreTestSupport):
         assert celune._model_ready.is_set()
         assert celune.current_voice == "balanced"
 
-    def test_voice_conversion_mode_rejects_text_input(self) -> None:
+    def test_voice_conversion_mode_rejects_text_input(
+        self, request: pytest.FixtureRequest
+    ) -> None:
         """Verify VC mode rejects text input instead of using the TTS backend."""
-        celune = self._make_celune({})
+        celune = self._make_celune(request, {})
         celune.input_mode = "voice_conversion"
 
         with mock.patch(
@@ -817,6 +932,7 @@ class TestCeluneReload(CeluneCoreTestSupport):
 
     def test_constructor_defaults_to_seedvc_vc_backend_in_voice_conversion_mode(
         self,
+        request: pytest.FixtureRequest,
     ) -> None:
         """Verify VC mode resolves the default Seed-VC backend cleanly."""
         with (
@@ -836,7 +952,7 @@ class TestCeluneReload(CeluneCoreTestSupport):
             celune = Celune(
                 config={"mode": "voice_conversion"}, tts_backend=FakeBackend
             )
-            self.addCleanup(self._close_celune, celune)
+            request.addfinalizer(partial(self._close_celune, celune))
 
         resolve_vc.assert_called_once()
         assert resolve_vc.call_args.args[1] == "seed-vc"
@@ -866,16 +982,18 @@ class TestCeluneReload(CeluneCoreTestSupport):
 
         resolve_vc.assert_called_once()
 
-    def test_load_success_and_model_failure_paths_are_stubbed(self) -> None:
+    def test_load_success_and_model_failure_paths_are_stubbed(
+        self, request: pytest.FixtureRequest
+    ) -> None:
         """Verify successful startup and default-model failure handling.
 
         Raises:
             AssertionError: Startup behavior changes unexpectedly.
         """
-        celune = self._make_celune({})
+        celune = self._make_celune(request, {})
         celune.setup_extensions = mock.Mock()
-        self.patch_owner(core_loading, "warmup", return_value=True)
-        self.patch_owner(core_loading, "_start_configured_api")
+        patch_owner(request, core_loading, "warmup", return_value=True)
+        patch_owner(request, core_loading, "_start_configured_api")
         celune.backend.preload_models = mock.Mock()
         celune.backend.load_default_model = mock.Mock(return_value={"model": "ok"})
         celune.backend.model_id_for_voice = mock.Mock(return_value="fake/balanced")
@@ -885,29 +1003,31 @@ class TestCeluneReload(CeluneCoreTestSupport):
             mock.patch("celune.core.voice.play_signal", return_value=False),
         ):
             thread_cls.return_value.start = mock.Mock()
-            self.assertEqual(celune.load(), True)
-        self.assertEqual(celune.loaded, True)
-        self.assertEqual(getattr(celune.glow, "entered"), True)  # noqa: B009
+            assert (celune.load()) is True
+        assert celune.loaded
+        assert (getattr(celune.glow, "entered")) is True  # noqa: B009
         celune.close()
 
-        failing = self._make_celune({})
+        failing = self._make_celune(request, {})
         failing.setup_extensions = mock.Mock()
         failing.backend.preload_models = mock.Mock()
         failing.backend.load_default_model = mock.Mock(side_effect=RuntimeError("boom"))
         errors: list[str] = []
         failing.error_callback = errors.append
         with mock.patch("celune.core.voice.play_signal", return_value=False):
-            self.assertEqual(failing.load(), False)
-        self.assertEqual(errors, ["Default model failed to load"])
-        self.assertEqual(getattr(failing.glow, "fatal_called"), True)  # noqa: B009
+            assert (failing.load()) is False
+        assert errors == ["TTS backend 'fake' could not initialize: boom"]
+        assert getattr(failing.glow, "fatal_called") is True  # noqa: B009
 
-    def test_unload_runtime_state_clears_models_without_cuda(self) -> None:
+    def test_unload_runtime_state_clears_models_without_cuda(
+        self, request: pytest.FixtureRequest
+    ) -> None:
         """Verify model references are cleared without touching CUDA.
 
         Raises:
             AssertionError: Unload behavior changes unexpectedly.
         """
-        celune = self._make_celune({})
+        celune = self._make_celune(request, {})
         celune.model = cast(PreTrainedModel, mock.Mock(spec=PreTrainedModel))
         celune.llm = cast(PreTrainedModel, mock.Mock(spec=PreTrainedModel))
         celune.tokenizer = cast(
@@ -924,9 +1044,11 @@ class TestCeluneReload(CeluneCoreTestSupport):
         assert celune.tokenizer is None
         assert celune.backend.model is None
 
-    def test_unload_runtime_state_runs_model_close_hooks(self) -> None:
+    def test_unload_runtime_state_runs_model_close_hooks(
+        self, request: pytest.FixtureRequest
+    ) -> None:
         """Verify TTS and normalizer teardown calls object-level release hooks."""
-        celune = self._make_celune({})
+        celune = self._make_celune(request, {})
         tts_model = SimpleNamespace(close=mock.Mock())
         llm = SimpleNamespace(close=mock.Mock())
         tokenizer = SimpleNamespace(close=mock.Mock())
@@ -948,15 +1070,18 @@ class TestCeluneReload(CeluneCoreTestSupport):
         assert celune.llm is None
         assert celune.tokenizer is None
 
-    def test_sleep_transition_defers_cuda_cache_release(self) -> None:
+    def test_sleep_transition_defers_cuda_cache_release(
+        self, request: pytest.FixtureRequest
+    ) -> None:
         """Verify automatic sleep unloads references without flushing the CUDA allocator."""
         celune = self._make_celune(
+            request,
             {
                 "sleep": {
                     "enabled": True,
                     "unload": {"persona": False, "normalizer": True, "tts": True},
                 }
-            }
+            },
         )
         celune.locked = False
         celune.loaded = True
@@ -976,21 +1101,24 @@ class TestCeluneReload(CeluneCoreTestSupport):
             mock.patch("celune.core.sleep.torch.cuda.synchronize") as synchronize,
             mock.patch("celune.core.sleep.torch.cuda.empty_cache") as empty_cache,
         ):
-            self.assertTrue(celune.enter_sleep_mode())
+            assert celune.enter_sleep_mode()
 
         synchronize.assert_not_called()
         empty_cache.assert_not_called()
-        self.assertTrue(celune.sleeping)
-        self.assertIsNone(celune.llm)
-        self.assertIsNone(celune.tokenizer)
+        assert celune.sleeping
+        assert celune.llm is None
+        assert celune.tokenizer is None
 
-    def test_sleep_unload_failure_restores_model_readiness(self) -> None:
+    def test_sleep_unload_failure_restores_model_readiness(
+        self, request: pytest.FixtureRequest
+    ) -> None:
         """Verify a failed sleep unload does not strand readiness waiters."""
-        celune = self._make_celune({})
+        celune = self._make_celune(request, {})
         celune.loaded = True
         celune.locked = False
         celune.cur_state = "idle"
-        sleep_config = self.patch_owner(
+        sleep_config = patch_owner(
+            request,
             core_sleep,
             "_sleep_config",
             return_value=(
@@ -1023,9 +1151,11 @@ class TestCeluneReload(CeluneCoreTestSupport):
             release_cuda_cache=False,
         )
 
-    def test_stale_normalizer_load_does_not_restore_released_references(self) -> None:
+    def test_stale_normalizer_load_does_not_restore_released_references(
+        self, request: pytest.FixtureRequest
+    ) -> None:
         """Verify background normalizer loads cannot repopulate state after unload."""
-        celune = self._make_celune({})
+        celune = self._make_celune(request, {})
         ready = threading.Event()
         release = threading.Event()
         finished = threading.Event()
@@ -1066,9 +1196,12 @@ class TestCeluneReload(CeluneCoreTestSupport):
         assert load_components.call_args.kwargs["progress_callback"] is None
         assert not progress_events
 
-    def test_sleep_mode_unloads_configured_models_and_wakes(self) -> None:
+    def test_sleep_mode_unloads_configured_models_and_wakes(
+        self, request: pytest.FixtureRequest
+    ) -> None:
         """Verify sleep mode honors unload settings and reloads on wake."""
         celune = self._make_celune(
+            request,
             {
                 "vram": "high",
                 "sleep": {
@@ -1078,7 +1211,7 @@ class TestCeluneReload(CeluneCoreTestSupport):
                 },
                 "persona": {"enabled": True},
                 "use_normalizer": True,
-            }
+            },
         )
         celune.locked = False
         celune.loaded = True
@@ -1094,9 +1227,11 @@ class TestCeluneReload(CeluneCoreTestSupport):
         )
         persona_client = mock.Mock()
         celune.vision = persona_client
-        warmup = self.patch_owner(core_loading, "warmup", return_value=True)
+        warmup = patch_owner(request, core_loading, "warmup", return_value=True)
         celune.load_normalizer = mock.Mock()
-        self.patch_owner(core_lifecycle, "persona_conn", return_value=persona_client)
+        patch_owner(
+            request, core_lifecycle, "persona_conn", return_value=persona_client
+        )
         old_backend = celune.backend
         persona_load_started = threading.Event()
         release_persona_load = threading.Event()
@@ -1108,17 +1243,17 @@ class TestCeluneReload(CeluneCoreTestSupport):
         persona_client.load.side_effect = load_persona
 
         with mock.patch("celune.core.voice.play_signal", return_value=False):
-            self.assertEqual(celune.enter_sleep_mode(), True)
+            assert (celune.enter_sleep_mode()) is True
 
-        self.assertEqual(celune.sleeping, True)
-        self.assertEqual(celune.loaded, False)
-        self.assertEqual(celune.cur_state, "sleeping")
-        self.assertEqual(getattr(celune.glow, "sleep_called"), True)  # noqa: B009
-        self.assertIsNone(celune.model)
-        self.assertEqual(celune.model_name, "")
-        self.assertIsNone(celune.llm)
-        self.assertIsNone(celune.tokenizer)
-        self.assertIsNone(celune.vision)
+        assert celune.sleeping is True
+        assert not celune.loaded
+        assert celune.cur_state == "sleeping"
+        assert getattr(celune.glow, "sleep_called") is True  # noqa: B009
+        assert celune.model is None
+        assert celune.model_name == ""
+        assert celune.llm is None
+        assert celune.tokenizer is None
+        assert celune.vision is None
         persona_client.close.assert_called_once_with()
 
         wake_result: list[bool] = []
@@ -1145,13 +1280,13 @@ class TestCeluneReload(CeluneCoreTestSupport):
         if background_thread is not None:
             background_thread.join(timeout=2)
 
-        self.assertIsNot(celune.backend, old_backend)
-        self.assertEqual(celune.sleeping, False)
-        self.assertEqual(celune.loaded, True)
-        self.assertEqual(celune.cur_state, "idle")
-        self.assertEqual(getattr(celune.glow, "wake_called"), True)  # noqa: B009
-        self.assertEqual(celune.model, {"model_id": "fake/balanced", "kwargs": {}})
-        self.assertEqual(celune.model_name, "fake/balanced")
+        assert celune.backend is not old_backend
+        assert not celune.sleeping
+        assert celune.loaded
+        assert celune.cur_state == "idle"
+        assert getattr(celune.glow, "wake_called") is True  # noqa: B009
+        assert celune.model == {"model_id": "fake/balanced", "kwargs": {}}
+        assert celune.model_name == "fake/balanced"
         warmup.assert_called_once_with(celune)
         celune.load_normalizer.assert_called_once_with()
         persona_client.load.assert_called_once_with(
@@ -1159,7 +1294,9 @@ class TestCeluneReload(CeluneCoreTestSupport):
             "4bit",
         )
 
-    def test_sleep_mode_can_unload_vc_without_unloading_tts(self) -> None:
+    def test_sleep_mode_can_unload_vc_without_unloading_tts(
+        self, request: pytest.FixtureRequest
+    ) -> None:
         """Verify sleep mode can explicitly unload and reload the active VC backend."""
 
         class CountingVCBackend(FakeVCBackend):
@@ -1201,7 +1338,7 @@ class TestCeluneReload(CeluneCoreTestSupport):
                 tts_backend=FakeBackend,
                 vc_backend=CountingVCBackend,
             )
-            self.addCleanup(self._close_celune, celune)
+            request.addfinalizer(partial(self._close_celune, celune))
 
         celune.locked = False
         celune.loaded = True
@@ -1224,6 +1361,7 @@ class TestCeluneReload(CeluneCoreTestSupport):
 
     def test_sleep_tts_unload_can_keep_vc_loaded_when_explicitly_disabled(
         self,
+        request: pytest.FixtureRequest,
     ) -> None:
         """Verify ``sleep.unload.vc`` can opt out of the legacy TTS-coupled VC unload."""
 
@@ -1261,7 +1399,7 @@ class TestCeluneReload(CeluneCoreTestSupport):
                 tts_backend=FakeBackend,
                 vc_backend=CountingVCBackend,
             )
-            self.addCleanup(self._close_celune, celune)
+            request.addfinalizer(partial(self._close_celune, celune))
 
         celune.locked = False
         celune.loaded = True
@@ -1275,10 +1413,13 @@ class TestCeluneReload(CeluneCoreTestSupport):
         assert celune.vc_backend is vc_backend
         assert vc_backend.unload_calls == 0  # pylint: disable=E1101
 
-    def test_sleep_mode_closes_persona_even_if_close_raises(self) -> None:
+    def test_sleep_mode_closes_persona_even_if_close_raises(
+        self, request: pytest.FixtureRequest
+    ) -> None:
         """Verify sleep still clears Persona references when client shutdown fails."""
         celune = self._make_celune(
-            {"sleep": {"enabled": True, "unload": {"persona": True, "tts": False}}}
+            request,
+            {"sleep": {"enabled": True, "unload": {"persona": True, "tts": False}}},
         )
         celune.locked = False
         celune.loaded = True
@@ -1289,10 +1430,13 @@ class TestCeluneReload(CeluneCoreTestSupport):
             assert celune.enter_sleep_mode()
         assert celune.vision is None
 
-    def test_sleep_mode_plays_signal_after_releasing_pipeline_lock(self) -> None:
+    def test_sleep_mode_plays_signal_after_releasing_pipeline_lock(
+        self, request: pytest.FixtureRequest
+    ) -> None:
         """Verify the sleeping signal is not invoked while ``say_lock`` is still held."""
         celune = self._make_celune(
-            {"sleep": {"enabled": True, "unload": {"persona": False, "tts": False}}}
+            request,
+            {"sleep": {"enabled": True, "unload": {"persona": False, "tts": False}}},
         )
         celune.locked = False
         celune.loaded = True
@@ -1307,10 +1451,13 @@ class TestCeluneReload(CeluneCoreTestSupport):
         with mock.patch("celune.core.voice.play_signal", side_effect=play_sleep_signal):
             assert celune.enter_sleep_mode()
 
-    def test_sleep_mode_waits_for_active_sfx_playback(self) -> None:
+    def test_sleep_mode_waits_for_active_sfx_playback(
+        self, request: pytest.FixtureRequest
+    ) -> None:
         """Verify sleep does not unload runtime state while an SFX source drains."""
         celune = self._make_celune(
-            {"sleep": {"enabled": True, "unload": {"persona": False, "tts": False}}}
+            request,
+            {"sleep": {"enabled": True, "unload": {"persona": False, "tts": False}}},
         )
         celune.locked = False
         celune.loaded = True
@@ -1323,9 +1470,12 @@ class TestCeluneReload(CeluneCoreTestSupport):
         play_signal_mock.assert_not_called()
         assert not celune.sleeping
 
-    def test_wake_failure_switches_glow_to_fatal_color(self) -> None:
+    def test_wake_failure_switches_glow_to_fatal_color(
+        self, request: pytest.FixtureRequest
+    ) -> None:
         """Verify wake failures trigger the fixed fatal OpenRGB glow state."""
         celune = self._make_celune(
+            request,
             {
                 "vram": "high",
                 "sleep": {
@@ -1333,7 +1483,7 @@ class TestCeluneReload(CeluneCoreTestSupport):
                     "timeout": 1,
                     "unload": {"persona": False, "normalizer": False, "tts": True},
                 },
-            }
+            },
         )
         celune.sleeping = True
         celune.loaded = False
@@ -1349,12 +1499,15 @@ class TestCeluneReload(CeluneCoreTestSupport):
             ),
             mock.patch("celune.core.voice.play_signal", return_value=False),
         ):
-            self.assertEqual(celune.wake_from_sleep(), False)
-        self.assertEqual(getattr(celune.glow, "fatal_called"), True)  # noqa: B009
+            assert (celune.wake_from_sleep()) is False
+        assert (getattr(celune.glow, "fatal_called")) is True  # noqa: B009
 
-    def test_concurrent_wake_requests_only_recreate_backend_once(self) -> None:
+    def test_concurrent_wake_requests_only_recreate_backend_once(
+        self, request: pytest.FixtureRequest
+    ) -> None:
         """Verify repeated wake requests cannot duplicate backend recreation."""
         celune = self._make_celune(
+            request,
             {
                 "vram": "high",
                 "sleep": {
@@ -1362,7 +1515,7 @@ class TestCeluneReload(CeluneCoreTestSupport):
                     "timeout": 1,
                     "unload": {"persona": False, "normalizer": False, "tts": True},
                 },
-            }
+            },
         )
         celune.sleeping = True
         celune.loaded = False
@@ -1370,7 +1523,7 @@ class TestCeluneReload(CeluneCoreTestSupport):
         celune.current_voice = "balanced"
         celune.voices = ("balanced",)
         celune.model = None
-        self.patch_owner(core_loading, "warmup", return_value=True)
+        patch_owner(request, core_loading, "warmup", return_value=True)
 
         load_started = threading.Event()
         release_load = threading.Event()
@@ -1409,9 +1562,11 @@ class TestCeluneReload(CeluneCoreTestSupport):
         assert not celune.sleeping
         assert celune.cur_state == "idle"
 
-    def test_raise_warmup_error_preserves_original_cause(self) -> None:
+    def test_raise_warmup_error_preserves_original_cause(
+        self, request: pytest.FixtureRequest
+    ) -> None:
         """Verify WarmupError keeps the underlying warmup failure as its cause."""
-        celune = self._make_celune({})
+        celune = self._make_celune(request, {})
         cause = RuntimeError("tensor mismatch")
         celune._last_warmup_error = cause
 
@@ -1420,9 +1575,11 @@ class TestCeluneReload(CeluneCoreTestSupport):
 
         assert exc_info.value.__cause__ is cause
 
-    def test_singing_warmup_includes_an_explicit_ipa_syllable(self) -> None:
+    def test_singing_warmup_includes_an_explicit_ipa_syllable(
+        self, request: pytest.FixtureRequest
+    ) -> None:
         """Give singing backends a CESN probe that follows the explicit IPA syntax."""
-        celune = self._make_celune({})
+        celune = self._make_celune(request, {})
         celune.backend.singing = True
         celune.model = {"model_id": "fake/balanced", "kwargs": {}}
         celune.backend.model = celune.model
@@ -1439,9 +1596,11 @@ class TestCeluneReload(CeluneCoreTestSupport):
             "[bpm:120,key:c,scale:major][lang:en][a4:4][ɑ] Ah"
         )
 
-    def test_nonfatal_warmup_failure_does_not_enter_fatal_error_state(self) -> None:
+    def test_nonfatal_warmup_failure_does_not_enter_fatal_error_state(
+        self, request: pytest.FixtureRequest
+    ) -> None:
         """Verify rollback-scoped warmup failures stay non-fatal."""
-        celune = self._make_celune({})
+        celune = self._make_celune(request, {})
         celune.cur_state = "reloading"
         celune.loaded = True
         celune.model = {"model_id": "fake/balanced", "kwargs": {}}
@@ -1453,8 +1612,8 @@ class TestCeluneReload(CeluneCoreTestSupport):
 
         result = core_loading.warmup(celune, fatal_on_failure=False)
 
-        self.assertEqual(result, False)
-        self.assertEqual(celune.cur_state, "reloading")
-        self.assertEqual(celune.loaded, True)
-        self.assertEqual(getattr(celune.glow, "fatal_called"), False)  # noqa: B009
+        assert result is False
+        assert celune.cur_state == "reloading"
+        assert celune.loaded
+        assert getattr(celune.glow, "fatal_called") is False  # noqa: B009
         celune.error_callback.assert_not_called()

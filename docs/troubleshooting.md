@@ -5,7 +5,7 @@ steps across startup, audio, backends, Persona, agent mode, and CI.
 
 ## Startup or import failures
 
-Run `celune doctor` first. Confirm Python is 3.12–3.14, the active `uv`
+Run `celune doctor` first. Confirm Python is 3.12-3.14, the active `uv`
 environment is the expected one, and the CUDA/PyTorch architecture is supported.
 If a heavy library fails before the loading UI, check that the source-tree
 entrypoint is being run through the supported environment and that a stale
@@ -13,8 +13,8 @@ compiled artifact is not shadowing the checkout.
 
 ## Backend environment failures
 
-Check the backend name and manifest. Isolated environments are backend-specific;
-the core environment being healthy does not prove a TTS worker is installed.
+Check the backend name and manifest. Isolated environments are backend-specific.
+The core environment being healthy does not prove a TTS worker is installed.
 Read the environment's manifest and worker logs, then retry the backend-specific
 setup after Celune exits. Do not mix the core CUDA 13.0 lock with the worker
 CUDA 12.8 compatibility stack by manually installing packages into both.
@@ -47,7 +47,7 @@ transcript that backend requires.
 
 Confirm the global `mode` is `converse` or `agent`, and use a vision/text-capable
 model, and check that the active operation mode is `converse` or `agent`.
-`CTRL+R` first wakes Celune when sleeping; press again after the engine is ready
+`CTRL+R` first wakes Celune when sleeping. Press again after the engine is ready
 to capture speech. Whisper has a five-second no-input timeout and a configured
 speech-end delay, so silence does not create an infinite recording.
 
@@ -56,7 +56,7 @@ speech-end delay, so silence does not create an infinite recording.
 `awaiting_approval` and `awaiting_choice` are intentional task states. Review
 the typed operation and danger level in the UI, then approve, deny, answer, or
 cancel. If local management is unexpectedly available, inspect
-`agent.fs_tools`; keep it disabled in
+`agent.fs_tools`. Keep it disabled in
 normal deployments.
 
 ## CI or build issues

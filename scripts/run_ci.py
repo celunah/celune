@@ -9,8 +9,8 @@ import time
 import ctypes
 import signal
 import subprocess
+import contextlib
 from ctypes import wintypes
-from contextlib import suppress
 from typing import Optional, cast
 from collections.abc import Callable
 
@@ -157,7 +157,7 @@ def _start_process() -> subprocess.Popen[str]:
     """Start the Poe CI task while keeping console interrupts visible to the runner."""
     if os.name == "nt":
         process = subprocess.Popen(POE_COMMAND, text=True)  # pylint: disable=R1732
-        with suppress(OSError):
+        with contextlib.suppress(OSError):
             _attach_windows_job(process)
         return process
 
@@ -179,9 +179,9 @@ def stop_process_tree(process: subprocess.Popen[str]) -> None:
                 check=False,
                 creationflags=subprocess.CREATE_NO_WINDOW,
             )
-        with suppress(OSError):
+        with contextlib.suppress(OSError):
             process.kill()
-        with suppress(subprocess.TimeoutExpired):
+        with contextlib.suppress(subprocess.TimeoutExpired):
             process.wait(timeout=GRACE_PERIOD)
         return
 
@@ -189,7 +189,7 @@ def stop_process_tree(process: subprocess.Popen[str]) -> None:
     killpg = cast(Callable[[int, int], None], getattr(os, "killpg", None))
     sigkill = cast(int, getattr(signal, "SIGKILL", signal.SIGTERM))
     if getpgid is None or killpg is None:
-        with suppress(OSError):
+        with contextlib.suppress(OSError):
             process.kill()
         return
 
@@ -197,15 +197,15 @@ def stop_process_tree(process: subprocess.Popen[str]) -> None:
     try:
         process_group_id = getpgid(process.pid)
     except ProcessLookupError:
-        with suppress(OSError):
+        with contextlib.suppress(OSError):
             process.kill()
         return
 
-    with suppress(ProcessLookupError):
+    with contextlib.suppress(ProcessLookupError):
         killpg(process_group_id, sigkill)
-    with suppress(OSError):
+    with contextlib.suppress(OSError):
         process.kill()
-    with suppress(subprocess.TimeoutExpired):
+    with contextlib.suppress(subprocess.TimeoutExpired):
         process.wait(timeout=GRACE_PERIOD)
 
 

@@ -4,12 +4,18 @@
 from __future__ import annotations
 
 from uuid import uuid4
-from typing import TYPE_CHECKING, Union, Optional, cast
 from dataclasses import replace
 from collections.abc import Mapping, Sequence
+from typing import TYPE_CHECKING, Union, Optional, cast
 
 from ..i18n import string
+from ..typing.aliases import LogLevel
 from ..utils import format_error_message
+from ..typing.modes import OperationMode
+from ..extensions.events import EventDispatcher
+from ..typing.common import JSON, JSONSerializable
+from ..typing.events import EventName, EventPayload
+from ..persona.capabilities import PersonaCapabilities
 from ..typing.agent import (
     ToolCall,
     AgentTask,
@@ -60,22 +66,16 @@ from ..typing.locks import (
     ComponentBusyResult,
     ComponentLockRequirement,
 )
-from ..typing.modes import OperationMode
-from ..typing.common import JSON, JSONSerializable
-from ..typing.events import EventName, EventPayload
-from ..typing.aliases import LogLevel
-from ..extensions.events import EventDispatcher
 from ..dataclasses.events import (
     AgentTaskFinishedEvent,
     AgentChoiceRequestedEvent,
     AgentTaskStateChangedEvent,
     AgentApprovalRequestedEvent,
 )
-from ..persona.capabilities import PersonaCapabilities
 
 if TYPE_CHECKING:
-    from ..core.concurrency import ComponentLockLease, ComponentLockManager
     from ..celune import Celune
+    from ..core.concurrency import ComponentLockLease, ComponentLockManager
 
 
 def _default_token_counter(text: str) -> int:
@@ -871,7 +871,7 @@ class AgentRuntime:
         """Run one bounded agent task through planning and typed tool execution.
 
         An existing non-terminal task for ``request.session.session_id`` is always
-        reused.  When no task exists, this compatibility entry point creates one;
+        reused.  When no task exists, this compatibility entry point creates one.
         routed Phase 3 requests therefore never create a second task.
         """
         task = self._session_task(request.session.session_id)
@@ -1053,6 +1053,8 @@ class AgentRuntime:
                         return _paused_output()
 
                 failure_reason = AgentFailureReason.TOOL_ERROR
+                if not self._consume_iteration(task):
+                    return self._terminal_output(task, callback)
                 self._transition(task, AgentTaskState.EXECUTING_TOOL)
                 self._log(
                     f"[AGENT] tool_execute task={task.task_id} "
@@ -1092,6 +1094,7 @@ class AgentRuntime:
                         task,
                         _empty_output(),
                         callback,
+                        consume_iteration=False,
                     )
                 handled = self._validate_output(
                     self._invoke_handle_result(task, result)
@@ -1108,9 +1111,12 @@ class AgentRuntime:
                         self._transition(task, AgentTaskState.PAUSED)
                     return handled
                 if handled["end"]:
-                    return self._complete_with_output(task, handled, callback)
-                if not self._consume_iteration(task):
-                    return self._terminal_output(task, callback)
+                    return self._complete_with_output(
+                        task,
+                        handled,
+                        callback,
+                        consume_iteration=False,
+                    )
                 last_output = handled
 
             return self._terminal_output(task, callback, last_output)
@@ -1441,7 +1447,7 @@ class AgentRuntime:
         return True
 
     def _consume_iteration(self, task: AgentTask) -> bool:
-        """Account one completed decision cycle and publish limit termination."""
+        """Account one started execution cycle."""
         old_state = task.state
         consumed = task.consume_iteration()
         if consumed:
@@ -1633,6 +1639,7 @@ class AgentRuntime:
         """Validate one executor result and fill its typed execution status."""
         if not isinstance(value, dict):
             raise TypeError("agent executor returned a non-object tool result")
+        result_metadata = cast(dict[str, JSONSerializable], value)
         call_id = value.get("tool_call_id")
         output = value.get("output")
         error = value.get("error")
@@ -1645,8 +1652,8 @@ class AgentRuntime:
             or not isinstance(end_task, bool)
         ):
             raise ValueError("agent executor returned an invalid tool result")
-        raw_status = value.get("status")
-        raw_tool_id = value.get("tool_id")
+        raw_status = result_metadata.get("status")
+        raw_tool_id = result_metadata.get("tool_id")
         if raw_status is None:
             status = (
                 AgentToolExecutionStatus.FAILED
@@ -1683,14 +1690,16 @@ class AgentRuntime:
         task: AgentTask,
         output: AgentOutput,
         callback: Optional[AgentResponseCallback],
+        *,
+        consume_iteration: bool = True,
     ) -> AgentOutput:
         """Complete after an already-published final output."""
+        if task.state not in {AgentTaskState.PLANNING, AgentTaskState.RESPONDING}:
+            raise ValueError("agent task cannot complete from its current state")
+        if consume_iteration and not self._consume_iteration(task):
+            return self._terminal_output(task, callback)
         if task.state == AgentTaskState.PLANNING:
             self._transition(task, AgentTaskState.RESPONDING)
-        if task.state != AgentTaskState.RESPONDING:
-            raise ValueError("agent task cannot complete from its current state")
-        if not self._consume_iteration(task):
-            return self._terminal_output(task, callback)
         metadata: JSON = {
             "iterations": task.iterations,
             "generated_tokens": task.generated_tokens,
@@ -1740,6 +1749,8 @@ class AgentRuntime:
         """Deliver a terminal output without masking lifecycle cleanup."""
         if callback is None:
             return
+
+        # noinspection PyBroadException
         try:
             callback(output)
         except Exception:
@@ -1824,7 +1835,7 @@ class AgentRuntime:
             self._after_transition(task, old_state)
 
     def _after_transition(self, task: AgentTask, old_state: AgentTaskState) -> None:
-        """Synchronize session compatibility flags and emit one state change."""
+        """Synchronize session flags and emit one task status update."""
         self._sync_session(task)
         self._emit(
             "agent_task_state_changed",
@@ -2001,3 +2012,8 @@ class AgentRuntime:
             f"[AGENT] emit_return name={event_name}",
             loglevel="debug",
         )
+
+    @property
+    def tool_schemas(self):
+        """Property for agent tool schemas."""
+        return self._tool_schemas

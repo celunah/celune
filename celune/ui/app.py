@@ -8,6 +8,12 @@ import asyncio
 import logging
 import itertools
 import threading
+import queue as queue_module
+from pathlib import Path
+from io import TextIOWrapper
+from types import ModuleType
+from dataclasses import field, dataclass
+from collections.abc import Callable, Iterator, Awaitable
 from typing import (
     TYPE_CHECKING,
     Never,
@@ -20,13 +26,8 @@ from typing import (
     cast,
     final,
 )
-from pathlib import Path
-from io import TextIOWrapper
-import queue as queue_module
-from types import ModuleType
-from dataclasses import field, dataclass
-from collections.abc import Callable, Iterator, Awaitable
 
+from rich.text import Text
 from textual import (
     app,
     css,
@@ -37,39 +38,42 @@ from textual import (
     binding,
     widgets,
     containers,
+)
+from textual import (
     color as textual_color,
     screen as textual_screen,
     widget as textual_widget,
     message as textual_message,
 )
-from rich.text import Text
 
+from .buttons import CeluneButton
+from .loading import CeluneLoadingScreen
+from ..i18n import string, tagged_string
+from ..typing.agent import AgentTaskState
+from ..typing.modes import OperationState
+from ..typing.registry import ModelMetadata
+from ..typing.common import JSONSerializable
+
+# noinspection PyUnresolvedReferences
+from ..watchdog import launcher_loss_requested
+from .compat import install_textual_timer_sleep
+from ..typing.config import AudioDeviceInfoValue
+from ..core.concurrency import run_in_daemon_thread
+from .terminal import SelectMenuOption, SelectMenuWidget
+from ..constants import BASE_SR, SIGTSTP, APP_NAME, ExitCodes
+from .theme import CELUNE_CSS, severity_color, with_brightness
+from ..theme.defaults import default_theme_family, default_error_theme_family
+from ..typing.locks import (
+    ComponentLockName,
+    ComponentLockOwner,
+    ComponentLockRequirement,
+)
 from . import (
     debug as _debug,
     capture as _capture,
     runtime as _runtime,
     interaction as _interaction,
 )
-from ..typing.locks import (
-    ComponentLockName,
-    ComponentLockOwner,
-    ComponentLockRequirement,
-)
-from .buttons import CeluneButton
-from .loading import CeluneLoadingScreen
-from ..i18n import string, tagged_string
-from ..typing.agent import AgentTaskState
-from ..typing.modes import OperationState
-from ..registry.types import ModelMetadata
-from ..typing.common import JSONSerializable
-from ..watchdog import launcher_loss_requested
-from .compat import install_textual_timer_sleep
-from ..core.concurrency import run_in_daemon_thread
-from ..typing.config import AudioDeviceInfoValue
-from .terminal import SelectMenuOption, SelectMenuWidget
-from ..constants import BASE_SR, SIGTSTP, APP_NAME, ExitCodes
-from .theme import CELUNE_CSS, severity_color, with_brightness
-from ..theme.defaults import default_theme_family, default_error_theme_family
 
 App = app.App
 ReturnType = app.ReturnType
@@ -105,11 +109,19 @@ else:
 install_textual_timer_sleep()
 
 if TYPE_CHECKING:
+    # noinspection PyUnresolvedReferences
     import yaml
+
+    # noinspection PyUnresolvedReferences
     import numpy as np
+
+    # noinspection PyUnresolvedReferences
     import sounddevice as sd
+
+    # noinspection PyUnresolvedReferences
     import numpy.typing as npt
 
+    # noinspection PyUnresolvedReferences
     from ..vc import (
         VC_PLAYBACK_GAIN,
         VCDebugCapture,
@@ -122,29 +134,47 @@ if TYPE_CHECKING:
         vc_live_chunk_overlap_frames,
         create_live_voice_activity_detector,
     )
+
+    # noinspection PyUnresolvedReferences
     from ..paths import config_path, main_window_log_path
+
+    # noinspection PyUnresolvedReferences
     from ..utils import discard, replace_ipa, is_april_fools
     from ..celune import Celune
+
+    # noinspection PyUnresolvedReferences
     from ..config import format_audio_device_name, resolve_audio_device_with_info
     from ..cevoice import CEVoiceLoader
+
+    # noinspection PyUnresolvedReferences
     from .commands import process_command as process_ui_command
     from .terminal import (
         LogRedirect,
         UILogHandler,
         is_celune_log_record,
     )
+
+    # noinspection PyUnresolvedReferences
     from .resources import FOOTER_ROTATE_SECONDS
+
+    # noinspection PyUnresolvedReferences
     from ..exceptions import CEDTSError
+
+    # noinspection PyUnresolvedReferences
     from ..persona.asr import (
         DEFAULT_PERSONA_SPEECH_MODEL_ID,
         PERSONA_SPEECH_END_DELAY_SECONDS,
         PERSONA_SPEECH_NO_INPUT_TIMEOUT_SECONDS,
-        WhisperSegment,
         WhisperTranscriber,
     )
+
+    # noinspection PyUnresolvedReferences
     from ..persona.impl import persona_config, persona_enabled, persona_talkback_enabled
     from ..typing.agent import AgentTask
     from ..typing.aliases import LogLevel, AudioChunk, AudioChunks, VCAudioCallback
+
+    # noinspection PyUnresolvedReferences
+    from ..dataclasses.asr import WhisperSegment
     from ..core.concurrency import ComponentLockLease
     from ..extensions.events import EventDispatcher
     from ..pipeline.captions import current_playback_status
@@ -157,10 +187,14 @@ if TYPE_CHECKING:
         AgentTaskStateChangedEvent,
         AgentApprovalRequestedEvent,
     )
+
+    # noinspection PyUnresolvedReferences
     from ..pipeline.submission import (
         queue_streaming_sfx_audio,
         finish_streaming_sfx_audio,
     )
+
+    # noinspection PyUnresolvedReferences
     from ..dataclasses.pipeline import AudioOutput
 
     colors: ModuleType
@@ -174,8 +208,8 @@ if TYPE_CHECKING:
         def start_gpu_usage_worker(self) -> None:
             """Start native async GPU usage polling."""
 
-        def stop_gpu_usage_worker(self) -> None:
-            """Stop native async GPU usage polling."""
+        async def stop_gpu_usage_worker(self) -> None:
+            """Stop and await native async GPU usage polling."""
 
         def resource_pages(
             self,
@@ -210,6 +244,7 @@ _UI_RUNTIME_EXPORTS = (
     launcher_loss_requested,
 )
 
+# noinspection PyUnresolvedReferences
 if TYPE_CHECKING:
     _UI_TYPE_EXPORTS = (
         AgentTask,
@@ -343,6 +378,7 @@ class Button(CeluneButton):
             super().__init__()
             self.button = button
 
+    # noinspection PyShadowingBuiltins
     def __init__(
         self,
         label: Optional[str] = None,
@@ -350,9 +386,8 @@ class Button(CeluneButton):
             "default"
         ),
         *,
-        # pylint: disable=redefined-builtin
         name: Optional[str] = None,
-        id: Optional[str] = None,
+        id: Optional[str] = None,  # pylint: disable=W0622
         classes: Optional[str] = None,
         tooltip: Optional[RenderableType] = None,
         action: Optional[str] = None,
@@ -483,35 +518,44 @@ class SelectMenuOverlay(ModalScreen[None]):
         event.stop()
         self.dismiss(None)
 
-    def on_key(self, event: events.Key) -> None:
+    # statics aplenty
+    @staticmethod
+    def on_key(event: events.Key) -> None:
         """Keep unhandled keys from reaching the application underneath."""
         event.stop()
 
-    def on_mouse_down(self, event: events.MouseDown) -> None:
+    @staticmethod
+    def on_mouse_down(event: events.MouseDown) -> None:
         """Consume mouse presses outside the menu popup."""
         event.stop()
 
-    def on_mouse_up(self, event: events.MouseUp) -> None:
+    @staticmethod
+    def on_mouse_up(event: events.MouseUp) -> None:
         """Consume mouse releases outside the menu popup."""
         event.stop()
 
-    def on_mouse_scroll_down(self, event: events.MouseScrollDown) -> None:
+    @staticmethod
+    def on_mouse_scroll_down(event: events.MouseScrollDown) -> None:
         """Consume downward scrolling outside the menu popup."""
         event.stop()
 
-    def on_mouse_scroll_up(self, event: events.MouseScrollUp) -> None:
+    @staticmethod
+    def on_mouse_scroll_up(event: events.MouseScrollUp) -> None:
         """Consume upward scrolling outside the menu popup."""
         event.stop()
 
-    def on_mouse_scroll_right(self, event: events.MouseScrollRight) -> None:
+    @staticmethod
+    def on_mouse_scroll_right(event: events.MouseScrollRight) -> None:
         """Consume rightward scrolling outside the menu popup."""
         event.stop()
 
-    def on_mouse_scroll_left(self, event: events.MouseScrollLeft) -> None:
+    @staticmethod
+    def on_mouse_scroll_left(event: events.MouseScrollLeft) -> None:
         """Consume leftward scrolling outside the menu popup."""
         event.stop()
 
-    def on_click(self, event: events.Click) -> None:
+    @staticmethod
+    def on_click(event: events.Click) -> None:
         """Consume clicks outside the menu popup."""
         event.stop()
 
@@ -657,6 +701,22 @@ def terminal_title_escape(status: tuple[str, str, str]) -> str:
     return build_terminal_title(status)
 
 
+def terminal_status_escape(
+    status: tuple[str, str, str],
+    *,
+    program_state: Optional[str] = None,
+    message: Optional[str] = None,
+) -> str:
+    """Build terminal status escapes without loading runtime UI dependencies."""
+    from ..terminal import terminal_status_escape as build_terminal_status
+
+    return build_terminal_status(
+        status,
+        program_state=program_state,
+        message=message,
+    )
+
+
 def set_terminal_title(
     status: tuple[str, str, str],
     output: Optional[TextIO] = None,
@@ -667,6 +727,26 @@ def set_terminal_title(
     write_terminal_title(status, output)
 
 
+def set_terminal_status(
+    status: tuple[str, str, str],
+    output: Optional[TextIO] = None,
+    *,
+    program_state: Optional[str] = None,
+    message: Optional[str] = None,
+) -> None:
+    """Publish terminal status escapes without loading runtime UI dependencies."""
+    from ..terminal import set_terminal_status as write_terminal_status
+
+    write_terminal_status(
+        status,
+        output,
+        program_state=program_state,
+        message=message,
+    )
+
+
+# noinspection PyGlobalUndefined
+# noinspection PyUnresolvedReferences
 def ensure_ui_runtime_dependencies() -> None:
     """Load optional UI integrations after the first loading frame is visible."""
     global _RUNTIME_DEPENDENCIES_LOADED
@@ -674,8 +754,10 @@ def ensure_ui_runtime_dependencies() -> None:
     global default_loader
     global indent
     global set_terminal_title
+    global set_terminal_status
     global supports_ansi
     global terminal_title_escape
+    global terminal_status_escape
     if _RUNTIME_DEPENDENCIES_LOADED:
         return
 
@@ -764,7 +846,13 @@ def ensure_ui_runtime_dependencies() -> None:
         set_terminal_title as loaded_set_terminal_title,
     )
     from ..terminal import (
+        set_terminal_status as loaded_set_terminal_status,
+    )
+    from ..terminal import (
         terminal_title_escape as loaded_terminal_title_escape,
+    )
+    from ..terminal import (
+        terminal_status_escape as loaded_terminal_status_escape,
     )
     from ..watchdog import launcher_loss_requested as loaded_launcher_loss_requested
     from .resources import FOOTER_ROTATE_SECONDS
@@ -773,7 +861,6 @@ def ensure_ui_runtime_dependencies() -> None:
         DEFAULT_PERSONA_SPEECH_MODEL_ID,
         PERSONA_SPEECH_END_DELAY_SECONDS,
         PERSONA_SPEECH_NO_INPUT_TIMEOUT_SECONDS,
-        WhisperSegment,
         WhisperTranscriber,
     )
     from ..persona.impl import (
@@ -781,6 +868,7 @@ def ensure_ui_runtime_dependencies() -> None:
         persona_enabled,
         persona_talkback_enabled,
     )
+    from ..dataclasses.asr import WhisperSegment
     from ..pipeline.captions import current_playback_status
     from ..pipeline.submission import (
         queue_streaming_sfx_audio,
@@ -792,8 +880,10 @@ def ensure_ui_runtime_dependencies() -> None:
     default_loader = loaded_default_loader
     indent = loaded_indent
     set_terminal_title = loaded_set_terminal_title
+    set_terminal_status = loaded_set_terminal_status
     supports_ansi = loaded_supports_ansi
     terminal_title_escape = loaded_terminal_title_escape
+    terminal_status_escape = loaded_terminal_status_escape
     launcher_loss_requested = loaded_launcher_loss_requested
     _RUNTIME_LOG_REDIRECT_FILTER_MESSAGES = RUNTIME_LOG_FILTER_MESSAGES
     _RUNTIME_DEPENDENCIES_LOADED = True
@@ -1128,6 +1218,9 @@ class CeluneUI(
             None
         )
         self._terminal_status: Optional[tuple[str, str, str]] = None
+        self._terminal_status_message: Optional[str] = None
+        self._terminal_program_state: Optional[str] = None
+        self._pending_terminal_status_message: Optional[str] = None
         self._loading_screen: Optional[CeluneLoadingScreen] = None
         self._startup_loader = startup_loader
         self._startup_messages = list(startup_messages or [])
@@ -1527,6 +1620,7 @@ class CeluneUI(
         )
         original_call_handlers = logging.Logger.callHandlers
 
+        # noinspection PyShadowingNames
         def call_handlers(self: logging.Logger, record: logging.LogRecord) -> None:
             if is_celune_log_record(record):
                 original_call_handlers(self, record)

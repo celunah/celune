@@ -1,10 +1,13 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for the Pocket TTS backend adapter."""
+# TODO: merge this into test_backends_and_extensions.py
 
 import sys
-from types import ModuleType, SimpleNamespace
 from pathlib import Path
 from unittest import mock
+from types import ModuleType, SimpleNamespace
+
+from celune.utils import discard
 
 from .support import mock_mini_backend
 
@@ -39,7 +42,8 @@ def test_mini_generated_config_matches_snapshot_language_variant(
         def load_fake_model(
             *, config: Path, temp: float, lsd_decode_steps: int
         ) -> mock.Mock:
-            del temp, lsd_decode_steps
+            discard(temp)
+            discard(lsd_decode_steps)
             generated_configs.append(config.read_text(encoding="utf-8"))
             return runtime_model
 

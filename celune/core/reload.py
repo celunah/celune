@@ -6,24 +6,35 @@ from __future__ import annotations
 
 import time
 import contextlib
-from typing import TYPE_CHECKING, Union, Optional, cast
 from pathlib import Path
 from dataclasses import dataclass
+from typing import TYPE_CHECKING, Union, Optional, cast
 
 from transformers.modeling_utils import PreTrainedModel
 
 from . import lifecycle
+from ..constants import APP_NAME
 from ..i18n import string, tagged_string
+from ..typing.backends import BackendModel
+from ..typing.common import JSONSerializable
+from ..dataclasses.cevoice import CEVoicePersona
+from ..utils import available, format_error_message
+from ..backends.environment import backend_manifest
+from ..backends.tts import CeluneBackend, resolve_backend
+from ..exceptions import WarmupError, BackendError, NotAvailableError
 from ..vram import (
     VramPreset,
     resolve_vram_preset,
     is_cuda_out_of_memory,
     release_cuda_after_oom,
 )
-from ..utils import available, format_error_message
-from ..config import config_bool, config_value, config_backend_options
+from ..config import (
+    config_bool,
+    config_value,
+    config_backend_options,
+    inference_mode as config_inference_mode,
+)
 from ..cevoice import (
-    CEVoicePersona,
     default_loader,
     active_bundle_path,
     select_voice_bundle,
@@ -36,15 +47,10 @@ from .lifecycle import (
     _core_backend_target,
     tts_quantization_enabled,
 )
-from ..constants import APP_NAME
-from ..exceptions import WarmupError, BackendError, NotAvailableError
 from ..backends.vc import (
     CeluneVCBackend,
-)
-from ..backends.vc import (
     resolve_vc_backend as create_vc_backend,
 )
-from ..backends.tts import CeluneBackend, resolve_backend
 from ..typing.celune import (
     VCBackendSpec,
     TTSBackendSpec,
@@ -52,14 +58,18 @@ from ..typing.celune import (
     MessageCallback,
     ReleasableObject,
 )
-from ..typing.common import JSONSerializable
-from ..typing.backends import BackendModel
 from ..dataclasses.events import (
     VoiceChangedEvent,
     CharacterLoadedEvent,
     CharacterChangedEvent,
     CharacterUnloadedEvent,
 )
+
+
+if TYPE_CHECKING:
+    # for some bizarre reason Codex decided to shove this import at the bottom of this file
+    # it is a type import so why should it matter?
+    from ..celune import Celune
 
 
 @dataclass
@@ -165,7 +175,41 @@ def resolve_tts_backend(
     **backend_kwargs,
 ) -> CeluneBackend:
     """Resolve a TTS backend and bind runtime callbacks."""
+    inference_mode = config_inference_mode(
+        {"inference_mode": backend_kwargs.pop("inference_mode", "native")}
+    )
+    if isinstance(backend_spec, str):
+        manifest = backend_manifest(backend_spec)
+        supports_audio_cpp = manifest.supports_audio_cpp
+        requires_audio_cpp = manifest.requires_audio_cpp
+        backend_name = manifest.backend_id
+    else:
+        supports_audio_cpp = bool(getattr(backend_spec, "supports_audio_cpp", False))
+        requires_audio_cpp = bool(getattr(backend_spec, "requires_audio_cpp", False))
+        backend_name = str(getattr(backend_spec, "name", backend_spec))
+    effective_mode = (
+        "audio_cpp"
+        if requires_audio_cpp or (inference_mode == "gguf" and supports_audio_cpp)
+        else "native"
+    )
+    if isinstance(backend_spec, str):
+        backend_kwargs["inference_mode"] = inference_mode
+        backend_kwargs["effective_inference_mode"] = effective_mode
+    if inference_mode == "gguf" and not supports_audio_cpp:
+        self.log(
+            string("inference.audio_cpp_unavailable", backend=backend_name),
+            "warning",
+        )
+    self.log(
+        string(
+            "inference.backend_mode",
+            backend=backend_name,
+            requested=inference_mode,
+            effective=effective_mode,
+        )
+    )
     backend = resolve_backend(backend_spec, **backend_kwargs)
+    backend.configure_inference_mode(inference_mode, log=False)
     backend.bind_progress(self.progress_callback)
     backend.log_level = getattr(self, "log_level", "info")
     return backend
@@ -295,6 +339,7 @@ def _backend_reload_kwargs(
     """Return constructor kwargs needed to instantiate one backend specification."""
     backend_kwargs: dict[str, JSONSerializable] = {
         "quantize": tts_quantization_enabled(self.config, backend_spec),
+        "inference_mode": config_value(self.config, "inference_mode", "native"),
     }
     raw_name = getattr(backend_spec, "name", None)
     backend_name = (
@@ -310,19 +355,21 @@ def _backend_reload_kwargs(
     if isinstance(backend_spec, CeluneBackend):
         backend_spec.quantization_requested = bool(backend_kwargs["quantize"])
         backend_spec.quantize_kv_cache = quantize_kv_cache
-        return {}
+        return {"inference_mode": backend_kwargs["inference_mode"]}
 
     if backend_name in TTS_KV_CACHE_BACKENDS:
         backend_kwargs["quantize_kv_cache"] = quantize_kv_cache
     if backend_name == "qwen3":
         preset = resolve_vram_preset(self.config)
-        backend_kwargs["x_vector_only"] = config_bool(
-            self.config,
-            "CELUNE_QWEN3_X_VECTOR_ONLY",
-            "qwen3_x_vector_only",
-        )
         backend_kwargs["clone_model_id"] = preset.qwen3_clone_model_id
-    backend_kwargs.update(config_backend_options(self.config, backend_name))
+    backend_options = dict(config_backend_options(self.config, backend_name))
+    if backend_name == "qwen3":
+        backend_options["x_vector_only"] = config_bool(
+            backend_options,
+            "CELUNE_QWEN3_X_VECTOR_ONLY",
+            "x_vector_only",
+        )
+    backend_kwargs.update(backend_options)
     return backend_kwargs
 
 
@@ -554,11 +601,7 @@ def _hot_reload_backend_impl(
     candidate_vc_backend: Optional[CeluneVCBackend] = None
     candidate_model: Optional[PreTrainedModel] = None
     candidate_voice: Optional[str] = None
-    requested_name = (
-        backend_spec.name
-        if isinstance(backend_spec, (CeluneBackend, CeluneVCBackend))
-        else str(backend_spec)
-    )
+    requested_name = str(getattr(backend_spec, "name", None) or backend_spec)
 
     try:
         snapshot = _capture_reload_snapshot(self)
@@ -697,7 +740,9 @@ def _hot_reload_backend_impl(
         elif backend_target == "vc":
             lifecycle.unload_normalizer_components(self)
         self.loaded = True
-        self.log(string("celune.switched_backend", backend=requested_name))
+        message = string("celune.switched_backend", backend=requested_name)
+        self.log(message)
+        self.toast(message)
         self.progress_callback(1, 1)
         self.cur_state = "idle"
         self.status_callback(string("status.idle"))
@@ -813,7 +858,7 @@ def _track_reload_backend(
     self,
     backend: Union[CeluneBackend, CeluneVCBackend],
 ) -> bool:
-    """Publish a reload candidate to shutdown before it performs work."""
+    """Publish a reload candidate to shut down before it performs work."""
     with self._model_lock:
         if self._closed:
             return False
@@ -918,12 +963,12 @@ def _hot_reload_cevoice_impl(
                 release_loaded_object(cast(ReleasableObject, previous_model))
 
         self.loaded = True
-        self.log(
-            string(
-                "celune.switched_character",
-                character=(bundle if bundle is not None else previous_bundle.name),
-            )
+        message = string(
+            "celune.switched_character",
+            character=(bundle if bundle is not None else previous_bundle.name),
         )
+        self.log(message)
+        self.toast(message)
         self.progress_callback(1, 1)
         self.cur_state = "idle"
         self.status_callback(string("status.idle"))
@@ -969,10 +1014,9 @@ def _hot_reload_cevoice_impl(
             self.cur_state = "idle"
         self.status_callback(string("status.idle"))
         self.progress_callback(1, 1)
-        self.log(
-            string("celune.character_restore_failed"),
-            "warning",
-        )
+        message = string("celune.character_restore_failed")
+        self.log(message, "warning")
+        self.toast(message, severity="warning")
         return False
     finally:
         self._reload_pending = False
@@ -1146,7 +1190,3 @@ def reload_model_for_language(
     backend.unload_model()
     engine.model = backend.load_model(model_id, lang=target_language)
     engine.model_name = model_id
-
-
-if TYPE_CHECKING:
-    from ..celune import Celune

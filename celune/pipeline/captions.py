@@ -2,13 +2,13 @@
 """Caption alignment and playback progress tracking."""
 
 from __future__ import annotations
-from collections import abc, deque
 
 import re
 import json
 import math
 import queue
 import inspect
+import logging
 import importlib
 import itertools
 import threading
@@ -16,19 +16,18 @@ import subprocess
 import unicodedata
 import string as string_module
 from pathlib import Path
+from types import ModuleType
+from collections import abc, deque
 from difflib import SequenceMatcher
 from typing import TYPE_CHECKING, Union, Optional, Protocol, cast
 
 import numpy as np
 from iso639.exceptions import InvalidLanguageValue, DeprecatedLanguageValue
 
-from .timing import (
-    monotonic_time,
-)
-
 from ..i18n import string
 from ..constants import BASE_SR
 from ..typing.common import JSON
+from .timing import monotonic_time
 from ..utils import format_error_message
 from ..audio.resampling import resample_audio
 from ..typing.pipeline import SpeechStreamQueue
@@ -53,6 +52,8 @@ _MODEL_SAMPLE_RATE = 16000
 _MODEL_FRAME_RATE = 50.0
 
 _ONNX_LOG_SEVERITY_ERROR = 3
+
+_LOGGER = logging.getLogger(__name__)
 
 _ALIGNER_LOCK = threading.Lock()
 
@@ -93,6 +94,12 @@ class _InferenceSession(Protocol):
         input_feed: abc.Mapping[str, np.ndarray],
     ) -> abc.Sequence[np.ndarray]:
         """Evaluate the ONNX graph."""
+
+
+class _SessionOptions(Protocol):
+    """ONNX Runtime session options used by the aligner."""
+
+    log_severity_level: int
 
 
 class CaptionAligner:
@@ -268,19 +275,53 @@ class CaptionAligner:
                 )
                 session_options = runtime.SessionOptions()
                 session_options.log_severity_level = _ONNX_LOG_SEVERITY_ERROR
-                session = cast(
-                    _InferenceSession,
-                    runtime.InferenceSession(
-                        model_path,
-                        sess_options=session_options,
-                        providers=["CPUExecutionProvider"],
-                    ),
+                session = _create_caption_session(
+                    runtime,
+                    model_path,
+                    session_options,
                 )
                 self._input_name = session.get_inputs()[0].name
                 self._output_name = session.get_outputs()[0].name
                 self._session = session
                 self._vocab = vocab
             return self._session, self._vocab
+
+
+def _create_caption_session(
+    runtime: ModuleType,
+    model_path: str,
+    session_options: _SessionOptions,
+) -> _InferenceSession:
+    """Prefer CUDA for caption inference and retry with CPU if needed."""
+    cpu_provider = "CPUExecutionProvider"
+    if "CUDAExecutionProvider" in runtime.get_available_providers():
+        # noinspection PyBroadException
+        try:
+            preload_dlls = getattr(runtime, "preload_dlls", None)
+            if callable(preload_dlls):
+                preload_dlls()
+            return cast(
+                _InferenceSession,
+                runtime.InferenceSession(
+                    model_path,
+                    sess_options=session_options,
+                    providers=["CUDAExecutionProvider", cpu_provider],
+                ),
+            )
+        except Exception:
+            _LOGGER.warning(
+                "Caption CUDA session initialization failed, retrying with CPU.",
+                exc_info=True,
+            )
+
+    return cast(
+        _InferenceSession,
+        runtime.InferenceSession(
+            model_path,
+            sess_options=session_options,
+            providers=[cpu_provider],
+        ),
+    )
 
 
 def get_caption_aligner() -> CaptionAligner:
@@ -332,12 +373,16 @@ def align_chunk_word_start_frames(
                 language,
                 alignment_sections,
             )
-            aligned_timings = map_section_word_timings(
-                display_words,
-                aligned_words,
-                alignment_sections,
-                len(chunk_audio) / sample_rate,
-                sample_rate,
+            aligned_timings = (
+                map_section_word_timings(
+                    display_words,
+                    aligned_words,
+                    alignment_sections,
+                    len(chunk_audio) / sample_rate,
+                    sample_rate,
+                )
+                if aligned_words
+                else ()
             )
         else:
             aligned_words = get_caption_aligner().align_words(
@@ -383,7 +428,7 @@ def build_caption_alignment_sections(
     spoken_sections = tuple(
         (audio_start, audio_end, text)
         for audio_start, audio_end, text in audio_sections
-        if audio_end > audio_start and text.split()
+        if audio_end > audio_start and caption_alignment_word_count(text) > 0
     )
     if not spoken_sections:
         return "", ()
@@ -397,7 +442,7 @@ def build_caption_alignment_sections(
         display_ranges,
         strict=True,
     ):
-        transcript_word_end = transcript_word_start + len(text.split())
+        transcript_word_end = transcript_word_start + caption_alignment_word_count(text)
         sections.append(
             CaptionAlignmentSection(
                 audio_start,
@@ -410,35 +455,7 @@ def build_caption_alignment_sections(
         )
         transcript_word_start = transcript_word_end
 
-    merged_sections: list[CaptionAlignmentSection] = []
-    pending = sections[0]
-    for section in sections[1:]:
-        if pending.display_word_start == pending.display_word_end or (
-            section.display_word_start == section.display_word_end
-        ):
-            pending = CaptionAlignmentSection(
-                pending.audio_start_frame,
-                section.audio_end_frame,
-                pending.transcript_word_start,
-                section.transcript_word_end,
-                pending.display_word_start,
-                section.display_word_end,
-            )
-        else:
-            merged_sections.append(pending)
-            pending = section
-    if pending.display_word_start == pending.display_word_end and merged_sections:
-        previous = merged_sections[-1]
-        merged_sections[-1] = CaptionAlignmentSection(
-            previous.audio_start_frame,
-            pending.audio_end_frame,
-            previous.transcript_word_start,
-            pending.transcript_word_end,
-            previous.display_word_start,
-            pending.display_word_end,
-        )
-    else:
-        merged_sections.append(pending)
+    merged_sections = list(merge_empty_caption_alignment_sections(sections))
 
     first = merged_sections[0]
     if first.audio_start_frame > 0:
@@ -451,6 +468,54 @@ def build_caption_alignment_sections(
             first.display_word_end,
         )
     return " ".join(transcript_chunks), tuple(merged_sections)
+
+
+def caption_alignment_word_count(text: str) -> int:
+    """Count transcript words using the same edge-punctuation rules as eSpeak."""
+    return len(_caption_alignment_words(text))
+
+
+def merge_empty_caption_alignment_sections(
+    sections: abc.Sequence[CaptionAlignmentSection],
+) -> tuple[CaptionAlignmentSection, ...]:
+    """Merge sections that have no alignable transcript or display words."""
+    if not sections:
+        return ()
+
+    def is_empty(sect: CaptionAlignmentSection) -> bool:
+        return (
+            sect.transcript_word_start == sect.transcript_word_end
+            or sect.display_word_start == sect.display_word_end
+        )
+
+    merged: list[CaptionAlignmentSection] = []
+    pending = sections[0]
+    for section in sections[1:]:
+        if is_empty(pending) or is_empty(section):
+            pending = CaptionAlignmentSection(
+                pending.audio_start_frame,
+                section.audio_end_frame,
+                pending.transcript_word_start,
+                section.transcript_word_end,
+                pending.display_word_start,
+                section.display_word_end,
+            )
+        else:
+            merged.append(pending)
+            pending = section
+    if is_empty(pending) and merged:
+        previous = merged[-1]
+        merged[-1] = CaptionAlignmentSection(
+            previous.audio_start_frame,
+            pending.audio_end_frame,
+            previous.transcript_word_start,
+            pending.transcript_word_end,
+            previous.display_word_start,
+            pending.display_word_end,
+        )
+    else:
+        merged.append(pending)
+    return tuple(merged)
 
 
 def map_word_timings(
@@ -719,10 +784,7 @@ def _word_frame_spans(
 def _phonemize(transcript: str, voice: str) -> tuple[tuple[str, ...], ...]:
     """Return the eSpeak IPA phones for each whitespace-separated word."""
     words: list[tuple[str, ...]] = []
-    for token in transcript.split():
-        word = token.strip(_EDGE_PUNCTUATION)
-        if not word:
-            continue
+    for word in _caption_alignment_words(transcript):
         try:
             result = subprocess.run(
                 ["espeak-ng", "-q", "--ipa", "-v", voice, word],
@@ -743,13 +805,22 @@ def _phonemize(transcript: str, voice: str) -> tuple[tuple[str, ...], ...]:
     return tuple(words)
 
 
+def _caption_alignment_words(transcript: str) -> tuple[str, ...]:
+    """Return whitespace-delimited tokens that remain after edge punctuation removal."""
+    return tuple(
+        word for token in transcript.split() if (word := token.strip(_EDGE_PUNCTUATION))
+    )
+
+
 def _split_ipa_phones(ipa: str) -> tuple[str, ...]:
-    """Group combining and modifier characters with their IPA base phone."""
+    """Group IPA modifiers with base phones and ignore punctuation markers."""
     phones: list[str] = []
     for character in ipa:
         if character.isspace():
             continue
         category = unicodedata.category(character)
+        if category.startswith("P"):
+            continue
         joins_previous = phones and (
             category in {"Mn", "Lm"} or phones[-1].endswith(_IPA_TIE)
         )
@@ -880,6 +951,45 @@ class CaptionAlignmentWorker:
             )
         )
 
+    def submit_alignment(
+        self,
+        engine: Celune,
+        source_id: int,
+        audio_chunks: AudioChunks,
+        caption_text: str,
+        transcript: str,
+        display_words: tuple[str, ...],
+        language: Optional[str],
+        word_start: int,
+        word_end: int,
+        timing_words: tuple[str, ...],
+        alignment_failed: list[bool],
+        audio_start_frame: int,
+        audio_end_frame: int,
+        sample_rate: int = BASE_SR,
+        alignment_sections: tuple[CaptionAlignmentSection, ...] = (),
+    ) -> None:
+        """Align already queued speech without holding its playback."""
+        self.submit_task(
+            lambda: self._align_and_record_chunk(
+                engine,
+                source_id,
+                audio_chunks,
+                caption_text,
+                transcript,
+                display_words,
+                language,
+                word_start,
+                word_end,
+                timing_words,
+                alignment_failed,
+                audio_start_frame,
+                audio_end_frame,
+                sample_rate,
+                alignment_sections,
+            )
+        )
+
     def submit_audio(
         self,
         engine: Celune,
@@ -913,6 +1023,11 @@ class CaptionAlignmentWorker:
         notify_idle_when_finished: bool = True,
         saved_path: Optional[str] = None,
         analysis_audio: Optional[np.ndarray] = None,
+        analysis_text: Optional[str] = None,
+        analysis_language: Optional[str] = None,
+        analysis_backend: Optional[str] = None,
+        analysis_latency_ms: Optional[float] = None,
+        analysis_realtime_speed: Optional[float] = None,
         finish_stream: bool = True,
     ) -> None:
         """Queue a source completion marker after its pending audio chunks."""
@@ -927,6 +1042,11 @@ class CaptionAlignmentWorker:
                 notify_idle_when_finished=notify_idle_when_finished,
                 saved_path=saved_path,
                 analysis_audio=analysis_audio,
+                analysis_text=analysis_text,
+                analysis_language=analysis_language,
+                analysis_backend=analysis_backend,
+                analysis_latency_ms=analysis_latency_ms,
+                analysis_realtime_speed=analysis_realtime_speed,
             )
             with self._state_lock:
                 self._cancelled_sources.discard(source_id)
@@ -1056,6 +1176,75 @@ class CaptionAlignmentWorker:
                     timing_words,
                     word_start_frames,
                 )
+
+    def _align_and_record_chunk(
+        self,
+        engine: Celune,
+        source_id: int,
+        audio_chunks: AudioChunks,
+        caption_text: str,
+        transcript: str,
+        display_words: tuple[str, ...],
+        language: Optional[str],
+        word_start: int,
+        word_end: int,
+        timing_words: tuple[str, ...],
+        alignment_failed: list[bool],
+        audio_start_frame: int,
+        audio_end_frame: int,
+        sample_rate: int,
+        alignment_sections: tuple[CaptionAlignmentSection, ...],
+    ) -> None:
+        """Align already queued audio and attach its caption timings."""
+        with self._state_lock:
+            if source_id in self._cancelled_sources:
+                audio_chunks.clear()
+                return
+        with engine.queue_lock:
+            if source_id not in playback_source_meta(engine):
+                audio_chunks.clear()
+                return
+
+        if alignment_failed[0]:
+            audio_chunks.clear()
+            return
+        word_start_frames = align_chunk_word_start_frames(
+            audio_chunks,
+            sample_rate,
+            transcript,
+            display_words,
+            language,
+            self._logger,
+            self._log_level,
+            alignment_sections,
+        )
+        if word_start_frames is None:
+            alignment_failed[0] = True
+            callback = getattr(engine, "caption_callback", None)
+            if callable(callback):
+                callback(None)
+            audio_chunks.clear()
+            return
+
+        with self._state_lock:
+            if source_id in self._cancelled_sources:
+                audio_chunks.clear()
+                return
+            record_caption_playback_segment(
+                engine,
+                source_id,
+                audio_start_frame,
+                audio_end_frame,
+                word_start,
+                word_end,
+                timing_words,
+                word_start_frames,
+            )
+            engine._caption_source_id = source_id
+            callback = getattr(engine, "caption_callback", None)
+            if callable(callback):
+                callback(caption_text)
+        audio_chunks.clear()
 
     def _flush_audio(
         self,

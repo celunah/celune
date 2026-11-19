@@ -12,10 +12,8 @@ from celune.persona.paths import (
     persona_override_files,
 )
 
-from ..support import CeluneTestCase
 
-
-class TestPersonaPath(CeluneTestCase):
+class TestPersonaPath:
     """Verify safe Persona character paths and supported override loading."""
 
     def test_character_names_use_stable_safe_slugs(self) -> None:

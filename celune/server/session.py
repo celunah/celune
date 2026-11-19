@@ -2,10 +2,11 @@
 """Process-wide state shared by the API and mounted WebUI."""
 
 from __future__ import annotations
+
 import threading
-from collections import deque, defaultdict
-from collections.abc import Callable
 from dataclasses import field, dataclass
+from collections.abc import Callable
+from collections import deque, defaultdict
 from typing import TYPE_CHECKING, Optional, Protocol
 
 from ..i18n import string
@@ -14,7 +15,6 @@ from ..typing.events import EventName, EventCallback
 
 if TYPE_CHECKING:
     from .jobs import SpeechJob
-
     from ..celune import Celune
 
 
@@ -44,6 +44,7 @@ class ServerSession:
     speech_job_worker: Optional[threading.Thread] = None
     speech_job_ttl_seconds: int = 15 * 60
     active_speech_task_id: Optional[str] = None
+    webui_agent_task_id: Optional[str] = None
     webui_log_lines: deque[tuple[str, str]] = field(
         default_factory=lambda: deque(maxlen=240)
     )

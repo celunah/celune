@@ -15,11 +15,20 @@ from collections import OrderedDict
 from collections.abc import Callable, Iterator, Generator
 from typing import TYPE_CHECKING, ClassVar, Optional, Protocol, cast
 
+
 import torch
 import torchaudio
 import numpy as np
 from huggingface_hub import snapshot_download
 
+from ...i18n import string
+from ...utils import discard
+from ...typing.aliases import AudioChunk
+from ...typing.backends import BackendModel
+from ...modeling import create_quantized_kv_cache
+from ...cevoice import CEVoiceLoader, default_loader
+from ...registry.consent import require_model_consent
+from ...registry.tts import TTS_DEFAULT_VOICE, FIREREDTTS3_MODEL_ID
 from .base import (
     CeluneBackend,
     to_numpy_audio,
@@ -31,14 +40,6 @@ from ...paths import (
     huggingface_progress,
     huggingface_hub_cache_dir,
 )
-from ...i18n import string
-from ...typing.aliases import AudioChunk
-from ...typing.backends import BackendModel
-from ...modeling import create_quantized_kv_cache
-from ...cevoice import CEVoiceLoader, default_loader
-from ...registry.consent import require_model_consent
-from ...registry.tts import TTS_DEFAULT_VOICE, FIREREDTTS3_MODEL_ID
-
 
 if TYPE_CHECKING:
     from transformers.cache_utils import Cache
@@ -62,7 +63,16 @@ class FireRedModel(BackendModel, Protocol):
     redae: "FireRedRedAE"
     tts_core: "_FireRedCore"
     spk_extractor: "_FireRedSpeakerExtractor"
-    device: torch.device
+
+    @property
+    def device(self) -> torch.device:
+        """Return the model's active device."""
+        raise NotImplementedError("protocol not defined")
+
+    @device.setter
+    def device(self, value: torch.device) -> None:
+        """Set the model's active device."""
+        raise NotImplementedError("protocol not defined")
 
     def _tokenize_text(self, text: str) -> torch.Tensor:
         """Tokenize FireRed text on the model's device."""
@@ -75,6 +85,10 @@ class FireRedRedAE(Protocol):
     sample_rate: int
     downsample_rate: int
     decoder: "_FireRedAudioDecoder"
+
+    def to(self, device: torch.device) -> "FireRedRedAE":
+        """Move the RedAE component to a device."""
+        raise NotImplementedError("protocol not defined")
 
     def pad_to_multiple_of(self, audio: torch.Tensor, multiple_of: int) -> torch.Tensor:
         """Pad audio to a RedAE-compatible length."""
@@ -92,6 +106,10 @@ class FireRedRedAE(Protocol):
 class _FireRedSpeakerExtractor(Protocol):
     """Speaker encoder methods required by the FireRed generation path."""
 
+    def to(self, device: torch.device) -> "_FireRedSpeakerExtractor":
+        """Move the speaker encoder to a device."""
+        raise NotImplementedError("protocol not defined")
+
     def forward(self, audio: torch.Tensor, audio_sr: int) -> torch.Tensor:
         """Extract a speaker embedding from prompt audio."""
         raise NotImplementedError("protocol not defined")
@@ -101,6 +119,10 @@ class _FireRedCore(Protocol):
     """FireRed autoregressive core methods required for streaming."""
 
     patch_size: int
+
+    def to(self, device: torch.device) -> "_FireRedCore":
+        """Move the autoregressive core to a device."""
+        raise NotImplementedError("protocol not defined")
 
     def generate_stream(
         self,
@@ -785,7 +807,7 @@ class FireRedTTS3(CeluneBackend[FireRedModel]):
         self, model: str, lang: Optional[str] = None
     ) -> tuple[bool, Optional[str]]:
         """Check whether the FireRedTTS3 model snapshot has all required files."""
-        del lang
+        discard(lang)
         return cached_hf_snapshot_path(model, list(self._model_files))
 
     @classmethod
@@ -993,8 +1015,8 @@ class FireRedTTS3(CeluneBackend[FireRedModel]):
                 cached_prompt = (
                     prompt_latents,
                     spk_emb,
-                    int(prompt_audio.shape[1]),
-                    int(model.redae.sample_rate),
+                    prompt_audio.shape[1],
+                    model.redae.sample_rate,
                 )
                 if len(self._reference_prompt_cache) >= _FIRERED_REFERENCE_CACHE_SIZE:
                     self._reference_prompt_cache.popitem(last=False)
@@ -1089,10 +1111,11 @@ class FireRedTTS3(CeluneBackend[FireRedModel]):
         if voice not in voice_names:
             raise ValueError(f"unknown voice: {voice}")
 
-        # FireRed consumes the prompt transcript together with the complete
-        # reference waveform. Truncating only the waveform leaves part of the
-        # transcript unmatched, so the model can regenerate that prompt text
-        # before it reaches the requested utterance.
+        # if the reference speech is truncated but its transcript is not,
+        # the backend may want to complete the missing transcript parts
+        # before speaking the requested text
+        #
+        # please truncate the transcript together with its speech to prevent this
         reference_wav = loader.materialize(voice, "wav")
         reference_text = loader.bundle.voices[voice].get("reference_text")
         if not isinstance(reference_text, str) or not reference_text.strip():
@@ -1122,13 +1145,13 @@ class FireRedTTS3(CeluneBackend[FireRedModel]):
             """Yield generated audio using one cached incremental decoder."""
             decoder: Optional[FireRedIncrementalDecoder] = None
             prompt_samples = 0
-            sample_rate = 0
+            sr = 0
 
             for (
                 prompt_latents,
                 latent_patch,
                 prompt_samples,
-                sample_rate,
+                sr,
             ) in self._stream_latents(
                 model,
                 language=language or "English",
@@ -1148,20 +1171,20 @@ class FireRedTTS3(CeluneBackend[FireRedModel]):
                     )
                     decoder.push(prompt_latents)
 
-                audio, audio_start = decoder.push(latent_patch)
-                if audio is None:
+                latent, audio_start = decoder.push(latent_patch)
+                if latent is None:
                     continue
                 trim = max(0, prompt_samples - audio_start)
-                if trim >= audio.shape[-1]:
+                if trim >= latent.shape[-1]:
                     continue
-                yield audio[trim:], sample_rate
+                yield latent[trim:], sr
 
             if decoder is not None:
-                audio, audio_start = decoder.finish()
-                if audio is not None:
+                latent, audio_start = decoder.finish()
+                if latent is not None:
                     trim = max(0, prompt_samples - audio_start)
-                    if trim < audio.shape[-1]:
-                        yield audio[trim:], sample_rate
+                    if trim < latent.shape[-1]:
+                        yield latent[trim:], sr
 
         with (
             self._suppress_backend_output(),
@@ -1176,7 +1199,7 @@ class FireRedTTS3(CeluneBackend[FireRedModel]):
                         first_chunk_time = time.monotonic()
                     yield (
                         pending_audio,
-                        int(sample_rate),
+                        sample_rate,
                         {
                             "backend": self.name,
                             "chunk_index": chunk_index,
@@ -1205,7 +1228,7 @@ class FireRedTTS3(CeluneBackend[FireRedModel]):
                         first_chunk_time = time.monotonic()
                     yield (
                         pending_audio,
-                        int(sample_rate),
+                        sample_rate,
                         {
                             "backend": self.name,
                             "chunk_index": chunk_index,
@@ -1219,12 +1242,15 @@ class FireRedTTS3(CeluneBackend[FireRedModel]):
                     pending_audio = None
                     pending_steps = 0
 
+                    discard(pending_audio)
+                    discard(pending_steps)
+
                 total_steps += len(audio_batch)
                 if first_chunk_time is None:
                     first_chunk_time = time.monotonic()
                 yield (
                     np.concatenate(audio_batch),
-                    int(sample_rate),
+                    sample_rate,
                     {
                         "backend": self.name,
                         "chunk_index": chunk_index,
@@ -1240,7 +1266,7 @@ class FireRedTTS3(CeluneBackend[FireRedModel]):
                     first_chunk_time = time.monotonic()
                 yield (
                     pending_audio,
-                    int(sample_rate),
+                    sample_rate,
                     {
                         "backend": self.name,
                         "chunk_index": chunk_index,

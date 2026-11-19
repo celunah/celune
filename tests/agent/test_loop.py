@@ -2,15 +2,19 @@
 """Focused tests for the bounded Phase 4 agent execution loop."""
 
 from __future__ import annotations
+
 from unittest import mock
 from types import SimpleNamespace
 from typing import Optional, cast
 from contextlib import nullcontext
 
+import pytest
+
 from celune.celune import Celune
 from celune.agent.persona import PersonaAgentBridge
 from celune.extensions.events import EventDispatcher
 from celune.typing.persona import PersonaClientResponse
+from celune.dataclasses.events import AgentTaskStateChangedEvent
 from celune.agent import (
     ToolCall,
     AgentTool,
@@ -104,6 +108,30 @@ def _validated_call(call: ToolCall) -> ValidatedToolCall:
 class TestAgentLoop:
     """Verify bounded orchestration with replaceable dependencies."""
 
+    def test_iteration_accounting_emits_a_status_refresh_event(self) -> None:
+        """Notify status subscribers after an iteration counter is incremented."""
+        events: list[tuple[AgentTaskStateChangedEvent, int]] = []
+        dispatcher = EventDispatcher(log_warning=lambda _message, _severity: None)
+        runtime = AgentRuntime(
+            event_dispatcher=dispatcher,
+            planner=lambda _context: _output(response="Done.", end=True),
+        )
+        task = runtime.create_task(_request(), task_id="progress-task")
+        dispatcher.subscribe(
+            "agent_task_state_changed",
+            lambda event: events.append((event, task.iterations)),
+        )
+
+        runtime.run(task.request)
+
+        assert task.iterations == 1
+        assert any(
+            event.old_state == AgentTaskState.PLANNING
+            and event.new_state == AgentTaskState.RESPONDING
+            and iterations == 1
+            for event, iterations in events
+        )
+
     def test_one_step_completion_consumes_phase_three_task(self) -> None:
         """Reuse a routed idle task and complete it without creating another task."""
         request = _request()
@@ -140,9 +168,9 @@ class TestAgentLoop:
             assert selected == call
             return _result(call)
 
-        def handle(context, result):
-            handled_results.append(result)
-            assert context.last_tool_result is result
+        def handle(context, res):
+            handled_results.append(res)
+            assert context.last_tool_result is res
             return _output(response="Result received.")
 
         runtime = AgentRuntime(
@@ -349,6 +377,103 @@ class TestAgentLoop:
             bridge.plan(runtime.get_context(task.task_id))
 
         assert task.context_tokens == 126
+
+    def test_persona_agent_rejects_punctuation_only_speech(self) -> None:
+        """Do not pass a compaction artifact such as a lone quote to TTS."""
+        response = PersonaClientResponse(
+            {"response": '"'},
+            prompt_tokens=10,
+            completion_tokens=2,
+        )
+        engine = SimpleNamespace(
+            vision=SimpleNamespace(post=mock.Mock(side_effect=[response, response])),
+            component_locks=None,
+        )
+        runtime = AgentRuntime()
+        task = runtime.create_task(_request(), task_id="punctuation-task")
+        bridge = PersonaAgentBridge(cast(Celune, engine), {})
+
+        with (
+            mock.patch(
+                "celune.agent.persona.build_persona_request",
+                return_value={},
+            ),
+            pytest.raises(RuntimeError, match="empty agent response"),
+        ):
+            bridge.respond(runtime.get_context(task.task_id))
+        assert engine.vision.post.call_count == 2
+        assert task.context_tokens == 24
+
+    def test_persona_agent_repairs_punctuation_only_speech_once(self) -> None:
+        """Recover a usable response after Persona emits punctuation alone."""
+        responses = [
+            PersonaClientResponse({"response": '"'}),
+            PersonaClientResponse({"response": "Understood."}),
+        ]
+        post = mock.Mock(side_effect=responses)
+        engine = SimpleNamespace(
+            vision=SimpleNamespace(post=post),
+            component_locks=None,
+        )
+        runtime = AgentRuntime()
+        task = runtime.create_task(_request(), task_id="recovered-speech-task")
+        bridge = PersonaAgentBridge(cast(Celune, engine), {})
+        payload = {
+            "system": "Return one short acknowledgment.",
+            "messages": [
+                {"role": "system", "content": "Return one short acknowledgment."},
+                {"role": "user", "content": "Check this."},
+            ],
+        }
+
+        with mock.patch(
+            "celune.agent.persona.build_persona_request",
+            return_value=payload,
+        ):
+            output = bridge.respond(runtime.get_context(task.task_id))
+
+        assert output["response"] == "Understood."
+        assert post.call_count == 2
+        repaired_request = cast(dict[str, object], post.call_args.kwargs["json"])
+        assert (
+            "previous response contained no spoken content"
+            in cast(str, repaired_request["system"]).casefold()
+        )
+
+    def test_persona_opening_retry_requests_a_grounded_character_acknowledgment(
+        self,
+    ) -> None:
+        """Keep retries VLM-generated while correcting unsupported opening claims."""
+        response = PersonaClientResponse({"response": "I hear you."})
+        post = mock.Mock(return_value=response)
+        engine = SimpleNamespace(
+            vision=SimpleNamespace(post=post),
+            component_locks=None,
+        )
+        runtime = AgentRuntime()
+        task = runtime.create_task(_request(), task_id="opening-retry-task")
+        bridge = PersonaAgentBridge(cast(Celune, engine), {})
+        payload = {
+            "system": "Return one short acknowledgment.",
+            "messages": [
+                {"role": "system", "content": "Return one short acknowledgment."},
+                {"role": "user", "content": "List this directory."},
+            ],
+        }
+
+        with mock.patch(
+            "celune.agent.persona.build_persona_request",
+            return_value=payload,
+        ):
+            output = bridge.opening(runtime.get_context(task.task_id), retry=True)
+
+        assert output["response"] == "I hear you."
+        retry_request = cast(dict[str, object], post.call_args.kwargs["json"])
+        system = cast(str, retry_request["system"])
+        assert (
+            "previous opening included a progress, status, or factual claim" in system
+        )
+        assert "active character's voice" in system
 
     def test_approval_pause_does_not_consume_iteration_or_lose_call(self) -> None:
         """Resume an approved pending call without repeating the planner cycle."""
@@ -598,29 +723,29 @@ class TestAgentLoop:
     def test_dependency_cancellation_leaves_terminal_task(self) -> None:
         """Handle cancellation during planning, selection, and execution."""
 
-        def make_runtime(phase: str) -> AgentRuntime:
+        def make_runtime(agent_phase: str) -> AgentRuntime:
             """Build one runtime whose selected dependency cancels the task."""
-            runtime: AgentRuntime
+            agent_runtime: AgentRuntime
 
             def planner(context):
-                if phase == "planning":
+                if agent_phase == "planning":
                     assert context.task is not None
-                    runtime.cancel_task(context.task.task_id)
+                    agent_runtime.cancel_task(context.task.task_id)
                 return _output(tool_call=_call())
 
             def selector(context, output):
-                if phase == "selection":
+                if agent_phase == "selection":
                     assert context.task is not None
-                    runtime.cancel_task(context.task.task_id)
+                    agent_runtime.cancel_task(context.task.task_id)
                 return output["tool_call"]
 
             def execute(context, call):
-                if phase == "execution":
+                if agent_phase == "execution":
                     assert context.task is not None
-                    runtime.cancel_task(context.task.task_id)
+                    agent_runtime.cancel_task(context.task.task_id)
                 return _result(call)
 
-            runtime = AgentRuntime(
+            agent_runtime = AgentRuntime(
                 planner=planner,
                 tool_selector=selector,
                 tool_executor=execute,
@@ -628,7 +753,7 @@ class TestAgentLoop:
                     response="done", end=True
                 ),
             )
-            return runtime
+            return agent_runtime
 
         for phase in ("planning", "selection", "execution"):
             with nullcontext():
@@ -686,9 +811,9 @@ class TestAgentLoop:
         handled: list[ToolResult] = []
         outputs: list[AgentOutput] = []
 
-        def record_result(_context, result: ToolResult) -> AgentOutput:
+        def record_result(_context, res: ToolResult) -> AgentOutput:
             """Record a result if the terminal result guard regresses."""
-            handled.append(result)
+            handled.append(res)
             return _output(response="unexpected")
 
         def record_output(output: AgentOutput) -> None:

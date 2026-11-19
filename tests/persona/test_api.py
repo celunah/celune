@@ -6,6 +6,7 @@ from unittest import mock
 from types import SimpleNamespace
 from typing import Union, Optional, cast
 
+
 import pytest
 
 from celune.utils import discard
@@ -16,8 +17,6 @@ from celune.exceptions import ModelConsentRequired
 from celune.typing.aliases import RecordedKwargValue
 from celune.registry.revisions import remote_code_model_revision
 from celune.registry.llm import LLM_MODELS, PERSONA_DEFAULT_MODEL_ID, persona_model_tier
-
-from ..support import CeluneTestCase
 
 
 class _FakeEncoded:
@@ -166,7 +165,7 @@ class _FakeQwenVlConfig:
     model_type = "qwen3_vl"
 
 
-class TestPersonaApi(CeluneTestCase):
+class TestPersonaApi:
     """Tests for shared Persona runtime behavior."""
 
     @staticmethod
@@ -325,18 +324,16 @@ class TestPersonaApi(CeluneTestCase):
             revision=revision,
         )
         loaders["model_loader"].assert_called_once()
-        self.assertEqual(
-            loaders["model_loader"].call_args.args,
-            ("Qwen/Qwen3-VL-4B-Instruct",),
+        assert loaders["model_loader"].call_args.args == (
+            ("Qwen/Qwen3-VL-4B-Instruct",)
         )
-        self.assertEqual(
-            loaders["model_loader"].call_args.kwargs,
+        assert loaders["model_loader"].call_args.kwargs == (
             {
                 "trust_remote_code": True,
                 "revision": revision,
                 "device_map": "auto",
                 "dtype": runtime.torch.bfloat16,
-            },
+            }
         )
         loaders["tokenizer_loader"].assert_not_called()
         fake_model.eval.assert_called_once_with()
@@ -350,21 +347,18 @@ class TestPersonaApi(CeluneTestCase):
         revision = cast(str, remote_code_model_revision(model_id))
         metadata = get_model_metadata(model_id)
         assert metadata is not None
-        self.assertEqual(metadata.revision, revision)
-        self.assertEqual(metadata.tier, persona_model_tier(model_id))
+        assert metadata.revision == revision
+        assert metadata.tier == persona_model_tier(model_id)
 
     def test_persona_registry_derives_supported_variants_and_tiers(self) -> None:
         """Verify every Persona catalog entry has a pinned revision and tier."""
-        self.assertEqual(
-            len(LLM_MODELS),
-            14,
-        )
+        assert len(LLM_MODELS) == 14
 
         for metadata in LLM_MODELS:
-            self.assertEqual(
-                remote_code_model_revision(metadata.model_id), metadata.revision
+            assert (remote_code_model_revision(metadata.model_id)) == (
+                metadata.revision
             )
-            self.assertEqual(persona_model_tier(metadata.model_id), metadata.tier)
+            assert (persona_model_tier(metadata.model_id)) == (metadata.tier)
 
     def test_load_requires_consent_for_unknown_models_before_loading(self) -> None:
         """Verify unregistered Persona repositories stop before model loading."""
@@ -374,7 +368,7 @@ class TestPersonaApi(CeluneTestCase):
             mock.patch.object(runtime.AutoConfig, "from_pretrained") as config_loader,
             mock.patch("celune.registry.consent._STORE") as store,
             mock.patch("celune.registry.consent._PENDING_CONSENTS", {}),
-            self.assertRaises(ModelConsentRequired),
+            pytest.raises(ModelConsentRequired),
         ):
             hub_api.return_value.model_info.return_value.sha = "a" * 40
             store.has_acknowledged.return_value = False
@@ -505,17 +499,23 @@ class TestPersonaApi(CeluneTestCase):
         sync.assert_called_once_with()
         empty_cache.assert_called_once_with()
 
-    def test_generation_uses_actual_prompt_length_as_context_budget(self) -> None:
-        """Bound completion tokens by the prompt tokens that were encoded."""
+    def test_generation_reserves_requested_completion_tokens(self) -> None:
+        """Leave context space for the requested completion before encoding."""
 
         class _BudgetModel(_FakeGenerativeModel):
-            """Return an input prefix plus the requested three-token completion."""
+            """Return the encoded prompt followed by the requested completion."""
 
             def generate(self, **kwargs) -> runtime.torch.Tensor:
                 self.calls.append(dict(kwargs))
-                return runtime.torch.tensor(
-                    [[1, 2, 3, 4, 5, 6, 7, 8]],
-                    dtype=runtime.torch.long,
+                input_ids = kwargs["input_ids"]
+                completion = runtime.torch.full(
+                    (input_ids.shape[0], kwargs["max_new_tokens"]),
+                    9,
+                    dtype=input_ids.dtype,
+                )
+                return runtime.torch.cat(
+                    (input_ids, completion),
+                    dim=1,
                 )
 
         backend = runtime.PersonaBackend()
@@ -529,21 +529,25 @@ class TestPersonaApi(CeluneTestCase):
 
         def build_inputs(_messages, context_space):
             limits.append(context_space)
-            return {"input_ids": runtime.torch.tensor([[1, 2, 3, 4, 5]])}
+            input_ids = runtime.torch.ones(
+                (1, context_space),
+                dtype=runtime.torch.long,
+            )
+            return {"input_ids": input_ids}
 
         with mock.patch.object(backend, "_build_inputs", side_effect=build_inputs):
             response = backend.generate(
                 runtime.GenerateRequest(
                     user="hello",
-                    context_space=8,
-                    max_new_tokens=12,
+                    context_space=16,
+                    max_new_tokens=4,
                 )
             )
 
-        assert limits == [7]
-        assert model.calls[0]["max_new_tokens"] == 3
-        assert response.prompt_tokens == 5
-        assert response.completion_tokens == 3
+        assert limits == [12]
+        assert model.calls[0]["max_new_tokens"] == 4
+        assert response.prompt_tokens == 12
+        assert response.completion_tokens == 4
 
     def test_persona_client_response_keeps_local_token_usage(self) -> None:
         """Keep exact generation usage available to Celune's local agent bridge."""
@@ -586,13 +590,11 @@ class TestPersonaApi(CeluneTestCase):
         )
         assert model.calls[0]["cache_implementation"] == "dynamic"
         criterion = cast(runtime._PersonaCancellationCriteria, criteria[0])
-        self.assertFalse(
+        assert not (
             criterion(runtime.torch.tensor([[1]]), runtime.torch.tensor([])).item()
         )
         backend.interrupt_generation()
-        self.assertTrue(
-            criterion(runtime.torch.tensor([[1]]), runtime.torch.tensor([])).item()
-        )
+        assert criterion(runtime.torch.tensor([[1]]), runtime.torch.tensor([])).item()
 
     def test_generation_retries_with_dynamic_cache_after_quantized_cache_failure(
         self,
@@ -651,6 +653,11 @@ class TestPersonaApi(CeluneTestCase):
             "load",
             side_effect=lambda model_id, quantization: (
                 print(f"loading {model_id}"),
+                print(
+                    "INFO Caption alignment ONNX Runtime providers: "
+                    "['CUDAExecutionProvider', 'CPUExecutionProvider']",
+                    file=__import__("sys").stderr,
+                ),
                 print(f"warn {quantization}", file=__import__("sys").stderr),
             ),
         ):

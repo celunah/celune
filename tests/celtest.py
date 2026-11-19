@@ -23,7 +23,7 @@ The project header is read from the active project's ``pyproject.toml``::
     [tool.celtest]
     display_name = "Example Project"
 
-``tool.celtest.display_name`` is optional; ``project.name`` is used when it
+``tool.celtest.display_name`` is optional. ``project.name`` is used when it
 is absent. The plugin has no dependency on the host project's package.
 """
 
@@ -41,6 +41,8 @@ from collections.abc import Mapping, Callable, Generator
 from typing import TypeVar, Optional, Protocol, ParamSpec, cast
 
 import pytest
+
+__version__ = "1.0.0"
 
 _P = ParamSpec("_P")
 _R = TypeVar("_R")
@@ -237,7 +239,7 @@ _state = _PluginState()
 def _friendly_name(value: str) -> str:
     """Turn a pytest function name or node ID into a readable fallback."""
     function_name = value.rsplit("::", 1)[-1]
-    function_name = re.sub(r"\[[^]]*\]$", "", function_name)
+    function_name = re.sub(r"\[[^]]*]$", "", function_name)
     function_name = re.sub(r"^test_", "", function_name)
     words = re.sub(r"[_-]+", " ", function_name).strip().split()
     if not words:
@@ -372,7 +374,7 @@ def _source_metadata(
     body: list[ast.stmt] = tree.body
     current: Optional[ast.AST] = None
     for raw_part in parts:
-        part = re.sub(r"\[[^]]*\]$", "", raw_part)
+        part = re.sub(r"\[[^]]*]$", "", raw_part)
         current = next(
             (
                 candidate
@@ -700,6 +702,22 @@ def pytest_sessionstart(session: pytest.Session) -> None:
         Optional[_TerminalReporter],
         config.pluginmanager.get_plugin("terminalreporter"),
     )
+
+    pm = session.config.pluginmanager
+    versions = [
+        f"celtest {__version__}",
+        f"• pytest {pytest.__version__}",
+    ]
+
+    seen = set()
+    for _plugin, dist in pm.list_plugin_distinfo():
+        key = (dist.project_name.casefold(), dist.version)
+        if key in seen:
+            continue
+        versions.append(f"• {dist.project_name} {dist.version}")
+        seen.add(key)
+    _write_line(" ".join(versions))
+
     if (
         _state.verbose
         and _state.is_controller
@@ -968,7 +986,7 @@ def _render_summary(
         _finish_compact_status_line()
         _write_line("")
         _write_line(
-            f"passed {passed}/{len(runnable)} time {_format_duration(elapsed)} "
+            f"passed {passed}/{len(runnable)} • time {_format_duration(elapsed)} • "
             f"warnings {len(_state.warning_lines)}"
         )
         _write_compact_summary_details(runnable)
@@ -979,7 +997,7 @@ def _render_summary(
 
     _write_line("")
     _write_line(
-        f"passed {passed}/{len(runnable)} time {_format_duration(elapsed)} "
+        f"passed {passed}/{len(runnable)} • time {_format_duration(elapsed)} • "
         f"warnings {len(_state.warning_lines)}"
     )
 

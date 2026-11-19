@@ -1,7 +1,7 @@
 # Modes
 
 Celune has three operation modes and a separate legacy input-mode layer. The
-operation mode decides how text is routed; the input mode decides whether the
+operation mode decides how text is routed. The input mode decides whether the
 engine accepts text or audio.
 
 ## Modes
@@ -28,13 +28,14 @@ as new public configuration.
 ## Text-to-speech flow
 
 In `performance` mode, `say()` and `/say` queue the supplied text literally. A new
-request does not implicitly stop an utterance that is already playing; a direct
+request does not implicitly stop an utterance that is already playing. A direct
 request is reported as busy until the shared speech pipeline is available. Use
 `/stop` or `force_stop_speech()` when interruption is intentional. Celune
-normalizes special characters, segments long input, asks the active backend for
-streaming chunks, applies the smart buffer and DSP, then sends normalized audio
-to the playback worker. A request can save the final result, expose chunks to a
-Python queue, or stream the result through the REST API.
+normalizes special characters, removes horizontal whitespace before colons,
+segments long input, asks the active backend for streaming chunks, applies the
+smart buffer and DSP, then sends normalized audio to the playback worker. A
+request can save the final result, expose chunks to a Python queue, or stream
+the result through the REST API.
 
 ## Button actions
 
@@ -49,18 +50,18 @@ Textual's `disabled` state.
 The voice button uses `press` to cycle to the next loaded voice and `hold` to
 open the voice selector. These capabilities are independent, so the UI can set
 `ButtonActions(press=False, hold=True)` while Celune sleeps. A short press then
-does nothing, while a hold opens the selector; confirming a voice wakes Celune
+does nothing, while a hold opens the selector. Confirming a voice wakes Celune
 before applying the selected voice. With a singing backend, voice cycling stays
 locked and the hold menu lists only packs that provide the reserved `sing`
-voice. Since each pack provides one singing role, the menu has no entry search;
-confirming a row loads that character pack.
+voice. Since each pack provides one singing role, the menu has no entry search.
+Confirming a row loads that character pack.
 
 ## Conversation flow
 
 In `converse` mode, typed text is handled by Persona. The response may use the
 loaded CEVOICE character metadata, short-term history, long-term memory, visual
 attachments, and emotion cues. The final response is passed to the normal
-speech pipeline; Persona does not own a separate playback implementation.
+speech pipeline. Persona does not own a separate playback implementation.
 
 `/think` is the direct UI command for this route. The REST `/v1/think` endpoint
 accepts a request asynchronously and returns `202` when the turn is accepted.
@@ -70,7 +71,8 @@ accepts a request asynchronously and returns `202` when the turn is accepted.
 Agent mode extends Persona with a typed, allowlisted tool catalog. A task can
 plan, call read-only tools, pause for approval, execute an approved mutating
 tool, and answer through the speech pipeline. The production limits are 20
-loops, up to 8,192 context tokens, and compaction at 75 percent. See
+loops, up to 8,192 context tokens, and the shared Persona compaction threshold
+(75 percent by default). See
 [Agent mode](agent.md) for every built-in tool family and its permissions.
 Persona and standard agent models require at least the `high` VRAM preset.
 Smart 8B-tier Persona models require `xhigh`. An incompatible preset disables

@@ -7,6 +7,7 @@ import time
 import shutil
 import asyncio
 import datetime
+import tempfile
 import contextlib
 import subprocess
 from typing import TYPE_CHECKING, Optional
@@ -128,56 +129,46 @@ def format_vram() -> str:
     return f"VRAM: {avail / 1024**3:.2f}/{total / 1024**3:.2f} GB available"
 
 
-async def _terminate_gpu_process(process: asyncio.subprocess.Process) -> None:
-    """Terminate one timed-out GPU query and drain its subprocess pipes."""
-    if process.returncode is None:
-        with contextlib.suppress(OSError, ProcessLookupError):
-            process.kill()
-    with contextlib.suppress(OSError, subprocess.SubprocessError):
-        await process.communicate()
-
-
 async def _query_gpu_usage() -> Optional[int]:
-    """Read one GPU utilization sample through an async subprocess."""
+    """Read one GPU sample without blocking or creating asyncio pipe transports."""
     if not _NVIDIA_SMI:
         return None
 
     process: Optional[asyncio.subprocess.Process] = None
     try:
-        process = await asyncio.create_subprocess_exec(
-            _NVIDIA_SMI,
-            "--query-gpu=utilization.gpu",
-            "--format=csv,noheader,nounits",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.DEVNULL,
-        )
-        stdout, _ = await asyncio.wait_for(
-            process.communicate(),
-            timeout=NVIDIA_SMI_TIMEOUT_SECONDS,
-        )
-    except TimeoutError:
-        if process is not None:
-            await _terminate_gpu_process(process)
-        return None
-    except (OSError, ValueError, subprocess.SubprocessError):
-        if process is not None:
-            await _terminate_gpu_process(process)
-        return None
+        with tempfile.TemporaryFile(mode="w+b") as output:
+            process = await asyncio.create_subprocess_exec(
+                _NVIDIA_SMI,
+                "--query-gpu=utilization.gpu",
+                "--format=csv,noheader,nounits",
+                stdout=output,
+                stderr=subprocess.DEVNULL,
+            )
+            try:
+                await asyncio.wait_for(
+                    process.wait(),
+                    timeout=NVIDIA_SMI_TIMEOUT_SECONDS,
+                )
+            except TimeoutError:
+                with contextlib.suppress(ProcessLookupError):
+                    process.kill()
+                await process.wait()
+                return None
+            if process.returncode != 0:
+                return None
+            output.seek(0)
+            first_line = output.read().decode(errors="replace").strip().splitlines()[:1]
     except asyncio.CancelledError:
-        if process is not None:
-            await _terminate_gpu_process(process)
+        if process is not None and process.returncode is None:
+            with contextlib.suppress(ProcessLookupError):
+                process.kill()
+            await process.wait()
         raise
-
-    if process.returncode != 0:
+    except (OSError, ValueError, subprocess.SubprocessError):
         return None
 
-    if not isinstance(stdout, bytes):
-        return None
-
-    first_line = stdout.decode(errors="replace").strip().splitlines()[0:1]
     if not first_line:
         return None
-
     try:
         return int(first_line[0].strip())
     except ValueError:
@@ -224,16 +215,13 @@ def start_gpu_usage_worker() -> None:
     task.add_done_callback(clear_task)
 
 
-def stop_gpu_usage_worker() -> None:
-    """Cancel the native async GPU sampler on the current event loop."""
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        return
-
+async def stop_gpu_usage_worker() -> None:
+    """Cancel and await the native async GPU sampler on the current event loop."""
+    loop = asyncio.get_running_loop()
     task = _NVIDIA_SMI_TASKS.pop(loop, None)
     if task is not None:
         task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
 
 
 def gpu_usage() -> Optional[int]:

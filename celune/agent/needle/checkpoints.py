@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import os
 import json
+import contextlib
 import hashlib
 from uuid import uuid4
 from pathlib import Path
@@ -243,11 +244,11 @@ def validate_needle_safetensors(
             dtype_errors.append(f"{name}: expected {dtype}, got {tensor.dtype}")
     if shape_errors:
         raise NeedleCheckpointError(
-            "Needle checkpoint tensor shapes do not match: " + "; ".join(shape_errors)
+            "Needle checkpoint tensor shapes do not match: " + ", ".join(shape_errors)
         )
     if dtype_errors:
         raise NeedleCheckpointError(
-            "Needle checkpoint tensor dtypes do not match: " + "; ".join(dtype_errors)
+            "Needle checkpoint tensor dtypes do not match: " + ", ".join(dtype_errors)
         )
 
     try:
@@ -405,7 +406,7 @@ def prepare_needle_checkpoint(
 
     The normal path selects the pinned upstream ``model.safetensors`` artifact.
     The legacy ``needle.pkl`` path is accepted only through an explicitly
-    isolated converter callback; Celune never unpickles it in the runtime.
+    isolated converter callback. Celune never unpickles it in the runtime.
     """
     if source_filename not in {NEEDLE_WEIGHTS_FILE, NEEDLE_PICKLE_FILE}:
         raise NeedleCheckpointError(
@@ -463,7 +464,7 @@ def prepare_needle_checkpoint(
 
     if pickle_converter is None:
         raise NeedleUnsupportedConverterError(
-            "needle.pkl is a legacy JAX/Flax checkpoint; provide an isolated "
+            "needle.pkl is a legacy JAX/Flax checkpoint. Provide an isolated "
             "offline converter before using it"
         )
     artifact_dir = (
@@ -486,7 +487,7 @@ def prepare_needle_checkpoint(
         converter_version=converter_version,
     ):
         assert cached_metadata is not None
-        try:
+        with contextlib.suppress(NeedleCheckpointError):
             inventory = validate_needle_safetensors(artifact_path, config)
             if (
                 _sha256(artifact_path) == cached_metadata.canonical_sha256
@@ -498,9 +499,6 @@ def prepare_needle_checkpoint(
                     resolved_config,
                     cached_metadata,
                 )
-        except NeedleCheckpointError:
-            pass
-
     artifact_dir.mkdir(parents=True, exist_ok=True)
     temporary = artifact_dir / f".{artifact_path.name}.{uuid4().hex}.tmp"
     try:

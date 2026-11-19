@@ -10,17 +10,19 @@ import shlex
 import types
 import ctypes
 import asyncio
-import threading
 import contextlib
-from uuid import uuid4
-from pathlib import Path
-from copy import deepcopy
+import threading
 import queue as queue_module
+from uuid import uuid4
+from copy import deepcopy
+from pathlib import Path
 from collections.abc import Callable, Iterator
 from typing import TYPE_CHECKING, Optional, cast
 
 from . import app as _app
+from .toast import CeluneToast
 from ..constants import SIGTSTP, APP_NAME
+from ..typing.agent import AgentTaskState
 from ..typing.modes import OPERATION_MODES, OperationState
 
 _FATAL_TEXT_EDITOR_BLOCKED_KEYS = frozenset(
@@ -32,6 +34,29 @@ _FATAL_TEXT_EDITOR_BLOCKED_KEYS = frozenset(
         "ctrl+r",
         "ctrl+t",
         "escape",
+    }
+)
+_SETTINGS_FREE_TEXT_PATHS = frozenset(
+    {
+        ("api", "token"),
+        ("audio_api",),
+        ("input_device",),
+        ("locale",),
+        ("output_device",),
+        ("persona", "memory", "storage_dir"),
+        ("persona", "speech_language"),
+        ("youtube", "cookies_file"),
+        ("youtube", "cookies_from_browser"),
+        ("youtube", "js_runtimes"),
+        ("youtube", "player_client"),
+        ("youtube", "po_token"),
+        ("youtube", "remote_components"),
+    }
+)
+_SETTINGS_NULLABLE_INTEGER_PATHS = frozenset(
+    {
+        ("agent", "max_tokens"),
+        ("persona", "max_turns"),
     }
 )
 
@@ -59,6 +84,7 @@ __all__ = (
     "_split_command_input",
     "_start_vc_recording",
     "_submit_text",
+    "action_help_quit",
     "action_quit",
     "action_toggle_debug_inspector",
     "begin_tutorial",
@@ -80,6 +106,7 @@ __all__ = (
     "open_voice_menu",
     "process_command",
     "request_agent_test_response",
+    "show_toast",
     "split_command_input",
     "stop_vc_debug_capture",
     "toggle_vc_recording",
@@ -204,11 +231,11 @@ def _start_vc_recording(self) -> bool:
                 )
                 if live_source_id is None:
                     live_playback_generation = None
-            except Exception as exc:
+            except Exception as _exception:
                 self.safe_log(
                     _app.format_error_message(
                         _app.string("ui.recording_stream_submit_failed"),
-                        exc,
+                        _exception,
                         _app.resolve_log_level(
                             getattr(self.celune, "log_level", None),
                             self._startup_log_level,
@@ -282,7 +309,7 @@ def _start_vc_recording(self) -> bool:
 
                 if is_final_chunk:
                     finish_playback_segment()
-            except Exception as exc:
+            except Exception as exception:
                 if debug_capture is not None:
                     debug_capture.record_conversion(debug_token)
                 if self.celune is None:
@@ -293,12 +320,12 @@ def _start_vc_recording(self) -> bool:
                             "ui.recording_stream_chunk_failed",
                             label=queued_label,
                         ),
-                        exc,
+                        exception,
                         getattr(self.celune, "log_level", "info"),
                     ),
                     "warning",
                 )
-                if isinstance(exc, _app.CEDTSError):
+                if isinstance(exception, _app.CEDTSError):
                     self._cancel_vc_recording(announce=False)
 
     worker = threading.Thread(target=submit_live_audio, daemon=True)
@@ -365,6 +392,7 @@ def _start_vc_recording(self) -> bool:
                 return
 
             live_audio: Optional[_app.AudioChunk] = None
+            discard(live_audio)
             if voice_detected:
                 if not self._vc_recording_speech_started:
                     self._prepend_vc_preroll_locked()
@@ -415,6 +443,7 @@ def _start_vc_recording(self) -> bool:
             samplerate=sample_rate,
             channels=channel_count,
             dtype="float32",
+            latency="low",
             callback=callback,
             device=input_device,
             blocksize=live_chunk_frames,
@@ -573,7 +602,7 @@ def stop_vc_debug_capture(
             self.safe_log(_app.string("ui.vc_debug_empty"), "warning")
 
         if result.errors and announce:
-            message = "; ".join(result.errors)
+            message = ", ".join(result.errors)
             self.safe_log(
                 _app.format_error_message(
                     _app.string("ui.vc_debug_save_failed"),
@@ -664,6 +693,10 @@ def open_settings_menu(self, *, preview: bool = False) -> None:
                 label=label,
                 value=value,
                 autocomplete_values=self._config_autocomplete(path, value),
+                allow_free_text=(
+                    path in _SETTINGS_FREE_TEXT_PATHS
+                    or (value is None and path not in _SETTINGS_NULLABLE_INTEGER_PATHS)
+                ),
                 explanation=self._config_explanation(path),
             )
         )
@@ -711,10 +744,8 @@ def _config_autocomplete(
     path: tuple[str, ...], value: _app.JSONSerializable
 ) -> Optional[tuple[_app.JSONSerializable, ...]]:
     """Return useful autocomplete candidates for one configuration value."""
-    if value is None:
-        return (None,)
     if isinstance(value, bool):
-        return (True, False)
+        return True, False
 
     candidates: dict[tuple[str, ...], tuple[_app.JSONSerializable, ...]] = {
         ("api", "access"): ("same_machine", "same_network", "everyone"),
@@ -728,13 +759,21 @@ def _config_autocomplete(
             "seed-vc",
         ),
         ("log_level",): ("info", "verbose", "debug"),
+        ("inference_mode",): ("native", "gguf"),
         ("mode",): OPERATION_MODES,
         ("theme",): ("dark", "light"),
         ("vram",): ("low", "medium", "high", "xhigh"),
         ("audio_api",): (None, "wasapi", "directsound"),
         ("persona", "speech_language"): ("auto",),
     }
-    return candidates.get(path)
+    if path in candidates:
+        values = candidates[path]
+        if value is None and None not in values:
+            return None, *values
+        return values
+    if value is None:
+        return (None,)
+    return None
 
 
 def config_label(path: tuple[str, ...]) -> str:
@@ -775,6 +814,12 @@ def config_label(path: tuple[str, ...]) -> str:
 def _config_explanation(path: tuple[str, ...]) -> str:
     """Return a localized explanation for one configuration value."""
     aliases: dict[tuple[str, ...], str] = {
+        ("inference_mode",): "celune.inference_mode",
+        (
+            "backend_options",
+            "qwen3",
+            "x_vector_only",
+        ): "qwen3_x_vector_only",
         ("persona", "speech_end_delay_seconds"): "persona.speech_delay",
         (
             "persona",
@@ -948,8 +993,8 @@ def open_voice_menu(self, *, preview: bool = False) -> None:
             _app.string("ui.voice_menu_title"),
             options,
             value_display="all",
-            footer_builder=lambda option: self._menu_footer(
-                option,
+            footer_builder=lambda _option: self._menu_footer(
+                _option,
                 option_count=len(options),
                 confirm_hint=_app.string("ui.voice_confirm_hint"),
                 include_search=not singing_backend,
@@ -962,7 +1007,9 @@ def open_voice_menu(self, *, preview: bool = False) -> None:
 
 def _discard_menu_preview_result(result: None) -> None:
     """Consume a preview overlay result without applying a selection."""
-    del result
+    from ..utils import discard
+
+    discard(result)
 
 
 def _show_menu(
@@ -1385,6 +1432,53 @@ async def action_quit(self) -> None:
     self._graceful_exit(return_code=self._startup_error_exit_code)
 
 
+def action_help_quit(self) -> None:
+    """Show the Celune-specific hint for the conventional Ctrl+C key."""
+    self.show_toast(_app.string("ui.ctrl_c_toast"))
+
+
+def show_toast(
+    self,
+    msg: str,
+    duration: Optional[float] = None,
+    *,
+    severity: str = "info",
+) -> None:
+    """Schedule a transient message in the bottom toast widget.
+
+    Args:
+        msg: The single-line message to display.
+        severity: The theme severity color to apply.
+        duration: Seconds to keep the message visible before fading it out.
+    """
+    self.call_later(_display_toast, self, msg, severity, duration)
+
+
+def _display_toast(
+    self,
+    msg: str,
+    severity: str,
+    duration: Optional[float],
+) -> None:
+    """Display a scheduled toast on the Textual application thread."""
+    if severity not in {"info", "warning", "error"}:
+        severity = "info"
+    display_duration = CeluneToast.DEFAULT_DURATION if duration is None else duration
+    try:
+        toast = self.screen.query_one(CeluneToast)
+    except _app.NoMatches:
+        toast = CeluneToast()
+        self.screen.mount(toast)
+        self.screen.call_later(
+            toast.show,
+            msg,
+            display_duration,
+            severity=severity,
+        )
+    else:
+        toast.show(msg, display_duration, severity=severity)
+
+
 def action_toggle_debug_inspector(self) -> None:
     """Open the inspector only while Celune's active log level is debug."""
     if self.cur_state == "exiting":
@@ -1572,7 +1666,7 @@ def on_button_pressed(self, event: _app.Button.Pressed) -> None:
     ).start()
 
 
-def on_unmount(self) -> None:
+async def on_unmount(self) -> None:
     """Unload Celune."""
     if not self._is_ui_test_mode():
         from ..registry.consent import set_model_consent_handler
@@ -1598,7 +1692,10 @@ def on_unmount(self) -> None:
         )
     )
     if _app.ui_resources is not None and not self._is_ui_test_mode():
-        self._run_shutdown_step(_app.ui_resources.stop_gpu_usage_worker)
+        try:
+            await _app.ui_resources.stop_gpu_usage_worker()
+        except Exception as exc:
+            self._report_shutdown_error(exc)
     self._run_shutdown_step(self._shutdown_runtime)
 
     if self._runtime_log_capture_enabled:
@@ -1640,6 +1737,23 @@ def tts_idle(self) -> None:
     if celune.sleeping:
         self.safe_status(_app.string("status.sleeping"), "sleeping")
         return
+    runtime = getattr(celune, "agent_runtime", None)
+    active_task = runtime.get_active_task("default") if runtime is not None else None
+    display_task = active_task
+    if runtime is not None and active_task is None and self._agent_task_id is not None:
+        with contextlib.suppress(ValueError):
+            previous_task = runtime.get_task(self._agent_task_id)
+            if previous_task.is_terminal:
+                self._agent_task_id = None
+                self._agent_status_signature = None
+            else:
+                display_task = previous_task
+    if getattr(celune, "_maintain_status_after_playback", False):
+        celune._maintain_status_after_playback = False
+        if display_task is not None and not display_task.is_terminal:
+            self._agent_status_signature = None
+            self._refresh_agent_status()
+            return
     celune.cur_state = "idle"
     if celune.is_in_tutorial:
         self.input_box.placeholder = _app.string("ui.tutorial_placeholder")
@@ -1664,7 +1778,29 @@ def tts_queue_avail(self) -> None:
         return
     celune.locked = False
     self._cancel_sleep_timer()
-    self.safe_status(_app.string("status.speaking"))
+    runtime = getattr(celune, "agent_runtime", None)
+    active_task = runtime.get_active_task("default") if runtime is not None else None
+    waiting_task = active_task
+    if waiting_task is None and runtime is not None and self._agent_task_id is not None:
+        with contextlib.suppress(ValueError):
+            previous_task = runtime.get_task(self._agent_task_id)
+            if previous_task.state in {
+                AgentTaskState.AWAITING_APPROVAL,
+                AgentTaskState.AWAITING_CHOICE,
+            }:
+                waiting_task = previous_task
+    if waiting_task is not None and waiting_task.state in {
+        AgentTaskState.AWAITING_APPROVAL,
+        AgentTaskState.AWAITING_CHOICE,
+    }:
+        self._agent_task_id = waiting_task.task_id
+        self._agent_status_signature = None
+        self._refresh_agent_status()
+    elif active_task is not None:
+        self._agent_task_id = active_task.task_id
+        self._refresh_agent_status()
+    else:
+        self.safe_status(_app.string("status.speaking"))
     self.change_input_state(locked=True)
     self.change_voice_lock_state(locked=True)
     if celune.is_in_tutorial:
@@ -1769,6 +1905,7 @@ def _shutdown_from_windows_signal(self) -> None:
 
 def _hide_scrollbars_for_exit(self) -> None:
     """Hide mounted scrollbars before painting the final transparent frame."""
+    # noinspection PyBroadException
     try:
         screen = self.screen
         widgets = (screen, *screen.query(_app.Widget))
@@ -1816,6 +1953,7 @@ def _graceful_exit(self, return_code: Optional[int] = None) -> None:
 
         def finish_fade() -> None:
             """Paint one final fully transparent frame before unmounting."""
+            # noinspection PyBroadException
             try:
                 self._hide_scrollbars_for_exit()
                 self.screen.styles.opacity = 0.0
@@ -1824,6 +1962,7 @@ def _graceful_exit(self, return_code: Optional[int] = None) -> None:
             except Exception:
                 finish_exit()
 
+        # noinspection PyBroadException
         try:
             self._animate_opacity(
                 self.screen,
@@ -2076,6 +2215,10 @@ class InteractionHooks:
         """Delegate to the interaction implementation."""
         return await action_quit(self)
 
+    def action_help_quit(self) -> None:
+        """Delegate Textual's Ctrl+C hint to the Celune toast."""
+        return action_help_quit(self)
+
     def action_toggle_debug_inspector(self) -> None:
         """Delegate the debug-inspector binding to the interaction module."""
         return action_toggle_debug_inspector(self)
@@ -2141,9 +2284,9 @@ class InteractionHooks:
         """Delegate to the interaction implementation."""
         return on_text_area_changed(self, event)
 
-    def on_unmount(self) -> None:
+    async def on_unmount(self) -> None:
         """Delegate to the interaction implementation."""
-        return on_unmount(self)
+        await on_unmount(self)
 
     def on_voice_button_held(self, event: _app.VoiceButton.Held) -> None:
         """Delegate to the interaction implementation."""
@@ -2156,6 +2299,16 @@ class InteractionHooks:
     def open_voice_menu(self, *, preview: bool = False) -> None:
         """Delegate voice-menu opening or its no-op preview."""
         return open_voice_menu(self, preview=preview)
+
+    def show_toast(
+        self,
+        msg: str,
+        duration: Optional[float] = None,
+        *,
+        severity: str = "info",
+    ) -> None:
+        """Delegate transient message display to the interaction implementation."""
+        return show_toast(self, msg, duration, severity=severity)
 
     def process_command(self, command: str, args: list[str]) -> None:
         """Delegate to the interaction implementation."""

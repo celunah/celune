@@ -9,7 +9,7 @@ pronunciation, shape note connections, and paste short example songs.
 Select a TTS backend that supports singing and a CECHAR v5 pack with a `sing`
 voice. Enter a CESN score in Celune's input box and submit it with `CTRL+ENTER`.
 The examples here use English and stay within Celune's default singing range,
-F#3–C5 (MIDI 54–72); a different character pack can declare another range.
+F#3-C5 (MIDI 54-72). A different character pack can declare another range.
 
 CESN keeps the lyric text you write and sends its explicit notes and
 pronunciation to the backend. It does not infer syllables or pronunciation
@@ -20,7 +20,7 @@ the sounds passed to the singer.
 
 Start with a tempo, key, scale, and language. A lyric-bearing group follows the
 order `[extra tags][notes][pronunciation] lyrics`. Every pitched note needs
-one dot-separated pronunciation syllable; rests take time but do not take a
+one dot-separated pronunciation syllable. Rests take time but do not take a
 syllable.
 
 ```text
@@ -36,11 +36,11 @@ also make phrases easier to distinguish in playback.
 
 ## Set notes and rhythm
 
-Note names use A–G, an optional sharp or flat, and an optional octave, such as
+Note names use A-G, an optional sharp or flat, and an optional octave, such as
 `g3`, `c4`, or `f#4`. Note types are whole (`1`), half (`2`), quarter (`4`),
-eighth (`8`), sixteenth (`16`), or thirty-second (`32`); add `d` for a dotted
+eighth (`8`), sixteenth (`16`), or thirty-second (`32`). Add `d` for a dotted
 note. Tempo is in beats per minute. Key and scale describe the musical
-context; an out-of-scale note is retained with a warning, while a note outside
+context. An out-of-scale note is retained with a warning, while a note outside
 the singer's declared pitch range is rejected.
 
 This example gives the first two syllables a quicker pickup and holds the
@@ -78,14 +78,14 @@ syllables:
 ```
 
 The spelling, punctuation, and caption stay `Quiet.` in both scores. X-SAMPA
-changes only the pronunciation encoding; it does not add sounds or languages
+changes only the pronunciation encoding. It does not add sounds or languages
 that the selected backend does not support.
 
 ## Shape note connections
 
 Use `[slur:N]` before a note list to connect `N` adjacent pitched notes. The
 number must match the number of IPA syllables in the group, and a slur cannot
-include a rest. Note pitches and durations remain in the score; a slur guides
+include a rest. Note pitches and durations remain in the score. A slur guides
 the connection between their sounds.
 
 ```text
@@ -115,7 +115,7 @@ an `l` onset followed by the `A` vowel. This three-note example expands to
 ```
 
 The slide form needs at least two pitched notes, one vowel nucleus, and no
-rests. Use a slur for multiple syllables; use a slide for one onset followed
+rests. Use a slur for multiple syllables. Use a slide for one onset followed
 by a sustained vowel.
 
 ## Add vibrato to one note
@@ -131,7 +131,7 @@ before a note list applies to its first note.
 [v:8,5,20][c4:2,d4:2][ˈkɑː.lm]calm
 ```
 
-Here the first half note starts vibrating after an eighth-note delay; the
+Here the first half note starts vibrating after an eighth-note delay. The
 second half note is unchanged. Vibrato is applied to the existing framewise F0
 track only in SoulX-Singer's high-precision mode. Standard score mode does not
 apply it. A delay as long as the target note leaves no time for vibrato.
@@ -198,7 +198,7 @@ guarantee identical sound across random seeds, model versions, or voice packs.
 If a score fails, check that a `[lang:...]` tag appears before its note list,
 that each lyric group's pitched-note count matches its pronunciation
 syllables, and that all notes are inside the selected singer's declared range.
-`CESNMatchError` and `CESNAlignmentError` identify note/IPA count mismatches;
+`CESNMatchError` and `CESNAlignmentError` identify note/IPA count mismatches.
 `CESNRangeError` identifies an out-of-range note. Celune reports notation
 errors against the input line and column. See the CESN format reference for
 all tags, constraints, and error types.

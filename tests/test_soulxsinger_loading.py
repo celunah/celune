@@ -75,7 +75,7 @@ def test_soulxsinger_reference_wav_loader_uses_soundfile_and_resamples() -> None
         dtype=soulxsinger.np.float32,
     )
     soundfile = SimpleNamespace(read=mock.Mock(return_value=(audio, 16000)))
-    resample = mock.Mock(side_effect=lambda waveform, *_rates: waveform)
+    resample = mock.Mock(side_effect=lambda _waveform, *_rates: _waveform)
     torchaudio = SimpleNamespace(functional=SimpleNamespace(resample=resample))
 
     with mock.patch.dict(

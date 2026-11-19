@@ -2,16 +2,17 @@
 """Tests for explicit CESN IPA syllable alignment."""
 
 import json
-from types import SimpleNamespace
-from typing import Optional, cast
 from pathlib import Path
 from unittest import mock
+from types import SimpleNamespace
+from typing import Optional, cast
 
-import numpy as np
 import pytest
+import numpy as np
 
-from celune.cesn import CESNSinger, CESNVibrato, format_cesn_error, parse_cesn
+
 from celune.cevoice import CEVoiceLoader
+from celune.cesn import CESNSinger, CESNVibrato, format_cesn_error, parse_cesn
 from celune.exceptions import (
     CESNIPAError,
     CESNRangeError,
@@ -165,7 +166,7 @@ def test_generate_stream_uses_or_rejects_explicit_ipa(
     if expected_phonemes is not None:
         assert processor.process.call_count == (2 if high_precision else 1)
         target_metadata = processed_metadata[-1]
-        assert target_metadata["phoneme"] == (f"<SP> {expected_phonemes} <SP>")
+        assert target_metadata["phoneme"] == f"<SP> {expected_phonemes} <SP>"
         assert "text" not in target_metadata
         duration_metadata = target_metadata["duration"]
         pitch_metadata = target_metadata["note_pitch"]
@@ -548,7 +549,7 @@ def test_cesn_preprocessing_uses_the_selected_singers_pitch_range() -> None:
             "[lang:en][bpm:120,key:f#,scale:major][f#3:4][æ]Ah."
         )
 
-    assert str(error.value) == "note F3 is outside Celune's singing range (F#3–C5)."
+    assert str(error.value) == "note F3 is outside Celune's singing range (F#3-C5)."
     assert error.value.source_start == notation.index("f3")
     assert error.value.source_end == notation.index("f3") + 2
     assert f"{' ' * notation.index('f3')}^~" in format_cesn_error(

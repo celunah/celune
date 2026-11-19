@@ -11,10 +11,13 @@ import lzma
 import wave
 import struct
 import hashlib
-from typing import Final, Union, Optional, cast
+
 from pathlib import Path
+from typing import Final, Union, Optional, cast
 from collections.abc import Mapping, Sequence
 
+from ..typing.cevoice import Manifest, ManifestValue, VoiceManifest
+from ..exceptions import CEVoiceError, CEVoiceDependencyUnavailableError
 from .base import (
     ALLOWED_ASSET_KINDS,
     SUPPORTED_ENTRY_SUFFIXES,
@@ -25,8 +28,6 @@ from .base import (
     _is_hex_color,
     _validate_persona_metadata,
 )
-from ..exceptions import CEVoiceError, CEVoiceDependencyUnavailableError
-from ..typing.cevoice import Manifest, ManifestValue, VoiceManifest
 
 FORMAT_NAME: Final[str] = "CECHAR"
 V4_MAGIC: Final[bytes] = b"CECHAR\0"
@@ -288,7 +289,7 @@ def _validate_v4_file_data(
         _validate_v4_wav(name, data)
     elif suffix == ".pt":
         if validate_embeddings:
-            _validate_v4_embedding(name, data)
+            validate_v4_embedding(name, data)
     else:
         _validate_v4_persona_markdown(name, data)
 
@@ -695,7 +696,7 @@ def _validate_v4_assets(
         if suffix == ".wav":
             _validate_v4_wav(name, data)
         elif suffix == ".pt" and validate_embeddings:
-            _validate_v4_embedding(name, data)
+            validate_v4_embedding(name, data)
         elif suffix == ".md":
             _validate_v4_persona_markdown(name, data)
 
@@ -746,8 +747,18 @@ def _validate_v4_wav(name: str, data: bytes) -> None:
         raise CEVoiceError(f"invalid indexed CECHAR WAV asset '{name}'") from error
 
 
-def _validate_v4_embedding(name: str, data: bytes) -> None:
-    """Validate one restricted tensor-only indexed CECHAR voice embedding."""
+def validate_v4_embedding(name: str, data: bytes) -> None:
+    """Validate one restricted tensor-only indexed CECHAR voice embedding.
+
+    Args:
+        name: Archive entry name used in validation errors.
+        data: Serialized tensor bytes.
+
+    Raises:
+        CEVoiceError: The bytes do not contain one supported finite float32
+            speaker embedding.
+        CEVoiceDependencyUnavailableError: PyTorch is not installed.
+    """
     try:
         import torch
     except ModuleNotFoundError as error:

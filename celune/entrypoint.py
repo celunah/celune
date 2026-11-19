@@ -8,8 +8,8 @@ import time
 import random
 import shutil
 import datetime
-import warnings
 import platform
+import warnings
 import contextlib
 import subprocess
 from dataclasses import dataclass
@@ -19,6 +19,14 @@ from types import ModuleType, SimpleNamespace
 from typing import TYPE_CHECKING, NoReturn, Optional
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
+
+from celune.i18n import string
+from celune.typing.common import Config
+from celune.terminal import set_terminal_status
+from celune import REVISION, __tagline__, __version__
+from celune.vcs import is_git_checkout, git_checkout_hint
+from celune.config import config_log_level, normalize_log_level
+from celune.exceptions import CEVoiceDependencyUnavailableError
 from celune.paths import (
     project_root,
     running_compiled,
@@ -32,13 +40,6 @@ from celune.constants import (
     SUPPORTED_CUDA_VERSIONS,
     ExitCodes,
 )
-from celune.i18n import string
-from celune.typing.common import Config
-from celune.terminal import set_terminal_title
-from celune import REVISION, __tagline__, __version__
-from celune.vcs import is_git_checkout, git_checkout_hint
-from celune.exceptions import CEVoiceDependencyUnavailableError
-from celune.config import config_log_level, normalize_log_level
 
 if TYPE_CHECKING:
     from celune.celune import Celune
@@ -130,7 +131,7 @@ _CELUNE_PROCESS_NAMES = frozenset(
 
 def _load_ui_test_runtime() -> SimpleNamespace:
     """Load only the runtime boundary needed to render the UI test screen."""
-    from celune.testmode import UITestRuntime
+    from celune.test import UITestRuntime
 
     return SimpleNamespace(Celune=UITestRuntime, ExitCodes=ExitCodes)
 
@@ -267,23 +268,23 @@ def _load_runtime() -> SimpleNamespace:
         import yaml
         import psutil
 
+        from celune.ui import SelectMenu
         from celune.paths import (
             config_path,
             ensure_config_path,
             default_config_path,
         )
+        from celune.utils import indent, title_case, detected_ide, supports_ansi
         from celune.config import (
             env_bool,
             config_bool,
             config_value,
             merge_missing_defaults,
         )
-        from celune.ui import SelectMenu
+        from celune.updater import check_for_update, update_to_latest
         from celune.namedays import has_name_day
         from celune.exceptions import No, UpdateError
         from celune.backends.environment import BACKEND_MANIFESTS
-        from celune.updater import check_for_update, update_to_latest
-        from celune.utils import indent, title_case, detected_ide, supports_ansi
 
         config_path()
     except ModuleNotFoundError as package:
@@ -360,11 +361,15 @@ def _select_initial_backend(
         string(label_key, backend=backend_id)
         for backend_id, label_key in backend_choices
     ]
-    selected_backend = runtime.SelectMenu(
-        labels,
-        backend_ids,
-        string("cli.backend_picker_prompt"),
-    ).start()
+    try:
+        selected_backend = runtime.SelectMenu(
+            labels,
+            backend_ids,
+            string("cli.backend_picker_prompt"),
+        ).start()
+    except ModuleNotFoundError:
+        print(string("celune.cannot_select_backend"))
+        sys.exit(EXIT_CODES.EXIT_FAILURE.value)
     if not isinstance(selected_backend, str) or selected_backend not in backend_ids:
         return backend
 
@@ -995,7 +1000,7 @@ def _doctor_checks() -> list[DoctorCheck]:
             checks,
             "Python environment",
             False,
-            f"project virtual environment not found; running {current_python}",
+            f"project virtual environment not found. Running {current_python}",
             hint="Run `uv sync` to create or repair a compatible environment.",
         )
 
@@ -1016,7 +1021,7 @@ def _doctor_checks() -> list[DoctorCheck]:
         hint=f"{APP_NAME} setup uses uv to sync Python dependencies.",
     )
 
-    # CEDTS worker manifests own backend-specific packages; probe core imports here only.
+    # core imports only, Celune automatically sets up her backend environments with CEDTS
     required_imports = [
         ("yaml", "PyYAML", f"{APP_NAME} needs YAML support for config loading."),
         ("psutil", "psutil", f"{APP_NAME} uses psutil for process checks."),
@@ -1496,7 +1501,7 @@ def start(
             def finish_test(
                 core: "Celune",
                 success: bool,
-                detail: Optional[str],
+                details: Optional[str],
             ) -> None:
                 """Finish the selected explicit test through the core boundary."""
                 if active_test_mode == "agent":
@@ -1505,7 +1510,7 @@ def start(
                     run_agent_test(
                         core,
                         startup_success=success,
-                        startup_detail=detail,
+                        startup_detail=details,
                         request_user=getattr(
                             ui,
                             "request_agent_test_response",
@@ -1516,7 +1521,7 @@ def start(
                 core.finish_test_mode(
                     active_test_mode,
                     success,
-                    detail=detail,
+                    detail=details,
                 )
 
             ui = CeluneUI(
@@ -1565,12 +1570,14 @@ def start(
             return
         migrate_legacy_app_data()
         if runtime.supports_ansi():
-            set_terminal_title(
+            set_terminal_status(
                 (
                     APP_NAME,
                     string("osc.state_initializing"),
                     string("osc.action_starting"),
-                )
+                ),
+                program_state="initializing",
+                message=string("osc.action_starting"),
             )
         date = datetime.datetime.now(datetime.UTC)
         if runtime.has_name_day("Celine", date) and not runtime.env_bool(
@@ -1719,13 +1726,14 @@ def start(
 
             def prepare_interactive_runtime():
                 """Construct the engine inside the already-mounted UI worker."""
-                runtime = _load_core_runtime(defer_missing_dependency=True)
+                core = _load_core_runtime(defer_missing_dependency=True)
                 _print_startup_diagnostic(
                     string("ui.startup_loading_core"),
                 )
-                return runtime.Celune(
+                return core.Celune(
                     tts_backend=backend,
                     log_callback=ui.tts_log,
+                    toast_callback=ui.show_toast,
                     status_callback=ui.safe_status,
                     error_callback=ui.error,
                     idle_callback=ui.tts_idle,
@@ -1898,18 +1906,17 @@ def handle_tar_command(arguments: list[str], program: str) -> int:
 
     operation = arguments[0]
     insertion_position: Optional[int] = None
-    if operation in {"-tf", "-xf", "-rf", "-df"}:
-        pass
-    elif re.fullmatch(r"-af[0-9]+", operation):
+    if operation not in {"-tf", "-xf", "-rf", "-df"}:
+        match = re.fullmatch(r"-af([0-9]+)", operation)
+        if match is None:
+            return _syntax_error(program, "tar")
         try:
-            insertion_position = int(operation[3:])
+            insertion_position = int(match[1])
         except ValueError:
             return _syntax_error(program, "tar")
         if insertion_position < 1:
             return _syntax_error(program, "tar")
         operation = "-af"
-    else:
-        return _syntax_error(program, "tar")
 
     values = arguments[1:]
     if operation == "-tf":
@@ -2088,10 +2095,10 @@ def _add_pack_entries(
             print(string("cli.pack_unsupported_file", name=source.name))
             return 1
         if suffix == ".pt" and bundle.is_indexed:
-            from celune.cevoice.v4 import _validate_v4_embedding
+            from celune.cevoice import validate_v4_embedding
 
             try:
-                _validate_v4_embedding(source.name, source.read_bytes())
+                validate_v4_embedding(source.name, source.read_bytes())
             except CEVoiceDependencyUnavailableError as error:
                 _print_pack_dependency_error(error)
                 return 1

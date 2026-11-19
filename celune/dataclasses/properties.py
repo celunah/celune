@@ -43,6 +43,7 @@ def forward_property(
         field_name: Field name inside that grouped state object.
         doc: Optional property docstring to attach.
         read_only: Whether the generated property should omit a setter.
+        reject_duplicate: Whether a duplicate property should be rejected.
 
     Returns:
         property: A descriptor that reads from the grouped state container.

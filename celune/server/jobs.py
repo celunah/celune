@@ -2,6 +2,7 @@
 """Speech job state and event subscriptions shared by API transports."""
 
 from __future__ import annotations
+
 import time
 import asyncio
 import threading
@@ -331,10 +332,8 @@ def unsubscribe_from_speech_job(
     with session.speech_jobs_lock:
         job = session.speech_jobs.get(job_id)
         if job is not None:
-            try:
+            with contextlib.suppress(ValueError):
                 job.subscriptions.remove(subscription)
-            except ValueError:
-                pass
     subscription.close()
 
 

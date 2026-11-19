@@ -14,22 +14,22 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from celune import signature
+from scripts import make_signing_key as signing_tool
 from scripts.make_signing_key import (
     configure_signed_build,
     default_output_path,
     default_root_key_path,
     make_signing_key,
 )
-from scripts import make_signing_key as signing_tool
 
 
 def _empty_project(root: Path) -> None:
     """Create an isolated checkout with matching root trust anchors."""
-    (root / "celune").mkdir(parents=True)
+    (root / "celune" / "assets").mkdir(parents=True)
     (root / "launcher").mkdir()
     root_public_key = b"\x01" * 32
     key_id = f"ed25519-{hashlib.sha256(root_public_key).hexdigest()[:16]}"
-    (root / "celune" / "release_keyring.json").write_text(
+    (root / "celune" / "assets" / "release_keyring.json").write_text(
         json.dumps({key_id: root_public_key.hex()}, indent=2) + "\n",
         encoding="utf-8",
     )
@@ -72,7 +72,9 @@ def test_generated_key_is_private_and_registered_in_the_key_catalog(
     )
     expected_key_id = f"ed25519-{hashlib.sha256(public_key).hexdigest()[:16]}"
     catalog = json.loads(
-        (project_root / "celune" / "release_keyring.json").read_text(encoding="utf-8")
+        (project_root / "celune" / "assets" / "release_keyring.json").read_text(
+            encoding="utf-8"
+        )
     )
     root_private_key = serialization.load_pem_private_key(
         root_path.read_bytes(),
@@ -109,7 +111,7 @@ def test_generated_key_is_private_and_registered_in_the_key_catalog(
     monkeypatch.setattr(
         signature,
         "_CATALOG_PATH",
-        project_root / "celune" / "release_keyring.json",
+        project_root / "celune" / "assets" / "release_keyring.json",
     )
     verified_keyring = signature.decode_signed_keyring(
         signature.create_signed_keyring(root_path)
@@ -165,7 +167,9 @@ def test_existing_release_key_is_reused_and_registered(
         serialization.PublicFormat.Raw,
     )
     catalog = json.loads(
-        (project_root / "celune" / "release_keyring.json").read_text(encoding="utf-8")
+        (project_root / "celune" / "assets" / "release_keyring.json").read_text(
+            encoding="utf-8"
+        )
     )
     assert key_path.read_bytes() == private_key_bytes
     assert key_id == f"ed25519-{hashlib.sha256(public_key).hexdigest()[:16]}"
@@ -187,7 +191,9 @@ def test_existing_root_key_requires_explicit_trust_update(
             serialization.NoEncryption(),
         )
     )
-    original_catalog = (project_root / "celune" / "release_keyring.json").read_bytes()
+    original_catalog = (
+        project_root / "celune" / "assets" / "release_keyring.json"
+    ).read_bytes()
     original_python_pin = (project_root / "celune" / "constants.py").read_bytes()
     original_launcher_pin = (project_root / "launcher" / "release_keys.h").read_bytes()
 
@@ -196,7 +202,7 @@ def test_existing_root_key_requires_explicit_trust_update(
 
     assert not release_path.exists()
     assert (
-        project_root / "celune" / "release_keyring.json"
+        project_root / "celune" / "assets" / "release_keyring.json"
     ).read_bytes() == original_catalog
     assert (
         project_root / "celune" / "constants.py"
@@ -213,7 +219,9 @@ def test_existing_root_key_can_be_trusted(
     project_root = tmp_path / "project"
     _empty_project(project_root)
     original_catalog = json.loads(
-        (project_root / "celune" / "release_keyring.json").read_text(encoding="utf-8")
+        (project_root / "celune" / "assets" / "release_keyring.json").read_text(
+            encoding="utf-8"
+        )
     )
     release_path = tmp_path / "release.pem"
     root_path = tmp_path / "root.pem"
@@ -241,7 +249,9 @@ def test_existing_root_key_can_be_trusted(
         project_root / "celune" / "constants.py"
     ).read_text(encoding="utf-8")
     catalog = json.loads(
-        (project_root / "celune" / "release_keyring.json").read_text(encoding="utf-8")
+        (project_root / "celune" / "assets" / "release_keyring.json").read_text(
+            encoding="utf-8"
+        )
     )
     root_key_id = f"ed25519-{hashlib.sha256(root_public_key).hexdigest()[:16]}"
     assert catalog[root_key_id] == root_public_key.hex()
@@ -287,7 +297,7 @@ def test_key_creation_rejects_destinations_inside_the_checkout(
     """Keep generated private keys out of the project checkout."""
     project_root = tmp_path / "project"
     _empty_project(project_root)
-    key_catalog = project_root / "celune" / "release_keyring.json"
+    key_catalog = project_root / "celune" / "assets" / "release_keyring.json"
     original_catalog = key_catalog.read_bytes()
 
     with pytest.raises(ValueError, match="outside the repository"):

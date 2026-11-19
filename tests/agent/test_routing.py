@@ -2,6 +2,7 @@
 """Focused tests for Celune's conversation-first agent routing boundary."""
 
 from __future__ import annotations
+
 import json
 from unittest import mock
 from types import SimpleNamespace
@@ -9,11 +10,12 @@ from contextlib import nullcontext
 from typing import TYPE_CHECKING, cast
 
 from celune.i18n import string
-from celune.typing.common import JSONSerializable
 from celune.agent import (
+    AgentTool,
     AgentRoute,
     AgentRuntime,
     AgentTaskState,
+    AgentToolSchema,
     AgentInputRouter,
     AgentChoiceOption,
     AgentToolBehavior,
@@ -28,6 +30,7 @@ from celune.agent import (
     AgentInputClassification,
     AgentClassificationFailureKind,
 )
+from celune.typing.common import JSONSerializable
 
 if TYPE_CHECKING:
     from celune.celune import Celune
@@ -46,9 +49,10 @@ def _call() -> ValidatedToolCall:
     }
 
 
-class TestAgentRouting:  # pylint: disable=attribute-defined-outside-init
+class TestAgentRouting:
     """Verify routing keeps conversation and task input separate."""
 
+    # pylint: disable=W0201
     def setup_method(self) -> None:
         """Create a fresh router and engine fixture for each test."""
         self._cuda_patch = mock.patch(
@@ -70,11 +74,14 @@ class TestAgentRouting:  # pylint: disable=attribute-defined-outside-init
     def _set_classifier(self, *payloads: dict[str, JSONSerializable]) -> None:
         """Install deterministic structured Persona routing responses."""
         responses = []
+
         for payload in payloads:
+            serialized_payload = json.dumps(payload)
+
             responses.append(
                 SimpleNamespace(
                     raise_for_status=mock.Mock(),
-                    json=lambda payload=payload: {"text": json.dumps(payload)},
+                    json=lambda serialized=serialized_payload: {"text": serialized},
                 )
             )
         self.engine.vision = SimpleNamespace(post=mock.Mock(side_effect=responses))
@@ -94,6 +101,188 @@ class TestAgentRouting:  # pylint: disable=attribute-defined-outside-init
                 assert result.classification == AgentInputClassification.CONVERSATION
                 assert result.route == AgentRoute.CONVERSATION
         assert self.runtime.get_active_task("default") is None
+
+    def test_classifier_uses_available_tools_to_route_unmatched_input_to_persona(
+        self,
+    ) -> None:
+        """Give semantic routing the available tool catalog for conversation matches."""
+        self.engine.agent_tool_schemas = {
+            "read_status": AgentToolSchema(
+                tool_id="read_status",
+                display_name="Read status",
+                description="Read current Celune status.",
+            ),
+            "disabled": AgentToolSchema(
+                tool_id="disabled",
+                display_name="Disabled tool",
+                description="Unavailable capability.",
+                available=False,
+            ),
+        }
+        self._set_classifier({"classification": "conversation", "confidence": 0.96})
+
+        result = self.router.route(
+            "What do you think about the current setup?",
+            persona_ready=True,
+        )
+
+        assert result.route == AgentRoute.CONVERSATION
+        assert self.runtime.get_active_task("default") is None
+        request = self.engine.vision.post.call_args.kwargs["json"]
+        assert request["tool_catalog"] == [
+            {
+                "tool_id": "read_status",
+                "display_name": "Read status",
+                "description": "Read current Celune status.",
+            }
+        ]
+        system_prompt = request["system"]
+        assert isinstance(system_prompt, str)
+        assert "Available agent tools:" in system_prompt
+        assert "If no listed available tool can perform" in system_prompt
+
+    def test_explicit_registered_tool_request_skips_persona_classification(
+        self,
+    ) -> None:
+        """Route an exact registered-tool command directly to agent execution."""
+        self.runtime.tools = (cast(AgentTool, SimpleNamespace(name="query_character")),)
+        self.engine.vision = SimpleNamespace(post=mock.Mock())
+
+        result = self.router.route(
+            "Use query_character to report the current character and voice.",
+            persona_ready=True,
+        )
+
+        self.engine.vision.post.assert_not_called()
+        assert result.route == AgentRoute.TASK
+        assert result.task_request is not None
+        assert result.task_request.request == (
+            "Use query_character to report the current character and voice."
+        )
+
+    def test_explicit_tool_request_replaces_an_unanswerable_choice(self) -> None:
+        """Let a new explicit task leave a stale pending choice cleanly."""
+        self.runtime.tools = (cast(AgentTool, SimpleNamespace(name="remember")),)
+        task = self.runtime.create_task(
+            self.router._make_request("Choose a tool."),
+            task_id="stale-choice",
+        )
+        self.runtime.start_task(task.task_id)
+        self.runtime.classify_task(task.task_id)
+        self.runtime.request_choice(
+            task.task_id,
+            AgentChoiceRequest(
+                "choice-stale",
+                task.task_id,
+                "Choose an option.",
+                (AgentChoiceOption("tool-1", "1. unrelated tool"),),
+            ),
+        )
+
+        result = self.router.route(
+            'Use remember to save "test" with importance 1.',
+            persona_ready=False,
+        )
+
+        assert task.state == AgentTaskState.CANCELLED
+        assert result.route == AgentRoute.TASK
+        assert result.task_request is not None
+        assert result.task_request.request.startswith("Use remember")
+
+    def test_numbered_choice_answer_does_not_require_persona(self) -> None:
+        """Accept an explicit option number while a task waits for a choice."""
+        task = self.runtime.create_task(
+            self.router._make_request("Choose a tool."),
+            task_id="numbered-choice",
+        )
+        self.runtime.start_task(task.task_id)
+        self.runtime.classify_task(task.task_id)
+        self.runtime.request_choice(
+            task.task_id,
+            AgentChoiceRequest(
+                "choice-numbered",
+                task.task_id,
+                "Choose an option.",
+                (
+                    AgentChoiceOption("tool-1", "1. first tool"),
+                    AgentChoiceOption("tool-2", "2. second tool"),
+                ),
+            ),
+        )
+        self.engine.vision = SimpleNamespace(post=mock.Mock())
+
+        result = self.router.route("option 2", persona_ready=False)
+
+        self.engine.vision.post.assert_not_called()
+        assert result.route == AgentRoute.CHOICE_RESPONSE
+        assert result.choice_id == "tool-2"
+        assert task.state == AgentTaskState.WORKING
+
+    def test_active_task_rejects_impossible_new_task_route_without_value_error(
+        self,
+    ) -> None:
+        """Normalize an invalid new-task route returned for an active task."""
+        task = self.runtime.create_task(
+            self.router._make_request("Check the current state."),
+            task_id="active-route",
+        )
+        self.runtime.start_task(task.task_id)
+        self.runtime.classify_task(task.task_id)
+        self._set_classifier(
+            {
+                "classification": "task",
+                "route": "task",
+                "confidence": 0.9,
+            }
+        )
+
+        result = self.router.route("Keep checking.", persona_ready=True)
+
+        assert result.route == AgentRoute.TASK_INPUT
+        assert task.interruption is not None
+
+    def test_short_approval_answer_resumes_without_classifier(self) -> None:
+        """Accept a direct yes while keeping the approval task active."""
+        task = self.runtime.create_task(
+            self.router._make_request("Change the setting."),
+            task_id="task-approval",
+        )
+        self.runtime.start_task(task.task_id)
+        self.runtime.classify_task(task.task_id)
+        self.runtime.request_approval(
+            task.task_id,
+            AgentApprovalRequest("approval-yes", task.task_id, _call(), "Allow?"),
+        )
+        self.engine.vision = SimpleNamespace(post=mock.Mock())
+
+        result = self.router.route("Yes.", persona_ready=False)
+
+        self.engine.vision.post.assert_not_called()
+        assert result.route == AgentRoute.APPROVAL_RESPONSE
+        assert result.approval_decision == AgentApprovalDecision.APPROVED
+        assert task.state == AgentTaskState.WORKING
+
+    def test_classifier_failure_keeps_pending_approval_answerable(self) -> None:
+        """Preserve an approval pause when Persona cannot classify an answer."""
+        task = self.runtime.create_task(
+            self.router._make_request("Change the setting."),
+            task_id="task-approval-failure",
+        )
+        self.runtime.start_task(task.task_id)
+        self.runtime.classify_task(task.task_id)
+        self.runtime.request_approval(
+            task.task_id,
+            AgentApprovalRequest("approval-failure", task.task_id, _call(), "Allow?"),
+        )
+        self.engine.vision = SimpleNamespace(
+            post=mock.Mock(side_effect=RuntimeError("classifier unavailable"))
+        )
+
+        result = self.router.route("Maybe later.", persona_ready=True)
+
+        assert result.route == AgentRoute.CLARIFICATION
+        assert task.state == AgentTaskState.AWAITING_APPROVAL
+        assert self.runtime.get_pending_approval(task.task_id) is not None
 
     def test_classifier_failure_logging_is_generic_only_at_normal_level(self) -> None:
         """Keep diagnostics detailed only when verbose or debug logs are enabled."""
@@ -163,6 +352,44 @@ class TestAgentRouting:  # pylint: disable=attribute-defined-outside-init
         execute_tool.assert_not_called()
         assert result.intent == "inspect_process"
         assert result.to_json()["intent"] == "inspect_process"
+
+    def test_history_resolved_task_request_keeps_the_current_follow_up(self) -> None:
+        """Keep the latest wording beside a target resolved from earlier turns."""
+        follow_up = "Could you summarize that report again?"
+        resolved_request = "Summarize /work/report.txt."
+        self._set_classifier(
+            {
+                "classification": "task",
+                "route": "task",
+                "confidence": 0.92,
+                "task_request": resolved_request,
+            }
+        )
+
+        result = self.router.route(follow_up, persona_ready=True)
+
+        assert result.task_request is not None
+        assert result.task_request.request == resolved_request
+        assert result.task_request.original_request == follow_up
+
+    def test_task_summary_preserves_the_original_user_request(self) -> None:
+        """Keep exact user wording available after Persona rewrites task intent."""
+        original_request = r"List the directory C:\Games\XSanity\Program64"
+        self._set_classifier(
+            {
+                "classification": "task",
+                "route": "task",
+                "confidence": 0.96,
+                "task_request": "List the requested directory.",
+            }
+        )
+
+        result = self.router.route(original_request, persona_ready=True)
+
+        assert result.task_request is not None
+        assert result.task_request.request == "List the requested directory."
+        assert result.task_request.original_request == original_request
+        assert result.task_request.to_json()["original_request"] == original_request
 
     def test_valid_low_confidence_task_is_not_downgraded_to_conversation(
         self,
@@ -457,12 +684,6 @@ class TestAgentRouting:  # pylint: disable=attribute-defined-outside-init
         self._set_classifier(
             {
                 "classification": "task",
-                "route": "approval_response",
-                "confidence": 0.99,
-                "approval_decision": "approved",
-            },
-            {
-                "classification": "task",
                 "route": "choice_response",
                 "confidence": 0.99,
                 "choice_id": "brief",
@@ -564,7 +785,7 @@ class TestAgentRouting:  # pylint: disable=attribute-defined-outside-init
 
         self.runtime.resume(task.session_id)
         cancellation = self.router.route(
-            "I changed my mind; abandon this task.", persona_ready=True
+            "I changed my mind. Abandon this task.", persona_ready=True
         )
         assert cancellation.route == AgentRoute.CANCELLATION
         assert task.state == AgentTaskState.CANCELLED

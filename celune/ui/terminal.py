@@ -7,21 +7,21 @@ import time
 import logging
 import threading
 from typing import Literal, Optional
-from collections import deque
-from collections.abc import Mapping, Callable, Sequence, Collection
 from dataclasses import replace, dataclass
+from collections import deque
+from collections.abc import Callable, Collection, Mapping, Sequence
 
 from rich.text import Text
 from rich.cells import cell_len
 from textual.dom import NoScreen
-from textual.events import Key, Click, Leave, MouseMove
 from textual.widget import Widget
 from textual.message import Message
+from textual.events import Key, Click, Leave, MouseMove
 
 from ..i18n import string
 from ..terminal import infer_log_severity
-from ..typing.common import JSONSerializable
 from ..typing.aliases import LogCallback
+from ..typing.common import JSONSerializable
 
 _MCP_DISCONNECT_CORRELATION_SECONDS = 5.0
 
@@ -107,6 +107,7 @@ class SelectMenuOption:
         show_value: Whether an editable value is rendered in brackets.
         confirm_value: Optional value returned for a non-editable row.
         explanation: Optional line shown above the footer hints.
+        allow_free_text: Whether typing can set values outside autocomplete.
     """
 
     label: str
@@ -119,6 +120,7 @@ class SelectMenuOption:
     confirm_value: Optional[JSONSerializable] = None
     explanation: Optional[str] = None
     autocomplete_labels: Optional[Sequence[str]] = None
+    allow_free_text: bool = False
 
 
 class SelectMenuWidget(Widget):
@@ -307,7 +309,7 @@ class SelectMenuWidget(Widget):
             self.refresh()
 
     def on_click(self, event: Click) -> None:
-        """Select clicked rows and confirm on a double-click when supported."""
+        """Select clicked rows and confirm on a double click when supported."""
         option_index = self._option_index_at(event)
         if option_index is None:
             return
@@ -490,12 +492,20 @@ class SelectMenuWidget(Widget):
         reset_editor = False
         if matches:
             value = matches[0]
-        elif option.autocomplete_values is not None:
+        elif option.autocomplete_values is not None and not option.allow_free_text:
             value = option.value
             reset_editor = True
         else:
-            value = self._coerce_text_value(query, option.value)
-            reset_editor = not self._is_valid_text_value(query, option.value)
+            value = self._coerce_text_value(
+                query,
+                option.value,
+                allow_free_text=option.allow_free_text,
+            )
+            reset_editor = not self._is_valid_text_value(
+                query,
+                option.value,
+                allow_free_text=option.allow_free_text,
+            )
         self._set_option_value(
             self.selected_index,
             value,
@@ -535,15 +545,29 @@ class SelectMenuWidget(Widget):
         )
 
     @staticmethod
-    def _coerce_text_value(text: str, current: JSONSerializable) -> JSONSerializable:
+    def _coerce_text_value(
+        text: str,
+        current: JSONSerializable,
+        *,
+        allow_free_text: bool = False,
+    ) -> JSONSerializable:
         """Preserve simple scalar return types while editing text."""
         normalized = text.casefold().strip()
+        if allow_free_text and (isinstance(current, str) or current is None):
+            if normalized in {"null", "none"}:
+                return None
+            quoted = text.strip()
+            if len(quoted) >= 2 and quoted[0] == quoted[-1] and quoted[0] in {"'", '"'}:
+                value = quoted[1:-1]
+                if quoted[0] == "'":
+                    value = value.replace("''", "'")
+                return value
+        if current is None and normalized == "none":
+            return None
         if isinstance(current, bool):
             if normalized in {"true", "false"}:
                 return normalized == "true"
             return current
-        if current is None and normalized == "none":
-            return None
         if isinstance(current, int):
             try:
                 return int(text)
@@ -557,13 +581,20 @@ class SelectMenuWidget(Widget):
         return text
 
     @staticmethod
-    def _is_valid_text_value(text: str, current: JSONSerializable) -> bool:
+    def _is_valid_text_value(
+        text: str,
+        current: JSONSerializable,
+        *,
+        allow_free_text: bool = False,
+    ) -> bool:
         """Return whether text can be represented by the current scalar type."""
         normalized = text.casefold().strip()
+        if allow_free_text:
+            return True
         if isinstance(current, bool):
             return normalized in {"true", "false"}
         if current is None:
-            return normalized == "none"
+            return normalized in {"null", "none"}
         if isinstance(current, int):
             try:
                 int(text)
@@ -630,14 +661,15 @@ class SelectMenuWidget(Widget):
         if cell_len(value) <= max_cells:
             return value
 
-        ellipsis = "…"
-        target_cells = max(0, max_cells - cell_len(ellipsis))
+        # Unicode character... hm
+        ellipsis_char = "…"
+        target_cells = max(0, max_cells - cell_len(ellipsis_char))
         truncated = ""
         for character in value:
             if cell_len(truncated + character) > target_cells:
                 break
             truncated += character
-        return truncated + ellipsis
+        return truncated + ellipsis_char
 
 
 class LogRedirect:
@@ -831,10 +863,10 @@ class UILogHandler(logging.Handler):
             return
 
         if (
-            "triton not found; flop counting will not work for triton kernels"
-            in message
+            message.startswith("triton not found")
+            and "flop counting will not work for triton kernels" in message
         ):
-            message = "triton not found; flop counting will not work for triton kernels"
+            message = "triton not found, flop counting will not work for triton kernels"
 
         if self._is_filtered_message(message):
             return

@@ -203,6 +203,7 @@ def quantize_component(
         converted = sum(
             1
             for name, candidate in module.named_modules()
+            if isinstance(candidate, nn.Linear)
             if is_safe_linear(candidate, name, rule)
             and _is_quantized_tensor(candidate.weight)
         )

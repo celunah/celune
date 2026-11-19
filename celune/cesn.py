@@ -4,12 +4,13 @@
 import re
 import math
 import warnings
+import contextlib
 import unicodedata
-from typing import TYPE_CHECKING, Union, Optional, NamedTuple, cast
 from pathlib import Path
 from fractions import Fraction
-from dataclasses import field, dataclass
 from collections.abc import Callable
+from dataclasses import field, dataclass
+from typing import TYPE_CHECKING, Union, Optional, NamedTuple, cast
 
 from iso639 import Lang, exceptions
 
@@ -116,6 +117,16 @@ class CESNBlock:
         """Return pitched event/IPA pairs, excluding rests."""
         return tuple(event for event in self.events if isinstance(event, CESNNotePair))
 
+    @property
+    def source_note_spans(self):
+        """Property for CESN source note spans."""
+        return self._source_note_spans
+
+    @property
+    def source_ipa_spans(self):
+        """Property for CESN source IPA spans."""
+        return self._source_ipa_spans
+
 
 @dataclass(frozen=True)
 class CESNSection:
@@ -136,12 +147,12 @@ class _CESNJoinMarker(NamedTuple):
 _CESNEvent = Union[CESNNoteEvent, CESNRestEvent, _CESNJoinMarker]
 
 NOTE_EVENT_PATTERN = re.compile(
-    r"(?:(?P<pitch>[a-g](?:[#b])?-?\d+)|(?P<rest>r))\s*:\s*"
+    r"(?:(?P<pitch>[a-g][#b]?-?\d+)|(?P<rest>r))\s*:\s*"
     r"(?P<note_type>32|16|8|4|2|1)\s*(?P<dotted>d?)",
     re.IGNORECASE,
 )
 _LANGUAGE_PATTERN = re.compile(r"[a-z]{2,3}(?:-[a-z0-9]{2,8})*\Z")
-_KEY_PATTERN = re.compile(r"[a-g](?:[#b])?\Z", re.IGNORECASE)
+_KEY_PATTERN = re.compile(r"[a-g][#b]?\Z", re.IGNORECASE)
 _TUPLET_PATTERN = re.compile(r"(?P<actual>\d+)\s*,\s*(?P<normal>\d+)\Z")
 _SCALE_INTERVALS = {
     "major": (0, 2, 4, 5, 7, 9, 11),
@@ -181,7 +192,7 @@ def _parse_cesn(
     Each section begins when its singer, language, BPM, key, or scale changes.
     Every pitched note requires one dot-separated pronunciation syllable. Raw
     IPA is retained and marked X-SAMPA is converted to IPA. The original lyrics
-    remain intact on each block; no spelling-based syllabification is performed.
+    remain intact on each block. No spelling-based syllabification is performed.
     Rests remain in each block's event stream but consume no pronunciation.
     A lyric block ending in a period or comma gains an automatic half-note or
     quarter-note rest unless an explicit trailing rest already follows it. The
@@ -235,15 +246,15 @@ def _parse_cesn(
             section_state = None
             section_blocks = []
             return
-        language = section_state.language
-        if language is None:
+        lang = section_state.language
+        if lang is None:
             raise CESNValidationError("CESN language must be specified")
         sections.append(
             CESNSection(
                 bpm=section_state.bpm,
                 key=section_state.key,
                 scale=section_state.scale,
-                language=language,
+                language=lang,
                 singer=section_state.singer,
                 blocks=tuple(section_blocks),
             )
@@ -251,10 +262,10 @@ def _parse_cesn(
         section_state = None
         section_blocks = []
 
-    def apply_tuplet(events: tuple[_CESNEvent, ...]) -> tuple[_CESNEvent, ...]:
+    def apply_tuplet(note_events: tuple[_CESNEvent, ...]) -> tuple[_CESNEvent, ...]:
         nonlocal active_tuplet, tuplet_remaining
         annotated: list[_CESNEvent] = []
-        for event in events:
+        for event in note_events:
             if isinstance(event, _CESNJoinMarker):
                 annotated.append(event)
                 continue
@@ -450,11 +461,8 @@ def _parse_cesn(
             location[:] = pending_note_span
         following_rest_only = False
         if following_tag is not None:
-            try:
+            with contextlib.suppress(CESNValidationError):
                 following_events = _parse_note_events(following_tag)
-            except CESNValidationError:
-                pass
-            else:
                 following_rest_only = bool(following_events) and all(
                     isinstance(event, CESNRestEvent) for event in following_events
                 )
@@ -526,11 +534,8 @@ def _parse_cesn(
             "v",
             "x-sampa",
         }:
-            try:
+            with contextlib.suppress(CESNValidationError):
                 _parse_note_events(tag)
-            except CESNValidationError:
-                pass
-            else:
                 is_note_event_tag = True
         continues_note_group = (
             is_note_event_tag

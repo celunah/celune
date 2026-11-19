@@ -42,7 +42,7 @@ KEYRING_MAX_BODY_SIZE = (
     + KEYRING_SIGNATURE_SIZE
 )
 _ROOT_PUBLIC_KEY = bytes.fromhex(RELEASE_KEYRING_ROOT_PUBLIC_KEY_HEX)
-_CATALOG_PATH = Path(__file__).with_name(KEYRING_CATALOG_NAME)
+_CATALOG_PATH = Path(__file__).parent / "assets" / KEYRING_CATALOG_NAME
 
 
 def signing_key_id(public_key: bytes) -> str:

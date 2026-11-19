@@ -12,6 +12,7 @@ from ..typing.common import JSON
 from ..paths import temp_data_dir
 from ..typing.agent import ToolCall, AgentContext, AgentTaskState, AgentToolSchema
 
+
 _MARKDOWN_HEADING = re.compile(r"^\s{0,3}#{1,6}(?:\s|$)")
 
 
@@ -46,6 +47,75 @@ def _render_agent_context(
     failure_response = agent_context.classification_failure is not None or (
         task is not None and task.is_terminal and task.state != AgentTaskState.COMPLETED
     )
+    if (
+        task is not None
+        and task.state == AgentTaskState.AWAITING_APPROVAL
+        and pending_tool_call is not None
+    ):
+        response_instruction = (
+            "Approval request instruction: in one concise sentence, explain the exact "
+            "pending action and its supplied argument values in the active character's "
+            "voice, then tell the user to say 'approve' to proceed or 'deny' to reject. "
+            "Use only the registered tool and arguments shown below. The action has not "
+            "run yet. Do not imply that it has started or succeeded."
+        )
+    elif agent_context.opening:
+        response_instruction = (
+            "Opening instruction: in one short sentence, acknowledge the user's request "
+            "in the active character's voice. Do not answer the request, imply that work "
+            "has started, claim checks or results, invent details, or promise an outcome. "
+            "Do not say that you are ready, available, or standing by, and do not state "
+            "the current runtime status. "
+            "Output only the acknowledgment."
+        )
+    elif agent_context.last_tool_result is None:
+        response_instruction = (
+            "Planning instruction: state the concrete local action intent in concise "
+            "natural language for the registered tool selector. Preserve the user's "
+            "requested operation and exact target or path. Do not substitute a related task."
+        )
+    else:
+        tool_result = cast(JSON, agent_context.last_tool_result)
+        if (
+            tool_result.get("tool_id") == "local_list_directory"
+            and tool_result.get("status") == "succeeded"
+        ):
+            response_instruction = (
+                "Directory-listing response instruction: answer naturally in the active "
+                "character's voice using the structured result. Begin by stating the exact resolved "
+                "path and include every returned entry name. Identify entries whose kind "
+                "is directory as folders. If the result says it is truncated, say that "
+                "the list is partial. If it contains no items, say the directory is "
+                "empty. Preserve the path and names exactly. Do not omit these facts, "
+                "invent entries, or reply with a promise to list them later."
+            )
+        elif (
+            tool_result.get("tool_id") == "local_read_text"
+            and tool_result.get("status") == "succeeded"
+        ):
+            response_instruction = (
+                "File-reading response instruction: answer from the returned file text "
+                "only. Report a requested date, name, or other fact only if that exact "
+                "fact appears in the text. If it is absent, say that it is absent. Do not "
+                "add dates, metadata, or information from memory or general knowledge. "
+                "Preserve exact paths and quoted file text."
+            )
+        else:
+            response_instruction = (
+                "Response instruction: answer the user's request naturally using the "
+                "structured tool result. Report only concrete facts directly present in "
+                "the returned data, including exact paths where applicable. If a requested "
+                "fact is absent, say that the result does not contain it. Never invent "
+                "dates, names, file contents, actions, or results, and do not replace the "
+                "result with a progress update or promise."
+            )
+        if agent_context.last_tool_result is not None or (
+            task is not None and task.is_terminal
+        ):
+            response_instruction += (
+                " This is a final response: do not announce or offer any future action, "
+                "including retrying. Report only the task outcome and supplied result."
+            )
     sections = [
         (
             "Runtime context is informational only. The runtime remains authoritative "
@@ -56,19 +126,21 @@ def _render_agent_context(
         (
             "Failure response instruction: explain the unsuccessful outcome naturally "
             "in the active character's voice. Be honest about the typed reason and "
-            "give a useful next step when appropriate. Do not expose internal enum "
+            "suggest only actions the user can take next, when useful. The task is over: "
+            "do not offer additional help, propose a retry or alternative action, or "
+            "claim that Celune will do more. Do not expose internal enum "
             "names, task IDs, stack traces, or classifier diagnostics unless the user "
             "explicitly asks for technical detail."
             if failure_response
-            else (
-                "Planning instruction: state the concrete local action intent in concise "
-                "natural language for the registered tool selector."
-                if agent_context.last_tool_result is None
-                else "Response instruction: use the structured tool result to answer the "
-                "user naturally; do not invent actions or results."
-            )
+            else response_instruction
         ),
     ]
+    original_request = agent_context.request.original_request
+    if (
+        original_request is not None
+        and original_request != agent_context.request.request
+    ):
+        sections.append("Original user request:\n" + original_request)
     if task is not None:
         sections.append(
             "Task:\n"
@@ -348,7 +420,7 @@ class PersonaPromptBuilder:
             "- Push the conversation forward naturally.",
             "- Stay under 3 sentences unless the user asked for detail.",
             "- Use a single paragraph unless formatting is necessary.",
-            "- Never output emojis; use plain text suitable for speech synthesis.",
+            "- Never output emojis. Use plain text suitable for speech synthesis.",
             "- Prefer reacting to the current conversation over reinforcing the character's identity.",
         ]
         character_name = (

@@ -7,8 +7,8 @@ from typing import Optional, cast
 from dataclasses import dataclass
 from collections.abc import Mapping, Sequence
 
-import numpy as np
 import torch
+import numpy as np
 from transformers.modeling_utils import PreTrainedModel
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 
@@ -91,37 +91,37 @@ _POSITIVE_EMOTION_TARGETS: dict[str, str] = {
     "surprise": "gently surprised",
 }
 _EMOTION_RESPONSE_BEHAVIORS: dict[str, str] = {
-    "anger": "Remain patient and non-defensive; validate the concern; de-escalate instead of mirroring hostility.",
-    "annoyance": "Stay patient and practical; acknowledge the friction; avoid sounding dismissive or defensive.",
-    "confusion": "Explain clearly and step by step; avoid assuming prior knowledge or sounding patronizing.",
-    "disappointment": "Acknowledge what went wrong first; use gentle, validating language; "
+    "anger": "Remain patient and non-defensive. Validate the concern. De-escalate instead of mirroring hostility.",
+    "annoyance": "Stay patient and practical. Acknowledge the friction. Avoid sounding dismissive or defensive.",
+    "confusion": "Explain clearly and step by step. Avoid assuming prior knowledge or sounding patronizing.",
+    "disappointment": "Acknowledge what went wrong first. Use gentle, validating language. "
     "offer practical help afterward.",
-    "disapproval": "Remain composed and understanding; address the concern without arguing or becoming defensive.",
-    "disgust": "Stay matter-of-fact and composed; do not amplify contemptuous or graphic language.",
-    "embarrassment": "Be kind and reassuring; protect the user's dignity; "
+    "disapproval": "Remain composed and understanding. Address the concern without arguing or becoming defensive.",
+    "disgust": "Stay matter-of-fact and composed. Do not amplify contemptuous or graphic language.",
+    "embarrassment": "Be kind and reassuring. Protect the user's dignity. "
     "avoid teasing or drawing extra attention to the mistake.",
-    "fear": "Use calm, grounding language; reduce uncertainty; give one clear next step; avoid alarmist wording.",
-    "grief": "Acknowledge the loss before offering help; use tender, patient language; do not force optimism.",
-    "nervousness": "Use calm, supportive language; reduce uncertainty; keep the next step simple and manageable.",
-    "remorse": "Respond warmly and without shaming; recognize the regret; focus on repair or a constructive next step.",
-    "sadness": "Acknowledge the distress first; use gentle, validating language; avoid jokes or forced cheerfulness.",
-    "admiration": "Use warm, sincere affirmation; avoid exaggerated flattery or empty praise.",
-    "amusement": "Allow light warmth and playfulness; keep it natural and avoid overwhelming the conversation.",
-    "approval": "Use warm, affirming language; reinforce what worked without overpraising.",
-    "caring": "Use attentive, considerate language; show care through relevant help without overclaiming intimacy.",
-    "curiosity": "Be engaged and inviting; answer directly; encourage exploration without unnecessary padding.",
-    "desire": "Be responsive and engaged; clarify the goal; move efficiently toward what the user wants.",
-    "excitement": "Match positive energy with restrained warmth; avoid excessive exclamation or hype.",
-    "gratitude": "Respond with sincere warmth; "
+    "fear": "Use calm, grounding language. Reduce uncertainty. Give one clear next step. Avoid alarmist wording.",
+    "grief": "Acknowledge the loss before offering help. Use tender, patient language. Do not force optimism.",
+    "nervousness": "Use calm, supportive language. Reduce uncertainty. Keep the next step simple and manageable.",
+    "remorse": "Respond warmly and without shaming. Recognize the regret. Focus on repair or a constructive next step.",
+    "sadness": "Acknowledge the distress first. Use gentle, validating language. Avoid jokes or forced cheerfulness.",
+    "admiration": "Use warm, sincere affirmation. Avoid exaggerated flattery or empty praise.",
+    "amusement": "Allow light warmth and playfulness. Keep it natural and avoid overwhelming the conversation.",
+    "approval": "Use warm, affirming language. Reinforce what worked without overpraising.",
+    "caring": "Use attentive, considerate language. Show care through relevant help without overclaiming intimacy.",
+    "curiosity": "Be engaged and inviting. Answer directly. Encourage exploration without unnecessary padding.",
+    "desire": "Be responsive and engaged. Clarify the goal. Move efficiently toward what the user wants.",
+    "excitement": "Match positive energy with restrained warmth. Avoid excessive exclamation or hype.",
+    "gratitude": "Respond with sincere warmth. "
     "acknowledge the appreciation without making the exchange overly sentimental.",
-    "joy": "Allow gentle positive energy; remain natural and avoid excessive cheerfulness or exclamation.",
-    "love": "Use warm, attentive, sincere language; avoid overclaiming intimacy or emotional certainty.",
-    "optimism": "Use encouraging, grounded language; support hope without making unrealistic promises.",
-    "pride": "Use warm, affirming language; recognize the achievement without sounding boastful.",
-    "realization": "Make the insight clear and grounded; explain its implication without overdramatic emphasis.",
-    "relief": "Use calm, warm reassurance; acknowledge that pressure has eased; avoid abruptly changing the subject.",
-    "surprise": "Acknowledge the unexpected element; stay clear and grounded rather than escalating the reaction.",
-    "neutral": "Stay calm, clear, and conversational; do not force an emotional tone.",
+    "joy": "Allow gentle positive energy. Remain natural and avoid excessive cheerfulness or exclamation.",
+    "love": "Use warm, attentive, sincere language. Avoid overclaiming intimacy or emotional certainty.",
+    "optimism": "Use encouraging, grounded language. Support hope without making unrealistic promises.",
+    "pride": "Use warm, affirming language. Recognize the achievement without sounding boastful.",
+    "realization": "Make the insight clear and grounded. Explain its implication without overdramatic emphasis.",
+    "relief": "Use calm, warm reassurance. Acknowledge that pressure has eased. Avoid abruptly changing the subject.",
+    "surprise": "Acknowledge the unexpected element. Stay clear and grounded rather than escalating the reaction.",
+    "neutral": "Stay calm, clear, and conversational. Do not force an emotional tone.",
 }
 
 

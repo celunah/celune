@@ -3,8 +3,8 @@
 
 from __future__ import annotations
 
-from typing import Literal, Optional
 from dataclasses import dataclass
+from typing import Literal, Optional
 
 ModelCategory = Literal["tts", "llm", "asr", "other"]
 

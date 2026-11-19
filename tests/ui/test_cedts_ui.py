@@ -1,6 +1,7 @@
 """Tests for CEDTS-framed frontend timed updates."""
 
-from celune.cedts.ui import UiTimedUpdate, UiTimedUpdateChannel
+from celune.cedts.ui import UiTimedUpdateChannel
+from celune.dataclasses.ui import UiTimedUpdate
 
 
 def test_ui_timed_update_channel_delivers_framed_updates() -> None:

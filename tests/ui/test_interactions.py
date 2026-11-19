@@ -6,18 +6,27 @@ import asyncio
 import logging
 import tempfile
 import threading
+from types import SimpleNamespace
+from typing import Optional, cast
 from pathlib import Path
 from unittest import mock
-from typing import Optional, cast
-from types import SimpleNamespace
-from collections.abc import Callable
+from functools import partial
+from collections.abc import Callable, Iterator
 
-import pytest
 import numpy as np
+import pytest
 from textual import events
 from textual.widget import Widget
 from textual.widgets import Label, RichLog, TextArea, ProgressBar
 
+from celune.ui import app as ui_app
+from celune.ui import runtime as ui_runtime
+from celune.ui import resources as ui_resources
+from celune.i18n import string
+from celune.theme import colors
+from celune.utils import discard
+from celune.celune import Celune
+from celune.config import Config
 from celune.ui.app import (
     Button,
     CeluneUI,
@@ -25,25 +34,21 @@ from celune.ui.app import (
     ButtonActions,
     ProgressLabel,
 )
-from celune.i18n import string
-from celune.theme import colors
-from celune.celune import Celune
-from celune.config import Config
-from celune.utils import discard
-from celune.ui import app as ui_app
 from celune.ui.theme import severity_color
-from celune.ui import resources as ui_resources
+from celune.typing.agent import AgentTaskState
 from celune.typing.common import JSONSerializable
+from celune.dataclasses.events import AgentTaskFinishedEvent
 
+from ..support import FakeBackend
 from .fixtures import reset_ui_singletons
-from ..support import FakeBackend, CeluneTestCase
 
 
-class TestUIInteractions(CeluneTestCase):
+class TestUIInteractions:
     """Exercise interactive startup and shutdown behavior independently."""
 
-    def tearDown(self) -> None:
-        """Reset singleton UI guards after each test."""
+    @pytest.fixture(autouse=True)
+    def _pytest_setup_and_teardown(self) -> Iterator[None]:
+        yield
         reset_ui_singletons()
 
     def test_tts_queue_availability_keeps_controls_locked_until_playback_ends(
@@ -80,10 +85,275 @@ class TestUIInteractions(CeluneTestCase):
         change_voice_lock_state.assert_called_once_with(locked=True)
         assert ui.input_box.placeholder == string("ui.tutorial_placeholder")
 
-    def test_vc_recording_vad_plays_leading_silence(self) -> None:
+    def test_tts_queue_status_keeps_active_agent_state_visible(self) -> None:
+        """Keep the agent task state visible while an agent utterance plays."""
+        active_task = SimpleNamespace(
+            task_id="active-task",
+            state=AgentTaskState.WORKING,
+            is_terminal=False,
+        )
+        celune = SimpleNamespace(
+            test_finished=False,
+            locked=True,
+            is_in_tutorial=False,
+            voices=("balanced", "bold"),
+            agent_runtime=SimpleNamespace(
+                get_active_task=mock.Mock(return_value=active_task)
+            ),
+        )
+        safe_status = mock.Mock()
+        refresh_status = mock.Mock()
+        ui = cast(
+            CeluneUI,
+            SimpleNamespace(
+                celune=celune,
+                cur_state="idle",
+                celune_ready=True,
+                _is_agent_test_mode=mock.Mock(return_value=False),
+                _cancel_sleep_timer=mock.Mock(),
+                safe_status=safe_status,
+                _refresh_agent_status=refresh_status,
+                input_box=SimpleNamespace(placeholder=""),
+                change_input_state=mock.Mock(),
+                change_voice_lock_state=mock.Mock(),
+            ),
+        )
+
+        CeluneUI.tts_queue_avail(ui)
+
+        assert ui._agent_task_id == "active-task"
+        refresh_status.assert_called_once()
+        safe_status.assert_not_called()
+
+    def test_finished_agent_status_returns_to_idle_after_playback(self) -> None:
+        """Clear the last terminal task from the TUI once its speech is done."""
+        playback_done = threading.Event()
+        playback_done.set()
+        terminal_task = SimpleNamespace(is_terminal=True)
+        runtime = SimpleNamespace(
+            get_active_task=mock.Mock(return_value=None),
+            get_task=mock.Mock(return_value=terminal_task),
+        )
+        celune = SimpleNamespace(
+            test_finished=False,
+            agent_runtime=runtime,
+            playback_done=playback_done,
+            _maintain_status_after_playback=True,
+            cur_state="idle",
+            locked=True,
+            sleeping=False,
+            is_in_tutorial=False,
+            voices=("balanced",),
+        )
+        safe_status = mock.Mock()
+        ui = cast(
+            CeluneUI,
+            SimpleNamespace(
+                celune=celune,
+                cur_state="idle",
+                celune_ready=True,
+                _agent_task_id="finished-task",
+                _agent_status_signature=("finished-task",),
+                _hide_caption_widgets=mock.Mock(),
+                _is_agent_test_mode=mock.Mock(return_value=False),
+                change_input_state=mock.Mock(),
+                change_voice_lock_state=mock.Mock(),
+                safe_status=safe_status,
+                _schedule_sleep_timer=mock.Mock(),
+                input_box=SimpleNamespace(placeholder=""),
+            ),
+        )
+
+        CeluneUI.tts_idle(ui)
+
+        assert ui._agent_task_id is None
+        assert ui._agent_status_signature is None
+        assert celune.cur_state == "idle"
+        assert not celune._maintain_status_after_playback
+        safe_status.assert_called_once_with(string("status.idle"))
+
+    def test_agent_status_stays_visible_when_playback_ends_during_active_task(
+        self,
+    ) -> None:
+        """Preserve the running task status when one agent utterance finishes."""
+        active_task = SimpleNamespace(task_id="active-task", is_terminal=False)
+        celune = SimpleNamespace(
+            test_finished=False,
+            agent_runtime=SimpleNamespace(
+                get_active_task=mock.Mock(return_value=active_task)
+            ),
+            _maintain_status_after_playback=True,
+            cur_state="speaking",
+            locked=True,
+            sleeping=False,
+            is_in_tutorial=False,
+            voices=("balanced",),
+        )
+        refresh_status = mock.Mock()
+        safe_status = mock.Mock()
+        ui = cast(
+            CeluneUI,
+            SimpleNamespace(
+                celune=celune,
+                cur_state="idle",
+                celune_ready=True,
+                _agent_task_id="active-task",
+                _hide_caption_widgets=mock.Mock(),
+                _is_agent_test_mode=mock.Mock(return_value=False),
+                _refresh_agent_status=refresh_status,
+                change_input_state=mock.Mock(),
+                change_voice_lock_state=mock.Mock(),
+                safe_status=safe_status,
+                _schedule_sleep_timer=mock.Mock(),
+            ),
+        )
+
+        CeluneUI.tts_idle(ui)
+
+        assert not celune._maintain_status_after_playback
+        assert celune.cur_state == "speaking"
+        refresh_status.assert_called_once()
+        safe_status.assert_not_called()
+
+    def test_approval_status_survives_the_approval_prompt_playback(self) -> None:
+        """Restore the pending approval status after its speech finishes."""
+        pending_task = SimpleNamespace(
+            task_id="approval-task",
+            state=AgentTaskState.AWAITING_APPROVAL,
+            is_terminal=False,
+            iterations=0,
+            needs_context_compaction=False,
+            config=SimpleNamespace(max_loops=20),
+        )
+        runtime = SimpleNamespace(
+            get_active_task=mock.Mock(return_value=None),
+            get_task=mock.Mock(return_value=pending_task),
+        )
+        celune = SimpleNamespace(
+            test_finished=False,
+            agent_runtime=runtime,
+            _maintain_status_after_playback=True,
+            cur_state="speaking",
+            locked=True,
+            sleeping=False,
+            is_in_tutorial=False,
+            voices=("balanced",),
+            last_component_busy=None,
+        )
+        safe_status = mock.Mock()
+        ui = cast(
+            CeluneUI,
+            SimpleNamespace(
+                celune=celune,
+                cur_state="idle",
+                celune_ready=True,
+                _agent_task_id="approval-task",
+                _agent_status_signature=("approval-task", "stale-speaking"),
+                _agent_status_text=ui_runtime._agent_status_text,
+                _agent_task_for_display=lambda: ui_runtime._agent_task_for_display(ui),
+                _refresh_agent_status=lambda: ui_runtime._refresh_agent_status(ui),
+                _hide_caption_widgets=mock.Mock(),
+                _is_agent_test_mode=mock.Mock(return_value=False),
+                change_input_state=mock.Mock(),
+                change_voice_lock_state=mock.Mock(),
+                safe_status=safe_status,
+                _schedule_sleep_timer=mock.Mock(),
+            ),
+        )
+
+        CeluneUI.tts_idle(ui)
+
+        assert not celune._maintain_status_after_playback
+        assert celune.cur_state == "speaking"
+        safe_status.assert_called_once_with(
+            string("agent.status.awaiting_approval"), "info"
+        )
+
+    def test_approval_status_survives_queue_start(self) -> None:
+        """Do not replace a pending approval label with the generic speaking label."""
+        pending_task = SimpleNamespace(
+            task_id="approval-task",
+            state=AgentTaskState.AWAITING_APPROVAL,
+            is_terminal=False,
+            iterations=0,
+            needs_context_compaction=False,
+            config=SimpleNamespace(max_loops=20),
+        )
+        runtime = SimpleNamespace(
+            get_active_task=mock.Mock(return_value=None),
+            get_task=mock.Mock(return_value=pending_task),
+        )
+        celune = SimpleNamespace(
+            test_finished=False,
+            locked=True,
+            is_in_tutorial=False,
+            voices=("balanced",),
+            agent_runtime=runtime,
+            last_component_busy=None,
+        )
+        safe_status = mock.Mock()
+        ui = cast(
+            CeluneUI,
+            SimpleNamespace(
+                celune=celune,
+                cur_state="idle",
+                celune_ready=True,
+                _agent_task_id="approval-task",
+                _agent_status_signature=("approval-task", "stale-speaking"),
+                _agent_status_text=ui_runtime._agent_status_text,
+                _agent_task_for_display=lambda: ui_runtime._agent_task_for_display(ui),
+                _refresh_agent_status=lambda: ui_runtime._refresh_agent_status(ui),
+                _is_agent_test_mode=mock.Mock(return_value=False),
+                _cancel_sleep_timer=mock.Mock(),
+                safe_status=safe_status,
+                input_box=SimpleNamespace(placeholder=""),
+                change_input_state=mock.Mock(),
+                change_voice_lock_state=mock.Mock(),
+            ),
+        )
+
+        CeluneUI.tts_queue_avail(ui)
+
+        safe_status.assert_called_once_with(
+            string("agent.status.awaiting_approval"), "info"
+        )
+
+    def test_finished_task_event_does_not_restore_terminal_status_after_idle(
+        self,
+    ) -> None:
+        """Ignore delayed finish events after playback already returned to idle."""
+        playback_done = threading.Event()
+        playback_done.set()
+        safe_status = mock.Mock()
+        ui = cast(
+            CeluneUI,
+            SimpleNamespace(
+                celune=SimpleNamespace(
+                    agent_runtime=SimpleNamespace(
+                        get_active_task=mock.Mock(return_value=None)
+                    ),
+                    playback_done=playback_done,
+                ),
+                _run_on_ui_thread=lambda callback: callback(),
+                safe_status=safe_status,
+                _agent_task_id="old-task",
+            ),
+        )
+
+        ui_runtime._on_agent_task_finished(
+            ui,
+            cast(AgentTaskFinishedEvent, SimpleNamespace(task_id="old-task")),
+        )
+
+        assert ui._agent_task_id is None
+        safe_status.assert_called_once_with(string("status.idle"))
+
+    def test_vc_recording_vad_plays_leading_silence(
+        self, request: pytest.FixtureRequest
+    ) -> None:
         """Verify live VC converts and plays silence while its VAD gate is closed."""
         ui = CeluneUI()
-        self.addCleanup(setattr, CeluneUI, "_instance", None)
+        request.addfinalizer(partial(setattr, CeluneUI, "_instance", None))
         converted_chunks: list[np.ndarray] = []
         ui.celune = cast(
             Celune,
@@ -173,14 +443,16 @@ class TestUIInteractions(CeluneTestCase):
             )
             ui.on_key(cast(events.Key, stop_event))
 
-        self.assertTrue(converted_chunks)
-        self.assertTrue(np.allclose(converted_chunks[0], 0.0))
+        assert converted_chunks
+        assert np.allclose(converted_chunks[0], 0.0)
         queue_stream.assert_called_once()
 
-    def test_vc_recording_vad_preroll_keeps_speech_onset(self) -> None:
+    def test_vc_recording_vad_preroll_keeps_speech_onset(
+        self, request: pytest.FixtureRequest
+    ) -> None:
         """Verify live VC prepends a short preroll so VAD onset is not clipped."""
         ui = CeluneUI()
-        self.addCleanup(setattr, CeluneUI, "_instance", None)
+        request.addfinalizer(partial(setattr, CeluneUI, "_instance", None))
         converted_chunks: list[np.ndarray] = []
         ui.celune = cast(
             Celune,
@@ -221,7 +493,7 @@ class TestUIInteractions(CeluneTestCase):
                 Returns:
                     bool: Whether the fake detector considers speech active.
                 """
-                del sample_rate
+                discard(sample_rate)
                 return float(np.max(np.abs(audio))) >= 0.05
 
             def reset(self) -> None:
@@ -302,15 +574,21 @@ class TestUIInteractions(CeluneTestCase):
         speech_chunks = [
             chunk for chunk in converted_chunks if not np.allclose(chunk, 0.0)
         ]
-        self.assertTrue(speech_chunks)
-        self.assertGreaterEqual(len(speech_chunks[0]), 3000)
-        self.assertAlmostEqual(float(speech_chunks[0][0, 0]), 0.004)
-        self.assertAlmostEqual(float(speech_chunks[0][-1, 0]), 0.05)
+        assert speech_chunks
+        assert (len(speech_chunks[0])) >= (3000)
+        assert (float(speech_chunks[0][0, 0])) == pytest.approx(
+            (0.004), abs=10**-(7), rel=0
+        )
+        assert (float(speech_chunks[0][-1, 0])) == pytest.approx(
+            (0.05), abs=10**-(7), rel=0
+        )
 
-    def test_vc_recording_flushes_active_speech_before_end_of_phrase(self) -> None:
+    def test_vc_recording_flushes_active_speech_before_end_of_phrase(
+        self, request: pytest.FixtureRequest
+    ) -> None:
         """Verify live VC can submit one mid-speech chunk before silence arrives."""
         ui = CeluneUI()
-        self.addCleanup(setattr, CeluneUI, "_instance", None)
+        request.addfinalizer(partial(setattr, CeluneUI, "_instance", None))
         converted_chunks: list[np.ndarray] = []
         ui.celune = cast(
             Celune,
@@ -419,12 +697,14 @@ class TestUIInteractions(CeluneTestCase):
 
         assert converted_chunks
         assert converted_chunks[0].shape[0] >= 17000
-        self.assertTrue(np.allclose(converted_chunks[-1], trailing_audio))
+        assert np.allclose(converted_chunks[-1], trailing_audio)
 
-    def test_vc_recording_uses_energy_onset_with_ai_vad(self) -> None:
+    def test_vc_recording_uses_energy_onset_with_ai_vad(
+        self, request: pytest.FixtureRequest
+    ) -> None:
         """Verify current audio energy preserves onset while AI VAD catches up."""
         ui = CeluneUI()
-        self.addCleanup(setattr, CeluneUI, "_instance", None)
+        request.addfinalizer(partial(setattr, CeluneUI, "_instance", None))
         converted_chunks: list[np.ndarray] = []
         ui.celune = cast(
             Celune,
@@ -544,14 +824,16 @@ class TestUIInteractions(CeluneTestCase):
             )
             ui.on_key(cast(events.Key, stop_event))
 
-        self.assertGreaterEqual(fake_vad.calls, 1)
-        self.assertTrue(converted_chunks)
-        self.assertTrue(np.any(np.abs(converted_chunks[0]) >= 0.05))
+        assert (fake_vad.calls) >= (1)
+        assert converted_chunks
+        assert np.any(np.abs(converted_chunks[0]) >= 0.05)
 
-    def test_vc_recording_ai_vad_exception_keeps_detector_active(self) -> None:
+    def test_vc_recording_ai_vad_exception_keeps_detector_active(
+        self, request: pytest.FixtureRequest
+    ) -> None:
         """Verify one AI VAD callback failure does not disable AI VAD forever."""
         ui = CeluneUI()
-        self.addCleanup(setattr, CeluneUI, "_instance", None)
+        request.addfinalizer(partial(setattr, CeluneUI, "_instance", None))
         ui.celune = cast(
             Celune,
             SimpleNamespace(
@@ -676,10 +958,12 @@ class TestUIInteractions(CeluneTestCase):
         assert fake_vad.calls == 2
         assert fake_vad.reset_calls == 1
 
-    def test_ctrl_r_wakes_sleeping_celune_without_starting_recording(self) -> None:
+    def test_ctrl_r_wakes_sleeping_celune_without_starting_recording(
+        self, request: pytest.FixtureRequest
+    ) -> None:
         """Verify CTRL+R wakes a sleeping VC runtime instead of starting capture."""
         ui = CeluneUI()
-        self.addCleanup(setattr, CeluneUI, "_instance", None)
+        request.addfinalizer(partial(setattr, CeluneUI, "_instance", None))
         ui.celune = cast(
             Celune,
             SimpleNamespace(
@@ -712,10 +996,12 @@ class TestUIInteractions(CeluneTestCase):
         start_event.prevent_default.assert_called_once_with()
         start_event.stop.assert_called_once_with()
 
-    def test_ctrl_j_submits_input_once_and_stops_key_propagation(self) -> None:
+    def test_ctrl_j_submits_input_once_and_stops_key_propagation(
+        self, request: pytest.FixtureRequest
+    ) -> None:
         """Verify the command shortcut consumes its key after one submission."""
         ui = CeluneUI()
-        self.addCleanup(setattr, CeluneUI, "_instance", None)
+        request.addfinalizer(partial(setattr, CeluneUI, "_instance", None))
         ui.input_box = TextArea()
         ui.input_box.load_text("/vram")
         ui._submit_text = mock.Mock(return_value=True)
@@ -733,10 +1019,12 @@ class TestUIInteractions(CeluneTestCase):
         event.prevent_default.assert_called_once_with()
         event.stop.assert_called_once_with()
 
-    def test_graceful_exit_uses_live_vc_shutdown_path(self) -> None:
+    def test_graceful_exit_uses_live_vc_shutdown_path(
+        self, request: pytest.FixtureRequest
+    ) -> None:
         """Verify app exit stops live VC before closing the runtime."""
         ui = CeluneUI()
-        self.addCleanup(setattr, CeluneUI, "_instance", None)
+        request.addfinalizer(partial(setattr, CeluneUI, "_instance", None))
         ui.celune = cast(Celune, SimpleNamespace(close=mock.Mock()))
         ui._shutdown_live_vc_recording = mock.Mock()
         ui.exit = mock.Mock()
@@ -748,10 +1036,12 @@ class TestUIInteractions(CeluneTestCase):
         cast(mock.Mock, ui.celune.close).assert_called_once_with()
         ui.exit.assert_called_once_with()
 
-    def test_graceful_exit_fades_screen_before_unmounting(self) -> None:
+    def test_graceful_exit_fades_screen_before_unmounting(
+        self, request: pytest.FixtureRequest
+    ) -> None:
         """Verify the visible screen fades before Textual is asked to exit."""
         ui = CeluneUI()
-        self.addCleanup(setattr, CeluneUI, "_instance", None)
+        request.addfinalizer(partial(setattr, CeluneUI, "_instance", None))
         ui._shutdown_runtime = mock.Mock()
         ui.exit = mock.Mock()
         screen_styles = SimpleNamespace(
@@ -840,10 +1130,12 @@ class TestUIInteractions(CeluneTestCase):
         ui._shutdown_runtime.assert_called_once_with()
         ui.exit.assert_called_once_with()
 
-    def test_graceful_exit_survives_shutdown_exception(self) -> None:
+    def test_graceful_exit_survives_shutdown_exception(
+        self, request: pytest.FixtureRequest
+    ) -> None:
         """Verify a core shutdown error cannot escape the exit handler."""
         ui = CeluneUI()
-        self.addCleanup(setattr, CeluneUI, "_instance", None)
+        request.addfinalizer(partial(setattr, CeluneUI, "_instance", None))
         ui._old_stderr = mock.Mock()
         ui._persist_log_entry = mock.Mock()
         ui._shutdown_runtime = mock.Mock(
@@ -859,16 +1151,18 @@ class TestUIInteractions(CeluneTestCase):
 
         ui.exit.assert_called_once_with()
         ui._old_stderr.write.assert_called_once()
-        self.assertIn("pipeline close failed", ui._old_stderr.write.call_args.args[0])
+        assert "pipeline close failed" in (ui._old_stderr.write.call_args.args[0])
         ui._persist_log_entry.assert_any_call(
             mock.ANY,
             "error",
         )
 
-    def test_shutdown_error_persists_traceback(self) -> None:
+    def test_shutdown_error_persists_traceback(
+        self, request: pytest.FixtureRequest
+    ) -> None:
         """Verify shutdown diagnostics remain available after the UI closes."""
         ui = CeluneUI()
-        self.addCleanup(setattr, CeluneUI, "_instance", None)
+        request.addfinalizer(partial(setattr, CeluneUI, "_instance", None))
         ui._old_stderr = mock.Mock()
 
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -883,13 +1177,15 @@ class TestUIInteractions(CeluneTestCase):
 
             persisted = ui._log_file_path.read_text(encoding="utf-8")
 
-        self.assertIn("pipeline close failed", persisted)
-        self.assertIn("traceback text", persisted)
+        assert "pipeline close failed" in (persisted)
+        assert "traceback text" in (persisted)
 
-    def test_runtime_shutdown_continues_after_live_input_error(self) -> None:
+    def test_runtime_shutdown_continues_after_live_input_error(
+        self, request: pytest.FixtureRequest
+    ) -> None:
         """Verify core teardown still runs when live input cleanup fails."""
         ui = CeluneUI()
-        self.addCleanup(setattr, CeluneUI, "_instance", None)
+        request.addfinalizer(partial(setattr, CeluneUI, "_instance", None))
         ui.celune = cast(Celune, SimpleNamespace(close=mock.Mock()))
         ui._shutdown_live_vc_recording = mock.Mock(
             side_effect=RuntimeError("input close failed")
@@ -901,37 +1197,43 @@ class TestUIInteractions(CeluneTestCase):
         cast(mock.Mock, ui.celune.close).assert_called_once_with()
         ui._report_shutdown_error.assert_called_once()
 
-    def test_unmount_survives_shutdown_exception(self) -> None:
+    def test_unmount_survives_shutdown_exception(
+        self, request: pytest.FixtureRequest
+    ) -> None:
         """Verify late unmount cleanup cannot turn normal exit into an app error."""
         ui = CeluneUI()
-        self.addCleanup(setattr, CeluneUI, "_instance", None)
+        request.addfinalizer(partial(setattr, CeluneUI, "_instance", None))
         ui._shutdown_runtime = mock.Mock(
             side_effect=RuntimeError("runtime close failed")
         )
         ui._report_shutdown_error = mock.Mock()
 
-        ui.on_unmount()
+        asyncio.run(ui.on_unmount())
 
         ui._report_shutdown_error.assert_called_once()
 
-    def test_runtime_shutdown_is_idempotent(self) -> None:
+    def test_runtime_shutdown_is_idempotent(
+        self, request: pytest.FixtureRequest
+    ) -> None:
         """Verify graceful exit and unmount close the core only once."""
         ui = CeluneUI()
-        self.addCleanup(setattr, CeluneUI, "_instance", None)
+        request.addfinalizer(partial(setattr, CeluneUI, "_instance", None))
         ui.celune = cast(Celune, SimpleNamespace(close=mock.Mock()))
         ui._shutdown_live_vc_recording = mock.Mock()
         ui.exit = mock.Mock()
 
         ui._graceful_exit()
-        ui.on_unmount()
+        asyncio.run(ui.on_unmount())
 
         ui._shutdown_live_vc_recording.assert_called_once_with()
         cast(mock.Mock, ui.celune.close).assert_called_once_with()
 
-    def test_launcher_loss_uses_graceful_exit_path(self) -> None:
+    def test_launcher_loss_uses_graceful_exit_path(
+        self, request: pytest.FixtureRequest
+    ) -> None:
         """Verify a launcher disconnect routes through normal UI cleanup."""
         ui = CeluneUI()
-        self.addCleanup(setattr, CeluneUI, "_instance", None)
+        request.addfinalizer(partial(setattr, CeluneUI, "_instance", None))
         ui.celune = cast(Celune, SimpleNamespace(close=mock.Mock()))
         ui._shutdown_live_vc_recording = mock.Mock()
         ui.exit = mock.Mock()
@@ -944,10 +1246,12 @@ class TestUIInteractions(CeluneTestCase):
         cast(mock.Mock, ui.celune.close).assert_called_once_with()
         ui.exit.assert_called_once_with()
 
-    def test_start_vc_recording_logs_ambiguous_input_device_as_warning(self) -> None:
+    def test_start_vc_recording_logs_ambiguous_input_device_as_warning(
+        self, request: pytest.FixtureRequest
+    ) -> None:
         """Verify ambiguous VC input device matches do not bubble up as exceptions."""
         ui = CeluneUI()
-        self.addCleanup(setattr, CeluneUI, "_instance", None)
+        request.addfinalizer(partial(setattr, CeluneUI, "_instance", None))
         ui.celune = cast(
             Celune,
             SimpleNamespace(
@@ -1007,7 +1311,7 @@ class TestUIInteractions(CeluneTestCase):
                     )
                     assert isinstance(task, asyncio.Task)
                     assert task.get_loop() is asyncio.get_running_loop()
-                    ui_resources.stop_gpu_usage_worker()
+                    await ui_resources.stop_gpu_usage_worker()
                     await asyncio.sleep(0)
             finally:
                 ui_resources._NVIDIA_SMI_TASKS.clear()
@@ -1016,42 +1320,43 @@ class TestUIInteractions(CeluneTestCase):
         asyncio.run(start_and_stop())
 
     def test_gpu_usage_query_times_out(self) -> None:
-        """Verify a stuck nvidia-smi query becomes an unavailable sample."""
+        """Keep timed-out GPU polling bounded without asyncio pipe transports."""
+        process = SimpleNamespace(
+            returncode=None,
+            wait=mock.AsyncMock(side_effect=[TimeoutError, 0]),
+            kill=mock.Mock(),
+        )
 
-        class FakeProcess:
-            """Minimal async subprocess fake for timeout cleanup."""
+        with (
+            mock.patch("celune.ui.resources._NVIDIA_SMI", "nvidia-smi"),
+            mock.patch(
+                "celune.ui.resources.asyncio.create_subprocess_exec",
+                new=mock.AsyncMock(return_value=process),
+            ) as create_process,
+        ):
+            assert asyncio.run(ui_resources._query_gpu_usage()) is None
 
-            returncode: Optional[int] = None
-            killed = False
+        assert create_process.call_args.args[0] == "nvidia-smi"
+        assert create_process.call_args.kwargs["stdout"].closed
+        process.kill.assert_called_once_with()
+        assert process.wait.await_count == 2
 
-            def kill(self) -> None:
-                """Record process termination."""
-                self.killed = True
-                self.returncode = -9
+    def test_gpu_usage_query_parses_one_device_sample(self) -> None:
+        """Parse nvidia-smi output redirected to a temporary file."""
+        process = SimpleNamespace(returncode=0, wait=mock.AsyncMock(return_value=0))
 
-            async def communicate(self) -> tuple[bytes, bytes]:
-                """Raise until the timeout handler terminates the process."""
-                if not self.killed:
-                    raise TimeoutError
-                return b"", b""
-
-        process = FakeProcess()
-
-        async def create_process(*_args: object, **_kwargs: object) -> FakeProcess:
-            """Return the fake GPU query process."""
+        async def spawn_process(*_args, stdout, **_kwargs):
+            stdout.write(b"42\n")
             return process
 
         with (
             mock.patch("celune.ui.resources._NVIDIA_SMI", "nvidia-smi"),
             mock.patch(
                 "celune.ui.resources.asyncio.create_subprocess_exec",
-                side_effect=create_process,
-            ) as create,
+                new=mock.AsyncMock(side_effect=spawn_process),
+            ),
         ):
-            assert asyncio.run(ui_resources._query_gpu_usage()) is None
-
-        create.assert_called()
-        assert process.killed
+            assert asyncio.run(ui_resources._query_gpu_usage()) == 42
 
     def test_textual_input_lock_update_with_persona_on_ui_thread(self) -> None:
         """Verify input state updates update with Persona."""
@@ -1273,7 +1578,9 @@ class TestUIInteractions(CeluneTestCase):
         assert ui.vc_mode_button.actions == ButtonActions(press=True)
         ui._cancel_vc_recording.assert_not_called()
 
-    def test_runtime_logger_warning_is_routed_into_ui_logs(self) -> None:
+    def test_runtime_logger_warning_is_routed_into_ui_logs(
+        self, request: pytest.FixtureRequest
+    ) -> None:
         """Verify external Python logger warnings are routed into the UI logs."""
         ui = CeluneUI()
         captured: list[tuple[str, str]] = []
@@ -1284,7 +1591,7 @@ class TestUIInteractions(CeluneTestCase):
         logger = logging.getLogger("torch.utils.flop_counter")
 
         ui.install_runtime_log_redirects()
-        self.addCleanup(ui._remove_runtime_log_redirects)
+        request.addfinalizer(ui._remove_runtime_log_redirects)
 
         logger.warning("test warning")
 
@@ -1295,7 +1602,9 @@ class TestUIInteractions(CeluneTestCase):
             )
         ]
 
-    def test_mcp_logger_is_tagged_and_routed_at_debug_level(self) -> None:
+    def test_mcp_logger_is_tagged_and_routed_at_debug_level(
+        self, request: pytest.FixtureRequest
+    ) -> None:
         """Verify MCP SDK diagnostics use the MCP tag and debug log level."""
         ui = CeluneUI()
         captured: list[tuple[str, str, str]] = []
@@ -1312,10 +1621,10 @@ class TestUIInteractions(CeluneTestCase):
         logger = logging.getLogger("mcp.server.streamable_http")
         previous_level = logger.level
         logger.setLevel(logging.INFO)
-        self.addCleanup(logger.setLevel, previous_level)
+        request.addfinalizer(partial(logger.setLevel, previous_level))
 
         ui.install_runtime_log_redirects()
-        self.addCleanup(ui._remove_runtime_log_redirects)
+        request.addfinalizer(ui._remove_runtime_log_redirects)
 
         logger.info("Created new transport with session ID: test-session")
 
@@ -1327,7 +1636,9 @@ class TestUIInteractions(CeluneTestCase):
             )
         ]
 
-    def test_mcp_session_disconnect_callback_is_logged_as_info(self) -> None:
+    def test_mcp_session_disconnect_callback_is_logged_as_info(
+        self, request: pytest.FixtureRequest
+    ) -> None:
         """Map a teardown callback to its terminated session without changing SDK logs."""
         ui = CeluneUI()
         captured: list[tuple[str, str, str]] = []
@@ -1344,16 +1655,16 @@ class TestUIInteractions(CeluneTestCase):
         logger = logging.getLogger("mcp.server.streamable_http")
         previous_level = logger.level
         logger.setLevel(logging.INFO)
-        self.addCleanup(logger.setLevel, previous_level)
+        request.addfinalizer(partial(logger.setLevel, previous_level))
 
         ui.install_runtime_log_redirects()
-        self.addCleanup(ui._remove_runtime_log_redirects)
+        request.addfinalizer(ui._remove_runtime_log_redirects)
 
         logger.info("Terminating session: test-session")
         asyncio_logger = logging.getLogger("asyncio")
         previous_asyncio_level = asyncio_logger.level
         asyncio_logger.setLevel(logging.ERROR)
-        self.addCleanup(asyncio_logger.setLevel, previous_asyncio_level)
+        request.addfinalizer(partial(asyncio_logger.setLevel, previous_asyncio_level))
         callback_message = (
             "Exception in callback "
             "_ProactorBasePipeTransport._call_connection_lost()\n"
@@ -1367,7 +1678,9 @@ class TestUIInteractions(CeluneTestCase):
             ("[MCP] Session test-session was terminated", "info", "info"),
         ]
 
-    def test_forced_mcp_disconnect_is_a_warning(self) -> None:
+    def test_forced_mcp_disconnect_is_a_warning(
+        self, request: pytest.FixtureRequest
+    ) -> None:
         """Show an uncorrelated Proactor disconnect as an MCP warning."""
         ui = CeluneUI()
         captured: list[tuple[str, str, str]] = []
@@ -1385,10 +1698,10 @@ class TestUIInteractions(CeluneTestCase):
         logger = logging.getLogger("asyncio")
         previous_level = logger.level
         logger.setLevel(logging.ERROR)
-        self.addCleanup(logger.setLevel, previous_level)
+        request.addfinalizer(partial(logger.setLevel, previous_level))
 
         ui.install_runtime_log_redirects()
-        self.addCleanup(ui._remove_runtime_log_redirects)
+        request.addfinalizer(ui._remove_runtime_log_redirects)
 
         logger.error(
             "Exception in callback "
@@ -1406,7 +1719,9 @@ class TestUIInteractions(CeluneTestCase):
             ),
         ]
 
-    def test_runtime_huggingface_logger_error_is_routed_into_ui_logs(self) -> None:
+    def test_runtime_huggingface_logger_error_is_routed_into_ui_logs(
+        self, request: pytest.FixtureRequest
+    ) -> None:
         """Verify Hugging Face logger errors are routed into the UI log widget."""
         ui = CeluneUI()
         captured: list[tuple[str, str]] = []
@@ -1416,7 +1731,7 @@ class TestUIInteractions(CeluneTestCase):
 
         logger = logging.getLogger("huggingface_hub")
         ui.install_runtime_log_redirects()
-        self.addCleanup(ui._remove_runtime_log_redirects)
+        request.addfinalizer(ui._remove_runtime_log_redirects)
 
         logger.error("download failed because the connection dropped")
 
@@ -1432,6 +1747,7 @@ class TestUIInteractions(CeluneTestCase):
 
     def test_runtime_global_log_redirect_captures_unlisted_external_logger(
         self,
+        request: pytest.FixtureRequest,
     ) -> None:
         """Verify arbitrary external loggers are captured without per-backend wiring."""
         ui = CeluneUI()
@@ -1443,7 +1759,7 @@ class TestUIInteractions(CeluneTestCase):
         logger = logging.getLogger("some.third_party.backend")
 
         ui.install_runtime_log_redirects()
-        self.addCleanup(ui._remove_runtime_log_redirects)
+        request.addfinalizer(ui._remove_runtime_log_redirects)
 
         logger.warning("backend emitted a warning")
 
@@ -1451,7 +1767,9 @@ class TestUIInteractions(CeluneTestCase):
             ("Internal runtime warning: backend emitted a warning", "warning")
         ]
 
-    def test_runtime_logger_suppresses_filtered_messages(self) -> None:
+    def test_runtime_logger_suppresses_filtered_messages(
+        self, request: pytest.FixtureRequest
+    ) -> None:
         """Verify runtime logger redirection honors the shared suppression list."""
         ui = CeluneUI()
         captured: list[tuple[str, str]] = []
@@ -1462,7 +1780,7 @@ class TestUIInteractions(CeluneTestCase):
         logger = logging.getLogger("some.third_party.backend")
 
         ui.install_runtime_log_redirects()
-        self.addCleanup(ui._remove_runtime_log_redirects)
+        request.addfinalizer(ui._remove_runtime_log_redirects)
 
         logger.warning("Loading weights from C:/models/checkpoint.safetensors")
 
@@ -2006,8 +2324,8 @@ class TestUIInteractions(CeluneTestCase):
         fake_status.size = SimpleNamespace(width=96)
         ui.on_resize(cast(events.Resize, SimpleNamespace()))
 
-        self.assertNotEqual(narrow, fake_status.rendered)
-        self.assertEqual(fake_status.rendered, f"  {message}")
+        assert (narrow) != (fake_status.rendered)
+        assert (fake_status.rendered) == (f"  {message}")
 
     def test_tutorial_typing_runs_as_a_native_async_worker(self) -> None:
         """Verify tutorial typing updates the UI loop without a worker thread."""

@@ -1,9 +1,10 @@
 # Celune
 
 Celune is a local-first character engine for expressive text-to-speech, voice
-conversion, Persona conversation, and constrained agent work. It buffers speech
-for responsive playback, keeps the core runtime usable from Python, and exposes
-the same engine through the terminal UI, REST API, WebUI, and extension system.
+conversion, Persona conversation, and constrained agent work. The application
+buffers speech for responsive playback, keeps its core runtime usable from
+Python, and exposes the same engine through the terminal UI, REST API, WebUI,
+and extension system.
 
 This site documents the behavior implemented in the repository, including the
 custom CEVOICE/CECHAR voice-pack format and CEDTS isolated-worker protocol.
@@ -35,8 +36,8 @@ input text/audio
 ```
 
 The core uses normalized `numpy.float32` audio, 48 kHz stereo output, and FLAC
-for saved files and API responses. Backends may run in isolated environments;
-the core communicates with them over CEDTS rather than importing backend-only
+for saved files and API responses. Backends may run in isolated environments.
+The core communicates with them over CEDTS rather than importing backend-only
 packages into the main application.
 
 ## Project conventions
@@ -47,6 +48,6 @@ voice recordings, and other assets retain their own licenses. See
 
 The repository root keeps `README.md` for the project landing page,
 `AGENTS.md` for contributor instructions, and `CLAUDE.md` for tooling metadata.
-Documentation-owned Markdown lives under `docs/`; the lore-only Book of Celune
+Documentation-owned Markdown lives under `docs/`. The lore-only Book of Celune
 at `resources/about/about-celune.md` is intentionally not treated as a factual
 technical reference.

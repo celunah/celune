@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import gc
 import os
+import re
 import time
 import queue
 import shutil
@@ -18,6 +19,28 @@ from collections.abc import Mapping, Callable, Generator
 
 import torch
 
+from ..chroma import AudioRGBGlow
+from ..exceptions import BackendError
+from ..typing.aliases import LogLevel
+from ..agent.runtime import AgentRuntime
+from ..modes import resolve_operation_mode
+from .callbacks import _buffer_startup_log
+from .concurrency import ComponentLockLease
+from ..agent.routing import AgentInputRouter
+from ..agent.needle import NeedleToolSelector
+from ..dataclasses.events import ShutdownEvent
+from ..extensions.events import EventDispatcher
+from ..agent.persona import PersonaAgentBridge
+from ..paths import api_key_path, temp_data_dir
+from ..typing.common import JSON, JSONSerializable
+from ..backends.tts import BACKENDS, CeluneBackend
+from ..persona.emotion import PersonaEmotionAnalyzer
+from ..backends.vc import VC_BACKENDS, CeluneVCBackend
+from ..typing.modes import BackendMode, OperationState
+from ..i18n import string, set_locale, get_system_locale
+from ..utils import discard, available, clear_queue, format_error_message
+from ..vram import backend_allowed, resolve_vram_preset, resolve_backend_name
+from ..typing.agent import AgentTaskConfig, AgentToolSelector, AgentCancellationReason
 from ..config import (
     Config,
     config_bool,
@@ -25,8 +48,6 @@ from ..config import (
     config_api_settings,
     normalize_log_level,
     config_backend_options,
-)
-from ..config import (
     config_int as _config_int,
 )
 from ..cevoice import (
@@ -38,7 +59,6 @@ from ..cevoice import (
 from ..constants import (
     APP_NAME,
     AGENT_MAX_LOOPS,
-    AGENT_COMPACT_AT,
     AGENT_CONTEXT_SPACE,
     DEFAULT_TARGET_CHUNK_LENGTH_SECONDS,
 )
@@ -52,6 +72,7 @@ from ..persona.impl import (
     PersonaClient,
     persona_enabled,
     persona_model_id,
+    persona_compact_at,
     persona_is_available,
     persona_quantization,
     create_persona_client,
@@ -62,6 +83,7 @@ from ..typing.locks import (
     ComponentLockRequirement,
 )
 from ..typing.celune import (
+    ToastCallback,
     VCBackendSpec,
     TTSBackendSpec,
     CaptionCallback,
@@ -72,7 +94,6 @@ from ..typing.celune import (
     VoiceLockStateCallback,
     CaptionProgressCallback,
 )
-from ..chroma import AudioRGBGlow
 from ..dataclasses.celune import (
     CeluneAudioState,
     CeluneModelState,
@@ -82,27 +103,6 @@ from ..dataclasses.celune import (
     CeluneCallbackState,
     CelunePipelineState,
 )
-from ..exceptions import BackendError
-from ..typing.aliases import LogLevel
-from ..agent.runtime import AgentRuntime
-from ..modes import resolve_operation_mode
-from .callbacks import _buffer_startup_log
-from .concurrency import ComponentLockLease
-from ..agent.routing import AgentInputRouter
-from ..agent.needle import NeedleToolSelector
-from ..agent.persona import PersonaAgentBridge
-from ..dataclasses.events import ShutdownEvent
-from ..extensions.events import EventDispatcher
-from ..paths import api_key_path, temp_data_dir
-from ..backends.tts import BACKENDS, CeluneBackend
-from ..typing.common import JSON, JSONSerializable
-from ..persona.emotion import PersonaEmotionAnalyzer
-from ..backends.vc import VC_BACKENDS, CeluneVCBackend
-from ..typing.modes import BackendMode, OperationState
-from ..i18n import string, set_locale, get_system_locale
-from ..utils import discard, available, clear_queue, format_error_message
-from ..vram import backend_allowed, resolve_vram_preset, resolve_backend_name
-from ..typing.agent import AgentTaskConfig, AgentToolSelector, AgentCancellationReason
 
 TTS_KV_CACHE_BACKENDS = frozenset({"qwen3", "fireredtts3", "voxcpm2"})
 
@@ -133,12 +133,16 @@ def initialize(
     agent_tool_selector: Optional[AgentToolSelector] = None,
     backend_mode: BackendMode = "normal",
     startup_callback: Optional[Callable[[str], None]] = None,
+    toast_callback: Optional[ToastCallback] = None,
 ) -> None:
     """Create the Celune engine and retain its deferred startup callback.
 
     The optional ``startup_callback`` receives the initialization-core
     checkpoint when :meth:`load` begins.
     """
+
+    # "protected member" - she is being created, what are you on?
+    # noinspection PyProtectedMember
     if type(self)._instance is not None:
         raise RuntimeError(f"can only instantiate {self.__class__.__name__} once")
     if backend_mode not in {"normal", "ui_test", "agent_test"}:
@@ -150,6 +154,7 @@ def initialize(
     self._startup_callback = startup_callback
     self._callbacks = CeluneCallbackState(
         log_callback=partial(_buffer_startup_log, self),
+        toast_callback=toast_callback or _noop_toast,
         status_callback=status_callback or _noop_message,
         error_callback=error_callback or (lambda error: None),
         idle_callback=idle_callback or (lambda: None),
@@ -269,6 +274,7 @@ def initialize(
 
     backend_kwargs: dict[str, JSONSerializable] = {
         "quantize": tts_quantization_enabled(config, tts_backend),
+        "inference_mode": config_value(config, "inference_mode", "native"),
     }
     if isinstance(tts_backend, CeluneBackend):
         tts_backend.quantization_requested = bool(backend_kwargs["quantize"])
@@ -313,13 +319,15 @@ def initialize(
     if backend_name in TTS_KV_CACHE_BACKENDS:
         backend_kwargs["quantize_kv_cache"] = quantize_kv_cache
     if backend_name == "qwen3":
-        backend_kwargs["x_vector_only"] = config_bool(
-            config,
-            "CELUNE_QWEN3_X_VECTOR_ONLY",
-            "qwen3_x_vector_only",
-        )
         backend_kwargs["clone_model_id"] = preset.qwen3_clone_model_id
-    backend_kwargs.update(config_backend_options(config, backend_name))
+    backend_options = dict(config_backend_options(config, backend_name))
+    if backend_name == "qwen3":
+        backend_options["x_vector_only"] = config_bool(
+            backend_options,
+            "CELUNE_QWEN3_X_VECTOR_ONLY",
+            "x_vector_only",
+        )
+    backend_kwargs.update(backend_options)
 
     self._runtime_preflight_done = False
 
@@ -464,27 +472,42 @@ def _noop_message(
     loglevel: LogLevel = "info",
 ) -> None:
     """Discard a message callback."""
-    del msg, severity, loglevel
+    discard(msg)
+    discard(severity)
+    discard(loglevel)
+
+
+def _noop_toast(
+    msg: str,
+    severity: str = "info",
+    *,
+    duration: Optional[float] = None,
+) -> None:
+    """Discard a toast callback when Celune has no interactive UI."""
+    discard(msg)
+    discard(severity)
+    discard(duration)
 
 
 def _noop_input_state(locked: bool) -> None:
     """Discard an input lock-state callback."""
-    del locked
+    discard(locked)
 
 
 def _noop_voice_lock_state(locked: bool) -> None:
     """Discard a voice lock-state callback."""
-    del locked
+    discard(locked)
 
 
 def _noop_progress(progress: Optional[float], total: Optional[float]) -> None:
     """Discard a progress callback."""
-    del progress, total
+    discard(progress)
+    discard(total)
 
 
 def _noop_caption(caption: Optional[str]) -> None:
     """Discard a speech caption update."""
-    del caption
+    discard(caption)
 
 
 def finish_test_mode(
@@ -541,13 +564,13 @@ def finish_test_mode(
 
     if cleanup_errors:
         success = False
-        detail = detail or "; ".join(cleanup_errors)
+        detail = detail or ", ".join(cleanup_errors)
         if checks is not None:
             checks.append(
                 {
                     "name": "cleanup",
                     "status": "failed",
-                    "detail": "; ".join(cleanup_errors),
+                    "detail": ", ".join(cleanup_errors),
                 }
             )
 
@@ -578,6 +601,7 @@ def finish_test_mode(
         }
         result["summary"] = cast(JSONSerializable, summary)
     self._runtime_state.test_result = result
+    # noinspection PyBroadException
     try:
         self.cur_state = "stopped"
     except Exception:
@@ -894,13 +918,7 @@ def agent_task_config(config: Config) -> AgentTaskConfig:
         context_size=min(
             positive("context_size", AGENT_CONTEXT_SPACE), AGENT_CONTEXT_SPACE
         ),
-        compact_at=(
-            values["compact_at"]
-            if isinstance(values.get("compact_at"), int)
-            and not isinstance(values["compact_at"], bool)
-            and 1 <= values["compact_at"] <= 100
-            else AGENT_COMPACT_AT
-        ),
+        compact_at=persona_compact_at(config),
     )
 
 
@@ -1033,6 +1051,28 @@ def start_persona_background_load(self) -> None:
     thread.start()
 
 
+def _is_memory_related_error(error: BaseException) -> bool:
+    """Return whether an exception chain describes a memory limit failure."""
+    errors_to_check = [error]
+    checked_errors: set[int] = set()
+    memory_pattern = re.compile(r"\b(?:memory|ram|vram|oom)\b", re.IGNORECASE)
+    while errors_to_check:
+        current_error = errors_to_check.pop()
+        error_id = id(current_error)
+        if error_id in checked_errors:
+            continue
+        checked_errors.add(error_id)
+        if memory_pattern.search(str(current_error)):
+            return True
+        for chained_error in (
+            current_error.__cause__,
+            current_error.__context__,
+        ):
+            if chained_error is not None:
+                errors_to_check.append(chained_error)
+    return False
+
+
 def load_persona_background(self, vision: PersonaClient) -> None:
     """Load Persona in the background and publish its ready state."""
     acquired, component_lease = acquire_component_lease(
@@ -1050,14 +1090,15 @@ def load_persona_background(self, vision: PersonaClient) -> None:
     except Exception as error:
         self.log(string("celune.persona_not_initialized"), "warning")
         self.log(string("celune.speech_only_mode"), "warning")
-        self.log(
-            format_error_message(
+        if _is_memory_related_error(error):
+            error_message = string("celune.persona_insufficient_memory")
+        else:
+            error_message = format_error_message(
                 string("celune.persona_init_failed"),
                 error,
                 self.log_level,
-            ),
-            "warning",
-        )
+            )
+        self.log(error_message, "warning")
         with self._model_lock:
             if self.vision is vision:
                 self.vision = None
@@ -1339,12 +1380,18 @@ async def _pipeline_jobs(self) -> None:
 
 
 def _abort_backend_operations(self) -> None:
-    """Abort backend-owned work before pipeline and model teardown begins."""
+    """Cancel active TTS work before pipeline and model teardown begins."""
     seen: set[int] = set()
     for backend in (self.backend, self.vc_backend, self._reload_backend):
         if backend is None or id(backend) in seen:
             continue
         seen.add(id(backend))
+        if backend is self.backend:
+            cancel = getattr(backend, "cancel_active_request", None)
+            if callable(cancel):
+                with contextlib.suppress(Exception):
+                    cancel(wait_for_ack=False)
+                continue
         abort = getattr(backend, "abort", None)
         if callable(abort):
             with contextlib.suppress(Exception):

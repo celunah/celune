@@ -7,6 +7,8 @@ from typing import Union, Optional, cast
 import torch
 from torch import nn
 
+from celune.utils import discard
+
 from .support import mock_voxcpm_backend
 
 
@@ -33,7 +35,8 @@ class _ToyAttention(nn.Module):
         self.v_proj = nn.Linear(4, 2, bias=False)
         self.o_proj = nn.Linear(4, 4, bias=False)
 
-    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+    @staticmethod
+    def forward(hidden_states: torch.Tensor) -> torch.Tensor:
         """Provide the unused module forward surface required by PyTorch."""
         return hidden_states
 
@@ -45,7 +48,7 @@ class _ToyAttention(nn.Module):
         kv_cache: tuple[torch.Tensor, torch.Tensor],
     ) -> torch.Tensor:
         """Apply the original full-precision static-cache attention step."""
-        del position_emb
+        discard(position_emb)
         if isinstance(position_id, torch.Tensor):
             position_id = int(position_id.reshape(-1)[0].item())
         batch_size = hidden_states.size(0)
@@ -172,8 +175,8 @@ def test_voxcpm_adapter_patches_both_cache_backed_language_models() -> None:
     """Use the compact cache for base and residual decoding paths."""
     with mock_voxcpm_backend():
         from celune.backends.tts.voxcpm2 import (
-            QuantizedStaticKVCache,
             VoxCPMModel,
+            QuantizedStaticKVCache,
             install_voxcpm_quantized_cache,
         )
 

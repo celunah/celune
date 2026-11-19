@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Proxy objects for backends running in isolated Python processes."""
 
+from __future__ import annotations
+
 import os
 import re
 import json
@@ -8,12 +10,20 @@ import time
 import select
 import threading
 import subprocess
+import contextlib
 from uuid import uuid4
-from typing import IO, Optional, cast
-from contextlib import suppress
+from dataclasses import replace, dataclass
 from collections import OrderedDict, abc, deque
-from dataclasses import dataclass
+from typing import IO, TYPE_CHECKING, Optional, cast
 
+from ..i18n import string
+from ..typing.common import JSON
+from ..utils import format_error_message
+from ..cevoice import active_bundle_path
+from ..backends.tts.base import CeluneBackend
+from ..backends.vc.base import CeluneVCBackend
+from ..typing.aliases import LogLevel, LogCallback
+from ..dataclasses.pipeline import AudioOutput, VoiceConversionRequest
 from ..paths import (
     project_root,
     huggingface_home_dir,
@@ -21,8 +31,6 @@ from ..paths import (
     huggingface_hub_cache_dir,
     temp_directory_environment,
 )
-from ..utils import format_error_message
-from ..cevoice import active_bundle_path
 from .protocol import (
     CEDTS_VERSION,
     CORE_CAPABILITIES,
@@ -52,30 +60,29 @@ from ..exceptions import (
     CEDTSProtocolError,
     CESNValidationError,
 )
-from ..typing.common import JSON
 from ..typing.worker import (
     WorkerValue,
     WorkerMessage,
     WorkerResponse,
     WorkerPayloadDescriptor,
 )
-from ..typing.aliases import LogLevel, LogCallback
 from ..typing.backends import (
     BackendArguments,
     BackendGeneration,
     BackendDescription,
     BackendArgumentValue,
 )
-from ..backends.vc.base import CeluneVCBackend
-from ..backends.tts.base import CeluneBackend
 from ..backends.environment import (
     BackendManifest,
     BackendEnvironment,
     BackendEnvironmentManager,
 )
-from ..dataclasses.pipeline import AudioOutput, VoiceConversionRequest
+
 
 __all__ = ["RemoteBackendProxy", "RemoteModelHandle", "RemoteVCBackendProxy"]
+
+if TYPE_CHECKING:
+    from ..backends.tts.audio_cpp import AudioCppServerLease
 
 
 def _worker_protocol_error(key: str, **kwargs: str) -> CEDTSError:
@@ -331,7 +338,25 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
         event_callback: Optional[abc.Callable[[WorkerMessage], None]] = None,
         **backend_kwargs: BackendArgumentValue,
     ) -> None:
+        from ..config import inference_mode as config_inference_mode
+
+        requested_mode = config_inference_mode(
+            {"inference_mode": backend_kwargs.get("inference_mode", "native")}
+        )
+        effective_mode = (
+            "audio_cpp"
+            if manifest.requires_audio_cpp
+            or (requested_mode == "gguf" and manifest.supports_audio_cpp)
+            else "native"
+        )
+        manifest = replace(manifest, runtime=effective_mode)
+        backend_kwargs["inference_mode"] = requested_mode
+        backend_kwargs["effective_inference_mode"] = effective_mode
         self._manifest = manifest
+        self.effective_inference_mode = effective_mode
+        self.model_metadata: Optional[dict[str, str]] = None
+        self._audio_cpp_shared_server_lease: Optional[AudioCppServerLease] = None
+        self._audio_cpp_shared_server_failure: Optional[str] = None
         self._environment_manager = environment_manager or BackendEnvironmentManager()
         self._fatal_callback = fatal
         self._log_callback = log
@@ -378,6 +403,34 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
 
         environment = self._environment_manager.ensure(manifest)
         try:
+            if effective_mode == "audio_cpp":
+                try:
+                    from ..backends.tts.audio_cpp import (
+                        acquire_shared_audio_cpp_server,
+                    )
+
+                    self._audio_cpp_shared_server_lease = (
+                        acquire_shared_audio_cpp_server(
+                            environment.virtualenv,
+                            backend_name=manifest.backend_id,
+                            log=log,
+                        )
+                    )
+                except Exception as error:
+                    failure_reason = str(error).strip()
+                    if len(failure_reason) > 1000:
+                        failure_reason = failure_reason[:997] + "..."
+                    if manifest.requires_audio_cpp:
+                        raise RuntimeError(
+                            string(
+                                "inference.shared_server_failed",
+                                backend=manifest.backend_id,
+                                reason=failure_reason,
+                            )
+                        ) from error
+                    self._audio_cpp_shared_server_failure = failure_reason
+                    backend_kwargs["audio_cpp_shared_server_error"] = failure_reason
+                    backend_kwargs["effective_inference_mode"] = "native"
             self._start_worker(environment, log, backend_kwargs)
             try:
                 self._handshake()
@@ -392,11 +445,18 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
                 fatal=fatal,
                 quantize=bool(backend_kwargs.get("quantize", True)),
                 quantize_kv_cache=bool(backend_kwargs.get("quantize_kv_cache", True)),
+                inference_mode="native",
+            )
+            self.supports_audio_cpp = manifest.supports_audio_cpp
+            self.requires_audio_cpp = manifest.requires_audio_cpp
+            self.configure_inference_mode(
+                str(backend_kwargs.get("inference_mode", "native")),
+                log=False,
             )
             self._start_packet_reader()
             self._load_description()
         except Exception:
-            with suppress(Exception):
+            with contextlib.suppress(Exception):
                 self.close()
             raise
 
@@ -408,6 +468,20 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
     ) -> None:
         """Start the worker process and forward its stderr logs."""
         environment_variables = _worker_environment(environment)
+        environment_variables["CELUNE_TTS_INFERENCE_MODE"] = str(
+            backend_kwargs.get("inference_mode", "native")
+        )
+        environment_variables["CELUNE_TTS_EFFECTIVE_RUNTIME"] = str(
+            backend_kwargs.get("effective_inference_mode", "native")
+        )
+        audio_cpp_lease = getattr(self, "_audio_cpp_shared_server_lease", None)
+        if audio_cpp_lease is not None:
+            environment_variables["CELUNE_AUDIO_CPP_SHARED_SERVER_URL"] = (
+                audio_cpp_lease.base_url
+            )
+            environment_variables["CELUNE_AUDIO_CPP_SHARED_SERVER_LOG"] = str(
+                audio_cpp_lease.log_path
+            )
         worker_binary_input = -1
         core_binary_input = -1
         core_binary_output = -1
@@ -472,10 +546,10 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
                     pass_fds=(worker_binary_input, worker_binary_output),
                 )
             for handle in windows_binary_handles:
-                with suppress(OSError):
+                with contextlib.suppress(OSError):
                     _set_windows_handle_inheritable(handle, False)
             for descriptor in (worker_binary_input, worker_binary_output):
-                with suppress(OSError):
+                with contextlib.suppress(OSError):
                     os.close(descriptor)
             worker_binary_input = -1
             worker_binary_output = -1
@@ -500,7 +574,7 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
                 self._stderr_thread.start()
         except Exception:
             for handle in windows_binary_handles:
-                with suppress(OSError):
+                with contextlib.suppress(OSError):
                     _set_windows_handle_inheritable(handle, False)
             for descriptor in (
                 worker_binary_input,
@@ -509,15 +583,15 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
                 worker_binary_output,
             ):
                 if descriptor >= 0:
-                    with suppress(OSError):
+                    with contextlib.suppress(OSError):
                         os.close(descriptor)
             process = self._process
             self._process = None
             if process is not None:
-                with suppress(Exception):
+                with contextlib.suppress(Exception):
                     if process.poll() is None:
                         self._terminate_process(process)
-                with suppress(Exception):
+                with contextlib.suppress(Exception):
                     self._close_process_streams(process)
             raise
 
@@ -598,6 +672,7 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
         """Return one worker error line after its stderr reader has drained."""
         process = getattr(self, "_process", None)
         stderr_thread = getattr(self, "_stderr_thread", None)
+        # noinspection PyBroadException
         try:
             process_exited = process is not None and process.poll() is not None
         except Exception:
@@ -607,7 +682,7 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
             and stderr_thread is not None
             and stderr_thread is not threading.current_thread()
         ):
-            with suppress(RuntimeError):
+            with contextlib.suppress(RuntimeError):
                 stderr_thread.join(timeout=_WORKER_THREAD_JOIN_TIMEOUT_SECONDS)
 
         lines = self._worker_error_detail().splitlines()
@@ -627,6 +702,12 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
         worker_error = self._worker_exit_message()
         if not worker_error:
             return error
+        error_type, separator, error_message = worker_error.partition(": ")
+        if separator and error_type in {
+            CEDTSStreamError.__name__,
+            f"{CEDTSStreamError.__module__}.{CEDTSStreamError.__qualname__}",
+        }:
+            return CEDTSStreamError(error_message)
         return CEDTSEOFError(
             f"{error}: {worker_error}",
             packet_name=error.packet_name,
@@ -649,7 +730,7 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
             reported_errors.add(error_id)
         log_callback = getattr(self, "_log_callback", None)
         if callable(log_callback):
-            with suppress(Exception):
+            with contextlib.suppress(Exception):
                 _emit_log(
                     cast(abc.Callable[..., None], log_callback),
                     f"[IPC] CEDTS transport error operation={operation}: {error}",
@@ -661,7 +742,7 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
         process = getattr(self, "_process", None)
         if process is None or not callable(getattr(process, "poll", None)):
             return
-        with suppress(Exception):
+        with contextlib.suppress(Exception):
             self.abort()
 
     def _notify_fatal(self) -> None:
@@ -855,7 +936,7 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
                         else:
                             log_callback = getattr(self, "_log_callback", None)
                             if callable(log_callback):
-                                with suppress(Exception):
+                                with contextlib.suppress(Exception):
                                     _emit_log(
                                         cast(abc.Callable[..., None], log_callback),
                                         format_error_message(
@@ -873,7 +954,7 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
                     return
         finally:
             if not self._reader_stop.is_set():
-                with suppress(Exception):
+                with contextlib.suppress(Exception):
                     if process.poll() is not None:
                         self._close_process_streams(process)
 
@@ -972,6 +1053,41 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
         with self._event_condition:
             self._event_queue.append(packet)
             self._event_condition.notify_all()
+        if packet.get("operation") == "metadata":
+            raw_data = packet.get("data")
+            data = (
+                cast(dict[str, WorkerValue], raw_data)
+                if isinstance(raw_data, dict)
+                else {}
+            )
+            model = data.get("model")
+            runtime_type = data.get("type")
+            quantization = data.get("quant")
+            if (
+                isinstance(model, str)
+                and isinstance(runtime_type, str)
+                and runtime_type in {"native", "gguf"}
+                and isinstance(quantization, str)
+            ):
+                self.model_metadata = {
+                    "model": model,
+                    "type": runtime_type,
+                    "quant": quantization,
+                }
+                self.effective_inference_mode = (
+                    "audio_cpp" if runtime_type == "gguf" else "native"
+                )
+                log_callback = getattr(self, "_log_callback", None)
+                if callable(log_callback):
+                    _emit_log(
+                        cast(LogCallback, log_callback),
+                        string(
+                            "inference.loaded_model",
+                            model=model,
+                            type=runtime_type,
+                            quant=quantization,
+                        ),
+                    )
         if packet.get("kind") == "progress":
             data = packet.get("data")
             if isinstance(data, dict):
@@ -1293,9 +1409,9 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
             capabilities, dict
         ):
             raise _worker_protocol_error("worker_capabilities_are_incompatible")
-        if capabilities.get("streaming") is not True:
+        if not capabilities.get("streaming"):
             raise _worker_protocol_error("worker_does_not_support_streaming")
-        if capabilities.get("cancellation") is not True:
+        if not capabilities.get("cancellation"):
             raise _worker_protocol_error("worker_does_not_support_cancellation")
         supported_operations = capabilities.get("supported_operations")
         supported_media_types = capabilities.get("supported_media_types")
@@ -1306,7 +1422,7 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
         ):
             raise _worker_protocol_error("worker_capability_negotiation_is_incomplete")
         self._negotiated_capabilities = cast(dict[str, WorkerValue], capabilities)
-        self._cedts_limits = limits_from_capabilities(capabilities)
+        self._cedts_limits = limits_from_capabilities(self._negotiated_capabilities)
         ready = self._receive_handshake_packet(process)
         self._raise_handshake_error(ready, hello_id)
         if (
@@ -1441,7 +1557,7 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
                         )
                 except CEDTSTimeoutError as error:
                     self._report_transport_error(operation, error)
-                    with suppress(Exception):
+                    with contextlib.suppress(Exception):
                         self.abort()
                     raise
                 except CEDTSError as error:
@@ -1450,7 +1566,7 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
                 except TimeoutError as error:
                     if response_timeout is None:
                         raise
-                    with suppress(Exception):
+                    with contextlib.suppress(Exception):
                         self.abort()
                     timeout_error = CEDTSTimeoutError(operation, response_timeout)
                     self._report_transport_error(operation, timeout_error)
@@ -1753,7 +1869,7 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
 
         Voice-bundle backends use the same backend model for every voice in a
         CEVOICE/CECHAR pack. The worker description provides that model as
-        ``clone_model_id`` or ``model_name``; the pack-local voice name is
+        ``clone_model_id`` or ``model_name``. The pack-local voice name is
         only used to select the reference audio in the generation request.
 
         Args:
@@ -1782,6 +1898,7 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
         """Load a model in the worker and return an opaque handle."""
         from ..registry.consent import require_model_consent
 
+        self.model_metadata = None
         require_model_consent(model_id)
         self.quantization_attempted = getattr(self, "quantization_requested", False)
         value = self.request(
@@ -1815,6 +1932,7 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
         Args:
             release_cuda_cache: Whether the worker should synchronize CUDA and release cached accelerator blocks.
         """
+        self.model_metadata = None
         process = getattr(self, "_process", None)
         if (
             getattr(self, "_closed", False)
@@ -1895,7 +2013,7 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
     @staticmethod
     def _shutdown_ack_failure(response: WorkerResponse) -> Optional[BackendError]:
         """Return an error when the worker rejects the shutdown request."""
-        if response.get("ok") is True:
+        if response.get("ok"):
             return None
         value = response.get("value")
         reason = response.get("error")
@@ -1926,7 +2044,7 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
             )
             for stream in process_streams + owned_streams:
                 if stream is not None:
-                    with suppress(OSError, ValueError):
+                    with contextlib.suppress(OSError, ValueError):
                         stream.close()
         finally:
             self._binary_input = None
@@ -1950,14 +2068,14 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
     def _terminate_process(self, process: subprocess.Popen[bytes]) -> None:
         """Escalate a worker that did not complete its graceful shutdown."""
         self._stop_packet_reader()
-        with suppress(OSError):
+        with contextlib.suppress(OSError):
             process.terminate()
         try:
             process.wait(timeout=1)
         except subprocess.TimeoutExpired:
-            with suppress(OSError):
+            with contextlib.suppress(OSError):
                 process.kill()
-            with suppress(subprocess.TimeoutExpired):
+            with contextlib.suppress(subprocess.TimeoutExpired):
                 process.wait(timeout=1)
 
     def close(self) -> None:
@@ -1968,6 +2086,7 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
                 self._close_process_streams(self._process)
                 self._clear_received_message_ids()
                 self._clear_runtime_state()
+                self._release_audio_cpp_shared_server()
                 return
             self._closing = True
             process = self._process
@@ -2032,6 +2151,7 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
                 self._close_process_streams(process)
                 self._clear_received_message_ids()
                 self._clear_runtime_state()
+                self._release_audio_cpp_shared_server()
             if shutdown_failure is not None:
                 raise shutdown_failure
 
@@ -2044,6 +2164,7 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
             if self._closed and self._process is None:
                 self._close_process_streams(None)
                 self._clear_received_message_ids()
+                self._release_audio_cpp_shared_server()
                 return
             process = self._process
             try:
@@ -2055,6 +2176,22 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
                 self._close_process_streams(process)
                 self._clear_received_message_ids()
                 self._clear_runtime_state()
+                self._release_audio_cpp_shared_server()
+
+    def configure_inference_mode(
+        self, inference_mode: str, *, log: bool = True
+    ) -> None:
+        """Resolve the proxy mode while preserving shared-server fallback."""
+        super().configure_inference_mode(inference_mode, log=log)
+        if getattr(self, "_audio_cpp_shared_server_failure", None) is not None:
+            self.effective_inference_mode = "native"
+
+    def _release_audio_cpp_shared_server(self) -> None:
+        """Release this proxy's reference to the process-wide audio.cpp server."""
+        lease = getattr(self, "_audio_cpp_shared_server_lease", None)
+        self._audio_cpp_shared_server_lease = None
+        if lease is not None:
+            lease.release()
 
 
 class RemoteVCBackendProxy(CeluneVCBackend):

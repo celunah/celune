@@ -2,8 +2,8 @@
 
 The Textual UI is the primary interactive surface. It has a loading phase,
 status header, log panel, caption/progress area, input editor, voice/style
-button, optional VC controls, and rotating resource information. Celune
-registers its default dark/light palette and mounts the loading screen before
+button, optional VC controls, and rotating resource information. The
+application registers its default dark/light palette and mounts the loading screen before
 importing or initializing the engine, Persona, agent, audio, backend, or model
 runtime, so the first frame is both themed and responsive. Pack-derived colors
 are applied later when the runtime is available. Those dependencies load in the
@@ -14,12 +14,33 @@ post-frame worker and report failures on the loading overlay.
 | Key | Action |
 | --- | --- |
 | `CTRL+ENTER` | Submit the input. During the tutorial it advances/skips the current step. |
-| `CTRL+J` | Submit the input in terminals that map Enter differently; it also cancels the tutorial. |
+| `CTRL+J` | Submit the input in terminals that map Enter differently. It also cancels the tutorial. |
 | `CTRL+Q` | Fade out the UI, then shut down through the graceful teardown path. |
 | `CTRL+T` | Toggle dark/light themes and persist the selection. |
 | `CTRL+R` | Wake from sleep, start/stop Persona speech capture, or start/stop live VC capture depending on mode. |
 | `CTRL+B` | Open or close the debug inspector when `log_level` is `debug`. |
 | `ESC` during startup | Reveal the main interface when the loading footer offers this action. |
+
+Pressing `CTRL+C` displays a temporary toast at the bottom of the interface:
+`You pressed CTRL+C. Press CTRL+Q to exit.`
+
+Core code can request a transient message with
+`Celune.toast(msg: str, severity: str = "info", *, duration: Optional[float] = None) -> None`.
+The TUI maps `info` to lavender, `warning` to yellow, and `error` to red. The
+message appears on one line, centered near the bottom, then fades after the
+duration. Omitting it uses three seconds. Each call replaces the visible toast.
+The method returns immediately. For example:
+
+```python
+celune.toast("Settings saved", duration=2.0)
+celune.toast("Check the selected path", severity="warning")
+celune.toast("The operation failed", severity="error")
+```
+
+UI integrations can use
+`CeluneUI.show_toast(msg, duration=None, *, severity="info")` directly. It
+schedules work on Textual's event loop, so callbacks from worker threads do not
+block input.
 
 ## Debug inspector
 
@@ -35,6 +56,10 @@ The left pane selects the UI and its subsystems alongside engine components,
 including loaded lifecycle, pipeline, playback, audio-server, and worker modules.
 The right pane refreshes the selected object's state and attributes. Sensitive
 fields such as API keys, tokens, passwords, and credentials are redacted. The
+`Callbacks` entry under `Components > Engine` replaces those tables with a live
+callback list and details for each current handler, signature, source location,
+and any UI handlers chained onto it. The view refreshes with the inspector's
+one-second component snapshot. The
 `UI Modals` entry under `Components > UI` replaces the state and attributes
 tables with buttons for voice selection, the settings menu, and the license
 modal. It opens the current voice and settings menus when available, using
@@ -45,26 +70,26 @@ settings, or loading a model.
 Under `Components > Engine`, select `Glow Effects` to enter a six-digit hex
 color and a positive transition duration in seconds, then choose `Set` to fade
 to that color. The three seasonal buttons preview their matching effects on any
-date; a custom color overrides the seasonal palette while its brightness effect
+date. A custom color overrides the seasonal palette while its brightness effect
 continues. `Reset Special Effects` restores the pack's default color and lunar
 idle brightness, and suppresses the current date's seasonal effect until the
 local date changes. Invalid color or duration feedback appears in red, then
 fades away and releases its space.
 
 The bottom `LIVE CALLS` pane keeps a rolling buffer of up to 100 calls while the
-inspector is open. Closing the inspector stops tracing; opening it again resumes
+inspector is open. Closing the inspector stops tracing. Opening it again resumes
 tracing and retains the buffer. The table displays the latest 25 entries and
 refreshes once per second. By default, it
 records calls from Celune, third-party packages, the Python standard library,
 and built-in functions exposed by the monitor. The table shows Time, Call,
-Source, and Duration; source is labeled Celune, Third party, Standard library,
+Source, and Duration. Source is labeled Celune, Third party, Standard library,
 Built-in, or Unknown when classification is uncertain. Select a call to inspect
 its call path, arguments, duration, thread, and source location. Completed
 durations update without repainting still-running rows on each refresh. Details
 remain available for the selected call as the rolling trace advances. The
 source input and actions share the `LIVE CALLS` title row, with trace status
 directly underneath. Inspector buttons show hover, keyboard-focus, and press
-feedback; clicking non-focusable space clears a button's focus highlight.
+feedback. Clicking non-focusable space clears a button's focus highlight.
 Celune buttons size to their rendered labels without interior padding. Controls
 with explicit layout widths keep those widths. Drag the separators to resize
 the component and details panes, the upper section and `LIVE CALLS`, or the call
@@ -75,17 +100,17 @@ This avoids callback traffic from unrelated interpreter code.
 
 Enter a package or module name and choose `Select Source` to limit the trace to
 that module and its dotted submodules. The input keeps the submitted name
-visible. Repeat to add more names to the active filter; `Reset Sources` returns
+visible. Repeat to add more names to the active filter. `Reset Sources` returns
 to all sources. The status directly below `LIVE CALLS` shows the active filter
 or `Tracing all function calls`. Special methods such as `__init__` and
-`__eq__` are hidden by default; enable `Show special methods` to include them.
+`__eq__` are hidden by default. Enable `Show special methods` to include them.
 Use `Pause` to stop adding entries, `Resume` to continue, and `Clear` to remove
 the visible trace. Press `F` to filter component names, use the arrow keys to
 select components or calls, `ENTER` to expand a component, and `TAB` to move
 between panes.
 
 The call table keeps its columns within the inspector pane, shows the complete
-duration status, and truncates long call names; selecting a call still shows
+duration status, and truncates long call names. Selecting a call still shows
 its full name in the details pane. Each refresh updates new and completed calls
 while preserving the selected call and the visible call by their entry IDs.
 
@@ -95,10 +120,10 @@ the active Celune instance as `engine`, built-ins, Python literals, nested
 containers, and nested calls with positional and keyword arguments. For
 example, `celune.audio.pad_note([65.4], duration=1.0)` invokes the imported
 function. The inspector parses a restricted expression tree and does not use
-`eval`; imported code and called functions still run with normal Python
+`eval`. Imported code and called functions still run with normal Python
 permissions and may have side effects. The return value or a parse, resolution,
 or call error appears in Call details. Calls run on a worker thread so the
-inspector remains responsive; calls already running continue if Invoke Mode is
+inspector remains responsive. Calls already running continue if Invoke Mode is
 turned off.
 This keeps the details open as calls arrive and lets the table continue
 scrolling while tracing is active. If the visible call leaves the rolling
@@ -110,7 +135,7 @@ exposed C-callable boundaries in the current process. It cannot inspect the
 internal execution of native libraries or calls inside isolated backend worker
 processes. When a selected source targets compiled code in a Nuitka build, Live
 Calls shows a first row with the current time, a compiled-code call, an
-unreachable source, and an unavailable duration; its details explain the
+unreachable source, and an unavailable duration. Its details explain the
 tracing limitation. To prevent the inspector from tracing its own rendering workload,
 `textual` and `rich` modules are always excluded. `celune.ui.debug` is excluded
 by default but can be selected explicitly. Source filters narrow the monitored
@@ -121,16 +146,16 @@ the trace control reports that tracing is unavailable.
 
 After the core is attached to the UI and startup reporting is ready, the loading
 screen adds `ESC reveal UI` to its footer. Press `ESC` to show the main interface
-while voice-runtime initialization continues; input and voice controls stay
+while voice-runtime initialization continues. Input and voice controls stay
 locked until startup finishes. Any later startup error is written to the main log
 instead of bringing the loading overlay back. Before that point, the loading
 screen only offers `CTRL+Q` to quit.
 
 The style button cycles the active voice on a normal click. Hold it to open
-`Select voice` after releasing the button, including while Celune is sleeping;
-selecting a voice wakes her first. The menu lists every readable `.cevoice` and
+`Select voice` after releasing the button, including while the engine is
+sleeping. Selecting a voice wakes the engine first. The menu lists every readable `.cevoice` and
 `.cechar` CEVOICE/CECHAR pack as one character row. Left/Right cycles the voice
-entry when a pack has multiple entries; single-entry packs omit the bracketed
+entry when a pack has multiple entries. Single-entry packs omit the bracketed
 value. Confirming a row hot-loads that pack and voice. In VC mode
 the mode button toggles talk/sing F0 conditioning. Touch users can use this
 visible button rather than keyboard shortcuts.
@@ -138,7 +163,7 @@ visible button rather than keyboard shortcuts.
 When the active TTS backend supports singing, the input placeholder asks for
 CESN notation. A short press on the voice button remains disabled, while a hold
 opens a menu containing only packs with a CECHAR v5 `sing` voice. Each pack has
-one non-searchable singing choice; selecting it reloads that character pack.
+one non-searchable singing choice. Selecting it reloads that character pack.
 `/help` adds a short CESN syntax glossary for notation order, language, tempo
 and scale, notes, rests, IPA pronunciation, slurs, tuplets, singer selection,
 and comments, followed by a link to the paste-ready
@@ -150,13 +175,13 @@ and the input prompt returns to the active mode. See
 [CESN format and parsing](../formats/cesn.md) for the complete notation reference.
 
 The mounted WebUI delegates its `ALT+R` recording shortcut to these same
-runtime capture paths and exposes a compact voice button beside its text input;
-clicking it cycles the active voice through the shared Core switching path. That
+runtime capture paths and exposes a compact voice button beside its text input.
+Clicking it cycles the active voice through the shared Core switching path. That
 button is disabled for singing backends, which accept CESN input instead. The
 WebUI does not expose the TUI's settings, Record, or Stop controls. The TUI publishes
 timed status, theme, marquee, and resource-page updates through the CEDTS
-frontend channel so the browser does not maintain an independent timer state;
-browser polling is only a reconnect fallback.
+frontend channel so the browser does not maintain an independent timer state.
+Browser polling is only a reconnect fallback.
 
 The tutorial generates each localized passage as a separate utterance in the
 currently active voice, without CeluneNorm. During preparation, the progress bar
@@ -165,7 +190,7 @@ with 500 ms pauses, then plays the sequence as one source. The combined
 transcript is phonemized and sent through one acoustic-model inference. Known
 passage audio and word boundaries constrain alignment to each passage, so words
 cannot drift across a pause into another line. When TTS uses a pronunciation
-workaround, captions can show the canonical term; for example, the tutorial says
+workaround, captions can show the canonical term. For example, the tutorial says
 “CE voice” and displays “CEVOICE.” The input and voice-style
 highlights and `/help` action start at their matching passage offsets. Tutorial
 preparation and playback run in a background worker while the input and voice
@@ -181,7 +206,7 @@ worker signals its completion during teardown so a restart does not wait for a
 fixed shutdown timeout when the worker has already stopped.
 
 The TUI playback bar has a separate progress readout. During active audio
-playback it shows elapsed time as `MM:SS`; during loading and other determinate
+playback it shows elapsed time as `MM:SS`. During loading and other determinate
 operations it shows a right-aligned percentage. When progress is indeterminate
 or unavailable, the readout is hidden and the bar expands into its space. The
 Background Persona, normalizer, and Whisper model loads do not publish
@@ -195,15 +220,15 @@ caption progress follows the frame ranges produced by generated text chunks, so 
 growing audio total cannot move its progress backward or shift later words.
 When enabled, a background worker matches the combined transcript and waveform
 with one IPA forced-alignment inference from the Sadda acoustic model. Known
-chunk boundaries constrain the match to each chunk's audio range; chunk
+chunk boundaries constrain the match to each chunk's audio range. Chunk
 boundaries also map normalized synthesis tokens to display words. Captioned
 playback waits for synthesis and alignment to finish, while speech without
 captions keeps streaming. Another speech request can generate while alignment
 is pending. If alignment fails, Celune clears the caption and suppresses it for
-the rest of that utterance; speech playback continues. A caption waits for its
+the rest of that utterance. Speech playback continues. A caption waits for its
 final playback marker before it can finish. The caption and bar
 share one reserved line, so the bar is not restored until the caption transition
-completes; the normal bar/readout state is also restored immediately when wake
+completes. The normal bar/readout state is also restored immediately when wake
 begins.
 
 The caption keeps the newest words that fit its line and releases older words
@@ -243,7 +268,7 @@ menu = SelectMenuWidget(
 Labels begin at the same column as the `->` selection marker. Every displayed
 value begins two cells after the longest label, including when labels contain
 wide Unicode characters. Set `value_display="current"` to show a bracketed
-value only on the highlighted editable row; the default `"all"` shows values on
+value only on the highlighted editable row. The default `"all"` shows values on
 every editable row. Use `display_value` when a row returns structured data but
 should show a shorter human-readable value in brackets. `set_value(index,
 value)` updates an editable row and raises `ValueError` for a non-editable row.
@@ -259,14 +284,14 @@ to its content, up to the available viewport. Its surrounding layer is
 transparent but modal: mouse and keyboard input outside the menu is consumed.
 When the option list is taller than the overlay, the visible rows form a
 moving window around the highlighted row so the footer bindings remain visible.
-Application menus show only applicable navigation/value hints; hints are
+Application menus show only applicable navigation/value hints. Hints are
 separated with `・`. Moving the pointer over an option applies a soft hover
 highlight, clicking an option selects it, and double-clicking confirms it when
 the menu is configured to return a value. Menus configured with
 `return_value=False` still allow mouse selection but require ENTER to confirm.
 
 Up/Down wrap through the rows. Left/Right cycle an editable row's
-`autocomplete_values`; printable keys search those candidates. When a row has
+`autocomplete_values`. Printable keys search those candidates. When a row has
 declared candidates, text that matches none of them snaps back to the current
 valid value. Rows without candidates still accept free-form strings, while
 boolean, integer, float, and `None` values reject invalid text and retain their
@@ -274,14 +299,14 @@ previous valid type and value. Backspace removes the last search character.
 Autocomplete candidates retain their original JSON-compatible return types,
 including strings, numbers, booleans, and `None` when explicitly supplied.
 Non-editable rows ignore value controls. An option's `keybind` or the
-constructor's `keybinds={"key": index}` mapping selects a row directly;
-navigation and value-editing keys cannot be used for these shortcuts.
+constructor's `keybinds={"key": index}` mapping selects a row directly.
+Navigation and value-editing keys cannot be used for these shortcuts.
 
 ENTER posts `SelectMenuWidget.Confirmed` with the selected `option_index`,
 `option`, and `value`. Set `return_value=False` to make `value` be `None` while
 retaining the selected row in the message. A non-editable row may provide
 `confirm_value` when it should still return a fixed result. ESC posts
-`SelectMenuWidget.Cancelled` with the selected row and `value=None`; the host
+`SelectMenuWidget.Cancelled` with the selected row and `value=None`. The host
 screen can handle that message by popping or hiding the menu. The widget does
 not automatically change screens.
 
@@ -308,17 +333,17 @@ the overlay says `Celune can't continue.` A compact instruction appears directly
 below it for missing dependencies: use the project `.venv` with `uv run`, run
 `python configure.py` when the environment is missing or incomplete, or start
 the user-facing launcher when a compiled entrypoint was opened directly. The
-lower-left status identifies the cause, such as `Missing dependency: dateutil`;
-no further startup progress is pending. The UI switches to the red error theme
+lower-left status identifies the cause, such as `Missing dependency: dateutil`.
+No further startup progress is pending. The UI switches to the red error theme
 and catches early startup exceptions, including missing dependencies, without
 leaving a worker traceback on the terminal. The terminal title changes to an
 error state with a concise cause.
-Press `CTRL+Q` on this screen to close the application; a missing-dependency
+Press `CTRL+Q` on this screen to close the application. A missing-dependency
 failure then returns exit code `4` to the launcher, while other early startup
 failures return the general failure code. After core attachment, press `ESC` to
 reveal the main UI and inspect its log if a later initialization step fails.
-The GPU preflight runs after core attachment and before backend model loading;
-its GPU check diagnostics appear in the main log and in the startup error
+The GPU preflight runs after core attachment and before backend model loading.
+Its GPU check diagnostics appear in the main log and in the startup error
 report.
 Fatal Textual callback failures also set a nonzero UI return code, which the
 entrypoint passes to the outer launcher so its failure diagnostics remain
@@ -343,18 +368,18 @@ continues to validate its own arguments and report command-specific errors.
 | <code>/consumebuffer true&#124;false</code> | Toggle boundary consumption of live input. |
 | `/invoke NAME [ARGS...]` | Invoke a registered extension. |
 | `/extensions` | List loaded extensions. |
-| `/voiceprompt TEXT` | Set a backend voice prompt; use `clear` to remove it. Unavailable on Mini. |
-| `/speed VALUE` | Set 80–120% playback speed. Rubber Band is required. |
-| `/reverb VALUE` | Set 0–100% reverb strength. |
+| `/voiceprompt TEXT` | Set a backend voice prompt. Use `clear` to remove it. Unavailable on Mini. |
+| `/speed VALUE` | Set 80-120% playback speed. Rubber Band is required. |
+| `/reverb VALUE` | Set 0-100% reverb strength. |
 | `/backend NAME` | Switch TTS/VC backend and wait for the reload worker. |
 | <code>/cevoice NAME&#124;PATH</code> | Load a CEVOICE/CECHAR pack. |
-| `/settings` | Open the configuration manager in normal operation or after a recoverable configuration failure. During configuration recovery it is the only command available. ENTER saves nested YAML values and requests a silent launcher restart; ESC discards changes. |
-| `/vc FILE` | Submit a file for voice conversion; VC mode is required. |
+| `/settings` | Open the configuration manager in normal operation or after a recoverable configuration failure. During configuration recovery it is the only command available. ENTER saves nested YAML values and requests a silent launcher restart. ESC discards changes. |
+| `/vc FILE` | Submit a file for voice conversion. VC mode is required. |
 | <code>/vcmode talk&#124;sing</code> | Select ordinary speech or F0-conditioned singing. |
 | <code>/vcdebug on&#124;off</code> | Save raw microphone and converted VC audio to temporary AppData files. |
 | <code>/xvectoronly true&#124;false</code> | Toggle Qwen3 identity-only cloning. Qwen3 only. |
 | `/play PATH [VOLUME]` | Play a local/remote sound effect. Remote playback reports its playing status as soon as the audio is ready to queue. |
-| `/attach FILE...` | Add vision attachments; `/attach clear` removes them. |
+| `/attach FILE...` | Add vision attachments. Use `/attach clear` to remove them. |
 | `/say TEXT` | Send a direct Persona/vision prompt when vision is available. |
 | <code>/seed NUMBER&#124;random</code> | Set a backend seed or restore random seeds. |
 | `/tutorial` | Speak short localized tutorial passages in the active voice and demonstrate `/help`. |
@@ -374,7 +399,7 @@ speech input appears at most once in the report.
 When all three values are identical, the reserved and peak positions are shown
 as `-` because those per-component allocator statistics are not applicable.
 For CUDA components, allocated memory is the component's resident tensor
-storage; reserved and peak memory are the allocator totals from the owning
+storage. Reserved and peak memory are the allocator totals from the owning
 process because PyTorch does not attribute those values to individual model
 objects. For CPU components, all three values are the component's resident
 tensor storage because the CPU allocator has no corresponding per-component
@@ -395,9 +420,9 @@ date. These effects scale the existing lunar-adjusted idle brightness:
   and 100% of its base level over 12 seconds.
 - October 31 uses `#9d1017`, stays at 50% of base brightness, and pulses to
   100% every 4.12 seconds before fading back over one second.
-- December 24–26 cycles through the pastel blue `#9fcfff`, pink `#ff9fcc`, and
-  green `#b0f5b4` colors. Each fades in over 0.5–2 seconds and stays for 1–3
-  seconds; brightness is unchanged.
+- December 24-26 cycles through the pastel blue `#9fcfff`, pink `#ff9fcc`, and
+  green `#b0f5b4` colors. Each fades in over 0.5-2 seconds and stays for 1-3
+  seconds. Brightness is unchanged.
 
 When speech starts, the controller resets brightness to the active effect's
 baseline and pauses its idle brightness animation while audio-reactive speech
@@ -406,9 +431,9 @@ brightness runs. Idle modulation resumes after playback finishes.
 ## Headless mode
 
 Set `headless: true` or `CELUNE_HEADLESS=1` for service/API/extension use. Set
-`headless: null` to auto-detect the mode: Windows uses the full Textual UI;
+`headless: null` to auto-detect the mode: Windows uses the full Textual UI.
 Linux uses Textual when a desktop session is detected, and uses headless mode
-for TTY-only or non-interactive sessions. If detection fails, Celune attempts
-the full Textual UI and retains its existing unsupported-terminal handling.
+for TTY-only or non-interactive sessions. If detection fails, the application
+attempts the full Textual UI and retains its existing unsupported-terminal handling.
 The headless UI forwards logs and lifecycle callbacks but has no editable input
-box; use the REST API, Python calls, or extensions to submit work.
+box. Use the REST API, Python calls, or extensions to submit work.

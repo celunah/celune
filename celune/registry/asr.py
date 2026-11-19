@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Reviewed metadata for automatic speech recognition models."""
 
-from .types import ModelMetadata
+from ..typing.registry import ModelMetadata
 
 DEFAULT_PERSONA_SPEECH_MODEL_ID = "openai/whisper-large-v3-turbo"
 DEFAULT_PERSONA_SPEECH_MODEL_REVISION = "41f01f3fe87f28c78e2fbf8b568835947dd65ed9"

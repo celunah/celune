@@ -1,7 +1,7 @@
 # Documentation
 
 This page defines the format for Celune's technical documentation. It is for
-contributors adding or updating a page under `docs/`; `AGENTS.md` makes these
+contributors adding or updating a page under `docs`. `AGENTS.md` makes these
 rules part of the repository workflow.
 
 ## Page structure
@@ -70,7 +70,7 @@ uv run --with-requirements docs/requirements.txt mkdocs build --strict
 ```
 
 The current MarkdownLint CLI requires Node.js 22 or newer. The CI action runs
-with Node.js 24; use an equivalent supported Node.js runtime when running the
+with Node.js 24. Use an equivalent supported Node.js runtime when running the
 command locally.
 
 The CI workflow runs the same MarkdownLint configuration through the official
@@ -80,11 +80,11 @@ The CI workflow runs the same MarkdownLint configuration through the official
 
 Before committing documentation, confirm that:
 
-- the page has an H1 and a purpose paragraph;
-- headings use sentence case and sections follow the reader's workflow;
-- commands, paths, calls, fields, and examples match the current source;
-- failure, compatibility, or verification behavior is documented where needed;
-- links and navigation resolve;
+- the page has an H1 and a purpose paragraph
+- headings use sentence case and sections follow the reader's workflow
+- commands, paths, calls, fields, and examples match the current source
+- failure, compatibility, or verification behavior is documented where needed
+- links and navigation resolve
 - `uv run --with-requirements docs/requirements.txt mkdocs build --strict`
-  succeeds; and
+  succeeds
 - `git diff --check` reports no whitespace errors.

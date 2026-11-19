@@ -7,10 +7,26 @@ from typing import Never, Union, ClassVar, Optional, final
 
 import numpy as np
 
-from .config import (
-    Config,
-)
+from .config import Config
 from . import vc as core_vc
+from .typing.aliases import LogLevel
+from .core import agent as core_agent
+from .core import sleep as core_sleep
+from .core import voice as core_voice
+from .typing.modes import BackendMode
+from .core import reload as core_reload
+from .core import speech as core_speech
+from .core import loading as core_loading
+from .agent.routing import AgentInputRouter
+from .core import callbacks as core_callbacks
+from .core import lifecycle as core_lifecycle
+from .typing.pipeline import SpeechStreamQueue
+from .dataclasses.events import StateChangedEvent
+from .typing.common import JSON, JSONSerializable
+from .typing.events import EventName, EventPayload
+from .core import conversation as core_conversation
+from .constants import DEFAULT_TARGET_CHUNK_LENGTH_SECONDS
+from .dataclasses.pipeline import AudioOutput, CaptionPlaybackState
 from .typing.agent import (
     AgentTool,
     AgentTaskConfig,
@@ -22,6 +38,7 @@ from .typing.celune import (
     CaptionCallback,
     CoreBackendSpec,
     MessageCallback,
+    ToastCallback,
     ProgressCallback,
     InputStateCallback,
     CeluneStateAccessors,
@@ -32,30 +49,10 @@ from .dataclasses.celune import (
     CELUNE_CONSTANT_PROPERTIES,
     CELUNE_FORWARDED_PROPERTIES,
 )
-from .dataclasses.events import (
-    StateChangedEvent,
-)
-from .typing.aliases import LogLevel
-from .core import agent as core_agent
-from .core import sleep as core_sleep
-from .core import voice as core_voice
 from .dataclasses.properties import (
     bind_constant_properties,
     bind_forwarded_properties,
 )
-from .typing.modes import BackendMode
-from .core import reload as core_reload
-from .core import speech as core_speech
-from .core import loading as core_loading
-from .agent.routing import AgentInputRouter
-from .core import callbacks as core_callbacks
-from .core import lifecycle as core_lifecycle
-from .typing.pipeline import SpeechStreamQueue
-from .typing.common import JSON, JSONSerializable
-from .typing.events import EventName, EventPayload
-from .core import conversation as core_conversation
-from .constants import DEFAULT_TARGET_CHUNK_LENGTH_SECONDS
-from .dataclasses.pipeline import AudioOutput, CaptionPlaybackState
 
 npt = np.typing
 
@@ -210,6 +207,7 @@ class Celune(CeluneStateAccessors):
         agent_tool_selector: Optional[AgentToolSelector] = None,
         backend_mode: BackendMode = "normal",
         startup_callback: Optional[Callable[[str], None]] = None,
+        toast_callback: Optional[ToastCallback] = None,
     ) -> None:
         """Create the Celune engine and retain its deferred startup callback.
 
@@ -242,6 +240,7 @@ class Celune(CeluneStateAccessors):
             agent_tool_selector,
             backend_mode,
             startup_callback,
+            toast_callback,
         )
 
     bind_forwarded_properties(locals(), CELUNE_FORWARDED_PROPERTIES)
@@ -574,6 +573,22 @@ class Celune(CeluneStateAccessors):
         """
         return core_callbacks.log_dev(self, msg, severity)
 
+    def toast(
+        self,
+        msg: "str",
+        severity: "str" = "info",
+        *,
+        duration: "Optional[float]" = None,
+    ) -> "None":
+        """Show a short UI toast using the selected severity color.
+
+        Args:
+            msg: The message to display.
+            severity: The UI severity color to use.
+            duration: Optional time in seconds before the toast fades out.
+        """
+        return core_callbacks.toast(self, msg, severity, duration=duration)
+
     def reset_persona_conversation(self) -> "None":
         """
         Clear Persona conversation context when its character changes.
@@ -798,7 +813,7 @@ class Celune(CeluneStateAccessors):
         Raises:
             NotAvailableError: If no usable voice or backend is available.
             Exception: If an unexpected loading failure occurs and `raise_on_error` is enabled.
-            RuntimeCheckError: If runtime validation fails; the message contains its diagnostics.
+            RuntimeCheckError: If runtime validation fails. The message contains its diagnostics.
             BackendError: If backend initialization fails.
         """
         return core_loading.load(self, raise_on_error, skip_runtime_check)
@@ -928,6 +943,7 @@ class Celune(CeluneStateAccessors):
         text: "str",
         save: "bool" = True,
         display_text: "Optional[str]" = None,
+        maintain_status: "bool" = False,
     ) -> "bool":
         """
         Queue text for Celune to say.
@@ -936,6 +952,7 @@ class Celune(CeluneStateAccessors):
             text: The input text to queue for synthesis.
             save: Whether to save generated output artifacts.
             display_text: Optional text to show in logs instead of the synthesis text.
+            maintain_status: Restore the current status after playback instead of setting it to idle.
 
         Returns:
             bool: ``True`` when the text was queued successfully, otherwise ``False``.
@@ -943,6 +960,8 @@ class Celune(CeluneStateAccessors):
         Raises:
             Exception: Re-raised after releasing the pipeline if queueing fails.
         """
+        if maintain_status:
+            return core_speech.say(self, text, save, display_text, maintain_status=True)
         return core_speech.say(self, text, save, display_text)
 
     async def say_async(

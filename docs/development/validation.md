@@ -68,7 +68,7 @@ configured MkDocs documentation tree.
 ## Focused checks
 
 For a docs-only change, a strict MkDocs build, link/path inspection, and Git
-diff review are the relevant gates; do not claim the full Python CI passed when
+diff review are the relevant gates. Do not claim the full Python CI passed when
 no Python validation was needed or when native prerequisites prevent it. For
 format/protocol/API changes, add the corresponding focused tests and then run
 the canonical CI when the environment allows it.
@@ -79,7 +79,7 @@ The English localization table in `celune/lang/en.json` is the source of truth
 for user-facing source strings. Keep keys at 50 characters or fewer and values
 at 100 characters or fewer. Split longer notices into multiple entries. CEDTS
 protocol failures, exception details, paths, and other implementation
-diagnostics stay in code; only their user-facing summary belongs in the table.
+diagnostics stay in code. Only their user-facing summary belongs in the table.
 Diagnostic tags such as `[ERROR]` and `[Core]` are engine-owned prefixes and
 must be added by runtime code, never stored in translated values.
 The localization tests verify these limits, reject technical CEDTS namespaces,

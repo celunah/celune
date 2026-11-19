@@ -13,8 +13,6 @@ import numpy as np
 
 from celune.persona.memory import PersonaMemoryStore, classifier_memory_candidates
 
-from ..support import CeluneTestCase
-
 
 class StubEmbeddingMemoryStore(PersonaMemoryStore):
     """Memory store with deterministic test embeddings."""
@@ -45,7 +43,7 @@ class StubEmbeddingMemoryStore(PersonaMemoryStore):
         return [np.array(self.embedding_map[text], dtype=np.float32) for text in texts]
 
 
-class TestPersonaMemory(CeluneTestCase):
+class TestPersonaMemory:
     """Verify Persona long-term memory behavior stays conservative and stable."""
 
     def test_explicit_memory_persists_across_store_instances(self) -> None:
@@ -273,6 +271,27 @@ class TestPersonaMemory(CeluneTestCase):
             retrieved = store.retrieve("Celune", request)
 
             assert [record.content for record in retrieved] == [memory]
+
+    def test_literal_recall_match_ranks_ahead_of_semantic_only_results(self) -> None:
+        """Prefer a strong literal phrase match over less specific semantic hits."""
+        request = "the Celune agent smoke test memory"
+        literal_match = "Celune agent smoke test 20261106"
+        semantic_match = "The user enjoys memory retrieval preferences"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = StubEmbeddingMemoryStore(
+                storage_dir=temp_dir,
+                embedding_map={
+                    request: (1.0, 0.0, 0.0),
+                    literal_match: (0.8, 0.6, 0.0),
+                    semantic_match: (1.0, 0.0, 0.0),
+                },
+            )
+            store.remember("Celune", literal_match, importance=1, explicit=True)
+            store.remember("Celune", semantic_match, importance=3, explicit=True)
+
+            retrieved = store.retrieve("Celune", request)
+
+            assert retrieved[0].content == literal_match
 
     def test_semantic_retrieval_rejects_unrelated_memory(self) -> None:
         """Verify unrelated memories are ignored when semantic similarity is low."""
