@@ -31,6 +31,134 @@ from ..support import FakeGlow, FakeBackend, FakeVCBackend, patch_owner
 class TestCeluneReload(CeluneCoreTestSupport):
     """Exercise backend reload behavior of the Celune core."""
 
+    def test_dispose_backend_closes_dead_worker_without_unloading(self) -> None:
+        """Avoid sending an unload request to a CEDTS worker that already exited."""
+        backend = FakeBackend()
+
+        with (
+            mock.patch.object(backend, "worker_running", False, create=True),
+            mock.patch.object(backend, "unload_model") as unload_model,
+            mock.patch.object(backend, "close", create=True) as close_backend,
+        ):
+            core_reload.dispose_backend(backend)
+
+        unload_model.assert_not_called()
+        close_backend.assert_called_once()
+
+    def test_failed_cedts_worker_clears_and_reloads_the_active_backend(
+        self,
+        request: pytest.FixtureRequest,
+    ) -> None:
+        """Rebuild the selected backend after its isolated worker exits."""
+        celune = self._make_celune(request, {})
+        previous_backend = celune.backend
+        celune.loaded = True
+        celune.cur_state = "error"
+        celune.model = {"model_id": "fake/balanced", "kwargs": {}}
+        previous_backend.model = celune.model
+        celune.model_name = "fake/balanced"
+        patch_owner(request, core_loading, "warmup", return_value=True)
+
+        with (
+            mock.patch.object(previous_backend, "worker_running", False, create=True),
+            mock.patch(
+                "celune.core.voice.threading.Thread",
+                side_effect=self._immediate_thread,
+            ),
+            mock.patch("celune.core.voice.play_signal", return_value=False),
+        ):
+            assert core_voice.recover_failed_backend(celune)
+
+        assert celune.backend is not previous_backend
+        assert celune.backend.name == "fake"
+        assert celune.loaded
+        assert celune.model is not None
+        assert celune.backend.model is celune.model
+        assert celune.model_name == "fake/balanced"
+        assert celune.cur_state == "idle"
+
+    def test_failed_backend_recovery_stays_recoverable_when_reload_cannot_start(
+        self,
+        request: pytest.FixtureRequest,
+    ) -> None:
+        """Leave Celune recoverable and nonfatal when recovery cannot start."""
+        celune = self._make_celune(request, {})
+        celune.loaded = True
+        celune.cur_state = "error"
+        celune.model = {"model_id": "fake/balanced", "kwargs": {}}
+        celune.backend.model = celune.model
+        celune.model_name = "fake/balanced"
+        original_operation_state = celune.operation_state
+        error_callback = mock.Mock()
+        celune._callbacks.error_callback = error_callback
+
+        with (
+            mock.patch.object(
+                celune.backend,
+                "worker_running",
+                False,
+                create=True,
+            ),
+            mock.patch("celune.core.voice._start_backend_reload", return_value=False),
+            mock.patch.object(celune, "fatal") as fatal,
+        ):
+            assert not core_voice.recover_failed_backend(celune)
+
+        assert celune.model is None
+        assert celune.backend.model is None
+        assert celune.model_name == ""
+        assert not celune.loaded
+        assert celune.cur_state == "error"
+        assert celune.operation_state is original_operation_state
+        fatal.assert_not_called()
+        error_callback.assert_called_once()
+        assert "switch to another backend manually" in error_callback.call_args.args[0]
+
+    def test_backend_recovery_reload_failure_prompts_manual_switch(
+        self,
+        request: pytest.FixtureRequest,
+    ) -> None:
+        """Ask for a manual switch when reloading the failed worker raises."""
+        celune = self._make_celune(request, {})
+        candidate_backend = FakeBackend()
+        candidate_backend.load_model = mock.Mock(
+            side_effect=RuntimeError("worker could not reload")
+        )
+        failure_message = "Celune could not recover. Switch backends manually."
+        error_callback = mock.Mock()
+        celune.error_callback = error_callback
+        fatal = mock.Mock()
+        celune.fatal = fatal
+        patch_owner(
+            request,
+            core_reload,
+            "resolve_tts_backend",
+            return_value=candidate_backend,
+        )
+
+        assert not core_reload._hot_reload_backend_impl(
+            celune,
+            FakeBackend,
+            failure_message=failure_message,
+        )
+
+        error_callback.assert_called_once_with(failure_message)
+        fatal.assert_not_called()
+        assert celune.operation_state.value == "normal"
+        assert not celune.loaded
+
+    def test_quantized_backend_reload_failure_does_not_enter_fatal_state(self) -> None:
+        """Leave fatal handling to the active runtime, not a reload candidate."""
+        fatal = mock.Mock()
+        backend = FakeBackend(fatal=fatal, quantize=True)
+        backend.quantization_requested = True
+        backend.load_model = mock.Mock(side_effect=RuntimeError("model load failed"))
+
+        with pytest.raises(RuntimeError, match="model load failed"):
+            core_reload._load_backend_voice_runtime(backend, "balanced")
+
+        fatal.assert_not_called()
+
     def test_tts_runtime_selection_uses_backend_capabilities(
         self, request: pytest.FixtureRequest
     ) -> None:

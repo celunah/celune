@@ -302,6 +302,31 @@ def _voice_switch_succeeded(self, name: str) -> bool:
     return self.loaded and self.current_voice == name
 
 
+def _start_backend_reload(
+    self,
+    backend_spec: CoreBackendSpec,
+    failure_message: Optional[str] = None,
+) -> bool:
+    """Start a background reload into another TTS or VC backend.
+
+    Args:
+        backend_spec: The backend name, type, or instance to activate.
+        failure_message: Optional error text for a reload failure.
+
+    Returns:
+        bool: ``True`` when the reload worker was started.
+    """
+    if not _prepare_backend_reload(self, backend_spec):
+        return False
+    preferred_voice = self.current_voice
+    threading.Thread(
+        target=core_reload.reload_backend,
+        args=(self, backend_spec, preferred_voice, failure_message),
+        daemon=True,
+    ).start()
+    return True
+
+
 def set_backend(
     self,
     backend_spec: CoreBackendSpec,
@@ -314,15 +339,7 @@ def set_backend(
     Returns:
         bool: ``True`` when the reload worker was started.
     """
-    if not _prepare_backend_reload(self, backend_spec):
-        return False
-    preferred_voice = self.current_voice
-    threading.Thread(
-        target=core_reload.reload_backend,
-        args=(self, backend_spec, preferred_voice),
-        daemon=True,
-    ).start()
-    return True
+    return _start_backend_reload(self, backend_spec)
 
 
 def _backend_spec_requires_singing(backend_spec: CoreBackendSpec) -> bool:
@@ -472,6 +489,57 @@ def set_backend_and_wait(
         self.log(string("celune.backend_switch_timeout"), "warning")
         return False
     return _backend_reload_succeeded(self, backend_spec)
+
+
+def recover_failed_backend(self) -> bool:
+    """Clear and reload the active backend after its CEDTS worker exits.
+
+    Returns:
+        bool: Whether a background reload was started.
+    """
+    operation_state = getattr(
+        getattr(self, "operation_state", None),
+        "value",
+        "normal",
+    )
+    if (
+        operation_state != "normal"
+        or getattr(self, "_closed", False)
+        or getattr(self, "exit_requested", False)
+        or getattr(self, "_reload_pending", False)
+        or self.cur_state == "reloading"
+    ):
+        return False
+
+    backend = (
+        self.vc_backend
+        if core_lifecycle.is_voice_conversion_mode(self)
+        else self.backend
+    )
+    if backend is None or getattr(backend, "worker_running", None) is not False:
+        return False
+
+    backend_spec = core_reload.restorable_active_backend_spec(self)
+    if isinstance(backend, CeluneBackend):
+        backend.model = None
+    self.model = None
+    self.model_name = ""
+    self.loaded = False
+    self.cur_state = "error"
+    self.log(
+        "[RECOVERY] CEDTS worker exited: reloading the active backend",
+        "warning",
+    )
+    core_reload.close_backend(backend)
+    failure_message = string(
+        "status.backend_recovery_failed",
+        app_name=APP_NAME,
+    )
+    if _start_backend_reload(self, backend_spec, failure_message):
+        return True
+
+    self.error_callback(failure_message)
+    return False
 
 
 async def set_backend_async(

@@ -518,11 +518,18 @@ def convert_audio_input(
         Callable[[VoiceConversionRequest], AudioOutput],
         converter,
     )
-    output = (
-        typed_converter(conversion_request)
-        if callable(converter)
-        else backend.convert(conversion_request)
-    )
+    try:
+        output = (
+            typed_converter(conversion_request)
+            if callable(converter)
+            else backend.convert(conversion_request)
+        )
+    except Exception:
+        if getattr(backend, "worker_running", None) is False:
+            from ..core.voice import recover_failed_backend
+
+            recover_failed_backend(engine)
+        raise
     return output
 
 

@@ -461,6 +461,18 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
                 self.close()
             raise
 
+    @property
+    def worker_running(self) -> bool:
+        """Return whether the worker can still serve protocol requests."""
+        process = self._process
+        return (
+            process is not None
+            and process.poll() is None
+            and not self._closing
+            and not self._closed
+            and self._reader_error is None
+        )
+
     def _start_worker(
         self,
         environment: BackendEnvironment,
@@ -2232,6 +2244,11 @@ class RemoteVCBackendProxy(CeluneVCBackend):
         super().__init__(log=log)
         self.name = self._worker.name
         self.is_fake = self._worker.is_fake
+
+    @property
+    def worker_running(self) -> bool:
+        """Return whether the isolated VC worker can serve requests."""
+        return self._worker.worker_running
 
     def preload_models(self) -> None:
         """Ensure voice-conversion assets are available in the worker."""

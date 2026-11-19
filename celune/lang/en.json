@@ -858,6 +858,7 @@
     "seedvc.loading_live_models": "Loading Seed-VC live models...",
     "seedvc.loading_models": "Loading Seed-VC models...",
     "status.api_starting": "Starting up",
+    "status.backend_recovery_failed": "{app_name} could not recover the backend. Please switch to another backend manually.",
     "status.could_not_continue": "{app_name} could not continue",
     "status.could_not_reload": "{app_name} could not reload",
     "status.could_not_start": "{app_name} could not start",

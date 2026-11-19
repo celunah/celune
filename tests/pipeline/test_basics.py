@@ -143,6 +143,29 @@ class TestPipeline:
         assert engine.statuses[-1][1] == "warning"
         assert "CUDA" not in engine.errors[-1]
 
+    def test_generation_worker_recovers_after_a_cedts_worker_exit(self) -> None:
+        """Start active-backend recovery after the failed utterance is released."""
+        engine = make_pipeline_engine()
+        engine.backend = SimpleNamespace(worker_running=False)
+        engine.sentinel = object()
+        request = SpeechRequest(text="hello", display_text="hello", save=False)
+        engine._speech_generation = request.generation
+        engine.text_queue.put(request)
+        engine.text_queue.put(engine.sentinel)
+
+        with (
+            mock.patch.object(generation, "_process_generation_request"),
+            mock.patch("celune.core.voice.recover_failed_backend") as recover,
+        ):
+            asyncio.run(
+                generation.generation_worker_job(
+                    cast(Celune, engine),
+                    mock.Mock(),
+                )
+            )
+
+        recover.assert_called_once_with(engine)
+
     def test_pipeline_cpu_config_has_conservative_defaults(self) -> None:
         """Verify playback pressure protection defaults to a small bounded window."""
         engine = make_pipeline_engine()
@@ -1006,6 +1029,28 @@ class TestPipelineAsync:
         assert queued_audio is not audio
         assert np.array_equal(queued_audio, audio)
         assert engine.text_queue.empty()
+
+    def test_vc_worker_abort_requests_active_backend_recovery(self) -> None:
+        """Request a same-backend reload when isolated VC conversion aborts."""
+        engine = make_pipeline_engine()
+        engine.input_mode = "voice_conversion"
+        engine.vc_backend = SimpleNamespace(
+            worker_running=False,
+            convert=mock.Mock(side_effect=RuntimeError("worker exited")),
+        )
+        request = AudioInputRequest(
+            audio=np.ones((8, 2), dtype=np.float32),
+            sample_rate=48000,
+            label="mic test",
+        )
+
+        with (
+            mock.patch("celune.core.voice.recover_failed_backend") as recover,
+            pytest.raises(RuntimeError, match="worker exited"),
+        ):
+            submission.convert_audio_input(cast(Celune, engine), request)
+
+        recover.assert_called_once_with(engine)
 
     def test_handle_audio_input_reports_missing_vc_backend_cleanly(self) -> None:
         """Verify VC mode surfaces a clean error when no VC backend is configured."""

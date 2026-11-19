@@ -1080,3 +1080,7 @@ async def generation_worker_job(
             )
         finally:
             engine._active_speech_generation = None
+        if getattr(engine.backend, "worker_running", None) is False:
+            from ..core.voice import recover_failed_backend
+
+            recover_failed_backend(engine)

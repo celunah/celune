@@ -1374,6 +1374,33 @@ class TestBackendProxyLifecycle:
             if reader_thread is not None:
                 reader_thread.join(timeout=2)
 
+    def test_remote_proxy_worker_running_requires_a_healthy_reader(self) -> None:
+        """Treat closed workers and failed packet readers as unavailable."""
+        proxy = object.__new__(remote.RemoteBackendProxy)
+        proxy._process = cast(
+            subprocess.Popen[bytes],
+            SimpleNamespace(poll=lambda: None),
+        )
+        proxy._closing = False
+        proxy._closed = False
+        proxy._reader_error = None
+
+        assert proxy.worker_running
+
+        proxy._reader_error = RuntimeError("packet reader failed")
+        assert not proxy.worker_running
+
+        proxy._reader_error = None
+        proxy._closed = True
+        assert not proxy.worker_running
+
+        vc_proxy = object.__new__(remote.RemoteVCBackendProxy)
+        vc_proxy._worker = cast(
+            remote.RemoteBackendProxy,
+            SimpleNamespace(worker_running=False),
+        )
+        assert not vc_proxy.worker_running
+
     def test_remote_proxy_backpressures_paused_stream_response_queue(self) -> None:
         """Verify a paused stream resumes after its bounded queue is drained."""
         proxy, reader, writer = self._make_packet_reader_proxy()

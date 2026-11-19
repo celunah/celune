@@ -129,6 +129,11 @@ def dispose_backend(
     release_cuda_cache: bool = True,
 ) -> None:
     """Unload one backend and close its worker process when supported."""
+    if getattr(backend, "worker_running", None) is False and callable(
+        getattr(backend, "close", None)
+    ):
+        close_backend(backend)
+        return
     try:
         unload_backend_model(backend, release_cuda_cache)
     finally:
@@ -442,10 +447,9 @@ def _rebuild_reload_snapshot_runtime(self, snapshot: ReloadSnapshot) -> None:
         self,
         snapshot.restorable_backend_spec,
         log=self.log_callback,
-        fatal=self.fatal,
+        fatal=None,
         **snapshot.backend_kwargs,
     )
-    restored_backend.bind_fatal(self.fatal)
     if restored_backend.uses_voice_bundles:
         restored_backend.validate_refs()
 
@@ -457,6 +461,7 @@ def _rebuild_reload_snapshot_runtime(self, snapshot: ReloadSnapshot) -> None:
             snapshot.current_voice,
         )
 
+    restored_backend.bind_fatal(self.fatal)
     snapshot.backend = restored_backend
     snapshot.model = cast(Optional[BackendModel], restored_model)
     snapshot.model_name = restored_model_name
@@ -557,9 +562,6 @@ def _load_backend_voice_runtime(
                 with contextlib.suppress(Exception):
                     backend.unload_model()
                 release_cuda_after_oom()
-            fatal = getattr(backend, "_fatal_callback", None)
-            if callable(fatal):
-                fatal()
             raise
     backend.model = model
     return model, model_name
@@ -569,11 +571,15 @@ def reload_backend(
     self,
     backend_spec: CoreBackendSpec,
     preferred_voice: Optional[str] = None,
+    failure_message: Optional[str] = None,
 ) -> bool:
     """Switch backend while reserving the shared model lifecycle resource."""
     from .voice import _reject_singing_backend
 
     if _reject_singing_backend(self, backend_spec):
+        _release_unstarted_reload(self)
+        if failure_message is not None:
+            self.error_callback(failure_message)
         return False
 
     acquired, component_lease = lifecycle.acquire_model_loading_lease(
@@ -581,9 +587,18 @@ def reload_backend(
     )
     if not acquired:
         _release_unstarted_reload(self)
+        if failure_message is not None:
+            self.error_callback(failure_message)
         return False
     try:
-        return _hot_reload_backend_impl(self, backend_spec, preferred_voice)
+        if failure_message is None:
+            return _hot_reload_backend_impl(self, backend_spec, preferred_voice)
+        return _hot_reload_backend_impl(
+            self,
+            backend_spec,
+            preferred_voice,
+            failure_message,
+        )
     finally:
         if component_lease is not None:
             component_lease.release()
@@ -593,6 +608,7 @@ def _hot_reload_backend_impl(
     self,
     backend_spec: CoreBackendSpec,
     preferred_voice: Optional[str] = None,
+    failure_message: Optional[str] = None,
 ) -> bool:
     """Synchronously switch to a new backend family with rollback on failure."""
     snapshot: Optional[ReloadSnapshot] = None
@@ -636,13 +652,12 @@ def _hot_reload_backend_impl(
                 self,
                 cast(TTSBackendSpec, normalized_backend_spec),
                 log=self.log_callback,
-                fatal=self.fatal,
+                fatal=None,
                 **candidate_kwargs,
             )
             if not _track_reload_backend(self, candidate_backend):
                 close_backend(candidate_backend)
                 return False
-            candidate_backend.bind_fatal(self.fatal)
             validate_backend_against_preset(candidate_backend, preset)
             if candidate_backend.uses_voice_bundles:
                 candidate_backend.validate_refs()
@@ -680,6 +695,7 @@ def _hot_reload_backend_impl(
                 raise_warmup_error(self, "warmup failed after backend reload")
             candidate_model = cast(Optional[PreTrainedModel], candidate_backend.model)
 
+            candidate_backend.bind_fatal(self.fatal)
             self.backend = candidate_backend
             self.vc_backend = None
             self._vc_backend_spec = None
@@ -838,7 +854,9 @@ def _hot_reload_backend_impl(
         self.progress_callback(1, 1)
         if rollback_succeeded:
             self.log(string("celune.backend_restore_failed"), "warning")
-        self.error_callback(string("status.could_not_reload", app_name=APP_NAME))
+        self.error_callback(
+            failure_message or string("status.could_not_reload", app_name=APP_NAME)
+        )
         return False
     finally:
         _clear_reload_backend(
