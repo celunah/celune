@@ -13,7 +13,8 @@ if isinstance(sys.stdout, io.TextIOWrapper):
     sys.stdout.reconfigure(encoding="utf-8", errors="backslashreplace")
 
 _WARNING_LINE = re.compile(
-    r"\b\w*warn(?:ing)?\b|\bdeprecated\b|\bW\d{4}\b",
+    r"(?i)^(?:CMake\s+(?:Deprecation\s+)?Warning(?:\s+\([^)]*\))?(?:\s+at\b|:)|W(?=\s|:|\[|$)|\[(?:W|warning)"
+    r"(?:/[^]]+)?]|(?:.*:\s*)?(?:[a-z_]*warning|deprecation|deprecated)\s*:)",
     re.IGNORECASE,
 )
 _CELTEST_STATUS_LINE = re.compile(r"^\s*(?:⚙️|✅|❌|⚠️)\s")
