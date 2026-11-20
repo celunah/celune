@@ -792,7 +792,8 @@ class PersonaRuntime:
                 )
             else:
                 try:
-                    # Consent and policy failures must not trigger native fallback.
+                    # if the user declines consent or Celune is operating in commercial mode,
+                    # do not violate the terms by reloading a native backend
                     require_model_consent(model_id)
                     server_path = ensure_llama_server()
                     model_path, projector_path = download_persona_gguf(variant)

@@ -571,7 +571,8 @@ class DotsTtsMF(CeluneBackend[Union[DotsTtsRuntime, AudioCppRuntime]]):
         if not isinstance(text_value, str) or not text_value.strip():
             raise ValueError("expected text to say")
 
-        # Native dots.tts ignores these sampling controls as well.
+        # backends have a shared set of parameters passed into all,
+        # but not all models support every parameter, so drop unsupported ones here
         for option in ("temperature", "top_k", "top_p", "repetition_penalty"):
             kwargs.pop(option, None)
         max_tokens = kwargs.pop("max_new_tokens", self.max_new_tokens)
