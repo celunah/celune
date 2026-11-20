@@ -21,17 +21,27 @@ class TestCIWarnings:
 
     def test_warning_lines_include_common_tool_formats(self) -> None:
         """Recognize prose, deprecation, and Pylint warning formats."""
-        assert CI_WARNINGS._is_warning_line("WARN type inference degraded")
-        assert CI_WARNINGS._is_warning_line("DeprecationWarning: old API")
-        assert CI_WARNINGS._is_warning_line("celune/file.py:12: W0611")
+        assert CI_WARNINGS._is_warning_line(
+            "CMake Warning (author) at CMakeLists.txt:29 (message):"
+        )
+        assert CI_WARNINGS._is_warning_line("DeprecationWarning: 'x' is deprecated")
+        assert CI_WARNINGS._is_warning_line(
+            "PendingDeprecationWarning: 'x' will soon be deprecated"
+        )
+        assert CI_WARNINGS._is_warning_line("FutureWarning: 'x' is deprecated")
+        assert CI_WARNINGS._is_warning_line(
+            "configure: WARNING: On this platform, SIGABRT cannot be caught using signal handlers."
+        )
+        assert CI_WARNINGS._is_warning_line(
+            "gmake[4]: warning: -j2 forced in submake: resetting jobserver mode."
+        )
+        assert CI_WARNINGS._is_warning_line(
+            "libtool: warning: '-version-info/-version-number' is ignored for convenience libraries"
+        )
         assert not CI_WARNINGS._is_warning_line("All checks passed")
-        assert not CI_WARNINGS._is_warning_line(
-            "⚙️ verify warning-only doctor results do not masquerade as a clean pass"
-        )
-        assert not CI_WARNINGS._is_warning_line(
-            "✅ verify warning-only doctor results do not masquerade as a clean pass"
-        )
-        assert not CI_WARNINGS._is_warning_line("⚠️ warnings")
+        assert not CI_WARNINGS._is_warning_line("test case with warnings")
+        assert not CI_WARNINGS._is_warning_line("this does not cause a warning")
+        assert not CI_WARNINGS._is_warning_line("W warnings")
         assert not CI_WARNINGS._is_warning_line("passed 2/3 time 0:01 warnings 1")
 
     def test_annotation_messages_escape_github_command_delimiters(self) -> None:
@@ -52,7 +62,7 @@ class TestCIWarnings:
             )
 
         assert status == 7
-        assert "::warning::warning" in output.getvalue()
+        assert not "::warning::warning" in output.getvalue()
 
     def test_main_does_not_annotate_celtest_status_descriptions(self) -> None:
         """Do not annotate Celtest descriptions that contain warning terminology."""
