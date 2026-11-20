@@ -3,19 +3,17 @@
 
 from __future__ import annotations
 
-
-from pathlib import Path
-from collections.abc import Callable, Iterator, Mapping
 from typing import TYPE_CHECKING, Union, Optional, Protocol
+from pathlib import Path
+from collections.abc import Mapping, Callable, Iterator
 
 import torch
 from transformers.modeling_utils import PreTrainedModel
 from transformers.tokenization_utils_base import BatchEncoding, PreTrainedTokenizerBase
 
-
-from .aliases import LogLevel
-from .common import JSON, Config, JSONSerializable
 from .modes import BackendMode, OperationMode, OperationState
+from .common import JSON, Config, JSONSerializable
+from .aliases import LogLevel
 
 if TYPE_CHECKING:
     import queue
@@ -23,29 +21,27 @@ if TYPE_CHECKING:
 
     import sounddevice as sd
 
-    from .aliases import AudioChunks
-    from ..chroma import AudioRGBGlow
-    from ..constants import PipelineStates
     from ..api import CloudflaredQuickTunnel
-    from ..persona.impl import PersonaClient
-    from ..backends.vc import CeluneVCBackend
-    from ..agent.routing import AgentInputRouter
-    from ..persona.memory import PersonaMemoryStore
-    from ..extensions.events import EventDispatcher
-    from ..dataclasses.cevoice import CEVoicePersona
-    from ..audio.dsp import StreamingPedalboardReverb
-    from ..persona.emotion import PersonaEmotionAnalyzer
-    from ..backends.tts import BackendModel, CeluneBackend
-    from ..extensions.manager import CeluneExtensionManager
-    from ..dataclasses.pipeline import CaptionPlaybackState
     from .locks import ComponentLockOwner, ComponentBusyResult
-    from ..core.concurrency import ComponentLockManager, PriorityInferenceScheduler
+    from ..chroma import AudioRGBGlow
+    from .aliases import AudioChunks
+    from ..audio.dsp import StreamingPedalboardReverb
+    from ..constants import PipelineStates
+    from ..backends.vc import CeluneVCBackend
+    from ..backends.tts import BackendModel, CeluneBackend
+    from ..persona.impl import PersonaClient
+    from ..agent.routing import AgentInputRouter
     from ..agent.runtime import (
-        AgentRuntime,
         AgentTool,
+        AgentRuntime,
         AgentToolSchema,
         AgentToolSelector,
     )
+    from ..persona.memory import PersonaMemoryStore
+    from ..persona.emotion import PersonaEmotionAnalyzer
+    from ..core.concurrency import ComponentLockManager, PriorityInferenceScheduler
+    from ..discord_presence import DiscordPresence
+    from ..extensions.events import EventDispatcher
     from ..dataclasses.celune import (
         CeluneAudioState,
         CeluneModelState,
@@ -55,6 +51,9 @@ if TYPE_CHECKING:
         CeluneCallbackState,
         CelunePipelineState,
     )
+    from ..extensions.manager import CeluneExtensionManager
+    from ..dataclasses.cevoice import CEVoicePersona
+    from ..dataclasses.pipeline import CaptionPlaybackState
 
 
 type GenerationKwarg = Union[torch.Tensor, int, bool, None]
@@ -320,6 +319,7 @@ class CeluneStateAccessors:
     _playback_source_meta: dict[int, dict[str, Union[str, float]]]
     _playback_caption_states: dict[int, CaptionPlaybackState]
     _caption_source_id: Optional[int]
+    _discord_presence: Optional[DiscordPresence]
     playback_chunk_last_queued_at: dict[int, float]
     _playback_trace_last_logged_at: float
     _playback_progress_last_emit_at: float

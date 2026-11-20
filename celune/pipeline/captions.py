@@ -7,6 +7,7 @@ import re
 import json
 import math
 import queue
+import string as string_module
 import inspect
 import logging
 import importlib
@@ -14,28 +15,27 @@ import itertools
 import threading
 import subprocess
 import unicodedata
-import string as string_module
-from pathlib import Path
 from types import ModuleType
-from collections import abc, deque
-from difflib import SequenceMatcher
 from typing import TYPE_CHECKING, Union, Optional, Protocol, cast
+from difflib import SequenceMatcher
+from pathlib import Path
+from collections import abc, deque
 
 import numpy as np
 from iso639.exceptions import InvalidLanguageValue, DeprecatedLanguageValue
 
 from ..i18n import string
-from ..constants import BASE_SR
-from ..typing.common import JSON
-from .timing import monotonic_time
 from ..utils import format_error_message
-from ..audio.resampling import resample_audio
-from ..typing.pipeline import SpeechStreamQueue
-from ..dataclasses.events import StateChangedEvent
-from ..registry.consent import require_model_consent
+from .timing import monotonic_time
+from ..constants import BASE_SR
+from ..exceptions import OnnxRuntimeNotFound, EspeakExecutableNotFound
+from ..typing.common import JSON
 from ..registry.other import CAPTION_ALIGNMENT_MODEL_ID
 from ..typing.aliases import LogLevel, AudioChunk, AudioChunks
-from ..exceptions import OnnxRuntimeNotFound, EspeakExecutableNotFound
+from ..typing.pipeline import SpeechStreamQueue
+from ..audio.resampling import resample_audio
+from ..registry.consent import require_model_consent
+from ..dataclasses.events import StateChangedEvent
 from ..dataclasses.pipeline import (
     SpeechTiming,
     CaptionPlaybackState,
@@ -1110,7 +1110,7 @@ class CaptionAlignmentWorker:
         sample_rate: int,
         alignment_sections: tuple[CaptionAlignmentSection, ...],
     ) -> None:
-        from .buffering import flush_buffered_speech_chunks
+        from .buffering import publish_caption_update, flush_buffered_speech_chunks
 
         with self._state_lock:
             if source_id in self._cancelled_sources:
@@ -1138,9 +1138,7 @@ class CaptionAlignmentWorker:
             )
             if aligned_frames is None:
                 alignment_failed[0] = True
-                callback = getattr(engine, "caption_callback", None)
-                if callable(callback):
-                    callback(None)
+                publish_caption_update(engine, None)
                 word_start_frames = ()
             else:
                 word_start_frames = aligned_frames
@@ -1196,6 +1194,8 @@ class CaptionAlignmentWorker:
         alignment_sections: tuple[CaptionAlignmentSection, ...],
     ) -> None:
         """Align already queued audio and attach its caption timings."""
+        from .buffering import publish_caption_update
+
         with self._state_lock:
             if source_id in self._cancelled_sources:
                 audio_chunks.clear()
@@ -1220,9 +1220,7 @@ class CaptionAlignmentWorker:
         )
         if word_start_frames is None:
             alignment_failed[0] = True
-            callback = getattr(engine, "caption_callback", None)
-            if callable(callback):
-                callback(None)
+            publish_caption_update(engine, None)
             audio_chunks.clear()
             return
 
@@ -1241,9 +1239,7 @@ class CaptionAlignmentWorker:
                 word_start_frames,
             )
             engine._caption_source_id = source_id
-            callback = getattr(engine, "caption_callback", None)
-            if callable(callback):
-                callback(caption_text)
+            publish_caption_update(engine, caption_text)
         audio_chunks.clear()
 
     def _flush_audio(
@@ -1584,6 +1580,10 @@ def _notify_caption_progress(
     visible_words: Optional[int] = None,
 ) -> None:
     """Notify caption consumers while preserving legacy two-argument callbacks."""
+    presence = engine._discord_presence
+    if presence is not None:
+        presence.update_caption_progress(progress, total, visible_words)
+
     callback = getattr(engine, "caption_progress_callback", None)
     if not callable(callback):
         return
@@ -1662,9 +1662,9 @@ def notify_speech_playback_finished(engine: Celune, source_id: int) -> None:
     caption_state = playback_caption_states(engine).get(source_id)
     if caption_state is not None and caption_state.section_segments:
         if caption_state.active_section_index is not None:
-            callback = getattr(engine, "caption_callback", None)
-            if callable(callback):
-                callback(None)
+            from .buffering import publish_caption_update
+
+            publish_caption_update(engine, None)
         if caption_source_id == source_id:
             engine._caption_source_id = None
         return
@@ -1759,11 +1759,11 @@ def update_playback_progress(
                 current_state.active_section_index = section_index
                 changed = True
         if changed and section_index is not None:
-            callback = getattr(engine, "caption_callback", None)
-            if callable(callback):
-                engine._caption_source_id = speech_source_id
-                caption_text = section_segments[section_index].display_text
-                callback(caption_text or None)
+            from .buffering import publish_caption_update
+
+            engine._caption_source_id = speech_source_id
+            caption_text = section_segments[section_index].display_text
+            publish_caption_update(engine, caption_text or None, include_text=True)
         return
 
     if caption_state is not None and caption_segments:

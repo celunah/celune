@@ -8,9 +8,6 @@ import queue
 import importlib
 import threading
 import contextlib
-from pathlib import Path
-from unittest import mock
-from collections.abc import Callable, Iterator
 from types import ModuleType, SimpleNamespace, MappingProxyType
 from typing import (
     TYPE_CHECKING,
@@ -19,19 +16,21 @@ from typing import (
     TypedDict,
     cast,
 )
+from pathlib import Path
+from unittest import mock
+from collections.abc import Callable, Iterator
 
 import numpy as np
-import numpy.typing as npt
 import pytest
 
 from celune.utils import discard
 from celune.constants import PipelineStates
-from celune.typing.aliases import AudioChunk
 from celune.typing.common import JSONSerializable
-from celune.backends.tts.base import CeluneBackend
+from celune.typing.aliases import AudioChunk
 from celune.backends.vc.base import CeluneVCBackend
-from celune.dataclasses.pipeline import AudioOutput, VoiceConversionRequest
 from celune.core.concurrency import ComponentLockManager, PriorityInferenceScheduler
+from celune.backends.tts.base import CeluneBackend
+from celune.dataclasses.pipeline import AudioOutput, VoiceConversionRequest
 
 if TYPE_CHECKING:
     from celune.celune import Celune
@@ -127,7 +126,8 @@ class FakeBackend(CeluneBackend):
             kwargs: Generation arguments accepted for interface compatibility.
 
         Returns:
-            Iterator[tuple[npt.NDArray[np.float32], int, dict[str, int]]]: An iterator yielding one fake audio chunk.
+            Iterator[tuple[np.typing.NDArray[np.float32], int, dict[str, int]]]:
+                An iterator yielding one fake audio chunk.
         """
         discard(model)
         discard(kwargs)
@@ -221,7 +221,7 @@ class FakeGlow:
         discard(reset)
         discard(wait)
 
-    def schedule(self, audio: npt.NDArray[np.float32]) -> None:
+    def schedule(self, audio: np.typing.NDArray[np.float32]) -> None:
         """Record audio scheduled for glow processing.
 
         Args:
@@ -261,7 +261,7 @@ class FakeStream:
         """Record stream closure."""
         self.closed = True
 
-    def write(self, audio: npt.NDArray[np.float32]) -> bool:
+    def write(self, audio: np.typing.NDArray[np.float32]) -> bool:
         """Record one written audio chunk.
 
         Args:
@@ -315,6 +315,7 @@ def make_pipeline_engine() -> SimpleNamespace:
     engine._pipeline_lock_owner = None
     engine._last_component_busy = None
     engine.cur_state = "idle"
+    engine._discord_presence = None
 
     def update_cur_state(state: str) -> None:
         engine.cur_state = state

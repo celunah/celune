@@ -16,12 +16,6 @@ import psutil
 
 from ..i18n import string
 from ..utils import discard
-from ..typing.common import JSONSerializable
-from ..typing.pipeline import SpeechStreamQueue
-from ..dataclasses.events import StateChangedEvent
-from ..core.concurrency import ComponentLockManager
-from ..typing.aliases import AudioChunk, AudioChunks
-from ..constants import BASE_SR, APP_NAME, PipelineStates
 from .timing import (
     LEGACY_BUFFER_SECONDS,
     SMART_BUFFER_SMOOTHING,
@@ -51,6 +45,7 @@ from .captions import (
     playback_source_meta,
     set_playback_source_status,
 )
+from ..constants import BASE_SR, APP_NAME, PipelineStates
 from ..typing.locks import (
     ComponentLockName,
     ComponentLockOwner,
@@ -58,6 +53,11 @@ from ..typing.locks import (
     ComponentLockAcquisition,
     ComponentLockRequirement,
 )
+from ..typing.common import JSONSerializable
+from ..typing.aliases import AudioChunk, AudioChunks
+from ..typing.pipeline import SpeechStreamQueue
+from ..core.concurrency import ComponentLockManager
+from ..dataclasses.events import StateChangedEvent
 from ..dataclasses.pipeline import (
     SpeechTiming,
     PlaybackChunk,
@@ -553,16 +553,31 @@ def flush_buffered_speech_chunks(
 
     buffer.clear()
     if not pushed_audio:
-        caption_callback = getattr(engine, "caption_callback", None)
-        if caption_text is not None and callable(caption_callback):
+        if caption_text is not None:
             engine._caption_source_id = source_id
-            caption_callback(caption_text)
+            publish_caption_update(engine, caption_text)
         set_playback_source_status(engine, source_id, string("status.speaking"))
         engine.cur_state = "speaking"
         engine.queue_avail_callback()
         return True
 
     return pushed_audio
+
+
+def publish_caption_update(
+    engine: Celune,
+    caption: Optional[str],
+    include_text: bool = False,
+) -> None:
+    """Publish one caption update to Discord and the configured UI callback."""
+    presence = engine._discord_presence
+    if presence is not None:
+        presence.update_caption(
+            caption,
+            engine._caption_source_id,
+            include_text=include_text,
+        )
+    engine.caption_callback(caption)
 
 
 def config_text(engine: Celune, key: str, default: str) -> str:

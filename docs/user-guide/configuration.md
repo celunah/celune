@@ -22,7 +22,8 @@ before the interface opens. `celune config view` prints the active file and
 | `voice_bundle` | `default` | CEVOICE/CECHAR name or path. |
 | `log_level` | `info` | `info`, `verbose`, or `debug`. |
 | `locale` | `null` | Locale override. `null` uses system detection. |
-| `discord_presence` | `true` | Show Celune's current coarse activity through Discord Rich Presence. |
+| `rpc.enabled` | `true` | Show Celune's activity through Discord Rich Presence. |
+| `rpc.show_utterances` | `true` | Show speech caption chunks in Rich Presence. |
 | `mode` | `performance` | `performance`, `converse`, or `agent`. The former `speak` name remains compatible. |
 | `vram` | `medium` | Model-size and memory preset: `low`, `medium`, `high`, or `xhigh`. Persona and standard agent models need `high`. Smart 8B-tier Persona models need `xhigh`. |
 | `headless` | `false` | Suppress the Textual interface. |
@@ -50,17 +51,26 @@ compatibility and artifact matrix.
 
 ### Discord Rich Presence
 
-When `discord_presence` is enabled, Celune publishes her current activity over
+When `rpc.enabled` is true, Celune publishes her current activity over
 Discord's local IPC connection. Discord labels her activity as
-`Listening to Celune`, with a coarse state such as idle, thinking, generating,
-speaking, sleeping, or reloading as its status detail. It never includes
-conversation text, generated speech, audio, server details, or other Discord
-account data.
+`Listening to Celune`, with a state such as idle, thinking, generating,
+speaking, sleeping, or reloading as its status detail. If `rpc.show_utterances`
+is true, the detail changes to `Celune says:` for one second when speech starts,
+then displays available caption text in chunks no more often than every six
+seconds. Each detail is limited to Discord's 128-character activity field.
+This uses the existing caption pipeline. Enable `captions` to produce aligned
+captions for TTS speech. When speech ends, the detail returns to Celune's
+current state. Caption text is sent to Discord only when
+`rpc.show_utterances` is enabled.
+Discord limits clients to five activity updates per 20 seconds, so Celune also
+rate-limits state changes and shutdown clears across the same rolling window
+([Discord Gateway documentation](https://github.com/discord/discord-api-docs/blob/main/developers/events/gateway-events.mdx)).
 Celune does not use a bot, OAuth authorization, or message, friend, guild, or
 voice APIs. Discord must be running and configured to display current activity.
 If the IPC connection is unavailable, Celune keeps running and retries. She
-clears the activity during shutdown. Set `discord_presence: false` to disable
-it.
+clears the activity during shutdown when the rate limit allows. Set
+`rpc.enabled: false` to disable Rich Presence. Set `rpc.show_utterances: false`
+to keep caption text private while leaving state details enabled.
 
 ### Backend-specific options
 

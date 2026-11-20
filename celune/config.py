@@ -2,15 +2,14 @@
 """Configuration helpers for Celune."""
 
 import os
-from pathlib import Path
 from copy import deepcopy
 from typing import Optional, cast
+from pathlib import Path
 from collections.abc import Mapping, Callable, Sequence
 
 from .i18n import string
 from .paths import api_key_path
 from .constants import APP_NAME
-from .typing.aliases import LogLevel
 from .typing.common import Config, JSONSerializable
 from .typing.config import (
     AudioHostApi,
@@ -19,6 +18,7 @@ from .typing.config import (
     AudioDeviceInfoValue,
     AudioDeviceQueryResult,
 )
+from .typing.aliases import LogLevel
 
 ENABLED_ENV_VALUES = {"1", "true", "on", "yes", "enabled"}
 LOG_LEVELS: tuple[LogLevel, ...] = ("info", "verbose", "debug")
@@ -623,7 +623,23 @@ def merge_missing_defaults(
         tuple[Config, bool]: The merged configuration and whether it changed.
     """
     source_config = config
+    migrated_discord_presence = False
     migrated_qwen3_option = False
+    default_rpc = defaults.get("rpc")
+    if (
+        config is not None
+        and "discord_presence" in config
+        and isinstance(default_rpc, dict)
+    ):
+        source_values = dict(config)
+        legacy_value = source_values.pop("discord_presence")
+        raw_rpc_options = source_values.get("rpc")
+        rpc_options = dict(raw_rpc_options) if isinstance(raw_rpc_options, dict) else {}
+        rpc_options.setdefault("enabled", legacy_value)
+        source_values["rpc"] = rpc_options
+        source_config = source_values
+        migrated_discord_presence = True
+
     default_backend_options = defaults.get("backend_options")
     default_qwen3_options = (
         default_backend_options.get("qwen3")
@@ -631,12 +647,12 @@ def merge_missing_defaults(
         else None
     )
     if (
-        config is not None
-        and "qwen3_x_vector_only" in config
+        source_config is not None
+        and "qwen3_x_vector_only" in source_config
         and isinstance(default_qwen3_options, dict)
         and "x_vector_only" in default_qwen3_options
     ):
-        source_values = dict(config)
+        source_values = dict(source_config)
         legacy_value = source_values.pop("qwen3_x_vector_only")
         raw_backend_options = source_values.get("backend_options")
         backend_options = (
@@ -653,7 +669,7 @@ def merge_missing_defaults(
         migrated_qwen3_option = True
 
     merged: Config = {}
-    changed = migrated_qwen3_option
+    changed = migrated_discord_presence or migrated_qwen3_option
 
     if source_config is not None:
         for key, current_value in source_config.items():

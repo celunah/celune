@@ -76,9 +76,11 @@ locale: null
 
 # Discord Rich Presence
 #
-# `true` = display Celune's current activity through Discord's local IPC
-# `false` = keep the activity private
-discord_presence: true
+# Celune publishes activity through Discord's local IPC connection.
+rpc:
+  enabled: true
+  # Caption text is sent only when this option is enabled.
+  show_utterances: true
 
 # Audio device settings
 #
