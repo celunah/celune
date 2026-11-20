@@ -58,8 +58,11 @@ The right pane refreshes the selected object's state and attributes. Sensitive
 fields such as API keys, tokens, passwords, and credentials are redacted. The
 `Callbacks` entry under `Components > Engine` replaces those tables with a live
 callback list and details for each current handler, signature, source location,
-and any UI handlers chained onto it. The view refreshes with the inspector's
-one-second component snapshot. The
+and any UI handlers chained onto it. Its `Calls` column counts observed callback
+invocations, and the selected callback details show when each handler was last
+called. Counts update with each live-call refresh and are kept independently of
+the rolling call list. Pausing `Live Calls` stops the counts, and clearing it
+resets them. The
 `UI Modals` entry under `Components > UI` replaces the state and attributes
 tables with buttons for voice selection, the settings menu, and the license
 modal. It opens the current voice and settings menus when available, using

@@ -622,17 +622,20 @@ def test_glow_effects_component_validates_inputs_and_runs_actions() -> None:
     assert not trace.available
 
 
+def first_callback(_message: str) -> None:
+    """Serve as a module-level callback for the live inspector test."""
+
+
+def second_callback(_message: str) -> None:
+    """Serve as a second module-level callback for the live inspector test."""
+
+
+def replacement_callback(_message: str) -> None:
+    """Serve as a replacement module-level callback for the live inspector test."""
+
+
 def test_engine_callbacks_render_as_a_live_callback_viewer() -> None:
-    """Show callback slots and refresh their current handlers in the inspector."""
-
-    def first_callback(_message: str) -> None:
-        return None
-
-    def second_callback(_message: str) -> None:
-        return None
-
-    def replacement_callback(_message: str) -> None:
-        return None
+    """Show current callback handlers and update their observed call counts."""
 
     callback_state = SimpleNamespace(
         log_callback=first_callback,
@@ -671,12 +674,41 @@ def test_engine_callbacks_render_as_a_live_callback_viewer() -> None:
             assert screen._selected_callback_name == "log_callback"
             assert "first_callback" in (screen._shown_callback_detail or "")
 
+            trace.set_paused(False)
+            callback_state.log_callback("first message")
+            callback_state.log_callback("second message")
+            screen._refresh_live_calls(force=True)
+            await pilot.pause()
+
+            callback_record = screen._callback_entries["log_callback"]
+            assert callback_record.call_count == 2
+            assert callback_record.last_called_ns is not None
+            assert screen._callback_row_values["log_callback"] == (
+                "first_callback",
+                "2",
+            )
+
+            trace.set_paused(True)
             callback_state.log_callback = replacement_callback
             screen._render_component()
             await pilot.pause()
 
             assert table.row_count == 2
             assert "replacement_callback" in (screen._shown_callback_detail or "")
+            assert screen._callback_entries["log_callback"].call_count == 0
+
+            trace.set_paused(False)
+            callback_state.log_callback("replacement message")
+            screen._refresh_live_calls(force=True)
+            await pilot.pause()
+
+            callback_record = screen._callback_entries["log_callback"]
+            assert callback_record.call_count == 1
+            assert callback_record.last_called_ns is not None
+            assert screen._callback_row_values["log_callback"] == (
+                "replacement_callback",
+                "1",
+            )
 
     asyncio.run(inspect_callbacks())
     assert not trace.available

@@ -14,11 +14,6 @@ import sysconfig
 import threading
 import contextlib
 from enum import Enum
-from pathlib import Path
-from datetime import datetime
-from collections import abc, deque
-from dataclasses import field, dataclass
-from typing import Literal, ClassVar, Optional, cast, TYPE_CHECKING
 from types import (
     CodeType,
     FrameType,
@@ -27,8 +22,12 @@ from types import (
     FunctionType,
     BuiltinFunctionType,
 )
+from typing import TYPE_CHECKING, Literal, ClassVar, Optional, cast
+from pathlib import Path
+from datetime import datetime
+from collections import abc, deque
+from dataclasses import field, replace, dataclass
 
-from rich.text import Text
 from textual import (
     app,
     events,
@@ -40,15 +39,20 @@ from textual import (
 from textual import (
     validation as textual_validation,
 )
+from rich.text import Text
 
 from ..i18n import string
-from ..constants import APP_NAME
-from .buttons import CeluneButton
 from ..paths import running_compiled
 from .invoke import invoke_expression
+from .buttons import CeluneButton
+from ..constants import APP_NAME
 from ..exceptions import (
     InvokeCallError as _InvokeCallError,
+)
+from ..exceptions import (
     InvokeParseError as _InvokeParseError,
+)
+from ..exceptions import (
     InvokeResolutionError as _InvokeResolutionError,
 )
 
@@ -252,6 +256,10 @@ class DebugCallTrace:
         self._entries: deque[DebugCallEntry] = deque(maxlen=self._TRACE_LIMIT)
         self._stacks: dict[int, list[_ActiveCall]] = {}
         self._lock = threading.RLock()
+        self._callback_codes: set[CodeType] = set()
+        self._callback_callable_ids: set[int] = set()
+        self._callback_calls: dict[CodeType, tuple[int, int]] = {}
+        self._native_callback_calls: dict[int, tuple[int, int]] = {}
         self._source_cache: dict[tuple[Optional[str], Optional[str]], str] = {}
         self._source_filters: tuple[str, ...] = ()
         self._module_codes: dict[str, set[CodeType]] = {}
@@ -394,6 +402,8 @@ class DebugCallTrace:
                 )
         self._active_codes.clear()
         self._code_modules.clear()
+        self._callback_codes.clear()
+        self._callback_callable_ids.clear()
         self._module_codes.clear()
         self._module_identities.clear()
         with contextlib.suppress(Exception):
@@ -502,6 +512,8 @@ class DebugCallTrace:
         """Remove all visible entries from the rolling trace."""
         with self._lock:
             self._entries.clear()
+            self._callback_calls.clear()
+            self._native_callback_calls.clear()
 
     def entries(
         self,
@@ -534,6 +546,37 @@ class DebugCallTrace:
             None,
         )
 
+    def callback_usage(self, target: object) -> tuple[int, Optional[int]]:
+        """Return and collect invocations for one current callback target."""
+        code_target = target.func if isinstance(target, functools.partial) else target
+        if isinstance(code_target, MethodType):
+            code_target = code_target.__func__
+        code = getattr(code_target, "__code__", None)
+        if not isinstance(code, CodeType):
+            call_method = inspect.getattr_static(type(code_target), "__call__", None)
+            code = getattr(call_method, "__code__", None)
+        module_name = _callable_module_name(code_target)
+        if isinstance(code, CodeType) and module_name is not None:
+            if self.available:
+                self._code_modules[code] = module_name
+                self._callback_codes.add(code)
+                self._set_code_monitoring(
+                    code,
+                    self._recording and self._should_monitor_module(module_name),
+                )
+            with self._lock:
+                call_count, last_called_ns = self._callback_calls.get(code, (0, 0))
+        else:
+            callable_id = id(target)
+            if self.available:
+                self._callback_callable_ids.add(callable_id)
+            with self._lock:
+                call_count, last_called_ns = self._native_callback_calls.get(
+                    callable_id,
+                    (0, 0),
+                )
+        return call_count, last_called_ns or None
+
     def _on_start(self, code: CodeType, instruction_offset: int) -> None:
         _discard_unused(instruction_offset)
         if self._failed or self._suspended or not self._recording:
@@ -548,8 +591,12 @@ class DebugCallTrace:
             name = _qualified_python_name(module_name, code)
             special_method = _is_special_method(code.co_name)
             started_ns = time.perf_counter_ns()
+            timestamp_ns = time.time_ns()
             thread_id = threading.get_ident()
             with self._lock:
+                if code in self._callback_codes:
+                    call_count, _ = self._callback_calls.get(code, (0, 0))
+                    self._callback_calls[code] = (call_count + 1, timestamp_ns)
                 stack = self._stacks.setdefault(thread_id, [])
                 entry: Optional[DebugCallEntry] = None
                 if (
@@ -562,7 +609,7 @@ class DebugCallTrace:
                     self._next_entry_id += 1
                     entry = DebugCallEntry(
                         entry_id=self._next_entry_id,
-                        timestamp_ns=time.time_ns(),
+                        timestamp_ns=timestamp_ns,
                         name=name,
                         display_name=f"{name}()",
                         source_category=source_category,
@@ -608,11 +655,22 @@ class DebugCallTrace:
                 special_method = _is_special_method(name.rpartition(".")[2])
             source_category = self._classify_source(module_name, None)
             started_ns = time.perf_counter_ns()
+            timestamp_ns = time.time_ns()
             thread_id = threading.get_ident()
             frame = sys._getframe().f_back
             source_path = code.co_filename
             source_line = frame.f_lineno if frame is not None else code.co_firstlineno
             with self._lock:
+                callable_id = id(callable_value)
+                if callable_id in self._callback_callable_ids:
+                    call_count, _ = self._native_callback_calls.get(
+                        callable_id,
+                        (0, 0),
+                    )
+                    self._native_callback_calls[callable_id] = (
+                        call_count + 1,
+                        timestamp_ns,
+                    )
                 stack = self._stacks.setdefault(thread_id, [])
                 entry: Optional[DebugCallEntry] = None
                 if (
@@ -624,7 +682,7 @@ class DebugCallTrace:
                     self._next_entry_id += 1
                     entry = DebugCallEntry(
                         entry_id=self._next_entry_id,
-                        timestamp_ns=time.time_ns(),
+                        timestamp_ns=timestamp_ns,
                         name=name,
                         display_name=f"{name}()",
                         source_category=source_category,
@@ -886,6 +944,8 @@ class _InspectorCallback:
     source_path: str
     source_line: Optional[int]
     chained_handlers: tuple[str, ...]
+    call_count: int = 0
+    last_called_ns: Optional[int] = None
 
 
 _UI_MODULE_COMPONENTS: tuple[tuple[str, str], ...] = (
@@ -1640,7 +1700,9 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
         table.add_column(
             string("debug.callback_handler"), key="debug-callback-handler", width=28
         )
-        table.add_column(string("debug.source"), key="debug-callback-source", width=16)
+        table.add_column(
+            string("debug.callback_calls"), key="debug-callback-calls", width=9
+        )
         self._refresh_snapshot()
         self._refresh_source_status()
         self._refresh_live_calls()
@@ -2170,6 +2232,9 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
     def _refresh_live_calls(self, *, force: bool = False) -> None:
         with self.trace.suspend_events():
             self._update_live_calls(force=force)
+            component = self._selected_component
+            if component is not None and component.path == "celune._callbacks":
+                self._render_callback_viewer(component.value)
 
     def _update_live_calls(self, *, force: bool = False) -> None:
         self._refresh_source_status()
@@ -2690,8 +2755,15 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
             name: _inspect_callback(name, target)
             for name, target in _object_attributes(callback_state).items()
         }
+        for name, record in tuple(records.items()):
+            call_count, last_called_ns = self.trace.callback_usage(record.target)
+            records[name] = replace(
+                record,
+                call_count=call_count,
+                last_called_ns=last_called_ns,
+            )
         rows = {
-            name: (record.handler_label, _source_category_label(record.source_category))
+            name: (record.handler_label, str(record.call_count))
             for name, record in records.items()
         }
         table = self.query_one("#debug-callback-table", widgets.DataTable)
@@ -2700,24 +2772,24 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
 
         for name in previous_rows.keys() - rows.keys():
             table.remove_row(name)
-        for name, (handler, source) in rows.items():
+        for name, (handler, calls) in rows.items():
             if name not in previous_rows:
                 table.add_row(
                     Text(name),
                     Text(handler, no_wrap=False),
-                    Text(source),
+                    Text(calls),
                     key=name,
                 )
                 continue
-            previous_handler, previous_source = previous_rows[name]
+            previous_handler, previous_calls = previous_rows[name]
             if handler != previous_handler:
                 table.update_cell(
                     name,
                     "debug-callback-handler",
                     Text(handler, no_wrap=False),
                 )
-            if source != previous_source:
-                table.update_cell(name, "debug-callback-source", Text(source))
+            if calls != previous_calls:
+                table.update_cell(name, "debug-callback-calls", Text(calls))
 
         self._callback_row_values = rows
         if self._selected_callback_name not in records:
@@ -2736,10 +2808,17 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
                 if record.source_path and record.source_line is not None
                 else string("debug.not_applicable")
             )
+            last_called = (
+                _format_timestamp(record.last_called_ns)
+                if record.last_called_ns is not None
+                else string("debug.callback_not_called")
+            )
             lines = [
                 f"{string('debug.callback_slot')}: {record.slot}",
                 f"{string('debug.callback_handler')}: {record.handler_name}",
                 f"{string('debug.callback_signature')}: {record.signature}",
+                (f"{string('debug.callback_calls_observed')}: {record.call_count}"),
+                f"{string('debug.callback_last_called')}: {last_called}",
                 (
                     f"{string('debug.source_category')}: "
                     f"{_source_category_label(record.source_category)}"
