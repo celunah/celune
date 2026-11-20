@@ -74,6 +74,12 @@ log_level: info
 # non-existing locales will fall back to raw keys
 locale: null
 
+# Discord Rich Presence
+#
+# `true` = display Celune's current activity through Discord's local IPC
+# `false` = keep the activity private
+discord_presence: true
+
 # Audio device settings
 #
 # set either key to a sounddevice device name or numeric index

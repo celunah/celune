@@ -22,6 +22,7 @@ before the interface opens. `celune config view` prints the active file and
 | `voice_bundle` | `default` | CEVOICE/CECHAR name or path. |
 | `log_level` | `info` | `info`, `verbose`, or `debug`. |
 | `locale` | `null` | Locale override. `null` uses system detection. |
+| `discord_presence` | `true` | Show Celune's current coarse activity through Discord Rich Presence. |
 | `mode` | `performance` | `performance`, `converse`, or `agent`. The former `speak` name remains compatible. |
 | `vram` | `medium` | Model-size and memory preset: `low`, `medium`, `high`, or `xhigh`. Persona and standard agent models need `high`. Smart 8B-tier Persona models need `xhigh`. |
 | `headless` | `false` | Suppress the Textual interface. |
@@ -46,6 +47,18 @@ requires audio.cpp in either mode. Celune logs the requested and effective
 runtime, and backend workers report their loaded model through CEDTS metadata.
 See [inference runtimes](../development/inference-runtimes.md) for the exact
 compatibility and artifact matrix.
+
+### Discord Rich Presence
+
+When `discord_presence` is enabled, Celune publishes her current activity over
+Discord's local IPC connection. The activity shows Celune and a coarse state
+such as idle, thinking, generating, speaking, sleeping, or reloading. It never
+includes conversation text, generated speech, audio, server details, or other
+Discord account data. Celune does not use a bot, OAuth authorization, or
+message, friend, guild, or voice APIs. Discord must be running and configured
+to display current activity. If the IPC connection is unavailable, Celune keeps
+running and retries. She clears the activity during shutdown. Set
+`discord_presence: false` to disable it.
 
 ### Backend-specific options
 

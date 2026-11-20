@@ -184,6 +184,7 @@ def initialize(
     self._audio_state = CeluneAudioState()
     self._runtime_state = CeluneRuntimeState()
     self._reload_backend = None
+    self._discord_presence = None
     self._normalizer_load_epoch = 0
     self._async_runtime_lock = threading.Lock()
     self._voice_reload_guard = threading.Lock()
@@ -1246,6 +1247,11 @@ def close(self) -> None:
         self._closed = True
         self.operation_state = OperationState.STOPPED
 
+    discord_presence = self._discord_presence
+    self._discord_presence = None
+    if discord_presence is not None:
+        discord_presence.close()
+
     if self._api_tunnel is not None:
         self._api_tunnel.stop()
         self._api_tunnel = None
@@ -1294,6 +1300,26 @@ def close(self) -> None:
             set_commercial_mode(False)
             type(self)._instance = None
             self.log("[ENGINE] close complete", loglevel="debug")
+
+
+def start_discord_presence(self) -> None:
+    """Start optional Rich Presence after a normal engine load."""
+    from ..discord_presence import DiscordPresence
+
+    with self._model_lock:
+        if self._closed or self.backend_mode != "normal":
+            return
+        if self.config.get("discord_presence", True) is not True:
+            return
+        if self._discord_presence is not None:
+            return
+
+        presence = DiscordPresence(lambda: self.cur_state)
+        self._discord_presence = presence
+        try:
+            presence.start()
+        except Exception:
+            self._discord_presence = None
 
 
 def run_pipeline_jobs(self) -> None:

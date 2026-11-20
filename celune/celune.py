@@ -53,6 +53,7 @@ from .dataclasses.properties import (
     bind_constant_properties,
     bind_forwarded_properties,
 )
+from .discord_presence import DiscordPresence
 
 npt = np.typing
 
@@ -74,6 +75,7 @@ class Celune(CeluneStateAccessors):
     _playback_source_statuses: dict[int, str]
     _playback_source_meta: dict[int, dict[str, Union[str, float]]]
     _playback_caption_states: dict[int, CaptionPlaybackState]
+    _discord_presence: Optional[DiscordPresence]
 
     def __init_subclass__(cls, **kwargs: Never) -> Never:
         raise TypeError(f"{__class__.__name__} is final and cannot be subclassed")

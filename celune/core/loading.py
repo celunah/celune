@@ -342,6 +342,7 @@ def load(self, raise_on_error: bool = False, skip_runtime_check: bool = False) -
     if self.backend_mode == "normal":
         _play_readiness_signal_after_persona_load(self)
     self.emit_event("ready", ReadyEvent(celune=self))
+    lifecycle.start_discord_presence(self)
 
     return True
 

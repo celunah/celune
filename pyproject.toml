@@ -41,6 +41,8 @@ dependencies = [
     # UX & UI
     "textual",
     "rich",
+    # Presence-only Discord integration through the local IPC pipe.
+    "pypresence==4.6.2",
     # Early terminal selectors need this library.
     "readchar",
     # "You do want me to glow, do you?" - she says.
