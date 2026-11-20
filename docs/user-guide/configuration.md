@@ -51,14 +51,16 @@ compatibility and artifact matrix.
 ### Discord Rich Presence
 
 When `discord_presence` is enabled, Celune publishes her current activity over
-Discord's local IPC connection. The activity shows Celune and a coarse state
-such as idle, thinking, generating, speaking, sleeping, or reloading. It never
-includes conversation text, generated speech, audio, server details, or other
-Discord account data. Celune does not use a bot, OAuth authorization, or
-message, friend, guild, or voice APIs. Discord must be running and configured
-to display current activity. If the IPC connection is unavailable, Celune keeps
-running and retries. She clears the activity during shutdown. Set
-`discord_presence: false` to disable it.
+Discord's local IPC connection. Discord labels her activity as
+`Listening to Celune`, with a coarse state such as idle, thinking, generating,
+speaking, sleeping, or reloading as its status detail. It never includes
+conversation text, generated speech, audio, server details, or other Discord
+account data.
+Celune does not use a bot, OAuth authorization, or message, friend, guild, or
+voice APIs. Discord must be running and configured to display current activity.
+If the IPC connection is unavailable, Celune keeps running and retries. She
+clears the activity during shutdown. Set `discord_presence: false` to disable
+it.
 
 ### Backend-specific options
 

@@ -68,7 +68,7 @@ class DiscordPresence:
         """Connect to Discord locally and publish state transitions."""
         try:
             from pypresence import Presence
-            from pypresence.types import StatusDisplayType
+            from pypresence.types import ActivityType, StatusDisplayType
         except ImportError:
             return
 
@@ -118,6 +118,7 @@ class DiscordPresence:
                                 client.update(
                                     name=APP_NAME,
                                     details=string(status_key),
+                                    activity_type=ActivityType.LISTENING,
                                     status_display_type=StatusDisplayType.DETAILS,
                                 )
                         except Exception:
