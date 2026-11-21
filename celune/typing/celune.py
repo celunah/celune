@@ -40,7 +40,7 @@ if TYPE_CHECKING:
     from ..persona.memory import PersonaMemoryStore
     from ..persona.emotion import PersonaEmotionAnalyzer
     from ..core.concurrency import ComponentLockManager, PriorityInferenceScheduler
-    from ..discord_presence import DiscordPresence
+    from ..rpc import DiscordPresence
     from ..extensions.events import EventDispatcher
     from ..dataclasses.celune import (
         CeluneAudioState,

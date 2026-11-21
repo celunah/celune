@@ -1306,7 +1306,7 @@ def close(self) -> None:
 
 def start_discord_presence(self) -> None:
     """Start optional Rich Presence after a normal engine load."""
-    from ..discord_presence import DiscordPresence
+    from ..rpc import DiscordPresence
 
     with self._model_lock:
         if self._closed or self.backend_mode != "normal":

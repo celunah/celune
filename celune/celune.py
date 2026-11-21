@@ -53,7 +53,7 @@ from .dataclasses.properties import (
     bind_constant_properties,
     bind_forwarded_properties,
 )
-from .discord_presence import DiscordPresence
+from .rpc import DiscordPresence
 
 npt = np.typing
 
@@ -424,8 +424,6 @@ class Celune(CeluneStateAccessors):
     def api_settings(self) -> tuple[bool, str, int, Optional[str], int, str]:
         """Resolve API access, authentication, port, and rate-limit settings."""
         return core_lifecycle.api_settings(self)
-
-    # as of CeluneNorm 2.0, normalization ACTUALLY works with long inputs
 
     def stop_live_audio(self) -> None:
         """Reset any state held by the active live voice-conversion backend."""
