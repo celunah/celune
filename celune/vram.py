@@ -36,6 +36,7 @@ KNOWN_TTS_BACKENDS = (
     "mini",
     "qwen3",
     "ming3",
+    "zonos3",
     "dotstts",
     "voxcpm2",
     "fireredtts3",

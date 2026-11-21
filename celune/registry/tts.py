@@ -48,6 +48,8 @@ __all__ = [
     "TTS_VOICE_NAMES",
     "VOXCPM2_MODEL_ID",
     "VOXCPM2_VOICE_MODELS",
+    "ZONOS3_TTS_MODEL_ID",
+    "ZONOS3_TTS_REVISION",
     "ModelComponentContract",
     "ModelContract",
     "QuantizationRule",
@@ -310,6 +312,8 @@ DOTS_TTS_CANONICAL_MODEL_ID = "dots-studio/dots.tts-mf"
 VOXCPM2_MODEL_ID = "openbmb/VoxCPM2"
 FIREREDTTS3_MODEL_ID = "FireRedTeam/FireRedTTS3"
 MING3_TTS_MODEL_ID = "inclusionAI/Ming-3.0-tts-0.5B"
+ZONOS3_TTS_MODEL_ID = "Zyphra/ZONOS3-Mini"
+ZONOS3_TTS_REVISION = "2921b8821772b0bd10a04456863d21abf9d2f283"
 MING3_TTS_GGUF_REPO = "audio-cpp/Ming-3.0-TTS-0.5B-GGUF"
 MING3_TTS_BF16_FILE = "ming-3.0-tts-0.5b-bf16.gguf"
 MING3_TTS_BF16_SIZE = 2_998_284_288
@@ -435,6 +439,18 @@ TTS_MODELS: tuple[ModelMetadata, ...] = (
         non_commercial=False,
         research_only=False,
         repository_url="https://huggingface.co/inclusionAI/Ming-3.0-tts-0.5B",
+        roles=("voice-cloning",),
+    ),
+    ModelMetadata(
+        model_id=ZONOS3_TTS_MODEL_ID,
+        display_name="ZONOS3-Mini",
+        category="tts",
+        revision=ZONOS3_TTS_REVISION,
+        license_id="apache-2.0",
+        license_url="https://www.apache.org/licenses/LICENSE-2.0",
+        non_commercial=False,
+        research_only=False,
+        repository_url="https://huggingface.co/Zyphra/ZONOS3-Mini",
         roles=("voice-cloning",),
     ),
     ModelMetadata(

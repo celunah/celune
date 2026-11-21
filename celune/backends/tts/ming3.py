@@ -46,7 +46,6 @@ from ...registry.tts import (
     model_contract as resolve_model_contract,
 )
 
-_AUDIOCPP_RELEASE = "v0.9.3"
 _SAMPLE_RATE = 44_100
 _MAX_TOKENS = 512
 _MAX_AUDIO_SECONDS = 120.0

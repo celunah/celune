@@ -33,7 +33,8 @@ for the timeout and invalid-client conditions.
 | `fireredtts3` | TTS | `celune.backends.tts.fireredtts3:FireRedTTS3` | FireRedTTS3 source, Transformers 5.6.2, and TorchCodec 0.16.0. BF16 transformer path with PyTorch SDPA and latent streaming. |
 | `dotstts` | TTS | `celune.backends.tts.dotstts:DotsTtsMF` | Celune's `dots.tts` fork. Python 3.12. |
 | `voxcpm2` | TTS | `celune.backends.tts.voxcpm2:VoxCPM2` | Celune's VoxCPM `fix/latent-consistency` branch. Python 3.12. |
-| `ming3` | TTS | `celune.backends.tts.ming3:Ming3` | Multilingual Ming 3.0 voice cloning through audio.cpp v0.9.3's native streaming CUDA server. |
+| `ming3` | TTS | `celune.backends.tts.ming3:Ming3` | Multilingual Ming 3.0 voice cloning through audio.cpp v0.9.4's native streaming CUDA server. |
+| `zonos3` | TTS | `celune.backends.tts.zonos3:Zonos3` | ZONOS3-Mini reference model with progressive PCM callbacks. Python 3.12 and PyTorch 2.9.1 CUDA 12.8. |
 | `soulxsinger` | TTS | `celune.backends.tts.soulxsinger:SoulXSinger` | Score-conditioned singing. Python 3.12, pinned upstream source and Transformers 4.41.2, `iso639-lang` for CESN, explicit English IPA, CUDA. |
 | `seed-vc` | VC | `celune.backends.vc.seedvc:CeluneSeedVCBackend` | Celune's Seed-VC fork. |
 
@@ -43,7 +44,7 @@ below 5, Lingua, librosa, llvmlite, NumPy/Numba, Pillow, platformdirs, psutil,
 sounddevice, soundfile, and Zstandard. They also use the CEDTS-compatible
 PyTorch 2.11 CUDA 12.8 worker stack.
 Ming3 uses the shared worker environment for Celune integration and starts a
-pinned audio.cpp v0.9.3 CUDA server as a child process. On Windows it downloads
+pinned audio.cpp v0.9.4 CUDA server as a child process. On Windows it downloads
 the CUDA 13.3 binary and runtime archives. On Linux it uses the CUDA 12.8
 release. The server runs only on loopback and is stopped when the backend
 runtime is released. The Ming weights are converted GGUF packages from
@@ -74,6 +75,16 @@ available for Python 3.12. Python 3.13 falls back to a source distribution that
 fails to parse its incomplete project metadata.
 
 ## Backend behavior
+
+### ZONOS3-Mini
+
+`zonos3` adapts the Apache-2.0 [ZONOS3-Mini model](https://huggingface.co/Zyphra/ZONOS3-Mini) through Zyphra's pinned [PyTorch reference implementation](https://github.com/Zyphra/ZONOS3-Mini/tree/a50e14117d99181ba7f28047b451ba03ba1a09a9/model). The model snapshot is pinned to Hugging Face revision `2921b8821772b0bd10a04456863d21abf9d2f283`. The upstream Python package is MIT licensed, separately from the Apache-2.0 model weights.
+
+The backend uses Python 3.12 and a separate PyTorch 2.9.1 CUDA 12.8 environment to match the reference package's torchaudio and Transformers constraints. It clones from the active CEVOICE/CECHAR reference WAV in speaker-embedding mode. ZONOS3 does not need the voice pack's reference transcript. Celune's language detector maps to the model's 43 languages, and missing or unsupported codes fall back to US English.
+
+The first model download is about 11 GB. It includes the 1.77 GB language model and the matched codec's 7.96 GB generator checkpoint, teacher, decoder, tokenizer, pause rows, and speaker encoder. The language model loads in BF16 on CUDA. The large matched decoder loads on CPU by default to leave GPU memory for the language model. Set `ZONOS3_AUDIO_CODEC_DEVICE` to select another decoder device. The reference implementation emits progressive PCM chunks through its `on_audio` callback. Celune forwards these callbacks through a bounded producer thread as normalized float32 audio at 44.1 kHz.
+
+ZONOS3 remains Celune-native for now. The released [audio.cpp v0.9.4 model catalog](https://github.com/0xShug0/audio.cpp/blob/v0.9.4/webui/configs/models_catalog.json) does not advertise ZONOS3, so Celune does not select GGUF inference for this model.
 
 ### Qwen3
 
@@ -147,7 +158,7 @@ package can carry incompatible build requirements.
 
 ### Ming3
 
-`ming3` adapts the official [Ming 3.0 TTS 0.5B model](https://huggingface.co/inclusionAI/Ming-3.0-tts-0.5B) and the pinned [audio.cpp v0.9.3 runtime](https://github.com/0xShug0/audio.cpp/tree/v0.9.3). The official Python wrapper collects the complete waveform before returning. Celune instead uses audio.cpp's `streaming` session and server-sent PCM deltas, which arrive while acoustic generation is active. This meets the backend's model-time streaming contract without patching the Python package.
+`ming3` adapts the official [Ming 3.0 TTS 0.5B model](https://huggingface.co/inclusionAI/Ming-3.0-tts-0.5B) and the pinned [audio.cpp v0.9.4 runtime](https://github.com/0xShug0/audio.cpp/tree/v0.9.4). The official Python wrapper collects the complete waveform before returning. Celune instead uses audio.cpp's `streaming` session and server-sent PCM deltas, which arrive while acoustic generation is active. This meets the backend's model-time streaming contract without patching the Python package.
 
 The backend supports Chinese, English, Japanese, Korean, German, French, and
 Spanish. It clones from the active CEVOICE/CECHAR voice's reference WAV and exact

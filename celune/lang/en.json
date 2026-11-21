@@ -218,6 +218,7 @@
     "cli.backend_dotstts": "Dots TTS",
     "cli.backend_fireredtts3": "FireRedTTS3",
     "cli.backend_ming3": "Ming 3",
+    "cli.backend_zonos3": "ZONOS3-Mini",
     "cli.backend_mini": "Mini",
     "cli.backend_picker_prompt": "Choose a TTS backend for this installation.",
     "cli.backend_qwen3": "Qwen3",

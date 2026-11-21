@@ -112,10 +112,11 @@ requires audio.cpp.
 | --- | --- | --- | --- |
 | Mini / Pocket TTS | `true / false` | Native adapter | audio.cpp for verified English, French, German, Italian, Portuguese, and Spanish packages. Otherwise native |
 | Qwen3 TTS | `true / false` | Native adapter | audio.cpp for verified 0.6B and 1.7B Base packages. Other variants fall back to native |
-| FireRedTTS3 | `false / false` | Native adapter | Native fallback. Audio.cpp v0.9.3 FireRedTTS3 is offline-only |
+| FireRedTTS3 | `false / false` | Native adapter | Native fallback. Audio.cpp v0.9.4 FireRedTTS3 is offline-only |
 | Dots TTS MeanFlow | `true / false` | Native adapter | audio.cpp for the verified MeanFlow package. Unsupported model IDs fall back to native |
 | VoxCPM2 | `true / false` | Native adapter | audio.cpp for the verified VoxCPM2 package. Unsupported load options fall back to native |
 | Ming3 | `true / true` | audio.cpp | audio.cpp |
+| ZONOS3-Mini | `false / false` | Native adapter | Native fallback. Audio.cpp v0.9.4 does not list ZONOS3 |
 | SoulX-Singer | `false / false` | Native adapter | Native fallback |
 
 The enabled streaming adapters use the exact GGUF filenames, sizes, SHA-256
@@ -124,7 +125,7 @@ digests, model IDs, quantization labels, and package revision recorded in
 `audio-cpp/audio.cpp-gguf` revision
 `73ce4162f6cce370dd533c6782b772135c1b2a8e`. Each downloaded file is checked
 against its pinned size and SHA-256 before the runtime can load it. The runtime
-is audio.cpp `v0.9.3` and currently advertises Windows x64 with CUDA 13.3 and
+is audio.cpp `v0.9.4` and currently advertises Windows x64 with CUDA 13.3 and
 Linux x86_64 with CUDA 12.8.
 
 | Backend and package | Verified streaming inputs and options |
@@ -137,11 +138,11 @@ Linux x86_64 with CUDA 12.8.
 FireRedTTS3 remains native because the pinned audio.cpp guide marks its TTS
 implementation offline-only, which cannot satisfy Celune's streaming contract.
 Seed-VC is a voice-conversion backend and does not participate in TTS runtime
-selection. The feature audit uses the pinned [audio.cpp v0.9.3 TTS guide](https://github.com/0xShug0/audio.cpp/blob/v0.9.3/docs/tts.md),
-the [Qwen3 TTS guide](https://github.com/0xShug0/audio.cpp/blob/v0.9.3/docs/models/qwen3_tts.md),
-and the [DotTTS guide](https://github.com/0xShug0/audio.cpp/blob/v0.9.3/docs/models/dots_tts.md).
+selection. The feature audit uses the pinned [audio.cpp v0.9.4 TTS guide](https://github.com/0xShug0/audio.cpp/blob/v0.9.4/docs/tts.md),
+the [Qwen3 TTS guide](https://github.com/0xShug0/audio.cpp/blob/v0.9.4/docs/models/qwen3_tts.md),
+and the [DotTTS guide](https://github.com/0xShug0/audio.cpp/blob/v0.9.4/docs/models/dots_tts.md).
 
-Ming3 uses audio.cpp release `v0.9.3`. Its GGUF files are pinned to repository
+Ming3 uses audio.cpp release `v0.9.4`. Its GGUF files are pinned to repository
 revision `2eb8d37c7f10672e69c8aa33091baa04c461b66c`:
 
 | File | Size in bytes | SHA-256 | `quant` metadata |
@@ -150,12 +151,12 @@ revision `2eb8d37c7f10672e69c8aa33091baa04c461b66c`:
 | `ming-3.0-tts-0.5b-q8_0.gguf` | 1,742,280,896 | `fcf2aa25e8e9cf2065a936e506581735c64d6255fb7869f09fbb61a2dde09aa1` | `Q8_0` |
 
 The audio.cpp runtime supports Windows x64 with CUDA 13.3 and Ubuntu Linux x64
-with CUDA 12.8. Windows downloads both `audio-v0.9.3-bin-windows-x64-cuda13.3.zip`
-(`0bd3988be10c31ec078c40df2bd0d4266e660804f6d5083aeb05d1309d091e43`) and
-`audio-v0.9.3-cudart-windows-x64-cuda13.3.zip`
-(`839eb20f684a8aab64895b1e466b32ce9b29dfc19dc1ce15b2ef35218512ac0a`). Linux
-downloads `audio-v0.9.3-bin-ubuntu-x64-cuda12.8-colab.tar.gz`
-(`5be3e8d515fb244387de87958668ebb729d9442de6a53df12e4c718ea918419d`). Celune
+with CUDA 12.8. Windows downloads both `audio-v0.9.4-bin-windows-x64-cuda13.3.zip`
+(`b05eceb8aa0a29e618b3af87e0c2fd0fb665034d181096eb868ed856bf656b8b`) and
+`audio-v0.9.4-cudart-windows-x64-cuda13.3.zip`
+(`b93fa9b9cb875ccea1aa81cb09fd6b02c9afda133de73bd119a73ff5d8db6d96`). Linux
+downloads `audio-v0.9.4-bin-ubuntu-x64-cuda12.8-colab.tar.gz`
+(`5b6708aa781a8a7b08d506abc6104ff9e642cb33c4271c768e81205c4c8df686`). Celune
 checks the archive SHA-256 and model size/checksum before launching the
 loopback streaming server.
 

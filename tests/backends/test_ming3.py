@@ -80,9 +80,9 @@ def test_ming3_runtime_architecture_falls_back_to_python_platform() -> None:
         assets = Ming3._runtime_assets()
 
     expected_archive = (
-        "audio-v0.9.3-bin-windows-x64-cuda13.3.zip"
+        "audio-v0.9.4-bin-windows-x64-cuda13.3.zip"
         if sys.platform == "win32"
-        else "audio-v0.9.3-bin-ubuntu-x64-cuda12.8-colab.tar.gz"
+        else "audio-v0.9.4-bin-ubuntu-x64-cuda12.8-colab.tar.gz"
     )
     assert assets[0][0] == expected_archive
 

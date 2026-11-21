@@ -161,6 +161,13 @@ def _ming3_constructor() -> abc.Callable[..., BackendRuntime]:
     return cast(abc.Callable[..., BackendRuntime], Ming3)
 
 
+def _zonos3_constructor() -> abc.Callable[..., BackendRuntime]:
+    """Load the approved ZONOS3-Mini backend constructor on demand."""
+    from ..backends.tts.zonos3 import Zonos3
+
+    return cast(abc.Callable[..., BackendRuntime], Zonos3)
+
+
 def _soulxsinger_constructor() -> abc.Callable[..., BackendRuntime]:
     """Load the approved SoulX-Singer backend constructor on demand."""
     from ..backends.tts.soulxsinger import SoulXSinger
@@ -184,6 +191,7 @@ _BACKEND_REGISTRY: abc.Mapping[
     "dotstts": ("tts", _dotstts_constructor),
     "voxcpm2": ("tts", _voxcpm2_constructor),
     "ming3": ("tts", _ming3_constructor),
+    "zonos3": ("tts", _zonos3_constructor),
     "soulxsinger": ("tts", _soulxsinger_constructor),
     "seed-vc": ("vc", _seed_vc_constructor),
 }

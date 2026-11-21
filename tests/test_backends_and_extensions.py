@@ -445,7 +445,7 @@ class TestBackend:
                 string(
                     "celune.unknown_backend",
                     backend="missing",
-                    available="mini, qwen3, fireredtts3, dotstts, voxcpm2, ming3, soulxsinger",
+                    available="mini, qwen3, fireredtts3, dotstts, voxcpm2, ming3, zonos3, soulxsinger",
                 )
             ),
         ):

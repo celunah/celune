@@ -70,6 +70,10 @@ _TTS_PYTORCH_REQUIREMENTS = (
     *_MAIN_BRANCH_PYTORCH_REQUIREMENTS,
     "torchao==0.17.0",
 )
+_ZONOS3_PYTORCH_REQUIREMENTS = (
+    "torch==2.9.1+cu128",
+    "torchaudio==2.9.1+cu128",
+)
 _PYTORCH_INDEX_URLS = (
     "https://pypi.org/simple",
     "https://download.pytorch.org/whl/cu128",
@@ -230,6 +234,49 @@ BACKEND_MANIFESTS = {
         index_urls=_PYTORCH_INDEX_URLS,
         supports_audio_cpp=True,
         requires_audio_cpp=True,
+    ),
+    "zonos3": BackendManifest(
+        backend_id="zonos3",
+        kind="tts",
+        requirements=(
+            *_ZONOS3_PYTORCH_REQUIREMENTS,
+            "GitPython>=3.1.59,<4.0",
+            "descript-audio-codec==1.0.0",
+            "fastapi",
+            (
+                "fusealign-hub @ git+https://github.com/Zyphra/"
+                "fusealign-multilingual.git@64d311875e55e797dafae2a7c3b0c1e45967459f"
+            ),
+            "huggingface-hub>=0.36,<1.0.0",
+            "hf-xet",
+            "kernels>=0.12.1",
+            "librosa==0.11.0",
+            "lmdb>=1.4",
+            "llvmlite==0.47.0",
+            "numpy",
+            "numba==0.65.1",
+            "omegaconf",
+            "pillow",
+            "platformdirs",
+            "psutil",
+            "pydantic>=2",
+            "pyicu-wheels>=2.14,<2.15",
+            "pyyaml",
+            "sounddevice",
+            "soundfile",
+            "tokenizers",
+            "transformers>=4.56.0,<=4.57.3",
+            "zyphra-textnorm==0.2.0",
+            "zstandard",
+            (
+                "zonos3 @ git+https://github.com/Zyphra/"
+                "ZONOS3-Mini.git@a50e14117d99181ba7f28047b451ba03ba1a09a9#subdirectory=model"
+            ),
+        ),
+        backend_module="celune.backends.tts.zonos3",
+        backend_class="Zonos3",
+        python="3.12",
+        index_urls=_PYTORCH_INDEX_URLS,
     ),
     "soulxsinger": BackendManifest(
         backend_id="soulxsinger",

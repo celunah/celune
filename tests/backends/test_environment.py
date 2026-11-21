@@ -244,6 +244,7 @@ class TestBackendEnvironment:
             "dotstts",
             "voxcpm2",
             "ming3",
+            "zonos3",
             "soulxsinger",
             "seed-vc",
         }
@@ -262,6 +263,7 @@ class TestBackendEnvironment:
                 "dotstts",
                 "voxcpm2",
                 "ming3",
+                "zonos3",
                 "soulxsinger",
                 "seed-vc",
             }
@@ -279,6 +281,7 @@ class TestBackendEnvironment:
                 "dotstts": "tts",
                 "voxcpm2": "tts",
                 "ming3": "tts",
+                "zonos3": "tts",
                 "soulxsinger": "tts",
                 "seed-vc": "vc",
             }
@@ -374,8 +377,10 @@ class TestBackendEnvironment:
             "torchaudio==2.11.0+cu128",
             "torchvision==0.26.0+cu128",
         }
-        for manifest in BACKEND_MANIFESTS.values():
+        for backend_id, manifest in BACKEND_MANIFESTS.items():
             assert "https://download.pytorch.org/whl/cu128" in manifest.index_urls
+            if backend_id == "zonos3":
+                continue
             assert expected_requirements.issubset(manifest.requirements)
 
     def test_manifests_include_gitpython_for_shared_core_utilities(self) -> None:
@@ -414,7 +419,7 @@ class TestBackendEnvironment:
         standard_manifests = (
             manifest
             for backend_id, manifest in BACKEND_MANIFESTS.items()
-            if backend_id not in {"fireredtts3", "soulxsinger"}
+            if backend_id not in {"fireredtts3", "soulxsinger", "zonos3"}
         )
         for manifest in standard_manifests:
             assert expected_requirements.issubset(manifest.requirements)
@@ -464,6 +469,21 @@ class TestBackendEnvironment:
         assert ming3_manifest.supports_audio_cpp
         assert ming3_manifest.requires_audio_cpp
 
+    def test_zonos3_manifest_uses_its_pinned_cuda_runtime(self) -> None:
+        """Keep ZONOS3's model dependencies isolated from the newer shared worker stack."""
+        manifest = BACKEND_MANIFESTS["zonos3"]
+
+        assert manifest.python == "3.12"
+        assert "torch==2.9.1+cu128" in manifest.requirements
+        assert "torchaudio==2.9.1+cu128" in manifest.requirements
+        assert "huggingface-hub>=0.36,<1.0.0" in manifest.requirements
+        assert "transformers>=4.56.0,<=4.57.3" in manifest.requirements
+        assert any(
+            "ZONOS3-Mini.git@a50e14117d99" in item for item in manifest.requirements
+        )
+        assert not manifest.supports_audio_cpp
+        assert not manifest.requires_audio_cpp
+
     def test_audio_cpp_manifest_eligibility_matches_verified_adapters(self) -> None:
         """Advertise only TTS backends with verified streaming adapters."""
         for backend_id in ("mini", "qwen3", "dotstts", "voxcpm2"):
@@ -471,7 +491,7 @@ class TestBackendEnvironment:
             assert manifest.supports_audio_cpp
             assert not manifest.requires_audio_cpp
 
-        for backend_id in ("fireredtts3", "soulxsinger"):
+        for backend_id in ("fireredtts3", "soulxsinger", "zonos3"):
             manifest = BACKEND_MANIFESTS[backend_id]
             assert not manifest.supports_audio_cpp
             assert not manifest.requires_audio_cpp
@@ -792,6 +812,39 @@ class TestBackendEnvironment:
 
         for variable in ("TMPDIR", "TEMP", "TMP"):
             assert worker_environment[variable] == temp_directory
+
+    def test_zonos3_codec_device_override_is_scoped_to_its_worker(self) -> None:
+        """Forward ZONOS3's codec device override only to its worker."""
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            zonos3_environment = environment.BackendEnvironment(
+                manifest=BACKEND_MANIFESTS["zonos3"],
+                root=root,
+            )
+            mini_environment = environment.BackendEnvironment(
+                manifest=BACKEND_MANIFESTS["mini"],
+                root=root,
+            )
+            with (
+                mock.patch.object(remote, "huggingface_home_dir", return_value=root),
+                mock.patch.object(
+                    remote, "huggingface_hub_cache_dir", return_value=root
+                ),
+                mock.patch.object(remote, "configure_numba_cache", return_value=root),
+                mock.patch.object(remote, "project_root", return_value=root),
+                mock.patch.dict(
+                    os.environ,
+                    {"ZONOS3_AUDIO_CODEC_DEVICE": "cuda:1"},
+                    clear=True,
+                ),
+            ):
+                zonos3_worker_environment = remote._worker_environment(
+                    zonos3_environment
+                )
+                mini_worker_environment = remote._worker_environment(mini_environment)
+
+        assert zonos3_worker_environment["ZONOS3_AUDIO_CODEC_DEVICE"] == "cuda:1"
+        assert "ZONOS3_AUDIO_CODEC_DEVICE" not in mini_worker_environment
 
     def testexclusive_lock_times_out_while_another_handle_owns_it(self) -> None:
         """Verify the operating-system lock blocks a second installer."""

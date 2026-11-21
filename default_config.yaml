@@ -5,6 +5,7 @@
 #
 # `qwen3` = faster, consistent
 # `ming3` = audio.cpp only, very fast
+# `zonos3` = multilingual, natural voice cloning
 # `dotstts` = slowest, very high quality
 # `voxcpm2` = slower, very expressive
 # `mini` = very fast, just as good

@@ -128,6 +128,7 @@ _INITIAL_BACKEND_LABEL_KEYS = {
     "dotstts": "cli.backend_dotstts",
     "voxcpm2": "cli.backend_voxcpm2",
     "ming3": "cli.backend_ming3",
+    "zonos3": "cli.backend_zonos3",
     "soulxsinger": "cli.backend_soulxsinger",
 }
 

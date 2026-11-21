@@ -44,24 +44,24 @@ from ...registry.audio_cpp import (
     AudioCppModelArtifact,
 )
 
-_AUDIOCPP_RELEASE = "v0.9.3"
+_AUDIOCPP_RELEASE = "v0.9.4"
 _AUDIOCPP_RELEASE_URL = (
     "https://github.com/0xShug0/audio.cpp/releases/download/" + _AUDIOCPP_RELEASE
 )
 _WINDOWS_RUNTIME = (
     (
-        "audio-v0.9.3-bin-windows-x64-cuda13.3.zip",
-        "0bd3988be10c31ec078c40df2bd0d4266e660804f6d5083aeb05d1309d091e43",
+        "audio-v0.9.4-bin-windows-x64-cuda13.3.zip",
+        "b05eceb8aa0a29e618b3af87e0c2fd0fb665034d181096eb868ed856bf656b8b",
     ),
     (
-        "audio-v0.9.3-cudart-windows-x64-cuda13.3.zip",
-        "839eb20f684a8aab64895b1e466b32ce9b29dfc19dc1ce15b2ef35218512ac0a",
+        "audio-v0.9.4-cudart-windows-x64-cuda13.3.zip",
+        "b93fa9b9cb875ccea1aa81cb09fd6b02c9afda133de73bd119a73ff5d8db6d96",
     ),
 )
 _LINUX_RUNTIME = (
     (
-        "audio-v0.9.3-bin-ubuntu-x64-cuda12.8-colab.tar.gz",
-        "5be3e8d515fb244387de87958668ebb729d9442de6a53df12e4c718ea918419d",
+        "audio-v0.9.4-bin-ubuntu-x64-cuda12.8-colab.tar.gz",
+        "5b6708aa781a8a7b08d506abc6104ff9e642cb33c4271c768e81205c4c8df686",
     ),
 )
 _SERVER_START_TIMEOUT_SECONDS = 600.0

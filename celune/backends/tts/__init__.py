@@ -30,6 +30,7 @@ BACKENDS = {
     "dotstts": ("celune.backends.tts.dotstts", "DotsTtsMF"),
     "voxcpm2": ("celune.backends.tts.voxcpm2", "VoxCPM2"),
     "ming3": ("celune.backends.tts.ming3", "Ming3"),
+    "zonos3": ("celune.backends.tts.zonos3", "Zonos3"),
     "soulxsinger": ("celune.backends.tts.soulxsinger", "SoulXSinger"),
 }
 

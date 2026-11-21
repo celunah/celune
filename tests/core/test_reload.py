@@ -704,12 +704,12 @@ class TestCeluneReload(CeluneCoreTestSupport):
         celune.change_voice_lock_state_callback.assert_not_called()
         try_play_signal.assert_not_called()
         celune.log_callback.assert_called_once_with(
-            "unknown backend: qwen (available: mini, qwen3, fireredtts3, dotstts, voxcpm2, ming3, "
+            "unknown backend: qwen (available: mini, qwen3, fireredtts3, dotstts, voxcpm2, ming3, zonos3, "
             "soulxsinger, seed-vc)",
             "warning",
         )
         toast_callback.assert_called_once_with(
-            "unknown backend: qwen (available: mini, qwen3, fireredtts3, dotstts, voxcpm2, ming3, "
+            "unknown backend: qwen (available: mini, qwen3, fireredtts3, dotstts, voxcpm2, ming3, zonos3, "
             "soulxsinger, seed-vc)",
             severity="warning",
             duration=None,

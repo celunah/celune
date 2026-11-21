@@ -221,6 +221,18 @@ def _worker_environment(environment: BackendEnvironment) -> dict[str, str]:
         if value is not None:
             worker_environment[variable] = value
 
+    if environment.manifest.backend_id == "zonos3":
+        codec_device = next(
+            (
+                candidate
+                for name, candidate in parent_environment.items()
+                if name.casefold() == "zonos3_audio_codec_device"
+            ),
+            None,
+        )
+        if codec_device is not None:
+            worker_environment["ZONOS3_AUDIO_CODEC_DEVICE"] = codec_device
+
     worker_environment.update(temp_directory_environment())
 
     if os.name == "nt" and environment.manifest.backend_id == "soulxsinger":
