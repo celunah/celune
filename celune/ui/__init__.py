@@ -1,5 +1,17 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Celune UI package with lazy imports for early startup."""
+"""Public package surface for Celune's user interfaces.
+
+The package exposes the main Textual application, :class:`CeluneUI`, a
+lightweight terminal interface, :class:`CeluneHeadlessUI`, and shared terminal
+helpers for selection menus and log forwarding. The Textual app presents
+runtime status and logs, handles user interaction and commands, and coordinates
+audio workflows such as speech input and voice conversion while the core engine
+owns Celune's application behavior and inference.
+
+Implementation is split across focused modules for the app, runtime updates,
+audio capture, interaction, commands, and debugging. Public names are loaded
+lazily so importing :mod:`celune.ui` does not eagerly import an interface.
+"""
 
 from typing import TYPE_CHECKING
 
