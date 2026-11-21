@@ -18,7 +18,9 @@ Authorization: Bearer YOUR_API_KEY
 
 The API key is the configured `api.token`, `CELUNE_API_TOKEN`, or generated key stored in the app-data `api.key` file. The endpoint uses the same authentication and per-client request limit as REST routes. For network access, use the machine address accepted by the API listener. MCP validates the Host against loopback and the machine's active network interfaces.
 
-Install the optional API dependencies with `uv sync --extra api`. The MCP endpoint starts with the API and shuts down with it. It does not start a second Celune process.
+Install the optional API dependencies with `uv sync --extra api --extra cu132`,
+or select another CUDA extra. The MCP endpoint starts with the API and shuts
+down with it. It does not start a second Celune process.
 
 ## Tools
 

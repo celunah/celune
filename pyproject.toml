@@ -11,11 +11,8 @@ authors = [
 dependencies = [
     # AI stack
     # PyTorch is now a selectable index, you must install one before running Celune.
-    "torchao>=0.18.0",
     # If not installed, Hugging Face falls back to the older Git LFS way of downloading models.
     "hf-xet",
-    "accelerate",
-    "bitsandbytes",
     "qwen-vl-utils",
     "huggingface-hub>=1.0.0,<2.0.0",
     "safetensors",
@@ -63,8 +60,6 @@ dependencies = [
     "yt-dlp[default]",
     # Lua runtime for running Celune extensions
     "lupa",
-    # Needed for live voice capture to tell when you're speaking.
-    "silero-vad",
 ]
 
 [project.urls]
@@ -191,30 +186,50 @@ cechar4-openzl = [
 # CUDA indexes for PyTorch
 # CUDA 12.8 - oldest, most supported
 cu128 = [
+    "accelerate",
+    "bitsandbytes",
     "torch>=2.11.0",
+    "torchao>=0.18.0",
     "torchaudio>=2.11.0",
     "torchvision>=0.26.0",
+    # Needed for live voice capture to tell when you're speaking.
+    "silero-vad",
 ]
 
 # CUDA 13.0
 cu130 = [
+    "accelerate",
+    "bitsandbytes",
     "torch>=2.11.0",
+    "torchao>=0.18.0",
     "torchaudio>=2.11.0",
     "torchvision>=0.26.0",
+    # Needed for live voice capture to tell when you're speaking.
+    "silero-vad",
 ]
 
 # CUDA 13.2 - stable, recommended
 cu132 = [
+    "accelerate",
+    "bitsandbytes",
     "torch>=2.11.0",
+    "torchao>=0.18.0",
     "torchaudio>=2.11.0",
     "torchvision>=0.26.0",
+    # Needed for live voice capture to tell when you're speaking.
+    "silero-vad",
 ]
 
 # CUDA 13.4 - latest, experimental
 cu134 = [
+    "accelerate",
+    "bitsandbytes",
     "torch>=2.15.0",
+    "torchao>=0.18.0",
     "torchaudio>=2.11.1",
     "torchvision>=0.29.2",
+    # Needed for live voice capture to tell when you're speaking.
+    "silero-vad",
 ]
 
 # These dependency groups are currently handled internally by Celune backends and the Celune core no longer

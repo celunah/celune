@@ -1,30 +1,114 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for the source-tree configuration helper."""
 
+import tomllib
+from types import SimpleNamespace
 from pathlib import Path
 from unittest import mock
-from types import SimpleNamespace
 
 import configure
 from configure import sync_arguments, initialize_app_data
 
 
 def test_sync_arguments_avoid_openzl_on_windows() -> None:
-    """Verify Windows setup selects the API extra instead of every extra."""
+    """Verify Windows setup selects API and the default CUDA extra."""
     command = sync_arguments("Windows", Path("uv.exe"))
 
-    assert command == ["uv.exe", "sync", "--dev", "--extra", "api"]
+    assert command == [
+        "uv.exe",
+        "sync",
+        "--dev",
+        "--extra",
+        "api",
+        "--extra",
+        "cu132",
+    ]
     assert "--all-extras" not in command
 
 
 def test_sync_arguments_include_linux_extras() -> None:
-    """Verify Linux setup includes the complete optional dependency set."""
+    """Verify Linux setup selects supported extras and one CUDA index."""
     assert sync_arguments("Linux", Path("uv")) == [
         "uv",
         "sync",
         "--dev",
-        "--all-extras",
+        "--extra",
+        "api",
+        "--extra",
+        "captions",
+        "--extra",
+        "cechar4-openzl",
+        "--extra",
+        "cu132",
     ]
+
+
+def test_sync_arguments_allow_a_different_cuda_index() -> None:
+    """Verify setup can use any declared CUDA index."""
+    assert sync_arguments("Windows", Path("uv"), "cu128")[-2:] == [
+        "--extra",
+        "cu128",
+    ]
+
+
+def test_sync_arguments_reject_unknown_cuda_index() -> None:
+    """Verify setup does not construct an invalid CUDA extra."""
+    try:
+        sync_arguments("Linux", Path("uv"), "cu120")
+    except ValueError as error:
+        assert str(error) == "unsupported CUDA index: cu120"
+    else:
+        raise AssertionError("unknown CUDA index was accepted")
+
+
+def test_torch_runtime_dependencies_are_only_in_cuda_extras() -> None:
+    """Verify default project syncs cannot resolve another Torch build."""
+    pyproject_path = Path(__file__).resolve().parents[1] / "pyproject.toml"
+    pyproject = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
+    lock_path = pyproject_path.with_name("uv.lock")
+    lock = tomllib.loads(lock_path.read_text(encoding="utf-8"))
+    project = pyproject["project"]
+    cuda_indexes = configure.PYTORCH_INDEXES
+    torch_runtime_packages = {
+        "accelerate",
+        "bitsandbytes",
+        "silero-vad",
+        "torch",
+        "torchao",
+        "torchaudio",
+        "torchvision",
+    }
+
+    def requirement_name(requirement: str) -> str:
+        """Return the normalized package name from a plain requirement."""
+        return requirement.split(">", maxsplit=1)[0].split("=", maxsplit=1)[0]
+
+    default_packages = {
+        requirement_name(requirement) for requirement in project["dependencies"]
+    }
+    assert default_packages.isdisjoint(torch_runtime_packages)
+
+    for cuda_index in cuda_indexes:
+        extra_packages = {
+            requirement_name(requirement)
+            for requirement in project["optional-dependencies"][cuda_index]
+        }
+        assert torch_runtime_packages <= extra_packages
+
+    sources = pyproject["tool"]["uv"]["sources"]
+    for package_name in ("torch", "torchaudio", "torchvision"):
+        source_indexes = {
+            source["extra"]: source["index"] for source in sources[package_name]
+        }
+        assert source_indexes == {
+            cuda_index: f"pytorch-{cuda_index}" for cuda_index in cuda_indexes
+        }
+
+        locked_packages = [
+            package for package in lock["package"] if package["name"] == package_name
+        ]
+        assert locked_packages
+        assert all("+cu" in package["version"] for package in locked_packages)
 
 
 def test_distro_package_keys_cover_supported_linux_distributions() -> None:

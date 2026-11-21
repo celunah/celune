@@ -109,11 +109,16 @@ terminal period. Names and acronyms elsewhere in that line are preserved.
 
 ## Run the suite
 
+Set up the environment with `python configure.py` first. It installs the
+platform's test dependencies and defaults to the recommended `cu132` index.
+Use `python configure.py --cuda-index cu128` (or `cu130` or `cu134`) to select a
+different index.
+
 The default development test task uses two xdist workers and keeps each test
 module on one worker:
 
 ```bash
-uv run poe test
+uv run --no-sync poe test
 ```
 
 CI uses the complete serial task so worker startup, process-global state, and
@@ -121,7 +126,7 @@ subprocess tests run in one pytest process. Use the same task when debugging a
 failure or investigating process-global state:
 
 ```bash
-uv run poe test_basic
+uv run --no-sync poe test_basic
 ```
 
 The basic task runs the complete `tests/` collection without xdist. Both
@@ -138,7 +143,7 @@ tasks include them.
 Run only the marked workflows with:
 
 ```bash
-uv run poe test_e2e
+uv run --no-sync poe test_e2e
 ```
 
 Celtest reports their pass, failure, warning, and skip outcomes like other
@@ -147,7 +152,8 @@ marker also supports ordinary pytest selection with `-m e2e`.
 
 GitHub Actions prepares a `Core engine` row and one row for every backend in
 `BACKEND_MANIFESTS`. The core row runs the complete serial suite with
-`uv run poe test_basic`, linting, type checking, and the import smoke check.
+`uv run --no-sync poe test_basic`, linting, type checking, and the import smoke
+check after syncing one CUDA extra.
 Each backend row provisions that backend's declared CEDTS dependencies and runs
 Ruff, Pylint error checks, Pyrefly, and docstring coverage against its adapter
 source using the manifest's Python version. Pylint's `no-member` and
@@ -198,15 +204,15 @@ For local iteration, testmon records coverage-based test dependencies in the
 ignored `.testmondata` file:
 
 ```bash
-uv run poe test_changed
+uv run --no-sync poe test_changed
 ```
 
 The first run establishes dependency data. Later runs select tests affected by
 changed Python code and retain failing tests. Testmon can observe Python code
 executed in the pytest process, but it cannot reliably infer changes to
 generated assets, runtime configuration, external tools, or code executed only
-inside CEDTS worker subprocesses. Run `uv run poe test` before handing off a
-change and in CI.
+inside CEDTS worker subprocesses. Run `uv run --no-sync poe test` before
+handing off a change and in CI.
 
 ## Verify failures
 
@@ -222,14 +228,15 @@ entries as well as the normal totals summary.
 
 When parallel execution fails:
 
-1. Re-run the affected node with `uv run poe test_basic` or a focused pytest
-   invocation.
+1. Re-run the affected node with `uv run --no-sync poe test_basic` or a
+   focused pytest invocation.
 2. Check for fixed paths, environment mutations, open worker processes,
    singleton state, physical-device access, or shared cache writes.
 3. Add isolation or teardown to the test before restoring it to the parallel
    task.
 
-The canonical project validation command remains:
+After syncing the selected CUDA extra, the canonical project validation command
+uses the existing environment without resynchronizing it:
 
 ```bash
 python scripts/run_ci.py

@@ -36,8 +36,8 @@ Install these before using the corresponding features:
 - OpenRGB, plus a compatible device, for audio-reactive lighting.
 - A C/C++ compiler for VoxCPM2 and any backend that builds native extensions.
 - A driver that supports the installed PyTorch CUDA build. Celune's runtime
-  check accepts CUDA 12.8 to 13.4. The core project currently pins CUDA
-  13.0, and CEDTS workers use a separate CUDA 12.8 stack.
+  check accepts CUDA 12.8 to 13.4. The setup helper defaults to CUDA 13.2,
+  and CEDTS workers use a separate CUDA 12.8 stack.
 - Symbolic-link support on Windows when developing or using workflows that
   create links.
 
@@ -71,20 +71,37 @@ python configure.py
 
 The helper installs required system tools, synchronizes the Python environment,
 creates Celune's AppData directories, and seeds the default configuration and
-voice pack. On Linux it uses `uv sync --dev --all-extras`. On Windows it uses
-`uv sync --dev --extra api` because OpenZL is not currently buildable there.
+voice pack. It selects the recommended `cu132` PyTorch extra on both platforms.
+Linux also installs the API, captions, and OpenZL extras. Windows installs the
+API extra and leaves captions optional. OpenZL is skipped there because it is
+not currently buildable. Choose another PyTorch CUDA index with
+`--cuda-index cu128`, `--cuda-index cu130`, or `--cuda-index cu134`.
 If all setup criteria are already satisfied, it asks, `You have already
 configured Celune. Repair Celune?` Answer `yes` to remove and recreate the
 project `.venv` before synchronizing dependencies, or press Enter to leave the
 existing installation unchanged. Run the helper with a system Python
 interpreter rather than the `.venv` interpreter when repairing, because the
 active environment cannot safely remove itself.
-The optional `live-vc-ai` extra adds Silero VAD for AI-assisted live
+The selected CUDA extra includes Silero VAD for AI-assisted live
 voice-conversion capture. `cechar4-openzl` adds OpenZL-compressed CECHAR v4/v5
 support on Linux.
 
-For a dependency-only manual setup, use `uv sync --dev --all-extras` on Linux
-or `uv sync --dev --extra api` on Windows.
+For a dependency-only manual setup, select one CUDA extra. The `cu132` examples
+below use the recommended index:
+
+```bash
+uv sync --dev --extra api --extra captions --extra cechar4-openzl --extra cu132
+```
+
+```powershell
+uv sync --dev --extra api --extra cu132
+```
+
+Do not use `--all-extras`, because the CUDA extras are mutually exclusive. Keep
+the selected CUDA extra on every `uv sync` command so an exact sync does not
+replace the CUDA build with a default PyPI build. A normal `uv run` preserves
+the installed CUDA packages because they are not part of the default dependency
+set.
 
 Backend-specific dependencies are normally installed by Celune's isolated
 backend environment manager. Do not add backend packages to core application

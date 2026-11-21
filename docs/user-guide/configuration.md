@@ -263,7 +263,7 @@ provider and falls back to CPU if CUDA is unavailable or cannot initialize. On
 Windows, install the Python dependencies with:
 
 ```powershell
-uv sync --dev --extra api --extra captions
+uv sync --dev --extra api --extra captions --extra cu132
 ```
 
 Also install the `espeak-ng` executable and make it available on `PATH`. When
@@ -407,12 +407,12 @@ target automatically.
 ## Voice conversion
 
 Voice-conversion F0 conditioning is a runtime control rather than a YAML
-setting. Live capture always performs voice-activity detection. The
-optional `live-vc-ai` extra supplies Silero VAD. When it is unavailable, the
-application uses its built-in energy detector instead. With Silero enabled, the energy
-detector also catches speech onset while the background model catches up. Live
-capture preserves microphone audio through a 300 ms VAD hangover so delayed or
-briefly missed decisions do not cut off speech boundaries.
+setting. Live capture always performs voice-activity detection. The selected
+CUDA extra supplies Silero VAD. When it is unavailable, the application uses
+its built-in energy detector instead. With Silero enabled, the energy detector
+also catches speech onset while the background model catches up. Live capture
+preserves microphone audio through a 300 ms VAD hangover so delayed or briefly
+missed decisions do not cut off speech boundaries.
 
 ## Configuration precedence
 

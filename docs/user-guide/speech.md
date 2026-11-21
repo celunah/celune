@@ -105,7 +105,7 @@ blocking startup. The first alignment can still wait if preparation is ongoing.
 Install the optional GPU-enabled ONNX Runtime dependency on Windows with:
 
 ```powershell
-uv sync --dev --extra api --extra captions
+uv sync --dev --extra api --extra captions --extra cu132
 ```
 
 Caption alignment keeps ONNX Runtime session logs at error level, suppressing

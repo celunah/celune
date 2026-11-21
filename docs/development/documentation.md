@@ -66,7 +66,7 @@ Run MarkdownLint and the strict site build before committing documentation:
 
 ```bash
 npx --yes markdownlint-cli2 "docs/**/*.md"
-uv run --with-requirements docs/requirements.txt mkdocs build --strict
+uv run --no-project --with-requirements docs/requirements.txt mkdocs build --strict
 ```
 
 The current MarkdownLint CLI requires Node.js 22 or newer. The CI action runs
@@ -85,6 +85,6 @@ Before committing documentation, confirm that:
 - commands, paths, calls, fields, and examples match the current source
 - failure, compatibility, or verification behavior is documented where needed
 - links and navigation resolve
-- `uv run --with-requirements docs/requirements.txt mkdocs build --strict`
+- `uv run --no-project --with-requirements docs/requirements.txt mkdocs build --strict`
   succeeds
 - `git diff --check` reports no whitespace errors.

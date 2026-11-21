@@ -252,13 +252,17 @@ cd celune
 Install `uv`, then set up the development environment:
 
 ```bash
-uv sync --dev --all-extras
+uv sync --dev --extra api --extra captions --extra cechar4-openzl --extra cu132
 ```
+
+The CUDA extra selects the PyTorch index. `cu132` is the recommended default.
+Choose `cu128`, `cu130`, or `cu134` in its place to use another index. The CUDA
+extras conflict, so do not use `--all-extras`.
 
 On Windows, OpenZL may fail to compile. Use the following command instead:
 
 ```powershell
-uv sync --dev --extra api --extra captions
+uv sync --dev --extra api --extra captions --extra cu132
 ```
 
 Build the launcher:

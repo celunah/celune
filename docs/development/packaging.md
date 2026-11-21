@@ -35,8 +35,12 @@ cmake --build --preset signed
 Both presets build the `celune_release` target with at most two build jobs.
 Nuitka's C compiler is also capped at two jobs.
 The dependency chain enforces libsodium → C launcher and native signature
-verification → Python core (Nuitka) → release packaging. `uv run poe build`
-builds the unsigned preset. `uv run poe build_signed` builds the signed preset.
+verification → Python core (Nuitka) → release packaging. Set up the source
+environment with `python configure.py` first. It defaults to CUDA 13.2; use
+`--cuda-index` to choose another supported index. Run build tasks with
+`uv run --no-sync poe build` for the unsigned preset or
+`uv run --no-sync poe build_signed` for the signed preset, preserving the
+selected PyTorch build.
 The CI workflow also builds both platform archives for pushed tags matching
 `v*`. These workflow artifacts are unsigned validation builds. Publish the
 original ZIPs with their signed counterparts, following the signature steps

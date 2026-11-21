@@ -55,7 +55,9 @@ jobs:
 
       - name: Sync dependencies
         if: matrix.kind == 'core'
-        run: python3 scripts/ci_warnings.py -- uv sync --dev --all-extras
+        run: >-
+          python3 scripts/ci_warnings.py -- uv sync --dev --extra api
+          --extra captions --extra cechar4-openzl --extra cu132
 
       - name: Sync backend analysis dependencies
         if: matrix.kind == 'backend'
@@ -72,34 +74,34 @@ jobs:
 
       - name: Verify formatting
         if: matrix.kind == 'core'
-        run: python3 scripts/ci_warnings.py -- uv run ruff format --check .
+        run: python3 scripts/ci_warnings.py -- uv run --no-sync ruff format --check .
 
       - name: Run lint
         if: matrix.kind == 'core'
-        run: python3 scripts/ci_warnings.py -- uv run pylint -j 0 celune tests main.py
+        run: python3 scripts/ci_warnings.py -- uv run --no-sync pylint -j 0 celune tests main.py
 
       - name: Type check
         if: matrix.kind == 'core'
-        run: python3 scripts/ci_warnings.py -- uv run pyrefly check
+        run: python3 scripts/ci_warnings.py -- uv run --no-sync pyrefly check
 
       - name: Check shared backend code
         if: matrix.kind == 'core'
         run: |
-          python3 scripts/ci_warnings.py -- uv run ruff check \
+          python3 scripts/ci_warnings.py -- uv run --no-sync ruff check \
             celune/backends/tts/__init__.py \
             celune/backends/tts/base.py \
             celune/backends/tts/contracts.py \
             celune/backends/tts/quantization.py \
             celune/backends/vc/__init__.py \
             celune/backends/vc/base.py
-          python3 scripts/ci_warnings.py -- uv run pylint -j 0 --ignore-paths='^$' \
+          python3 scripts/ci_warnings.py -- uv run --no-sync pylint -j 0 --ignore-paths='^$' \
             celune/backends/tts/__init__.py \
             celune/backends/tts/base.py \
             celune/backends/tts/contracts.py \
             celune/backends/tts/quantization.py \
             celune/backends/vc/__init__.py \
             celune/backends/vc/base.py
-          python3 scripts/ci_warnings.py -- uv run pyrefly check \
+          python3 scripts/ci_warnings.py -- uv run --no-sync pyrefly check \
             celune/backends/tts/__init__.py \
             celune/backends/tts/base.py \
             celune/backends/tts/contracts.py \
@@ -110,17 +112,17 @@ jobs:
       - name: Check docstring coverage
         if: matrix.kind == 'core'
         run: |
-          python3 scripts/ci_warnings.py -- uv run docstr-coverage -i -P --fail-under 80 celune tests main.py || {
+          python3 scripts/ci_warnings.py -- uv run --no-sync docstr-coverage -i -P --fail-under 80 celune tests main.py || {
             echo "::warning::Docstring coverage is below 80%. Try adding more missing docstrings."
           }
 
       - name: Run unit tests
         if: matrix.kind == 'core'
-        run: python3 scripts/ci_warnings.py -- uv run poe test_basic
+        run: python3 scripts/ci_warnings.py -- uv run --no-sync poe test_basic
 
       - name: Import smoke test
         if: matrix.kind == 'core'
-        run: python3 scripts/ci_warnings.py -- uv run python -c "import celune; print(dir(celune))"
+        run: python3 scripts/ci_warnings.py -- uv run --no-sync python -c "import celune; print(dir(celune))"
 
   required-python-check:
     name: Anti AI Slop & Vibe Coding Checks
@@ -156,7 +158,7 @@ jobs:
         uses: astral-sh/setup-uv@v7
 
       - name: Sync dependencies
-        run: python3 scripts/ci_warnings.py -- uv sync --dev
+        run: python3 scripts/ci_warnings.py -- uv sync --dev --extra cu132
 
       - name: Install appimagetool
         run: |
@@ -190,7 +192,7 @@ jobs:
 
       - name: Sync dependencies
         shell: powershell
-        run: python .\scripts\ci_warnings.py -- uv sync --dev --extra api
+        run: python .\scripts\ci_warnings.py -- uv sync --dev --extra api --extra cu132
 
       - name: Build Windows launcher artifacts
         shell: powershell

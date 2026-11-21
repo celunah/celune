@@ -5,11 +5,10 @@ import io
 import sys
 import contextlib
 import subprocess
-from unittest import mock
-from typing import Optional
 from types import SimpleNamespace
+from typing import Optional
 from pathlib import Path, PureWindowsPath
-
+from unittest import mock
 
 import pytest
 
@@ -21,6 +20,30 @@ entrypoint = main.load_entrypoint_module()
 
 class TestDoctorCommand:
     """Verify `celune doctor` works without booting the full app."""
+
+    @pytest.mark.parametrize(
+        ("cuda_version", "expected_ok"),
+        (
+            ("12.8", True),
+            ("13.0", True),
+            ("13.2", True),
+            ("13.4", True),
+            ("12.9", False),
+        ),
+    )
+    def test_startup_accepts_each_selectable_cuda_index(
+        self, cuda_version: str, expected_ok: bool
+    ) -> None:
+        """Verify startup accepts only the CUDA builds offered by Celune."""
+        fake_torch = SimpleNamespace(version=SimpleNamespace(cuda=cuda_version))
+        major, minor = cuda_version.split(".")
+        cuda_version_tuple = (int(major), int(minor))
+
+        with mock.patch.dict(sys.modules, {"torch": fake_torch}):
+            torch_ok, detected_version = entrypoint._check_torch()
+
+        assert torch_ok is expected_ok
+        assert detected_version == cuda_version_tuple
 
     def test_missing_dependency_help_identifies_launch_environment(self) -> None:
         """Verify recovery steps match the active interpreter and launcher."""
@@ -70,6 +93,14 @@ class TestDoctorCommand:
             assert entrypoint._missing_dependency_startup_help() == entrypoint.string(
                 "ui.missing_dependency_repair_venv", app_name=entrypoint.APP_NAME
             )
+
+    def test_missing_torch_help_uses_the_selected_index_setup(self, capsys) -> None:
+        """Verify missing PyTorch guidance does not suggest a standalone install."""
+        entrypoint._print_dependency_setup_help("torch")
+
+        output = capsys.readouterr().out
+        assert "uv sync --extra cu132" in output
+        assert "pip install torch" not in output
 
     def test_non_core_commands_work_without_installed_runtime_packages(self) -> None:
         """Verify lightweight commands do not import Celune's core contract."""

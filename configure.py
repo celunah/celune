@@ -6,14 +6,17 @@ import os
 import sys
 import shutil
 import tomllib
+import argparse
 import platform
 import subprocess
-from pathlib import Path
 from typing import Optional
+from pathlib import Path
 from collections.abc import Sequence
 
 APP_NAME = "Celune"
 PROJECT_ROOT = Path(__file__).resolve().parent
+PYTORCH_INDEXES = ("cu128", "cu130", "cu132", "cu134")
+DEFAULT_PYTORCH_INDEX = "cu132"
 RUNTIME_DIRECTORIES = (
     "environments",
     "huggingface/hub",
@@ -352,13 +355,30 @@ def confirm_repair() -> bool:
     return False
 
 
-def sync_arguments(system_name: str, uv: Path) -> list[str]:
+def sync_arguments(
+    system_name: str,
+    uv: Path,
+    pytorch_index: str = DEFAULT_PYTORCH_INDEX,
+) -> list[str]:
     """Return the platform-safe dependency synchronization command."""
+    if pytorch_index not in PYTORCH_INDEXES:
+        raise ValueError(f"unsupported CUDA index: {pytorch_index}")
+
     command = [str(uv), "sync", "--dev"]
     if system_name == "Windows":
         command.extend(("--extra", "api"))
     else:
-        command.append("--all-extras")
+        command.extend(
+            (
+                "--extra",
+                "api",
+                "--extra",
+                "captions",
+                "--extra",
+                "cechar4-openzl",
+            )
+        )
+    command.extend(("--extra", pytorch_index))
     return command
 
 
@@ -390,8 +410,17 @@ def _recreate_virtual_environment(uv: Path, root: Path = PROJECT_ROOT) -> bool:
     return _run([str(uv), "venv", str(virtual_environment)], cwd=root)
 
 
-def main() -> int:
+def main(argv: Optional[Sequence[str]] = None) -> int:
     """Run system dependency, Python environment, and AppData setup."""
+    parser = argparse.ArgumentParser(description="Set up Celune's source environment.")
+    parser.add_argument(
+        "--cuda-index",
+        choices=PYTORCH_INDEXES,
+        default=DEFAULT_PYTORCH_INDEX,
+        help="PyTorch CUDA index to install (default: cu132)",
+    )
+    arguments = parser.parse_args(argv)
+
     system_name = platform.system()
     distro_name = get_distro_name(system_name)
     architecture = platform.machine()
@@ -473,7 +502,7 @@ def main() -> int:
     if repair_requested and not _recreate_virtual_environment(uv):
         print("Celune setup did not complete successfully.")
         return 1
-    if not _run(sync_arguments(system_name, uv)):
+    if not _run(sync_arguments(system_name, uv, arguments.cuda_index)):
         print("Celune's Python environment could not be synchronized.")
         ok = False
 

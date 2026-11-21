@@ -52,9 +52,10 @@ browser UI, API, and extension surfaces.
   Python 3.12-3.14. Check `pyproject.toml` before adding core imports. Backend
   packages belong in backend code or isolated workers. Guard platform-specific
   APIs so other supported platforms can type-check, and skip tests for other
-  platforms. Use `uv`. Run `python configure.py` for setup (`--all-extras` is
-  Linux-only). If `uv` reports access denied, retry with `--no-cache`. Do not
-  alter the environment to work around failures.
+  platforms. Use `uv`. Run `python configure.py` for setup. It selects CUDA
+  13.2 by default; use `--cuda-index cu128`, `cu130`, or `cu134` to choose
+  another PyTorch index. If `uv` reports access denied, retry with `--no-cache`.
+  Do not alter the environment to work around failures.
 - **Preserve runtime contracts.** Keep startup's default theme and loading
   screen ahead of core or backend imports. Reuse audio, playback, buffering,
   stream, and DSP abstractions. Apply runtime themes after initialization. Use

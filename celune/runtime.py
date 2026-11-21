@@ -8,22 +8,22 @@ from collections.abc import Callable
 
 import torch
 
-from .i18n import string
-from ._version import DEVELOPMENT
-from .typing.modes import BackendMode
-from .backends.tts import CeluneBackend
-from .backends.vc import CeluneVCBackend
-from .paths import project_root, running_compiled
-from .typing.aliases import LogLevel, LogCallback
 from . import __comment__, __version__, __codename__
 from .vcs import get_branch, is_git_checkout, git_checkout_hint
-from .constants import APP_NAME, NVIDIA_DEVICE_KEYWORDS, SUPPORTED_CUDA_VERSIONS
+from .i18n import string
+from .paths import project_root, running_compiled
 from .utils import (
     available,
     format_number,
     current_platform,
     cuda_architecture,
 )
+from ._version import DEVELOPMENT
+from .constants import APP_NAME, NVIDIA_DEVICE_KEYWORDS, SUPPORTED_CUDA_VERSIONS
+from .backends.vc import CeluneVCBackend
+from .backends.tts import CeluneBackend
+from .typing.modes import BackendMode
+from .typing.aliases import LogLevel, LogCallback
 
 
 def log_runtime_banner(
@@ -176,7 +176,7 @@ def validate_runtime(
             "error",
         )
         log(
-            f"Run `uv sync` in {APP_NAME}'s directory to set up the environment, "
+            f"Run `python configure.py` in {APP_NAME}'s directory to set up the environment, "
             f"then restart {APP_NAME}.",
             "error",
         )

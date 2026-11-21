@@ -55,14 +55,15 @@ replace third-party model terms.
 FireRedTTS3 is intentionally separate from that Hugging Face portion: its
 manifest uses `huggingface-hub>=1.5.0,<2.0.0` and `transformers==5.6.2`, which
 cannot be resolved alongside the shared Hub-below-1 and Transformers-below-5
-constraints. The core project pins PyTorch 2.15 with CUDA 13.2, and the core and
-backend environments are intentionally not the same lockfile. Its `pyproject.toml`
-declares explicit PyTorch indexes for CUDA 12.8, 13.0, 13.2, and 13.4. The
-current `tool.uv.sources` entries select CUDA 13.2. An index declaration does
-not widen the exact version pins. When evaluating another release, update the
-`torch`, `torchaudio`, and `torchvision` pins and source entries together to
-use matching CUDA suffixes. PyTorch does not publish every release for every
-CUDA index, so check the [release compatibility matrix](https://github.com/pytorch/pytorch/blob/main/RELEASE.md)
+constraints. The core project's `cu128`, `cu130`, `cu132`, and `cu134` extras
+each select an explicit PyTorch index and compatible `torch`, `torchaudio`, and
+`torchvision` ranges. `cu132` is the recommended default. The PyTorch runtime
+packages and their direct dependents are kept in those extras so a plain
+`uv run` cannot resolve a second PyTorch build from PyPI. Use exactly one CUDA
+extra with `uv sync`; the CUDA extras are mutually exclusive. The core and
+backend environments are intentionally not the same lockfile. PyTorch does not
+publish every release for every CUDA index, so check the
+[release compatibility matrix](https://github.com/pytorch/pytorch/blob/main/RELEASE.md)
 and resolve the complete stack before changing the lockfile. For PyTorch 2.15,
 CUDA 13.2 is stable and CUDA 13.4 is experimental. SoulX-Singer pins
 Transformers 4.41.2 to match its upstream requirements. Its custom Llama

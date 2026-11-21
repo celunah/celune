@@ -16,7 +16,7 @@ compiled artifact is not shadowing the checkout.
 Check the backend name and manifest. Isolated environments are backend-specific.
 The core environment being healthy does not prove a TTS worker is installed.
 Read the environment's manifest and worker logs, then retry the backend-specific
-setup after Celune exits. Do not mix the core CUDA 13.0 lock with the worker
+setup after Celune exits. Do not mix the core CUDA 13.2 default with the worker
 CUDA 12.8 compatibility stack by manually installing packages into both.
 
 ## No audio or a stale device

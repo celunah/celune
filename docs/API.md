@@ -46,10 +46,10 @@ in its startup message when `cloudflared` publishes it within ten seconds. If
 the tunnel fails or does not publish a URL by then, the startup message uses the
 loopback API URL. A public URL that appears later is logged separately.
 
-The API is an optional core extra. Install it with `uv sync --extra api` (or
-include `--all-extras` during Linux development). Keep a network-facing listener
-behind authentication and an appropriate firewall. The API can start speech,
-load voices, and play uploaded audio.
+The API is an optional core extra. Install it with
+`uv sync --extra api --extra cu132` (or select another CUDA extra). Keep a
+network-facing listener behind authentication and an appropriate firewall. The
+API can start speech, load voices, and play uploaded audio.
 
 Authenticated requests may send either header:
 

@@ -12,27 +12,24 @@ import platform
 import warnings
 import contextlib
 import subprocess
-from dataclasses import dataclass
-from collections.abc import Callable
-from importlib import util, import_module
 from types import ModuleType, SimpleNamespace
 from typing import TYPE_CHECKING, NoReturn, Optional
 from pathlib import Path, PurePosixPath, PureWindowsPath
+from importlib import util, import_module
+from dataclasses import dataclass
+from collections.abc import Callable
 
-
-from celune.i18n import string
-from celune.typing.common import Config
-from celune.terminal import set_terminal_status
 from celune import REVISION, __tagline__, __version__
 from celune.vcs import is_git_checkout, git_checkout_hint
-from celune.config import config_log_level, normalize_log_level
-from celune.exceptions import CEVoiceDependencyUnavailableError
+from celune.i18n import string
 from celune.paths import (
     project_root,
     running_compiled,
     migrate_legacy_app_data,
     configure_huggingface_runtime,
 )
+from celune.config import config_log_level, normalize_log_level
+from celune.terminal import set_terminal_status
 from celune.constants import (
     APP_NAME,
     APP_SLUG,
@@ -40,6 +37,8 @@ from celune.constants import (
     SUPPORTED_CUDA_VERSIONS,
     ExitCodes,
 )
+from celune.exceptions import CEVoiceDependencyUnavailableError
+from celune.typing.common import Config
 
 if TYPE_CHECKING:
     from celune.celune import Celune
@@ -263,9 +262,10 @@ def _print_dependency_setup_help(package_name: str) -> None:
     print(string("cli.setup_with_uv"))
     print(string("cli.setup_cmd_uv_sync"))
     print()
-    print(string("cli.install_manually"))
-    print(string("cli.setup_cmd_pip_install", package_name=package_name))
-    print()
+    if package_name not in {"torch", "torchao", "torchaudio", "torchvision"}:
+        print(string("cli.install_manually"))
+        print(string("cli.setup_cmd_pip_install", package_name=package_name))
+        print()
 
     print(string("cli.full_traceback"))
     if os.name == "nt":
@@ -719,7 +719,7 @@ def _doctor_torch_details() -> list[DoctorCheck]:
             "PyTorch",
             False,
             "Module 'torch' is not installed.",
-            hint="Run `python configure.py` or `uv sync`.",
+            hint="Run `python configure.py` or `uv sync --extra cu132`.",
         )
         return checks
 
@@ -1021,7 +1021,7 @@ def _doctor_checks() -> list[DoctorCheck]:
             "Python environment",
             False,
             f"project virtual environment not found. Running {current_python}",
-            hint="Run `uv sync` to create or repair a compatible environment.",
+            hint="Run `python configure.py` or `uv sync --extra cu132`.",
         )
 
     _doctor_add(
@@ -1029,7 +1029,7 @@ def _doctor_checks() -> list[DoctorCheck]:
         "Launcher Python",
         venv_python.exists(),
         str(venv_python),
-        hint="Run `uv sync` to create or repair a compatible environment.",
+        hint="Run `python configure.py` or `uv sync --extra cu132`.",
     )
 
     uv_path = shutil.which("uv")

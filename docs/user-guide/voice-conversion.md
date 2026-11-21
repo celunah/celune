@@ -49,9 +49,9 @@ results returned to Python or the REST API retain the backend's original level.
 Press `CTRL+R` in VC mode to start or stop microphone capture. The capture path
 uses preroll, hangover, voice-activity checks, and a bounded submission queue
 so the first phonemes are not cut off and stale audio cannot grow without
-limit. With the optional `live-vc-ai` extra, the application uses Silero VAD.
-Otherwise, the application uses the built-in energy detector. VAD is always
-active during live capture.
+limit. The selected CUDA extra supplies Silero VAD. If it is unavailable, the
+application uses the built-in energy detector. VAD is always active during live
+capture.
 
 Use `/vcmode talk` for ordinary speech and `/vcmode sing` for F0-conditioned
 singing. The UI exposes a button for changing F0 mode.
