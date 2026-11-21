@@ -837,7 +837,7 @@ class TestBackendEnvironment:
                 mock.patch.object(remote, "project_root", return_value=root),
                 mock.patch.dict(
                     os.environ,
-                    {"ZONOS3_AUDIO_CODEC_DEVICE": "cuda:1"},
+                    {"zonos3_audio_codec_device": "cuda:1"},
                     clear=True,
                 ),
             ):

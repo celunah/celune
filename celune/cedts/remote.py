@@ -214,7 +214,7 @@ def _worker_environment(environment: BackendEnvironment) -> dict[str, str]:
             (
                 candidate
                 for name, candidate in parent_environment.items()
-                if name.casefold() == variable.casefold()  # pylint: disable=E1101
+                if name.lower() == variable.lower()
             ),
             None,
         )
@@ -226,7 +226,7 @@ def _worker_environment(environment: BackendEnvironment) -> dict[str, str]:
             (
                 candidate
                 for name, candidate in parent_environment.items()
-                if name.casefold() == "zonos3_audio_codec_device"
+                if name.lower() == "zonos3_audio_codec_device"
             ),
             None,
         )
