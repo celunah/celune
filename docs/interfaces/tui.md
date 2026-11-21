@@ -367,6 +367,7 @@ continues to validate its own arguments and report command-specific errors.
 | Command | Arguments and behavior |
 | --- | --- |
 | `/help` | Show commands available for the current backend, mode, and Persona capability. |
+| `/savings` | Compare session and all-time generated speech with equivalent per-minute API pricing. |
 | `/restartaudio` | Recreate the audio server, test each detected speaker channel, then play a readiness signal. |
 | <code>/consumebuffer true&#124;false</code> | Toggle boundary consumption of live input. |
 | `/invoke NAME [ARGS...]` | Invoke a registered extension. |
@@ -408,6 +409,11 @@ objects. For CPU components, all three values are the component's resident
 tensor storage because the CPU allocator has no corresponding per-component
 reserved or peak counters. Worker-backed TTS and VC backends report from their
 own CEDTS processes.
+
+`/savings` reports estimated session and all-time API costs for each model in
+the configured comparison list. The base price is shown per minute of speech.
+These values use public API pricing for comparison, can differ from actual
+usage costs, and are not fees charged by Celune.
 
 ## Themes and lighting
 

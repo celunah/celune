@@ -11,13 +11,11 @@ import tempfile
 import contextlib
 import subprocess
 from typing import TYPE_CHECKING, Optional
-from decimal import ROUND_HALF_UP, Decimal
 
 import torch
 import psutil
 
 from ..i18n import string
-from ..constants import APP_NAME, COST_EQUIVALENTS
 from ..persona.impl import persona_talkback_enabled
 from ..utils import lunar_info, lunar_phase, celune_day_status
 
@@ -44,71 +42,11 @@ _RESOURCE_PAGE_CACHE: Optional[
             bool,
             bool,
             str,
-            float,
-            float,
         ],
         float,
         tuple[str, ...],
     ]
 ] = None
-
-
-def _format_cost(amount: float) -> str:
-    """Return one compact USD amount string for footer displays."""
-    if amount <= 0.0:
-        return "0.00"
-    decimal_amount = Decimal(str(amount))
-    if amount < 0.01:
-        formatted = str(
-            decimal_amount.quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
-        )
-    else:
-        formatted = str(
-            decimal_amount.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-        )
-    return formatted.rstrip("0").rstrip(".")
-
-
-def format_cost_equivalent_pages(celune: Celune) -> tuple[str, ...]:
-    """Return footer lines describing session and total saved cost by provider.
-
-    Args:
-        celune: The active Celune runtime state.
-
-    Returns:
-        tuple[str, ...]: Footer lines for session and total savings by provider.
-    """
-    session_speech_seconds = max(
-        0.0,
-        float(getattr(celune, "total_generated_speech_seconds", 0.0)),
-    )
-    historical_speech_seconds = max(
-        0.0,
-        float(getattr(celune, "historical_generated_speech_seconds", 0.0)),
-    )
-    session_speech_minutes = session_speech_seconds / 60.0
-    total_speech_minutes = (historical_speech_seconds + session_speech_seconds) / 60.0
-
-    pages = []
-    for provider, cost_per_minute in COST_EQUIVALENTS.items():
-        pages.append(
-            string(
-                "ui.footer_cost_equivalent",
-                app_name=APP_NAME,
-                cost=_format_cost(session_speech_minutes * cost_per_minute),
-                provider=provider,
-            )
-        )
-        pages.append(
-            string(
-                "ui.footer_total_cost_equivalent",
-                app_name=APP_NAME,
-                cost=_format_cost(total_speech_minutes * cost_per_minute),
-                provider=provider,
-            )
-        )
-
-    return tuple(pages)
 
 
 def format_vram() -> str:
@@ -293,12 +231,6 @@ def resource_pages(celune: Celune, theme_name: Optional[str] = None) -> tuple[st
     configured_theme = (
         raw_configured_theme if isinstance(raw_configured_theme, str) else "dark"
     )
-    session_speech_seconds = float(
-        getattr(celune, "total_generated_speech_seconds", 0.0)
-    )
-    historical_speech_seconds = float(
-        getattr(celune, "historical_generated_speech_seconds", 0.0)
-    )
     now_monotonic = time.monotonic()
     cache_key = (
         id(celune),
@@ -308,8 +240,6 @@ def resource_pages(celune: Celune, theme_name: Optional[str] = None) -> tuple[st
         persona_ready,
         tutorial,
         configured_theme,
-        session_speech_seconds,
-        historical_speech_seconds,
     )
     cached = _RESOURCE_PAGE_CACHE
     if (
@@ -335,8 +265,11 @@ def resource_pages(celune: Celune, theme_name: Optional[str] = None) -> tuple[st
         pages.append(f"{int(days)} day{suffix} until full moon")
 
     pages.append("/help commands")
-    pages.extend(format_cost_equivalent_pages(celune))
     if celune is not None:
+        current_character = getattr(celune, "current_character", None)
+        if current_character is not None:
+            pages.append(f"{current_character} is the active character")
+
         if input_mode == "voice_conversion":
             pages.append(string("ui.footer_toggle_recording"))
         elif (

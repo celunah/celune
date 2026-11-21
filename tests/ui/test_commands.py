@@ -2,35 +2,36 @@
 """Tests for Textual command routing and agent-status presentation."""
 
 import tempfile
-from types import SimpleNamespace
-from typing import Optional, cast
 from pathlib import Path
 from unittest import mock
+from types import SimpleNamespace
+from typing import Optional, cast
 from collections.abc import Iterator
 
-import numpy as np
 import pytest
+import numpy as np
 from textual import events
 from textual.widgets import TextArea
 
 from celune.i18n import string
-from celune.agent import AgentTaskState
 from celune.celune import Celune
+from celune.constants import APP_NAME
+from celune.agent import AgentTaskState
+from celune.typing.modes import OperationState
+from celune.ui.commands import process_command, attachment_source
 from celune.ui.app import (
     CeluneUI,
     VoiceButton,
     ButtonActions,
 )
-from celune.ui.commands import process_command, attachment_source
 from celune.typing.locks import (
     ComponentLockName,
     ComponentLockOwner,
     ComponentBusyResult,
 )
-from celune.typing.modes import OperationState
 
-from ..support import FakeBackend, FakeVCBackend
 from ..platform import WINDOWS_ONLY
+from ..support import FakeBackend, FakeVCBackend
 
 
 class TestUICommand:
@@ -102,6 +103,38 @@ class TestUICommand:
         assert string("commands.help_cesn_slur") in messages
         assert string("commands.help_cesn_singer") in messages
         assert string("commands.help_cesn_tutorial") in messages
+        assert any(string("commands.help_savings") in message for message in messages)
+
+    def test_savings_command_reports_session_total_and_api_prices(self) -> None:
+        """Show current and cumulative API cost estimates on demand."""
+        self.ui.celune.total_generated_speech_seconds = 120.0
+        self.ui.celune.historical_generated_speech_seconds = 180.0
+
+        self._process_command("savings", [])
+
+        assert len(self.logs) == 1
+        report = self.logs[0][0]
+        assert string("commands.savings_title", app_name=APP_NAME) in report
+        assert string("commands.savings_question", app_name=APP_NAME) in report
+        assert string("commands.savings_disclaimer_pricing") in report
+        assert string("commands.savings_disclaimer_changes") in report
+        assert string("commands.savings_disclaimer_fees", app_name=APP_NAME) in report
+
+        gemini_row = next(
+            line for line in report.splitlines() if "gemini-3.8-flash-tts" in line
+        )
+        assert "$0.05" in gemini_row
+        assert "$0.14" in gemini_row
+        assert "$0.027/min" in gemini_row
+
+        realtime_row = next(
+            line
+            for line in report.splitlines()
+            if line.split(" |", maxsplit=1)[0].strip() == "gpt-realtime-2.1"
+        )
+        assert "$0.15" in realtime_row
+        assert "$0.38" in realtime_row
+        assert "$0.076/min" in realtime_row
 
     def test_help_omits_cesn_tutorial_without_singing_backend(self) -> None:
         """Hide the CESN tutorial link when the active backend cannot sing."""

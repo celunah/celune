@@ -17,6 +17,7 @@ import soundfile as sf
 from ..constants import APP_NAME
 from ..i18n import string, tagged_string
 from ..typing.modes import OperationState
+from .savings import format_savings_report
 from ..pipeline.playback import close_stream
 from ..exceptions import InvalidExtensionError
 from ..audio.server import restart_audio_server
@@ -33,8 +34,8 @@ from ..utils import (
 )
 
 if TYPE_CHECKING:
-    from .app import CeluneUI
     from ..celune import Celune
+    from .app import CeluneUI
 
 IMAGE_EXTENSIONS = {".jpeg", ".jpg", ".png", ".webp"}
 VIDEO_EXTENSIONS = {".mp4", ".webm"}
@@ -406,6 +407,12 @@ def _handle_help(ui: CeluneUI, _args: list[str]) -> None:
         ui.safe_log(string("commands.help_cesn_tuplet"))
         ui.safe_log(string("commands.help_cesn_singer"))
         ui.safe_log(string("commands.help_cesn_tutorial"))
+
+
+@_register_command("savings", "commands.help_savings")
+def _handle_savings(ui: CeluneUI, _args: list[str]) -> None:
+    """Show estimated API speech costs for this session and all time."""
+    ui.safe_log(format_savings_report(ui.celune))
 
 
 @_register_command("vram", "commands.help_vram")

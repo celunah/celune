@@ -8,33 +8,34 @@ import asyncio
 import tempfile
 import warnings
 import threading
-from types import SimpleNamespace
-from typing import Optional, cast
 from pathlib import Path
 from unittest import mock
 from functools import partial
+from types import SimpleNamespace
+from typing import Optional, cast
 from collections.abc import Callable, Iterator
 
-import numpy as np
 import pytest
+import numpy as np
 from textual import events
 from textual.app import App
-from textual.widgets import Label, Static, RichLog, TextArea, ProgressBar
 from textual.containers import Vertical
+from textual.widgets import Label, Static, RichLog, TextArea, ProgressBar
 
-from celune.ui import (
-    app as ui_app,
-)
-from celune.ui import compat as ui_compat
-from celune.ui import terminal as ui_terminal
-from celune.ui import (
-    resources as ui_resources,
-)
-from celune.core import lifecycle as core_lifecycle
-from celune.i18n import string, tagged_string
 from celune.theme import colors
-from celune.utils import discard
 from celune.celune import Celune
+from celune.utils import discard
+from celune.ui import app as ui_app
+from celune.ui import compat as ui_compat
+from celune.i18n import string, tagged_string
+from celune.ui import terminal as ui_terminal
+from celune.typing.modes import OperationState
+from celune.ui.headless import CeluneHeadlessUI
+from celune.ui import resources as ui_resources
+from celune.constants import APP_NAME, ExitCodes
+from celune.core import lifecycle as core_lifecycle
+from celune.extensions.events import EventDispatcher
+from celune.dataclasses.events import CharacterChangedEvent
 from celune.ui.app import (
     Button,
     CeluneUI,
@@ -44,11 +45,6 @@ from celune.ui.app import (
     ProgressLabel,
     CeluneLoadingScreen,
 )
-from celune.constants import APP_NAME, COST_EQUIVALENTS, ExitCodes
-from celune.ui.headless import CeluneHeadlessUI
-from celune.typing.modes import OperationState
-from celune.extensions.events import EventDispatcher
-from celune.dataclasses.events import CharacterChangedEvent
 
 from ..celtest import celtest
 from ..support import FakeBackend
@@ -2089,8 +2085,8 @@ class TestUIStartup:
 
         assert "CTRL+R toggle recording" in pages
 
-    def test_textual_resource_footer_rotates_cost_equivalent_pages(self) -> None:
-        """Verify the resource footer includes saved-cost pages for each provider."""
+    def test_textual_resource_footer_keeps_savings_out_of_rotating_pages(self) -> None:
+        """Keep API cost comparisons in their on-demand command report."""
         celune = cast(
             Celune,
             SimpleNamespace(
@@ -2104,17 +2100,11 @@ class TestUIStartup:
         )
 
         pages = ui_resources.resource_pages(celune, "celune")
-        cost_pages = [
-            page
-            for page in pages
-            if "(this session): $" in page or "(overall): $" in page
-        ]
 
-        assert len(cost_pages) == len(COST_EQUIVALENTS) * 2
-        assert "gemini-3.8-flash-tts (this session): $0.05" in cost_pages
-        assert "gpt-realtime-2.1 (this session): $0.15" in cost_pages
-        assert "gemini-3.8-flash-tts (overall): $0.14" in cost_pages
-        assert "gpt-realtime-2.1 (overall): $0.38" in cost_pages
+        assert "/help commands" in pages
+        assert not any("(this session): $" in page for page in pages)
+        assert not any("(overall): $" in page for page in pages)
+        assert not any("gemini-3.8-flash-tts" in page for page in pages)
 
     def test_ctrl_r_toggles_tui_vc_recording(
         self, request: pytest.FixtureRequest

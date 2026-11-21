@@ -40,6 +40,7 @@ class UITestRuntime:
     backend = _UITestBackend()
     voices: tuple[str, ...] = ()
     current_voice: Optional[str] = None
+    current_character: Optional[str] = None
     use_normalization = False
     log_callback: Optional[Callable[[str, str], None]] = None
 
