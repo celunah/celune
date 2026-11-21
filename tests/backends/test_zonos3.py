@@ -135,3 +135,80 @@ def test_zonos3_forwards_progressive_audio_before_synthesis_finishes(
     assert final_metadata is not None
     assert final_metadata["is_final"]
     assert synthesis_finished.is_set()
+
+
+def test_zonos3_stream_close_waits_for_synthesis_worker(tmp_path: Path) -> None:
+    """Do not finish stream cancellation while synthesis still uses the model."""
+    reference = tmp_path / "reference.wav"
+    reference.write_bytes(b"reference wav")
+    loader = SimpleNamespace(materialize=mock.Mock(return_value=reference))
+    runtime = Zonos3Runtime(None, None, tmp_path)
+    producer_waiting = threading.Event()
+    allow_producer_finish = threading.Event()
+    producer_finished = threading.Event()
+    close_started = threading.Event()
+    close_finished = threading.Event()
+    close_errors: list[Exception] = []
+
+    def synthesize(
+        _runtime: Zonos3Runtime,
+        _request: dict[str, BackendArgumentValue],
+        on_audio: Callable[[np.ndarray], None],
+    ) -> None:
+        """Emit enough audio to yield once, then wait for cancellation cleanup."""
+        on_audio(np.array([0.0, 0.5], dtype=np.float32))
+        on_audio(np.array([0.25, 0.75], dtype=np.float32))
+        producer_waiting.set()
+        try:
+            assert allow_producer_finish.wait(timeout=10)
+        finally:
+            producer_finished.set()
+
+    backend = _backend()
+    with (
+        mock.patch.object(
+            backend,
+            "_require_compatible_bundle",
+            return_value=(loader, ("balanced",)),
+        ),
+        mock.patch.object(backend, "_truncate_reference", return_value=reference),
+        mock.patch.object(backend, "_apply_seed"),
+        mock.patch.object(Zonos3, "_run_synthesis", side_effect=synthesize),
+    ):
+        stream = backend.generate_stream(
+            runtime,
+            text="A short sentence.",
+            voice="balanced",
+            language="en-US",
+        )
+        first_audio, sample_rate, _metadata = next(stream)
+        close = getattr(stream, "close", None)
+
+        assert first_audio.tolist() == [0.0, 0.5]
+        assert sample_rate == 44_100
+        assert producer_waiting.wait(timeout=1)
+        assert callable(close)
+
+        def close_stream() -> None:
+            """Close the consumer stream and capture cleanup failures."""
+            close_started.set()
+            try:
+                close()
+            except Exception as error:
+                close_errors.append(error)
+            finally:
+                close_finished.set()
+
+        closer = threading.Thread(target=close_stream)
+        closer.start()
+        try:
+            assert close_started.wait(timeout=1)
+            assert not close_finished.wait(timeout=2.2)
+        finally:
+            allow_producer_finish.set()
+            closer.join(timeout=5)
+
+    assert not closer.is_alive()
+    assert not close_errors
+    assert producer_finished.is_set()
+    assert close_finished.is_set()

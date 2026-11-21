@@ -481,6 +481,9 @@ class TestBackendEnvironment:
         assert any(
             "ZONOS3-Mini.git@a50e14117d99" in item for item in manifest.requirements
         )
+        assert not any(
+            item.startswith("fusealign-hub @") for item in manifest.requirements
+        )
         assert not manifest.supports_audio_cpp
         assert not manifest.requires_audio_cpp
 

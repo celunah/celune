@@ -243,10 +243,6 @@ BACKEND_MANIFESTS = {
             "GitPython>=3.1.59,<4.0",
             "descript-audio-codec==1.0.0",
             "fastapi",
-            (
-                "fusealign-hub @ git+https://github.com/Zyphra/"
-                "fusealign-multilingual.git@64d311875e55e797dafae2a7c3b0c1e45967459f"
-            ),
             "huggingface-hub>=0.36,<1.0.0",
             "hf-xet",
             "kernels>=0.12.1",

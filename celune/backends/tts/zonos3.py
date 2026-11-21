@@ -7,7 +7,7 @@ import base64
 import threading
 from pathlib import Path
 from dataclasses import dataclass
-from typing import Optional, Protocol, Union
+from typing import Optional, Protocol, Union, cast
 from collections.abc import Callable, Iterator
 
 import torch
@@ -311,8 +311,12 @@ class Zonos3(CeluneBackend[Zonos3Runtime]):
                 raise FileNotFoundError(f"ZONOS3 release directory is missing: {local}")
             return str(local)
 
-        release.resolve_file = resolve_file
-        release.resolve_dir_or_local = resolve_dir_or_local
+        vars(release).update(
+            {
+                "resolve_file": resolve_file,
+                "resolve_dir_or_local": resolve_dir_or_local,
+            }
+        )
 
     def load_model(
         self, model_id: str, **kwargs: BackendArgumentValue
@@ -348,6 +352,7 @@ class Zonos3(CeluneBackend[Zonos3Runtime]):
                 device: torch.device,
                 decoder: Optional[str] = None,
             ) -> torch.nn.Module:
+                """Load one codec decoder on Celune's configured device."""
                 del device
                 codec_device = torch.device(
                     os.environ.get("ZONOS3_AUDIO_CODEC_DEVICE", "cpu")
@@ -369,7 +374,7 @@ class Zonos3(CeluneBackend[Zonos3Runtime]):
         lm.append_text_rows(TextExtraRows.load(snapshot_path / _TEXT_ROWS))
         assets = CeluneReferenceAssets.load()
         assets.grow(lm)
-        runtime = Zonos3Runtime(lm, assets, snapshot_path)
+        runtime = Zonos3Runtime(lm, cast(_ReferenceAssets, assets), snapshot_path)
         self.quantization_attempted = False
         self.quantization_active = False
         self.quantization_mode = None
@@ -400,14 +405,18 @@ class Zonos3(CeluneBackend[Zonos3Runtime]):
         if runtime.lm is None or runtime.assets is None:
             raise RuntimeError("ZONOS3-Mini runtime has been unloaded")
 
-        from zonos3.reference.synth import synthesize
+        from zonos3.reference.lm import Zonos3LM
+        from zonos3.reference.synth import ReferenceAssets, synthesize
+
+        language_model = cast(Zonos3LM, runtime.lm)
+        reference_assets = cast(ReferenceAssets, runtime.assets)
 
         synthesize(
-            runtime.lm,
+            language_model,
             request,
-            assets=runtime.assets,
-            device=runtime.lm.device,
-            dtype=runtime.lm.dtype,
+            assets=reference_assets,
+            device=language_model.device,
+            dtype=language_model.dtype,
             on_audio=on_audio,
         )
 
@@ -537,7 +546,9 @@ class Zonos3(CeluneBackend[Zonos3Runtime]):
                 pending_audio = audio
         finally:
             cancelled.set()
-            producer.join(timeout=2.0)
+            # CEDTS enforces a bounded drain and terminates this worker if upstream
+            # synthesis does not reach its next callback after cancellation.
+            producer.join()
 
         if total_samples == 0:
             raise RuntimeError("ZONOS3-Mini returned empty audio")
