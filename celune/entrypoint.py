@@ -98,6 +98,26 @@ def _resolve_headless_mode(runtime: SimpleNamespace, config: Config) -> bool:
     return runtime.config_bool(config, "CELUNE_HEADLESS", "headless")
 
 
+def _check_torch() -> tuple[bool, Optional[tuple[int, int]]]:
+    try:
+        import torch
+
+        cuda = torch.version.cuda
+
+        if cuda is None:
+            return False, None
+
+        major, minor = map(int, cuda.split(".", maxsplit=1))
+        return (major, minor) in {
+            (12, 8),
+            (13, 0),
+            (13, 2),
+            (13, 4),
+        }, (major, minor)
+    except ModuleNotFoundError:
+        return False, (-1, -1)
+
+
 # refer to the app configuration for details on these parameters
 INITIAL_LOG_LEVEL = normalize_log_level(os.getenv("CELUNE_LOG_LEVEL", "info"))
 INITIAL_HEADLESS = _env_flag("CELUNE_HEADLESS")
@@ -1467,6 +1487,20 @@ def start(
     lightweight_ui_test = testing and test_mode in {None, "ui"}
     runtime = _load_ui_test_runtime() if lightweight_ui_test else _load_runtime()
     active_log_level = normalize_log_level(log_level or INITIAL_LOG_LEVEL)
+
+    torch_ok, version = _check_torch()
+    if not torch_ok and not lightweight_ui_test:
+        # CPU or other non-CUDA build
+        if version is None:
+            print(string("celune.torch_not_cuda"))
+        # nothing found
+        elif version == (-1, -1):
+            print(string("celune.no_torch"))
+        # wrong CUDA version
+        else:
+            print(string("celune.torch_wrong_cuda"))
+        print(string("celune.torch_hint"))
+        sys.exit(runtime.ExitCodes.EXIT_MISSING_DEPENDENCIES.value)
 
     try:
         if testing:
