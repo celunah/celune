@@ -760,7 +760,9 @@ class TestAgentStatusUI:
         ui.update_resources = mock.Mock()
         ui.change_input_state(locked=True)
 
-        assert (ui.input_box.placeholder) == (string("ui.stopped_placeholder"))
+        assert (ui.input_box.placeholder) == (
+            string("ui.stopped_placeholder", app_name=APP_NAME)
+        )
         assert (ui._terminal_status_for(string("status.speaking"), "info")) == (
             ("stopped", string("osc.action_stopped"))
         )
