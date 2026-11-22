@@ -265,18 +265,18 @@ add_dependencies(launcher_signature_test celune_libsodium_source)
 if(WIN32)
     target_compile_definitions(celune_launcher PRIVATE SODIUM_STATIC SODIUM_EXPORT=)
     target_compile_definitions(launcher_signature_test PRIVATE SODIUM_STATIC SODIUM_EXPORT=)
-    target_compile_options(celune_launcher PRIVATE /O2 /GL /GS /guard:cf /W4 /DNDEBUG)
+    target_compile_options(celune_launcher PRIVATE /O2 /GS /guard:cf /W4 /DNDEBUG)
     target_link_libraries(celune_launcher PRIVATE bcrypt)
-    target_link_options(celune_launcher PRIVATE /LTCG /OPT:REF /OPT:ICF /DYNAMICBASE /NXCOMPAT /GUARD:CF)
+    target_link_options(celune_launcher PRIVATE /OPT:REF /OPT:ICF /DYNAMICBASE /NXCOMPAT /GUARD:CF)
     target_compile_options(launcher_signature_test PRIVATE /O2 /W4)
     target_link_libraries(launcher_signature_test PRIVATE bcrypt)
 else()
     find_package(Threads REQUIRED)
     target_compile_options(celune_launcher PRIVATE
         -O2 -Wall -Wextra -Wpedantic -DNDEBUG -D_FORTIFY_SOURCE=3
-        -fstack-protector-strong -flto
+        -fstack-protector-strong
     )
-    target_link_options(celune_launcher PRIVATE -flto -s -Wl,-z,relro,-z,now)
+    target_link_options(celune_launcher PRIVATE -s -Wl,-z,relro,-z,now)
     target_link_libraries(celune_launcher PRIVATE Threads::Threads)
     target_compile_options(launcher_signature_test PRIVATE -O2 -Wall -Wextra -Wpedantic)
     target_link_libraries(launcher_signature_test PRIVATE Threads::Threads)
@@ -295,7 +295,7 @@ set(_nuitka_arguments
     --follow-import-to=celune
     --include-package-data=celune
     "--output-dir=${_output_dir}"
-    --lto=yes
+    --lto=no
     "${CMAKE_CURRENT_SOURCE_DIR}/nuitka_main.py"
 )
 if(WIN32)
@@ -317,8 +317,8 @@ if(WIN32)
         list(APPEND _nuitka_arguments "--windows-icon-from-exe=${CMAKE_CURRENT_SOURCE_DIR}/celune.exe")
     endif()
     set(_nuitka_environment
-        "CL=/O2 /GL /GS /guard:cf /DNDEBUG"
-        "_CL_=/link /LTCG /OPT:REF /OPT:ICF /DYNAMICBASE /NXCOMPAT"
+        "CL=/O2 /GS /guard:cf /DNDEBUG"
+        "_CL_=/link /OPT:REF /OPT:ICF /DYNAMICBASE /NXCOMPAT"
     )
 else()
     list(PREPEND _nuitka_arguments "--output-filename=celune-bin")
