@@ -80,7 +80,7 @@ fails to parse its incomplete project metadata.
 
 `zonos3` adapts the Apache-2.0 [ZONOS3-Mini model](https://huggingface.co/Zyphra/ZONOS3-Mini) through Zyphra's pinned [PyTorch reference implementation](https://github.com/Zyphra/ZONOS3-Mini/tree/a50e14117d99181ba7f28047b451ba03ba1a09a9/model). The model snapshot is pinned to Hugging Face revision `2921b8821772b0bd10a04456863d21abf9d2f283`. The upstream Python package is MIT licensed, separately from the Apache-2.0 model weights.
 
-The backend uses Python 3.12 and a separate PyTorch 2.9.1 CUDA 12.8 environment to match the reference package's torchaudio and Transformers constraints. It clones from the active CEVOICE/CECHAR reference WAV in speaker-embedding mode. ZONOS3 does not need the voice pack's reference transcript. Celune's language detector maps to the model's 43 languages, and missing or unsupported codes fall back to US English.
+The backend uses Python 3.12 and a separate PyTorch 2.9.1 CUDA 12.8 environment to match the reference package's torchaudio and Transformers constraints. Its worker manifest also installs Celune's shared CEDTS runtime dependencies, including Lingua language detection. It clones from the active CEVOICE/CECHAR reference WAV in speaker-embedding mode. ZONOS3 does not need the voice pack's reference transcript. Celune's language detector maps to the model's 43 languages, and missing or unsupported codes fall back to US English.
 
 The pinned upstream package caps `pyicu-wheels` below 2.15, but that range has no Windows CPython 3.12 wheel. On Windows, Celune uses the available [2.15.2 wheel](https://pypi.org/project/pyicu-wheels/2.15.2/) through a uv resolver override. Other platforms keep the upstream range.
 

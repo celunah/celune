@@ -492,11 +492,15 @@ class TestBackendEnvironment:
         assert ming3_manifest.supports_audio_cpp
         assert ming3_manifest.requires_audio_cpp
 
-    def test_zonos3_manifest_uses_its_pinned_cuda_runtime(self) -> None:
-        """Keep ZONOS3's model dependencies isolated from the newer shared worker stack."""
+    def test_zonos3_manifest_includes_shared_worker_dependencies(self) -> None:
+        """Keep ZONOS3's shared dependencies and dedicated CUDA stack declared."""
         manifest = BACKEND_MANIFESTS["zonos3"]
 
         assert manifest.python == "3.12"
+        assert all(
+            requirement in manifest.requirements
+            for requirement in environment._WORKER_SHARED_REQUIREMENTS
+        )
         assert "torch==2.9.1+cu128" in manifest.requirements
         assert "torchaudio==2.9.1+cu128" in manifest.requirements
         assert "huggingface-hub>=0.36,<1.0.0" in manifest.requirements
