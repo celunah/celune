@@ -387,7 +387,7 @@ async def api_security(
                 headers={"Cache-Control": "no-store"},
             )
 
-        if server_session.auth_token is None:
+        if clean_token(server_session.auth_token) is None:
             model_request_token = enter_api_model_request()
             try:
                 return await call_next(request)
@@ -469,7 +469,7 @@ class WebUiWebSocketSecurityMiddleware:
         if (
             scope["type"] == "websocket"
             and is_webui
-            and server_session.auth_token is not None
+            and clean_token(server_session.auth_token) is not None
         ):
             websocket = WebSocket(scope, receive, send)
             if not webui_authenticated(websocket) or not same_origin(websocket):
@@ -601,11 +601,10 @@ async def authenticate_webui(
 ) -> Response:
     """Exchange the configured application key for a WebUI session cookie."""
     provided_key = clean_token(body.api_key)
-    if server_session.auth_token is None:
+    auth_token = clean_token(server_session.auth_token)
+    if auth_token is None:
         return JSONResponse(status_code=404, content={"error": "not_found"})
-    if provided_key is None or not compare_digest(
-        provided_key, server_session.auth_token
-    ):
+    if provided_key is None or not compare_digest(provided_key, auth_token):
         return JSONResponse(
             status_code=401,
             content={
