@@ -107,6 +107,7 @@ from ..dataclasses.celune import (
 from ..dataclasses.events import ShutdownEvent
 
 TTS_KV_CACHE_BACKENDS = frozenset({"qwen3", "fireredtts3", "voxcpm2"})
+_SHUTDOWN_MODEL_LOCK_TIMEOUT_SECONDS = 1.0
 
 
 def initialize(
@@ -1243,11 +1244,17 @@ def _unload_runtime_state_impl(
 def close(self) -> None:
     """Shut off Celune and release loaded runtime state."""
     self._exit_requested = True
-    with self._model_lock:
+    _abort_backend_operations(self)
+    if not self._model_lock.acquire(timeout=_SHUTDOWN_MODEL_LOCK_TIMEOUT_SECONDS):
+        _abort_backend_operations(self, force_active=True)
+        self._model_lock.acquire()
+    try:
         if self._closed:
             return
         self._closed = True
         self.operation_state = OperationState.STOPPED
+    finally:
+        self._model_lock.release()
 
     discord_presence = self._discord_presence
     self._discord_presence = None
@@ -1258,8 +1265,6 @@ def close(self) -> None:
         self._api_tunnel.stop()
         self._api_tunnel = None
 
-    # call this or else you get a zombified Celune that can't proceed with her exit procedures
-    _abort_backend_operations(self)
     with _shutdown_runtime_lock(self):
         self.log(
             f"[ENGINE] close requested state={self.cur_state} loaded={self.loaded} "
@@ -1418,14 +1423,14 @@ async def _pipeline_jobs(self) -> None:
     await asyncio.gather(generation_task, playback_task)
 
 
-def _abort_backend_operations(self) -> None:
-    """Cancel active TTS work before pipeline and model teardown begins."""
+def _abort_backend_operations(self, *, force_active: bool = False) -> None:
+    """Cancel backend work, optionally terminating the active TTS worker."""
     seen: set[int] = set()
     for backend in (self.backend, self.vc_backend, self._reload_backend):
         if backend is None or id(backend) in seen:
             continue
         seen.add(id(backend))
-        if backend is self.backend:
+        if backend is self.backend and not force_active:
             cancel = getattr(backend, "cancel_active_request", None)
             if callable(cancel):
                 with contextlib.suppress(Exception):

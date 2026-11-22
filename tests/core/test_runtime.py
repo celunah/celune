@@ -1649,6 +1649,77 @@ class TestCeluneRuntime(CeluneCoreTestSupport):
         cancel_active_request.assert_called_once_with(wait_for_ack=False)
         backend_abort.assert_not_called()
 
+    def test_close_terminates_a_worker_when_warmup_holds_the_model_lock(
+        self, request: pytest.FixtureRequest
+    ) -> None:
+        """Force a stuck backend worker to release the model lock during shutdown."""
+        celune = self._make_celune(request, {})
+        events: list[str] = []
+        model_lock_held = threading.Event()
+        release_model_lock = threading.Event()
+        close_done = threading.Event()
+        close_errors: list[BaseException] = []
+
+        def hold_model_lock() -> None:
+            """Model a backend call that remains inside generation."""
+            with celune._model_lock:
+                model_lock_held.set()
+                release_model_lock.wait(timeout=3)
+
+        def terminate_backend() -> None:
+            """Release the simulated inference lock when its worker is killed."""
+            events.append("abort")
+            release_model_lock.set()
+
+        def close_engine() -> None:
+            """Run engine shutdown on its owning thread."""
+            try:
+                celune.close()
+            except BaseException as error:  # pragma: no cover - assertion aid
+                close_errors.append(error)
+            finally:
+                close_done.set()
+
+        holder = threading.Thread(target=hold_model_lock, daemon=True)
+        holder.start()
+        assert model_lock_held.wait(timeout=1)
+        cancel_active_request = mock.Mock(
+            side_effect=lambda **_kwargs: events.append("cancel")
+        )
+        backend_abort = mock.Mock(side_effect=terminate_backend)
+
+        with (
+            mock.patch(
+                "celune.core.lifecycle._SHUTDOWN_MODEL_LOCK_TIMEOUT_SECONDS",
+                0.01,
+            ),
+            mock.patch("celune.core.lifecycle._close_speech_pipeline"),
+            mock.patch("celune.core.lifecycle.unload_persona_state"),
+            mock.patch("celune.core.lifecycle.unload_runtime_state"),
+            mock.patch.object(
+                celune.backend,
+                "cancel_active_request",
+                cancel_active_request,
+                create=True,
+            ),
+            mock.patch.object(celune.backend, "abort", backend_abort, create=True),
+        ):
+            closer = threading.Thread(target=close_engine, daemon=True)
+            closer.start()
+            try:
+                assert close_done.wait(timeout=2)
+            finally:
+                release_model_lock.set()
+                holder.join(timeout=1)
+                closer.join(timeout=1)
+
+        assert not close_errors
+        assert not holder.is_alive()
+        assert not closer.is_alive()
+        assert events == ["cancel", "abort"]
+        cancel_active_request.assert_called_once_with(wait_for_ack=False)
+        backend_abort.assert_called_once_with()
+
     def test_close_aborts_a_backend_candidate_stuck_during_reload(
         self, request: pytest.FixtureRequest
     ) -> None:

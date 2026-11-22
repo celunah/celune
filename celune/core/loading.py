@@ -307,6 +307,9 @@ def load(self, raise_on_error: bool = False, skip_runtime_check: bool = False) -
     if not self.is_voice_conversion_mode():
         warmup_ok = warmup(self)
 
+    if self.exit_requested:
+        return False
+
     if warmup_ok:
         self.loaded = True
         self._model_ready.set()
@@ -566,6 +569,9 @@ def warmup(
     voice: Optional[str] = None,
 ) -> bool:
     """Warm up Celune's speech capabilities."""
+    if self.exit_requested:
+        return False
+
     self.log(tagged_string("celune.warmup_start", "WARMUP"))
     self.status_callback(string("status.warming_up"))
     self.progress_callback(None, None)
@@ -617,6 +623,8 @@ def warmup(
     try:
         warmup_start = time.perf_counter()
         run_warmup(active_model)
+        if self.exit_requested:
+            return False
 
         warmup_end = time.perf_counter()
         warmup_took = warmup_end - warmup_start
@@ -628,6 +636,9 @@ def warmup(
         self.progress_callback(1, 1)
         return True
     except Exception as error:
+        if self.exit_requested:
+            return False
+
         warmup_error = error
         quantization_recovery_failed = False
         if active_backend.quantization_active:
