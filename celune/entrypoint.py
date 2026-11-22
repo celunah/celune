@@ -1406,11 +1406,9 @@ def _close_existing_celune_processes(runtime: SimpleNamespace) -> None:
             if process_name not in _CELUNE_PROCESS_NAMES:
                 continue
             if process_name == "celune.appimage" and appimage_path:
-                try:
+                with contextlib.suppress(OSError):
                     if os.path.samefile(proc.exe(), appimage_path):
                         continue
-                except OSError:
-                    pass
             existing_processes.append(proc)
 
     if not existing_processes:
