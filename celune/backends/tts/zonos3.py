@@ -1,14 +1,15 @@
 # SPDX-License-Identifier: Apache-2.0
 """Streaming Celune adapter for Zyphra's ZONOS3-Mini reference model."""
 
+import gc
 import os
 import queue
 import base64
 import threading
 from pathlib import Path
 from dataclasses import dataclass
-from typing import Optional, Protocol, Union, cast
 from collections.abc import Callable, Iterator
+from typing import Optional, Protocol, Union, cast
 
 import torch
 import numpy as np
@@ -17,8 +18,8 @@ from huggingface_hub import snapshot_download, try_to_load_from_cache
 from .base import CeluneBackend
 from ...typing.aliases import AudioChunk
 from ...cevoice import CEVoiceLoader, default_loader
-from ...registry.consent import require_model_consent
 from ...paths import huggingface_hub_cache_dir, huggingface_progress
+from ...registry.consent import require_model_consent
 from ...typing.backends import BackendArgumentValue, BackendArguments
 from ...registry.tts import (
     TTS_DEFAULT_VOICE,
@@ -98,6 +99,58 @@ _LANGUAGE_ALIASES = {
     "zh-cn": "cmn",
 }
 _QUEUE_CAPACITY = 8
+
+
+def _resolve_codec_device(device: torch.device) -> tuple[torch.device, bool]:
+    """Resolve the codec device override or use the language model's device.
+
+    Args:
+        device: Device selected for the ZONOS3 language model.
+
+    Returns:
+        tuple[torch.device, bool]: Selected device and whether automatic fallback is enabled.
+    """
+    configured_device = os.environ.get("ZONOS3_AUDIO_CODEC_DEVICE", "auto").strip()
+    automatic = not configured_device or configured_device.casefold() == "auto"
+    if automatic:
+        return device, True
+    return torch.device(configured_device), False
+
+
+def _load_codec_decoder_with_fallback(
+    load_decoder: Callable[[torch.device], torch.nn.Module],
+    device: torch.device,
+    *,
+    automatic: bool,
+    log: Callable[[str, str], None],
+) -> tuple[torch.nn.Module, torch.device]:
+    """Retry automatic CUDA decoder loading on CPU when VRAM is exhausted.
+
+    Args:
+        load_decoder: Load one decoder on the supplied device.
+        device: Initially selected codec device.
+        automatic: Whether device placement allows CPU fallback.
+        log: Backend diagnostic callback.
+
+    Returns:
+        tuple[torch.nn.Module, torch.device]: Loaded decoder and its device.
+    """
+    try:
+        decoder_model = load_decoder(device)
+    except torch.cuda.OutOfMemoryError as error:
+        if not automatic or device.type != "cuda":
+            raise
+        error.__traceback__ = None
+        del error
+        gc.collect()
+        torch.cuda.empty_cache()
+        device = torch.device("cpu")
+        log(
+            "[ZONOS3] Matched codec decoder did not fit on CUDA, retrying on CPU",
+            "warning",
+        )
+        decoder_model = load_decoder(device)
+    return decoder_model, device
 
 
 class _Zonos3LanguageModel(Protocol):
@@ -343,8 +396,12 @@ class Zonos3(CeluneBackend[Zonos3Runtime]):
         from zonos3.reference.lm import Zonos3LM
         from zonos3.reference.synth import ReferenceAssets
 
+        backend_log = self.log
+
         class CeluneReferenceAssets(ReferenceAssets):
-            """Keep the large matched codec decoder on CPU by default."""
+            """Load the matched decoder beside the language model when memory allows."""
+
+            _celune_codec_device: Optional[torch.device] = None
 
             def decoder(
                 self,
@@ -353,17 +410,52 @@ class Zonos3(CeluneBackend[Zonos3Runtime]):
                 decoder: Optional[str] = None,
             ) -> torch.nn.Module:
                 """Load one codec decoder on Celune's configured device."""
-                del device
-                codec_device = torch.device(
-                    os.environ.get("ZONOS3_AUDIO_CODEC_DEVICE", "cpu")
+                codec_device, automatic = _resolve_codec_device(device)
+                if automatic and self._celune_codec_device is not None:
+                    codec_device = self._celune_codec_device
+
+                from zonos3.tokenizer import matched_codec
+
+                cache_key = (
+                    codec,
+                    matched_codec.decoder_id(codec, decoder),
+                    str(codec_device),
                 )
-                return super().decoder(codec, codec_device, decoder)
+                was_cached = cache_key in self._decoders
+                if not was_cached:
+                    backend_log(
+                        f"[ZONOS3] Loading matched codec decoder on {codec_device}",
+                        "info",
+                    )
+
+                base_decoder = super().decoder
+
+                def load_decoder(target_device: torch.device) -> torch.nn.Module:
+                    """Load this matched codec decoder on the requested device."""
+                    return base_decoder(codec, target_device, decoder)
+
+                codec_model, codec_device = _load_codec_decoder_with_fallback(
+                    load_decoder,
+                    codec_device,
+                    automatic=automatic,
+                    log=backend_log,
+                )
+
+                if automatic:
+                    self._celune_codec_device = codec_device
+                if not was_cached:
+                    backend_log(
+                        f"[ZONOS3] Matched codec decoder ready on {codec_device}",
+                        "info",
+                    )
+                return codec_model
 
             def release(self) -> None:
                 """Clear lazy model assets and the upstream codec's process cache."""
                 self._decoders.clear()
                 self._speaker_encoders.clear()
                 self._normalizer = None
+                self._celune_codec_device = None
                 from zonos3.tokenizer import matched_codec
 
                 matched_codec._CACHE.clear()
@@ -374,6 +466,8 @@ class Zonos3(CeluneBackend[Zonos3Runtime]):
         lm.append_text_rows(TextExtraRows.load(snapshot_path / _TEXT_ROWS))
         assets = CeluneReferenceAssets.load()
         assets.grow(lm)
+        assets.decoder(lm.config.audio_codec, device)
+        self.report_progress(0.95, 1.0)
         runtime = Zonos3Runtime(lm, cast(_ReferenceAssets, assets), snapshot_path)
         self.quantization_attempted = False
         self.quantization_active = False
