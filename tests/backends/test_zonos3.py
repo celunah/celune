@@ -19,6 +19,7 @@ from celune.backends.tts.zonos3 import (
     Zonos3Runtime,
     _load_codec_decoder_with_fallback,
     _resolve_codec_device,
+    _snapshot_asset_path,
 )
 
 
@@ -99,6 +100,26 @@ def test_zonos3_retries_automatic_cuda_decoder_load_on_cpu(
     assert isinstance(decoder_model, torch.nn.Identity)
     assert decoder_device == torch.device("cpu")
     log.assert_called_once()
+
+
+def test_zonos3_keeps_snapshot_file_paths_unresolved_for_hub_blob_links(
+    tmp_path: Path,
+) -> None:
+    """Preserve lexical snapshot paths because Hugging Face files link to blobs."""
+    snapshot = tmp_path / "snapshots" / "revision"
+    asset_uri = f"hf://{ZONOS3_TTS_MODEL_ID}/autoencoder/generator.pt"
+
+    assert _snapshot_asset_path(snapshot, asset_uri) == (
+        snapshot.resolve() / "autoencoder" / "generator.pt"
+    )
+
+
+def test_zonos3_rejects_release_asset_uri_path_traversal(tmp_path: Path) -> None:
+    """Reject upstream release URIs that escape the pinned snapshot."""
+    asset_uri = f"hf://{ZONOS3_TTS_MODEL_ID}/../outside/model.pt"
+
+    with pytest.raises(ValueError, match="escapes the pinned snapshot"):
+        _snapshot_asset_path(tmp_path, asset_uri)
 
 
 def test_zonos3_forwards_progressive_audio_before_synthesis_finishes(

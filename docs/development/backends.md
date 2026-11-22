@@ -86,6 +86,8 @@ The pinned upstream package caps `pyicu-wheels` below 2.15, but that range has n
 
 The first model download is about 11 GB. It includes the 1.77 GB language model and the matched codec's 7.96 GB generator checkpoint, teacher, decoder, tokenizer, pause rows, and speaker encoder. The language model loads in BF16 on CUDA. Celune preloads the matched decoder during model loading and defaults it to the language model's CUDA device for faster progressive decoding. If it does not fit, Celune clears the failed allocation and retries on CPU. Set `ZONOS3_AUDIO_CODEC_DEVICE` to `cpu`, `cuda`, or a device such as `cuda:1` to override automatic placement. The reference implementation emits progressive PCM chunks through its `on_audio` callback. Celune forwards these callbacks through a bounded producer thread as normalized float32 audio at 44.1 kHz.
 
+Pinned `hf://` asset URIs reject lexical path traversal. Celune keeps paths inside the snapshot unresolved so Hugging Face cache symlinks can reach their adjacent blob store.
+
 ZONOS3 remains Celune-native for now. The released [audio.cpp v0.9.4 model catalog](https://github.com/0xShug0/audio.cpp/blob/v0.9.4/webui/configs/models_catalog.json) does not advertise ZONOS3, so Celune does not select GGUF inference for this model.
 
 ### Qwen3

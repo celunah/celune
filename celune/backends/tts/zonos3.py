@@ -153,6 +153,42 @@ def _load_codec_decoder_with_fallback(
     return decoder_model, device
 
 
+def _snapshot_asset_path(
+    snapshot_path: Path,
+    value: Union[str, Path],
+) -> Optional[Path]:
+    """Map a release URI into a pinned snapshot without resolving file symlinks.
+
+    Args:
+        snapshot_path: Root of the downloaded Hugging Face snapshot.
+        value: Upstream release URI or an unrelated local path.
+
+    Returns:
+        Optional[Path]: Snapshot path for a matching URI, or ``None`` otherwise.
+
+    Raises:
+        ValueError: If a matching URI attempts to traverse outside the snapshot.
+    """
+    value_string = str(value)
+    uri_root = f"hf://{ZONOS3_TTS_MODEL_ID}"
+    uri_prefix = f"{uri_root}/"
+    if value_string == uri_root:
+        return snapshot_path.resolve()
+    if not value_string.startswith(uri_prefix):
+        return None
+
+    relative_path = Path(value_string.removeprefix(uri_prefix))
+    if (
+        relative_path.is_absolute()
+        or relative_path.drive
+        or ".." in relative_path.parts
+    ):
+        raise ValueError(
+            f"ZONOS3 release asset path escapes the pinned snapshot: {value_string}"
+        )
+    return snapshot_path.resolve() / relative_path
+
+
 class _Zonos3LanguageModel(Protocol):
     """The model device and dtype needed by upstream synthesis."""
 
@@ -325,30 +361,15 @@ class Zonos3(CeluneBackend[Zonos3Runtime]):
 
     @staticmethod
     def _pin_upstream_assets(snapshot_path: Path) -> None:
-        """Resolve upstream hf:// release references against the pinned local snapshot."""
+        """Resolve upstream release URIs against the pinned local snapshot."""
         from zonos3.utils import release
 
         original_file_resolver = release.resolve_file
         original_directory_resolver = release.resolve_dir_or_local
-        uri_prefix = f"hf://{ZONOS3_TTS_MODEL_ID}/"
-
-        def local_path(value: Union[str, Path]) -> Optional[Path]:
-            """Return a path in this pinned snapshot for a matching release URI."""
-            value_string = str(value)
-            if value_string == f"hf://{ZONOS3_TTS_MODEL_ID}":
-                return snapshot_path
-            if not value_string.startswith(uri_prefix):
-                return None
-            resolved = (snapshot_path / value_string.removeprefix(uri_prefix)).resolve()
-            if not resolved.is_relative_to(snapshot_path.resolve()):
-                raise ValueError(
-                    "ZONOS3 release asset path escapes the pinned snapshot"
-                )
-            return resolved
 
         def resolve_file(value: Union[str, Path]) -> str:
             """Use the pinned snapshot for release files from the model repository."""
-            local = local_path(value)
+            local = _snapshot_asset_path(snapshot_path, value)
             if local is None:
                 return original_file_resolver(value)
             if not local.is_file():
@@ -357,7 +378,7 @@ class Zonos3(CeluneBackend[Zonos3Runtime]):
 
         def resolve_dir_or_local(value: Union[str, Path]) -> str:
             """Use the pinned snapshot for release directories from the model repository."""
-            local = local_path(value)
+            local = _snapshot_asset_path(snapshot_path, value)
             if local is None:
                 return original_directory_resolver(value)
             if not local.is_dir():
