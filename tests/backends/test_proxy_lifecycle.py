@@ -1122,7 +1122,14 @@ class TestBackendProxyLifecycle:
         request_id = "active-event-request"
         with proxy._response_condition:
             proxy._pending_reply_ids.add(request_id)
+        proxy._ensure_heartbeat_state()
+        with proxy._heartbeat_lock:
+            proxy._pending_heartbeat_ids.add("heartbeat-request")
         try:
+            send_message(
+                writer,
+                build_packet("pong", "protocol", reply_to="heartbeat-request"),
+            )
             send_message(
                 writer,
                 build_packet("event", "fatal", {"fatal": True}),
@@ -1150,6 +1157,7 @@ class TestBackendProxyLifecycle:
             assert ([event["kind"] for event in events if event is not None]) == (
                 ["event", "progress", "callback"]
             )
+            assert not proxy._pending_heartbeat_ids
             assert event_callback.call_count == 3
             fatal_callback.assert_called_once_with()
         finally:
@@ -1520,20 +1528,20 @@ class TestBackendProxyLifecycle:
 
     def test_worker_handshake_negotiates_the_cedts_capabilities(self) -> None:
         """Verify the worker accepts a compatible hello and rejects requirements it lacks."""
-        assert remote.CEDTS_VERSION == (1, 3)
+        assert remote.CEDTS_VERSION == (1, 4)
         hello = build_packet(
             "hello",
             "handshake",
             cast(
                 dict[str, WorkerValue],
                 {
-                    "versions": [[1, 3]],
+                    "versions": [[1, 4]],
                     "capabilities": remote.CORE_CAPABILITIES,
                     "required_capabilities": {"streaming": True},
                 },
             ),
         )
-        assert (hello["cedts_version"]) == ([1, 3])
+        assert (hello["cedts_version"]) == ([1, 4])
         negotiated = worker._negotiate_hello(hello)
         assert (negotiated["streaming"]) is True
         assert (negotiated["cancellation"]) is True
@@ -1559,7 +1567,7 @@ class TestBackendProxyLifecycle:
             cast(
                 dict[str, WorkerValue],
                 {
-                    "versions": [[1, 3]],
+                    "versions": [[1, 4]],
                     "capabilities": remote.CORE_CAPABILITIES,
                     "required_capabilities": {"callback": True},
                 },
@@ -1588,7 +1596,7 @@ class TestBackendProxyLifecycle:
             cast(
                 dict[str, WorkerValue],
                 {
-                    "versions": [[1, 3]],
+                    "versions": [[1, 4]],
                     "capabilities": offered_capabilities,
                 },
             ),
@@ -1684,7 +1692,7 @@ class TestBackendProxyLifecycle:
                 cast(
                     dict[str, WorkerValue],
                     {
-                        "cedts_version": [1, 3],
+                        "cedts_version": [1, 4],
                         "capabilities": remote.CORE_CAPABILITIES,
                     },
                 ),
@@ -1724,7 +1732,7 @@ class TestBackendProxyLifecycle:
                 cast(
                     dict[str, WorkerValue],
                     {
-                        "cedts_version": [1, 3],
+                        "cedts_version": [1, 4],
                         "capabilities": remote.CORE_CAPABILITIES,
                     },
                 ),
@@ -1831,7 +1839,7 @@ class TestBackendProxyLifecycle:
                 cast(
                     dict[str, WorkerValue],
                     {
-                        "cedts_version": [1, 3],
+                        "cedts_version": [1, 4],
                         "capabilities": remote.CORE_CAPABILITIES,
                     },
                 ),
@@ -1924,7 +1932,7 @@ class TestBackendProxyLifecycle:
                 cast(
                     dict[str, WorkerValue],
                     {
-                        "cedts_version": [1, 3],
+                        "cedts_version": [1, 4],
                         "capabilities": small_capabilities,
                     },
                 ),

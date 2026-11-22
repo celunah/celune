@@ -27,6 +27,8 @@ from .protocol import (
     CEDTS_VERSION,
     WORKER_CAPABILITIES,
     DEFAULT_CEDTS_LIMITS,
+    HEARTBEAT_CHECK_INTERVAL_SECONDS,
+    HEARTBEAT_TIMEOUT_SECONDS,
     SUPPORTED_OPERATIONS,
     CALL_ARGUMENT_SCHEMAS,
     WORKER_TRACEBACK_MARKER,
@@ -1136,6 +1138,28 @@ def main() -> int:
     active_thread: Optional[threading.Thread] = None
     shutting_down = False
     last_progress_at = 0.0
+    heartbeat_stop = threading.Event()
+    heartbeat_lock = threading.Lock()
+    last_heartbeat_at = time.monotonic()
+
+    def _watch_heartbeat() -> None:
+        """Exit the worker when Celune stops sending heartbeats."""
+        while not heartbeat_stop.wait(HEARTBEAT_CHECK_INTERVAL_SECONDS):
+            with heartbeat_lock:
+                heartbeat_age = time.monotonic() - last_heartbeat_at
+            if heartbeat_age >= HEARTBEAT_TIMEOUT_SECONDS:
+                _worker_log(
+                    "[IPC] Celune heartbeat timed out, exiting worker",
+                    "error",
+                    loglevel="verbose",
+                )
+                os._exit(1)
+
+    threading.Thread(
+        target=_watch_heartbeat,
+        name="CEDTSHeartbeatWatchdog",
+        daemon=True,
+    ).start()
 
     def _backend_progress(
         progress: Optional[float], total: Optional[float] = None
@@ -1294,6 +1318,7 @@ def main() -> int:
         try:
             control, decoded = _receive_packet()
         except (CEDTSEOFError, CEDTSStreamError, BrokenPipeError):
+            heartbeat_stop.set()
             return 0
         except Exception as error:
             print(str(error), file=_WORKER_STDERR)
@@ -1322,6 +1347,17 @@ def main() -> int:
                 _worker_protocol_error("duplicate_or_invalid_request_message_id"),
                 reply_to=cast(Optional[str], packet_id),
                 send_lock=send_lock,
+                limits=effective_limits,
+            )
+            continue
+        if packet_kind == "ping":
+            with heartbeat_lock:
+                last_heartbeat_at = time.monotonic()
+            _send_message(
+                protocol_stream,
+                binary_output,
+                build_packet("pong", "protocol", reply_to=packet_id),
+                send_lock,
                 limits=effective_limits,
             )
             continue
@@ -1377,6 +1413,7 @@ def main() -> int:
                     limits=effective_limits,
                 )
                 continue
+            heartbeat_stop.set()
             with active_request_lock:
                 active_job = active_request_id is not None
                 running_thread = active_thread

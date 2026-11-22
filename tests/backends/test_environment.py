@@ -1083,7 +1083,7 @@ class TestBackendEnvironment:
             + b"}}}"
         )
         oversized_collection = {
-            "cedts_version": [1, 3],
+            "cedts_version": [1, 4],
             "kind": "request",
             "message_id": "collection",
             "reply_to": None,
@@ -1091,7 +1091,7 @@ class TestBackendEnvironment:
             "data": {"arguments": {"value": list(range(1025))}},
         }
         unknown_packet_field = {
-            "cedts_version": [1, 3],
+            "cedts_version": [1, 4],
             "kind": "request",
             "message_id": "unknown-field",
             "reply_to": None,
@@ -1111,7 +1111,7 @@ class TestBackendEnvironment:
 
         oversized_string = json.dumps(
             {
-                "cedts_version": [1, 3],
+                "cedts_version": [1, 4],
                 "kind": "request",
                 "message_id": "string",
                 "reply_to": None,
@@ -1240,7 +1240,7 @@ class TestBackendEnvironment:
                 cast(
                     dict[str, WorkerValue],
                     {
-                        "versions": [[1, 3]],
+                        "versions": [[1, 4]],
                         "capabilities": remote.CORE_CAPABILITIES,
                         "unexpected": True,
                     },

@@ -35,6 +35,7 @@ from .protocol import (
     CEDTS_VERSION,
     CORE_CAPABILITIES,
     DEFAULT_CEDTS_LIMITS,
+    HEARTBEAT_INTERVAL_SECONDS,
     WORKER_TRACEBACK_MARKER,
     CEDTSLimits,
     build_packet,
@@ -406,6 +407,10 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
         self._reader_stop = threading.Event()
         self._reader_thread: Optional[threading.Thread] = None
         self._reader_error: Optional[Exception] = None
+        self._heartbeat_stop = threading.Event()
+        self._heartbeat_thread: Optional[threading.Thread] = None
+        self._heartbeat_lock = threading.Lock()
+        self._pending_heartbeat_ids: set[str] = set()
         self._response_condition = threading.Condition()
         self._pending_reply_ids: set[str] = set()
         self._response_queues: dict[str, deque[WorkerResponse]] = {}
@@ -453,6 +458,8 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
                 if detailed_error is not error:
                     raise detailed_error from error
                 raise
+            self._start_packet_reader()
+            self._start_heartbeat()
             super().__init__(
                 log=log,
                 fatal=fatal,
@@ -466,7 +473,6 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
                 str(backend_kwargs.get("inference_mode", "native")),
                 log=False,
             )
-            self._start_packet_reader()
             self._load_description()
         except Exception:
             with contextlib.suppress(Exception):
@@ -786,6 +792,72 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
             with response_condition:
                 response_condition.notify_all()
 
+    def _start_heartbeat(self) -> None:
+        """Send periodic CEDTS pings while the worker remains connected."""
+        process = self._process
+        if process is None or process.stdin is None:
+            raise _worker_protocol_error("worker_streams_are_unavailable_for_heartbeat")
+        self._heartbeat_stop.clear()
+        self._heartbeat_thread = threading.Thread(
+            target=self._send_heartbeats,
+            args=(process,),
+            daemon=True,
+            name=f"celune-worker-heartbeat-{process.pid}",
+        )
+        self._heartbeat_thread.start()
+
+    def _send_heartbeats(self, process: subprocess.Popen[bytes]) -> None:
+        """Keep the worker informed that its Celune supervisor is still alive."""
+        while not self._heartbeat_stop.wait(HEARTBEAT_INTERVAL_SECONDS):
+            if process.poll() is not None or process.stdin is None:
+                return
+            heartbeat_id = uuid4().hex
+            self._ensure_heartbeat_state()
+            with self._heartbeat_lock:
+                self._pending_heartbeat_ids.add(heartbeat_id)
+            try:
+                self._send_packet(
+                    process.stdin,
+                    "ping",
+                    "protocol",
+                    message_id=heartbeat_id,
+                )
+            except (BrokenPipeError, OSError, CEDTSError) as error:
+                with self._heartbeat_lock:
+                    self._pending_heartbeat_ids.discard(heartbeat_id)
+                transport_error = (
+                    error
+                    if isinstance(error, CEDTSError)
+                    else CEDTSStreamError(f"CEDTS heartbeat send failed: {error}")
+                )
+                self._report_transport_error("heartbeat", transport_error)
+                self._ensure_response_state()
+                with self._response_condition:
+                    self._reader_error = transport_error
+                    self._response_condition.notify_all()
+                self._abort_after_reader_failure()
+                return
+
+    def _stop_heartbeat(self) -> None:
+        """Stop and join the heartbeat sender before shutting down its worker."""
+        heartbeat_stop = getattr(self, "_heartbeat_stop", None)
+        if heartbeat_stop is None:
+            return
+        heartbeat_stop.set()
+        heartbeat_thread = getattr(self, "_heartbeat_thread", None)
+        if (
+            heartbeat_thread is not None
+            and heartbeat_thread is not threading.current_thread()
+        ):
+            heartbeat_thread.join(timeout=_WORKER_THREAD_JOIN_TIMEOUT_SECONDS)
+
+    def _ensure_heartbeat_state(self) -> None:
+        """Initialize heartbeat correlation for lightweight proxy test doubles."""
+        if not hasattr(self, "_heartbeat_lock"):
+            self._heartbeat_lock = threading.Lock()
+        if not hasattr(self, "_pending_heartbeat_ids"):
+            self._pending_heartbeat_ids = set()
+
     def _start_packet_reader(self) -> None:
         """Start the sole reader for the worker control and binary streams."""
         process = self._process
@@ -831,6 +903,9 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
     def _clear_runtime_state(self) -> None:
         """Release all connection state and wake consumers during shutdown."""
         self._ensure_response_state()
+        self._ensure_heartbeat_state()
+        with self._heartbeat_lock:
+            self._pending_heartbeat_ids.clear()
         with self._response_condition:
             self._pending_reply_ids.clear()
             self._response_queues.clear()
@@ -992,6 +1067,9 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
         if packet.get("cedts_version") != list(CEDTS_VERSION):
             raise _worker_protocol_error("worker_packet_version_is_unsupported")
         kind = packet.get("kind")
+        if kind == "pong":
+            self._record_pong(packet)
+            return
         if kind == "cancel_ack":
             self._handle_cancel_ack(packet)
             return
@@ -1051,6 +1129,18 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
             self._response_condition.notify_all()
         if kind == "shutdown_ack":
             self._stop_packet_reader()
+
+    def _record_pong(self, packet: WorkerMessage) -> None:
+        """Accept a worker pong that identifies its corresponding ping."""
+        reply_to = packet.get("reply_to")
+        self._ensure_heartbeat_state()
+        with self._heartbeat_lock:
+            if (
+                not isinstance(reply_to, str)
+                or reply_to not in self._pending_heartbeat_ids
+            ):
+                raise _worker_protocol_error("worker_pong_correlation_is_invalid")
+            self._pending_heartbeat_ids.remove(reply_to)
 
     def _handle_cancel_ack(self, packet: WorkerMessage) -> None:
         """Resolve a request-scoped cancellation acknowledgement."""
@@ -1402,6 +1492,9 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
                 raise _worker_protocol_error("worker_packet_version_is_unsupported")
             kind = packet.get("kind")
             packet_reply_to = packet.get("reply_to")
+            if kind == "pong":
+                self._record_pong(packet)
+                continue
             if kind == "cancel_ack":
                 self._handle_cancel_ack(packet)
                 continue
@@ -2126,6 +2219,7 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
     def close(self) -> None:
         """Gracefully stop the worker, escalating only after a shutdown timeout."""
         self._ensure_response_state()
+        self._stop_heartbeat()
         with self._close_lock:
             if self._closed:
                 self._close_process_streams(self._process)
@@ -2203,6 +2297,7 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
     def abort(self) -> None:
         """Terminate the worker without waiting for an active generation."""
         self._closing = True
+        self._stop_heartbeat()
         self._stop_packet_reader()
         self._clear_runtime_state()
         with self._close_lock:

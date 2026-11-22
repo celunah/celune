@@ -417,7 +417,7 @@ raise SystemExit(worker.main())
                 cast(
                     dict[str, WorkerValue],
                     {
-                        "versions": [[1, 3]],
+                        "versions": [[1, 4]],
                         "capabilities": remote.CORE_CAPABILITIES,
                         "required_capabilities": {"streaming": True},
                     },
@@ -431,6 +431,16 @@ raise SystemExit(worker.main())
             assert hello_ack["reply_to"] == "hello-request"
             assert ready["kind"] == "ready"
             assert ready["reply_to"] == "hello-request"
+
+            heartbeat_id = "heartbeat-request"
+            send_no_payload_packet(
+                process.stdin,
+                core_binary_output,
+                build_packet("ping", "protocol", message_id=heartbeat_id),
+            )
+            pong = receive_worker_message()
+            assert pong["kind"] == "pong"
+            assert pong["reply_to"] == heartbeat_id
 
             request = build_packet(
                 "request",
@@ -503,6 +513,116 @@ raise SystemExit(worker.main())
                     process.stdout.close()
                 if process.stderr is not None:
                     process.stderr.close()
+
+    @LINUX_ONLY
+    def test_worker_subprocess_exits_after_missing_celune_heartbeats(self) -> None:
+        """Exit an idle worker after its Celune heartbeat deadline passes."""
+        child_code = """
+from celune.cedts import worker
+from celune.utils import discard
+
+worker.HEARTBEAT_TIMEOUT_SECONDS = 1.0
+worker.HEARTBEAT_CHECK_INTERVAL_SECONDS = 0.05
+
+class FakeBackend:
+    name = "heartbeat-fake"
+    chunk_rate = 0.0
+    supported_languages = ()
+    voice_models = None
+    default_voice = None
+    model_name = None
+    voices = []
+    clone_model_id = None
+    uses_voice_bundles = False
+    max_new_tokens = 512
+    is_fake = True
+
+    def unload_model(self, release_cuda_cache=True):
+        discard(release_cuda_cache)
+
+def fake_load_backend(manifest, log, fatal, kwargs):
+    discard(manifest)
+    discard(log)
+    discard(fatal)
+    discard(kwargs)
+    return FakeBackend()
+
+worker._load_backend = fake_load_backend
+raise SystemExit(worker.main())
+"""
+        worker_binary_input, core_binary_output = os.pipe()
+        core_binary_input, worker_binary_output = os.pipe()
+        process: Optional[subprocess.Popen[bytes]] = None
+        try:
+            process = subprocess.Popen(  # pylint: disable=R1732
+                [
+                    sys.executable,
+                    "-c",
+                    child_code,
+                    "--backend",
+                    "mini",
+                    "--backend-kwargs",
+                    "{}",
+                    "--binary-input-fd",
+                    str(worker_binary_input),
+                    "--binary-output-fd",
+                    str(worker_binary_output),
+                ],
+                cwd=Path.cwd(),
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                bufsize=0,
+                pass_fds=(worker_binary_input, worker_binary_output),
+            )
+            os.close(worker_binary_input)
+            os.close(worker_binary_output)
+            worker_binary_input = -1
+            worker_binary_output = -1
+            assert process.stdin is not None
+            assert process.stdout is not None
+            assert process.stderr is not None
+
+            hello = build_packet(
+                "hello",
+                "handshake",
+                cast(
+                    dict[str, WorkerValue],
+                    {
+                        "versions": [list(remote.CEDTS_VERSION)],
+                        "capabilities": remote.CORE_CAPABILITIES,
+                        "required_capabilities": {"streaming": True},
+                    },
+                ),
+                message_id="heartbeat-test-hello",
+            )
+            send_no_payload_packet(process.stdin, core_binary_output, hello)
+            for expected_kind in ("hello_ack", "ready"):
+                ready, _, _ = select.select([process.stdout], [], [], 10.0)
+                if not ready:
+                    pytest.fail("worker did not complete its CEDTS handshake")
+                assert receive_message(process.stdout)["kind"] == expected_kind
+
+            assert process.wait(timeout=5) == 1
+            assert "Celune heartbeat timed out" in process.stderr.read().decode()
+        finally:
+            for descriptor in (
+                worker_binary_input,
+                worker_binary_output,
+                core_binary_output,
+                core_binary_input,
+            ):
+                if descriptor >= 0:
+                    with contextlib.suppress(OSError):
+                        os.close(descriptor)
+            if process is not None:
+                if process.poll() is None:
+                    process.terminate()
+                    with contextlib.suppress(subprocess.TimeoutExpired):
+                        process.wait(timeout=2)
+                for stream in (process.stdin, process.stdout, process.stderr):
+                    if stream is not None:
+                        stream.close()
 
     def test_worker_flushes_redirected_backend_output_before_exit(self) -> None:
         """Verify redirected backend output is visible before worker shutdown."""
@@ -666,7 +786,7 @@ raise SystemExit(worker.main())
                     cast(
                         dict[str, WorkerValue],
                         {
-                            "versions": [[1, 3]],
+                            "versions": [[1, 4]],
                             "capabilities": remote.CORE_CAPABILITIES,
                             "required_capabilities": {"streaming": True},
                         },
@@ -981,7 +1101,7 @@ finally:
                     cast(
                         dict[str, WorkerValue],
                         {
-                            "versions": [[1, 3]],
+                            "versions": [[1, 4]],
                             "capabilities": remote.CORE_CAPABILITIES,
                             "required_capabilities": {"streaming": True},
                         },
@@ -1288,7 +1408,7 @@ raise SystemExit(worker.main())
                     cast(
                         dict[str, WorkerValue],
                         {
-                            "versions": [[1, 3]],
+                            "versions": [[1, 4]],
                             "capabilities": remote.CORE_CAPABILITIES,
                             "required_capabilities": {"streaming": True},
                         },
