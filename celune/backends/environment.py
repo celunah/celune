@@ -9,8 +9,8 @@ import shutil
 import hashlib
 import platform
 import importlib
-import subprocess
 import contextlib
+import subprocess
 from pathlib import Path
 from typing import Optional
 from collections.abc import Generator
@@ -74,6 +74,10 @@ _ZONOS3_PYTORCH_REQUIREMENTS = (
     "torch==2.9.1+cu128",
     "torchaudio==2.9.1+cu128",
 )
+_ZONOS3_ICU_REQUIREMENT = (
+    "pyicu-wheels==2.15.2" if os.name == "nt" else "pyicu-wheels>=2.14,<2.15"
+)
+_ZONOS3_UV_OVERRIDES = ("pyicu-wheels==2.15.2",) if os.name == "nt" else ()
 _PYTORCH_INDEX_URLS = (
     "https://pypi.org/simple",
     "https://download.pytorch.org/whl/cu128",
@@ -100,6 +104,7 @@ class BackendManifest:
     revision: int = 1
     supports_audio_cpp: bool = False
     requires_audio_cpp: bool = False
+    uv_overrides: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         """Validate audio.cpp backend declarations."""
@@ -111,6 +116,8 @@ class BackendManifest:
     def fingerprint(self) -> str:
         """Return the stable environment fingerprint for this manifest."""
         manifest_data = asdict(self)
+        if not self.uv_overrides:
+            manifest_data.pop("uv_overrides", None)
         if not self.ignore_uv_sources:
             manifest_data.pop("ignore_uv_sources", None)
         payload = {
@@ -256,7 +263,7 @@ BACKEND_MANIFESTS = {
             "platformdirs",
             "psutil",
             "pydantic>=2",
-            "pyicu-wheels>=2.14,<2.15",
+            _ZONOS3_ICU_REQUIREMENT,
             "pyyaml",
             "sounddevice",
             "soundfile",
@@ -273,6 +280,7 @@ BACKEND_MANIFESTS = {
         backend_class="Zonos3",
         python="3.12",
         index_urls=_PYTORCH_INDEX_URLS,
+        uv_overrides=_ZONOS3_UV_OVERRIDES,
     ),
     "soulxsinger": BackendManifest(
         backend_id="soulxsinger",
@@ -466,6 +474,13 @@ class BackendEnvironmentManager:
                         for find_link in manifest.find_links
                         for item in ("--find-links", find_link)
                     )
+                if manifest.uv_overrides:
+                    overrides_path = temporary_root / "uv-overrides.txt"
+                    overrides_path.write_text(
+                        "\n".join(manifest.uv_overrides) + "\n",
+                        encoding="utf-8",
+                    )
+                    install_arguments.extend(("--overrides", str(overrides_path)))
                 self._run_uv(*install_arguments, *manifest.requirements)
                 metadata = {
                     "manifest": asdict(manifest),

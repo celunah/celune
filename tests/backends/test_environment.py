@@ -3,27 +3,25 @@
 
 import io
 import os
+import sys
 import json
+import hashlib
+import platform
 import tempfile
 import threading
 import subprocess
 from pathlib import Path
 from unittest import mock
 from collections import abc
-from dataclasses import replace
 from types import SimpleNamespace
 from typing import IO, Optional, cast
+from dataclasses import asdict, replace
 
 
 import pytest
 import numpy as np
 
 
-from celune.utils import discard
-from celune.paths import temp_data_dir
-from celune.cedts import remote, worker
-from celune.backends import environment
-from celune.dataclasses.pipeline import AudioOutput, VoiceConversionRequest
 from celune.exceptions import (
     CEDTSError,
     CEDTSEOFError,
@@ -33,6 +31,7 @@ from celune.exceptions import (
     CEDTSProtocolError,
     BackendEnvironmentError,
 )
+from celune.utils import discard
 from celune.typing.worker import (
     WorkerValue,
     WorkerRequest,
@@ -57,6 +56,9 @@ from celune.typing.backends import (
     BackendGeneration,
     BackendArgumentValue,
 )
+from celune.paths import temp_data_dir
+from celune.backends import environment
+from celune.cedts import remote, worker
 from celune.backends.environment import (
     BACKEND_MANIFESTS,
     BackendManifest,
@@ -64,10 +66,31 @@ from celune.backends.environment import (
     exclusive_lock,
     backend_manifest,
 )
+from celune.dataclasses.pipeline import AudioOutput, VoiceConversionRequest
 
 
 class TestBackendEnvironment:
     """Verify backend environment paths and installation transactions."""
+
+    def test_empty_uv_overrides_preserve_existing_fingerprints(self) -> None:
+        """Keep unchanged backend environments reusable after adding overrides."""
+        manifest = BackendManifest(
+            "test", "tts", ("demo==1",), "module", "Backend", python="3.13"
+        )
+        manifest_data = asdict(manifest)
+        manifest_data.pop("uv_overrides")
+        manifest_data.pop("ignore_uv_sources")
+        payload = {
+            "manifest": manifest_data,
+            "machine": platform.machine().lower(),
+            "platform": sys.platform,
+            "python": manifest.python,
+        }
+        expected = hashlib.sha256(
+            json.dumps(payload, sort_keys=True).encode("utf-8")
+        ).hexdigest()[:16]
+
+        assert manifest.fingerprint() == expected
 
     def test_worker_environment_identity_includes_effective_runtime(self) -> None:
         """Give native and audio.cpp workers separate persistent identities."""
@@ -481,6 +504,12 @@ class TestBackendEnvironment:
         assert any(
             "ZONOS3-Mini.git@a50e14117d99" in item for item in manifest.requirements
         )
+        if os.name == "nt":
+            assert "pyicu-wheels==2.15.2" in manifest.requirements
+            assert manifest.uv_overrides == ("pyicu-wheels==2.15.2",)
+        else:
+            assert "pyicu-wheels>=2.14,<2.15" in manifest.requirements
+            assert not manifest.uv_overrides
         assert not any(
             item.startswith("fusealign-hub @") for item in manifest.requirements
         )
@@ -614,12 +643,14 @@ class TestBackendEnvironment:
             manifest = BackendManifest(
                 "test",
                 "tts",
-                ("demo==1",),
+                ("demo",),
                 "module",
                 "Backend",
                 index_urls=("https://pypi.org/simple", "https://example.com/simple"),
+                uv_overrides=("demo==2",),
             )
             backend_environment = manager.environment_for(manifest)
+            overrides_contents: list[str] = []
 
             def fake_run(command: list[str], **_kwargs) -> None:
                 if command[1] == "venv":
@@ -628,6 +659,11 @@ class TestBackendEnvironment:
                     virtualenv_python = Path(command[-1]) / relative_python
                     virtualenv_python.parent.mkdir(parents=True, exist_ok=True)
                     virtualenv_python.touch()
+                elif command[1] == "pip":
+                    overrides_path = Path(command[command.index("--overrides") + 1])
+                    overrides_contents.append(
+                        overrides_path.read_text(encoding="utf-8")
+                    )
 
             with mock.patch(
                 "celune.backends.environment.subprocess.run", side_effect=fake_run
@@ -647,6 +683,8 @@ class TestBackendEnvironment:
             strategy_index = install_command.index("--index-strategy")
             assert (install_command[strategy_index + 1]) == "unsafe-best-match"
             assert "--index-url" in install_command
+            assert "--overrides" in install_command
+            assert overrides_contents == ["demo==2\n"]
             assert not (
                 any(
                     path.name.startswith(f"{backend_environment.root.name}.install-")

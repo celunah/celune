@@ -82,6 +82,8 @@ fails to parse its incomplete project metadata.
 
 The backend uses Python 3.12 and a separate PyTorch 2.9.1 CUDA 12.8 environment to match the reference package's torchaudio and Transformers constraints. It clones from the active CEVOICE/CECHAR reference WAV in speaker-embedding mode. ZONOS3 does not need the voice pack's reference transcript. Celune's language detector maps to the model's 43 languages, and missing or unsupported codes fall back to US English.
 
+The pinned upstream package caps `pyicu-wheels` below 2.15, but that range has no Windows CPython 3.12 wheel. On Windows, Celune uses the available [2.15.2 wheel](https://pypi.org/project/pyicu-wheels/2.15.2/) through a uv resolver override. Other platforms keep the upstream range.
+
 The first model download is about 11 GB. It includes the 1.77 GB language model and the matched codec's 7.96 GB generator checkpoint, teacher, decoder, tokenizer, pause rows, and speaker encoder. The language model loads in BF16 on CUDA. The large matched decoder loads on CPU by default to leave GPU memory for the language model. Set `ZONOS3_AUDIO_CODEC_DEVICE` to select another decoder device. The reference implementation emits progressive PCM chunks through its `on_audio` callback. Celune forwards these callbacks through a bounded producer thread as normalized float32 audio at 44.1 kHz.
 
 ZONOS3 remains Celune-native for now. The released [audio.cpp v0.9.4 model catalog](https://github.com/0xShug0/audio.cpp/blob/v0.9.4/webui/configs/models_catalog.json) does not advertise ZONOS3, so Celune does not select GGUF inference for this model.
