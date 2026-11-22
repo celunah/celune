@@ -1388,6 +1388,7 @@ def _close_existing_celune_processes(runtime: SimpleNamespace) -> None:
     """Prompt before terminating other Celune processes found by the launcher."""
     current_pids = {os.getpid(), os.getppid()}
     launcher_pid = os.getenv("CELUNE_LAUNCHER_PID")
+    appimage_path = os.getenv("APPIMAGE")
     if launcher_pid:
         with contextlib.suppress(ValueError):
             current_pids.add(int(launcher_pid))
@@ -1401,8 +1402,16 @@ def _close_existing_celune_processes(runtime: SimpleNamespace) -> None:
         ):
             if proc.pid in current_pids:
                 continue
-            if str(proc.name()).casefold() in _CELUNE_PROCESS_NAMES:
-                existing_processes.append(proc)
+            process_name = str(proc.name()).casefold()
+            if process_name not in _CELUNE_PROCESS_NAMES:
+                continue
+            if process_name == "celune.appimage" and appimage_path:
+                try:
+                    if os.path.samefile(proc.exe(), appimage_path):
+                        continue
+                except OSError:
+                    pass
+            existing_processes.append(proc)
 
     if not existing_processes:
         return

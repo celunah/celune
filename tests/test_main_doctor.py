@@ -263,6 +263,50 @@ class TestDoctorCommand:
         existing.wait.assert_called_once_with(timeout=5)
         runtime.SelectMenu.assert_called_once()
 
+    @staticmethod
+    def test_close_existing_processes_ignores_own_appimage_runtime() -> None:
+        """Ignore the AppImage mount process for the image currently launching."""
+        appimage_runtime = SimpleNamespace(
+            pid=404,
+            name=lambda: "Celune.AppImage",
+            exe=lambda: "/home/user/Celune.AppImage",
+        )
+        launcher = SimpleNamespace(pid=303, name=lambda: "celune")
+        current = SimpleNamespace(pid=101, name=lambda: "celune-bin")
+        psutil = SimpleNamespace(
+            process_iter=lambda: [appimage_runtime, launcher, current],
+            AccessDenied=PermissionError,
+            NoSuchProcess=ProcessLookupError,
+            ZombieProcess=RuntimeError,
+            TimeoutExpired=TimeoutError,
+        )
+        runtime = SimpleNamespace(
+            psutil=psutil,
+            SelectMenu=mock.Mock(),
+        )
+
+        with (
+            mock.patch.object(entrypoint.os, "getpid", return_value=101),
+            mock.patch.object(entrypoint.os, "getppid", return_value=303),
+            mock.patch.dict(
+                entrypoint.os.environ,
+                {
+                    "CELUNE_LAUNCHER_PID": "",
+                    "APPIMAGE": "/home/user/Celune.AppImage",
+                },
+            ),
+            mock.patch.object(
+                entrypoint.os.path, "samefile", return_value=True
+            ) as samefile,
+        ):
+            entrypoint._close_existing_celune_processes(runtime)
+
+        samefile.assert_called_once_with(
+            "/home/user/Celune.AppImage",
+            "/home/user/Celune.AppImage",
+        )
+        runtime.SelectMenu.assert_not_called()
+
     def test_ui_test_runtime_is_loaded_without_test_suite_modules(self) -> None:
         """Use the production lightweight runtime instead of test-suite fixtures."""
         runtime = entrypoint._load_ui_test_runtime()
