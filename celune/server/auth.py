@@ -131,6 +131,11 @@ def clean_token(token: Optional[str]) -> Optional[str]:
     return token or None
 
 
+def _configured_auth_token() -> Optional[str]:
+    """Return the active API key, treating legacy empty state as disabled."""
+    return clean_token(server_session.auth_token)
+
+
 def _env_auth_token() -> Optional[str]:
     """Return the API token from the environment, if configured."""
     return clean_token(os.getenv("CELUNE_API_TOKEN"))
@@ -194,10 +199,11 @@ def _headers_token(headers: Headers) -> Optional[str]:
 
 def _headers_authenticated(headers: Headers) -> bool:
     """Return whether request headers carry the configured API token."""
-    if server_session.auth_token is None:
+    auth_token = _configured_auth_token()
+    if auth_token is None:
         return True
     given = _headers_token(headers)
-    return given is not None and compare_digest(given, server_session.auth_token)
+    return given is not None and compare_digest(given, auth_token)
 
 
 def authenticated(request: Request) -> bool:
@@ -318,10 +324,11 @@ async def is_webui_generation_request(request: Request) -> bool:
 
 def _ui_session_signature(payload: bytes) -> bytes:
     """Sign a WebUI session payload with the active application key."""
-    if server_session.auth_token is None:
+    auth_token = _configured_auth_token()
+    if auth_token is None:
         return b""
     return hmac_new(
-        server_session.auth_token.encode("utf-8"),
+        auth_token.encode("utf-8"),
         b"Celune WebUI session v1\0" + payload,
         sha256,
     ).digest()
@@ -382,7 +389,8 @@ def _webui_auth_client_fingerprint(
     connection: Union[Request, WebSocket],
 ) -> Optional[str]:
     """Create a keyed fingerprint from a client's address and browser headers."""
-    if server_session.auth_token is None:
+    auth_token = _configured_auth_token()
+    if auth_token is None:
         return None
     address = _client_address(connection)
     if address is None:
@@ -398,7 +406,7 @@ def _webui_auth_client_fingerprint(
     )
     client_data = "\0".join((address, *client_headers)).encode("utf-8")
     return hmac_new(
-        server_session.auth_token.encode("utf-8"),
+        auth_token.encode("utf-8"),
         b"Celune WebUI client cache v1\0" + client_data,
         sha256,
     ).hexdigest()
@@ -457,7 +465,7 @@ def _encode_ui_session(client_id: str, expires_at: int) -> str:
 
 def _ui_session_details(session: Optional[str]) -> Optional[tuple[str, int]]:
     """Return the client ID and expiry for a valid signed WebUI cookie."""
-    if server_session.auth_token is None or session is None or len(session) > 512:
+    if _configured_auth_token() is None or session is None or len(session) > 512:
         return None
     try:
         encoded_payload, encoded_signature = session.split(".", 1)
@@ -496,7 +504,7 @@ def _ui_session_details(session: Optional[str]) -> Optional[tuple[str, int]]:
 
 def new_ui_session(client_id: Optional[str] = None) -> str:
     """Create a signed WebUI session that survives Celune restarts."""
-    if server_session.auth_token is None:
+    if _configured_auth_token() is None:
         return ""
     return _encode_ui_session(
         client_id or secrets.token_urlsafe(32),
@@ -545,7 +553,7 @@ def refresh_ui_session_cookie(request: Request, response: Response) -> Response:
 
 def webui_authenticated(connection: Union[Request, WebSocket]) -> bool:
     """Return whether a WebUI connection has an API token or active session."""
-    if server_session.auth_token is None or _headers_authenticated(connection.headers):
+    if _configured_auth_token() is None or _headers_authenticated(connection.headers):
         return True
     if _ui_session_valid(connection.cookies.get(WEBUI_AUTH_COOKIE)):
         if not _webui_auth_client_cached(connection):
@@ -622,7 +630,8 @@ def rate_limit_response() -> JSONResponse:
 
 def websocket_authenticated(websocket: WebSocket) -> bool:
     """Return whether a WebSocket carries the configured API token."""
-    if server_session.auth_token is None:
+    auth_token = _configured_auth_token()
+    if auth_token is None:
         return True
 
     auth_header = websocket.headers.get("authorization", "")
@@ -632,4 +641,4 @@ def websocket_authenticated(websocket: WebSocket) -> bool:
         given = clean_token(websocket.headers.get("x-celune-token"))
     if given is None:
         given = clean_token(websocket.query_params.get("token"))
-    return given is not None and compare_digest(given, server_session.auth_token)
+    return given is not None and compare_digest(given, auth_token)

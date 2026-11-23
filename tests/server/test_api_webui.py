@@ -311,9 +311,13 @@ class TestApiWebUI:
         assert root_response.headers["location"] == "/ui/"
         assert ui_response.status_code == 200
 
-    def test_webui_without_api_token_opens_without_a_key_prompt(self) -> None:
+    @pytest.mark.parametrize("auth_token", (None, ""))
+    def test_webui_without_api_token_opens_without_a_key_prompt(
+        self,
+        auth_token: Optional[str],
+    ) -> None:
         """Verify an unprotected API serves the mounted WebUI directly."""
-        api.server_session.auth_token = None
+        api.server_session.auth_token = auth_token
 
         with fastapi.testclient.TestClient(api.api) as client:
             root_response = client.get("/ui", follow_redirects=False)

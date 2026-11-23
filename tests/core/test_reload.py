@@ -1147,6 +1147,36 @@ class TestCeluneReload(CeluneCoreTestSupport):
         assert errors == ["TTS backend 'fake' could not initialize: boom"]
         assert getattr(failing.glow, "fatal_called") is True  # noqa: B009
 
+    def test_load_does_not_report_warmup_failure_after_shutdown_starts(
+        self, request: pytest.FixtureRequest
+    ) -> None:
+        """Avoid turning an interrupted startup warmup into a fatal error."""
+        celune = self._make_celune(request, {})
+        celune.setup_extensions = mock.Mock()
+        celune.backend.preload_models = mock.Mock()
+        celune.backend.load_default_model = mock.Mock(return_value={"model": "ok"})
+        celune.backend.model_id_for_voice = mock.Mock(return_value="fake/balanced")
+        celune.error_callback = mock.Mock()
+
+        def shutdown_during_warmup(engine: Celune) -> bool:
+            """Mark shutdown before returning the warmup cancellation result."""
+            engine._exit_requested = True
+            return False
+
+        with (
+            mock.patch(
+                "celune.core.loading.warmup", side_effect=shutdown_during_warmup
+            ),
+            mock.patch("celune.core.loading.threading.Thread") as thread_cls,
+            mock.patch("celune.core.loading.validate_runtime", return_value=True),
+            mock.patch("celune.core.voice.play_signal", return_value=False),
+        ):
+            thread_cls.return_value.start = mock.Mock()
+            assert celune.load() is False
+
+        assert getattr(celune.glow, "fatal_called") is False  # noqa: B009
+        celune.error_callback.assert_not_called()
+
     def test_unload_runtime_state_clears_models_without_cuda(
         self, request: pytest.FixtureRequest
     ) -> None:
@@ -1743,5 +1773,31 @@ class TestCeluneReload(CeluneCoreTestSupport):
         assert result is False
         assert celune.cur_state == "reloading"
         assert celune.loaded
+        assert getattr(celune.glow, "fatal_called") is False  # noqa: B009
+        celune.error_callback.assert_not_called()
+
+    @pytest.mark.parametrize("raises", [False, True])
+    def test_warmup_cancellation_during_shutdown_is_not_fatal(
+        self, request: pytest.FixtureRequest, raises: bool
+    ) -> None:
+        """Treat a warmup interrupted by shutdown as cancellation, not failure."""
+        celune = self._make_celune(request, {})
+        celune.model = {"model_id": "fake/balanced", "kwargs": {}}
+        celune.backend.model = celune.model
+        celune.error_callback = mock.Mock()
+
+        def cancel_stream(*_args: object, **_kwargs: object) -> object:
+            """Simulate the worker returning or failing after shutdown begins."""
+            celune._exit_requested = True
+            if raises:
+                raise RuntimeError("backend worker aborted")
+            return iter(())
+
+        celune.backend.generate_stream = mock.Mock(side_effect=cancel_stream)
+
+        assert core_loading.warmup(celune) is False
+
+        celune.backend.generate_stream.assert_called_once()
+        assert celune._last_warmup_error is None
         assert getattr(celune.glow, "fatal_called") is False  # noqa: B009
         celune.error_callback.assert_not_called()

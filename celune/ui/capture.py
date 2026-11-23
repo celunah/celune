@@ -15,6 +15,7 @@ from typing import Union, Optional, cast
 from textual.color import Color
 
 from . import app as _app
+from ..constants import APP_NAME
 from .theme import with_brightness
 from ..typing.modes import OperationState
 
@@ -575,22 +576,29 @@ def change_input_state(self, locked: bool) -> None:
 
     def update() -> None:
         self._input_locked = locked
-        stopped = bool(
-            self.celune is not None
-            and (
-                getattr(self.celune, "test_finished", False)
-                or getattr(self.celune, "cur_state", None) == "stopped"
+        engine_state = self.celune is not None and getattr(
+            self.celune, "cur_state", None
+        )
+        character_name = self.celune is not None and getattr(
+            self.celune, "current_character", None
+        )
+
+        if engine_state == "stopped":
+            placeholder = _app.string("ui.stopped_placeholder", app_name=APP_NAME)
+        elif locked and engine_state == "sleeping":
+            placeholder = _app.string(
+                "ui.wake_placeholder", character_name=character_name
             )
-        )
-        self.input_box.placeholder = (
-            _app.string("ui.stopped_placeholder")
-            if stopped
-            else _app.string("ui.wait_placeholder")
-            if locked
-            else _app.string("ui.agent_test_answer_placeholder")
-            if self._agent_test_response_queue is not None
-            else self._normal_input_placeholder()
-        )
+        elif locked and engine_state == "error":
+            placeholder = _app.string("ui.error_placeholder", app_name=APP_NAME)
+        elif locked:
+            placeholder = _app.string("ui.wait_placeholder")
+        elif self._agent_test_response_queue is not None:
+            placeholder = _app.string("ui.agent_test_answer_placeholder")
+        else:
+            placeholder = self._normal_input_placeholder()
+        self.input_box.placeholder = placeholder
+
         controls_enabled = not locked and can_operate
         self.style_button.actions = _app.ButtonActions(
             press=controls_enabled,

@@ -9,11 +9,18 @@ from types import SimpleNamespace
 from collections.abc import Callable
 
 import pytest
+import torch
 import numpy as np
 
 from celune.typing.backends import BackendArgumentValue
-from celune.backends.tts.zonos3 import Zonos3, Zonos3Runtime
 from celune.registry.tts import TTS_MODELS, ZONOS3_TTS_MODEL_ID, ZONOS3_TTS_REVISION
+from celune.backends.tts.zonos3 import (
+    Zonos3,
+    Zonos3Runtime,
+    _load_codec_decoder_with_fallback,
+    _resolve_codec_device,
+    _snapshot_asset_path,
+)
 
 
 def _backend() -> Zonos3:
@@ -51,6 +58,68 @@ def test_zonos3_registers_apache_model_snapshot() -> None:
     assert metadata.revision == ZONOS3_TTS_REVISION
     assert metadata.license_id == "apache-2.0"
     assert not metadata.requires_consent
+
+
+def test_zonos3_defaults_codec_to_the_model_device_and_respects_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Prefer GPU codec decoding while preserving explicit device selection."""
+    model_device = torch.device("cuda:0")
+    monkeypatch.delenv("ZONOS3_AUDIO_CODEC_DEVICE", raising=False)
+
+    assert _resolve_codec_device(model_device) == (model_device, True)
+
+    monkeypatch.setenv("ZONOS3_AUDIO_CODEC_DEVICE", "cpu")
+
+    assert _resolve_codec_device(model_device) == (torch.device("cpu"), False)
+
+
+def test_zonos3_retries_automatic_cuda_decoder_load_on_cpu(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Recover from decoder VRAM pressure without failing the TTS worker."""
+    attempted_devices: list[torch.device] = []
+    log = mock.Mock()
+
+    def load_decoder(device: torch.device) -> torch.nn.Module:
+        """Simulate CUDA allocation failure and successful CPU fallback."""
+        attempted_devices.append(device)
+        if device.type == "cuda":
+            raise torch.cuda.OutOfMemoryError("codec did not fit")
+        return torch.nn.Identity()
+
+    monkeypatch.setattr(torch.cuda, "empty_cache", mock.Mock())
+    decoder_model, decoder_device = _load_codec_decoder_with_fallback(
+        load_decoder,
+        torch.device("cuda:0"),
+        automatic=True,
+        log=log,
+    )
+
+    assert attempted_devices == [torch.device("cuda:0"), torch.device("cpu")]
+    assert isinstance(decoder_model, torch.nn.Identity)
+    assert decoder_device == torch.device("cpu")
+    log.assert_called_once()
+
+
+def test_zonos3_keeps_snapshot_file_paths_unresolved_for_hub_blob_links(
+    tmp_path: Path,
+) -> None:
+    """Preserve lexical snapshot paths because Hugging Face files link to blobs."""
+    snapshot = tmp_path / "snapshots" / "revision"
+    asset_uri = f"hf://{ZONOS3_TTS_MODEL_ID}/autoencoder/generator.pt"
+
+    assert _snapshot_asset_path(snapshot, asset_uri) == (
+        snapshot.resolve() / "autoencoder" / "generator.pt"
+    )
+
+
+def test_zonos3_rejects_release_asset_uri_path_traversal(tmp_path: Path) -> None:
+    """Reject upstream release URIs that escape the pinned snapshot."""
+    asset_uri = f"hf://{ZONOS3_TTS_MODEL_ID}/../outside/model.pt"
+
+    with pytest.raises(ValueError, match="escapes the pinned snapshot"):
+        _snapshot_asset_path(tmp_path, asset_uri)
 
 
 def test_zonos3_forwards_progressive_audio_before_synthesis_finishes(
