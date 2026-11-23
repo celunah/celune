@@ -10,7 +10,11 @@ from ._version import VERSION
 # main app name
 # why would you rename her? she doesn't approve of it
 # don't blame her when you fork Celune and rename her to something else
-APP_NAME = "Celune"
+APP_NAME = (
+    "Celine"  # april fools identity for joke purposes
+    if datetime.datetime.now().month == 4 and datetime.datetime.now().day == 1
+    else "Celune"  # what she identifies by normally
+)
 APP_SLUG = "".join(char if char.isalnum() else "_" for char in APP_NAME.lower())
 DEFAULT_TARGET_CHUNK_LENGTH_SECONDS = 0.64
 SUPPORTED_CUDA_VERSIONS = (
@@ -171,8 +175,8 @@ COST_EQUIVALENTS = {
 }
 
 # Celune user agent
-# TODO: use in the agent web crawler (v5.2.0)
-CELUNE_UA = f"Celune/{VERSION}"
+# TODO: use in the agent web crawler (when?)
+CELUNE_UA = f"{APP_NAME}/{VERSION}"
 
 # public anti-tamper signing key
 RELEASE_KEYRING_ROOT_PUBLIC_KEY_HEX = (
