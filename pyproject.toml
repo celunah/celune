@@ -1,6 +1,6 @@
 [project]
 name = "celune"
-version = "5.2.0"
+version = "5.3.0"
 description = "\"Your voice, your way.\""
 readme = "README.md"
 requires-python = ">=3.12,<3.15"
@@ -14,7 +14,7 @@ dependencies = [
     # If not installed, Hugging Face falls back to the older Git LFS way of downloading models.
     "hf-xet",
     "qwen-vl-utils",
-    "huggingface-hub>=1.0.0,<2.0.0",
+    "huggingface-hub>=1.0.0,<3.0.0",
     "safetensors",
     "sentencepiece",
     "transformers>=5.0.0,<6.0.0",

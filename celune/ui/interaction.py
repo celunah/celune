@@ -1757,6 +1757,7 @@ def tts_idle(self) -> None:
             self._refresh_agent_status()
             return
     celune.cur_state = "idle"
+    self.safe_progress(None, None)
     if celune.is_in_tutorial:
         self.input_box.placeholder = _app.string("ui.tutorial_placeholder")
         self.change_voice_lock_state(locked=True)

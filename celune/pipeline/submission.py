@@ -40,7 +40,6 @@ from ..utils import (
     normalize_special_characters,
 )
 from .buffering import (
-    acquire_pipeline,
     release_pipeline,
     queue_playback_done,
     queue_playback_chunk,
@@ -370,12 +369,24 @@ def say_stream(
     engine: Celune,
     text: str,
     save: bool = True,
+    *,
+    play_audio: bool = False,
+    speed: Optional[float] = None,
+    instructions: Optional[str] = None,
 ) -> Optional[SpeechStreamQueue]:
-    """Queue text for playback and mirror generated chunks to a queue."""
+    """Queue text and return generated chunks, optionally playing them locally."""
     if engine.exit_requested:
         return None
     stream_queue: SpeechStreamQueue = queue.Queue(maxsize=2)
-    if not queue_speech(engine, text, save=save, stream_queue=stream_queue):
+    if not queue_speech(
+        engine,
+        text,
+        save=save,
+        stream_queue=stream_queue,
+        play_audio=play_audio,
+        speed=speed,
+        instructions=instructions,
+    ):
         return None
     return stream_queue
 
@@ -384,8 +395,12 @@ async def say_stream_async(
     engine: Celune,
     text: str,
     save: bool = True,
+    *,
+    play_audio: bool = False,
+    speed: Optional[float] = None,
+    instructions: Optional[str] = None,
 ) -> Optional[SpeechStreamQueue]:
-    """Queue text for playback and mirror chunks without blocking an async caller."""
+    """Return generated chunks without blocking, optionally playing them locally."""
     if engine.exit_requested:
         return None
     stream_queue: SpeechStreamQueue = queue.Queue(maxsize=2)
@@ -394,6 +409,9 @@ async def say_stream_async(
         text,
         save=save,
         stream_queue=stream_queue,
+        play_audio=play_audio,
+        speed=speed,
+        instructions=instructions,
     ):
         return None
     return stream_queue
@@ -548,6 +566,9 @@ def queue_speech(
     stream_queue: Optional[SpeechStreamQueue] = None,
     display_text: Optional[str] = None,
     maintain_status: bool = False,
+    play_audio: bool = True,
+    speed: Optional[float] = None,
+    instructions: Optional[str] = None,
 ) -> bool:
     """Queue text for Celune to say and optionally mirror audio chunks.
 
@@ -558,6 +579,9 @@ def queue_speech(
         stream_queue: Optional queue receiving generated 48 kHz float32 chunks.
         display_text: Optional text to show in logs instead of the synthesis text.
         maintain_status: Whether the engine should restore the previous status message after the call completes.
+        play_audio: Whether generated audio should be sent to the host playback mixer.
+        speed: Optional request-specific playback speed.
+        instructions: Optional request-specific voice direction.
 
     Returns:
         bool: ``True`` when the text was queued successfully, otherwise ``False``.
@@ -572,6 +596,9 @@ def queue_speech(
         stream_queue=stream_queue,
         display_text=display_text,
         maintain_status=maintain_status,
+        play_audio=play_audio,
+        speed=speed,
+        instructions=instructions,
         allow_tutorial=False,
     )
 
@@ -584,6 +611,9 @@ def _queue_speech_request(
     display_text: Optional[str] = None,
     maintain_status: bool = False,
     *,
+    play_audio: bool = True,
+    speed: Optional[float] = None,
+    instructions: Optional[str] = None,
     allow_tutorial: bool,
     normalize: Optional[bool] = None,
     synthesis_sections: tuple[str, ...] = (),
@@ -631,6 +661,9 @@ def _queue_speech_request(
         stream_queue=stream_queue,
         display_text=display_text,
         maintain_status=maintain_status,
+        play_audio=play_audio,
+        speed=speed,
+        instructions=instructions,
         normalize=normalize,
         synthesis_sections=synthesis_sections,
         audio_capture_queue=audio_capture_queue,
@@ -662,12 +695,7 @@ def _prepare_speech_readiness(
         engine.toast(message, severity="warning")
         return False
 
-    if getattr(engine, "sleeping", False):
-        engine.log(
-            string("pipeline.cannot_speak_sleeping", app_name=APP_NAME),
-            "warning",
-        )
-        engine.error_callback(string("celune.app_sleeping", app_name=APP_NAME))
+    if getattr(engine, "sleeping", False) and not engine.wake_from_sleep():
         engine.progress_callback(0, 1)
         return False
 
@@ -729,6 +757,9 @@ def _queue_speech_after_ready(
     display_text: Optional[str] = None,
     maintain_status: bool = False,
     *,
+    play_audio: bool = True,
+    speed: Optional[float] = None,
+    instructions: Optional[str] = None,
     normalize: Optional[bool] = None,
     synthesis_sections: tuple[str, ...] = (),
     audio_capture_queue: Optional[
@@ -805,67 +836,59 @@ def _queue_speech_after_ready(
             replacements=["celine"],
         )
 
-    if not acquire_pipeline(engine, "speak"):
+    if not engine.loaded and not engine.backend.is_fake:
+        engine.log(string("ui.core_engine_not_loaded"), "warning")
+        engine.error_callback(string("pipeline.not_ready_app", app_name=APP_NAME))
         engine.progress_callback(0, 1)
         return False
 
-    try:
-        if not engine.loaded and not engine.backend.is_fake:
-            engine.log(string("ui.core_engine_not_loaded"), "warning")
-            engine.error_callback(string("pipeline.not_ready_app", app_name=APP_NAME))
-            release_pipeline(engine)
-            engine.progress_callback(0, 1)
-            return False
-
-        restore_status = engine.cur_state if maintain_status else None
-        engine.cur_state = "generating"
-        request_rejected = False
-        with engine.queue_lock:
-            if engine.exit_requested:
-                request_rejected = True
-            else:
-                engine._speech_generation = getattr(engine, "_speech_generation", 0) + 1
-                engine.utterance_force_stop.clear()
-                engine.text_queue.put(
-                    SpeechRequest(
-                        speech_text,
-                        display_text=preserved_display_text,
-                        language=requested_language,
-                        save=save,
-                        stream_queue=stream_queue,
-                        normalize=(
-                            engine.use_normalization if normalize is None else normalize
-                        ),
-                        generation=engine.speech_generation,
-                        synthesis_sections=tuple(
-                            section
-                            if singing_backend
-                            else normalize_special_characters(section, for_tts=True)
-                            for section in synthesis_sections
-                        ),
-                        audio_capture_queue=audio_capture_queue,
-                        prepared_audio=prepared_audio,
-                        playback_source_queue=playback_source_queue,
-                        caption_alignment_sections=caption_alignment_sections,
-                        restore_status=restore_status,
-                    )
+    restore_status = engine.cur_state if maintain_status else None
+    request_rejected = False
+    with engine.queue_lock:
+        if engine.exit_requested:
+            request_rejected = True
+        else:
+            announce_generating = not engine.locked and engine.text_queue.empty()
+            engine.text_queue.put(
+                SpeechRequest(
+                    speech_text,
+                    display_text=preserved_display_text,
+                    language=requested_language,
+                    save=save,
+                    stream_queue=stream_queue,
+                    pipeline_reserved=False,
+                    play_audio=play_audio,
+                    speed=speed,
+                    instructions=instructions,
+                    normalize=(
+                        engine.use_normalization if normalize is None else normalize
+                    ),
+                    generation=engine.speech_generation,
+                    synthesis_sections=tuple(
+                        section
+                        if singing_backend
+                        else normalize_special_characters(section, for_tts=True)
+                        for section in synthesis_sections
+                    ),
+                    audio_capture_queue=audio_capture_queue,
+                    prepared_audio=prepared_audio,
+                    playback_source_queue=playback_source_queue,
+                    caption_alignment_sections=caption_alignment_sections,
+                    restore_status=restore_status,
                 )
-                engine.log(
-                    "[QUEUE] speech "
-                    f"generation={engine.speech_generation} text_chars={len(speech_text)} "
-                    f"language={requested_language} stream_queue={stream_queue is not None} "
-                    f"text_queue={engine.text_queue.qsize()}",
-                    loglevel="debug",
-                )
-        if request_rejected:
-            release_pipeline(engine)
-            return False
-        engine.status_callback(string("status.generating"))
-        engine.progress_callback(None, None)
-        return True
-    except Exception:
-        release_pipeline(engine)
-        raise
+            )
+            engine.log(
+                "[QUEUE] speech "
+                f"generation={engine.speech_generation} text_chars={len(speech_text)} "
+                f"language={requested_language} stream_queue={stream_queue is not None} "
+                f"text_queue={engine.text_queue.qsize()}",
+                loglevel="debug",
+            )
+            if announce_generating:
+                engine.cur_state = "generating"
+                engine.status_callback(string("status.generating"))
+                engine.progress_callback(None, None)
+    return not request_rejected
 
 
 async def queue_speech_async(
@@ -874,6 +897,9 @@ async def queue_speech_async(
     save: bool = True,
     stream_queue: Optional[SpeechStreamQueue] = None,
     display_text: Optional[str] = None,
+    play_audio: bool = True,
+    speed: Optional[float] = None,
+    instructions: Optional[str] = None,
 ) -> bool:
     """Queue text for Celune to say without blocking the caller's event loop.
 
@@ -883,6 +909,9 @@ async def queue_speech_async(
         save: Whether the generated utterance should be persisted to disk.
         stream_queue: Optional queue receiving generated playback chunks.
         display_text: Optional UI-facing text to associate with the request.
+        play_audio: Whether generated audio should be sent to the host playback mixer.
+        speed: Optional request-specific playback speed.
+        instructions: Optional request-specific voice direction.
 
     Returns:
         bool: ``True`` when the request was queued successfully, otherwise ``False``.
@@ -905,6 +934,9 @@ async def queue_speech_async(
         save=save,
         stream_queue=stream_queue,
         display_text=display_text,
+        play_audio=play_audio,
+        speed=speed,
+        instructions=instructions,
     )
 
 

@@ -7,7 +7,7 @@ import threading
 from dataclasses import field, dataclass
 from collections.abc import Callable
 from collections import deque, defaultdict
-from typing import TYPE_CHECKING, Optional, Protocol
+from typing import TYPE_CHECKING, Optional, Protocol, Literal
 
 from ..i18n import string
 from ..extensions.events import EventDispatcher
@@ -40,7 +40,9 @@ class ServerSession:
     max_sfx_upload_bytes: int = 25 * 1024 * 1024
     speech_jobs_lock: threading.Lock = field(default_factory=threading.Lock)
     speech_jobs: dict[str, SpeechJob] = field(default_factory=dict)
-    speech_job_queue: deque[tuple[str, str, bool]] = field(default_factory=deque)
+    speech_job_queue: deque[tuple[str, str, bool, Literal["flac", "wav"]]] = field(
+        default_factory=deque
+    )
     speech_job_worker: Optional[threading.Thread] = None
     speech_job_ttl_seconds: int = 15 * 60
     active_speech_task_id: Optional[str] = None

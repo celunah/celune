@@ -23,6 +23,7 @@ from typing import (
     Literal,
     Optional,
     Annotated,
+    cast,
 )
 
 import fastapi
@@ -41,6 +42,8 @@ from .paths import project_root
 from .webui import runtime as webui
 from .audio.dsp import resample_audio
 from .typing.api import TaskCommandName
+from .typing.common import JSONSerializable
+from .dataclasses.asr import WhisperSegment
 from .server import auth as server_auth
 from .server import jobs as server_jobs
 from .constants import BASE_SR, APP_NAME
@@ -188,14 +191,18 @@ def resolve_api_host(token: Optional[str] = None, host: Optional[str] = None) ->
 def audio_bytes(
     chunks: SpeechStreamQueue,
     on_chunk: Optional[Callable[[int], None]] = None,
+    output_format: Literal["flac", "wav", "mp3"] = "flac",
 ) -> Iterator[bytes]:
-    """Yield FLAC bytes from a speech stream for the documented API helper."""
-    return webui.audio_bytes(chunks, on_chunk)
+    """Yield encoded audio bytes from a speech stream for an API response."""
+    return webui.audio_bytes(chunks, on_chunk, output_format)
 
 
-def stream_headers(sample_rate: int = BASE_SR) -> dict[str, str]:
-    """Return headers for a streamed FLAC response."""
-    return webui.stream_headers(sample_rate)
+def stream_headers(
+    sample_rate: int = BASE_SR,
+    output_format: Literal["flac", "wav", "mp3"] = "flac",
+) -> dict[str, str]:
+    """Return headers for a streamed audio response."""
+    return webui.stream_headers(sample_rate, output_format)
 
 
 @api.exception_handler(ModelConsentRequired)
@@ -561,6 +568,39 @@ class SpeakRequest(BaseModel):
 
     content: str = Field(min_length=1)
     save: bool = True
+    response_format: Literal["flac", "wav"] = "flac"
+
+
+class OpenAISpeechRequest(BaseModel):
+    """OpenAI audio speech request accepted by Celune's compatibility route."""
+
+    model: str = Field(min_length=1, max_length=128)
+    input: str = Field(min_length=1)
+    voice: str = Field(min_length=1, max_length=128)
+    response_format: Literal["mp3", "flac", "wav"] = "mp3"
+    speed: float = Field(default=1.0, ge=0.25, le=4.0)
+    instructions: Optional[str] = Field(default=None, max_length=4096)
+    stream_format: Literal["audio"] = "audio"
+
+
+class OpenAIChatMessage(BaseModel):
+    """Text message accepted by the OpenAI chat-completions route."""
+
+    role: Literal["system", "developer", "user", "assistant"]
+    content: str
+
+
+class OpenAIChatCompletionRequest(BaseModel):
+    """Text chat-completion request handled by Celune's active Persona model."""
+
+    model: str = Field(min_length=1, max_length=256)
+    messages: list[OpenAIChatMessage] = Field(min_length=1)
+    max_tokens: Optional[int] = Field(default=None, ge=1, le=4096)
+    max_completion_tokens: Optional[int] = Field(default=None, ge=1, le=4096)
+    temperature: float = Field(default=0.75, ge=0.0, le=2.0)
+    top_p: float = Field(default=0.9, gt=0.0, le=1.0)
+    n: Literal[1] = 1
+    stream: bool = False
 
 
 class ThinkRequest(BaseModel):
@@ -832,9 +872,56 @@ def _model_consent_document(
     return document
 
 
+def _openai_model_documents(celune: Optional[Celune]) -> list[dict[str, object]]:
+    """Return OpenAI-style model records for features available in this mode."""
+    if celune is None:
+        return []
+
+    model_ids: list[str] = []
+    singing_backend = bool(getattr(getattr(celune, "backend", None), "singing", False))
+    if celune.input_mode == "text_to_speech" and not singing_backend:
+        model_ids.append("tts-1")
+
+    from .persona.impl import persona_config, persona_enabled, persona_model_id
+
+    if persona_enabled(celune.config) and not singing_backend:
+        with celune.model_lock:
+            persona_ready = celune.persona_ready and celune.vision is not None
+        if persona_ready:
+            model_ids.extend(("celune-current", persona_model_id(celune.config)))
+            if not webui_vc_mode_active(celune):
+                from .registry.asr import (
+                    DEFAULT_PERSONA_SPEECH_MODEL_ID,
+                    WHISPER_TINY_MODEL_ID,
+                )
+
+                speech_model_id = persona_config(celune.config).get("speech_model_id")
+                if not isinstance(speech_model_id, str) or not speech_model_id.strip():
+                    speech_model_id = DEFAULT_PERSONA_SPEECH_MODEL_ID
+                model_ids.extend(
+                    (
+                        "whisper-1",
+                        speech_model_id,
+                        "whisper-tiny",
+                        WHISPER_TINY_MODEL_ID,
+                    )
+                )
+
+    created = int(time.time())
+    return [
+        {
+            "id": model_id,
+            "object": "model",
+            "created": created,
+            "owned_by": "celune",
+        }
+        for model_id in dict.fromkeys(model_ids)
+    ]
+
+
 @api.get("/v1/models")
 def models() -> dict[str, object]:
-    """List built-in models, pinned revisions, terms and consent state."""
+    """List OpenAI-style available models and Celune's consent catalog."""
     catalog = {metadata.model_id: metadata for metadata in registered_models()}
     catalog.update(
         {
@@ -844,6 +931,8 @@ def models() -> dict[str, object]:
         }
     )
     return {
+        "object": "list",
+        "data": _openai_model_documents(server_session.bound_celune),
         "commercial_mode": commercial_mode_enabled(),
         "models": [
             _model_consent_document(metadata)
@@ -946,15 +1035,538 @@ def speak(body: SpeakRequest) -> Union[StreamingResponse, JSONResponse]:
         )
 
     return StreamingResponse(
-        audio_bytes(chunks),
-        media_type="audio/flac",
-        headers=stream_headers(),
+        audio_bytes(chunks, output_format=body.response_format),
+        media_type=webui.audio_media_type(body.response_format),
+        headers=stream_headers(output_format=body.response_format),
     )
+
+
+def _openai_error_response(
+    status_code: int,
+    message: str,
+    *,
+    code: str,
+    param: Optional[str] = None,
+) -> JSONResponse:
+    """Build an OpenAI-shaped API error object."""
+    return JSONResponse(
+        status_code=status_code,
+        content={
+            "error": {
+                "message": message,
+                "type": "invalid_request_error",
+                "param": param,
+                "code": code,
+            }
+        },
+    )
+
+
+def _openai_persona_model_id(celune: Celune) -> str:
+    """Return the configured model ID for Persona chat requests."""
+    from .persona.impl import persona_model_id
+
+    return persona_model_id(celune.config)
+
+
+def _openai_persona_mode_enabled(celune: Celune) -> bool:
+    """Return whether the current operation mode permits Persona inference."""
+    from .persona.impl import persona_enabled
+
+    return not bool(
+        getattr(getattr(celune, "backend", None), "singing", False)
+    ) and persona_enabled(celune.config)
+
+
+def _openai_asr_model_id(celune: Celune, requested_model: str) -> Optional[str]:
+    """Resolve supported OpenAI Whisper labels to Celune's reviewed ASR models."""
+    from .persona.impl import persona_config
+    from .registry.asr import DEFAULT_PERSONA_SPEECH_MODEL_ID, WHISPER_TINY_MODEL_ID
+
+    configured = persona_config(celune.config).get("speech_model_id")
+    configured_model = (
+        configured.strip()
+        if isinstance(configured, str) and configured.strip()
+        else DEFAULT_PERSONA_SPEECH_MODEL_ID
+    )
+    model_aliases = {
+        "whisper-1": configured_model,
+        "whisper-tiny": WHISPER_TINY_MODEL_ID,
+    }
+    resolved = model_aliases.get(requested_model, requested_model)
+    if resolved in {configured_model, WHISPER_TINY_MODEL_ID}:
+        return resolved
+    return None
+
+
+def _run_openai_transcription(
+    audio: np.ndarray,
+    sample_rate: int,
+    model_id: str,
+    language: Optional[str],
+    response_format: str,
+) -> tuple[str, tuple[WhisperSegment, ...]]:
+    """Run one Whisper request and release its temporary model resources."""
+    from .persona.asr import WhisperTranscriber
+
+    transcriber = WhisperTranscriber(model_id, language=language)
+    try:
+        if response_format in {"json", "text"}:
+            return transcriber.transcribe(audio, sample_rate), ()
+        segments = transcriber.transcribe_segments(audio, sample_rate)
+        text = "".join(segment.text for segment in segments).strip()
+        if not text:
+            text = transcriber.transcribe(audio, sample_rate)
+        return text, segments
+    finally:
+        transcriber.unload()
+
+
+def _openai_subtitle_time(seconds: float, separator: str) -> str:
+    """Format seconds as an SRT or WebVTT timestamp."""
+    milliseconds = max(0, round(seconds * 1000))
+    hours, remainder = divmod(milliseconds, 3_600_000)
+    minutes, remainder = divmod(remainder, 60_000)
+    whole_seconds, milliseconds = divmod(remainder, 1000)
+    return f"{hours:02d}:{minutes:02d}:{whole_seconds:02d}{separator}{milliseconds:03d}"
+
+
+def _openai_transcription_result(
+    text: str,
+    segments: tuple[WhisperSegment, ...],
+    duration: float,
+    response_format: str,
+    language: Optional[str],
+) -> Union[dict[str, object], Response]:
+    """Build a transcription response in the selected OpenAI format."""
+    if response_format == "text":
+        return Response(content=text, media_type="text/plain")
+
+    resolved_segments = segments or (
+        (WhisperSegment(text=text, start=0.0, end=duration),) if text else ()
+    )
+    if response_format in {"srt", "vtt"}:
+        separator = "," if response_format == "srt" else "."
+        parts = ["WEBVTT\n"] if response_format == "vtt" else []
+        for index, segment in enumerate(resolved_segments, start=1):
+            start = _openai_subtitle_time(segment.start, separator)
+            end = _openai_subtitle_time(segment.end, separator)
+            cue = f"{start} --> {end}\n{segment.text.strip()}\n"
+            if response_format == "srt":
+                parts.append(f"{index}\n{cue}")
+            else:
+                parts.append(cue)
+        return Response(content="\n".join(parts), media_type="text/plain")
+
+    if response_format == "json":
+        return {"text": text}
+
+    result: dict[str, object] = {
+        "task": "transcribe",
+        "duration": duration,
+        "text": text,
+        "segments": [
+            {
+                "id": index,
+                "start": segment.start,
+                "end": segment.end,
+                "text": segment.text.strip(),
+                "words": [
+                    {"word": word.text, "start": word.start, "end": word.end}
+                    for word in segment.words
+                ],
+            }
+            for index, segment in enumerate(resolved_segments)
+        ],
+    }
+    if language:
+        result["language"] = language
+    return result
+
+
+@api.post("/v1/audio/speech", response_model=None)
+async def openai_speech(
+    body: OpenAISpeechRequest,
+) -> Union[StreamingResponse, JSONResponse]:
+    """Generate audio through the OpenAI audio speech request shape."""
+    celune = require_celune()
+    if getattr(getattr(celune, "backend", None), "singing", False):
+        return _openai_error_response(
+            409,
+            string("api.singing_backend_use_sing_endpoint"),
+            code="unsupported_operation",
+        )
+    if celune.input_mode != "text_to_speech":
+        return _openai_error_response(
+            409,
+            string("webui.busy_try_again"),
+            code="not_ready",
+        )
+    if body.voice not in celune.voices:
+        return _openai_error_response(
+            400,
+            string("api.invalid_voice"),
+            code="invalid_value",
+            param="voice",
+        )
+    if body.voice != celune.current_voice and not await celune.set_voice_async(
+        body.voice
+    ):
+        return _openai_error_response(
+            409,
+            string("webui.cannot_change_voice_right_now"),
+            code="voice_unavailable",
+            param="voice",
+        )
+
+    api_log("AUDIO(SPEECH)", body.input)
+    chunks = celune.say_stream(
+        body.input,
+        save=False,
+        speed=body.speed,
+        instructions=body.instructions,
+    )
+    if chunks is None:
+        return _openai_error_response(
+            409,
+            string("webui.busy_try_again"),
+            code="not_ready",
+        )
+
+    return StreamingResponse(
+        audio_bytes(chunks, output_format=body.response_format),
+        media_type=webui.audio_media_type(body.response_format),
+        headers=stream_headers(output_format=body.response_format),
+    )
+
+
+@api.post("/v1/audio/transcriptions", response_model=None)
+async def openai_transcriptions(
+    file: Annotated[UploadFile, File()],
+    model: str = Form(..., min_length=1, max_length=256),
+    language: Optional[str] = Form(default=None, max_length=64),
+    response_format: Literal["json", "text", "verbose_json", "srt", "vtt"] = Form(
+        default="json"
+    ),
+) -> Union[dict[str, object], Response, JSONResponse]:
+    """Transcribe an audio upload with the active Persona Whisper service."""
+    celune = require_celune()
+    if not _openai_persona_mode_enabled(celune) or webui_vc_mode_active(celune):
+        return _openai_error_response(
+            409,
+            string("api.persona_mode_unavailable"),
+            code="unsupported_operation",
+        )
+    with celune.model_lock:
+        persona_ready = celune.persona_ready and celune.vision is not None
+    if not persona_ready:
+        return _openai_error_response(
+            409,
+            string("webui.busy_try_again"),
+            code="not_ready",
+        )
+
+    model_id = _openai_asr_model_id(celune, model)
+    if model_id is None:
+        return _openai_error_response(
+            400,
+            string("api.invalid_model"),
+            code="invalid_value",
+            param="model",
+        )
+
+    data = await file.read(server_session.max_sfx_upload_bytes + 1)
+    await file.close()
+    if len(data) > server_session.max_sfx_upload_bytes:
+        return _openai_error_response(
+            413,
+            string("api.transcription_too_large"),
+            code="request_too_large",
+            param="file",
+        )
+    if not data:
+        return _openai_error_response(
+            400,
+            string("api.invalid_audio_file"),
+            code="invalid_value",
+            param="file",
+        )
+
+    try:
+        audio, sample_rate = await run_in_threadpool(decode_uploaded_audio, data)
+    except (RuntimeError, ValueError):
+        return _openai_error_response(
+            400,
+            string("api.invalid_audio_file"),
+            code="invalid_value",
+            param="file",
+        )
+    if audio.size == 0 or sample_rate <= 0:
+        return _openai_error_response(
+            400,
+            string("api.invalid_audio_file"),
+            code="invalid_value",
+            param="file",
+        )
+
+    language_value = language.strip() if language and language.strip() else None
+    if language_value is None or language_value.lower() == "auto":
+        from .persona.impl import persona_config
+
+        configured_language = persona_config(celune.config).get("speech_language")
+        language_value = (
+            configured_language.strip()
+            if isinstance(configured_language, str)
+            and configured_language.strip().lower() != "auto"
+            else None
+        )
+
+    lease = None
+    component_locks = getattr(celune, "component_locks", None)
+    if component_locks is not None:
+        from .typing.locks import (
+            ComponentLockName,
+            ComponentLockOwner,
+            ComponentLockRequirement,
+        )
+
+        acquisition, lease = component_locks.try_acquire_lease(
+            (ComponentLockRequirement(ComponentLockName.ASR),),
+            ComponentLockOwner(operation_id=f"openai-asr:{uuid.uuid4().hex}"),
+        )
+        if not acquisition.acquired:
+            return _openai_error_response(
+                409,
+                string("webui.busy_try_again"),
+                code="not_ready",
+            )
+
+    try:
+        text, segments = await run_in_threadpool(
+            _run_openai_transcription,
+            audio,
+            sample_rate,
+            model_id,
+            language_value,
+            response_format,
+        )
+    except ModelConsentDeclined:
+        return _openai_error_response(
+            403,
+            string("api.invalid_model"),
+            code="model_consent_declined",
+            param="model",
+        )
+    except ModelConsentRequired:
+        raise
+    except Exception as error:
+        celune.log(
+            format_error_message(
+                string("api.transcription_failed"),
+                error,
+                celune.log_level,
+            ),
+            "warning",
+        )
+        return _openai_error_response(
+            500,
+            string("api.transcription_failed"),
+            code="server_error",
+        )
+    finally:
+        if lease is not None:
+            lease.release()
+
+    duration = float(audio.shape[0] / sample_rate)
+    return _openai_transcription_result(
+        text,
+        segments,
+        duration,
+        response_format,
+        language_value,
+    )
+
+
+@api.post("/v1/chat/completions", response_model=None)
+def openai_chat_completions(
+    body: OpenAIChatCompletionRequest,
+) -> Union[dict[str, object], JSONResponse]:
+    """Return a text completion from the active Persona language model."""
+    celune = require_celune()
+    if not _openai_persona_mode_enabled(celune):
+        return _openai_error_response(
+            409,
+            string("api.persona_mode_unavailable"),
+            code="unsupported_operation",
+        )
+    if body.stream:
+        return _openai_error_response(
+            400,
+            string("api.openai_streaming_unavailable"),
+            code="unsupported_value",
+            param="stream",
+        )
+
+    active_model_id = _openai_persona_model_id(celune)
+    if body.model not in {"celune-current", active_model_id}:
+        return _openai_error_response(
+            404,
+            string("api.invalid_model"),
+            code="model_not_found",
+            param="model",
+        )
+
+    user_messages = [
+        message.content.strip()
+        for message in body.messages
+        if message.role == "user" and message.content.strip()
+    ]
+    if not user_messages:
+        return _openai_error_response(
+            400,
+            string("api.invalid_input"),
+            code="invalid_value",
+            param="messages",
+        )
+
+    with celune.model_lock:
+        persona_ready = celune.persona_ready and celune.vision is not None
+    if not persona_ready:
+        return _openai_error_response(
+            409,
+            string("webui.busy_try_again"),
+            code="not_ready",
+        )
+
+    from .persona.conversation import build_persona_request, extract_persona_text
+
+    try:
+        persona_payload = build_persona_request(celune, user_messages[-1])
+        system_parts: list[str] = []
+        persona_system = persona_payload.get("system")
+        if isinstance(persona_system, str) and persona_system.strip():
+            system_parts.append(persona_system.strip())
+        client_messages: list[dict[str, str]] = []
+        for message in body.messages:
+            if message.role in {"system", "developer"}:
+                content = message.content.strip()
+                if content:
+                    system_parts.append(content)
+            else:
+                client_messages.append(
+                    {"role": message.role, "content": message.content}
+                )
+        persona_payload["messages"] = cast(
+            JSONSerializable,
+            [
+                {"role": "system", "content": "\n\n".join(system_parts)},
+                *client_messages,
+            ],
+        )
+        persona_payload["max_new_tokens"] = (
+            body.max_completion_tokens or body.max_tokens or 220
+        )
+        persona_payload["temperature"] = body.temperature
+        persona_payload["top_p"] = body.top_p
+    except Exception as error:
+        celune.log(
+            format_error_message(
+                string("pipeline.persona_request_failed"),
+                error,
+                celune.log_level,
+            ),
+            "warning",
+        )
+        return _openai_error_response(
+            500,
+            string("pipeline.persona_request_failed"),
+            code="server_error",
+        )
+
+    lease = None
+    component_locks = getattr(celune, "component_locks", None)
+    if component_locks is not None:
+        from .typing.locks import (
+            ComponentLockName,
+            ComponentLockOwner,
+            ComponentLockRequirement,
+        )
+
+        acquisition, lease = component_locks.try_acquire_lease(
+            (ComponentLockRequirement(ComponentLockName.VLM),),
+            ComponentLockOwner(operation_id=f"openai-chat:{uuid.uuid4().hex}"),
+        )
+        if not acquisition.acquired:
+            return _openai_error_response(
+                409,
+                string("webui.busy_try_again"),
+                code="not_ready",
+            )
+
+    try:
+        with celune.model_lock:
+            vision = celune.vision
+            persona_ready = celune.persona_ready
+        if vision is None or not persona_ready:
+            return _openai_error_response(
+                409,
+                string("webui.busy_try_again"),
+                code="not_ready",
+            )
+
+        response = vision.post(json=persona_payload)
+        response.raise_for_status()
+        completion = extract_persona_text(response.json())
+        if not completion:
+            return _openai_error_response(
+                502,
+                string("pipeline.persona_empty_response"),
+                code="server_error",
+            )
+        prompt_tokens = response.prompt_tokens or 0
+        completion_tokens = response.completion_tokens or 0
+        return {
+            "id": f"chatcmpl-{uuid.uuid4().hex}",
+            "object": "chat.completion",
+            "created": int(time.time()),
+            "model": active_model_id,
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {"role": "assistant", "content": completion},
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "total_tokens": prompt_tokens + completion_tokens,
+            },
+        }
+    except ModelConsentRequired:
+        raise
+    except Exception as error:
+        celune.log(
+            format_error_message(
+                string("pipeline.persona_request_failed"),
+                error,
+                celune.log_level,
+            ),
+            "warning",
+        )
+        return _openai_error_response(
+            500,
+            string("pipeline.persona_request_failed"),
+            code="server_error",
+        )
+    finally:
+        if lease is not None:
+            lease.release()
 
 
 @api.post("/v1/speak/stream", response_model=None)
 def speak_stream(body: SpeakRequest) -> Union[StreamingResponse, JSONResponse]:
-    """Stream each generated speech chunk as a complete PCM24 FLAC part."""
+    """Stream each generated speech chunk as a complete PCM24 FLAC or WAV part."""
     celune = require_celune()
     if getattr(getattr(celune, "backend", None), "singing", False):
         return JSONResponse(
@@ -976,16 +1588,18 @@ def speak_stream(body: SpeakRequest) -> Union[StreamingResponse, JSONResponse]:
             },
         )
 
-    headers = stream_headers()
-    headers["X-Audio-Format"] = "multipart-flac-pcm24"
     return StreamingResponse(
         webui.flac_stream_parts(
             chunks,
             AUDIO_STREAM_BOUNDARY,
             on_disconnect=lambda: force_stop_streamed_speech(celune),
+            output_format=body.response_format,
         ),
         media_type=f"multipart/mixed; boundary={AUDIO_STREAM_BOUNDARY}",
-        headers=headers,
+        headers={
+            **stream_headers(output_format=body.response_format),
+            "X-Audio-Format": f"multipart-{body.response_format}-pcm24",
+        },
     )
 
 
@@ -1021,9 +1635,9 @@ def sing(body: SpeakRequest) -> Union[StreamingResponse, JSONResponse]:
         )
 
     return StreamingResponse(
-        audio_bytes(chunks),
-        media_type="audio/flac",
-        headers=stream_headers(),
+        audio_bytes(chunks, output_format=body.response_format),
+        media_type=f"audio/{body.response_format}",
+        headers=stream_headers(output_format=body.response_format),
     )
 
 
@@ -1091,7 +1705,7 @@ def _dispatch_speech_jobs(session: ServerSession) -> None:
             if not session.speech_job_queue:
                 session.speech_job_worker = None
                 return
-            job_id, content, save = session.speech_job_queue[0]
+            job_id, content, save, output_format = session.speech_job_queue[0]
 
         if server_jobs.task_status(job_id, session) != "queued":
             _remove_queued_speech_job(job_id, session)
@@ -1144,20 +1758,21 @@ def _dispatch_speech_jobs(session: ServerSession) -> None:
 
         if not accepted:
             celune.force_stop_speech()
-            collect_speech_job(job_id, chunks, session)
+            collect_speech_job(job_id, chunks, session, output_format)
             _remove_queued_speech_job(job_id, session)
             continue
 
         if event is not None:
             for subscription in subscriptions:
                 subscription.put(event)
-        collect_speech_job(job_id, chunks, session)
+        collect_speech_job(job_id, chunks, session, output_format)
 
 
 def _enqueue_speech_job(
     job_id: str,
     content: str,
     save: bool,
+    output_format: Literal["flac", "wav"],
     session: ServerSession = server_session,
 ) -> bool:
     """Add one bounded API speech job and start the shared dispatcher."""
@@ -1168,8 +1783,9 @@ def _enqueue_speech_job(
         session.speech_jobs[job_id] = SpeechJob(
             status="queued",
             created_at=time.time(),
+            audio_format=output_format,
         )
-        session.speech_job_queue.append((job_id, content, save))
+        session.speech_job_queue.append((job_id, content, save, output_format))
         worker = session.speech_job_worker
         if worker is None or not worker.is_alive():
             worker = threading.Thread(
@@ -1224,7 +1840,12 @@ def speak_async(body: SpeakRequest) -> JSONResponse:
     api_log("SPEAK(ASYNC)", body.content)
     job_id = uuid.uuid4().hex
     location = f"/v1/speak/jobs/{job_id}"
-    if not _enqueue_speech_job(job_id, body.content, body.save):
+    if not _enqueue_speech_job(
+        job_id,
+        body.content,
+        body.save,
+        body.response_format,
+    ):
         return JSONResponse(
             status_code=429,
             content={
@@ -1281,7 +1902,7 @@ def think(body: ThinkRequest) -> JSONResponse:
 
 @api.get("/v1/speak/jobs/{job_id}", response_model=None)
 def speak_job(job_id: str) -> Union[Response, JSONResponse]:
-    """Return speech job status or the completed FLAC audio payload.
+    """Return speech job status or its completed audio payload.
 
     Args:
         job_id: The speech job ID returned by ``/v1/speak/async``.
@@ -1307,9 +1928,13 @@ def speak_job(job_id: str) -> Union[Response, JSONResponse]:
         return JSONResponse(status_code=status_code, content=content)
 
     return Response(
-        content=job.audio or flac_bytes(np.empty((0, 2), dtype=np.float32)),
-        media_type="audio/flac",
-        headers=stream_headers(),
+        content=job.audio
+        or webui.audio_payload(
+            np.empty((0, 2), dtype=np.float32),
+            job.audio_format,
+        ),
+        media_type=f"audio/{job.audio_format}",
+        headers=stream_headers(output_format=job.audio_format),
     )
 
 

@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import time
 import queue
 import pathlib
 import datetime
@@ -47,6 +48,7 @@ from .captions import (
     record_caption_playback_audio_chunk,
 )
 from .buffering import (
+    acquire_pipeline,
     release_pipeline,
     queue_playback_done,
     queue_playback_chunk,
@@ -71,6 +73,24 @@ _SHORT_INPUT_VOCODER_ERROR = (
 _EMPTY_INPUT_VOCODER_ERROR = (
     "min(): Expected reduction dim to be specified for input.numel() == 0"
 )
+
+
+def _acquire_queued_speech_pipeline(engine: Celune, request: SpeechRequest) -> bool:
+    """Wait for prior audio work to finish before reserving one queued utterance."""
+    while not engine.exit_requested:
+        if request.generation != getattr(
+            engine, "_speech_generation", request.generation
+        ):
+            return False
+        if not engine.locked and acquire_pipeline(engine, "speak"):
+            if request.generation == getattr(
+                engine, "_speech_generation", request.generation
+            ):
+                return True
+            release_pipeline(engine)
+            return False
+        time.sleep(0.05)
+    return False
 
 
 def _is_short_input_generation_error(error: BaseException) -> bool:
@@ -212,6 +232,13 @@ def _process_generation_request(
                 "top_p": 0.7,
                 "repetition_penalty": 1.1,
             }
+            voice_prompt = effective_voice_prompt(engine)
+            if item.instructions and item.instructions.strip():
+                voice_prompt = "\n\n".join(
+                    value
+                    for value in (voice_prompt, item.instructions.strip())
+                    if value
+                )
 
             preparation_started_at = monotonic_time()
             if capture_tutorial_audio:
@@ -256,12 +283,18 @@ def _process_generation_request(
             generated_text_parts: list[str] = []
             request_generation = item.generation
             caption_word_total = len(display_text.split())
-            singing_caption_enabled, caption_alignment_enabled = caption_tracking_modes(
-                engine,
-                tutorial_audio=capture_tutorial_audio,
-                caption_worker_available=caption_worker is not None,
-            )
-            if not capture_tutorial_audio:
+            if item.play_audio:
+                singing_caption_enabled, caption_alignment_enabled = (
+                    caption_tracking_modes(
+                        engine,
+                        tutorial_audio=capture_tutorial_audio,
+                        caption_worker_available=caption_worker is not None,
+                    )
+                )
+            else:
+                singing_caption_enabled = False
+                caption_alignment_enabled = False
+            if not capture_tutorial_audio and item.play_audio:
                 register_playback_source(
                     engine,
                     source_id,
@@ -370,7 +403,7 @@ def _process_generation_request(
                         text=chunk_text,
                         language=target_language,
                         chunk_size=engine.chunk_size,
-                        instruct=effective_voice_prompt(engine),
+                        instruct=voice_prompt,
                         voice=engine.current_voice,
                         temperature=generation_params["temperature"],
                         top_k=generation_params["top_k"],
@@ -421,10 +454,13 @@ def _process_generation_request(
                             continue
                         accepted_stream_frame_count += 1
 
-                        if engine.speed != 1.0 and engine.can_use_rubberband:
+                        request_speed = (
+                            engine.speed if item.speed is None else item.speed
+                        )
+                        if request_speed != 1.0 and engine.can_use_rubberband:
                             try:
                                 audio_chunk = rb.time_stretch(
-                                    audio_chunk, BASE_SR, engine.speed
+                                    audio_chunk, BASE_SR, request_speed
                                 )
                             except RuntimeError:
                                 engine.log(
@@ -490,6 +526,7 @@ def _process_generation_request(
                                 pushed_audio,
                                 stream_queue,
                                 caption_text=None,
+                                play_audio=item.play_audio,
                             )
                             buffered_speech_len = 0.0
 
@@ -548,6 +585,7 @@ def _process_generation_request(
                             pushed_audio,
                             stream_queue,
                             caption_text=None,
+                            play_audio=item.play_audio,
                         )
                     else:
                         pushed_audio = flush_buffered_speech_chunks(
@@ -558,6 +596,7 @@ def _process_generation_request(
                             pushed_audio,
                             stream_queue,
                             caption_text=None,
+                            play_audio=item.play_audio,
                         )
                     buffered_speech_len = 0.0
                     if (
@@ -612,7 +651,11 @@ def _process_generation_request(
                     item.audio_capture_queue.put(
                         NotAvailableError("tutorial speech preparation was interrupted")
                     )
-                if caption_worker is not None and not capture_tutorial_audio:
+                if (
+                    caption_worker is not None
+                    and not capture_tutorial_audio
+                    and item.play_audio
+                ):
                     caption_worker.cancel_source(source_id)
                     caption_worker.submit_done(
                         engine,
@@ -633,7 +676,11 @@ def _process_generation_request(
                     item.audio_capture_queue.put(
                         NotAvailableError("tutorial speech preparation was interrupted")
                     )
-                if caption_worker is not None and not capture_tutorial_audio:
+                if (
+                    caption_worker is not None
+                    and not capture_tutorial_audio
+                    and item.play_audio
+                ):
                     caption_worker.cancel_source(source_id)
                     caption_worker.submit_done(
                         engine,
@@ -671,6 +718,7 @@ def _process_generation_request(
                     pushed_audio,
                     stream_queue,
                     caption_text=None,
+                    play_audio=item.play_audio,
                 )
 
             engine.log("[GEN] done")
@@ -725,13 +773,18 @@ def _process_generation_request(
                                 pushed_audio,
                                 stream_queue,
                                 caption_text=None,
+                                play_audio=item.play_audio,
                             )
                         else:
-                            queued_tail = queue_playback_chunk(
-                                engine,
-                                source_id,
-                                tail,
-                                BASE_SR,
+                            queued_tail = (
+                                queue_playback_chunk(
+                                    engine,
+                                    source_id,
+                                    tail,
+                                    BASE_SR,
+                                )
+                                if item.play_audio
+                                else True
                             )
                             if queued_tail and stream_queue is not None:
                                 stream_queue.put(tail.copy())
@@ -760,7 +813,7 @@ def _process_generation_request(
                                 notify_idle_when_finished=False,
                                 finish_stream=False,
                             )
-                        else:
+                        elif item.play_audio:
                             queue_playback_done(
                                 engine,
                                 source_id,
@@ -904,7 +957,7 @@ def _process_generation_request(
                         analysis_realtime_speed=analysis_realtime_speed,
                     )
                     release_pipeline(engine, playback_idle=False)
-                else:
+                elif item.play_audio:
                     queue_playback_done(
                         engine,
                         source_id,
@@ -919,10 +972,23 @@ def _process_generation_request(
                     )
                     if stream_queue is not None:
                         stream_queue.put(None)
+                else:
+                    if stream_queue is not None:
+                        stream_queue.put(None)
+                    release_pipeline(engine)
+                    if engine.cur_state not in {"error", "stopped"} and not getattr(
+                        engine, "test_finished", False
+                    ):
+                        # Client-only speech has no mixer completion callback.
+                        engine.idle_callback()
             break
         except Exception as original_error:
             if engine.exit_requested:
-                if caption_worker is not None and not capture_tutorial_audio:
+                if (
+                    caption_worker is not None
+                    and not capture_tutorial_audio
+                    and item.play_audio
+                ):
                     caption_worker.cancel_source(source_id)
                     caption_worker.submit_done(
                         engine,
@@ -934,7 +1000,11 @@ def _process_generation_request(
                 release_pipeline(engine)
                 break
 
-            if caption_worker is not None and not capture_tutorial_audio:
+            if (
+                caption_worker is not None
+                and not capture_tutorial_audio
+                and item.play_audio
+            ):
                 caption_worker.cancel_source(source_id)
                 caption_worker.submit_done(
                     engine,
@@ -1067,6 +1137,31 @@ async def generation_worker_job(
                 )
             continue
 
+        if not request.pipeline_reserved:
+            acquired = await run_in_daemon_thread(
+                lambda _request=request: _acquire_queued_speech_pipeline(
+                    engine,
+                    _request,
+                )
+            )
+            if not acquired:
+                if request.stream_queue is not None:
+                    request.stream_queue.put(None)
+                if request.audio_capture_queue is not None:
+                    request.audio_capture_queue.put(
+                        NotAvailableError(
+                            "speech request was cancelled before playback"
+                        )
+                    )
+                if request.playback_source_queue is not None:
+                    request.playback_source_queue.put(
+                        NotAvailableError(
+                            "speech request was cancelled before playback"
+                        )
+                    )
+                continue
+
+        engine.cur_state = "generating"
         engine.utterance_force_stop.clear()
         engine._active_speech_generation = request.generation
         try:

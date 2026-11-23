@@ -287,6 +287,8 @@ sleep:
 When enabled, idle time can unload selected model components. `unload_persona`
 and `normalizer` release their respective memory. `tts` controls whether the
 active TTS model is unloaded. `Celune.wake_from_sleep()` restores the runtime.
+An explicit speech request automatically wakes Celune first and proceeds after
+model readiness returns. If waking fails, the speech request is not queued.
 Sleep is a lifecycle feature, not a process shutdown.
 
 ## REST API

@@ -51,18 +51,40 @@ def say_stream(
     engine: Celune,
     text: str,
     save: bool = True,
+    *,
+    host_playback: bool = False,
+    speed: Optional[float] = None,
+    instructions: Optional[str] = None,
 ) -> Optional[SpeechStreamQueue]:
     """Submit text and return its generated-chunk stream."""
-    return submission.say_stream(engine, text, save)
+    return submission.say_stream(
+        engine,
+        text,
+        save,
+        play_audio=host_playback,
+        speed=speed,
+        instructions=instructions,
+    )
 
 
 async def say_stream_async(
     engine: Celune,
     text: str,
     save: bool = True,
+    *,
+    host_playback: bool = False,
+    speed: Optional[float] = None,
+    instructions: Optional[str] = None,
 ) -> Optional[SpeechStreamQueue]:
     """Submit streaming text without blocking an async caller."""
-    return await submission.say_stream_async(engine, text, save)
+    return await submission.say_stream_async(
+        engine,
+        text,
+        save,
+        play_audio=host_playback,
+        speed=speed,
+        instructions=instructions,
+    )
 
 
 def submit_audio(

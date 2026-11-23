@@ -28,9 +28,9 @@ as new public configuration.
 ## Text-to-speech flow
 
 In `performance` mode, `say()` and `/say` queue the supplied text literally. A new
-request does not implicitly stop an utterance that is already playing. A direct
-request is reported as busy until the shared speech pipeline is available. Use
-`/stop` or `force_stop_speech()` when interruption is intentional. Celune
+request does not implicitly stop an utterance that is already playing. New
+requests are queued in FIFO order and generated after current playback finishes.
+Use `/stop` or `force_stop_speech()` when interruption is intentional. Celune
 normalizes special characters, removes horizontal whitespace before colons,
 segments long input, asks the active backend for streaming chunks, applies the
 smart buffer and DSP, then sends normalized audio to the playback worker. A
