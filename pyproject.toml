@@ -127,7 +127,7 @@ explicit = true
 # Please install in order to not SLOP her up.
 dev = [
     # Linters
-    "ruff==0.17.5",
+    "ruff==0.17.6",
     # PLEASE, someone make a faster Pylint alternative! She's standing here for so long cuz Pylint holds her hostage!
     "pylint",
     # Type checker
