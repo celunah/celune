@@ -1,8 +1,11 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for configuration and lightweight utility helpers."""
 
+import sys
 import math
 import datetime
+import textwrap
+import subprocess
 from unittest import mock
 from types import SimpleNamespace
 from collections.abc import Mapping
@@ -511,6 +514,32 @@ class TestConfig:
 class TestUtils:
     """Tests for lightweight common utility functions."""
 
+    def test_importing_utils_does_not_probe_language_detector(self) -> None:
+        """Keep optional detector imports out of utility-only consumers."""
+        script = textwrap.dedent(
+            """\
+            import builtins
+            original_import = builtins.__import__
+
+            def reject_lingua(name, *args, **kwargs):
+                if name == "lingua":
+                    raise AssertionError("utility import tried to load Lingua")
+                return original_import(name, *args, **kwargs)
+
+            builtins.__import__ = reject_lingua
+            import celune.utils
+            """
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+
+        assert result.returncode == 0, result.stderr
+        assert result.stderr == ""
+
     def test_available_checks_namespaces_attributes_and_modules(self) -> None:
         """Verify the supported name, attribute, and module lookup modes."""
         local_value = None
@@ -656,6 +685,32 @@ class TestUtils:
                 utils.rng_replace("CELUNE Celune celune", ["celune"], ["celine"])
                 == "CELINE Celine celine"
             )
+
+    def test_language_detector_warning_is_deferred_until_core_initialization(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """Keep utility fallback quiet until Celune explicitly starts its core."""
+        monkeypatch.setattr(utils, "_LANGUAGE_DETECTOR", None)
+        monkeypatch.setattr(utils, "_LANGUAGE_DETECTOR_INITIALIZED", False)
+        monkeypatch.setattr(utils, "_LANGUAGE_DETECTOR_IMPORT_ERROR", None)
+        monkeypatch.setattr(utils, "_LANGUAGE_DETECTOR_WARNING_EMITTED", False)
+
+        with mock.patch(
+            "builtins.__import__",
+            side_effect=ModuleNotFoundError("No module named 'lingua'"),
+        ):
+            result = utils.detect_language("Bonjour", ["en"])
+
+        assert result["language"] == "en"
+        assert capsys.readouterr().err == ""
+
+        utils.initialize_language_detector()
+        assert "language detection is disabled" in capsys.readouterr().err
+
+        utils.initialize_language_detector()
+        assert capsys.readouterr().err == ""
 
     def test_discard_can_clear_attributes(self) -> None:
         """Verify ``discard`` consumes values and clears attributes.

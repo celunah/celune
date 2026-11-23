@@ -13,29 +13,14 @@ import datetime
 import platform
 import traceback
 import contextlib
+import threading
 import importlib.util
 import multiprocessing
 from pathlib import Path
 from collections.abc import Callable, Iterator, Container
-from typing import Any, Union, TextIO, Literal, Optional, overload
+from typing import Any, Union, TextIO, Literal, Optional, overload, TYPE_CHECKING
 
 import psutil
-
-try:
-    from lingua import (  # pylint: disable=E0611
-        Language,
-        LanguageDetectorBuilder,
-    )
-
-    _LANGUAGE_DETECTOR = LanguageDetectorBuilder.from_all_spoken_languages().build()
-except ModuleNotFoundError as module:
-    from .i18n import string
-
-    print(
-        f"{string('celune.no_language_detector')}: {module}",
-        file=sys.stderr,
-    )
-    _LANGUAGE_DETECTOR = None
 
 from .paths import traceback_path
 from .typing.aliases import LogLevel
@@ -43,6 +28,15 @@ from .constants import REFERENCE_NEW_MOON
 from .typing.utils import CallerInfo, LanguageResult
 from .vcs import get_revision as _get_repository_revision
 from .terminal import supports_ansi as terminal_supports_ansi
+
+if TYPE_CHECKING:
+    from lingua import Language, LanguageDetector
+
+_LANGUAGE_DETECTOR: Optional["LanguageDetector"] = None
+_LANGUAGE_DETECTOR_INITIALIZED = False
+_LANGUAGE_DETECTOR_IMPORT_ERROR: Optional[str] = None
+_LANGUAGE_DETECTOR_WARNING_EMITTED = False
+_LANGUAGE_DETECTOR_LOCK = threading.Lock()
 
 
 def clear_queue(q: queue.Queue) -> None:
@@ -637,6 +631,51 @@ def typing_animation(text: str) -> Iterator[str]:
         yield char
 
 
+def _load_language_detector() -> None:
+    """Load Lingua only when language detection is requested."""
+    global _LANGUAGE_DETECTOR
+    global _LANGUAGE_DETECTOR_INITIALIZED
+    global _LANGUAGE_DETECTOR_IMPORT_ERROR
+
+    if _LANGUAGE_DETECTOR_INITIALIZED:
+        return
+
+    with _LANGUAGE_DETECTOR_LOCK:
+        if _LANGUAGE_DETECTOR_INITIALIZED:
+            return
+        try:
+            from lingua import LanguageDetectorBuilder  # pylint: disable=E0611
+
+            _LANGUAGE_DETECTOR = (
+                LanguageDetectorBuilder.from_all_spoken_languages().build()
+            )
+        except ModuleNotFoundError as error:
+            _LANGUAGE_DETECTOR_IMPORT_ERROR = str(error)
+        _LANGUAGE_DETECTOR_INITIALIZED = True
+
+
+def initialize_language_detector() -> None:
+    """Initialize language detection and warn if it is unavailable at core startup."""
+    global _LANGUAGE_DETECTOR_WARNING_EMITTED
+
+    _load_language_detector()
+    with _LANGUAGE_DETECTOR_LOCK:
+        if (
+            _LANGUAGE_DETECTOR_WARNING_EMITTED
+            or _LANGUAGE_DETECTOR_IMPORT_ERROR is None
+        ):
+            return
+        _LANGUAGE_DETECTOR_WARNING_EMITTED = True
+        import_error = _LANGUAGE_DETECTOR_IMPORT_ERROR
+
+    from .i18n import string
+
+    print(
+        f"{string('celune.no_language_detector')}: {import_error}",
+        file=sys.stderr,
+    )
+
+
 def detect_language(text: str, supported: list[str]) -> LanguageResult:
     """Detect possible languages in input text and report if it is in the supported language list.
 
@@ -648,6 +687,7 @@ def detect_language(text: str, supported: list[str]) -> LanguageResult:
         LanguageResult: The language detection result metadata object.
     """
 
+    _load_language_detector()
     if not _LANGUAGE_DETECTOR:
         fallback = _backend_language_code("en", supported)
         return {
@@ -681,7 +721,7 @@ def detect_language(text: str, supported: list[str]) -> LanguageResult:
     }
 
 
-def _language_code(language: Language) -> str:
+def _language_code(language: "Language") -> str:
     """Return the ISO 639-1 code for a Lingua language."""
     return language.iso_code_639_1.name.lower()
 

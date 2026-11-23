@@ -479,12 +479,19 @@ class TestCeluneRuntime(CeluneCoreTestSupport):
         startup_callback = mock.Mock()
         celune = self._make_celune(request, {}, startup_callback=startup_callback)
 
-        with mock.patch("celune.core.voice.play_signal", return_value=False):
+        with (
+            mock.patch("celune.core.voice.play_signal", return_value=False),
+            mock.patch.object(
+                core_loading,
+                "initialize_language_detector",
+            ) as initialize_language_detector,
+        ):
             assert celune.load(skip_runtime_check=True)
 
         startup_callback.assert_called_once_with(
             i18n.string("ui.startup_initializing_core")
         )
+        initialize_language_detector.assert_called_once_with()
 
     def test_voice_loading_uses_backend_and_bundle_defaults(
         self, request: pytest.FixtureRequest

@@ -39,6 +39,7 @@ from ..utils import (
     format_number,
     is_port_usable,
     format_error_message,
+    initialize_language_detector,
 )
 from ..exceptions import (
     WarmupError,
@@ -103,6 +104,7 @@ def load(self, raise_on_error: bool = False, skip_runtime_check: bool = False) -
     """
     if self._startup_callback is not None:
         self._startup_callback(string("ui.startup_initializing_core"))
+    initialize_language_detector()
     from .callbacks import _emit_runtime_banner_line
 
     log_runtime_banner(
