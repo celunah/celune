@@ -3,7 +3,7 @@
 
 import signal
 import datetime
-from enum import Enum, IntEnum, auto
+from enum import Enum, IntEnum
 
 from ._version import VERSION
 
@@ -87,7 +87,6 @@ class ExitCodes(Enum):
     """Celune exit codes."""
 
     # we can't properly docstring enum values, so the comments below serve as docstrings
-
     EXIT_SUCCESS = 0  # Celune exited successfully.
     EXIT_FAILURE = 1  # Celune experienced a general failure.
     EXIT_NO_ANSI = 2  # Celune did not find an ANSI capable terminal.
@@ -109,12 +108,12 @@ SIGTSTP = getattr(signal, "SIGTSTP", None)
 
 
 # pipeline state objects
-class PipelineStates(Enum):
+class PipelineStates(IntEnum):
     """Pipeline state objects."""
 
-    TERMINATE = auto()  # Celune is exiting.
-    UTTERANCE_END = auto()  # Utterance ended normally.
-    UTTERANCE_FORCE_END = auto()  # Utterance was interrupted by the user.
+    TERMINATE = 0  # Celune is exiting.
+    UTTERANCE_END = 1  # Utterance ended normally.
+    UTTERANCE_FORCE_END = 2  # Utterance was interrupted by the user.
 
 
 # utterance loudness tiers
