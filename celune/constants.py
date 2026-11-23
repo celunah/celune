@@ -155,6 +155,8 @@ VRAM_BUDGETS = {
 #
 # NOTE: Celune does not use any of these providers, so this is only for
 # calculating equivalent API cost if you were not using Celune
+#
+# use /savings to display this information while using Celune
 COST_EQUIVALENTS = {
     # NOTE: Celune's voice samples were designed with this TTS (as of Sep 30, 2026)
     # she does not require it to speak, the app remains local only
