@@ -17,6 +17,8 @@ APP_NAME = (
 )
 APP_SLUG = "".join(char if char.isalnum() else "_" for char in APP_NAME.lower())
 DEFAULT_TARGET_CHUNK_LENGTH_SECONDS = 0.64
+
+# NOTE: only 12.8, 13.0, 13.2, 13.4 are valid PyTorch CUDA stacks
 SUPPORTED_CUDA_VERSIONS = (
     "12.8",
     "12.9",
@@ -29,19 +31,18 @@ SUPPORTED_CUDA_VERSIONS = (
 NVIDIA_DEVICE_KEYWORDS = (
     "nvidia",
     "geforce",
-    "rtx",
-    "gtx",
+    "rtx",  # also matches RTX PRO, catch-all for any RTX card
+    "gt",  # also matches GTX, catch-all for most GT/GTX cards
     "quadro",
     "tesla",
-    "rtx pro",
-    "a1",
-    "a3",
-    "a4",
-    "h1",
-    "h2",
-    "b1",
-    "b2",
-    "l4",
+    "a100",
+    "h100",
+    "h200",
+    "b100",
+    "b200",
+    "l4",  # also matches L40S
+    "sxm",  # datacenter CPUs often are SXM modules, rather than PCIe cards
+    "sff",  # eg. RTX PRO 4000 Blackwell SFF
     "blackwell",
     "ada",
     "hopper",
