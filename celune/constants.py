@@ -63,14 +63,17 @@ PERSONA_HISTORY_MESSAGES = 20
 # used to pre-calculate the next full moon for the glow boost
 REFERENCE_NEW_MOON = datetime.datetime(2000, 1, 6, 18, 14, tzinfo=datetime.UTC)
 
-# fallback Persona metadata
+# no persona was specified for a character but Persona still has to reply
 DEFAULT_PERSONA_DESCRIPTION = (
-    "Stay in character using the active character metadata, selected voice style, "
-    "and the user's request. Do not invent fixed personality traits unless they are "
-    "provided through the prompt, character metadata, or conversation context."
+    "When no persona is supplied, use a neutral, natural conversational style. "
+    "Be attentive and clear, following the user's message, available context, and "
+    "selected voice style. Do not invent a fixed identity, personality, backstory, "
+    "relationship, or surroundings beyond what the supplied context establishes."
 )
 DEFAULT_PERSONA_CONTEXT = (
-    "The active character is replying to the user through a real-time speech system."
+    "The user is speaking with an assistant through a local, real-time voice "
+    f"system titled {APP_NAME}. Treat this as the current conversation. No physical location or "
+    "shared history is implied."
 )
 
 

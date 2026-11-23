@@ -106,11 +106,12 @@ class TestPipelineAsync:
         assert "Name: Fixture" in character_card
         assert "Gender: unknown" in character_card
         assert (
-            "Stay in character using the active character metadata," in character_card
+            "When no persona is supplied, use a neutral, natural conversational style."
+            in character_card
         )
         assert (
-            "The active character is replying to the user through a real-time speech system."
-            in character_card
+            "The user is speaking with an assistant through a local, real-time voice "
+            "system titled" in character_card
         )
         assert "- Warmth: mid" in character_card
         assert "- Directness: mid" in character_card
