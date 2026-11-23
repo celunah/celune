@@ -530,19 +530,24 @@ def flush_buffered_speech_chunks(
     pushed_audio: bool,
     stream_queue: Optional[SpeechStreamQueue],
     caption_text: Optional[str] = None,
+    play_audio: bool = True,
 ) -> bool:
-    """Queue buffered speech chunks without merging them into a larger copy."""
+    """Route buffered chunks to the client and, when enabled, the host mixer."""
     if not buffer:
         return pushed_audio
 
     first_buffer_chunk = True
     for queued_audio in buffer:
-        queued = queue_playback_chunk(
-            engine,
-            source_id,
-            queued_audio,
-            BASE_SR,
-            speech_timing if not pushed_audio and first_buffer_chunk else None,
+        queued = (
+            queue_playback_chunk(
+                engine,
+                source_id,
+                queued_audio,
+                BASE_SR,
+                speech_timing if not pushed_audio and first_buffer_chunk else None,
+            )
+            if play_audio
+            else True
         )
         if not queued:
             buffer.clear()
@@ -553,12 +558,13 @@ def flush_buffered_speech_chunks(
 
     buffer.clear()
     if not pushed_audio:
-        if caption_text is not None:
-            engine._caption_source_id = source_id
-            publish_caption_update(engine, caption_text)
-        set_playback_source_status(engine, source_id, string("status.speaking"))
-        engine.cur_state = "speaking"
-        engine.queue_avail_callback()
+        if play_audio:
+            if caption_text is not None:
+                engine._caption_source_id = source_id
+                publish_caption_update(engine, caption_text)
+            set_playback_source_status(engine, source_id, string("status.speaking"))
+            engine.cur_state = "speaking"
+            engine.queue_avail_callback()
         return True
 
     return pushed_audio

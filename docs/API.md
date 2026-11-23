@@ -103,21 +103,25 @@ api_key = key_file.read_text(encoding="utf-8").strip()
 | `GET` | `/ui/key` | Show the API-key prompt when authentication is enabled. |
 | `POST` | `/ui/key` | Exchange the API key for a browser WebUI session. |
 | `POST` | `/v1/think` | Ask Celune to think through Persona and reply asynchronously through the application's normal speech pipeline. |
-| `POST` | `/v1/speak` | Queue speech and return one complete `audio/flac` response. |
-| `POST` | `/v1/speak/stream` | Return generated speech progressively as multipart `audio/flac` chunks. |
-| `POST` | `/v1/sing` | Validate CESN, queue singing, and stream the result as `audio/flac`. |
+| `POST` | `/v1/speak` | Queue speech and return one complete FLAC or WAV response. |
+| `POST` | `/v1/audio/speech` | Accept the OpenAI audio speech request shape and return MP3, FLAC, or WAV. |
+| `POST` | `/v1/audio/transcriptions` | Transcribe an uploaded audio file with the current Persona Whisper model. |
+| `POST` | `/v1/chat/completions` | Generate a text completion with the current Persona LLM. |
+| `POST` | `/v1/speak/stream` | Return generated speech progressively as multipart FLAC or WAV chunks. |
+| `POST` | `/v1/sing` | Validate CESN, queue singing, and stream FLAC or WAV. |
 | `POST` | `/v1/speak/async` | Add speech to the bounded FIFO and return `202 Accepted` with a job ID. |
-| `GET` | `/v1/speak/jobs/{job_id}` | Poll an async speech job. Returns `202` while pending and `audio/flac` when complete. |
+| `GET` | `/v1/speak/jobs/{job_id}` | Poll an async speech job. Returns `202` while pending and its selected audio format when complete. |
 | `POST` | `/v1/speak/jobs/{job_id}/cancel` | Cancel a queued job or stop an active async speech job. |
 | `WebSocket` | `/v1/ws/tasks/{job_id}` | Replay and stream typed lifecycle events for an async speech job. |
 | `POST` | `/v1/voice` | Change the active voice. |
 | `POST` | `/v1/sfx` | Upload and play a sound effect. |
 | `POST` | `/v1/convert` | Upload audio for voice conversion in VC mode. |
-| `GET` | `/v1/models` | List built-in models, pinned revisions, license details, and consent state. |
+| `GET` | `/v1/models` | List OpenAI-compatible available models and Celune's consent catalog. |
 | `POST` | `/v1/models/consent` | Record consent for one exact model revision. |
 
-`/v1/sing` uses the same `content` and optional `save` fields as `/v1/speak`.
-It requires a singing-capable backend and valid CESN notation. It returns
+`/v1/sing` uses the same `content`, optional `save`, and `response_format`
+fields as `/v1/speak`. It requires a singing-capable backend and valid CESN
+notation. It returns
 `409 Conflict` when the backend is not ready for singing and `422 Unprocessable
 Content` with a line and column for malformed notation. The optional MCP server
 is available at `/mcp`. See [MCP server](interfaces/mcp.md).
@@ -166,14 +170,17 @@ The JSON models are intentionally small:
 {"content":"Hello from Celune.","save":true}
 ```
 
-`SpeakRequest.content` is a non-empty string and `save` defaults to `true`.
-`ThinkRequest` has `content`. `VoiceRequest` has `voice_name`.
+`SpeakRequest.content` is a non-empty string, `save` defaults to `true`, and
+`response_format` defaults to `flac`. The supported formats are `flac` and
+`wav`. `ThinkRequest` has `content`. `VoiceRequest` has `voice_name`.
 
-Synchronous speech returns `audio/flac`. Async speech returns a task object
-with `status`, `job_id`, and `location`. Polling returns JSON while queued or
-running and FLAC when complete. Task event objects contain `task_id`, `event`,
-`status`, optional `message`, `severity`, `current`, `total`, `location`, and
-`error`. WebSocket commands currently accept:
+Synchronous speech returns `audio/flac` or `audio/wav` according to
+`response_format`. Audio is encoded as signed 24-bit PCM at 48 kHz. Async
+speech returns a task object with `status`, `job_id`, and `location`. Polling
+returns JSON while queued or running and the selected format when complete.
+Task event objects contain `task_id`, `event`, `status`, optional `message`,
+`severity`, `current`, `total`, `location`, and `error`. WebSocket commands
+currently accept:
 
 ```json
 {"command":"cancel"}
@@ -181,6 +188,123 @@ running and FLAC when complete. Task event objects contain `task_id`, `event`,
 
 The server validates the command and returns a typed command result. A socket
 disconnect removes only that subscriber. It does not cancel the job.
+
+## OpenAI-compatible API
+
+Celune exposes OpenAI-compatible text-to-speech, transcription, and chat
+completion routes. The endpoints use Celune's currently configured local models
+and do not contact OpenAI. Persona-backed endpoints appear only when the active
+operation mode enables Persona and its model is ready.
+
+### Text-to-speech
+
+`POST /v1/audio/speech` accepts the OpenAI audio speech request fields `model`,
+`input`, `voice`, `response_format`, `speed`, `instructions`, and
+`stream_format`. Celune uses its currently selected TTS backend. The `model`
+field is required for client compatibility and does not switch the backend.
+`voice` must match one of Celune's configured voice names. Selecting a
+different voice makes it the active Celune voice, as with `POST /v1/voice`.
+
+Celune returns MP3 by default, using the standard `audio/mpeg` media type. Set
+`response_format` to `flac` for PCM24 FLAC or `wav` for PCM24 WAV.
+`speed` accepts values from `0.25` to `4.0` and uses Rubber Band when it is
+available. If Rubber Band is unavailable, Celune uses normal speed.
+`instructions` are added to the active voice prompt when the backend supports
+voice prompts. `stream_format` supports `audio`; SSE is not supported.
+`response_format` supports `mp3`, `flac`, and `wav`. Requests use the usual
+bearer API key when authentication is enabled. Speech responses are returned to
+the requesting client without being sent to the host playback mixer. Speech
+submitted directly through the main TUI continues to play on the host.
+
+```json
+{
+  "model": "tts-1",
+  "input": "Hello from Celune.",
+  "voice": "Balanced",
+  "response_format": "wav",
+  "speed": 1.0,
+  "instructions": "Speak clearly and warmly."
+}
+```
+
+For example, the OpenAI Python client can use Celune as its base URL:
+
+```python
+from openai import OpenAI
+
+client = OpenAI(
+    base_url="http://127.0.0.1:2060/v1",
+    api_key="YOUR_CELUNE_API_KEY",
+)
+response = client.audio.speech.create(
+    model="tts-1",
+    voice="Balanced",
+    input="Hello from Celune.",
+    response_format="wav",
+)
+response.write_to_file("celune.wav")
+```
+
+The route supports Celune TTS with `mp3`, `flac`, and `wav` responses. Other
+OpenAI audio encodings are not supported. Celune-specific operations such as CESN
+singing, voice conversion, Persona, and sound effects remain available through
+their `/v1` endpoints.
+
+### Audio transcriptions
+
+`POST /v1/audio/transcriptions` accepts a multipart `file`, `model`, optional
+`language`, and `response_format`. `whisper-1` selects the configured Persona
+speech model, which defaults to `openai/whisper-large-v3-turbo`. The
+`whisper-tiny` alias selects `openai/whisper-tiny`. The exact configured model
+ID is also accepted. Files must be readable by Celune's SoundFile decoder and
+must not exceed 25 MB.
+
+`response_format` supports `json` (the default), `text`, `verbose_json`, `srt`,
+and `vtt`. When `language` is omitted, Celune uses the configured Persona speech
+language or automatic detection. Transcription is available when Persona is
+enabled and ready, except while voice-conversion input mode is active. The
+Whisper model is loaded for the request and unloaded afterward. A busy ASR
+component returns `409 Conflict`; pending model consent returns `428`.
+
+```python
+with open("input.wav", "rb") as audio_file:
+    transcript = client.audio.transcriptions.create(
+        model="whisper-1",
+        file=audio_file,
+        response_format="json",
+    )
+print(transcript.text)
+```
+
+### Chat completions
+
+`POST /v1/chat/completions` accepts text-only `system`, `developer`, `user`,
+and `assistant` messages. Use `celune-current` or the active Persona model ID
+for `model`. Celune applies the active character's Persona prompt and the
+messages supplied by the client. The request does not speak the response or
+change Celune's stored conversation history.
+
+The route supports one choice and the `max_tokens` or `max_completion_tokens`,
+`temperature`, and `top_p` parameters. Streaming, tool calls, and multimodal
+message content are not supported. Chat completions require Persona to be
+enabled and ready in the active operation mode. Requests return `409 Conflict`
+while Persona is unavailable or its model is busy.
+
+```python
+completion = client.chat.completions.create(
+    model="celune-current",
+    messages=[{"role": "user", "content": "Hello, Celune."}],
+)
+print(completion.choices[0].message.content)
+```
+
+### Model discovery
+
+`GET /v1/models` includes the OpenAI list fields `object` and `data` while
+retaining Celune's existing `models` consent catalog. It lists `tts-1` only
+when text-to-speech is available. Persona model IDs, `celune-current`,
+`whisper-1`, and `whisper-tiny` appear only when their mode and readiness
+requirements are met.
 
 ## Think
 
@@ -249,7 +373,7 @@ curl.exe -X POST http://127.0.0.1:2060/v1/speak ^
 
 Response:
 
-- `200 audio/flac` when speech is generated.
+- `200 audio/flac` by default, or `audio/wav` when requested.
 - `409 application/json` when Celune is busy or unavailable.
 
 Submitting another synchronous speech request does not cancel speech that is
@@ -261,7 +385,8 @@ available. Use `/v1/speak/async` to wait in the API speech queue.
 Use `/v1/speak/stream` with the same request fields as `/v1/speak` when the
 client can consume multipart responses and wants
 audio before the full utterance has finished. Each part is an independent,
-complete PCM24 FLAC file at 48 kHz stereo. The response uses
+complete PCM24 FLAC or WAV file at 48 kHz stereo. Set `response_format` to
+`wav` to receive WAV parts. The response uses
 `multipart/mixed; boundary=celune-audio`. Clients decode each part and append its
 frames in order. A disconnected client stops the active request. A slow client
 applies backpressure to audio delivery.
@@ -273,7 +398,8 @@ curl -N -X POST http://127.0.0.1:2060/v1/speak/stream \
   --output celune.multipart
 ```
 
-The synchronous `/v1/speak` endpoint remains a single `audio/flac` response.
+The synchronous `/v1/speak` endpoint returns one complete FLAC response by
+default. Set `response_format` to `wav` for one complete WAV response.
 `/v1/speak/stream` returns `409 Conflict` when the shared speech pipeline is
 busy. Use the asynchronous endpoint when requests should wait for their turn.
 
@@ -322,7 +448,8 @@ Poll the `location` until the job completes:
 curl -i http://127.0.0.1:2060/v1/speak/jobs/6f98c8f3a4a94a049d84dd9fce8a63c5
 ```
 
-When the job returns `200 audio/flac`, save the audio:
+When the job completes, it returns the format selected in the submission's
+`response_format` field, which defaults to `flac`:
 
 ```bash
 curl http://127.0.0.1:2060/v1/speak/jobs/6f98c8f3a4a94a049d84dd9fce8a63c5 \
@@ -332,7 +459,7 @@ curl http://127.0.0.1:2060/v1/speak/jobs/6f98c8f3a4a94a049d84dd9fce8a63c5 \
 Job responses:
 
 - `202 application/json` with `{"status":"queued"}` or `{"status":"running"}` while Celune is still working.
-- `200 audio/flac` when the generated speech is ready.
+- `200 audio/flac` by default, or `audio/wav` when WAV was selected.
 - `404 application/json` if the job ID is unknown.
 - `500 application/json` if the job failed.
 - `429 application/json` from submission when the waiting queue is full.
@@ -373,8 +500,8 @@ the WebSocket:
 ```
 
 The WebSocket layer never runs speech generation itself and does not expose
-internal exception details. Existing polling and synchronous speech endpoints
-remain available unchanged.
+internal exception details. Polling and synchronous speech endpoints remain
+available alongside the event stream.
 
 ## Voice
 

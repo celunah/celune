@@ -370,12 +370,24 @@ def say_stream(
     engine: Celune,
     text: str,
     save: bool = True,
+    *,
+    play_audio: bool = False,
+    speed: Optional[float] = None,
+    instructions: Optional[str] = None,
 ) -> Optional[SpeechStreamQueue]:
-    """Queue text for playback and mirror generated chunks to a queue."""
+    """Queue text and return generated chunks, optionally playing them locally."""
     if engine.exit_requested:
         return None
     stream_queue: SpeechStreamQueue = queue.Queue(maxsize=2)
-    if not queue_speech(engine, text, save=save, stream_queue=stream_queue):
+    if not queue_speech(
+        engine,
+        text,
+        save=save,
+        stream_queue=stream_queue,
+        play_audio=play_audio,
+        speed=speed,
+        instructions=instructions,
+    ):
         return None
     return stream_queue
 
@@ -384,8 +396,12 @@ async def say_stream_async(
     engine: Celune,
     text: str,
     save: bool = True,
+    *,
+    play_audio: bool = False,
+    speed: Optional[float] = None,
+    instructions: Optional[str] = None,
 ) -> Optional[SpeechStreamQueue]:
-    """Queue text for playback and mirror chunks without blocking an async caller."""
+    """Return generated chunks without blocking, optionally playing them locally."""
     if engine.exit_requested:
         return None
     stream_queue: SpeechStreamQueue = queue.Queue(maxsize=2)
@@ -394,6 +410,9 @@ async def say_stream_async(
         text,
         save=save,
         stream_queue=stream_queue,
+        play_audio=play_audio,
+        speed=speed,
+        instructions=instructions,
     ):
         return None
     return stream_queue
@@ -548,6 +567,9 @@ def queue_speech(
     stream_queue: Optional[SpeechStreamQueue] = None,
     display_text: Optional[str] = None,
     maintain_status: bool = False,
+    play_audio: bool = True,
+    speed: Optional[float] = None,
+    instructions: Optional[str] = None,
 ) -> bool:
     """Queue text for Celune to say and optionally mirror audio chunks.
 
@@ -558,6 +580,9 @@ def queue_speech(
         stream_queue: Optional queue receiving generated 48 kHz float32 chunks.
         display_text: Optional text to show in logs instead of the synthesis text.
         maintain_status: Whether the engine should restore the previous status message after the call completes.
+        play_audio: Whether generated audio should be sent to the host playback mixer.
+        speed: Optional request-specific playback speed.
+        instructions: Optional request-specific voice direction.
 
     Returns:
         bool: ``True`` when the text was queued successfully, otherwise ``False``.
@@ -572,6 +597,9 @@ def queue_speech(
         stream_queue=stream_queue,
         display_text=display_text,
         maintain_status=maintain_status,
+        play_audio=play_audio,
+        speed=speed,
+        instructions=instructions,
         allow_tutorial=False,
     )
 
@@ -584,6 +612,9 @@ def _queue_speech_request(
     display_text: Optional[str] = None,
     maintain_status: bool = False,
     *,
+    play_audio: bool = True,
+    speed: Optional[float] = None,
+    instructions: Optional[str] = None,
     allow_tutorial: bool,
     normalize: Optional[bool] = None,
     synthesis_sections: tuple[str, ...] = (),
@@ -631,6 +662,9 @@ def _queue_speech_request(
         stream_queue=stream_queue,
         display_text=display_text,
         maintain_status=maintain_status,
+        play_audio=play_audio,
+        speed=speed,
+        instructions=instructions,
         normalize=normalize,
         synthesis_sections=synthesis_sections,
         audio_capture_queue=audio_capture_queue,
@@ -729,6 +763,9 @@ def _queue_speech_after_ready(
     display_text: Optional[str] = None,
     maintain_status: bool = False,
     *,
+    play_audio: bool = True,
+    speed: Optional[float] = None,
+    instructions: Optional[str] = None,
     normalize: Optional[bool] = None,
     synthesis_sections: tuple[str, ...] = (),
     audio_capture_queue: Optional[
@@ -833,6 +870,9 @@ def _queue_speech_after_ready(
                         language=requested_language,
                         save=save,
                         stream_queue=stream_queue,
+                        play_audio=play_audio,
+                        speed=speed,
+                        instructions=instructions,
                         normalize=(
                             engine.use_normalization if normalize is None else normalize
                         ),
@@ -874,6 +914,9 @@ async def queue_speech_async(
     save: bool = True,
     stream_queue: Optional[SpeechStreamQueue] = None,
     display_text: Optional[str] = None,
+    play_audio: bool = True,
+    speed: Optional[float] = None,
+    instructions: Optional[str] = None,
 ) -> bool:
     """Queue text for Celune to say without blocking the caller's event loop.
 
@@ -883,6 +926,9 @@ async def queue_speech_async(
         save: Whether the generated utterance should be persisted to disk.
         stream_queue: Optional queue receiving generated playback chunks.
         display_text: Optional UI-facing text to associate with the request.
+        play_audio: Whether generated audio should be sent to the host playback mixer.
+        speed: Optional request-specific playback speed.
+        instructions: Optional request-specific voice direction.
 
     Returns:
         bool: ``True`` when the request was queued successfully, otherwise ``False``.
@@ -905,6 +951,9 @@ async def queue_speech_async(
         save=save,
         stream_queue=stream_queue,
         display_text=display_text,
+        play_audio=play_audio,
+        speed=speed,
+        instructions=instructions,
     )
 
 

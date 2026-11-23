@@ -11,7 +11,7 @@ import inspect
 import datetime
 import contextlib
 from html import escape
-from typing import TYPE_CHECKING, Union, Optional, cast
+from typing import TYPE_CHECKING, Union, Optional, Literal, cast
 from pathlib import Path
 from functools import partial
 from collections.abc import Mapping, Callable, Iterator, Sequence
@@ -941,15 +941,63 @@ def flac_bytes(audio: npt.NDArray[np.float32], sample_rate: int = BASE_SR) -> by
     return buffer.getvalue()
 
 
+def wav_bytes(audio: npt.NDArray[np.float32], sample_rate: int = BASE_SR) -> bytes:
+    """Encode audio as PCM24 WAV bytes."""
+    buffer = io.BytesIO()
+    sf.write(
+        buffer,
+        normalized_audio(audio),
+        sample_rate,
+        format="WAV",
+        subtype="PCM_24",
+    )
+    return buffer.getvalue()
+
+
+def mp3_bytes(audio: npt.NDArray[np.float32], sample_rate: int = BASE_SR) -> bytes:
+    """Encode audio as MPEG Layer III bytes."""
+    buffer = io.BytesIO()
+    sf.write(
+        buffer,
+        normalized_audio(audio),
+        sample_rate,
+        format="MP3",
+        subtype="MPEG_LAYER_III",
+    )
+    return buffer.getvalue()
+
+
+def audio_payload(
+    audio: npt.NDArray[np.float32],
+    output_format: Literal["flac", "wav", "mp3"] = "flac",
+    sample_rate: int = BASE_SR,
+) -> bytes:
+    """Encode audio in one of Celune's supported client response formats."""
+    if output_format == "wav":
+        return wav_bytes(audio, sample_rate)
+    if output_format == "mp3":
+        return mp3_bytes(audio, sample_rate)
+    return flac_bytes(audio, sample_rate)
+
+
+def audio_media_type(output_format: Literal["flac", "wav", "mp3"]) -> str:
+    """Return the correct media type for one supported audio format."""
+    if output_format == "mp3":
+        return "audio/mpeg"
+    return f"audio/{output_format}"
+
+
 def audio_bytes(
     chunks: SpeechStreamQueue,
     on_chunk: Optional[Callable[[int], None]] = None,
+    output_format: Literal["flac", "wav", "mp3"] = "flac",
 ) -> Iterator[bytes]:
-    """Yield one FLAC payload from queued 48 kHz stereo float32 chunks.
+    """Yield one encoded payload from queued 48 kHz stereo float32 chunks.
 
     Args:
         chunks: A queue of audio chunks.
         on_chunk: Optional callback invoked after each audio chunk is received.
+        output_format: Container to use for the completed audio payload.
 
     Returns:
         Iterator[bytes]: The audio chunk from the queue as raw bytes.
@@ -973,25 +1021,27 @@ def audio_bytes(
             on_chunk(chunk_count)
 
     if audio_chunks:
-        yield flac_bytes(np.concatenate(audio_chunks))
+        yield audio_payload(np.concatenate(audio_chunks), output_format)
     else:
-        yield flac_bytes(np.empty((0, 2), dtype=np.float32))
+        yield audio_payload(np.empty((0, 2), dtype=np.float32), output_format)
 
 
 def flac_stream_parts(
     chunks: SpeechStreamQueue,
     boundary: str,
     on_disconnect: Callable[[], bool],
+    output_format: Literal["flac", "wav"] = "flac",
 ) -> Iterator[bytes]:
-    """Yield generated audio chunks as independent PCM24 FLAC multipart parts.
+    """Yield generated audio chunks as independent PCM24 multipart parts.
 
     Args:
         chunks: A queue of generated 48 kHz stereo float32 audio chunks.
-        boundary: The multipart boundary used to frame each FLAC part.
+        boundary: The multipart boundary used to frame each audio part.
         on_disconnect: Callback used to stop speech if delivery ends early.
+        output_format: Container to use for each audio part.
 
     Returns:
-        Iterator[bytes]: Multipart framing and one FLAC payload per generated chunk.
+        Iterator[bytes]: Multipart framing and one payload per generated chunk.
 
     Raises:
         Exception: If the speech pipeline places an error in the audio queue.
@@ -1007,10 +1057,10 @@ def flac_stream_parts(
             if isinstance(item, Exception):
                 raise item
 
-            payload = flac_bytes(normalized_audio(item))
+            payload = audio_payload(normalized_audio(item), output_format)
             part_header = (
                 f"--{boundary}\r\n"
-                "Content-Type: audio/flac\r\n"
+                f"Content-Type: audio/{output_format}\r\n"
                 f"Content-Length: {len(payload)}\r\n\r\n"
             ).encode("ascii")
             yield part_header + payload + b"\r\n"
@@ -1031,17 +1081,23 @@ def flac_stream_parts(
                     break
 
 
-def stream_headers(sample_rate: int = BASE_SR) -> dict[str, str]:
-    """Return headers describing the FLAC response.
+def stream_headers(
+    sample_rate: int = BASE_SR,
+    output_format: Literal["flac", "wav", "mp3"] = "flac",
+) -> dict[str, str]:
+    """Return headers describing the encoded audio response.
 
     Args:
         sample_rate: Sample rate advertised in the response headers.
+        output_format: Container used for the response payload.
 
     Returns:
-        dict[str, str]: Response headers for a FLAC response.
+        dict[str, str]: Headers describing the audio response.
     """
     return {
-        "X-Audio-Format": "flac-pcm24",
+        "X-Audio-Format": (
+            "mp3" if output_format == "mp3" else f"{output_format}-pcm24"
+        ),
         "X-Sample-Rate": str(sample_rate),
         "X-Channels": "2",
     }
@@ -1051,8 +1107,9 @@ def collect_speech_job(
     job_id: str,
     chunks: SpeechStreamQueue,
     session: ServerSession = server_session,
+    output_format: Literal["flac", "wav"] = "flac",
 ) -> None:
-    """Consume a speech stream queue and store its final FLAC payload."""
+    """Consume a speech stream queue and store its final audio payload."""
     try:
         audio = b"".join(
             audio_bytes(
@@ -1062,6 +1119,7 @@ def collect_speech_job(
                     current=float(count),
                     session=session,
                 ),
+                output_format=output_format,
             )
         )
     except Exception as e:

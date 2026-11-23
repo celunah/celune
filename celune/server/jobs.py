@@ -7,7 +7,7 @@ import time
 import asyncio
 import threading
 import contextlib
-from typing import Optional
+from typing import Optional, Literal
 from collections import deque
 from dataclasses import field, dataclass
 
@@ -125,6 +125,7 @@ class SpeechJob:
     status: TaskStatus
     created_at: float
     audio: Optional[bytes] = None
+    audio_format: Literal["flac", "wav"] = "flac"
     error: Optional[str] = None
     events: deque[TaskEvent] = field(
         default_factory=lambda: deque(maxlen=256),
@@ -351,5 +352,6 @@ def speech_job_snapshot(
             status=job.status,
             created_at=job.created_at,
             audio=job.audio,
+            audio_format=job.audio_format,
             error=job.error,
         )

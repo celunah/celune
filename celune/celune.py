@@ -984,20 +984,46 @@ class Celune(CeluneStateAccessors):
         return await core_speech.say_async(self, text, save, display_text)
 
     def say_stream(
-        self, text: "str", save: "bool" = True
+        self,
+        text: "str",
+        save: "bool" = True,
+        *,
+        host_playback: "bool" = False,
+        speed: "Optional[float]" = None,
+        instructions: "Optional[str]" = None,
     ) -> "Optional[SpeechStreamQueue]":
         """
-        Queue text for playback and mirror generated chunks to a queue.
+        Queue text and return its generated audio chunks.
         """
-        return core_speech.say_stream(self, text, save)
+        return core_speech.say_stream(
+            self,
+            text,
+            save,
+            host_playback=host_playback,
+            speed=speed,
+            instructions=instructions,
+        )
 
     async def say_stream_async(
-        self, text: "str", save: "bool" = True
+        self,
+        text: "str",
+        save: "bool" = True,
+        *,
+        host_playback: "bool" = False,
+        speed: "Optional[float]" = None,
+        instructions: "Optional[str]" = None,
     ) -> "Optional[SpeechStreamQueue]":
         """
-        Queue text for playback and mirror chunks without blocking an async caller.
+        Queue text and return chunks without blocking an async caller.
         """
-        return await core_speech.say_stream_async(self, text, save)
+        return await core_speech.say_stream_async(
+            self,
+            text,
+            save,
+            host_playback=host_playback,
+            speed=speed,
+            instructions=instructions,
+        )
 
     def submit_audio(
         self,

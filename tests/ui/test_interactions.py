@@ -159,6 +159,7 @@ class TestUIInteractions:
                 change_input_state=mock.Mock(),
                 change_voice_lock_state=mock.Mock(),
                 safe_status=safe_status,
+                safe_progress=mock.Mock(),
                 _schedule_sleep_timer=mock.Mock(),
                 input_box=SimpleNamespace(placeholder=""),
             ),

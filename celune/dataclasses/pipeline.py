@@ -44,6 +44,9 @@ class SpeechRequest:
     language: str = "Auto"
     save: bool = True
     stream_queue: Optional[queue.Queue[Optional[Union[AudioChunk, Exception]]]] = None
+    play_audio: bool = True
+    speed: Optional[float] = None
+    instructions: Optional[str] = None
     normalize: bool = False
     silent_retry_count: int = 0
     generation: int = 0
