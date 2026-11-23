@@ -374,11 +374,12 @@ curl.exe -X POST http://127.0.0.1:2060/v1/speak ^
 Response:
 
 - `200 audio/flac` by default, or `audio/wav` when requested.
-- `409 application/json` when Celune is busy or unavailable.
+- `409 application/json` when Celune is unavailable or cannot accept speech.
 
 Submitting another synchronous speech request does not cancel speech that is
-already playing. It receives the busy response until the shared pipeline is
-available. Use `/v1/speak/async` to wait in the API speech queue.
+already playing. Speech requests are queued in FIFO order and begin when the
+shared pipeline is available. Use `/v1/speak/async` when the client needs a
+job ID and polling instead of an open audio response.
 
 ## Speak (Streaming)
 
@@ -400,8 +401,9 @@ curl -N -X POST http://127.0.0.1:2060/v1/speak/stream \
 
 The synchronous `/v1/speak` endpoint returns one complete FLAC response by
 default. Set `response_format` to `wav` for one complete WAV response.
-`/v1/speak/stream` returns `409 Conflict` when the shared speech pipeline is
-busy. Use the asynchronous endpoint when requests should wait for their turn.
+`/v1/speak/stream` queues requests behind active speech and begins streaming
+when their turn reaches the shared pipeline. Use the asynchronous endpoint when
+requests should return a job ID immediately.
 
 ## Speak (Asynchronous)
 

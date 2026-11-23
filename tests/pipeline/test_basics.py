@@ -2,6 +2,7 @@
 """Tests for pipeline helpers that do not perform real synthesis."""
 
 import sys
+import time
 import queue
 import asyncio
 import tempfile
@@ -98,6 +99,44 @@ class TestPipeline:
         engine.log.assert_called_once_with(message, "warning")
         engine.toast.assert_called_once_with(message, severity="warning")
         assert engine.text_queue.empty()
+
+    def test_speech_submission_queues_while_an_utterance_is_active(self) -> None:
+        """Keep speech requests in FIFO order while another utterance plays."""
+        engine = make_pipeline_engine()
+        engine.locked = True
+        engine.cur_state = "speaking"
+        engine.playback_done.clear()
+
+        assert submission.queue_speech(cast(Celune, engine), "first")
+        assert submission.queue_speech(cast(Celune, engine), "second")
+
+        first = engine.text_queue.get_nowait()
+        second = engine.text_queue.get_nowait()
+        assert (first.text, second.text) == ("first", "second")
+        assert not first.pipeline_reserved
+        assert not second.pipeline_reserved
+        assert first.generation == second.generation == engine.speech_generation
+
+    def test_queued_speech_waits_for_pipeline_reservation(self) -> None:
+        """Reserve the shared pipeline only after earlier work releases it."""
+        engine = make_pipeline_engine()
+        engine._speech_generation = 3
+        request = SpeechRequest("next", "next", generation=3, pipeline_reserved=False)
+        assert buffering.acquire_pipeline(cast(Celune, engine), "current")
+
+        def release_current_request() -> None:
+            time.sleep(0.05)
+            buffering.release_pipeline(cast(Celune, engine))
+
+        releaser = threading.Thread(target=release_current_request, daemon=True)
+        releaser.start()
+        assert generation._acquire_queued_speech_pipeline(
+            cast(Celune, engine),
+            request,
+        )
+        releaser.join(timeout=1)
+        assert engine.locked
+        buffering.release_pipeline(cast(Celune, engine))
 
     def test_speech_submission_wakes_celune_on_demand(self) -> None:
         """Wake a sleeping engine before accepting an explicit speech request."""

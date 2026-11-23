@@ -40,7 +40,6 @@ from ..utils import (
     normalize_special_characters,
 )
 from .buffering import (
-    acquire_pipeline,
     release_pipeline,
     queue_playback_done,
     queue_playback_chunk,
@@ -837,70 +836,59 @@ def _queue_speech_after_ready(
             replacements=["celine"],
         )
 
-    if not acquire_pipeline(engine, "speak"):
+    if not engine.loaded and not engine.backend.is_fake:
+        engine.log(string("ui.core_engine_not_loaded"), "warning")
+        engine.error_callback(string("pipeline.not_ready_app", app_name=APP_NAME))
         engine.progress_callback(0, 1)
         return False
 
-    try:
-        if not engine.loaded and not engine.backend.is_fake:
-            engine.log(string("ui.core_engine_not_loaded"), "warning")
-            engine.error_callback(string("pipeline.not_ready_app", app_name=APP_NAME))
-            release_pipeline(engine)
-            engine.progress_callback(0, 1)
-            return False
-
-        restore_status = engine.cur_state if maintain_status else None
-        engine.cur_state = "generating"
-        request_rejected = False
-        with engine.queue_lock:
-            if engine.exit_requested:
-                request_rejected = True
-            else:
-                engine._speech_generation = getattr(engine, "_speech_generation", 0) + 1
-                engine.utterance_force_stop.clear()
-                engine.text_queue.put(
-                    SpeechRequest(
-                        speech_text,
-                        display_text=preserved_display_text,
-                        language=requested_language,
-                        save=save,
-                        stream_queue=stream_queue,
-                        play_audio=play_audio,
-                        speed=speed,
-                        instructions=instructions,
-                        normalize=(
-                            engine.use_normalization if normalize is None else normalize
-                        ),
-                        generation=engine.speech_generation,
-                        synthesis_sections=tuple(
-                            section
-                            if singing_backend
-                            else normalize_special_characters(section, for_tts=True)
-                            for section in synthesis_sections
-                        ),
-                        audio_capture_queue=audio_capture_queue,
-                        prepared_audio=prepared_audio,
-                        playback_source_queue=playback_source_queue,
-                        caption_alignment_sections=caption_alignment_sections,
-                        restore_status=restore_status,
-                    )
+    restore_status = engine.cur_state if maintain_status else None
+    request_rejected = False
+    with engine.queue_lock:
+        if engine.exit_requested:
+            request_rejected = True
+        else:
+            announce_generating = not engine.locked and engine.text_queue.empty()
+            engine.text_queue.put(
+                SpeechRequest(
+                    speech_text,
+                    display_text=preserved_display_text,
+                    language=requested_language,
+                    save=save,
+                    stream_queue=stream_queue,
+                    pipeline_reserved=False,
+                    play_audio=play_audio,
+                    speed=speed,
+                    instructions=instructions,
+                    normalize=(
+                        engine.use_normalization if normalize is None else normalize
+                    ),
+                    generation=engine.speech_generation,
+                    synthesis_sections=tuple(
+                        section
+                        if singing_backend
+                        else normalize_special_characters(section, for_tts=True)
+                        for section in synthesis_sections
+                    ),
+                    audio_capture_queue=audio_capture_queue,
+                    prepared_audio=prepared_audio,
+                    playback_source_queue=playback_source_queue,
+                    caption_alignment_sections=caption_alignment_sections,
+                    restore_status=restore_status,
                 )
-                engine.log(
-                    "[QUEUE] speech "
-                    f"generation={engine.speech_generation} text_chars={len(speech_text)} "
-                    f"language={requested_language} stream_queue={stream_queue is not None} "
-                    f"text_queue={engine.text_queue.qsize()}",
-                    loglevel="debug",
-                )
-        if request_rejected:
-            release_pipeline(engine)
-            return False
-        engine.status_callback(string("status.generating"))
-        engine.progress_callback(None, None)
-        return True
-    except Exception:
-        release_pipeline(engine)
-        raise
+            )
+            engine.log(
+                "[QUEUE] speech "
+                f"generation={engine.speech_generation} text_chars={len(speech_text)} "
+                f"language={requested_language} stream_queue={stream_queue is not None} "
+                f"text_queue={engine.text_queue.qsize()}",
+                loglevel="debug",
+            )
+            if announce_generating:
+                engine.cur_state = "generating"
+                engine.status_callback(string("status.generating"))
+                engine.progress_callback(None, None)
+    return not request_rejected
 
 
 async def queue_speech_async(

@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import time
 import queue
 import pathlib
 import datetime
@@ -47,6 +48,7 @@ from .captions import (
     record_caption_playback_audio_chunk,
 )
 from .buffering import (
+    acquire_pipeline,
     release_pipeline,
     queue_playback_done,
     queue_playback_chunk,
@@ -71,6 +73,24 @@ _SHORT_INPUT_VOCODER_ERROR = (
 _EMPTY_INPUT_VOCODER_ERROR = (
     "min(): Expected reduction dim to be specified for input.numel() == 0"
 )
+
+
+def _acquire_queued_speech_pipeline(engine: Celune, request: SpeechRequest) -> bool:
+    """Wait for prior audio work to finish before reserving one queued utterance."""
+    while not engine.exit_requested:
+        if request.generation != getattr(
+            engine, "_speech_generation", request.generation
+        ):
+            return False
+        if not engine.locked and acquire_pipeline(engine, "speak"):
+            if request.generation == getattr(
+                engine, "_speech_generation", request.generation
+            ):
+                return True
+            release_pipeline(engine)
+            return False
+        time.sleep(0.05)
+    return False
 
 
 def _is_short_input_generation_error(error: BaseException) -> bool:
@@ -1117,6 +1137,31 @@ async def generation_worker_job(
                 )
             continue
 
+        if not request.pipeline_reserved:
+            acquired = await run_in_daemon_thread(
+                lambda _request=request: _acquire_queued_speech_pipeline(
+                    engine,
+                    _request,
+                )
+            )
+            if not acquired:
+                if request.stream_queue is not None:
+                    request.stream_queue.put(None)
+                if request.audio_capture_queue is not None:
+                    request.audio_capture_queue.put(
+                        NotAvailableError(
+                            "speech request was cancelled before playback"
+                        )
+                    )
+                if request.playback_source_queue is not None:
+                    request.playback_source_queue.put(
+                        NotAvailableError(
+                            "speech request was cancelled before playback"
+                        )
+                    )
+                continue
+
+        engine.cur_state = "generating"
         engine.utterance_force_stop.clear()
         engine._active_speech_generation = request.generation
         try:
