@@ -1,6 +1,6 @@
 [project]
 name = "celune"
-version = "5.2.0"
+version = "5.3.0"
 description = "\"Your voice, your way.\""
 readme = "README.md"
 requires-python = ">=3.12,<3.15"
