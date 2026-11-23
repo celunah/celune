@@ -99,6 +99,31 @@ class TestPipeline:
         engine.toast.assert_called_once_with(message, severity="warning")
         assert engine.text_queue.empty()
 
+    def test_speech_submission_wakes_celune_on_demand(self) -> None:
+        """Wake a sleeping engine before accepting an explicit speech request."""
+        engine = make_pipeline_engine()
+        engine.sleeping = True
+
+        def wake() -> bool:
+            engine.sleeping = False
+            return True
+
+        engine.wake_from_sleep = mock.Mock(side_effect=wake)
+
+        assert submission._prepare_speech_readiness(cast(Celune, engine))
+        engine.wake_from_sleep.assert_called_once_with()
+        assert engine.sleeping is False
+
+    def test_speech_submission_stops_when_on_demand_wake_fails(self) -> None:
+        """Do not queue speech if restoring the sleeping engine fails."""
+        engine = make_pipeline_engine()
+        engine.sleeping = True
+        engine.wake_from_sleep = mock.Mock(return_value=False)
+
+        assert not submission._prepare_speech_readiness(cast(Celune, engine))
+        engine.wake_from_sleep.assert_called_once_with()
+        assert engine.progress[-1] == (0, 1)
+
     def test_persona_input_rejects_singing_backend_before_queueing(self) -> None:
         """Do not spend Persona work on spoken replies a singer cannot perform."""
         engine = make_pipeline_engine()

@@ -696,12 +696,7 @@ def _prepare_speech_readiness(
         engine.toast(message, severity="warning")
         return False
 
-    if getattr(engine, "sleeping", False):
-        engine.log(
-            string("pipeline.cannot_speak_sleeping", app_name=APP_NAME),
-            "warning",
-        )
-        engine.error_callback(string("celune.app_sleeping", app_name=APP_NAME))
+    if getattr(engine, "sleeping", False) and not engine.wake_from_sleep():
         engine.progress_callback(0, 1)
         return False
 
