@@ -2,12 +2,20 @@
 """Recursively populate and convert docstrings to a unified format."""
 
 import re
+import sys
 import ast
 import textwrap
 from pathlib import Path
 from dataclasses import dataclass
 from typing import Union, Optional
 from collections.abc import Iterable
+
+try:
+    from celune.utils import discard
+except ModuleNotFoundError:
+    PROJECT_ROOT = Path(__file__).resolve().parent.parent
+    sys.path.insert(0, str(PROJECT_ROOT))
+    from celune.utils import discard
 
 ROOT = Path(__file__).resolve().parents[1]
 TARGETS = [
@@ -21,6 +29,8 @@ TARGETS = [
 
 @dataclass
 class ParsedDoc:
+    """Parsed docstring AST."""
+
     description: str
     args: dict[str, str]
     returns: str
@@ -29,6 +39,8 @@ class ParsedDoc:
 
 @dataclass
 class Replacement:
+    """Replacement range and text."""
+
     start: int
     end: int
     text: str
@@ -43,6 +55,7 @@ MAX_LINE_LENGTH = 120
 
 
 def target_files() -> list[Path]:
+    """Get files to target."""
     files: list[Path] = []
     for target in TARGETS:
         if target.is_file():
@@ -53,6 +66,7 @@ def target_files() -> list[Path]:
 
 
 def normalize_sentence(text: str) -> str:
+    """Normalize a docstring description."""
     compact = " ".join(text.strip().split())
     if not compact:
         return "Describe this function."
@@ -62,6 +76,7 @@ def normalize_sentence(text: str) -> str:
 
 
 def clean_inline(text: str) -> str:
+    """Clean up an inline string."""
     return " ".join(text.strip().split())
 
 
@@ -93,6 +108,7 @@ def wrap_doc_line(
 
 
 def parse_docstring(doc: str) -> ParsedDoc:
+    """Parse a docstring into an AST."""
     lines = doc.expandtabs().splitlines()
     section = "description"
     description_lines: list[str] = []
@@ -157,6 +173,7 @@ def parse_docstring(doc: str) -> ParsedDoc:
 
 
 def function_kind(parents: list[tuple[str, str]], name: str) -> str:
+    """Return what type of function or method this `def` is."""
     if parents and parents[-1][0] == "class":
         if name.startswith("_"):
             return "private"
@@ -169,27 +186,36 @@ def function_kind(parents: list[tuple[str, str]], name: str) -> str:
 
 
 def iter_direct_raises(root: ast.AST) -> Iterable[str]:
+    """Iterate over direct raisable exceptions."""
+
     class RaiseCollector(ast.NodeVisitor):
+        """Visit raise statements and collect their exceptions."""
+
         def __init__(self) -> None:
             self.names: list[str] = []
 
         def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+            """Enter a function definition."""
             if node is not root:
                 return
             self.generic_visit(node)
 
         def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+            """Enter an async function definition."""
             if node is not root:
                 return
             self.generic_visit(node)
 
         def visit_Lambda(self, node: ast.Lambda) -> None:
-            return
+            """Enter a lambda function definition. This makes no changes."""
+            discard(node)
 
         def visit_ClassDef(self, node: ast.ClassDef) -> None:
-            return
+            """Enter a class definition. This makes no changes."""
+            discard(node)
 
         def visit_Raise(self, node: ast.Raise) -> None:
+            """Enter an exception declaration."""
             exc = node.exc
             if exc is None:
                 self.names.append("Exception")
@@ -204,27 +230,36 @@ def iter_direct_raises(root: ast.AST) -> Iterable[str]:
 
 
 def has_non_none_return(root: ast.AST) -> bool:
+    """Check whether a function returns something else than None."""
+
     class ReturnCollector(ast.NodeVisitor):
+        """Visit return statements and collect their values."""
+
         def __init__(self) -> None:
             self.found = False
 
         def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+            """Enter a function definition."""
             if node is not root:
                 return
             self.generic_visit(node)
 
         def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+            """Enter an async function definition."""
             if node is not root:
                 return
             self.generic_visit(node)
 
         def visit_Lambda(self, node: ast.Lambda) -> None:
-            return
+            """Enter a lambda function definition. This makes no changes."""
+            discard(node)
 
         def visit_ClassDef(self, node: ast.ClassDef) -> None:
-            return
+            """Enter a class definition. This makes no changes."""
+            discard(node)
 
         def visit_Return(self, node: ast.Return) -> None:
+            """Enter a return statement."""
             if node.value is not None and not (
                 isinstance(node.value, ast.Constant) and node.value.value is None
             ):
@@ -236,6 +271,7 @@ def has_non_none_return(root: ast.AST) -> bool:
 
 
 def expr_name(node: ast.AST) -> str:
+    """Get an expression's named value."""
     if isinstance(node, ast.Name):
         return node.id
     if isinstance(node, ast.Attribute):
@@ -248,12 +284,14 @@ def expr_name(node: ast.AST) -> str:
 
 
 def inferred_return_text(parsed: ParsedDoc) -> str:
+    """Infer a return value from this docstring."""
     if parsed.returns:
         return parsed.returns
     return "Result of this function."
 
 
 def arg_description(name: str, parsed: ParsedDoc) -> str:
+    """Infer an argument description from this docstring."""
     for key, value in parsed.args.items():
         normalized = key.lstrip("*")
         if normalized == name and value:
@@ -262,12 +300,14 @@ def arg_description(name: str, parsed: ParsedDoc) -> str:
 
 
 def raise_description(name: str, parsed: ParsedDoc) -> str:
+    """Infer a raisable description from this docstring."""
     if name in parsed.raises and parsed.raises.get(name):
         return parsed.raises[name]
     return f"If `{name}` needs to be raised."
 
 
 def public_docstring(node: ast.AST, indent: str, parsed: ParsedDoc) -> str:
+    """Generate a public function docstring."""
     assert isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
     description = normalize_sentence(
         parsed.description or ast.get_docstring(node, clean=False) or ""
@@ -340,6 +380,7 @@ def public_docstring(node: ast.AST, indent: str, parsed: ParsedDoc) -> str:
 
 
 def private_docstring(node: ast.AST, indent: str, parsed: ParsedDoc) -> str:
+    """Generate a private function docstring."""
     assert isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
     raw = parsed.description or ast.get_docstring(node, clean=False) or ""
     first = raw.strip().splitlines()[0] if raw.strip() else ""
@@ -347,6 +388,7 @@ def private_docstring(node: ast.AST, indent: str, parsed: ParsedDoc) -> str:
 
 
 def collect_replacements(source: str, tree: ast.AST) -> list[Replacement]:
+    """Collect code sections to modify."""
     replacements: list[Replacement] = []
     lines = source.splitlines(keepends=True)
     line_offsets = [0]
@@ -354,21 +396,27 @@ def collect_replacements(source: str, tree: ast.AST) -> list[Replacement]:
         line_offsets.append(line_offsets[-1] + len(line))
 
     class Visitor(ast.NodeVisitor):
+        """Visit syntactic constructs and collect their replacements."""
+
         def __init__(self) -> None:
             self.parents: list[tuple[str, str]] = []
 
         def visit_ClassDef(self, node: ast.ClassDef) -> None:
+            """Enter a class definition."""
             self.parents.append(("class", node.name))
             self.generic_visit(node)
             self.parents.pop()
 
         def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+            """Enter a function definition."""
             self._handle(node)
 
         def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+            """Enter an async function definition."""
             self._handle(node)
 
         def _handle(self, node: Union[ast.FunctionDef, ast.AsyncFunctionDef]) -> None:
+            """Handle the selected syntactic construct."""
             if not node.body:
                 return
             doc_expr = node.body[0]
@@ -399,7 +447,7 @@ def collect_replacements(source: str, tree: ast.AST) -> list[Replacement]:
 
             indent_match = re.match(r"\s*", lines[doc_expr.lineno - 1])
             if indent_match is None:
-                raise RuntimeError("failed to determine indentation")
+                raise IndentationError("indentation level does not match any")
             indent = indent_match.group(0)
 
             if kind == "nested":
@@ -422,8 +470,9 @@ def collect_replacements(source: str, tree: ast.AST) -> list[Replacement]:
     return sorted(replacements, key=lambda item: item.start, reverse=True)
 
 
-def rewrite_file(path: Path) -> bool:
-    with path.open("r", encoding="utf-8", newline="") as source_file:
+def rewrite_file(file: Path) -> bool:
+    """Rewrite the selected source file with modified docstrings."""
+    with file.open("r", encoding="utf-8", newline="") as source_file:
         source = source_file.read()
     newline = "\r\n" if "\r\n" in source else "\n"
     tree = ast.parse(source)
@@ -440,20 +489,19 @@ def rewrite_file(path: Path) -> bool:
         updated = updated.replace("\r\n", "\n").replace("\n", newline)
 
     if updated != source:
-        with path.open("w", encoding="utf-8", newline="") as output_file:
+        with file.open("w", encoding="utf-8", newline="") as output_file:
             output_file.write(updated)
         return True
     return False
 
 
-def main() -> None:
-    changed = 0
+if __name__ == "__main__":
+    num = 0
     for path in target_files():
         if rewrite_file(path):
-            changed += 1
             print(path.relative_to(ROOT))
-    print(f"Changed {changed} files.")
-
-
-if __name__ == "__main__":
-    main()
+            num += 1
+    if num > 0:
+        print(f"Changed {num} files.")
+    else:
+        print("Nothing was changed.")
