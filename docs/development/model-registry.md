@@ -10,12 +10,14 @@ This page is for Celune contributors who add model metadata or change a model lo
 | --- | --- |
 | `celune.registry.tts` | TTS models, voice selections, model contracts, and related runtime pins. |
 | `celune.registry.audio_cpp_models` | Verified audio.cpp GGUF packages, checksums, and backend compatibility. |
-| `celune.registry.gguf_catalog` | Pinned Persona GGUF model and projector packages. |
+| `celune.registry.gguf` | Pinned Persona GGUF model and projector packages, plus the Raon GGUF artifact inventory. |
 | `celune.registry.llm` | Persona and agent language models, tiers, and revisions. |
 | `celune.registry.asr` | Speech recognition models and revisions. |
 | `celune.registry.other` | Singleton support models such as alignment, embeddings, emotion, normalization, Needle, and voice conversion. |
 
-Shared registry metadata types live in `celune.typing.registry`. Each `ModelMetadata` entry records its model ID, display name, category, immutable Hugging Face commit SHA, repository URL, license identifier and source URL, restriction flags, and any runtime roles. A missing license or restriction value is represented by `None`. Celune treats unknown terms as requiring consent. Set `terms_review_required` when the published terms need human review, even if a license identifier exists.
+Shared registry metadata types live in `celune.typing.registry`. Each `ModelMetadata` entry records its model ID, display name, category, immutable Hugging Face commit SHA, repository URL, license identifier and source URL, restriction flags, runtime roles, and optional vision capability. A missing license or restriction value is represented by `None`. `supports_vision=False` explicitly identifies text-only models. Celune treats unknown terms as requiring consent. Set `terms_review_required` when the published terms need human review, even if a license identifier exists.
+
+`KRAFTON/Raon-1-nano` is pinned as a non-vision Persona model and loads through Transformers' `AutoModelForCausalLM` path. The official GGUF files are separately pinned in `celune.registry.gguf.RAON_GGUF_FILES`, but they are not runnable through Celune's current Persona GGUF runtime. Raon requires KRAFTON's llama.cpp architecture support, so do not expose those files as ordinary llama.cpp-compatible Persona variants.
 
 Set `non_commercial` and `research_only` only when applicable terms restrict those uses. An advisory about intended research use alone does not set either flag or require review. FireRedTTS3 and dots.tts MF have Apache-2.0 entries with `research_only=False` and `terms_review_required=False`. The [ASTRAL Quantization model card](https://huggingface.co/Plachta/ASTRAL-quantization) declares GPL-3.0. Its entry uses `non_commercial=False` and `research_only=False` and does not require review.
 

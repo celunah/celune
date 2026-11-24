@@ -262,3 +262,48 @@ _PACKAGES = (
 PERSONA_GGUF_VARIANTS_BY_MODEL = {
     model_id: package.variants() for model_id, package in _PACKAGES
 }
+
+RAON_GGUF_REPO_ID = "KRAFTON/Raon-1-nano-gguf"
+RAON_GGUF_REVISION = "435596f1220a24df3a6ad19b36998b606df3385d"
+RAON_GGUF_FILES = {
+    "F16": PersonaGGUFFile(
+        filename="raon-1-nano-F16.gguf",
+        size=6_274_887_040,
+        sha256="37d9b28f2516c52743685e9a39708ba4bde73c478374a31d54e55d88943bb1bb",
+    ),
+    "F16_MTP": PersonaGGUFFile(
+        filename="raon-1-nano-F16_MTP.gguf",
+        size=6_384_592_256,
+        sha256="a00a0ab3d177962d957dfe5e190d189ce5d606df324a969d04c8add37cabb8b4",
+    ),
+    "Q4_K_M": PersonaGGUFFile(
+        filename="raon-1-nano-Q4_K_M.gguf",
+        size=2_082_677_632,
+        sha256="90e9ea83613626457c1249bb85e8d8471dd8874e62b4fa707d40c96737d764b6",
+    ),
+    "Q4_K_M_MTP": PersonaGGUFFile(
+        filename="raon-1-nano-Q4_K_M_MTP.gguf",
+        size=2_145_934_208,
+        sha256="f83a4f119a5099b72a2cd354de9eeae8f90f6e301680b38628b8fd01221d7b5c",
+    ),
+    "Q6_K": PersonaGGUFFile(
+        filename="raon-1-nano-Q6_K.gguf",
+        size=2_646_016_384,
+        sha256="98bb590470a9e504b8cd5715683a07c8c9680810d629dde485bc64ff21a6e634",
+    ),
+    "Q6_K_MTP": PersonaGGUFFile(
+        filename="raon-1-nano-Q6_K_MTP.gguf",
+        size=2_709_272_960,
+        sha256="38af261a61e1f4782348bceb69dfabb662a6294ac0e79b822a9b56ebcbd74186",
+    ),
+    "Q8_0": PersonaGGUFFile(
+        filename="raon-1-nano-Q8_0.gguf",
+        size=3_391_016_320,
+        sha256="5b4d73eaace1a96f872af4b7e7650bdc8a13389f7ac3da9eeebe06e146d22421",
+    ),
+    "Q8_0_MTP": PersonaGGUFFile(
+        filename="raon-1-nano-Q8_0_MTP.gguf",
+        size=3_454_272_896,
+        sha256="b324a8aa8d089f10d5672e8c8bef1c4a30caa93aa55571540037f5771b1a90b7",
+    ),
+}

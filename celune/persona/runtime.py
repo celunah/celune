@@ -17,8 +17,9 @@ from transformers.configuration_utils import PreTrainedConfig
 from transformers.tokenization_utils_base import BatchEncoding
 from transformers import (
     AutoConfig,
-    AutoProcessor,
     AutoTokenizer,
+    AutoProcessor,
+    AutoModelForCausalLM,
     StoppingCriteria,
     BitsAndBytesConfig,
     StoppingCriteriaList,
@@ -172,6 +173,7 @@ class PersonaBackend:
         self.model: Optional[PersonaModel] = None
         self.supports_vision = False
         self.supports_emotion_probes = False
+        self.model_type = ""
         self._generation_cancelled = threading.Event()
 
     @property
@@ -215,81 +217,75 @@ class PersonaBackend:
             revision=load_revision,
         )
         model_type = getattr(config, "model_type", N_A_STR)
-        wanted_type = "qwen3_vl"
+        if model_type not in {"qwen3_vl", "raon1_nano"}:
+            raise TypeError(f"unsupported Persona model type: {model_type}")
 
-        if model_type != wanted_type:
-            raise TypeError(
-                f"unsupported model type {config.model_type}, expected {wanted_type}"
-            )
-
+        supports_vision = model_type == "qwen3_vl"
+        model_class = (
+            Qwen3VLForConditionalGeneration if supports_vision else AutoModelForCausalLM
+        )
+        load_model = cast(Callable[..., PersonaModel], model_class.from_pretrained)
         normalized = quantization.casefold()
         if normalized in {"4bit", "nf4", "bnb4", "bitsandbytes-4bit"}:
             if not torch.cuda.is_available():
                 raise RuntimeError("CUDA support required to quantize Persona")
+            quantization_config = BitsAndBytesConfig(
+                load_in_4bit=True,
+                bnb_4bit_quant_type="nf4",
+                bnb_4bit_compute_dtype=torch.bfloat16,
+                bnb_4bit_use_double_quant=True,
+            )
             model = _load_persona_model_safely(
-                lambda: cast(
-                    PersonaModel,
-                    Qwen3VLForConditionalGeneration.from_pretrained(
-                        model_id,
-                        trust_remote_code=True,
-                        revision=load_revision,
-                        device_map="auto",
-                        quantization_config=BitsAndBytesConfig(
-                            load_in_4bit=True,
-                            bnb_4bit_quant_type="nf4",
-                            bnb_4bit_compute_dtype=torch.bfloat16,
-                            bnb_4bit_use_double_quant=True,
-                        ),
-                    ),
+                lambda: load_model(
+                    model_id,
+                    trust_remote_code=True,
+                    revision=load_revision,
+                    device_map="auto",
+                    quantization_config=quantization_config,
                 )
             )
         elif normalized in {"8bit", "bnb8", "bitsandbytes-8bit"}:
             if not torch.cuda.is_available():
                 raise RuntimeError("CUDA support required to quantize Persona")
             model = _load_persona_model_safely(
-                lambda: cast(
-                    PersonaModel,
-                    Qwen3VLForConditionalGeneration.from_pretrained(
-                        model_id,
-                        trust_remote_code=True,
-                        revision=load_revision,
-                        device_map="auto",
-                        quantization_config=BitsAndBytesConfig(load_in_8bit=True),
-                    ),
+                lambda: load_model(
+                    model_id,
+                    trust_remote_code=True,
+                    revision=load_revision,
+                    device_map="auto",
+                    quantization_config=BitsAndBytesConfig(load_in_8bit=True),
                 )
             )
         elif normalized in {"none", "false", "off", "disabled"}:
             model = _load_persona_model_safely(
-                lambda: cast(
-                    PersonaModel,
-                    Qwen3VLForConditionalGeneration.from_pretrained(
-                        model_id,
-                        trust_remote_code=True,
-                        revision=load_revision,
-                        device_map="auto",
-                        dtype=torch.bfloat16,
-                    ),
+                lambda: load_model(
+                    model_id,
+                    trust_remote_code=True,
+                    revision=load_revision,
+                    device_map="auto",
+                    dtype=torch.bfloat16,
                 )
             )
         else:
             raise ValueError(f"unsupported Persona quantization mode: {quantization}")
 
-        try:
-            processor = cast(
-                PersonaProcessor,
-                AutoProcessor.from_pretrained(
-                    model_id,
-                    trust_remote_code=True,
-                    revision=load_revision,
-                ),
-            )
-        except Exception as exc:
-            raise ValueError(
-                f"Persona processor failed to load for model '{model_id}'"
-            ) from exc
+        processor: Optional[PersonaProcessor] = None
+        if supports_vision:
+            try:
+                processor = cast(
+                    PersonaProcessor,
+                    AutoProcessor.from_pretrained(
+                        model_id,
+                        trust_remote_code=True,
+                        revision=load_revision,
+                    ),
+                )
+            except Exception as exc:
+                raise ValueError(
+                    f"Persona processor failed to load for model '{model_id}'"
+                ) from exc
 
-        supports_vision = True
-        tokenizer = processor.tokenizer
+        tokenizer = processor.tokenizer if processor is not None else None
         if tokenizer is None:
             tokenizer = cast(
                 PersonaTokenizer,
@@ -307,7 +303,10 @@ class PersonaBackend:
         self.model_id = model_id
         self.quantization = quantization
         self.supports_vision = supports_vision
-        self.supports_emotion_probes = _model_supports_emotion_probes(model)
+        self.supports_emotion_probes = (
+            model_type != "raon1_nano" and _model_supports_emotion_probes(model)
+        )
+        self.model_type = model_type
 
     def unload(self) -> None:
         """Unload the active Persona model and related processor state."""
@@ -318,6 +317,7 @@ class PersonaBackend:
         self.quantization = ""
         self.supports_vision = False
         self.supports_emotion_probes = False
+        self.model_type = ""
         gc.collect()
 
     def emotion_backend(self) -> Optional[tuple[PersonaTokenizer, PersonaModel]]:
@@ -401,8 +401,10 @@ class PersonaBackend:
             if max_new_tokens <= 0:
                 raise ValueError("Persona prompt leaves no room for a response")
             model_config = getattr(model, "config", None)
-            if isinstance(input_ids, torch.Tensor) and isinstance(
-                model_config, PreTrainedConfig
+            if (
+                self.model_type != "raon1_nano"
+                and isinstance(input_ids, torch.Tensor)
+                and isinstance(model_config, PreTrainedConfig)
             ):
                 with contextlib.suppress(RuntimeError, TypeError, ValueError):
                     generation_cache = create_quantized_kv_cache(
@@ -416,8 +418,10 @@ class PersonaBackend:
             )
             if generation_cache is not None:
                 generation_kwargs["past_key_values"] = generation_cache
-            else:
+            elif self.model_type != "raon1_nano":
                 generation_kwargs["cache_implementation"] = "dynamic"
+            if self.model_type == "raon1_nano":
+                generation_kwargs["presence_penalty"] = 1.5
             pad_token_id = tokenizer.eos_token_id
             if pad_token_id is not None:
                 generation_kwargs["pad_token_id"] = pad_token_id
@@ -444,7 +448,8 @@ class PersonaBackend:
                     )
                     generation_cache = None
                     generation_kwargs.pop("past_key_values", None)
-                    generation_kwargs["cache_implementation"] = "dynamic"
+                    if self.model_type != "raon1_nano":
+                        generation_kwargs["cache_implementation"] = "dynamic"
                     output_ids = model.generate(
                         **model_inputs,
                         max_new_tokens=max_new_tokens,

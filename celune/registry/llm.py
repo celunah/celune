@@ -24,6 +24,7 @@ LLM_MODELS: tuple[ModelMetadata, ...] = (
         repository_url=f"{_HUGGING_FACE_ROOT}Qwen/Qwen3-VL-4B-Instruct",
         roles=_PERSONA_ROLES,
         tier="standard",
+        supports_vision=True,
     ),
     ModelMetadata(
         model_id="huihui-ai/Huihui-Qwen3-VL-4B-Instruct-abliterated",
@@ -39,6 +40,7 @@ LLM_MODELS: tuple[ModelMetadata, ...] = (
         ),
         roles=_PERSONA_ROLES,
         tier="standard",
+        supports_vision=True,
     ),
     ModelMetadata(
         model_id="Qwen/Qwen3-VL-8B-Instruct",
@@ -52,6 +54,7 @@ LLM_MODELS: tuple[ModelMetadata, ...] = (
         repository_url=f"{_HUGGING_FACE_ROOT}Qwen/Qwen3-VL-8B-Instruct",
         roles=_PERSONA_ROLES,
         tier="smart",
+        supports_vision=True,
     ),
     ModelMetadata(
         model_id="huihui-ai/Huihui-Qwen3-VL-8B-Instruct-abliterated",
@@ -67,6 +70,7 @@ LLM_MODELS: tuple[ModelMetadata, ...] = (
         ),
         roles=_PERSONA_ROLES,
         tier="smart",
+        supports_vision=True,
     ),
     ModelMetadata(
         model_id="Qwen/Qwen3-VL-8B-Thinking",
@@ -80,6 +84,7 @@ LLM_MODELS: tuple[ModelMetadata, ...] = (
         repository_url=f"{_HUGGING_FACE_ROOT}Qwen/Qwen3-VL-8B-Thinking",
         roles=_PERSONA_ROLES,
         tier="smart",
+        supports_vision=True,
     ),
     ModelMetadata(
         model_id="huihui-ai/Huihui-Qwen3-VL-8B-Thinking-abliterated",
@@ -95,6 +100,7 @@ LLM_MODELS: tuple[ModelMetadata, ...] = (
         ),
         roles=_PERSONA_ROLES,
         tier="smart",
+        supports_vision=True,
     ),
     ModelMetadata(
         model_id="Qwen/Qwen3.5-4B",
@@ -108,6 +114,7 @@ LLM_MODELS: tuple[ModelMetadata, ...] = (
         repository_url=f"{_HUGGING_FACE_ROOT}Qwen/Qwen3.5-4B",
         roles=_PERSONA_ROLES,
         tier="standard",
+        supports_vision=True,
     ),
     ModelMetadata(
         model_id="huihui-ai/Huihui-Qwen3.5-4B-abliterated",
@@ -121,6 +128,7 @@ LLM_MODELS: tuple[ModelMetadata, ...] = (
         repository_url=f"{_HUGGING_FACE_ROOT}huihui-ai/Huihui-Qwen3.5-4B-abliterated",
         roles=_PERSONA_ROLES,
         tier="standard",
+        supports_vision=True,
     ),
     ModelMetadata(
         model_id="Qwen/Qwen3.5-9B",
@@ -134,6 +142,7 @@ LLM_MODELS: tuple[ModelMetadata, ...] = (
         repository_url=f"{_HUGGING_FACE_ROOT}Qwen/Qwen3.5-9B",
         roles=_PERSONA_ROLES,
         tier="smart",
+        supports_vision=True,
     ),
     ModelMetadata(
         model_id="huihui-ai/Huihui-Qwen3.5-9B-abliterated",
@@ -147,6 +156,7 @@ LLM_MODELS: tuple[ModelMetadata, ...] = (
         repository_url=f"{_HUGGING_FACE_ROOT}huihui-ai/Huihui-Qwen3.5-9B-abliterated",
         roles=_PERSONA_ROLES,
         tier="smart",
+        supports_vision=True,
     ),
     ModelMetadata(
         model_id="google/gemma-4-E2B-it",
@@ -160,6 +170,7 @@ LLM_MODELS: tuple[ModelMetadata, ...] = (
         repository_url=f"{_HUGGING_FACE_ROOT}google/gemma-4-E2B-it",
         roles=_PERSONA_ROLES,
         tier="standard",
+        supports_vision=True,
     ),
     ModelMetadata(
         model_id="huihui-ai/Huihui-gemma-4-E2B-it-abliterated",
@@ -175,6 +186,7 @@ LLM_MODELS: tuple[ModelMetadata, ...] = (
         ),
         roles=_PERSONA_ROLES,
         tier="standard",
+        supports_vision=True,
     ),
     ModelMetadata(
         model_id="google/gemma-4-E4B-it",
@@ -188,6 +200,7 @@ LLM_MODELS: tuple[ModelMetadata, ...] = (
         repository_url=f"{_HUGGING_FACE_ROOT}google/gemma-4-E4B-it",
         roles=_PERSONA_ROLES,
         tier="smart",
+        supports_vision=True,
     ),
     ModelMetadata(
         model_id="huihui-ai/Huihui-gemma-4-E4B-it-abliterated",
@@ -203,6 +216,21 @@ LLM_MODELS: tuple[ModelMetadata, ...] = (
         ),
         roles=_PERSONA_ROLES,
         tier="smart",
+        supports_vision=True,
+    ),
+    ModelMetadata(
+        model_id="KRAFTON/Raon-1-nano",
+        display_name="Raon-1 nano",
+        category="llm",
+        revision="0c735595d7a524618fe6ae029f8b956089690748",
+        license_id="apache-2.0",
+        license_url=_APACHE_2_LICENSE_URL,
+        non_commercial=False,
+        research_only=False,
+        repository_url=f"{_HUGGING_FACE_ROOT}KRAFTON/Raon-1-nano",
+        roles=_PERSONA_ROLES,
+        tier="standard",
+        supports_vision=False,
     ),
 )
 

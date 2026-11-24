@@ -224,6 +224,77 @@ class TestPersonaApi:
                 "tokenizer_loader": tokenizer_loader,
             }
 
+    def test_raon_loads_as_text_only_auto_model(self) -> None:
+        """Load the pinned Raon architecture without a vision processor."""
+        model = _FakeModel()
+        tokenizer = _FakeTokenizer()
+        backend = runtime.PersonaBackend()
+        metadata = get_model_metadata("KRAFTON/Raon-1-nano")
+        assert metadata is not None
+        with (
+            mock.patch(
+                "celune.persona.runtime.require_model_consent",
+                return_value=metadata,
+            ),
+            mock.patch(
+                "celune.persona.runtime.AutoConfig.from_pretrained",
+                return_value=SimpleNamespace(model_type="raon1_nano"),
+            ),
+            mock.patch(
+                "celune.persona.runtime.AutoModelForCausalLM.from_pretrained",
+                return_value=model,
+            ) as model_loader,
+            mock.patch(
+                "celune.persona.runtime.AutoTokenizer.from_pretrained",
+                return_value=tokenizer,
+            ) as tokenizer_loader,
+            mock.patch(
+                "celune.persona.runtime.AutoProcessor.from_pretrained"
+            ) as processor_loader,
+        ):
+            backend.load("KRAFTON/Raon-1-nano", "none")
+
+        assert backend.model is model
+        assert backend.tokenizer is tokenizer
+        assert backend.processor is None
+        assert backend.model_type == "raon1_nano"
+        assert not backend.supports_vision
+        model_loader.assert_called_once_with(
+            "KRAFTON/Raon-1-nano",
+            trust_remote_code=True,
+            revision=metadata.revision,
+            device_map="auto",
+            dtype=runtime.torch.bfloat16,
+        )
+        tokenizer_loader.assert_called_once_with(
+            "KRAFTON/Raon-1-nano",
+            trust_remote_code=True,
+            revision=metadata.revision,
+        )
+        processor_loader.assert_not_called()
+
+    def test_raon_generation_uses_its_stateful_cache_and_presence_penalty(
+        self,
+    ) -> None:
+        """Preserve Raon's custom cache and recommended repetition penalty."""
+        backend = runtime.PersonaBackend()
+        backend.tokenizer = cast(runtime.PersonaTokenizer, _FakeTokenizer())
+        model = _FakeGenerativeModel()
+        backend.model = cast(runtime.PersonaModel, model)
+        backend.model_id = "KRAFTON/Raon-1-nano"
+        backend.model_type = "raon1_nano"
+        with mock.patch.object(
+            backend,
+            "_build_inputs",
+            return_value={"input_ids": runtime.torch.tensor([[1, 2]])},
+        ):
+            backend.generate(runtime.GenerateRequest(user="hello"))
+
+        kwargs = model.calls[0]
+        assert kwargs["presence_penalty"] == 1.5
+        assert "cache_implementation" not in kwargs
+        assert "past_key_values" not in kwargs
+
     def test_runtime_clamps_quantization_and_rejects_disabled_persona(self) -> None:
         """Verify VRAM presets constrain direct Persona runtime usage."""
         with mock.patch("celune.vram.torch.cuda.is_available", return_value=False):
@@ -352,13 +423,20 @@ class TestPersonaApi:
 
     def test_persona_registry_derives_supported_variants_and_tiers(self) -> None:
         """Verify every Persona catalog entry has a pinned revision and tier."""
-        assert len(LLM_MODELS) == 14
+        assert len(LLM_MODELS) == 15
 
         for metadata in LLM_MODELS:
             assert (remote_code_model_revision(metadata.model_id)) == (
                 metadata.revision
             )
             assert (persona_model_tier(metadata.model_id)) == (metadata.tier)
+            expected_vision = metadata.model_id != "KRAFTON/Raon-1-nano"
+            assert metadata.supports_vision is expected_vision
+
+        raon = get_model_metadata("KRAFTON/Raon-1-nano")
+        assert raon is not None
+        assert raon.supports_vision is False
+        assert raon.to_dict()["supports_vision"] is False
 
     def test_load_requires_consent_for_unknown_models_before_loading(self) -> None:
         """Verify unregistered Persona repositories stop before model loading."""

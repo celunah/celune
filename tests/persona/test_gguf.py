@@ -14,6 +14,7 @@ import pytest
 
 from celune.persona import gguf, runtime
 from celune.registry import get_model_metadata
+from celune.registry import gguf as gguf_registry
 from celune.exceptions import ModelConsentRequired
 from celune.dataclasses.persona import ChatMessage, GenerateRequest
 from celune.registry.llm import LLM_MODELS, PERSONA_DEFAULT_MODEL_ID
@@ -30,12 +31,32 @@ def test_gguf_artifacts_cover_registered_models_and_precisions() -> None:
         == (gguf.QWEN3_VL_GGUF_VARIANTS["8bit"])
     )
     for metadata in LLM_MODELS:
+        if metadata.supports_vision is not True:
+            continue
         for quantization in ("4bit", "8bit"):
             assert (
                 gguf.persona_gguf_variant(metadata.model_id, quantization) is not None
             )
     assert gguf.persona_gguf_variant("unregistered/model", "4bit") is None
     assert gguf.persona_gguf_variant(PERSONA_DEFAULT_MODEL_ID, "none") is None
+
+
+def test_raon_gguf_artifacts_are_pinned_without_vision_projectors() -> None:
+    """Register Raon's official GGUF and MTP files as non-vision artifacts."""
+    assert gguf_registry.RAON_GGUF_REPO_ID == "KRAFTON/Raon-1-nano-gguf"
+    assert len(gguf_registry.RAON_GGUF_REVISION) == 40
+    assert set(gguf_registry.RAON_GGUF_FILES) == {
+        "F16",
+        "F16_MTP",
+        "Q4_K_M",
+        "Q4_K_M_MTP",
+        "Q6_K",
+        "Q6_K_MTP",
+        "Q8_0",
+        "Q8_0_MTP",
+    }
+    assert gguf_registry.RAON_GGUF_FILES["Q4_K_M"].size == 2_082_677_632
+    assert gguf_registry.RAON_GGUF_FILES["Q8_0"].size == 3_391_016_320
 
 
 def test_llama_cpp_archives_include_server_and_cuda_libraries() -> None:

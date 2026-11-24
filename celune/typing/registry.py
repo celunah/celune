@@ -28,6 +28,7 @@ class ModelMetadata:
     repository_url: str
     roles: tuple[str, ...] = ()
     tier: Optional[Literal["standard", "smart"]] = None
+    supports_vision: Optional[bool] = None
     terms_review_required: bool = False
 
     @property
@@ -69,6 +70,7 @@ class ModelMetadata:
             "repository_url": self.repository_url,
             "roles": list(self.roles),
             "tier": self.tier,
+            "supports_vision": self.supports_vision,
             "terms_review_required": self.terms_review_required,
             "requires_consent": self.requires_consent,
         }

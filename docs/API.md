@@ -146,8 +146,9 @@ consent modal with license details, restriction flags, and the source link.
 
 `GET /v1/models` lists the built-in catalog, including model ID, display name,
 category, pinned revision, license and license URL, non-commercial and
-research-only flags, consent state, whether commercial mode is enabled, and
-whether each model's reviewed terms confirm commercial use. Custom model
+research-only flags, optional `supports_vision` capability, consent state,
+whether commercial mode is enabled, and whether each model's reviewed terms
+confirm commercial use. Custom model
 metadata is included in a `428 Precondition Required` response when an
 operation first needs consent. When commercial mode blocks a model operation,
 Celune returns `403 Forbidden` with the model metadata and a localized reason.

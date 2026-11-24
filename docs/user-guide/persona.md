@@ -8,17 +8,22 @@ it.
 ## Model and capabilities
 
 The default model is `Qwen/Qwen3-VL-4B-Instruct`. The model registry in
-`celune.constants` also contains the supported Qwen3-VL, Qwen3.5, and Gemma
-variants, each with an allowlisted revision. The selected `vram` tier controls
-quantization and loading choices. Persona can report these capabilities:
+`celune.registry.llm` also contains the supported Qwen3-VL, Qwen3.5, Gemma, and
+KRAFTON Raon-1-nano models, each with an allowlisted revision. The selected
+`vram` tier controls quantization and loading choices. Persona can report these
+capabilities:
 
 ```python
 capabilities = celune.vision.capabilities() if celune.vision is not None else None
 ```
 
 `PersonaCapabilities` distinguishes text, vision, image uploads, and emotion
-probes. A speech-only model has no attachment path, even if the UI command is
-present.
+probes. Raon-1-nano is a text-only model and has no attachment path, even if the
+UI command is present. Its native Transformers loader requires Transformers
+5.16.1 or newer within the supported 5.x range. Official Raon GGUF artifacts
+are pinned in `celune.registry.gguf`, but Persona's GGUF runtime does not yet
+support the custom Raon architecture. Use the native Transformers mode for
+Raon.
 
 The `high` preset supports registered standard models, including the 4B tier.
 Registered smart 8B-tier models require `xhigh`. Persona context is capped at
