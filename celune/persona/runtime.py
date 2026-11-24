@@ -280,7 +280,7 @@ class PersonaBackend:
             )
             if table_bits is not None:
                 try:
-                    saved_bytes = quantize_raon_per_layer_table(
+                    quantize_raon_per_layer_table(
                         cast(torch.nn.Module, model),
                         table_bits,
                     )
@@ -289,14 +289,6 @@ class PersonaBackend:
                         "Could not quantize Raon PLE table, retaining native weights: %s",
                         error,
                     )
-                else:
-                    if saved_bytes > 0:
-                        _LOGGER.info(
-                            "Quantized Raon PLE table to %s-bit lookup storage, "
-                            "saved %.2f GiB",
-                            table_bits,
-                            saved_bytes / 1024**3,
-                        )
 
         processor: Optional[PersonaProcessor] = None
         if supports_vision:

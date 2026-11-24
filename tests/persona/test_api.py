@@ -273,8 +273,11 @@ class TestPersonaApi:
         )
         processor_loader.assert_not_called()
 
-    def test_raon_quantized_load_compresses_the_per_layer_table(self) -> None:
-        """Apply the custom table quantizer alongside BitsAndBytes loading."""
+    def test_raon_quantized_load_compresses_the_per_layer_table(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Apply the custom table quantizer silently alongside BitsAndBytes."""
+        caplog.set_level("INFO", logger="celune.persona.runtime")
         metadata = get_model_metadata("KRAFTON/Raon-1-nano")
         assert metadata is not None
         model = _FakeModel()
@@ -309,6 +312,7 @@ class TestPersonaApi:
         quantize_table.assert_called_once_with(model, 4)
         assert backend.model is model
         assert backend.quantization == "4bit"
+        assert "Quantized Raon PLE table" not in caplog.text
 
     def test_raon_generation_uses_its_stateful_cache_and_presence_penalty(
         self,
