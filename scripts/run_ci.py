@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import os
 import sys
-import time
 import ctypes
 import signal
 import contextlib
@@ -16,7 +15,6 @@ from collections.abc import Callable
 
 import psutil
 
-TIMEOUT = 600
 GRACE_PERIOD = 2.0
 MEMORY = psutil.virtual_memory().total >> 30
 
@@ -209,15 +207,11 @@ def stop_process_tree(process: subprocess.Popen[str]) -> None:
         process.wait(timeout=GRACE_PERIOD)
 
 
-def _wait_for_process(process: subprocess.Popen[str], timeout: float) -> int:
-    """Wait in short intervals so console interrupts reach the runner promptly."""
-    deadline = time.monotonic() + timeout
+def _wait_for_process(process: subprocess.Popen[str]) -> int:
+    """Wait without a deadline while keeping console interrupts responsive."""
     while True:
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            raise subprocess.TimeoutExpired(process.args, timeout)
         try:
-            return process.wait(timeout=min(remaining, 0.1))
+            return process.wait(timeout=0.1)
         except subprocess.TimeoutExpired:
             continue
 
@@ -226,7 +220,7 @@ def main() -> int:
     """Run Poe CI and return a shell-compatible status code."""
     process = _start_process()
     try:
-        exit_code = _wait_for_process(process, TIMEOUT)
+        exit_code = _wait_for_process(process)
     except KeyboardInterrupt:
         previous_sigint_handler = signal.signal(signal.SIGINT, signal.SIG_IGN)
         try:
@@ -235,10 +229,6 @@ def main() -> int:
             signal.signal(signal.SIGINT, previous_sigint_handler)
         print("\nSLOP - Interrupted", flush=True)
         return 130
-    except subprocess.TimeoutExpired:
-        stop_process_tree(process)
-        print(f"\nSLOP - Timed out after {TIMEOUT} seconds", flush=True)
-        return 1
     finally:
         _close_windows_job(process)
 

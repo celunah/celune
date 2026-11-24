@@ -79,8 +79,7 @@ class TestRunCi:
             0,
         ]
 
-        with mock.patch.object(run_ci.time, "monotonic", side_effect=(0.0, 0.0, 0.2)):
-            exit_code = run_ci._wait_for_process(process, 600.0)
+        exit_code = run_ci._wait_for_process(process)
 
         assert exit_code == 0
         assert process.wait.call_count == 2
