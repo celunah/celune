@@ -131,7 +131,7 @@ is breadth-first, so progress levels are processed in ascending order. Level
 transitions repaint immediately. Repeated updates within one level are
 throttled. The loading screen's terminal-title and early-shutdown helpers stay
 lightweight, so exiting before runtime initialization cannot enter an undefined
-or heavy runtime-import path. Ctrl+C stops an active runtime search, and the
+or heavy runtime-import path. ^C stops an active runtime search, and the
 launcher failure screen handles errors from the default, `start`, and `run`
 operations. Other CLI commands return their own exit status directly.
 On Windows, a `CreateProcessA` failure with `ERROR_FILE_CORRUPT` (1392) while

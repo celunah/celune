@@ -55,7 +55,7 @@ use carriage-return replacement.
 collection, and other errors. Configured skips use the blue `S` marker. Tests
 that were collected but never started use `N`.
 
-If CTRL+C interrupts a run after collection, Celtest keeps any completed test
+If ^C interrupts a run after collection, Celtest keeps any completed test
 results already shown and ends with a simple `interrupted` message. It omits
 the interruption hint, totals, and all incomplete or skipped test entries:
 

@@ -579,7 +579,7 @@ class TestUIStartup:
                 assert footer.region.right <= 80
                 assert starting.region.x >= 2
                 assert quit_hint.region.right <= 78
-                assert str(quit_hint.render()) == "CTRL+Q to quit"
+                assert str(quit_hint.render()) == "^Q to quit"
 
                 screen.show_error("Backend failed", help_message="Run configure.py")
                 await pilot.pause()
@@ -2082,7 +2082,7 @@ class TestUIStartup:
         ui.change_voice_lock_state.assert_called_once_with(locked=True)
 
     def test_textual_resource_footer_only_advertises_ctrl_q_exit(self) -> None:
-        """Verify the Textual UI footer no longer advertises CTRL+C exit."""
+        """Verify the Textual UI footer no longer advertises ^C exit."""
         celune = cast(
             Celune,
             SimpleNamespace(
@@ -2095,9 +2095,9 @@ class TestUIStartup:
 
         pages = ui_resources.resource_pages(celune, "celune")
 
-        exit_page = next(page for page in pages if "CTRL+Q exit" in page)
-        assert "CTRL+C" not in exit_page
-        assert "CTRL+R toggle recording" not in pages
+        exit_page = next(page for page in pages if "^Q exit" in page)
+        assert "^C" not in exit_page
+        assert "^R toggle recording" not in pages
 
     def test_log_source_hint_has_its_own_resource_page_and_names_other_source(
         self,
@@ -2154,7 +2154,7 @@ class TestUIStartup:
 
         pages = ui_resources.resource_pages(celune, "celune")
 
-        assert "CTRL+R toggle recording" in pages
+        assert "^R toggle recording" in pages
 
     def test_textual_resource_footer_keeps_savings_out_of_rotating_pages(self) -> None:
         """Keep API cost comparisons in their on-demand command report."""
@@ -2180,7 +2180,7 @@ class TestUIStartup:
     def test_ctrl_r_toggles_tui_vc_recording(
         self, request: pytest.FixtureRequest
     ) -> None:
-        """Verify CTRL+R streams VC audio live and flushes the final tail on stop."""
+        """Verify ^R streams VC audio live and flushes the final tail on stop."""
         ui = CeluneUI()
         request.addfinalizer(partial(setattr, CeluneUI, "_instance", None))
         ui.celune = cast(

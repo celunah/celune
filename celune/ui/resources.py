@@ -288,12 +288,10 @@ def resource_pages(celune: Celune, theme_name: Optional[str] = None) -> tuple[st
             active_theme = "celune_light" if configured_theme == "light" else "celune"
 
         if active_theme == "celune_april_fools":
-            pages.append(f"CTRL+Q exit • CTRL+ENTER {enter_action}")
+            pages.append(f"^Q exit • ^ENTER {enter_action}")
         else:
             other_theme = "light" if active_theme == "celune" else "dark"
-            pages.append(
-                f"CTRL+Q exit • CTRL+T {other_theme} • CTRL+ENTER {enter_action}"
-            )
+            pages.append(f"^Q exit • ^T {other_theme} • ^ENTER {enter_action}")
 
     result = tuple(pages)
     _RESOURCE_PAGE_CACHE = (cache_key, now_monotonic, result)

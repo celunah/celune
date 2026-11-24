@@ -166,7 +166,7 @@ arguments, already-running instances, no ANSI-capable terminal, launcher loss,
 pending updates, and an unsupported CPU. A normal interactive start should use
 the launcher so process-loss, CPU compatibility, and update handoff behavior
 are preserved.
-Press Ctrl+C during the initial backend picker to interrupt startup. The
+Press ^C during the initial backend picker to interrupt startup. The
 launcher reports the interruption.
 
 ## See also

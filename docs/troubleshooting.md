@@ -47,7 +47,7 @@ transcript that backend requires.
 
 Confirm the global `mode` is `converse` or `agent`, and use a vision/text-capable
 model, and check that the active operation mode is `converse` or `agent`.
-`CTRL+R` first wakes Celune when sleeping. Press again after the engine is ready
+`^R` first wakes Celune when sleeping. Press again after the engine is ready
 to capture speech. Whisper has a five-second no-input timeout and a configured
 speech-end delay, so silence does not create an infinite recording.
 

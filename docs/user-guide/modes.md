@@ -81,7 +81,7 @@ the corresponding feature instead of being raised automatically.
 ## Voice-conversion input
 
 Voice conversion is an audio-input mode. Text commands that require TTS are
-not accepted while VC is active. Use `/vc <file>` for a file or `CTRL+R` to
+not accepted while VC is active. Use `/vc <file>` for a file or `^R` to
 toggle live microphone capture. The converted audio still passes through the
 shared playback and save path, but it does not load a TTS model. See
 [Speech buffering and playback](configuration.md#speech-buffering-and-playback)

@@ -720,7 +720,7 @@ def _webui_toggle_recording(
     WebUiUpdate,
     WebUiUpdate,
 ]:
-    """Toggle the same Persona or live VC capture path used by ``CTRL+R``."""
+    """Toggle the same Persona or live VC capture path used by ``^R``."""
     celune = session.bound_celune
     ui = CeluneUI.get_instance()
     if celune is None or ui is None:

@@ -748,7 +748,7 @@ class TestAgentStatusUI:
     def test_stopped_state_wins_over_agent_status_and_uses_stopped_placeholder(
         self,
     ) -> None:
-        """Verify STOPPED remains visible and rejects every key except Ctrl+Q."""
+        """Verify STOPPED remains visible and rejects every key except ^Q."""
         ui, _task, _safe_status = self._ui_for_task(AgentTaskState.WORKING)
         ui.celune.cur_state = "stopped"
         ui.input_box = TextArea()

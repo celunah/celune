@@ -962,7 +962,7 @@ class TestUIInteractions:
     def test_ctrl_r_wakes_sleeping_celune_without_starting_recording(
         self, request: pytest.FixtureRequest
     ) -> None:
-        """Verify CTRL+R wakes a sleeping VC runtime instead of starting capture."""
+        """Verify ^R wakes a sleeping VC runtime instead of starting capture."""
         ui = CeluneUI()
         request.addfinalizer(partial(setattr, CeluneUI, "_instance", None))
         ui.celune = cast(

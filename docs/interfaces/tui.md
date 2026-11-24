@@ -13,16 +13,16 @@ post-frame worker and report failures on the loading overlay.
 
 | Key | Action |
 | --- | --- |
-| `CTRL+ENTER` | Submit the input. During the tutorial it advances/skips the current step. |
-| `CTRL+J` | Submit the input in terminals that map Enter differently. It also cancels the tutorial. |
-| `CTRL+Q` | Fade out the UI, then shut down through the graceful teardown path. |
-| `CTRL+T` | Toggle dark/light themes and persist the selection. |
-| `CTRL+R` | Wake from sleep, start/stop Persona speech capture, or start/stop live VC capture depending on mode. |
-| `CTRL+B` | Open or close the debug inspector when `log_level` is `debug`. |
+| `^ENTER` | Submit the input. During the tutorial it advances/skips the current step. |
+| `^J` | Submit the input in terminals that map Enter differently. It also cancels the tutorial. |
+| `^Q` | Fade out the UI, then shut down through the graceful teardown path. |
+| `^T` | Toggle dark/light themes and persist the selection. |
+| `^R` | Wake from sleep, start/stop Persona speech capture, or start/stop live VC capture depending on mode. |
+| `^B` | Open or close the debug inspector when `log_level` is `debug`. |
 | `ESC` during startup | Reveal the main interface when the loading footer offers this action. |
 
-Pressing `CTRL+C` displays a temporary toast at the bottom of the interface:
-`You pressed CTRL+C. Press CTRL+Q to exit.`
+Pressing `^C` displays a temporary toast at the bottom of the interface:
+`You pressed ^C. Press ^Q to exit.`
 
 Core code can request a transient message with
 `Celune.toast(msg: str, severity: str = "info", *, duration: Optional[float] = None) -> None`.
@@ -44,8 +44,8 @@ block input.
 
 ## Debug inspector
 
-Set `log_level: debug` in `config.yaml`, then press `CTRL+B` to open the
-inspector. Press `CTRL+B` or `ESC` to close it. The shortcut is ignored at other
+Set `log_level: debug` in `config.yaml`, then press `^B` to open the
+inspector. Press `^B` or `ESC` to close it. The shortcut is ignored at other
 log levels. It remains available while the engine is `FATAL` or `STOPPED`.
 Inspector input placeholders use the active theme's secondary color.
 
@@ -152,7 +152,7 @@ screen adds `ESC reveal UI` to its footer. Press `ESC` to show the main interfac
 while voice-runtime initialization continues. Input and voice controls stay
 locked until startup finishes. Any later startup error is written to the main log
 instead of bringing the loading overlay back. Before that point, the loading
-screen only offers `CTRL+Q` to quit.
+screen only offers `^Q` to quit.
 
 The style button cycles the active voice on a normal click. Hold it to open
 `Select voice` after releasing the button, including while the engine is
@@ -341,7 +341,7 @@ No further startup progress is pending. The UI switches to the red error theme
 and catches early startup exceptions, including missing dependencies, without
 leaving a worker traceback on the terminal. The terminal title changes to an
 error state with a concise cause.
-Press `CTRL+Q` on this screen to close the application. A missing-dependency
+Press `^Q` on this screen to close the application. A missing-dependency
 failure then returns exit code `4` to the launcher, while other early startup
 failures return the general failure code. After core attachment, press `ESC` to
 reveal the main UI and inspect its log if a later initialization step fails.

@@ -69,7 +69,7 @@ before importing or initializing the engine, Persona, agent runtime, backend
 environments, audio backends, or model libraries. The first-frame path is
 limited to launcher state and lightweight Textual/loading/theme primitives. The
 existing post-frame worker loads the selected runtime and later applies
-pack-derived colors. This keeps startup responsive and lets `CTRL+C` use the UI
+pack-derived colors. This keeps startup responsive and lets `^C` use the UI
 shutdown path even while runtime loading fails.
 
 The GPU runtime preflight runs from `Celune.load()` after the UI callbacks are
@@ -271,7 +271,7 @@ and out-of-memory cleanup without requiring a GPU.
 
 ## Shutdown
 
-UI unmount, `CTRL+Q`, API shutdown, process-loss detection, and `Celune.close()`
+UI unmount, `^Q`, API shutdown, process-loss detection, and `Celune.close()`
 converge on idempotent teardown. Active live recording is stopped, workers are
 asked to shut down, streams are closed, models release their state, and event
 listeners receive terminal notifications. Pipeline blocking work uses daemon

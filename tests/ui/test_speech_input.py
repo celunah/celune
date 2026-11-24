@@ -154,7 +154,7 @@ class TestSpeechInput:
 
     @staticmethod
     def test_ctrl_r_routes_persona_and_vc_to_separate_recorders() -> None:
-        """Verify Persona CTRL+R does not alter the existing VC shortcut path."""
+        """Verify Persona ^R does not alter the existing VC shortcut path."""
         ui = CeluneUI()
         ui.cur_state = "idle"
         ui.celune = SimpleNamespace(

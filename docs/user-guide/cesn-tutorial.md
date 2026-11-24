@@ -7,7 +7,7 @@ pronunciation, shape note connections, and paste short example songs.
 ## Before you start
 
 Select a TTS backend that supports singing and a CECHAR v5 pack with a `sing`
-voice. Enter a CESN score in Celune's input box and submit it with `CTRL+ENTER`.
+voice. Enter a CESN score in Celune's input box and submit it with `^ENTER`.
 The examples here use English and stay within Celune's default singing range,
 F#3-C5 (MIDI 54-72). A different character pack can declare another range.
 

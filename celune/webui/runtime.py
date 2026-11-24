@@ -1202,7 +1202,7 @@ def webui_resources_html(session: ServerSession = server_session) -> str:
         if recording_hint
         else ""
     )
-    if "CTRL+" in resource:
+    if "^" in resource:
         return (
             '<div class="footer-block">'
             f"{hint_html}"

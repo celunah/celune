@@ -1435,7 +1435,7 @@ async def action_quit(self) -> None:
 
 
 def action_help_quit(self) -> None:
-    """Show the Celune-specific hint for the conventional Ctrl+C key."""
+    """Show the Celune-specific hint for the conventional ^C key."""
     self.show_toast(_app.string("ui.ctrl_c_toast"))
 
 
@@ -2219,7 +2219,7 @@ class InteractionHooks:
         return await action_quit(self)
 
     def action_help_quit(self) -> None:
-        """Delegate Textual's Ctrl+C hint to the Celune toast."""
+        """Delegate Textual's ^C hint to the Celune toast."""
         return action_help_quit(self)
 
     def action_toggle_debug_inspector(self) -> None:

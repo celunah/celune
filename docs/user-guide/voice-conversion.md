@@ -46,7 +46,7 @@ results returned to Python or the REST API retain the backend's original level.
 
 ## Live microphone conversion
 
-Press `CTRL+R` in VC mode to start or stop microphone capture. The capture path
+Press `^R` in VC mode to start or stop microphone capture. The capture path
 uses preroll, hangover, voice-activity checks, and a bounded submission queue
 so the first phonemes are not cut off and stale audio cannot grow without
 limit. The selected CUDA extra supplies Silero VAD. If it is unavailable, the

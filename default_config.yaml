@@ -64,7 +64,7 @@ voice_bundle: default
 #
 # `info` = only user-facing statuses
 # `verbose` = detailed runtime status
-# `debug` = every event logged + a debug menu (press CTRL+B)
+# `debug` = every event logged + a debug menu (press ^B)
 log_level: info
 
 # Locale settings
@@ -238,7 +238,7 @@ persona:
   # which model to use? (in case you want to use a different model)
   model_id: Qwen/Qwen3-VL-4B-Instruct
   # model_id: huihui-ai/Huihui-Qwen3-VL-4B-Instruct-abliterated
-  # Hugging Face Whisper model used by CTRL+R Persona voice input
+  # Hugging Face Whisper model used by ^R Persona voice input
   speech_model_id: openai/whisper-large-v3-turbo
   # Whisper language code/name, or auto to detect the spoken language
   speech_language: auto
