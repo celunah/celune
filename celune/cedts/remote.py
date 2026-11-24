@@ -641,6 +641,9 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
             with self._worker_stderr_lock:
                 self._worker_stderr.append(text)
             severity, explicit, message, loglevel = self._split_worker_log(text)
+            if message.startswith("[CEDTS] "):
+                _emit_log(log, message, severity, "info")
+                continue
             if filtered_continuation:
                 if not explicit:
                     continue

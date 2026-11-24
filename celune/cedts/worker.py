@@ -368,6 +368,65 @@ def _describe(backend: BackendRuntime) -> BackendDescription:
     )
 
 
+def _packet_log_value(value: WorkerValue, depth: int = 0) -> WorkerValue:
+    """Return a bounded, JSON-safe packet value for diagnostic logging."""
+    if depth >= 4:
+        return "..."
+    if isinstance(value, dict):
+        return {
+            key: _packet_log_value(cast(WorkerValue, item), depth + 1)
+            for key, item in list(value.items())[:32]
+        }
+    if isinstance(value, (list, tuple)):
+        return [_packet_log_value(item, depth + 1) for item in value[:32]]
+    if value is None or isinstance(value, (bool, int, float, str)):
+        if isinstance(value, str) and len(value) > 512:
+            return f"{value[:512]}..."
+        return value
+    shape = getattr(value, "shape", None)
+    dtype = getattr(value, "dtype", None)
+    if shape is not None or dtype is not None:
+        return f"<{type(value).__name__} shape={shape} dtype={dtype}>"
+    return f"<{type(value).__name__}>"
+
+
+def _log_packet(message: WorkerMessage, direction: str) -> None:
+    """Write one bounded CEDTS packet summary to the worker diagnostic stream."""
+    kind = message.get("kind", "packet")
+    operation = message.get("operation")
+    packet_name = str(operation or kind).upper()
+    version = message.get("cedts_version")
+    packet_id = message.get("message_id", message.get("reply_to", "-"))
+    data = message.get("data", {})
+    args = data.get("arguments") if isinstance(data, dict) else None
+    fields = [
+        packet_name,
+        f"version={json.dumps(version, separators=(',', ':'))}",
+        f"client={'core' if direction == 'in' else 'worker'}",
+        f"server={'worker' if direction == 'in' else 'core'}",
+        f"id={packet_id}",
+    ]
+    if args is not None:
+        fields.append(
+            f"args={json.dumps(_packet_log_value(cast(WorkerValue, args)), separators=(',', ':'))}"
+        )
+    if kind in {"response", "error"} and isinstance(data, dict):
+        response_error = data.get("error")
+        if kind == "response" and data.get("ok") is not False:
+            response_field = "response=ok"
+        elif isinstance(response_error, str):
+            failure = response_error.splitlines()[0][:160]
+            response_field = f"response={json.dumps(failure, ensure_ascii=False)}"
+        else:
+            response_field = "response=failed"
+    else:
+        response_field = None
+    rendered_fields = ", ".join(fields)
+    if response_field is not None:
+        rendered_fields = f"{rendered_fields} {response_field}"
+    _worker_log(f"[CEDTS] {rendered_fields}", loglevel="verbose")
+
+
 def _worker_log(
     message: str,
     severity: str = "info",
@@ -825,8 +884,10 @@ def _send_message(
         if binary_stream is None:
             if payloads:
                 raise RuntimeError("backend worker binary output stream is unavailable")
+            _log_packet(message, "out")
             return
         send_payloads(binary_stream, payloads, limits=limits)
+        _log_packet(message, "out")
 
     if send_lock is None:
         send()
@@ -1018,11 +1079,13 @@ def main() -> int:
             typed_descriptors,
             limits=effective_limits,
         )
-        return control_message, decode_message(
+        decoded_message = decode_message(
             control_message,
             payloads,
             limits=effective_limits,
         )
+        _log_packet(decoded_message, "in")
+        return control_message, decoded_message
 
     handshake_input = _HandshakeInputStream(sys.stdin.buffer)
     handshake_results: queue.Queue[

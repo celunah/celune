@@ -1013,6 +1013,9 @@ class CeluneUIThemeState:
     log_history: list[tuple[str, str]] = field(default_factory=list)
     log_history_lock: threading.Lock = field(default_factory=threading.Lock)
     rendered_log_count: int = 0
+    cedts_log_history: list[tuple[str, str]] = field(default_factory=list)
+    cedts_log_history_lock: threading.Lock = field(default_factory=threading.Lock)
+    log_source: str = "Celune"
     status_severity: str = "info"
     status_text: str = ""
     status_marquee_offset: int = 0
@@ -1170,6 +1173,12 @@ class CeluneUI(
             string("debug.binding"),
             priority=True,
         ),
+        binding.Binding(
+            "ctrl+l",
+            "toggle_log_source",
+            string("ui.log_source_binding"),
+            priority=True,
+        ),
     ]
     CSS = CELUNE_CSS
     _instance: ClassVar[Optional[CeluneUI]] = None
@@ -1256,6 +1265,11 @@ class CeluneUI(
     log_history = _forward_ui_property("_theme_state", "log_history")
     _log_history_lock = _forward_ui_property("_theme_state", "log_history_lock")
     _rendered_log_count = _forward_ui_property("_theme_state", "rendered_log_count")
+    cedts_log_history = _forward_ui_property("_theme_state", "cedts_log_history")
+    _cedts_log_history_lock = _forward_ui_property(
+        "_theme_state", "cedts_log_history_lock"
+    )
+    log_source = _forward_ui_property("_theme_state", "log_source")
     status_severity = _forward_ui_property("_theme_state", "status_severity")
     _status_text = _forward_ui_property("_theme_state", "status_text")
     _status_marquee_offset = _forward_ui_property(

@@ -679,6 +679,21 @@ def safe_log(
     if self.cur_state == "exiting":
         return
 
+    if msg.startswith("[CEDTS] "):
+        cedts_message = msg.removeprefix("[CEDTS] ")
+        with self._cedts_log_history_lock:
+            self.cedts_log_history.append((cedts_message, severity))
+            if len(self.cedts_log_history) > 10_000:
+                del self.cedts_log_history[: len(self.cedts_log_history) - 10_000]
+        if self.log_source == "CEDTS" and self.logs is not None:
+            if threading.current_thread() is threading.main_thread():
+                self.logs.write(
+                    _app.Text(cedts_message, style=self._severity_color(severity))
+                )
+            else:
+                self.post_message(_app.UILogMessage(cedts_message, severity))
+        return
+
     levels = {"info": 0, "verbose": 1, "debug": 2}
     active_log_level = _app.resolve_log_level(
         getattr(self.celune, "log_level", None),

@@ -89,6 +89,7 @@ __all__ = (
     "_update_status_label",
     "_write_terminal_escape",
     "_write_terminal_title",
+    "action_toggle_log_source",
     "advance_resources",
     "attach_celune",
     "compose",
@@ -861,8 +862,12 @@ def _refresh_logs(self, *, recolor: bool = False) -> None:
     if self.logs is None:
         return
 
-    with self._log_history_lock:
-        history = tuple(self.log_history)
+    if self.log_source == "CEDTS":
+        with self._cedts_log_history_lock:
+            history = tuple(self.cedts_log_history)
+    else:
+        with self._log_history_lock:
+            history = tuple(self.log_history)
 
     if not recolor:
         if self._rendered_log_count > len(history):
@@ -909,6 +914,16 @@ def _refresh_logs(self, *, recolor: bool = False) -> None:
         force=True,
     )
     self._rendered_log_count = len(history)
+
+
+def action_toggle_log_source(self) -> None:
+    """Switch the live log widget between Celune and CEDTS worker traffic."""
+    self.log_source = "CEDTS" if self.log_source == "Celune" else "Celune"
+    self._rendered_log_count = 0
+    if self.logs is not None:
+        self.logs.clear()
+    self._refresh_logs()
+    self.update_resources()
 
 
 def _persist_log_entry(self, msg: str, severity: str) -> None:
@@ -1314,8 +1329,11 @@ def update_resources(self) -> None:
     def update() -> None:
         pages = resources.resource_pages(self.celune, self.active_theme_name)
         text = pages[self._resource_page % len(pages)]
+        hint = _app.string("ui.log_source_hint", source=self.log_source)
 
-        self.resources.update(_app.indent(text, spaces=2, direction="right"))
+        self.resources.update(
+            _app.indent(f"{hint}  {text}", spaces=2, direction="right")
+        )
 
     self._run_on_ui_thread(update)
 
@@ -2211,6 +2229,10 @@ class RuntimeHooks:
     ) -> None:
         """Delegate to the runtime implementation."""
         return _on_agent_task_state_changed(self, event)
+
+    def action_toggle_log_source(self) -> None:
+        """Delegate to the runtime implementation."""
+        return action_toggle_log_source(self)
 
     def _persist_log_entry(self, msg: str, severity: str) -> None:
         """Delegate to the runtime implementation."""

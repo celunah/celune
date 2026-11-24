@@ -78,6 +78,66 @@ def _worker_error_response(error: CESNError) -> tuple[WorkerResponse, str]:
 class TestWorkerProtocol:
     """Exercise the CEDTS worker wire protocol in subprocesses."""
 
+    def test_worker_logs_schema_aware_cedts_traffic(self) -> None:
+        """Show packet fields in verbose diagnostics without dumping arrays."""
+        worker_stderr = io.StringIO()
+        request = cast(
+            WorkerMessage,
+            {
+                "kind": "request",
+                "operation": "generate_stream",
+                "cedts_version": [1, 4],
+                "message_id": "request-1",
+                "data": {
+                    "arguments": {
+                        "text": "hello",
+                        "audio": cast(WorkerValue, np.zeros(64, dtype=np.float32)),
+                    }
+                },
+            },
+        )
+        response = cast(
+            WorkerMessage,
+            {
+                "kind": "response",
+                "operation": "generate_stream",
+                "cedts_version": [1, 4],
+                "reply_to": "request-1",
+                "data": {
+                    "ok": True,
+                    "audio": cast(WorkerValue, np.zeros(64, dtype=np.float32)),
+                },
+            },
+        )
+        error_response = cast(
+            WorkerMessage,
+            {
+                "kind": "error",
+                "operation": "describe",
+                "cedts_version": [1, 4],
+                "reply_to": "request-2",
+                "data": {"error": "unsupported model", "error_type": "BackendError"},
+            },
+        )
+        with mock.patch.object(worker, "_WORKER_STDERR", worker_stderr):
+            worker._log_packet(request, "in")
+            worker._log_packet(response, "out")
+            worker._log_packet(error_response, "out")
+        lines = worker_stderr.getvalue().splitlines()
+        assert len(lines) == 3
+        assert "[verbose][info] [CEDTS] GENERATE_STREAM, version=[1,4]" in lines[0]
+        assert "version=[1,4]" in lines[0]
+        assert "client=core, server=worker, id=request-1" in lines[0]
+        assert (
+            'args={"text":"hello","audio":"<ndarray shape=(64,) dtype=float32>"}'
+            in lines[0]
+        )
+        assert "[verbose][info] [CEDTS] GENERATE_STREAM, version=[1,4]" in lines[1]
+        assert "client=worker, server=core, id=request-1" in lines[1]
+        assert lines[1].endswith("response=ok")
+        assert "DESCRIBE, version=[1,4]" in lines[2]
+        assert 'response="unsupported model"' in lines[2]
+
     def test_cedts_preserves_cesn_error_source_spans(self) -> None:
         """Return worker-side CESN diagnostics as source-aware parser errors."""
         stream = io.BytesIO()
@@ -489,9 +549,10 @@ raise SystemExit(worker.main())
             except subprocess.TimeoutExpired:
                 pytest.fail("worker did not exit after shutdown acknowledgement")
             assert process.returncode == 0
-            assert "backend load diagnostic" in (
-                stderr_output.decode("utf-8", errors="replace")
-            )
+            stderr_text = stderr_output.decode("utf-8", errors="replace")
+            assert "backend load diagnostic" in stderr_text
+            assert "[verbose][info] [CEDTS] HANDSHAKE, version=[1,4]" in stderr_text
+            assert "[verbose][info] [CEDTS] DESCRIBE, version=[1,4]" in stderr_text
         finally:
             for descriptor in (
                 worker_binary_input,
@@ -1683,6 +1744,30 @@ raise SystemExit(worker.main())
         proxy._read_worker_logs(stream, log)
 
         log.assert_called_once_with("backend message", "info", loglevel="info")
+
+    def test_remote_proxy_forwards_cedts_traffic_with_source_marker(self) -> None:
+        """Forward worker packet diagnostics with their source marker intact."""
+        proxy = object.__new__(remote.RemoteBackendProxy)
+        proxy._worker_stderr = deque()
+        proxy._worker_stderr_lock = threading.Lock()
+        log = mock.Mock()
+        stream = io.BytesIO(
+            b"[verbose][info] [CEDTS] request.describe version=[1,4]\n"
+            b"[info] backend ready\n"
+        )
+
+        proxy._read_worker_logs(stream, log)
+
+        assert log.call_args_list == [
+            mock.call(
+                "[CEDTS] request.describe version=[1,4]", "info", loglevel="info"
+            ),
+            mock.call("backend ready", "info", loglevel="info"),
+        ]
+        assert list(proxy._worker_stderr) == [
+            "[verbose][info] [CEDTS] request.describe version=[1,4]",
+            "[info] backend ready",
+        ]
 
     def test_remote_proxy_suppresses_multiline_tokenizer_warning(self) -> None:
         """Verify a filtered third-party warning and its continuation stay hidden."""

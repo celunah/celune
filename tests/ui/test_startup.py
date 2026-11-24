@@ -715,6 +715,36 @@ class TestUIStartup:
             string("osc.action_warning"),
         )
 
+    def test_cedts_traffic_is_retained_separately_from_celune_logs(self) -> None:
+        """Keep worker traffic available as a selectable log source only."""
+        ui = CeluneUI(startup_log_level="info")
+        ui.logs = None
+        loading_screen = mock.Mock()
+        ui._loading_screen = loading_screen
+
+        ui.safe_log("[CEDTS] request.describe id=request-1")
+
+        assert ui.cedts_log_history == [("request.describe id=request-1", "info")]
+        assert not ui.log_history
+        loading_screen.set_latest_log_message.assert_not_called()
+
+    def test_toggle_log_source_switches_between_celune_and_cedts(self) -> None:
+        """Restore the selected source in the log widget when toggled."""
+        ui = CeluneUI()
+        ui.logs = mock.Mock()
+        ui._refresh_logs = mock.Mock()
+        ui.update_resources = mock.Mock()
+
+        ui.action_toggle_log_source()
+        assert ui.log_source == "CEDTS"
+        ui.logs.clear.assert_called_once_with()
+        ui._refresh_logs.assert_called_once_with()
+        ui.update_resources.assert_called_once_with()
+
+        ui.action_toggle_log_source()
+        assert ui.log_source == "Celune"
+        assert ui._refresh_logs.call_count == 2
+
     def test_pre_attach_logs_use_configured_startup_log_level(self) -> None:
         """Verify deferred full-mode startup logs use the configured level before attach."""
         ui = CeluneUI(startup_log_level="info")

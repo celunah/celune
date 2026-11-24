@@ -1105,6 +1105,8 @@
     "ui.voice_confirm_hint": "ENTER apply",
     "ui.voice_menu_title": "Select voice",
     "ui.wait_placeholder": "Please wait",
+    "ui.log_source_binding": "Switch log source",
+    "ui.log_source_hint": "^L view {source} logs",
     "ui.wake_placeholder": "Type anything to wake up {character_name}",
     "vram.configuration_unprofiled": "This configuration is unprofiled and may not work on your hardware configuration.",
     "vram.preset_reduced": "Only {total} GiB VRAM is available. Selecting '{selected}' instead of '{requested}'.",
