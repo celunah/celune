@@ -822,7 +822,7 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
                 self._send_packet(
                     process.stdin,
                     "ping",
-                    "protocol",
+                    "heartbeat",
                     message_id=heartbeat_id,
                 )
             except (BrokenPipeError, OSError, CEDTSError) as error:

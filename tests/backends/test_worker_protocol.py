@@ -86,7 +86,7 @@ class TestWorkerProtocol:
             {
                 "kind": "request",
                 "operation": "generate_stream",
-                "cedts_version": [1, 4],
+                "cedts_version": [1, 5],
                 "message_id": "request-1",
                 "data": {
                     "arguments": {
@@ -101,7 +101,7 @@ class TestWorkerProtocol:
             {
                 "kind": "response",
                 "operation": "generate_stream",
-                "cedts_version": [1, 4],
+                "cedts_version": [1, 5],
                 "reply_to": "request-1",
                 "data": {
                     "ok": True,
@@ -114,7 +114,7 @@ class TestWorkerProtocol:
             {
                 "kind": "error",
                 "operation": "describe",
-                "cedts_version": [1, 4],
+                "cedts_version": [1, 5],
                 "reply_to": "request-2",
                 "data": {"error": "unsupported model", "error_type": "BackendError"},
             },
@@ -125,17 +125,17 @@ class TestWorkerProtocol:
             worker._log_packet(error_response, "out")
         lines = worker_stderr.getvalue().splitlines()
         assert len(lines) == 3
-        assert "[verbose][info] [CEDTS] GENERATE_STREAM, version=[1,4]" in lines[0]
-        assert "version=[1,4]" in lines[0]
+        assert "[verbose][info] [CEDTS] GENERATE_STREAM, version=[1,5]" in lines[0]
+        assert "version=[1,5]" in lines[0]
         assert "client=core, server=worker, id=request-1" in lines[0]
         assert (
             'args={"text":"hello","audio":"<ndarray shape=(64,) dtype=float32>"}'
             in lines[0]
         )
-        assert "[verbose][info] [CEDTS] GENERATE_STREAM, version=[1,4]" in lines[1]
+        assert "[verbose][info] [CEDTS] GENERATE_STREAM, version=[1,5]" in lines[1]
         assert "client=worker, server=core, id=request-1" in lines[1]
         assert lines[1].endswith("response=ok")
-        assert "DESCRIBE, version=[1,4]" in lines[2]
+        assert "DESCRIBE, version=[1,5]" in lines[2]
         assert 'response="unsupported model"' in lines[2]
 
     def test_cedts_preserves_cesn_error_source_spans(self) -> None:
@@ -477,7 +477,7 @@ raise SystemExit(worker.main())
                 cast(
                     dict[str, WorkerValue],
                     {
-                        "versions": [[1, 4]],
+                        "versions": [[1, 5]],
                         "capabilities": remote.CORE_CAPABILITIES,
                         "required_capabilities": {"streaming": True},
                     },
@@ -496,10 +496,11 @@ raise SystemExit(worker.main())
             send_no_payload_packet(
                 process.stdin,
                 core_binary_output,
-                build_packet("ping", "protocol", message_id=heartbeat_id),
+                build_packet("ping", "heartbeat", message_id=heartbeat_id),
             )
             pong = receive_worker_message()
             assert pong["kind"] == "pong"
+            assert pong["operation"] == "heartbeat"
             assert pong["reply_to"] == heartbeat_id
 
             request = build_packet(
@@ -551,8 +552,8 @@ raise SystemExit(worker.main())
             assert process.returncode == 0
             stderr_text = stderr_output.decode("utf-8", errors="replace")
             assert "backend load diagnostic" in stderr_text
-            assert "[verbose][info] [CEDTS] HANDSHAKE, version=[1,4]" in stderr_text
-            assert "[verbose][info] [CEDTS] DESCRIBE, version=[1,4]" in stderr_text
+            assert "[verbose][info] [CEDTS] HANDSHAKE, version=[1,5]" in stderr_text
+            assert "[verbose][info] [CEDTS] DESCRIBE, version=[1,5]" in stderr_text
         finally:
             for descriptor in (
                 worker_binary_input,
@@ -847,7 +848,7 @@ raise SystemExit(worker.main())
                     cast(
                         dict[str, WorkerValue],
                         {
-                            "versions": [[1, 4]],
+                            "versions": [[1, 5]],
                             "capabilities": remote.CORE_CAPABILITIES,
                             "required_capabilities": {"streaming": True},
                         },
@@ -1162,7 +1163,7 @@ finally:
                     cast(
                         dict[str, WorkerValue],
                         {
-                            "versions": [[1, 4]],
+                            "versions": [[1, 5]],
                             "capabilities": remote.CORE_CAPABILITIES,
                             "required_capabilities": {"streaming": True},
                         },
@@ -1469,7 +1470,7 @@ raise SystemExit(worker.main())
                     cast(
                         dict[str, WorkerValue],
                         {
-                            "versions": [[1, 4]],
+                            "versions": [[1, 5]],
                             "capabilities": remote.CORE_CAPABILITIES,
                             "required_capabilities": {"streaming": True},
                         },
@@ -1752,7 +1753,7 @@ raise SystemExit(worker.main())
         proxy._worker_stderr_lock = threading.Lock()
         log = mock.Mock()
         stream = io.BytesIO(
-            b"[verbose][info] [CEDTS] request.describe version=[1,4]\n"
+            b"[verbose][info] [CEDTS] request.describe version=[1,5]\n"
             b"[info] backend ready\n"
         )
 
@@ -1760,12 +1761,12 @@ raise SystemExit(worker.main())
 
         assert log.call_args_list == [
             mock.call(
-                "[CEDTS] request.describe version=[1,4]", "info", loglevel="info"
+                "[CEDTS] request.describe version=[1,5]", "info", loglevel="info"
             ),
             mock.call("backend ready", "info", loglevel="info"),
         ]
         assert list(proxy._worker_stderr) == [
-            "[verbose][info] [CEDTS] request.describe version=[1,4]",
+            "[verbose][info] [CEDTS] request.describe version=[1,5]",
             "[info] backend ready",
         ]
 

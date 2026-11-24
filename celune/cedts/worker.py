@@ -1419,7 +1419,7 @@ def main() -> int:
             _send_message(
                 protocol_stream,
                 binary_output,
-                build_packet("pong", "protocol", reply_to=packet_id),
+                build_packet("pong", "heartbeat", reply_to=packet_id),
                 send_lock,
                 limits=effective_limits,
             )

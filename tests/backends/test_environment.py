@@ -1053,7 +1053,7 @@ class TestBackendEnvironment:
         with pytest.raises(CEDTSStreamError) as context:
             send_message(
                 cast(IO[bytes], _ClosedStream()),
-                build_packet("ping", "protocol"),
+                build_packet("ping", "heartbeat"),
             )
         assert "pipe is closed" in (str(context.value))
 
@@ -1125,7 +1125,7 @@ class TestBackendEnvironment:
             + b"}}}"
         )
         oversized_collection = {
-            "cedts_version": [1, 4],
+            "cedts_version": [1, 5],
             "kind": "request",
             "message_id": "collection",
             "reply_to": None,
@@ -1133,7 +1133,7 @@ class TestBackendEnvironment:
             "data": {"arguments": {"value": list(range(1025))}},
         }
         unknown_packet_field = {
-            "cedts_version": [1, 4],
+            "cedts_version": [1, 5],
             "kind": "request",
             "message_id": "unknown-field",
             "reply_to": None,
@@ -1153,7 +1153,7 @@ class TestBackendEnvironment:
 
         oversized_string = json.dumps(
             {
-                "cedts_version": [1, 4],
+                "cedts_version": [1, 5],
                 "kind": "request",
                 "message_id": "string",
                 "reply_to": None,
@@ -1282,7 +1282,7 @@ class TestBackendEnvironment:
                 cast(
                     dict[str, WorkerValue],
                     {
-                        "versions": [[1, 4]],
+                        "versions": [[1, 5]],
                         "capabilities": remote.CORE_CAPABILITIES,
                         "unexpected": True,
                     },
@@ -1297,6 +1297,7 @@ class TestBackendEnvironment:
             build_packet("event", "fatal", {"fatal": "yes"}),
             build_packet("cancel", "cancel", {"target_message_id": 1}),
             build_packet("shutdown", "shutdown", {}),
+            build_packet("ping", "protocol"),
             build_packet(
                 "error",
                 "protocol",

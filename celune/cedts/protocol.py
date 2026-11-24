@@ -99,7 +99,7 @@ _AUDIO_MEDIA_TYPES = frozenset(
 _CEDTS_AUDIO_PEAK = np.float32(0.95)
 _TENSOR_MEDIA_TYPES = frozenset({"application/x-tensor"})
 _VALID_DTYPES = frozenset({"bool", "float32", "float64", "int8", "int16", "uint8"})
-CEDTS_VERSION = (1, 4)
+CEDTS_VERSION = (1, 5)
 HEARTBEAT_INTERVAL_SECONDS = 5.0
 HEARTBEAT_TIMEOUT_SECONDS = 30.0
 HEARTBEAT_CHECK_INTERVAL_SECONDS = 1.0
@@ -139,6 +139,7 @@ _PROTOCOL_OPERATIONS = frozenset(
         "cancel",
         "fatal",
         "handshake",
+        "heartbeat",
         "metadata",
         "protocol",
         "ready",
@@ -1318,7 +1319,7 @@ def _validate_packet_data(kind: str, operation: str, data: JSON) -> None:
             raise _worker_protocol_error("backend_worker_error_operation_is_invalid")
         _validate_error_data(data)
     elif kind in {"ping", "pong"}:
-        _validate_operation_match(operation, "protocol")
+        _validate_operation_match(operation, "heartbeat")
         _validate_exact_fields(data, set())
     elif kind == "shutdown":
         _validate_operation_match(operation, "shutdown")

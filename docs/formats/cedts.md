@@ -3,7 +3,7 @@
 CEDTS is Celune's private **C**elune **E**xtensible **D**ata **T**ransport
 **S**tandard for isolated backend workers and in-process frontend timed-update
 notifications. It is an implementation contract, not a public network API.
-The current protocol version is `(1, 4)`, written as `[1, 4]` in JSON. The
+The current protocol version is `(1, 5)`, written as `[1, 5]` in JSON. The
 pair is ordered as `(major, minor)`.
 
 The design keeps control frames and binary payloads separate, uses explicit
@@ -47,7 +47,7 @@ Control packets use these fields:
 
 | Field | Meaning |
 | --- | --- |
-| `cedts_version` | Two-element `[major, minor]` protocol version, currently `[1, 4]`. |
+| `cedts_version` | Two-element `[major, minor]` protocol version, currently `[1, 5]`. |
 | `kind` | Packet kind. |
 | `message_id` | Unique ID for a request/event. |
 | `reply_to` | Message ID being answered, when applicable. |
@@ -102,9 +102,9 @@ not expose a second public socket or permit arbitrary frontend commands.
 
 ## Handshake
 
-The core sends `hello` with `versions: [[1, 4]]`, its supported operations,
+The core sends `hello` with `versions: [[1, 5]]`, its supported operations,
 supported media types, a `describe` result, and capability flags. The worker
-replies with `hello_ack` containing the selected `[1, 4]` version and the
+replies with `hello_ack` containing the selected `[1, 5]` version and the
 negotiated capability intersection, then sends `ready` after backend setup.
 Limits are negotiated by taking the smaller peer limit. Current capability
 flags cover streaming, cancellation, and callbacks. The core callback
@@ -114,8 +114,9 @@ major/minor pair match. Version 1.2 adds optional `source_start` and
 half-open CESN source offsets and must appear together. Other error responses
 may omit them. Version 1.3 adds the worker-to-core `metadata` event. Version
 1.4 adds core-to-worker `ping` packets and correlated worker-to-core `pong`
-packets. Since peers require an exact version match, peers on different minor
-versions cannot exchange packets.
+packets. Version 1.5 labels the `ping` and `pong` operations `heartbeat` rather
+than `protocol`. Since peers require an exact version match, peers on different
+minor versions cannot exchange packets.
 
 Before reading the initial hello, the worker waits up to ten seconds for the
 complete control packet and its empty binary boundary. If no control bytes
@@ -131,13 +132,14 @@ The supported operation names are:
 `describe`, `model_is_available_locally`, `preload_models`, `load_model`,
 `unload_model`, `convert`, `call`, and `generate_stream`.
 
-Protocol-level operations include `cancel`, `fatal`, `handshake`, `protocol`,
-`ready`, and `shutdown`.
+Protocol-level operations include `cancel`, `fatal`, `handshake`, `heartbeat`,
+`protocol`, `ready`, and `shutdown`.
 
 ## Heartbeats and worker failure
 
-After the worker sends `ready`, the core sends an empty `ping` packet every five
-seconds. The worker replies with an empty `pong` whose `reply_to` is the ping's
+After the worker sends `ready`, the core sends an empty `ping` packet with
+operation `heartbeat` every five seconds. The worker replies with an empty
+`pong` packet with operation `heartbeat` and `reply_to` set to the ping's
 `message_id`. The core packet reader consumes these pongs outside request
 response queues. Heartbeats use the same serialized control stream as other
 packets and do not carry binary payloads.

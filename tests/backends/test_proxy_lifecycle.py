@@ -1128,7 +1128,7 @@ class TestBackendProxyLifecycle:
         try:
             send_message(
                 writer,
-                build_packet("pong", "protocol", reply_to="heartbeat-request"),
+                build_packet("pong", "heartbeat", reply_to="heartbeat-request"),
             )
             send_message(
                 writer,
@@ -1528,20 +1528,20 @@ class TestBackendProxyLifecycle:
 
     def test_worker_handshake_negotiates_the_cedts_capabilities(self) -> None:
         """Verify the worker accepts a compatible hello and rejects requirements it lacks."""
-        assert remote.CEDTS_VERSION == (1, 4)
+        assert remote.CEDTS_VERSION == (1, 5)
         hello = build_packet(
             "hello",
             "handshake",
             cast(
                 dict[str, WorkerValue],
                 {
-                    "versions": [[1, 4]],
+                    "versions": [[1, 5]],
                     "capabilities": remote.CORE_CAPABILITIES,
                     "required_capabilities": {"streaming": True},
                 },
             ),
         )
-        assert (hello["cedts_version"]) == ([1, 4])
+        assert (hello["cedts_version"]) == ([1, 5])
         negotiated = worker._negotiate_hello(hello)
         assert (negotiated["streaming"]) is True
         assert (negotiated["cancellation"]) is True
@@ -1552,7 +1552,7 @@ class TestBackendProxyLifecycle:
             cast(
                 dict[str, WorkerValue],
                 {
-                    "versions": [[1, 1]],
+                    "versions": [[1, 4]],
                     "capabilities": remote.CORE_CAPABILITIES,
                     "required_capabilities": {"streaming": True},
                 },
@@ -1567,7 +1567,7 @@ class TestBackendProxyLifecycle:
             cast(
                 dict[str, WorkerValue],
                 {
-                    "versions": [[1, 4]],
+                    "versions": [[1, 5]],
                     "capabilities": remote.CORE_CAPABILITIES,
                     "required_capabilities": {"callback": True},
                 },
@@ -1596,7 +1596,7 @@ class TestBackendProxyLifecycle:
             cast(
                 dict[str, WorkerValue],
                 {
-                    "versions": [[1, 4]],
+                    "versions": [[1, 5]],
                     "capabilities": offered_capabilities,
                 },
             ),
@@ -1692,7 +1692,7 @@ class TestBackendProxyLifecycle:
                 cast(
                     dict[str, WorkerValue],
                     {
-                        "cedts_version": [1, 4],
+                        "cedts_version": [1, 5],
                         "capabilities": remote.CORE_CAPABILITIES,
                     },
                 ),
@@ -1732,7 +1732,7 @@ class TestBackendProxyLifecycle:
                 cast(
                     dict[str, WorkerValue],
                     {
-                        "cedts_version": [1, 4],
+                        "cedts_version": [1, 5],
                         "capabilities": remote.CORE_CAPABILITIES,
                     },
                 ),
@@ -1839,7 +1839,7 @@ class TestBackendProxyLifecycle:
                 cast(
                     dict[str, WorkerValue],
                     {
-                        "cedts_version": [1, 4],
+                        "cedts_version": [1, 5],
                         "capabilities": remote.CORE_CAPABILITIES,
                     },
                 ),
@@ -1932,7 +1932,7 @@ class TestBackendProxyLifecycle:
                 cast(
                     dict[str, WorkerValue],
                     {
-                        "cedts_version": [1, 4],
+                        "cedts_version": [1, 5],
                         "capabilities": small_capabilities,
                     },
                 ),
