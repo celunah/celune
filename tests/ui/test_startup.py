@@ -2099,6 +2099,47 @@ class TestUIStartup:
         assert "CTRL+C" not in exit_page
         assert "CTRL+R toggle recording" not in pages
 
+    def test_log_source_hint_has_its_own_resource_page_and_names_other_source(
+        self,
+    ) -> None:
+        """Show only the alternate log source on its dedicated resource page."""
+        ui = CeluneUI()
+        ui.cur_state = "idle"
+        ui.celune = cast(Celune, SimpleNamespace())
+        ui.resources = mock.Mock()
+        ui._run_on_ui_thread = lambda callback: callback()
+        pages = ["resource page one", "resource page two"]
+        resources = SimpleNamespace(resource_pages=lambda *_args: pages)
+
+        with mock.patch.object(ui_app, "ui_resources", resources):
+            ui._resource_page = 0
+            ui.update_resources()
+            ui.resources.update.assert_called_once_with(
+                ui_app.indent(pages[0], spaces=2, direction="right")
+            )
+
+            ui.resources.update.reset_mock()
+            ui._resource_page = len(pages)
+            ui.update_resources()
+            ui.resources.update.assert_called_once_with(
+                ui_app.indent(
+                    string("ui.log_source_hint", source="CEDTS"),
+                    spaces=2,
+                    direction="right",
+                )
+            )
+
+            ui.resources.update.reset_mock()
+            ui.log_source = "CEDTS"
+            ui.update_resources()
+            ui.resources.update.assert_called_once_with(
+                ui_app.indent(
+                    string("ui.log_source_hint", source="Celune"),
+                    spaces=2,
+                    direction="right",
+                )
+            )
+
     def test_textual_resource_footer_advertises_ctrl_r_only_in_vc_mode(self) -> None:
         """Verify the resource footer advertises recording only while VC mode is active."""
         celune = cast(

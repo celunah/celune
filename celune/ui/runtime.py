@@ -1328,12 +1328,13 @@ def update_resources(self) -> None:
 
     def update() -> None:
         pages = resources.resource_pages(self.celune, self.active_theme_name)
-        text = pages[self._resource_page % len(pages)]
-        hint = _app.string("ui.log_source_hint", source=self.log_source)
+        if self._resource_page < len(pages):
+            text = pages[self._resource_page]
+        else:
+            source = "CEDTS" if self.log_source == "Celune" else "Celune"
+            text = _app.string("ui.log_source_hint", source=source)
 
-        self.resources.update(
-            _app.indent(f"{hint}  {text}", spaces=2, direction="right")
-        )
+        self.resources.update(_app.indent(text, spaces=2, direction="right"))
 
     self._run_on_ui_thread(update)
 
@@ -1722,8 +1723,8 @@ def advance_resources(self) -> None:
     if resources is None or self.celune is None:
         return
 
-    self._resource_page = (self._resource_page + 1) % len(
-        resources.resource_pages(self.celune, self.active_theme_name)
+    self._resource_page = (self._resource_page + 1) % (
+        len(resources.resource_pages(self.celune, self.active_theme_name)) + 1
     )
     self.update_resources()
     self._publish_webui_timed_update()
