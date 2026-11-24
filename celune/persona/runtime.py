@@ -28,6 +28,7 @@ from transformers import (
 
 from ..typing.common import JSONSerializable
 from .capabilities import PersonaCapabilities
+from .raon_quantization import quantize_raon_per_layer_table
 from ..exceptions import ModelConsentRequired
 from ..utils import normalize_special_characters
 from ..modeling import create_quantized_kv_cache
@@ -268,6 +269,34 @@ class PersonaBackend:
             )
         else:
             raise ValueError(f"unsupported Persona quantization mode: {quantization}")
+
+        if model_type == "raon1_nano":
+            table_bits = (
+                4
+                if normalized in {"4bit", "nf4", "bnb4", "bitsandbytes-4bit"}
+                else 8
+                if normalized in {"8bit", "bnb8", "bitsandbytes-8bit"}
+                else None
+            )
+            if table_bits is not None:
+                try:
+                    saved_bytes = quantize_raon_per_layer_table(
+                        cast(torch.nn.Module, model),
+                        table_bits,
+                    )
+                except (RuntimeError, TypeError, ValueError) as error:
+                    _LOGGER.warning(
+                        "Could not quantize Raon PLE table, retaining native weights: %s",
+                        error,
+                    )
+                else:
+                    if saved_bytes > 0:
+                        _LOGGER.info(
+                            "Quantized Raon PLE table to %s-bit lookup storage, "
+                            "saved %.2f GiB",
+                            table_bits,
+                            saved_bytes / 1024**3,
+                        )
 
         processor: Optional[PersonaProcessor] = None
         if supports_vision:

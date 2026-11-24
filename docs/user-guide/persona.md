@@ -20,10 +20,13 @@ capabilities = celune.vision.capabilities() if celune.vision is not None else No
 `PersonaCapabilities` distinguishes text, vision, image uploads, and emotion
 probes. Raon-1-nano is a text-only model and has no attachment path, even if the
 UI command is present. Its native Transformers loader requires Transformers
-5.16.1 or newer within the supported 5.x range. Official Raon GGUF artifacts
-are pinned in `celune.registry.gguf`, but Persona's GGUF runtime does not yet
-support the custom Raon architecture. Use the native Transformers mode for
-Raon.
+5.16.1 or newer within the supported 5.x range. Native 4-bit and 8-bit loads
+also quantize Raon's large per-layer embedding table and dequantize the
+requested rows during inference. This is approximate and may affect output
+quality. If Accelerate has sharded or offloaded the table, Celune logs a warning
+and keeps the original table instead. Official Raon GGUF artifacts are pinned
+in `celune.registry.gguf`, but Persona's GGUF runtime does not yet support the
+custom Raon architecture.
 
 The `high` preset supports registered standard models, including the 4B tier.
 Registered smart 8B-tier models require `xhigh`. Persona context is capped at

@@ -273,6 +273,43 @@ class TestPersonaApi:
         )
         processor_loader.assert_not_called()
 
+    def test_raon_quantized_load_compresses_the_per_layer_table(self) -> None:
+        """Apply the custom table quantizer alongside BitsAndBytes loading."""
+        metadata = get_model_metadata("KRAFTON/Raon-1-nano")
+        assert metadata is not None
+        model = _FakeModel()
+        backend = runtime.PersonaBackend()
+        with (
+            mock.patch(
+                "celune.persona.runtime.require_model_consent",
+                return_value=metadata,
+            ),
+            mock.patch(
+                "celune.persona.runtime.torch.cuda.is_available", return_value=True
+            ),
+            mock.patch(
+                "celune.persona.runtime.AutoConfig.from_pretrained",
+                return_value=SimpleNamespace(model_type="raon1_nano"),
+            ),
+            mock.patch(
+                "celune.persona.runtime.AutoModelForCausalLM.from_pretrained",
+                return_value=model,
+            ),
+            mock.patch(
+                "celune.persona.runtime.AutoTokenizer.from_pretrained",
+                return_value=_FakeTokenizer(),
+            ),
+            mock.patch(
+                "celune.persona.runtime.quantize_raon_per_layer_table",
+                return_value=1024,
+            ) as quantize_table,
+        ):
+            backend.load("KRAFTON/Raon-1-nano", "4bit")
+
+        quantize_table.assert_called_once_with(model, 4)
+        assert backend.model is model
+        assert backend.quantization == "4bit"
+
     def test_raon_generation_uses_its_stateful_cache_and_presence_penalty(
         self,
     ) -> None:
