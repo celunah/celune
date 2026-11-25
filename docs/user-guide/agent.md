@@ -106,12 +106,9 @@ Approval pauses do not count as tool iterations. Extensions can subscribe to
 
 ## Verify agent availability
 
-Run `celune test agent` to check the configured live agent path, every active
-tool handler, schema validation, permissions and approvals, task lifecycle,
-choices, context limits, and terminal outcomes. Its report records each check
-as passed, failed, or skipped. Optional local-management checks run only when
-`agent.fs_tools` is enabled. The [CLI guide](../interfaces/cli.md#commands)
-describes the report and exit status.
+Run `celune test agent` to verify the configured agent path. The
+[CLI guide](../interfaces/cli.md#commands) describes the checks, sandbox
+behavior, interaction timeout, report, and exit status.
 
 ## See also
 

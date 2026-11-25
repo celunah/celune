@@ -1,15 +1,8 @@
 # CLI
 
-`main.py` is the lightweight launcher. It rejects unsupported Python versions
-before importing the heavy runtime, then dispatches to `celune.entrypoint`.
-
-Commands that do not start the core keep that boundary: help, version, the
-doctor report, and the test-mode listing use lightweight command dependencies.
-Configuration commands load only the configuration-path and system-browser
-helpers. Voice-pack commands use the CEVOICE reader and writer without starting
-the runtime. Normal starts load the full Celune dependency contract. Agent test
-mode loads the engine and configured integrations. UI test mode uses the Textual
-interface with a lightweight runtime state object.
+The `celune` command starts Celune or runs management operations. Help, version,
+configuration, voice-pack, doctor, and UI test commands avoid loading the full
+inference runtime. Agent test mode loads the configured engine and integrations.
 
 ## Commands
 
@@ -34,36 +27,16 @@ interface with a lightweight runtime state object.
 | `celune help` / `--help` / `-h` | Print command help. |
 | `celune version` / `--version` | Print version, revision, and tagline. |
 
-The agent test runs the configured Persona, Needle, and TTS path through one
-read-only task. It then runs every active production tool handler with isolated
-test state and speaks a short worked/didn't work status for each tool. Detailed
-results are recorded in the test log. Celune speaks a multiple-choice question
-and an approval request before displaying them and accepting typed answers. The
-answers are applied directly to the paused diagnostic runtime, without another
-Persona response. Either listed choice passes. Approving or declining the
-simulated mutation passes when the response is processed. The test also checks task
-lifecycle, schema validation, permissions, context limits, and terminal
-outcomes. Each typed response prompt waits up to two minutes. A missing answer
-fails that check. When local-management tools are enabled, filesystem operations stay
-inside a temporary directory. Process and application mutations use test
-doubles and never launch or close real resources. Independent checks continue
-after a failure.
+`celune test agent` checks the configured Persona, Needle, TTS path, and active
+tool handlers. It uses isolated test state, temporary filesystem paths, and
+test doubles for process or application actions. Interactive checks request
+typed answers, with a two-minute timeout. Disabled tools are skipped, and
+independent checks continue after failures. A failed active check returns the
+standard failure exit code.
 
-UI test mode opens the live Textual interface without importing the production
-engine, TTS backend, model, GPU, or audio integrations. The screen remains
-available for visual inspection, while its runtime actions stay disabled. It
-reports that test mode is active, then marks the runtime stopped after startup.
-Use agent test mode when checking the configured engine and its integrations.
-
-The stopped test UI log shows one `PASS`, `FAIL`, or `SKIP` entry per check and
-a total for each status. Local-management tools are skipped when
-`agent.fs_tools` is disabled. When enabled, filesystem mutations stay inside a
-temporary directory. Process and application launch or termination use test
-doubles and do not affect running programs. A failed active check makes
-`celune test agent` return the standard failure exit code after the UI closes.
-
-The command help aligns descriptions with spaces, so terminal tab-stop settings
-do not shift the text.
+`celune test ui` opens the Textual interface for visual inspection without the
+production engine, TTS backend, model, GPU, or audio integrations. Runtime
+actions remain disabled.
 
 ## Voice pack operations
 

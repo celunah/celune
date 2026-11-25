@@ -1,29 +1,18 @@
 # CEVOICE
 
-`CEVOICE` is Celune's voice-pack container format. Repository-bundled character
-packs are listed in the known default-pack registry and display their registered
-variant label. The registry contains `default.cevoice`, `default_sep19.cevoice`,
-`classic.cevoice`, and `nol.cevoice`. Earlier default-pack checksums remain
-associated with `default.cevoice`. The Natural `default_sep19.cevoice` pack uses
-CECHAR v3. The `default.cevoice` pack uses `CECHAR` v5 and includes the hidden
-`sing` reference. The classic pack remains on CECHAR v4. CECHAR v5 keeps the
-indexed archive layout and reserves an optional hidden `sing` voice for singing
-backends. Older `CECHAR` v2/v3 and
-legacy `CEVOICE` v1 bundles remain readable. `write_cevoice()` writes the
-legacy-compatible layout, `write_cechar_v4()` writes v4, and
-`write_cechar_v5()` writes v5. A `.cevoice` file stores:
+CEVOICE is Celune's local voice-pack container. Current character packs use
+CECHAR v3, v4, or v5. Older CECHAR v2 and legacy CEVOICE v1 bundles remain
+readable. `write_cevoice()` writes the legacy-compatible layout,
+`write_cechar_v4()` writes v4, and `write_cechar_v5()` writes v5. A pack stores:
 
-- a small fixed-size binary header
+- a fixed-size binary header
 - UTF-8 JSON metadata
-- a contiguous binary payload containing the voice assets
+- a contiguous binary payload containing voice assets
 
-Celune currently accepts two asset kinds:
+Celune accepts two voice asset kinds:
 
-- `wav`: reference audio used by the voice-cloning backends
-- `pt`: optional PyTorch embedding data used by Celune's analysis tools
-
-The implementation lives in `celune/cevoice/`: shared bundle behavior is in
-`base.py`, while the version modules own their format rules.
+- `wav`: reference audio used by voice-cloning backends
+- `pt`: optional PyTorch embedding data used by analysis tools
 
 ## File layout
 
@@ -83,8 +72,6 @@ OpenZL writing also requires NumPy. Other CEVOICE reads and edits do not import
 NumPy for OpenZL support.
 CLI pack operations skip PyTorch tensor validation for existing `.pt` entries.
 Adding a new indexed `.pt` entry validates it with PyTorch.
-Codec loading is implemented in `celune/cevoice/v4.py`. CLI reporting is in
-`celune/entrypoint.py`.
 
 ## Metadata schema
 
@@ -310,200 +297,24 @@ Validation rules enforced by Celune:
 
 ## How Celune uses a bundle
 
-To build a pack with CAC's interactive wizard or select CECHAR v3, v4, or v5,
-see [Create a character pack](user-guide/creating-characters.md).
+Use `voice_bundle` to select a pack. The active pack supplies voice references,
+selection order, optional theme colors, and Persona metadata. Voice names remain
+backend identifiers. The `default_voice` and `voice_order` fields control the
+initial selection and display order.
 
-At startup, Celune resolves `voice_bundle` from config:
-
-- `default` becomes `voices/default.cevoice`
-- a bare name such as `my_pack` becomes `voices/my_pack.cevoice`
-- an explicit path is used as-is
-
-The official `default`, `default_sep19`, and `classic` packs are recognized by
-their content checksums, so they retain Celune's built-in Persona identity
-behavior. When shown in character or voice-pack selectors, they are labeled
-`Celune (default)`, `Celune (default_sep19)`, and `Celune (classic)` respectively.
-The variant label is display metadata only. These packs still provide the
-character identity `Celune` to Persona and extensions.
-
-`celune.cevoice.KNOWN_DEFAULT_CEVOICE_PACKS` maps each repository pack filename
-to its accepted SHA-256 checksums. Add a filename and the built pack's checksum
-when a new default character pack becomes part of the repository. Recognition
-uses the checksum, so another file with the same contents receives the same
-registered variant label.
-
-The loader parses and validates the bundle, then lazily materializes assets into a temporary directory only when a backend needs a filesystem path.
-
-- Qwen3 clone mode reads `wav` assets as reference audio and requires per-voice `reference_text`.
-- VoxCPM2 reads `wav` assets as reference audio and uses per-voice `cfg_scale` when present.
-- Voice names are local to the pack. They are not required to match a backend's built-in voice names.
-- CEDTS synchronizes the active pack with its worker and resolves each voice to the shared backend model.
-- Analysis helpers read optional `pt` assets directly from the bundle.
-- `default_voice` controls the initial selected voice.
-- `voice_order` controls the user-facing order.
-- In v5, `sing` is reserved for a singing backend and is hidden from TTS voice selection.
-- SoulXSinger startup, backend overrides, and pack selection require a usable
-  CECHAR v5 singing voice. Celune rejects an incompatible pack before loading
-  the singing model and logs a yellow warning naming the character.
-- `theme.accent` supplies the RGB glow color unless `theme.glow_color` overrides it.
-- Selecting or reloading a pack updates its TUI palette, RGB glow, and voice cycle
-  immediately. A pack without theme colors restores Celune's defaults.
-- `persona.identity.name`, when present, becomes the bundle's character name ahead of top-level `name`.
+CECHAR v5 reserves `sing` for a singing reference and keeps it out of TTS
+selection. A singing backend requires a valid `sing` entry; speech-only packs
+remain valid for ordinary TTS. Optional `pt` assets are used by analysis tools.
+For pack creation, see [Create a character pack](user-guide/creating-characters.md).
 
 ## Persona debug overrides
 
-Persona Markdown can be overridden during local character development without
-rebuilding the CECHAR bundle. Enable the opt-in setting in the active config:
+Local Markdown overrides replace matching embedded character files when
+`persona.debug_overrides` is enabled. See the [Persona guide](user-guide/persona.md)
+for the setting and storage behavior, and [Persona Markdown](formats/persona-markdown.md)
+for supported files.
 
-```yaml
-persona:
-  debug_overrides: true
-```
-
-Celune then checks the app-data directory for a character-specific folder. On
-Windows, the default location is:
-
-```text
-C:\Users\<user>\AppData\Local\Celune\persona\<character-slug>\
-```
-
-Supported non-empty UTF-8 files with the same names as CECHAR assets replace the
-matching files from the active bundle:
-
-- `identity.md`
-- `soul.md`
-- `personality.md`
-- `speech_style.md`
-- `boundaries.md`
-- `examples.md`
-
-Persona memory is always stored separately for each character at
-`<character-slug>\memory\records.json` under the same app-data directory.
-The setting only controls whether local Markdown files replace the embedded
-CECHAR Markdown.
-
-If the configured bundle is missing or malformed, Celune simply has no compatible voice pack to load.
-
-## Recommended way to make one
-
-Use `write_cevoice()` instead of hand-building bytes. It computes offsets, lengths, hashes, required metadata, and the final header for you.
-
-```python
-from pathlib import Path
-
-from celune.cevoice import write_cevoice
-
-write_cevoice(
-    "my_pack.cevoice",
-    {
-        "balanced": {
-            "wav": Path("source-assets/balanced.wav"),
-            "pt": Path("source-assets/balanced.pt"),
-        },
-        "calm": {
-            "wav": Path("source-assets/calm.wav"),
-            "pt": Path("source-assets/calm.pt"),
-        },
-        "bold": {
-            "wav": Path("source-assets/bold.wav"),
-        },
-    },
-    {
-        "name": "My Pack",
-        "description": "My custom Celune voice assets",
-        "default_voice": "balanced",
-        "voice_order": ["balanced", "calm", "bold"],
-        "theme": {
-            "background": "#1d1826",
-            "accent": "#cebaff",
-            "glow_color": "#cebaff",
-            "faded_accent": "#9c88ce",
-        },
-        "persona": {
-            "identity": {
-                "name": "My Character",
-                "profile": "A direct but kind archivist.",
-            },
-            "speaking_style": "Measured, observant, and brief.",
-            "boundaries": [
-                "Do not break character.",
-            ],
-            "prompt_rules": [
-                "Prefer concrete observations.",
-            ],
-            "example_dialogue": [
-                "User: is it fixed?",
-                "My Character: The noisy part is gone. Let's verify the rest.",
-            ],
-            "style": {
-                "warmth": "mid",
-                "directness": "high",
-                "humor": "low",
-                "detail": "mid",
-                "formality": "mid",
-                "enthusiasm": "low",
-            },
-        },
-    },
-    {
-        "balanced": {
-            "cfg_scale": 2.4,
-            "reference_text": "My reference transcript.",
-        },
-        "calm": {
-            "cfg_scale": 3.0,
-            "reference_text": "My calm reference transcript.",
-        },
-        "bold": {
-            "cfg_scale": 2.4,
-            "reference_text": "My bold reference transcript.",
-        },
-    },
-)
-```
-
-The values in the `voices` mapping can be:
-
-- `bytes`
-- a string path
-- a `Path`
-
-`wav` is the important runtime asset. Include `pt` only if you also want Celune's analysis features to have embeddings for that voice.
-
-To add an optional singing reference, write CECHAR v5. Provide its WAV,
-transcript, and CESN score under the reserved `sing` key. The writer stores
-null speaking-only metadata for it. Keep `sing` out of `voice_order`:
-
-```python
-from pathlib import Path
-
-from celune.cevoice import write_cechar_v5
-
-write_cechar_v5(
-    "character.cechar",
-    {
-        "balanced": {"wav": Path("source-assets/balanced.wav")},
-        "sing": {"wav": Path("source-assets/singing.wav")},
-    },
-    {"name": "My Character", "default_voice": "balanced"},
-    {
-        "balanced": {"reference_text": "Speaking transcript."},
-        "sing": {
-            "reference_text": "Singing transcript.",
-            "cesn": "[lang:en][f#3:4,g3:4][ˈsɪŋ.ɪŋ]Singing.",
-            "range": {"min": 54, "max": 72},
-        },
-    },
-)
-```
-
-The v5 writer adds `cfg_scale: null` and `persona: null` to `voices.sing`, and
-adds `cesn: null` to every speaking voice. It requires a singing pitch range,
-rejects a missing singing score, and rejects non-null CESN metadata on a
-speaking voice. Ordinary TTS continues to use the speaking voices listed in
-`voice_order`.
-
-## Minimal bundle recipe
+## Create a minimal CECHAR v3 pack
 
 For the smallest practical bundle:
 
@@ -557,54 +368,11 @@ If you want byte-for-byte output compatible with Celune's current writer, serial
 
 That last part is not required for validity, but it matches the built-in writer.
 
-## Reading and checking a bundle
+## Checking a bundle
 
-You can validate a finished file through Celune's parser:
-
-```python
-from celune.cevoice import CEVoice
-
-bundle = CEVoice.open("my_pack.cevoice")
-print(bundle.voice_order)
-print(bundle.read_asset("balanced", "wav")[:16])
-```
-
-`CEVoice.open()` validates indexed `.pt` tensors by default, in addition to:
-
-- the header
-- metadata structure
-- allowed asset kinds
-- offsets and lengths against the payload size
-
-Pass `validate_embeddings=False` to check the container without importing
-PyTorch or validating indexed `.pt` tensor contents. The CLI uses this option.
-Entry checksums and all non-tensor format validation still run. Callers that
-consume `.pt` data should use the default full validation.
-
-`read_asset()` additionally validates the SHA-256 digest of the asset bytes before returning them.
-Call `celune.cevoice.validate_v4_embedding(name, data)` to validate one indexed
-`.pt` asset directly. It accepts the archive entry name and serialized tensor
-bytes, returns `None` for a valid embedding, raises `CEVoiceError` for invalid
-data, and raises `CEVoiceDependencyUnavailableError` when PyTorch is missing.
-
-## Notes from Celune's default pack
-
-Celune's bundled `default.cevoice` uses:
-
-- `name`: `Celune`
-- `default_voice`: `balanced`
-- `voice_order`: `balanced`, `calm`, `bold`, `upbeat`
-- `theme`: `background`, `accent`, `glow_color`, and `faded_accent`
-- top-level `assets`: prompt source material for the bundled character
-- `soul.md`: shared character continuity and relationship guidance
-- per-voice `persona`: response-style refinements layered onto the shared character
-- `cfg_scale`: `2.4` for `balanced`, `bold`, and `upbeat`, and `3.0` for `calm`
-- `reference_text`: the transcript matching each bundled reference `wav`
-- `sing.range`: MIDI pitches 54-72 (F#3-C5), inclusive
-- both `wav` and `pt` assets for each voice
-- a `sing` WAV reference with transcript `Moonlight resting, silver-blue, I'll keep one quiet light for you.`. Celune keeps this voice out of `voice_order` and TTS selection
-
-That pack is a good real-world model if you want your own bundle to behave like the stock one.
+Use `celune ls <pack.cevoice>` to list entries and validate the container
+without loading PyTorch. `CEVoice.open()` validates indexed `.pt` tensor
+contents by default. See the CLI and Python API pages for usage details.
 
 ## See also
 

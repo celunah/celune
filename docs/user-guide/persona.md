@@ -7,30 +7,20 @@ it.
 
 ## Model and capabilities
 
-The default model is `Qwen/Qwen3-VL-4B-Instruct`. The model registry in
-`celune.registry.llm` also contains the supported Qwen3-VL, Qwen3.5, Gemma, and
-KRAFTON Raon-1-nano models, each with an allowlisted revision. The selected
-`vram` tier controls quantization and loading choices. Persona can report these
-capabilities:
+The default model is `Qwen/Qwen3-VL-4B-Instruct`. Celune also supports
+registered Qwen3-VL, Qwen3.5, Gemma, and KRAFTON Raon-1-nano models. The
+selected `vram` tier controls loading and quantization. The `high` preset
+supports standard registered models, including the 4B tier. Registered smart
+8B-tier models require `xhigh`.
 
-```python
-capabilities = celune.vision.capabilities() if celune.vision is not None else None
-```
+Raon-1-nano is text-only and does not accept attachments. Its native
+Transformers loader requires Transformers 5.16.1 or newer within the supported
+5.x range. Native 4-bit and 8-bit quantization of its embedding table is
+approximate and may affect output quality. Persona's GGUF runtime does not yet
+support the Raon architecture.
 
-`PersonaCapabilities` distinguishes text, vision, image uploads, and emotion
-probes. Raon-1-nano is a text-only model and has no attachment path, even if the
-UI command is present. Its native Transformers loader requires Transformers
-5.16.1 or newer within the supported 5.x range. Native 4-bit and 8-bit loads
-also quantize Raon's large per-layer embedding table and dequantize the
-requested rows during inference. This is approximate and may affect output
-quality. If Accelerate has sharded or offloaded the table, Celune logs a warning
-and keeps the original table instead. Official Raon GGUF artifacts are pinned
-in `celune.registry.gguf`, but Persona's GGUF runtime does not yet support the
-custom Raon architecture.
-
-The `high` preset supports registered standard models, including the 4B tier.
-Registered smart 8B-tier models require `xhigh`. Persona context is capped at
-2,048 tokens outside agent mode. Agent requests use a separate 8,192-token cap.
+Persona context is capped at 2,048 tokens outside agent mode. Agent requests use
+a separate 8,192-token cap.
 
 ## Character context
 
@@ -54,11 +44,8 @@ Persona speech capture. Whisper uses the configured
 speech model, automatic language detection by default, a five-second no-input
 timeout, and a 1.5-second speech-end delay.
 
-The transcriber exposes segment and word timestamps for the voice-input
-workflow. Whisper loads when a recording is transcribed and unloads after its
-final queued snapshot or cancellation. Input is resampled to the runtime's
-audio invariants before transcription. Speech captions use the separate IPA
-aligner documented in [speech](speech.md).
+Input audio is resampled before transcription. Speech captions use the separate
+IPA aligner documented in [Speech](speech.md).
 
 ## Attachments
 
@@ -69,48 +56,30 @@ pending attachments. Attachments are sent on the next vision-capable Persona
 turn. They are not interpreted by a speech-only backend.
 
 `/say <text>` is useful after an attachment: it sends the text as a direct
-vision prompt. In a vision-capable setup, Celune also keeps an internal display
-form when IPA replacement or other normalization changes the text that is
-synthesized.
+vision prompt.
 
 ## Emotion probes
 
-When enabled by the active Persona runtime, the `lunahr/emotispace-128` model
-produces GoEmotions-style labels. The implementation weights the user's
-emotion more strongly than the assistant's previous emotion and turns the
-result into a response-style cue. It is an input to response shaping, not a
-diagnostic claim about the user's mental state.
+When enabled, the `lunahr/emotispace-128` model can provide emotion labels as a
+response-style cue. These labels are not a diagnostic claim about the user's
+mental state.
 
 ## Long-term memory
 
-Memory is character-scoped. The default store is:
+Memory is scoped to the active character and stored under
+`<Celune app-data>/persona/<character-slug>/memory/records.json`. Use explicit
+phrases such as "remember this" or "save this" to persist a detail. Automatic
+suggestions use user-authored messages only. Credentials and similar sensitive
+secrets are rejected rather than stored.
 
-```text
-<Celune app-data>/persona/<character-slug>/memory/records.json
-```
+Explicit memories remain until forgotten. Inferred memories expire 60 days
+after their last update by default. Set
+`persona.memory.automatic_max_age_days` to `null` to disable that expiry.
+Retrieval combines semantic similarity with literal text matching when local
+embeddings are available, and uses text matching otherwise.
 
-Each record contains an ID, normalized content, importance from 1 to 3,
-explicitness, creation/update timestamps, and last-use timestamp. Use explicit
-phrases such as “remember this”, “don't forget”, “make a note of this”, “save
-this”, “on record”, or “going forward” when a detail should be persisted.
-
-The classifier may suggest additional memories when its confidence is above
-the configured threshold and the candidate count is within the configured
-limit. It uses user-authored messages, not Celune's generated replies, as
-evidence. Sensitive-looking secrets, passwords, API keys, payment numbers, and
-similar credentials are rejected rather than stored. Retrieval combines local
-sentence-transformer similarity with literal token and phrase overlap when
-embeddings are available, and uses token overlap when they are not. Configured
-thresholds control candidate eligibility. Explicit `recall` commands preserve
-the search phrase from the original user request. Inferred memories stop being
-retrieved 60 days after their last update by default. Explicit memories remain
-available until forgotten. Set `persona.memory.automatic_max_age_days` to
-`null` to disable inferred-memory expiry. Exact duplicates are merged, and
-high-confidence semantic duplicates are merged when local embeddings are
-available.
-
-Agent tools expose `remember`, `recall`, `forget`, `clear_recent_context`, and
-`summarize_context`. The same memory store is used by ordinary Persona turns.
+Agent mode provides `remember`, `recall`, `forget`, `clear_recent_context`, and
+`summarize_context` tools. Ordinary Persona turns use the same memory store.
 
 ## Debug Markdown overrides
 

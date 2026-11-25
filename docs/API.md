@@ -597,79 +597,26 @@ not persisted across a restart.
 
 ## WebUI behavior
 
-The WebUI is a Gradio application mounted at `/ui`. It uses the same engine,
-Persona/agent submission path, slash-command handler, voice state, VC state,
-speech lifecycle callbacks, and one-shot upload/microphone VC conversion. TUI
-timed state updates are delivered through the CEDTS frontend update channel.
-The browser keeps a polling fallback for reconnects and standalone API hosts.
-Browser playback is returned as 16-bit PCM. Celune's engine continues to use
-normalized float32 audio internally.
+The Gradio WebUI is mounted at `/ui` and uses the same Celune engine, voice
+state, and Persona and agent submission path as the other interfaces. It
+supports text input, voice selection, and `ALT+R` capture
+when the active mode supports recording. It does not include the TUI settings
+editor.
 
-Celune links a standalone stylesheet that applies the active palette as CSS.
-The footer displays Celune's status without a second caption or progress line.
-Polling, page-load refreshes, and voice or recording controls use direct,
-unqueued requests that do not consume the generation limit. Speech and
-conversion submissions remain limited. Gradio's other UI transport requests
-do not consume that budget.
+When API authentication is enabled, `/ui` prompts for an API key. A valid key
+creates an opaque, signed `HttpOnly`, `SameSite=Strict` cookie scoped to `/ui`
+for 30 days with a sliding expiry. The cookie contains a random client ID and
+expiry, not the API key, and is invalidated when the configured key changes.
+The browser does not store the key in its URL or browser storage. The key
+exchange is rate-limited, and browser writes reject cross-origin requests.
+WebUI actions and WebSocket connections require a valid session and same-origin
+request. Setting `api.token: ""` disables the prompt and session requirement,
+as described under
+[Access and authentication](#access-and-authentication).
 
-The application serves its page scripts, styles, and bundled fonts under
-`/ui/assets/`.
-Gradio serves its own hashed JavaScript and CSS bundles from that same path
-through the mounted application. A reverse proxy or Cloudflare Tunnel must
-forward `/ui/assets/` requests to Celune without rewriting their paths.
-
-When an API key is configured, unauthenticated access to `/ui` redirects to
-`/ui/key`, which displays a blocking API-key prompt. Submitting the key sends it
-to `POST /ui/key` in a JSON `api_key` field. A valid key creates an opaque,
-`HttpOnly`, `SameSite=Strict` cookie scoped to `/ui` for 30 days, then the
-browser returns to `/ui/`. The non-slash `/ui` path redirects to the mounted
-`/ui/` path after authentication. The signed cookie carries a random browser
-client ID and expiry, not the API key, and remains valid across Celune restarts.
-Active sessions are extended as the browser uses the WebUI. Changing the API
-key invalidates existing sessions. Another browser without its own cookie still
-sees the key prompt. When authentication is disabled with `api.token: ""`,
-`/ui/` opens without a key prompt. The API key is not stored in the URL or
-browser storage. The API security middleware checks the session on WebUI HTTP
-actions and WebSocket connections. Requests without a valid API key or session
-receive `401`, even if the prompt is removed from the page with browser
-developer tools. API
-routes, including read-only status and version routes, also require the API
-key. The authentication request is rate limited, and browser writes and
-WebSocket connections must come from the same origin.
-
-The application also remembers a successful browser authentication for 30 days
-in its app-data directory. The record is a keyed fingerprint of the client's
-resolved address (Cloudflare's forwarded address when tunneled) and browser
-request headers. It does not contain the API key, address, or raw headers. This
-lets the same client pass the gate after a Quick Tunnel hostname changes and
-receive a fresh host-scoped cookie. A different address or browser signature
-still receives the key prompt. Changing networks or browser settings can change
-that signature and require the key again. Two clients behind one public address
-with identical browser headers cannot be distinguished by the server and share
-this remembered grant.
-
-The browser submits this body to `POST /ui/key`:
-
-```json
-{"api_key":"YOUR_API_KEY"}
-```
-
-`api_key` must contain 1 to 4096 characters. A valid key returns
-`{"authenticated":true}` with the session cookie. An invalid key returns
-`401`, a cross-origin request returns `403`, and an attempt over the configured
-request limit returns `429`. The prompt shows “Invalid API key” for `401`
-responses. Other HTTP or network errors show “An error occurred while
-authenticating.” The error message expands into view with a `max-height`
-transition when present and collapses to zero height when cleared.
-
-The WebUI exposes the active voice as a compact button beside the text input.
-Clicking it cycles through the available voices using the same Core switching
-path as the TUI. The voice and VC conversion buttons follow the active Celune
-palette, including their disabled, hover, and keyboard-focus states. The WebUI
-does not expose the TUI's settings editor. When live Persona or VC capture is
-available, press `ALT+R` to toggle recording. The same shortcut is shown in the
-bottom-right resource area. If the API extra is absent, the REST/WebUI surface
-cannot be started, but the core Python/TUI runtime remains separate.
+A reverse proxy or Cloudflare Tunnel must forward `/ui/assets/` to Celune
+without rewriting that path. A remembered browser may need to authenticate
+again after its network or browser request signature changes.
 
 ## Embedding the server
 

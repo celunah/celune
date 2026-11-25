@@ -76,6 +76,7 @@ nav:
       - Gallery: GALLERY.md
   - Dev:
       - Architecture: development/architecture.md
+      - UI components: development/ui-components.md
       - Backends: development/backends.md
       - Inference runtimes: development/inference-runtimes.md
       - Docs standard: development/documentation.md
