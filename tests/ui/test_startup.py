@@ -1203,6 +1203,48 @@ class TestUIStartup:
         assert calls == ["message"]
         assert fake_celune.log_callback is callback
 
+    def test_callback_binding_tracks_each_chained_invocation(self) -> None:
+        """Count UI callback wrappers separately even though they share code."""
+        calls: list[tuple[str, str]] = []
+
+        def log_handler(message: str) -> None:
+            calls.append(("log", message))
+
+        def status_handler(message: str) -> None:
+            calls.append(("status", message))
+
+        ui = CeluneUI()
+        fake_celune = SimpleNamespace(
+            log_callback=core_lifecycle._noop_message,
+            status_callback=core_lifecycle._noop_message,
+        )
+        ui.celune = cast(Celune, fake_celune)
+        trace = ui._debug_call_trace
+        trace.set_enabled(True)
+        trace.set_inspector_open(True)
+        try:
+            ui._chain_runtime_callback("log_callback", log_handler)
+            ui._chain_runtime_callback("status_callback", status_handler)
+            log_target = cast(Callable[[str], None], fake_celune.log_callback)
+            status_target = cast(Callable[[str], None], fake_celune.status_callback)
+            trace.callback_usage(log_target)
+            trace.callback_usage(status_target)
+
+            log_target("first")
+            log_target("second")
+            status_target("third")
+
+            assert trace.callback_usage(log_target)[0] == 2
+            assert trace.callback_usage(status_target)[0] == 1
+            assert calls == [
+                ("log", "first"),
+                ("log", "second"),
+                ("status", "third"),
+            ]
+        finally:
+            trace.set_inspector_open(False)
+            trace.set_enabled(False)
+
     def test_caption_callback_chaining_preserves_legacy_callbacks(self) -> None:
         """Verify three-argument caption updates tolerate legacy two-argument callbacks."""
         ui = CeluneUI()

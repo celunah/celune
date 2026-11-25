@@ -9,6 +9,7 @@ import site
 import time
 import asyncio
 import inspect
+import weakref
 import functools
 import sysconfig
 import threading
@@ -259,6 +260,9 @@ class DebugCallTrace:
         self._callback_codes: set[CodeType] = set()
         self._callback_callable_ids: set[int] = set()
         self._callback_calls: dict[CodeType, tuple[int, int]] = {}
+        self._callback_target_calls: weakref.WeakKeyDictionary[
+            FunctionType, tuple[int, int]
+        ] = weakref.WeakKeyDictionary()
         self._native_callback_calls: dict[int, tuple[int, int]] = {}
         self._source_cache: dict[tuple[Optional[str], Optional[str]], str] = {}
         self._source_filters: tuple[str, ...] = ()
@@ -513,6 +517,7 @@ class DebugCallTrace:
         with self._lock:
             self._entries.clear()
             self._callback_calls.clear()
+            self._callback_target_calls.clear()
             self._native_callback_calls.clear()
 
     def entries(
@@ -546,8 +551,22 @@ class DebugCallTrace:
             None,
         )
 
+    def record_callback_invocation(self, target: FunctionType) -> None:
+        """Record one invocation for a specific UI callback wrapper."""
+        if not self._inspector_open or not self._recording:
+            return
+        with self._lock:
+            previous = self._callback_target_calls.get(target)
+            count = previous[0] + 1 if previous is not None else 1
+            self._callback_target_calls[target] = (count, time.time_ns())
+
     def callback_usage(self, target: object) -> tuple[int, Optional[int]]:
         """Return and collect invocations for one current callback target."""
+        if isinstance(target, FunctionType):
+            with self._lock:
+                target_calls = self._callback_target_calls.get(target)
+                if target_calls is not None:
+                    return target_calls[0], target_calls[1] or None
         code_target = target.func if isinstance(target, functools.partial) else target
         if isinstance(code_target, MethodType):
             code_target = code_target.__func__

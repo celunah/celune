@@ -432,6 +432,14 @@ def _chain_runtime_callback(
             target(*args, **kwargs)
 
     def chained(*args: object, **kwargs: object) -> None:
+        debug_trace = getattr(self, "_debug_call_trace", None)
+        record_invocation = getattr(
+            debug_trace,
+            "record_callback_invocation",
+            None,
+        )
+        if callable(record_invocation):
+            record_invocation(chained)
         invoke(callback, args, kwargs)
         invoke(current, args, kwargs)
 
