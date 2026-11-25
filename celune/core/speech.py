@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Optional
+import threading
 
 import numpy as np
 
@@ -55,6 +56,8 @@ def say_stream(
     host_playback: bool = False,
     speed: Optional[float] = None,
     instructions: Optional[str] = None,
+    request_id: Optional[str] = None,
+    cancel_event: Optional[threading.Event] = None,
 ) -> Optional[SpeechStreamQueue]:
     """Submit text and return its generated-chunk stream."""
     return submission.say_stream(
@@ -64,6 +67,8 @@ def say_stream(
         play_audio=host_playback,
         speed=speed,
         instructions=instructions,
+        request_id=request_id,
+        cancel_event=cancel_event,
     )
 
 

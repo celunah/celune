@@ -25,6 +25,7 @@ from .base import (
     CEVoice,
     CEVoiceAsset,
     _read_source,
+    _is_finite_number,
     _is_hex_color,
     _validate_persona_metadata,
 )
@@ -214,6 +215,7 @@ def _write_indexed_cechar(
         ensure_ascii=True,
         separators=(",", ":"),
         sort_keys=True,
+        allow_nan=False,
     ).encode("utf-8")
     if len(metadata_bytes) > 0xFFFFFFFF or len(file_entries) > 0xFFFFFFFF:
         raise CEVoiceError(f"CECHAR v{version} metadata exceeds uint32 limits")
@@ -632,6 +634,7 @@ def _validate_v4_semantic_metadata(
         if cfg_scale is not None and (
             not isinstance(cfg_scale, (int, float))
             or isinstance(cfg_scale, bool)
+            or not _is_finite_number(cfg_scale)
             or cfg_scale <= 0
         ):
             raise CEVoiceError(f"voice '{voice}' cfg_scale must be a positive number")

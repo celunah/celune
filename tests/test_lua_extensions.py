@@ -215,6 +215,51 @@ class TestLuaExtension:
 
         assert (extension.runtime._globals["called"]) is None
 
+    def test_unregister_waits_for_an_inflight_lua_callback(self) -> None:
+        """Do not return from unload while a Lua callback still uses its runtime."""
+        callback_started = threading.Event()
+        release_callback = threading.Event()
+        unregister_finished = threading.Event()
+
+        def block_log(_message: str, _severity: str = "info") -> None:
+            callback_started.set()
+            assert release_callback.wait(timeout=5)
+
+        core = SimpleNamespace(log=block_log, version="test")
+        manager = CeluneExtensionManager(
+            self.context,
+            self.dispatcher,
+            core=cast("Celune", core),
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            extension_path = Path(temp_dir) / "inflight.lua"
+            extension_path.write_text(
+                textwrap.dedent(
+                    """
+                    subscribe("ready", function()
+                        celune.log("callback entered")
+                    end)
+                    """
+                ),
+                encoding="utf-8",
+            )
+            manager.autoload(temp_dir)
+
+        self.dispatcher.emit("ready", ReadyEvent(celune=cast("Celune", core)))
+        assert callback_started.wait(timeout=5)
+
+        def unregister() -> None:
+            manager.unregister("inflight")
+            unregister_finished.set()
+
+        closer = threading.Thread(target=unregister, daemon=True)
+        closer.start()
+        assert not unregister_finished.wait(timeout=0.05)
+        release_callback.set()
+        assert unregister_finished.wait(timeout=5)
+        closer.join(timeout=5)
+        assert not closer.is_alive()
+
     def test_lua_ready_callbacks_do_not_block_core_loading(self) -> None:
         """Verify blocking Lua startup work runs outside the ready dispatcher."""
         callback_started = threading.Event()

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import re
 import threading
+import contextlib
 from collections.abc import Sequence
 from typing import Union, Optional, cast
 
@@ -116,6 +117,11 @@ def interrupt_active_agent_for_input(self, text: str) -> bool:
         )
     except ValueError:
         return False
+    vision = getattr(self, "vision", None)
+    interrupt = getattr(vision, "interrupt", None)
+    if callable(interrupt):
+        with contextlib.suppress(Exception):
+            interrupt()
     return True
 
 

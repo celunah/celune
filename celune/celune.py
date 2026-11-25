@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Celune's public engine facade."""
 
+import threading
 from pathlib import Path
 from collections.abc import Mapping, Callable
 from typing import Never, Union, ClassVar, Optional, final
@@ -797,6 +798,17 @@ class Celune(CeluneStateAccessors):
         """
         return await core_loading.force_stop_speech_async(self)
 
+    async def force_stop_speech_request_async(self, request_id: "str") -> "bool":
+        """Stop one active streamed speech request without interrupting another.
+
+        Args:
+            request_id: Identity supplied when the streamed request was queued.
+
+        Returns:
+            bool: Whether the active request matched and cancellation was requested.
+        """
+        return await core_loading.force_stop_speech_request_async(self, request_id)
+
     def load(
         self, raise_on_error: "bool" = False, skip_runtime_check: "bool" = False
     ) -> "bool":
@@ -991,9 +1003,22 @@ class Celune(CeluneStateAccessors):
         host_playback: "bool" = False,
         speed: "Optional[float]" = None,
         instructions: "Optional[str]" = None,
+        request_id: "Optional[str]" = None,
+        cancel_event: "Optional[threading.Event]" = None,
     ) -> "Optional[SpeechStreamQueue]":
-        """
-        Queue text and return its generated audio chunks.
+        """Queue text and return its generated audio chunks.
+
+        Args:
+            text: Text to synthesize.
+            save: Whether to save the generated output.
+            host_playback: Whether to play chunks through Celune's host mixer.
+            speed: Optional request-specific speech speed.
+            instructions: Optional request-specific voice direction.
+            request_id: Optional identity used for targeted cancellation.
+            cancel_event: Optional event that cancels this request before or during generation.
+
+        Returns:
+            Optional[SpeechStreamQueue]: Generated chunks, or ``None`` if rejected.
         """
         return core_speech.say_stream(
             self,
@@ -1002,6 +1027,8 @@ class Celune(CeluneStateAccessors):
             host_playback=host_playback,
             speed=speed,
             instructions=instructions,
+            request_id=request_id,
+            cancel_event=cancel_event,
         )
 
     async def say_stream_async(

@@ -199,15 +199,15 @@ class TestApiTaskWebSocket:
         api.server_session.active_speech_task_id = job_id
         calls: list[str] = []
 
-        async def force_stop_speech_async() -> bool:
-            calls.append("stop")
+        async def force_stop_speech_request_async(request_id: str) -> bool:
+            calls.append(request_id)
             return True
 
         previous_celune = api.server_session.bound_celune
         api.server_session.bound_celune = cast(
             Celune,
             SimpleNamespace(
-                force_stop_speech_async=force_stop_speech_async,
+                force_stop_speech_request_async=force_stop_speech_request_async,
             ),
         )
         try:
@@ -215,7 +215,7 @@ class TestApiTaskWebSocket:
         finally:
             api.server_session.bound_celune = previous_celune
 
-        assert calls == ["stop"]
+        assert calls == [job_id]
         assert isinstance(response, api.TaskCancelResponse)
         assert api.server_session.speech_jobs[job_id].status == "cancelled"
         assert api.server_session.speech_jobs[job_id].events[-1].event == "cancelled"

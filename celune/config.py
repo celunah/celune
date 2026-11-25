@@ -268,7 +268,22 @@ def config_bool(
     Returns:
         bool: The resolved boolean setting.
     """
-    return env_bool(env_name, bool(config_value(config, config_key, default)))
+    configured = config_value(config, config_key, default)
+    if isinstance(configured, bool):
+        config_default = configured
+    elif isinstance(configured, str):
+        normalized = configured.strip().casefold()
+        if normalized in ENABLED_ENV_VALUES:
+            config_default = True
+        elif normalized in {"0", "false", "off", "no", "disabled"}:
+            config_default = False
+        else:
+            config_default = default
+    elif isinstance(configured, int) and configured in {0, 1}:
+        config_default = bool(configured)
+    else:
+        config_default = default
+    return env_bool(env_name, config_default)
 
 
 def config_log_level(

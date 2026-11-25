@@ -654,6 +654,18 @@ def force_stop_speech(engine: Celune) -> bool:
     return _force_stop_speech(engine, clear_persona_queue=True)
 
 
+def force_stop_speech_request(engine: Celune, request_id: str) -> bool:
+    """Cancel one active streamed request only while its identity still matches."""
+    with engine.say_lock:
+        if engine._active_speech_request_id != request_id:
+            return False
+        cancel_active_request = getattr(engine.backend, "cancel_active_request", None)
+        if callable(cancel_active_request):
+            with contextlib.suppress(Exception):
+                cancel_active_request(wait_for_ack=False)
+        return True
+
+
 def force_stop_streamed_speech(engine: Celune) -> bool:
     """Stop streamed speech without discarding pending Persona inputs."""
     return _force_stop_speech(engine, clear_persona_queue=False)

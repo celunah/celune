@@ -7,6 +7,8 @@ import time
 import queue
 import asyncio
 import threading
+from collections import deque
+from collections.abc import Iterator
 from typing import cast
 from unittest import mock
 from types import SimpleNamespace
@@ -28,6 +30,17 @@ from ..celtest import celtest
 
 class TestApiAudio:
     """Tests for API audio payload formatting."""
+
+    @pytest.fixture(autouse=True)
+    def _isolate_rate_limit_hits(self) -> Iterator[None]:
+        """Keep unrelated API requests from exhausting this test client's quota."""
+        previous_hits = {
+            key: deque(hits) for key, hits in api.server_session.rate_limit_hits.items()
+        }
+        api.server_session.rate_limit_hits.clear()
+        yield
+        api.server_session.rate_limit_hits.clear()
+        api.server_session.rate_limit_hits.update(previous_hits)
 
     @staticmethod
     def _wav_bytes(
@@ -62,7 +75,7 @@ class TestApiAudio:
                     say_lock=threading.Lock(),
                     locked=False,
                     cur_state="idle",
-                    say_stream=lambda content, save=True: chunks,
+                    say_stream=lambda content, save=True, **_kwargs: chunks,
                 ),
             )
             with TestClient(api.api) as client:
@@ -127,6 +140,60 @@ class TestApiAudio:
             api.server_session.bound_celune = previous_celune
 
         engine.say_stream.assert_not_called()
+
+    def test_rest_generation_requests_have_text_and_message_bounds(self) -> None:
+        """Reject oversized text and chat item collections during model validation."""
+        with pytest.raises(ValueError):
+            api.SpeakRequest(content="x" * 65_537)
+        with pytest.raises(ValueError):
+            api.OpenAISpeechRequest(
+                model="celune",
+                input="x" * 65_537,
+                voice="balanced",
+            )
+        with pytest.raises(ValueError):
+            api.OpenAIChatCompletionRequest(
+                model="celune",
+                messages=[
+                    api.OpenAIChatMessage(role="user", content="x") for _ in range(65)
+                ],
+            )
+
+    def test_speech_job_ttl_preserves_active_jobs_and_expires_terminal_jobs(
+        self,
+    ) -> None:
+        """Keep queued work alive and base terminal retention on its last update."""
+        previous_ttl = api.server_session.speech_job_ttl_seconds
+        api.server_session.speech_job_ttl_seconds = 10
+        api.server_session.speech_jobs.clear()
+        try:
+            api.server_session.speech_jobs["queued"] = api.SpeechJob(
+                status="queued",
+                created_at=time.time() - 100,
+            )
+            api.server_session.speech_jobs["running"] = api.SpeechJob(
+                status="running",
+                created_at=time.time() - 100,
+            )
+            api.server_session.speech_jobs["completed"] = api.SpeechJob(
+                status="completed",
+                created_at=time.time() - 100,
+                updated_at=time.time(),
+            )
+
+            jobs.delete_expired_speech_jobs(time.time(), api.server_session)
+
+            assert set(api.server_session.speech_jobs) == {
+                "queued",
+                "running",
+                "completed",
+            }
+            api.server_session.speech_jobs["completed"].updated_at = time.time() - 11
+            jobs.delete_expired_speech_jobs(time.time(), api.server_session)
+            assert "completed" not in api.server_session.speech_jobs
+        finally:
+            api.server_session.speech_job_ttl_seconds = previous_ttl
+            api.server_session.speech_jobs.clear()
 
     def test_speech_job_lookup_expires_old_jobs(self) -> None:
         """Verify async speech jobs are removed after their in-memory TTL."""

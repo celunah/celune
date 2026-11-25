@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import threading
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 from typing import Optional, cast
 from contextlib import nullcontext
@@ -67,6 +68,22 @@ from celune.agent import (
 )
 
 from ..support import FakeGlow, FakeBackend
+
+
+def test_replacement_input_interrupts_active_persona_backend() -> None:
+    """Interrupt in-flight Persona inference before routing replacement input."""
+    task = SimpleNamespace(task_id="task-1", state=AgentTaskState.WORKING)
+    runtime = SimpleNamespace(
+        get_active_task=mock.Mock(return_value=task),
+        interrupt_task=mock.Mock(),
+    )
+    vision = SimpleNamespace(interrupt=mock.Mock())
+    core = SimpleNamespace(agent_runtime=runtime, vision=vision)
+
+    assert core_agent.interrupt_active_agent_for_input(core, "new request")
+
+    runtime.interrupt_task.assert_called_once()
+    vision.interrupt.assert_called_once_with()
 
 
 class _PersonaResponse:

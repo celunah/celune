@@ -43,6 +43,26 @@ class TestVram:
             assert preset.persona_quantization == "4bit"
             assert resolve_backend_name(config, "dotstts") == "dotstts"
 
+    def test_capacity_fraction_below_tier_requirement_downgrades_preset(self) -> None:
+        """Do not round fractional GiB capacity up when choosing a VRAM tier."""
+        config: Config = {"vram": "high"}
+        with (
+            mock.patch("celune.vram.torch.cuda.is_available", return_value=True),
+            mock.patch(
+                "celune.vram.cuda_total_capacity_bytes",
+                return_value=11 * 1024**3 + 1024**2,
+            ),
+            mock.patch("celune.vram.vram_profile_fits", return_value=None),
+        ):
+            assert resolve_vram_preset(config).tier == "medium"
+            warning = validate_vram_preset(config)
+
+        assert warning == (
+            "Only 11 GiB VRAM is available. Selecting 'medium' instead of 'high'.\n"
+            "This configuration is unprofiled and may not work on your hardware "
+            "configuration."
+        )
+
     def test_unprofiled_high_persona_backend_is_allowed(self) -> None:
         """Verify an unprofiled TTS combination proceeds at high VRAM."""
         config: Config = {"vram": "high", "persona": {"enabled": True}}

@@ -237,8 +237,9 @@ class LuaRuntimeManager:
         return "Lua extension"
 
     def close(self) -> None:
-        """Unregister callbacks and release the Lua runtime."""
-        self._closed = True
+        """Unregister callbacks and wait for in-flight Lua calls to finish."""
+        with self._lock:
+            self._closed = True
         with self._registration_lock:
             registrations = list(self._registrations)
             self._registrations.clear()

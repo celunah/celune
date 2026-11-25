@@ -1127,6 +1127,7 @@
     "webui.not_available": "i'm not currently available",
     "webui.not_returned_from_sleep": "{app_name} has not yet returned from sleep mode.",
     "webui.recording_requires_tui": "Live recording requires the active Textual runtime.",
+    "webui.recording_toggle_button": "Record / stop",
     "webui.recording_toggle_hint": "ALT+R: toggle recording",
     "webui.recording_voice_hint": "ALT+R: voice input",
     "webui.send_button": "Send",

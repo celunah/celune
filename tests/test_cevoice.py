@@ -393,6 +393,21 @@ class TestCEVoice:
         with pytest.raises(CEVoiceError, match="ordered MIDI pitches"):
             cevoice.write_cechar_v5(self.path, voices, voice_metadata=metadata)
 
+    @pytest.mark.parametrize("cfg_scale", [float("nan"), float("inf")])
+    def test_indexed_cechar_rejects_nonfinite_cfg_scale(self, cfg_scale: float) -> None:
+        """Reject JSON numeric sentinels from indexed CECHAR voice metadata."""
+        with pytest.raises(CEVoiceError, match="cfg_scale"):
+            cevoice_v4._validate_v4_semantic_metadata(
+                {},
+                {
+                    "balanced": {
+                        "cfg_scale": cfg_scale,
+                        "reference_text": "Balanced reference.",
+                    }
+                },
+                cevoice.V4_VERSION,
+            )
+
     def test_cechar_v4_treats_sing_as_an_ordinary_voice(self) -> None:
         """Keep the reserved singing role scoped to CECHAR v5 and newer."""
         sample = self._minimal_wav()
@@ -557,6 +572,28 @@ class TestCEVoice:
         self._rewrite_metadata(metadata)
         with pytest.raises(CEVoiceError, match="cfg_scale"):
             cevoice.CEVoice.open(self.path)
+
+        for cfg_scale in (float("nan"), float("inf")):
+            bundle = self._write_bundle()
+            metadata = copy.deepcopy(bundle.metadata)
+            voices = cast(cevoice.VoiceManifest, metadata["voices"])
+            voices["balanced"]["cfg_scale"] = cfg_scale
+            self._rewrite_metadata(metadata)
+            with pytest.raises(CEVoiceError, match="cfg_scale"):
+                cevoice.CEVoice.open(self.path)
+
+        with pytest.raises(ValueError, match="Out of range float values"):
+            cevoice.write_cevoice(
+                self.path,
+                {"balanced": {"wav": b"wav"}},
+                voice_metadata={"balanced": {"cfg_scale": float("nan")}},
+            )
+        with pytest.raises(ValueError, match="Out of range float values"):
+            cevoice.write_cechar_v4(
+                self.path,
+                {"balanced": {"wav": self._minimal_wav()}},
+                voice_metadata={"balanced": {"cfg_scale": float("inf")}},
+            )
 
         bundle = self._write_bundle()
         metadata = copy.deepcopy(bundle.metadata)

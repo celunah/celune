@@ -132,6 +132,8 @@ class SpeechJob:
         repr=False,
     )
     subscriptions: list[TaskSubscription] = field(default_factory=list, repr=False)
+    updated_at: Optional[float] = None
+    cancel_event: threading.Event = field(default_factory=threading.Event, repr=False)
 
 
 def delete_expired_speech_jobs(
@@ -142,7 +144,11 @@ def delete_expired_speech_jobs(
     expired_ids = [
         job_id
         for job_id, job in session.speech_jobs.items()
-        if now - job.created_at > session.speech_job_ttl_seconds
+        if (
+            job.status in {"completed", "failed", "cancelled"}
+            and now - (job.updated_at if job.updated_at is not None else job.created_at)
+            > session.speech_job_ttl_seconds
+        )
     ]
     for job_id in expired_ids:
         session.speech_jobs.pop(job_id, None)
@@ -186,6 +192,7 @@ def update_speech_job(
         if job is None:
             return
         job.status = status
+        job.updated_at = time.time()
         job.audio = audio
         job.error = error
 
@@ -351,6 +358,7 @@ def speech_job_snapshot(
         return SpeechJob(
             status=job.status,
             created_at=job.created_at,
+            updated_at=job.updated_at,
             audio=job.audio,
             audio_format=job.audio_format,
             error=job.error,

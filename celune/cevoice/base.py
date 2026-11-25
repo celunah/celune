@@ -6,6 +6,7 @@ from __future__ import annotations
 import os
 import copy
 import json
+import math
 import atexit
 import shutil
 import struct
@@ -573,6 +574,7 @@ def _write_legacy_cevoice(
         ensure_ascii=True,
         separators=(",", ":"),
         sort_keys=True,
+        allow_nan=False,
     ).encode("utf-8")
 
     output_path = Path(path)
@@ -1021,6 +1023,7 @@ def _validate_metadata(
         if cfg_scale is not None and (
             not isinstance(cfg_scale, (int, float))
             or isinstance(cfg_scale, bool)
+            or not _is_finite_number(cfg_scale)
             or cfg_scale <= 0
         ):
             raise CEVoiceError(f"voice '{voice}' cfg_scale must be a positive number")
@@ -1080,6 +1083,14 @@ def _validate_metadata(
                 )
     for name, asset in cast(Manifest, metadata.get("assets", {})).items():
         _validate_bundle_asset_entry(name, asset, payload_length)
+
+
+def _is_finite_number(value: float) -> bool:
+    """Return whether a JSON numeric value is finite and float-representable."""
+    try:
+        return math.isfinite(value)
+    except OverflowError:
+        return False
 
 
 def _is_hex_color(value: ManifestValue) -> bool:

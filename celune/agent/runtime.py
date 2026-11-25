@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import threading
 from uuid import uuid4
 from dataclasses import replace
 from collections.abc import Mapping, Sequence
@@ -319,6 +320,8 @@ class AgentRuntime:
         self._pending_tool_calls: dict[str, ToolCall] = {}
         self._last_tool_calls: dict[str, ToolCall] = {}
         self._terminal_events: set[str] = set()
+        self._active_tool_lock = threading.RLock()
+        self._active_tool_tasks: set[str] = set()
         self._component_locks: Optional[ComponentLockManager] = getattr(
             celune,
             "component_locks",
@@ -808,35 +811,43 @@ class AgentRuntime:
         task_id: str,
         reason: AgentCancellationReason = AgentCancellationReason.USER_REQUEST,
     ) -> AgentTask:
-        """Cancel any active or waiting task without leaving cancelling state behind."""
+        """Cancel work, remaining cancelling until any synchronous tool returns."""
         task = self.get_task(task_id)
-        if task.is_terminal:
-            raise ValueError("cannot cancel a terminal agent task")
-        self._log(
-            f"[AGENT] cancel task={task.task_id} state={task.state.value} "
-            f"reason={reason.value}",
-            loglevel="verbose",
-        )
-        self._invalidate_generation(task)
-        if task.state != AgentTaskState.CANCELLING:
-            self._transition(task, AgentTaskState.CANCELLING)
-        cancellation_error: Optional[Exception] = None
-        try:
-            task.cancel(reason)
-        except Exception as exc:
-            cancellation_error = exc
-        if task.state == AgentTaskState.CANCELLING:
+        with self._active_tool_lock:
+            if task.is_terminal:
+                raise ValueError("cannot cancel a terminal agent task")
+            self._log(
+                f"[AGENT] cancel task={task.task_id} state={task.state.value} "
+                f"reason={reason.value}",
+                loglevel="verbose",
+            )
+            self._invalidate_generation(task)
             old_state = task.state
-            task.transition(AgentTaskState.CANCELLED)
-            task.cancellation_reason = reason
-            self._after_transition(task, old_state)
-        else:
-            self._after_transition(task, AgentTaskState.CANCELLING)
-        self._clear_task_state(task_id)
-        self._emit_terminal(task)
-        if cancellation_error is not None:
-            raise cancellation_error
-        return task
+            if task.state != AgentTaskState.CANCELLING:
+                self._transition(task, AgentTaskState.CANCELLING)
+            if task_id in self._active_tool_tasks:
+                task.cancellation_reason = reason
+                if old_state != AgentTaskState.CANCELLING:
+                    self._after_transition(task, old_state)
+                return task
+
+            cancellation_error: Optional[Exception] = None
+            try:
+                task.cancel(reason)
+            except Exception as exc:
+                cancellation_error = exc
+            if task.state == AgentTaskState.CANCELLING:
+                old_state = task.state
+                task.transition(AgentTaskState.CANCELLED)
+                task.cancellation_reason = reason
+                self._after_transition(task, old_state)
+            else:
+                self._after_transition(task, AgentTaskState.CANCELLING)
+            self._clear_task_state(task_id)
+            self._emit_terminal(task)
+            if cancellation_error is not None:
+                raise cancellation_error
+            return task
 
     def pause_task(self, task_id: str) -> AgentTask:
         """Pause a task by its task identifier."""
@@ -1061,7 +1072,12 @@ class AgentRuntime:
                     f"tool={call['name']} call={call['id']}",
                     loglevel="verbose",
                 )
-                raw_result = self._invoke_execute(task, call)
+                if not self._begin_tool_execution(task, generation):
+                    return self._interrupted_output(task, callback)
+                try:
+                    raw_result = self._invoke_execute(task, call)
+                finally:
+                    self._end_tool_execution(task.task_id)
                 if not self._run_is_current(task, generation):
                     self._record_stale_tool_result(task, raw_result)
                     return self._interrupted_output(task, callback)
@@ -1367,6 +1383,23 @@ class AgentRuntime:
             generation,
         ) and self._run_is_current(task, generation)
 
+    def _begin_tool_execution(self, task: AgentTask, generation: int) -> bool:
+        """Register the executor boundary unless cancellation won the race."""
+        with self._active_tool_lock:
+            if (
+                task.generation != generation
+                or task.is_terminal
+                or task.state != AgentTaskState.EXECUTING_TOOL
+            ):
+                return False
+            self._active_tool_tasks.add(task.task_id)
+            return True
+
+    def _end_tool_execution(self, task_id: str) -> None:
+        """Mark one synchronous executor call as settled."""
+        with self._active_tool_lock:
+            self._active_tool_tasks.discard(task_id)
+
     def _invoke_execute(self, task: AgentTask, call: ToolCall) -> ToolResult:
         """Invoke the injected executor or the overridable runtime method."""
         context = self.get_context(task.task_id)
@@ -1513,6 +1546,19 @@ class AgentRuntime:
     ) -> AgentOutput:
         """Return a pause for stale work or the proper output for a terminal task."""
         if task.is_terminal:
+            return self._terminal_output(task, callback)
+        if task.state == AgentTaskState.CANCELLING:
+            with self._active_tool_lock:
+                if task.state == AgentTaskState.CANCELLING:
+                    old_state = task.state
+                    reason = (
+                        task.cancellation_reason or AgentCancellationReason.USER_REQUEST
+                    )
+                    task.transition(AgentTaskState.CANCELLED)
+                    task.cancellation_reason = reason
+                    self._after_transition(task, old_state)
+                    self._clear_task_state(task.task_id)
+                    self._emit_terminal(task)
             return self._terminal_output(task, callback)
         return _paused_output()
 

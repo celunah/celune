@@ -14,7 +14,9 @@ routing is disabled rather than raising the configured preset automatically.
 
 Tasks move through planning, execution, and response. They can pause for
 approval or a choice, then resume without losing progress. Cancellation clears
-any pending request.
+any pending request. If a synchronous tool is already executing, the task stays
+in `CANCELLING` until that call returns. Celune cannot interrupt or roll back a
+tool side effect already in progress.
 
 Tasks allow up to 20 planning and tool iterations by default. Set
 `agent.max_loops` to change the limit. Agent context is capped at 8,192 tokens,

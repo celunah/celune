@@ -140,10 +140,12 @@ html,
 
     #celune-style button:focus-visible,
     #celune-send button:focus-visible,
+    #celune-record-hotkey button:focus-visible,
     #celune-convert button:focus-visible,
     #celune-model-consent button:focus-visible,
     button#celune-style:focus-visible,
     button#celune-send:focus-visible,
+    button#celune-record-hotkey:focus-visible,
     button#celune-convert:focus-visible {
         outline: 2px solid var(--celune-ui-accent, var(--celune-primary, #cebaff));
         outline-offset: 2px;
@@ -219,6 +221,11 @@ html,
 
     #celune-record-hotkey {
         display: none !important;
+    }
+
+    #celune-record-hotkey button,
+    button#celune-record-hotkey {
+        min-height: 2.75rem;
     }
 
     .webui-desktop-only {
@@ -454,6 +461,15 @@ html,
         #celune-actions > * {
             flex: 1 1 0 !important;
             min-width: 0 !important;
+        }
+
+        #celune-record-hotkey {
+            display: flex !important;
+        }
+
+        #celune-record-hotkey button,
+        button#celune-record-hotkey {
+            width: 100%;
         }
 
         button#celune-send {

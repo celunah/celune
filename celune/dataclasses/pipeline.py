@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import time
 import queue
+import threading
 from pathlib import Path
 from typing import Union, Optional
 from dataclasses import field, dataclass
@@ -60,6 +61,8 @@ class SpeechRequest:
     caption_alignment_sections: tuple[CaptionAlignmentSection, ...] = ()
     restore_status: Optional[str] = None
     submitted_at: float = field(default_factory=time.monotonic)
+    request_id: Optional[str] = None
+    cancel_event: Optional[threading.Event] = None
 
 
 @dataclass(frozen=True)

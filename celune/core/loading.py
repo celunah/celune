@@ -29,7 +29,10 @@ from ..pipeline.output import saved_output_speech_seconds
 from ..runtime import validate_runtime, log_runtime_banner
 from ..typing.celune import Generative, NormalizerTokenizer
 from ..modeling import normalizer_device, load_normalizer_components
-from ..pipeline.playback import force_stop_speech as force_stop_pipeline
+from ..pipeline.playback import (
+    force_stop_speech as force_stop_pipeline,
+    force_stop_speech_request,
+)
 from ..vram import vram_profile_fits, resolve_vram_preset, validate_vram_preset
 from ..cevoice import default_loader, bundle_display_name, announce_default_bundle
 from ..utils import (
@@ -58,6 +61,13 @@ async def force_stop_speech_async(self) -> bool:
         ``True`` when an active utterance was interrupted.
     """
     return await run_in_daemon_thread(force_stop_pipeline, self)
+
+
+async def force_stop_speech_request_async(self, request_id: str) -> bool:
+    """Stop one active speech request without affecting a later request."""
+    return await run_in_daemon_thread(
+        lambda: force_stop_speech_request(self, request_id)
+    )
 
 
 async def enter_sleep_mode_async(self) -> bool:

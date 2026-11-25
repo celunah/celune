@@ -2118,6 +2118,7 @@ class TestApiWebUI:
         assert "celune-stop" not in component_ids
         assert "celune-settings" not in component_ids
         assert "celune-record-hotkey" in component_ids
+        assert string("webui.recording_toggle_button") in str(config)
         assert "Usage may differ. Some Celune features may not be available." in str(
             config
         )

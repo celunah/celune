@@ -8,6 +8,7 @@ import re
 import time
 import queue
 import pathlib
+import threading
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Union, Optional, cast
 
@@ -374,6 +375,8 @@ def say_stream(
     play_audio: bool = False,
     speed: Optional[float] = None,
     instructions: Optional[str] = None,
+    request_id: Optional[str] = None,
+    cancel_event: Optional[threading.Event] = None,
 ) -> Optional[SpeechStreamQueue]:
     """Queue text and return generated chunks, optionally playing them locally."""
     if engine.exit_requested:
@@ -387,6 +390,8 @@ def say_stream(
         play_audio=play_audio,
         speed=speed,
         instructions=instructions,
+        request_id=request_id,
+        cancel_event=cancel_event,
     ):
         return None
     return stream_queue
@@ -570,6 +575,8 @@ def queue_speech(
     play_audio: bool = True,
     speed: Optional[float] = None,
     instructions: Optional[str] = None,
+    request_id: Optional[str] = None,
+    cancel_event: Optional[threading.Event] = None,
 ) -> bool:
     """Queue text for Celune to say and optionally mirror audio chunks.
 
@@ -583,6 +590,8 @@ def queue_speech(
         play_audio: Whether generated audio should be sent to the host playback mixer.
         speed: Optional request-specific playback speed.
         instructions: Optional request-specific voice direction.
+        request_id: Optional identity used for targeted cancellation.
+        cancel_event: Optional event that cancels this request before or during generation.
 
     Returns:
         bool: ``True`` when the text was queued successfully, otherwise ``False``.
@@ -600,6 +609,8 @@ def queue_speech(
         play_audio=play_audio,
         speed=speed,
         instructions=instructions,
+        request_id=request_id,
+        cancel_event=cancel_event,
         allow_tutorial=False,
     )
 
@@ -617,6 +628,8 @@ def _queue_speech_request(
     instructions: Optional[str] = None,
     allow_tutorial: bool,
     normalize: Optional[bool] = None,
+    request_id: Optional[str] = None,
+    cancel_event: Optional[threading.Event] = None,
     synthesis_sections: tuple[str, ...] = (),
     audio_capture_queue: Optional[
         queue.Queue[Union[PreparedSpeechAudio, Exception]]
@@ -634,10 +647,14 @@ def _queue_speech_request(
         stream_queue: Optional queue that receives generated audio chunks.
         display_text: Optional text to associate with the request in the UI.
         allow_tutorial: Whether this internal request may speak during tutorial mode.
+        request_id: Optional identity used for targeted cancellation.
+        cancel_event: Optional event that cancels this request while waiting or generating.
 
     Returns:
         bool: ``True`` when the request was queued successfully.
     """
+    if cancel_event is not None and cancel_event.is_set():
+        return False
     if getattr(engine.backend, "singing", False) and not contains_cesn_note_event(text):
         message = string("celune.singing_backend_requires_cesn")
         engine.log(message, "warning")
@@ -647,10 +664,11 @@ def _queue_speech_request(
     if engine.exit_requested or not _prepare_speech_readiness(
         engine,
         allow_tutorial=allow_tutorial,
+        cancel_event=cancel_event,
     ):
         return False
 
-    if not _wait_for_model_ready(engine) or engine.exit_requested:
+    if not _wait_for_model_ready(engine, cancel_event) or engine.exit_requested:
         return False
     if not _finish_speech_readiness(engine):
         return False
@@ -671,6 +689,8 @@ def _queue_speech_request(
         prepared_audio=prepared_audio,
         playback_source_queue=playback_source_queue,
         caption_alignment_sections=caption_alignment_sections,
+        request_id=request_id,
+        cancel_event=cancel_event,
     )
 
 
@@ -678,6 +698,7 @@ def _prepare_speech_readiness(
     engine: Celune,
     *,
     allow_tutorial: bool = False,
+    cancel_event: Optional[threading.Event] = None,
 ) -> bool:
     """Run the pre-wait checks shared by synchronous and async speech queueing.
 
@@ -688,7 +709,9 @@ def _prepare_speech_readiness(
     Returns:
         bool: ``True`` when speech may proceed.
     """
-    if getattr(engine, "test_finished", False):
+    if getattr(engine, "test_finished", False) or (
+        cancel_event is not None and cancel_event.is_set()
+    ):
         return False
     if engine.is_in_tutorial and not allow_tutorial:
         message = string("celune.speech_input_disabled_tutorial")
@@ -698,6 +721,8 @@ def _prepare_speech_readiness(
 
     if getattr(engine, "sleeping", False) and not engine.wake_from_sleep():
         engine.progress_callback(0, 1)
+        return False
+    if cancel_event is not None and cancel_event.is_set():
         return False
 
     if _speech_reload_blocks(engine):
@@ -729,14 +754,20 @@ def _speech_reload_blocks(engine: Celune) -> bool:
     return True
 
 
-def _wait_for_model_ready(engine: Celune) -> bool:
-    """Wait for readiness while observing a reload boundary."""
-    while not engine.model_ready.wait(timeout=0.1):
+def _wait_for_model_ready(
+    engine: Celune,
+    cancel_event: Optional[threading.Event] = None,
+) -> bool:
+    """Wait for readiness while observing cancellation and reload boundaries."""
+    while True:
+        if cancel_event is not None and cancel_event.is_set():
+            return False
+        if engine.model_ready.wait(timeout=0.1):
+            return cancel_event is None or not cancel_event.is_set()
         if _speech_reload_blocks(engine):
             return False
         if engine.exit_requested:
             return False
-    return True
 
 
 def _finish_speech_readiness(engine: Celune) -> bool:
@@ -769,10 +800,12 @@ def _queue_speech_after_ready(
     prepared_audio: Optional[AudioChunk] = None,
     playback_source_queue: Optional[queue.Queue[Union[int, Exception]]] = None,
     caption_alignment_sections: tuple[CaptionAlignmentSection, ...] = (),
+    request_id: Optional[str] = None,
+    cancel_event: Optional[threading.Event] = None,
 ) -> bool:
     """Queue one speech request after reload readiness is satisfied."""
 
-    if engine.exit_requested:
+    if engine.exit_requested or (cancel_event is not None and cancel_event.is_set()):
         return False
 
     singing_backend = bool(getattr(engine.backend, "singing", False))
@@ -869,6 +902,8 @@ def _queue_speech_after_ready(
                         engine.use_normalization if normalize is None else normalize
                     ),
                     generation=engine.speech_generation,
+                    request_id=request_id,
+                    cancel_event=cancel_event,
                     synthesis_sections=tuple(
                         strip_reasoning_traces(section)
                         if singing_backend

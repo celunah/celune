@@ -408,6 +408,57 @@ class TestAgentRuntimeLifecycle:
             entry.get("type") == "stale_tool_result" for entry in task.request.history
         )
 
+    def test_cancellation_waits_for_synchronous_tool_execution_to_settle(self) -> None:
+        """Keep cancellation pending while a non-cooperative tool can still mutate."""
+        started = threading.Event()
+        release = threading.Event()
+        side_effects: list[str] = []
+        call: ToolCall = {
+            "id": "call-1",
+            "name": "write_file",
+            "arguments": {},
+        }
+
+        def planner(_context: AgentContext) -> AgentOutput:
+            """Return one call for the blocking executor fixture."""
+            return {
+                "tool_call": call,
+                "response": "Writing the file.",
+                "end": False,
+                "paused": False,
+            }
+
+        def execute(_context: AgentContext, _call: ToolCall) -> ToolResult:
+            """Model a synchronous mutating tool that cannot be interrupted."""
+            started.set()
+            release.wait(timeout=5)
+            side_effects.append("write completed")
+            return {"tool_call_id": "call-1", "output": "written", "error": None}
+
+        runtime = AgentRuntime(
+            planner=planner,
+            tool_selector=lambda _context, output: output["tool_call"],
+            tool_executor=execute,
+        )
+        task = runtime.create_task(self._request(), task_id="cancelling-tool")
+        worker = threading.Thread(target=lambda: runtime.run(task.request), daemon=True)
+        worker.start()
+        assert started.wait(timeout=2)
+
+        runtime.cancel_task(task.task_id)
+
+        assert task.state == AgentTaskState.CANCELLING
+        assert not task.is_terminal
+        assert not runtime._terminal_events
+        release.set()
+        worker.join(timeout=5)
+
+        assert not worker.is_alive()
+        assert side_effects == ["write completed"]
+        assert task.state == AgentTaskState.CANCELLED
+        assert task.cancellation_reason == AgentCancellationReason.USER_REQUEST
+        assert task.task_id in runtime._terminal_events
+
     def test_invalid_transitions_and_response_ids_are_rejected(self) -> None:
         """Reject lifecycle calls that do not match the Phase 1 transition table."""
         task = self.runtime.create_task(self._request(), task_id="task-1")

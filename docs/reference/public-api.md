@@ -184,13 +184,14 @@ async form.
 | --- | --- |
 | `say(text, save=True, display_text=None, maintain_status=False) -> bool` | Queue literal text for TTS. `display_text` changes only logs/captions. When `maintain_status=True`, playback completion restores the status active when speech was queued. |
 | `say_async(text, save=True, display_text=None) -> bool` | Non-blocking async form of `say`. |
-| `say_stream(text, save=True) -> SpeechStreamQueue` | Queue speech and mirror generated audio chunks to a bounded queue. |
+| `say_stream(text, save=True, *, host_playback=False, speed=None, instructions=None, request_id=None, cancel_event=None) -> SpeechStreamQueue` | Queue speech and mirror generated audio chunks to a bounded queue. Optional request identity and cancellation event support targeted cancellation. |
 | `say_stream_async(text, save=True) -> SpeechStreamQueue` | Async form of streaming speech. |
 | `think(text) -> bool` | Route text through Persona and the shared speech pipeline. |
 | `think_async(text) -> bool` | Async Persona turn. |
 | `normalize(text) -> Optional[str]` | Apply the optional text normalizer. Returns `None` when unavailable/rejected. |
 | `force_stop_speech() -> bool` | Interrupt active speech and queued generation. |
-| `force_stop_speech_async() -> bool` | Async interruption path. |
+| `force_stop_speech_async() -> bool` | Async interruption path for active and queued speech. |
+| `force_stop_speech_request_async(request_id) -> bool` | Stop only the active stream with the matching request identity. |
 | `try_play_signal(name) -> bool` | Play a readiness/sleep/working/error signal. |
 | `is_voice_conversion_mode` | Report whether text-to-speech calls are currently unavailable. |
 | `vision.capabilities()` | Read text/vision/upload/emotion support when Persona is loaded. |

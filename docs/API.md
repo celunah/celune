@@ -201,7 +201,11 @@ operation mode enables Persona and its model is ready.
 
 `POST /v1/audio/speech` accepts the OpenAI audio speech request fields `model`,
 `input`, `voice`, `response_format`, `speed`, `instructions`, and
-`stream_format`. Celune uses its currently selected TTS backend. The `model`
+`stream_format`. Text inputs to `/v1/audio/speech`, `/v1/speak`, `/v1/sing`, and
+`/v1/think` are limited to 65,536 characters. Chat completions accept at most 64
+messages with up to 16,384 characters per message. Oversized fields or message
+lists return FastAPI's standard `422` validation response. Celune uses its
+currently selected TTS backend. The `model`
 field is required for client compatibility and does not switch the backend.
 `voice` must match one of Celune's configured voice names. Selecting a
 different voice makes it the active Celune voice, as with `POST /v1/voice`.
@@ -283,7 +287,8 @@ print(transcript.text)
 and `assistant` messages. Use `celune-current` or the active Persona model ID
 for `model`. Celune applies the active character's Persona prompt and the
 messages supplied by the client. The request does not speak the response or
-change Celune's stored conversation history.
+change Celune's stored conversation history. Requests are limited to 64 text
+messages, each at most 16,384 characters.
 
 The route supports one choice and the `max_tokens` or `max_completion_tokens`,
 `temperature`, and `top_p` parameters. Streaming, tool calls, and multimodal
@@ -467,10 +472,12 @@ Job responses:
 - `500 application/json` if the job failed.
 - `429 application/json` from submission when the waiting queue is full.
 
-Async jobs are kept in memory for 15 minutes and are not persisted across Celune restarts.
-Queued jobs wait until the shared speech pipeline is available, including while
-local speech is playing. Cancelling a queued job removes it from the FIFO.
-Cancelling a running job stops that job.
+Queued and running jobs remain available for their full duration. Terminal jobs
+are kept in memory for 15 minutes after their last status update and are not
+persisted across Celune restarts. Queued jobs wait until the shared speech
+pipeline is available, including while local speech is playing. Cancelling a
+queued job removes it from the FIFO. Cancelling a running job targets that
+request without stopping a replacement request.
 
 ## Request scheduling
 
@@ -592,16 +599,18 @@ and conversion submissions consume the WebUI generation limit. Polling,
 page-load refreshes, voice and recording controls, and other Gradio transport
 requests do not consume it. Failed validation, busy-state, missing-job, and
 backend errors are returned as JSON with an HTTP status instead of exposing raw
-internal tracebacks. Async jobs are retained in memory for 15 minutes and are
-not persisted across a restart.
+internal tracebacks. Queued and running jobs remain available until terminal;
+terminal jobs are retained for 15 minutes after their last status update. Jobs
+are not persisted across a restart.
 
 ## WebUI behavior
 
 The Gradio WebUI is mounted at `/ui` and uses the same Celune engine, voice
 state, and Persona and agent submission path as the other interfaces. It
-supports text input, voice selection, and `ALT+R` capture
-when the active mode supports recording. It does not include the TUI settings
-editor.
+supports text input, voice selection, and `ALT+R` capture when the active
+mode supports recording. Touch and coarse-pointer layouts show a visible
+recording button as an alternative to the shortcut. The WebUI does not include
+the TUI settings editor.
 
 When API authentication is enabled, `/ui` prompts for an API key. A valid key
 creates an opaque, signed `HttpOnly`, `SameSite=Strict` cookie scoped to `/ui`

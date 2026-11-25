@@ -566,7 +566,7 @@ class VersionResponse(BaseModel):
 class SpeakRequest(BaseModel):
     """Request body for asking the app to speak."""
 
-    content: str = Field(min_length=1)
+    content: str = Field(min_length=1, max_length=65_536)
     save: bool = True
     response_format: Literal["flac", "wav"] = "flac"
 
@@ -575,7 +575,7 @@ class OpenAISpeechRequest(BaseModel):
     """OpenAI audio speech request accepted by Celune's compatibility route."""
 
     model: str = Field(min_length=1, max_length=128)
-    input: str = Field(min_length=1)
+    input: str = Field(min_length=1, max_length=65_536)
     voice: str = Field(min_length=1, max_length=128)
     response_format: Literal["mp3", "flac", "wav"] = "mp3"
     speed: float = Field(default=1.0, ge=0.25, le=4.0)
@@ -587,14 +587,14 @@ class OpenAIChatMessage(BaseModel):
     """Text message accepted by the OpenAI chat-completions route."""
 
     role: Literal["system", "developer", "user", "assistant"]
-    content: str
+    content: str = Field(max_length=16_384)
 
 
 class OpenAIChatCompletionRequest(BaseModel):
     """Text chat-completion request handled by Celune's active Persona model."""
 
     model: str = Field(min_length=1, max_length=256)
-    messages: list[OpenAIChatMessage] = Field(min_length=1)
+    messages: list[OpenAIChatMessage] = Field(min_length=1, max_length=64)
     max_tokens: Optional[int] = Field(default=None, ge=1, le=4096)
     max_completion_tokens: Optional[int] = Field(default=None, ge=1, le=4096)
     temperature: float = Field(default=0.75, ge=0.0, le=2.0)
@@ -606,7 +606,7 @@ class OpenAIChatCompletionRequest(BaseModel):
 class ThinkRequest(BaseModel):
     """Request body for asking the app to think and reply."""
 
-    content: str = Field(min_length=1)
+    content: str = Field(min_length=1, max_length=65_536)
 
 
 class VoiceRequest(BaseModel):
@@ -665,8 +665,10 @@ async def authenticate_webui(
 
 
 async def _cancel_speech_job(job_id: str) -> bool:
-    """Cancel one pending speech job or stop that job when it is active."""
+    """Cancel one pending speech job or its identity-bound active request."""
+    event = TaskEvent(task_id=job_id, event="cancelled", status="cancelled")
     queued = False
+    subscriptions: tuple[TaskSubscription, ...] = ()
     with server_session.speech_jobs_lock:
         job = server_session.speech_jobs.get(job_id)
         if job is None or job.status in {"completed", "failed", "cancelled"}:
@@ -676,22 +678,25 @@ async def _cancel_speech_job(job_id: str) -> bool:
                 if request[0] == job_id:
                     server_session.speech_job_queue.remove(request)
                     break
-            job.status = "cancelled"
             queued = True
         elif server_session.active_speech_task_id != job_id:
             return False
+        job.cancel_event.set()
+        job.status = "cancelled"
+        job.updated_at = time.time()
+        job.events.append(event)
+        subscriptions = tuple(job.subscriptions)
+        celune = server_session.bound_celune
 
+    for subscription in subscriptions:
+        subscription.put(event)
     if queued:
-        server_jobs.publish_task_event(
-            job_id,
-            TaskEvent(task_id=job_id, event="cancelled", status="cancelled"),
-        )
         return True
 
-    celune = require_celune()
-    # noinspection PyBroadException
+    if celune is None:
+        return True
     try:
-        stopped = await celune.force_stop_speech_async()
+        await celune.force_stop_speech_request_async(job_id)
     except Exception as error:
         celune.log(
             format_error_message(
@@ -701,18 +706,6 @@ async def _cancel_speech_job(job_id: str) -> bool:
             ),
             "warning",
         )
-        return False
-    if not stopped:
-        return False
-
-    server_jobs.update_speech_job(job_id, status="cancelled")
-    server_jobs.publish_task_event(
-        job_id,
-        TaskEvent(task_id=job_id, event="cancelled", status="cancelled"),
-    )
-    with server_session.speech_jobs_lock:
-        if server_session.active_speech_task_id == job_id:
-            server_session.active_speech_task_id = None
     return True
 
 
@@ -1683,6 +1676,7 @@ def _fail_queued_speech_job(
         if job is None or job.status != "queued":
             return
         job.status = "failed"
+        job.updated_at = time.time()
         job.error = message
         event = TaskEvent(
             task_id=job_id,
@@ -1706,6 +1700,8 @@ def _dispatch_speech_jobs(session: ServerSession) -> None:
                 session.speech_job_worker = None
                 return
             job_id, content, save, output_format = session.speech_job_queue[0]
+            job = session.speech_jobs.get(job_id)
+            cancel_event = job.cancel_event if job is not None else None
 
         if server_jobs.task_status(job_id, session) != "queued":
             _remove_queued_speech_job(job_id, session)
@@ -1721,7 +1717,12 @@ def _dispatch_speech_jobs(session: ServerSession) -> None:
             continue
 
         try:
-            chunks = celune.say_stream(content, save=save)
+            chunks = celune.say_stream(
+                content,
+                save=save,
+                request_id=job_id,
+                cancel_event=cancel_event,
+            )
         except Exception as error:
             _fail_queued_speech_job(job_id, error, session)
             _remove_queued_speech_job(job_id, session)
@@ -1747,6 +1748,7 @@ def _dispatch_speech_jobs(session: ServerSession) -> None:
                 ):
                     session.speech_job_queue.popleft()
                 job.status = "running"
+                job.updated_at = time.time()
                 session.active_speech_task_id = job_id
                 event = TaskEvent(
                     task_id=job_id,
@@ -1757,7 +1759,6 @@ def _dispatch_speech_jobs(session: ServerSession) -> None:
                 subscriptions = tuple(job.subscriptions)
 
         if not accepted:
-            celune.force_stop_speech()
             collect_speech_job(job_id, chunks, session, output_format)
             _remove_queued_speech_job(job_id, session)
             continue

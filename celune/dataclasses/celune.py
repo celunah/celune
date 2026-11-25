@@ -152,6 +152,7 @@ class CelunePipelineState:
     pipeline_lock_owner: Optional[ComponentLockOwner] = None
     last_component_busy: Optional[ComponentBusyResult] = None
     exit_requested: bool = False
+    active_speech_request_id: Optional[str] = None
 
 
 @dataclass
@@ -342,6 +343,11 @@ CELUNE_FORWARDED_PROPERTIES = (
         "utterance_force_stop",
     ),
     ForwardedPropertySpec("_speech_generation", "_pipeline_state", "speech_generation"),
+    ForwardedPropertySpec(
+        "_active_speech_request_id",
+        "_pipeline_state",
+        "active_speech_request_id",
+    ),
     ForwardedPropertySpec(
         "_playback_generation", "_pipeline_state", "playback_generation"
     ),

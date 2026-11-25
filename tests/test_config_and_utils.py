@@ -54,6 +54,15 @@ class TestConfig:
 
         with mock.patch.dict("os.environ", {}, clear=True):
             assert config.config_bool(values, "CELUNE_TEST", "enabled", default=False)
+            assert not config.config_bool(
+                {"enabled": "false"}, "CELUNE_TEST", "enabled", default=True
+            )
+            assert config.config_bool(
+                {"enabled": "yes"}, "CELUNE_TEST", "enabled", default=False
+            )
+            assert not config.config_bool(
+                {"enabled": "invalid"}, "CELUNE_TEST", "enabled", default=False
+            )
 
     def test_inference_mode_defaults_normalizes_and_rejects_invalid_values(
         self,

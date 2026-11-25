@@ -194,6 +194,7 @@ class PersonaAgentBridge:
             raise TypeError("Persona agent boundary is unavailable")
 
         lease = None
+        task_generation = context.task.generation if context.task is not None else None
         manager = getattr(self.engine, "component_locks", None)
         if manager is not None:
             task = context.task
@@ -232,7 +233,21 @@ class PersonaAgentBridge:
             )
             if repair_opening:
                 payload = _repair_opening_request(payload)
+            if context.task is not None and context.task.generation != task_generation:
+                return {
+                    "tool_call": None,
+                    "response": None,
+                    "end": False,
+                    "paused": True,
+                }
             response = cast(PersonaClientResponse, post(json=payload))
+            if context.task is not None and context.task.generation != task_generation:
+                return {
+                    "tool_call": None,
+                    "response": None,
+                    "end": False,
+                    "paused": True,
+                }
             response.raise_for_status()
             response_payload = response.json()
             prompt_tokens = getattr(response, "prompt_tokens", None)
@@ -244,6 +259,16 @@ class PersonaAgentBridge:
             if not spoken_text or not any(
                 character.isalnum() for character in spoken_text
             ):
+                if (
+                    context.task is not None
+                    and context.task.generation != task_generation
+                ):
+                    return {
+                        "tool_call": None,
+                        "response": None,
+                        "end": False,
+                        "paused": True,
+                    }
                 payload = _repair_persona_request(payload)
                 response = cast(PersonaClientResponse, post(json=payload))
                 response.raise_for_status()

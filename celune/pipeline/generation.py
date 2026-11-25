@@ -78,6 +78,8 @@ _EMPTY_INPUT_VOCODER_ERROR = (
 def _acquire_queued_speech_pipeline(engine: Celune, request: SpeechRequest) -> bool:
     """Wait for prior audio work to finish before reserving one queued utterance."""
     while not engine.exit_requested:
+        if request.cancel_event is not None and request.cancel_event.is_set():
+            return False
         if request.generation != getattr(
             engine, "_speech_generation", request.generation
         ):
@@ -138,6 +140,40 @@ def _recover_quantized_tts(engine: Celune, language: Optional[str]) -> None:
             error_code="tts_quantization_recovery_failed",
             error_type=type(error).__name__,
         ) from error
+
+
+def _speech_request_cancelled(engine: Celune, request: SpeechRequest) -> bool:
+    """Return whether global stop or this request's cancellation was requested."""
+    return engine.utterance_force_stop.is_set() or (
+        request.cancel_event is not None and request.cancel_event.is_set()
+    )
+
+
+def _finish_cancelled_speech_request(
+    engine: Celune,
+    request: SpeechRequest,
+) -> None:
+    """Release consumers and clear an unreserved request's generating status."""
+    if request.stream_queue is not None:
+        request.stream_queue.put(None)
+    if request.audio_capture_queue is not None:
+        request.audio_capture_queue.put(
+            NotAvailableError("speech request was cancelled")
+        )
+    if request.playback_source_queue is not None:
+        request.playback_source_queue.put(
+            NotAvailableError("speech request was cancelled")
+        )
+    with engine.say_lock:
+        clear_generating_status = not engine.locked and engine.cur_state == "generating"
+        if clear_generating_status:
+            engine.cur_state = "idle"
+    if clear_generating_status:
+        if request.play_audio:
+            engine.status_callback(string("status.idle"))
+            engine.progress_callback(0, 1)
+        else:
+            engine.idle_callback()
 
 
 def _process_generation_request(
@@ -311,7 +347,7 @@ def _process_generation_request(
                 if engine.exit_requested:
                     break
 
-                if engine.utterance_force_stop.is_set():
+                if _speech_request_cancelled(engine, item):
                     break
 
                 chunk_word_start, chunk_word_end = caption_word_ranges[chunk_index]
@@ -421,10 +457,10 @@ def _process_generation_request(
                         if engine.exit_requested:
                             break
 
-                        if (
-                            engine.utterance_force_stop.is_set()
-                            or request_generation
-                            != getattr(engine, "_speech_generation", request_generation)
+                        if _speech_request_cancelled(
+                            engine, item
+                        ) or request_generation != getattr(
+                            engine, "_speech_generation", request_generation
                         ):
                             break
 
@@ -480,7 +516,7 @@ def _process_generation_request(
 
                         if (
                             engine.exit_requested
-                            or engine.utterance_force_stop.is_set()
+                            or _speech_request_cancelled(engine, item)
                             or request_generation
                             != getattr(engine, "_speech_generation", request_generation)
                         ):
@@ -532,7 +568,7 @@ def _process_generation_request(
 
                     if (
                         not engine.exit_requested
-                        and not engine.utterance_force_stop.is_set()
+                        and not _speech_request_cancelled(engine, item)
                         and last_timing is not None
                         and last_timing.get("is_final")
                         and bool(last_timing.get("missing_eos"))
@@ -557,14 +593,14 @@ def _process_generation_request(
                     buffer.clear()
                     if (
                         not engine.exit_requested
-                        and not engine.utterance_force_stop.is_set()
+                        and not _speech_request_cancelled(engine, item)
                         and request_generation
                         == getattr(engine, "_speech_generation", request_generation)
                     ):
                         engine.progress_callback(chunk_index + 1, len(chunks))
                 elif (
                     not engine.exit_requested
-                    and not engine.utterance_force_stop.is_set()
+                    and not _speech_request_cancelled(engine, item)
                     and request_generation
                     == getattr(engine, "_speech_generation", request_generation)
                 ):
@@ -669,7 +705,7 @@ def _process_generation_request(
                 release_pipeline(engine)
                 break
 
-            if engine.utterance_force_stop.is_set() or request_generation != getattr(
+            if _speech_request_cancelled(engine, item) or request_generation != getattr(
                 engine, "_speech_generation", request_generation
             ):
                 if item.audio_capture_queue is not None:
@@ -1000,6 +1036,15 @@ def _process_generation_request(
                 release_pipeline(engine)
                 break
 
+            if item.cancel_event is not None and item.cancel_event.is_set():
+                _finish_cancelled_speech_request(engine, item)
+                engine.reverb.reset()
+                engine.cur_state = "idle"
+                release_pipeline(engine)
+                if not item.play_audio:
+                    engine.idle_callback()
+                break
+
             if (
                 caption_worker is not None
                 and not capture_tutorial_audio
@@ -1122,6 +1167,9 @@ async def generation_worker_job(
             break
 
         request = cast(SpeechRequest, item)
+        if request.cancel_event is not None and request.cancel_event.is_set():
+            _finish_cancelled_speech_request(engine, request)
+            continue
         if request.generation != getattr(
             engine, "_speech_generation", request.generation
         ):
@@ -1137,33 +1185,48 @@ async def generation_worker_job(
                 )
             continue
 
+        pipeline_acquired = request.pipeline_reserved
         if not request.pipeline_reserved:
-            acquired = await run_in_daemon_thread(
+            pipeline_acquired = await run_in_daemon_thread(
                 lambda _request=request: _acquire_queued_speech_pipeline(
                     engine,
                     _request,
                 )
             )
-            if not acquired:
-                if request.stream_queue is not None:
-                    request.stream_queue.put(None)
-                if request.audio_capture_queue is not None:
-                    request.audio_capture_queue.put(
-                        NotAvailableError(
-                            "speech request was cancelled before playback"
+            if not pipeline_acquired:
+                if request.cancel_event is not None and request.cancel_event.is_set():
+                    _finish_cancelled_speech_request(engine, request)
+                else:
+                    if request.stream_queue is not None:
+                        request.stream_queue.put(None)
+                    if request.audio_capture_queue is not None:
+                        request.audio_capture_queue.put(
+                            NotAvailableError(
+                                "speech request was cancelled before playback"
+                            )
                         )
-                    )
-                if request.playback_source_queue is not None:
-                    request.playback_source_queue.put(
-                        NotAvailableError(
-                            "speech request was cancelled before playback"
+                    if request.playback_source_queue is not None:
+                        request.playback_source_queue.put(
+                            NotAvailableError(
+                                "speech request was cancelled before playback"
+                            )
                         )
-                    )
                 continue
 
-        engine.cur_state = "generating"
-        engine.utterance_force_stop.clear()
-        engine._active_speech_generation = request.generation
+        with engine.say_lock:
+            cancelled_before_start = (
+                request.cancel_event is not None and request.cancel_event.is_set()
+            )
+            if not cancelled_before_start:
+                engine.cur_state = "generating"
+                engine.utterance_force_stop.clear()
+                engine._active_speech_generation = request.generation
+                engine._active_speech_request_id = request.request_id
+        if cancelled_before_start:
+            if pipeline_acquired:
+                release_pipeline(engine)
+            _finish_cancelled_speech_request(engine, request)
+            continue
         try:
             await run_in_daemon_thread(
                 lambda _request=request: _process_generation_request(
@@ -1174,7 +1237,10 @@ async def generation_worker_job(
                 )
             )
         finally:
-            engine._active_speech_generation = None
+            with engine.say_lock:
+                engine._active_speech_generation = None
+                if engine._active_speech_request_id == request.request_id:
+                    engine._active_speech_request_id = None
         if getattr(engine.backend, "worker_running", None) is False:
             from ..core.voice import recover_failed_backend
 

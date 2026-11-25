@@ -23,6 +23,7 @@ from celune.utils import discard, clear_queue
 from celune.audio.speakers import SpeakerChannel
 from celune.agent import routing as agent_routing
 from celune.typing.locks import ComponentLockName
+from celune.typing.pipeline import SpeechStreamQueue
 from celune.constants import BASE_SR, PipelineStates
 from celune.typing.common import JSON, JSONSerializable
 from celune.core.concurrency import run_in_daemon_thread
@@ -137,6 +138,39 @@ class TestPipeline:
         releaser.join(timeout=1)
         assert engine.locked
         buffering.release_pipeline(cast(Celune, engine))
+
+    def test_cancelled_speech_submission_does_not_wait_for_model_readiness(
+        self,
+    ) -> None:
+        """Stop an API request while its speech submission awaits model loading."""
+        engine = make_pipeline_engine()
+        engine.model_ready.clear()
+        cancel_event = threading.Event()
+        cancel_event.set()
+
+        assert not submission._wait_for_model_ready(
+            cast(Celune, engine),
+            cancel_event,
+        )
+
+    def test_cancelled_unreserved_stream_clears_queued_generating_state(
+        self,
+    ) -> None:
+        """Clear the queued status and close the stream before generation starts."""
+        engine = make_pipeline_engine()
+        engine.cur_state = "generating"
+        stream_queue: SpeechStreamQueue = queue.Queue()
+        request = SpeechRequest(
+            "cancelled",
+            display_text="cancelled",
+            stream_queue=stream_queue,
+            play_audio=False,
+        )
+
+        generation._finish_cancelled_speech_request(cast(Celune, engine), request)
+
+        assert engine.cur_state == "idle"
+        assert stream_queue.get_nowait() is None
 
     def test_speech_submission_wakes_celune_on_demand(self) -> None:
         """Wake a sleeping engine before accepting an explicit speech request."""
@@ -345,6 +379,12 @@ class TestPipeline:
         )
 
         assert not playback.force_stop_speech(celune_engine)
+        engine._active_speech_request_id = "request-1"
+        engine.backend.cancel_active_request = mock.Mock()
+        assert not playback.force_stop_speech_request(celune_engine, "request-2")
+        engine.backend.cancel_active_request.assert_not_called()
+        assert playback.force_stop_speech_request(celune_engine, "request-1")
+        engine.backend.cancel_active_request.assert_called_once_with(wait_for_ack=False)
         engine.locked = True
         engine.backend.cancel_active_request = mock.Mock()
         engine.text_queue.put("pending")

@@ -30,6 +30,7 @@ from .runtime import (
     append_webui_error,
     webui_resources_html,
     webui_vc_mode_active,
+    _webui_persona_input_available,
     configure_webui_theme,
     webui_submit_snapshot,
     webui_vc_controls_update,
@@ -707,7 +708,10 @@ def _webui_record_button_update(
         return gr.update(interactive=False)
     if getattr(celune, "is_in_tutorial", False):
         return gr.update(interactive=False)
-    return gr.update(interactive=True)
+    return gr.update(
+        interactive=webui_vc_mode_active(celune)
+        or _webui_persona_input_available(celune)
+    )
 
 
 def _webui_toggle_recording(
@@ -798,12 +802,12 @@ def build_webui(session: ServerSession = server_session) -> gr.Blocks:
                                 min_width=0,
                                 interactive=False,
                             )
-                    record_hotkey = gr.Button(
-                        value="",
-                        elem_id="celune-record-hotkey",
-                        visible=True,
-                        interactive=False,
-                    )
+                            record_hotkey = gr.Button(
+                                value=string("webui.recording_toggle_button"),
+                                elem_id="celune-record-hotkey",
+                                visible=True,
+                                interactive=False,
+                            )
                     with gr.Row(elem_id="celune-footer"):
                         status = gr.HTML(
                             webui_status_html(session), elem_id="celune-status"

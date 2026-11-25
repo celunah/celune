@@ -602,11 +602,11 @@ def validate_vram_preset(
     warnings: list[str] = []
     if torch.cuda.is_available():
         total_bytes = cuda_total_capacity_bytes()
-        total_gb = math.ceil(total_bytes / 1024**3)
+        total_gb = total_bytes // 1024**3
 
         tier = configured_tier
 
-        while VRAM_REQUIREMENTS[tier] > total_gb and tier != "low":
+        while VRAM_REQUIREMENTS[tier] * 1024**3 > total_bytes and tier != "low":
             tier = TIERS[TIERS.index(tier) - 1]
 
         if tier != configured_tier:
@@ -652,9 +652,8 @@ def resolve_vram_preset(
     # downgrade VRAM preset if user doesn't have enough VRAM for the currently selected preset
     if torch.cuda.is_available():
         total_bytes = cuda_total_capacity_bytes()
-        total_gb = math.ceil(total_bytes / 1024**3)
 
-        while VRAM_REQUIREMENTS[tier] > total_gb and tier != "low":
+        while VRAM_REQUIREMENTS[tier] * 1024**3 > total_bytes and tier != "low":
             tier = TIERS[TIERS.index(tier) - 1]
 
     if tier == "low":
