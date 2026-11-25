@@ -83,8 +83,13 @@ browser UI, API, and extension surfaces.
   recovery for procedures. Development pages identify owning paths,
   boundaries, validation, and runtime/release effects. Use canonical commands
   from the README and keep examples copyable. Keep contracts canonical instead
-  of duplicating them. Update `mkdocs.yml` when pages or navigation change, and
-  run strict MkDocs and MarkdownLint for docs changes.
+  of duplicating them. Keep user-facing docs concise and task-oriented: include
+  details readers need to choose, configure, operate, and troubleshoot Celune.
+  Put implementation internals in development docs, and link to canonical
+  references instead of repeating them. Avoid filler, repeated explanations,
+  and exhaustive edge-case narration, while preserving details needed for
+  safety, compatibility, and recovery. Update `mkdocs.yml` when pages or
+  navigation change, and run strict MkDocs and MarkdownLint for docs changes.
   Distinguish Celune's Apache 2.0 license (5.0.0+) from its earlier MIT license
   and from third-party model/asset licenses.
 - **Validate proportionally and report honestly.** After code changes, run

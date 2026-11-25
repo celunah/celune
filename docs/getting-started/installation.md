@@ -44,10 +44,10 @@ Install these before using the corresponding features:
 The setup helper can install system tools with `apt` on Debian, Ubuntu, Mint,
 and Pop!_OS, `pacman` on Arch, Manjaro, and EndeavourOS, `dnf` on Fedora,
 Rocky Linux, and AlmaLinux, and `zypper` on openSUSE. Alpine Linux is supported
-experimentally through `apk`. Some packages may potentially be unsupported
-there. On Debian-like Linux distributions, the project commonly needs
-PortAudio development headers for `sounddevice`. The CI workflow installs
-`portaudio19-dev`. Other distributions should use their equivalent package.
+experimentally through `apk`, where some required packages may be unavailable.
+On Debian-like Linux distributions, `sounddevice` commonly requires PortAudio
+development headers such as `portaudio19-dev`. Install the equivalent package
+on other distributions.
 
 ## Source installation
 

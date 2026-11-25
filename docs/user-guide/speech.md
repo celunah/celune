@@ -89,41 +89,19 @@ Int16 payloads are converted using `/32768` when decoded by CEDTS.
 
 ## Long-form speech
 
-Long text is segmented before generation. Smart buffering protects already
-played audio and throttles playback speed only within its configured limits.
-With captions disabled, progress follows blocks after they reach the output
-writer, so playback progress stays synchronized even when generation produces
-chunks faster than the sound device consumes them. Set `captions: true` to
-enable IPA alignment with the `sadda-speech/wav2vec2-espeak-ctc` phoneme model. Celune
-combines the generated text chunks and aligns them against the complete
-utterance waveform in one model inference. Known chunk boundaries constrain
-the alignment to each chunk's audio range, preventing timing drift across the
-utterance. The model is
-Apache-2.0 licensed and is downloaded from Hugging Face. When captions are
-enabled, Celune prepares the model in the background during startup without
-blocking startup. The first alignment can still wait if preparation is ongoing.
-Install the optional GPU-enabled ONNX Runtime dependency on Windows with:
+Celune segments long text before generation and uses smart buffering to keep
+playback smooth. Captions are optional. Set `captions: true` to align words
+with speech. This requires the `espeak-ng` executable and the optional
+`sadda-speech/wav2vec2-espeak-ctc` model. Install caption support on Windows
+with:
 
 ```powershell
 uv sync --dev --extra api --extra captions --extra cu132
 ```
 
-Caption alignment keeps ONNX Runtime session logs at error level, suppressing
-CPU graph-optimization warnings while preserving actual runtime errors. When
-the ONNX Runtime CUDA provider is available, the alignment session runs on an
-NVIDIA GPU. The session uses CPU if CUDA is unavailable or cannot initialize.
+Celune prefers the ONNX Runtime CUDA provider and falls back to CPU. If caption
+dependencies are unavailable or alignment fails, speech continues without
+captions. With captions disabled, Celune does not download the alignment model.
 
-The `espeak-ng` executable must also be on `PATH`. If eSpeak NG or ONNX Runtime
-is missing, the application logs a yellow warning and hides captions for the utterance.
-Speech playback continues. For speech, the application hides captions when aligned word
-timings are unavailable instead of advancing them at a uniform pace. With
-aligned timings, captions reveal the final word and remain visible until
-playback completes. With captions disabled, Celune does not load or download
-the alignment model. A background worker aligns one combined waveform and
-records its word timings without holding playback. Audio uses the same adaptive
-streaming buffer as speech without captions. Captions can begin revealing words
-after alignment finishes. Another speech request can generate while alignment
-is pending. Speech playback continues if alignment fails.
-For a caller that needs every chunk, use `say_stream()` and drain the returned
-queue until its terminal sentinel/condition. Do not read the internal playback
-queue directly.
+Python callers that need generated chunks can use `say_stream()` and drain its
+returned queue. Do not read the internal playback queue directly.

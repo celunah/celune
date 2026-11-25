@@ -15,28 +15,21 @@ selection, and the checks that confirm Celune is ready to speak.
 5. Use `/help` in the Textual UI to see commands supported by the active
    backend and mode.
 
-The default configuration enables the REST API on loopback port 2060 and keeps
-isolated backend environments enabled. A first launch can therefore spend time
-creating a backend environment and downloading models before the ready state.
-The speech pipeline and ready event become available after backend warmup. When
-Persona initializes in the background, Celune waits for that worker to finish
-before playing the readiness cue, so the cue does not overlap that startup work.
+The default configuration enables the REST API on loopback port 2060. The
+first launch may take longer while Celune prepares the selected backend and
+downloads its model.
 
 ## Select a backend
 
-When `backend` is `null`, the first interactive launch shows a terminal picker
-before the Textual UI starts. Celune saves the selected TTS backend to the
-active configuration. The picker lists the registered TTS backends: `mini`,
-`qwen3`, `fireredtts3`, `dotstts`, `voxcpm2`, `ming3`, and `soulxsinger`.
-Headless launches do not prompt and continue using the preset default. Set
-`backend` in the active config to choose it directly, or pass `CELUNE_BACKEND`
-for a one-process override. See [Backends](../development/backends.md) for
-capability and dependency details.
+When `backend` is `null`, an interactive launch asks you to choose a TTS
+backend and saves your selection. Headless launches use the configured preset
+default. Set `backend` in the config or use `CELUNE_BACKEND` for a one-run
+override. Compare TTS options in [Speech](../user-guide/speech.md), and see the
+[backend guide](../development/backends.md) for setup details.
 
-The backend controls language support, reference-audio requirements, model
-size, chunk rate, and whether the active voice pack can be used. An unknown
-voice or a missing compatible pack is reported as a load error rather than
-silently falling back to a different identity.
+A backend may require specific languages or reference audio. If the active voice
+pack is incompatible, Celune reports a load error rather than switching to a
+different voice.
 
 ## Select a voice pack
 
@@ -53,11 +46,10 @@ active capabilities.
 
 ## Verify speech
 
-In performance mode, type text and press `^ENTER`. In converse mode, the same
-action sends the text through Persona. Use `^R` for Persona speech input.
-Generated files are placed in the repository
-`outputs/` directory when saving is enabled. Celune writes 48 kHz, 24-bit FLAC
-outputs. The runtime keeps audio arrays as normalized float32.
+In performance mode, type text and press `^ENTER` to speak. In converse mode,
+the same action sends the text to Persona. Use `^R` for Persona speech input.
+When saving is enabled, speech is written as 48 kHz, 24-bit FLAC in
+`outputs/`.
 
 For a headless first check, set `headless: true` and use the REST API or an
 extension. To let Celune choose based on the environment, set `headless: null`.
@@ -73,16 +65,10 @@ Run:
 uv run python main.py doctor
 ```
 
-If the loading screen changes to the red `Failed to start` state, read the
-diagnostic shown there. When engine initialization returns a failure without
-raising an exception, the application shows the most recent error-level startup log
-instead of only the generic startup message. The screen keeps the final error
-message concise. Traceback detail remains in the application log. The application
-remains open so the error can be read. Press `^Q` to close it. A missing required
-dependency returns exit code `4` to the launcher, which can then report or
+If the loading screen shows `Failed to start`, read its diagnostic and check
+the application log for details. Press `^Q` to close the error screen. A missing
+required dependency returns exit code `4` to the launcher, which can report or
 repair the environment.
-
-Then inspect the application log and traceback path reported by the runtime.
 Do not delete a backend environment while it is running. If an environment is
 corrupt, use `celune doctor --fix` where the doctor offers a repair, or remove
 only the named backend environment after Celune has fully exited.

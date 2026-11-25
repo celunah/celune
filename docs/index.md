@@ -40,14 +40,8 @@ for saved files and API responses. Backends may run in isolated environments.
 The core communicates with them over CEDTS rather than importing backend-only
 packages into the main application.
 
-## Project conventions
+## Licensing
 
-The source repository is Apache 2.0-licensed. Third-party models, backend packages,
-voice recordings, and other assets retain their own licenses. See
-[Licensing](licensing.md) before redistributing a model or a voice pack.
-
-The repository root keeps `README.md` for the project landing page,
-`AGENTS.md` for contributor instructions, and `CLAUDE.md` for tooling metadata.
-Documentation-owned Markdown lives under `docs/`. The lore-only Book of Celune
-at `resources/about/about-celune.md` is intentionally not treated as a factual
-technical reference.
+Celune has been Apache 2.0-licensed since version 5.0.0; earlier releases
+used MIT. Models, backend packages, recordings, and other assets have separate
+terms. See the [licensing guide](licensing.md) before redistributing them.

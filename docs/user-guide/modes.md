@@ -39,22 +39,10 @@ the result through the REST API.
 
 ## Button actions
 
-Every TUI button owns a UI-level `ButtonActions(press=..., hold=...)`
-capability state. `press` is enabled by default and `hold` is optional and
-disabled by default. The UI handles the resulting press and hold events
-separately, so each interaction can run a different operation. When both
-capabilities are false, the button keeps its normal Textual behavior and
-appearance but is rendered with the disabled visual treatment without using
-Textual's `disabled` state.
-
-The voice button uses `press` to cycle to the next loaded voice and `hold` to
-open the voice selector. These capabilities are independent, so the UI can set
-`ButtonActions(press=False, hold=True)` while Celune sleeps. A short press then
-does nothing, while a hold opens the selector. Confirming a voice wakes Celune
-before applying the selected voice. With a singing backend, voice cycling stays
-locked and the hold menu lists only packs that provide the reserved `sing`
-voice. Since each pack provides one singing role, the menu has no entry search.
-Confirming a row loads that character pack.
+The voice button cycles through loaded voices when pressed and opens the voice
+selector when held. While Celune sleeps, a short press does nothing, but holding
+the button opens the selector and wakes Celune when you choose a voice. Singing
+backends lock voice cycling and show only packs with a `sing` voice.
 
 ## Conversation flow
 
