@@ -9,7 +9,7 @@ from uuid import uuid4
 from typing import TYPE_CHECKING
 
 from ..i18n import string
-from ..utils import format_error_message
+from ..utils import format_error_message, strip_reasoning_traces
 from .concurrency import run_in_daemon_thread
 from ..pipeline.submission import say, queue_speech
 from ..pipeline.buffering import notify_component_busy
@@ -102,7 +102,7 @@ def deliver_persona_response(
         engine.log(string("celune.persona_unavailable_singing"), "warning")
         return False
 
-    spoken_text = response.strip()
+    spoken_text = strip_reasoning_traces(response).strip()
     if not spoken_text:
         return False
 

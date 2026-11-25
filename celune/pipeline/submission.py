@@ -38,6 +38,7 @@ from ..utils import (
     detect_language,
     format_error_message,
     normalize_special_characters,
+    strip_reasoning_traces,
 )
 from .buffering import (
     release_pipeline,
@@ -776,9 +777,13 @@ def _queue_speech_after_ready(
 
     singing_backend = bool(getattr(engine.backend, "singing", False))
     speech_text = (
-        text if singing_backend else normalize_special_characters(text, for_tts=True)
+        strip_reasoning_traces(text)
+        if singing_backend
+        else normalize_special_characters(text, for_tts=True)
     )
-    preserved_display_text = display_text if display_text is not None else text
+    preserved_display_text = strip_reasoning_traces(
+        display_text if display_text is not None else text
+    )
     if singing_backend and contains_cesn_note_event(preserved_display_text):
         preserved_display_text = cesn_to_text(preserved_display_text)
     supported_languages = list(engine.backend.supported_languages)
@@ -865,7 +870,7 @@ def _queue_speech_after_ready(
                     ),
                     generation=engine.speech_generation,
                     synthesis_sections=tuple(
-                        section
+                        strip_reasoning_traces(section)
                         if singing_backend
                         else normalize_special_characters(section, for_tts=True)
                         for section in synthesis_sections

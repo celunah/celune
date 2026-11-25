@@ -84,6 +84,59 @@ class TestPipelineAsync:
 
         assert "Voice prompt:" not in context.persona_card.voice
 
+    def test_persona_response_extraction_removes_reasoning_blocks(self) -> None:
+        """Keep hidden model reasoning out of extracted Persona responses."""
+        payload = {
+            "choices": [
+                {
+                    "message": {
+                        "content": (
+                            "<think>Let me reason through this privately.</think> "
+                            "The answer is ready."
+                        )
+                    }
+                }
+            ]
+        }
+
+        assert (
+            persona_conversation.extract_persona_text(cast(JSONSerializable, payload))
+            == "The answer is ready."
+        )
+
+    def test_agent_response_delivery_cleans_reasoning_before_history_and_speech(
+        self,
+    ) -> None:
+        """Keep agent reasoning out of assistant history and queued speech."""
+        engine = make_pipeline_engine()
+        engine.persona_history = []
+        response = "<think>Private reasoning.</think> The spoken answer."
+
+        with (
+            mock.patch("celune.core.conversation.store_persona_memories"),
+            mock.patch(
+                "celune.core.conversation.queue_speech", return_value=True
+            ) as queue_speech,
+            mock.patch("celune.core.conversation.compact_persona_history"),
+            mock.patch("celune.core.conversation.classify_persona_memories"),
+        ):
+            queued = core_conversation.deliver_persona_response(
+                cast(Celune, engine), "A request.", response
+            )
+
+        assert queued
+        assert engine.persona_history == [
+            {"role": "user", "content": "A request."},
+            {"role": "assistant", "content": "The spoken answer."},
+        ]
+        queue_speech.assert_called_once_with(
+            engine,
+            "The spoken answer.",
+            save=False,
+            display_text="The spoken answer.",
+            maintain_status=False,
+        )
+
     def test_persona_card_uses_baseline_persona_for_non_default_voice_pack(
         self,
     ) -> None:

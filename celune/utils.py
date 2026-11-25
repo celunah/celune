@@ -872,6 +872,47 @@ def raise_test() -> None:
     raise RuntimeError("testing exception")
 
 
+_REASONING_MARKER_RE = re.compile(
+    r"<\s*(?P<closing>/)?\s*(?P<tag>think|analysis|reasoning)\s*>",
+    re.IGNORECASE,
+)
+
+
+def strip_reasoning_traces(text: str) -> str:
+    """Remove tagged reasoning sections, including incomplete and nested traces.
+
+    Args:
+        text: Generated text that may contain tagged internal reasoning.
+
+    Returns:
+        str: Text with tagged reasoning sections removed.
+    """
+    cleaned: list[str] = []
+    active_tags: list[str] = []
+    cursor = 0
+
+    for marker in _REASONING_MARKER_RE.finditer(text):
+        tag = marker.group("tag").casefold()
+        if marker.group("closing") is None:
+            if not active_tags:
+                cleaned.append(text[cursor : marker.start()])
+            active_tags.append(tag)
+            continue
+
+        if active_tags:
+            if tag in active_tags:
+                matching_tag = len(active_tags) - 1 - active_tags[::-1].index(tag)
+                del active_tags[matching_tag:]
+                if not active_tags:
+                    cursor = marker.end()
+        else:
+            cursor = marker.end()
+
+    if not active_tags:
+        cleaned.append(text[cursor:])
+    return "".join(cleaned)
+
+
 def normalize_special_characters(text: str, *, for_tts: bool = False) -> str:
     """Normalize special characters while optionally preparing text for TTS.
 
@@ -882,6 +923,9 @@ def normalize_special_characters(text: str, *, for_tts: bool = False) -> str:
     Returns:
         str: The normalized text.
     """
+
+    if for_tts:
+        text = strip_reasoning_traces(text)
 
     special_char_mappings = str.maketrans(
         {

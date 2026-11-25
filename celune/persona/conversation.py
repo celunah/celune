@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Optional, cast
 
-from ..utils import format_error_message
+from ..utils import format_error_message, strip_reasoning_traces
 from .paths import persona_override_files
 from .emotion import PersonaEmotionAnalyzer
 from .capabilities import PersonaCapabilities
@@ -725,7 +725,7 @@ def build_persona_request(
 def extract_persona_text(payload: JSONSerializable) -> str:
     """Extract spoken text from common Persona response payload shapes."""
     if isinstance(payload, str):
-        return payload.strip()
+        return strip_reasoning_traces(payload).strip()
 
     if not isinstance(payload, dict):
         return ""
@@ -733,13 +733,17 @@ def extract_persona_text(payload: JSONSerializable) -> str:
     for key in ("text", "response", "reply", "output", "content"):
         value = payload.get(key)
         if isinstance(value, str) and value.strip():
-            return value.strip()
+            spoken_text = strip_reasoning_traces(value).strip()
+            if spoken_text:
+                return spoken_text
 
     message = payload.get("message")
     if isinstance(message, dict):
         content = message.get("content")
         if isinstance(content, str) and content.strip():
-            return content.strip()
+            spoken_text = strip_reasoning_traces(content).strip()
+            if spoken_text:
+                return spoken_text
 
     choices = payload.get("choices")
     if isinstance(choices, list) and choices:

@@ -591,6 +591,30 @@ class TestUtils:
                 for_tts=True,
             )
         ) == "status, ready, now"
+        assert (
+            utils.normalize_special_characters(
+                "Before <think>private thoughts</think> spoken answer",
+                for_tts=True,
+            )
+            == "Before spoken answer"
+        )
+
+    def test_reasoning_trace_removal_handles_nested_and_incomplete_tags(self) -> None:
+        """Remove nested reasoning blocks without discarding visible completion text."""
+        assert (
+            utils.strip_reasoning_traces(
+                "Before <think>inner <think>nested</think> still hidden</think> After"
+            )
+            == "Before  After"
+        )
+        assert (
+            utils.strip_reasoning_traces("Visible <analysis>unfinished internal text")
+            == "Visible "
+        )
+        assert (
+            utils.strip_reasoning_traces("internal text</think> Visible answer")
+            == " Visible answer"
+        )
 
     def test_format_number_handles_precision_and_non_finite_values(self) -> None:
         """Verify number formatting and invalid precision handling.
