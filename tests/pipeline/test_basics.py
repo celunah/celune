@@ -997,7 +997,7 @@ class TestPipelineAsync:
 
         request = engine.text_queue.get_nowait()
         assert request.text == (
-            "status, ok C drive, Users, user foo underscore bar dot py"
+            "status, ok C drive, Users, user foo underscore bar dot P Y"
         )
         assert request.display_text == raw_text
 

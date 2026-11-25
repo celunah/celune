@@ -577,7 +577,22 @@ class TestUtils:
             "C drive, Users, user"
         )
         assert (utils.normalize_special_characters("foo_bar.py", for_tts=True)) == (
-            "foo underscore bar dot py"
+            "foo underscore bar dot P Y"
+        )
+        assert (
+            utils.normalize_special_characters(
+                "Run rg from script.py. Use the API.",
+                for_tts=True,
+            )
+            == "Run R G from script dot P Y. Use the A P I."
+        )
+        assert (
+            utils.normalize_special_characters("Save config.json", for_tts=True)
+            == "Save config dot J S O N"
+        )
+        assert (
+            utils.normalize_special_characters("Use yt-dlp and ffmpeg", for_tts=True)
+            == "Use Y T D L P and F F M P E G"
         )
         assert (utils.normalize_special_characters('{status: "ok"}', for_tts=True)) == (
             "status, ok"

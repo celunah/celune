@@ -966,16 +966,125 @@ def normalize_special_characters(text: str, *, for_tts: bool = False) -> str:
     return re.sub(r"\s{2,}", " ", normalized).strip()
 
 
+_TTS_SPELLED_COMMANDS = frozenset(
+    {
+        "cp",
+        "df",
+        "du",
+        "fd",
+        "ffmpeg",
+        "fzf",
+        "gh",
+        "ip",
+        "jq",
+        "ln",
+        "ls",
+        "mv",
+        "nc",
+        "npm",
+        "npx",
+        "ps",
+        "rg",
+        "rm",
+        "scp",
+        "sftp",
+        "sox",
+        "ssh",
+        "uv",
+        "yt-dlp",
+    }
+)
+_TTS_SPELLED_FILE_EXTENSIONS = frozenset(
+    {
+        "bat",
+        "cfg",
+        "cjs",
+        "cmd",
+        "csv",
+        "css",
+        "dll",
+        "docx",
+        "env",
+        "exe",
+        "flac",
+        "gguf",
+        "gz",
+        "html",
+        "ini",
+        "ipynb",
+        "jar",
+        "js",
+        "json",
+        "jsonl",
+        "jsx",
+        "lock",
+        "log",
+        "md",
+        "mdx",
+        "mjs",
+        "mp3",
+        "mp4",
+        "onnx",
+        "pdf",
+        "ps1",
+        "pt",
+        "pth",
+        "py",
+        "pyc",
+        "sh",
+        "so",
+        "sql",
+        "svg",
+        "tar",
+        "toml",
+        "ts",
+        "tsx",
+        "txt",
+        "vtt",
+        "wav",
+        "wasm",
+        "webp",
+        "xml",
+        "yaml",
+        "yml",
+        "zip",
+    }
+)
+
+
 def _normalize_tts_token(match: re.Match[str]) -> str:
-    """Render technical token punctuation for speech without changing prose dots."""
+    """Render technical names as letter sequences and expand punctuation."""
     token = match.group(0)
-    token_without_trailing = token.rstrip(",;:!?)]}")
-    is_technical = any(mark in token for mark in ("_", "\\", "/", ":")) or bool(
-        re.search(r"\.[A-Za-z0-9]{1,8}$", token_without_trailing)
-    )
+    token_without_trailing = token.rstrip(",.;:!?)]}")
+    trailing_punctuation = token[len(token_without_trailing) :]
+    normalized_token = token_without_trailing
+
+    if normalized_token.isalpha() and normalized_token.isupper():
+        return " ".join(normalized_token) + trailing_punctuation
+    if normalized_token.casefold() in _TTS_SPELLED_COMMANDS:
+        return (
+            " ".join(
+                character
+                for character in normalized_token.upper()
+                if character.isalnum()
+            )
+            + trailing_punctuation
+        )
+
+    filename, separator, extension = normalized_token.rpartition(".")
+    if separator and extension.casefold() in _TTS_SPELLED_FILE_EXTENSIONS:
+        normalized_token = f"{filename}.{' '.join(extension.upper())}"
+        token = normalized_token + trailing_punctuation
+
+    is_technical = any(
+        mark in normalized_token for mark in ("_", "\\", "/", ":")
+    ) or bool(re.search(r"\.[A-Za-z0-9]{1,8}$", token_without_trailing))
     if not is_technical:
         return token
-    return token.replace("_", " underscore ").replace(".", " dot ")
+    normalized_token = normalized_token.replace("_", " underscore ").replace(
+        ".", " dot "
+    )
+    return normalized_token + trailing_punctuation
 
 
 def available(

@@ -411,8 +411,8 @@ def test_tutorial_playback_stitches_audio_with_caption_transcript(monkeypatch) -
     assert captured_sections == [
         (
             CaptionAlignmentSection(0, 3, 0, 2, 0, 2),
-            CaptionAlignmentSection(24_003, 24_007, 2, 4, 2, 3),
-            CaptionAlignmentSection(48_007, 48_009, 4, 6, 3, 5),
+            CaptionAlignmentSection(24_003, 24_007, 2, 5, 2, 3),
+            CaptionAlignmentSection(48_007, 48_009, 5, 7, 3, 5),
         )
     ]
     assert starts == [0, 1, 2]
