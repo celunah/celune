@@ -185,14 +185,6 @@ def _persona_mood_or_state(
 
     summary = analyzer.summarize_history(persona_history_messages(engine), request)
     if summary is None or not summary.target_state.strip():
-        emotion_warning = (
-            f"Persona emotion analysis fell back to Neutral: {analyzer.last_error}"
-            if analyzer.last_error.strip()
-            else "Persona emotion analysis fell back to Neutral."
-        )
-        log = getattr(engine, "log", None)
-        if callable(log):
-            log(emotion_warning, "warning", loglevel="verbose")
         return "Neutral."
     return summary.target_state
 

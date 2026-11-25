@@ -104,6 +104,7 @@ class _FakeGenerativeModel:
 
     def __init__(self) -> None:
         self.device = "cpu"
+        self.generation_config: Optional[runtime.GenerationConfig] = None
         self.calls: list[dict[str, RecordedKwargValue]] = []
 
     def generate(self, **kwargs) -> runtime.torch.Tensor:
@@ -667,6 +668,63 @@ class TestPersonaApi:
         assert model.calls[0]["max_new_tokens"] == 4
         assert response.prompt_tokens == 12
         assert response.completion_tokens == 4
+
+    def test_generation_uses_a_copy_of_the_model_generation_config(self) -> None:
+        """Pass request generation controls through a copied GenerationConfig."""
+        backend = runtime.PersonaBackend()
+        backend.processor = cast(runtime.PersonaProcessor, _FakeProcessor())
+        backend.tokenizer = cast(runtime.PersonaTokenizer, _FakeTokenizer())
+        model = _FakeGenerativeModel()
+        original_config = runtime.GenerationConfig(
+            max_new_tokens=11,
+            do_sample=True,
+            temperature=0.8,
+            top_p=0.95,
+            repetition_penalty=1.1,
+            pad_token_id=3,
+        )
+        model.generation_config = original_config
+        backend.model = cast(runtime.PersonaModel, model)
+        backend.model_id = "fixture/model"
+        backend.quantization = "4bit"
+
+        with mock.patch.object(
+            backend,
+            "_build_inputs",
+            return_value={"input_ids": runtime.torch.tensor([[1, 2]])},
+        ):
+            backend.generate(
+                runtime.GenerateRequest(
+                    user="hello",
+                    context_space=16,
+                    max_new_tokens=4,
+                    temperature=0.6,
+                    top_p=0.7,
+                    repetition_penalty=1.3,
+                )
+            )
+
+        kwargs = model.calls[0]
+        generation_config = kwargs["generation_config"]
+        assert isinstance(generation_config, runtime.GenerationConfig)
+        assert generation_config is not original_config
+        assert generation_config.max_new_tokens == 4
+        assert generation_config.do_sample is True
+        assert generation_config.temperature == 0.6
+        assert generation_config.top_p == 0.7
+        assert generation_config.repetition_penalty == 1.3
+        assert generation_config.pad_token_id == 7
+        assert original_config.max_new_tokens == 11
+        assert original_config.temperature == 0.8
+        assert original_config.pad_token_id == 3
+        assert not {
+            "max_new_tokens",
+            "do_sample",
+            "temperature",
+            "top_p",
+            "repetition_penalty",
+            "pad_token_id",
+        }.intersection(kwargs)
 
     def test_persona_client_response_keeps_local_token_usage(self) -> None:
         """Keep exact generation usage available to Celune's local agent bridge."""

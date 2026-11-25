@@ -838,8 +838,8 @@ class TestPipelineAsync:
         assert context.mood_or_state == "Thoughtful and slightly tired."
         analyzer.assert_not_called()
 
-    def test_persona_context_logs_emotion_fallback_reason(self) -> None:
-        """Verify emotion-analysis failures are surfaced in verbose logs."""
+    def test_persona_context_does_not_log_neutral_emotion_fallback(self) -> None:
+        """Verify unavailable emotion analysis quietly falls back to Neutral."""
         engine = make_pipeline_engine()
         engine.config = {}
         engine.current_character = "Fixture"
@@ -863,15 +863,7 @@ class TestPipelineAsync:
             )
 
         assert context.mood_or_state == "Neutral."
-        assert captured == [
-            (
-                (
-                    "Persona emotion analysis fell back to Neutral: "
-                    "lunahr/emotispace-128 could not be loaded"
-                ),
-                "warning",
-            )
-        ]
+        assert not captured
 
     def test_persona_prompt_builder_omits_vision_context_without_attachments(
         self,

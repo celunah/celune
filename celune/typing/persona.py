@@ -12,7 +12,7 @@ import numpy as np
 import numpy.typing as npt
 
 from transformers.cache_utils import Cache
-from transformers import StoppingCriteriaList
+from transformers import GenerationConfig, StoppingCriteriaList
 from transformers.tokenization_utils_base import BatchEncoding
 
 from .common import JSONSerializable, VideoMetadataScalar
@@ -35,6 +35,7 @@ type ProcessorKwargValue = Union[
 ]
 type ModelGenerateKwargValue = Union[
     Cache,
+    GenerationConfig,
     torch.Tensor,
     int,
     float,

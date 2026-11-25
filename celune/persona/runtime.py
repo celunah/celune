@@ -3,11 +3,12 @@
 
 from __future__ import annotations
 
-import gc
-import os
-import logging
-import threading
 import contextlib
+import copy
+import gc
+import logging
+import os
+import threading
 from typing import TYPE_CHECKING, Union, Optional, cast
 from collections.abc import Mapping, Callable, Sequence, Generator
 
@@ -17,6 +18,7 @@ from transformers.configuration_utils import PreTrainedConfig
 from transformers.tokenization_utils_base import BatchEncoding
 from transformers import (
     AutoConfig,
+    GenerationConfig,
     AutoTokenizer,
     AutoProcessor,
     AutoModelForCausalLM,
@@ -443,19 +445,31 @@ class PersonaBackend:
                 generation_kwargs["cache_implementation"] = "dynamic"
             if self.model_type == "raon1_nano":
                 generation_kwargs["presence_penalty"] = 1.5
-            pad_token_id = tokenizer.eos_token_id
-            if pad_token_id is not None:
-                generation_kwargs["pad_token_id"] = pad_token_id
+
+            generation_config = getattr(model, "generation_config", None)
+            if isinstance(generation_config, GenerationConfig):
+                generation_config = copy.deepcopy(generation_config)
+                generation_config.max_new_tokens = max_new_tokens
+                generation_config.do_sample = request.temperature > 0
+                generation_config.temperature = request.temperature
+                generation_config.top_p = request.top_p
+                generation_config.repetition_penalty = request.repetition_penalty
+                if tokenizer.eos_token_id is not None:
+                    generation_config.pad_token_id = tokenizer.eos_token_id
+                generation_kwargs["generation_config"] = generation_config
+            else:
+                generation_kwargs["max_new_tokens"] = max_new_tokens
+                generation_kwargs["do_sample"] = request.temperature > 0
+                generation_kwargs["temperature"] = request.temperature
+                generation_kwargs["top_p"] = request.top_p
+                generation_kwargs["repetition_penalty"] = request.repetition_penalty
+                if tokenizer.eos_token_id is not None:
+                    generation_kwargs["pad_token_id"] = tokenizer.eos_token_id
 
             with torch.inference_mode():
                 try:
                     output_ids = model.generate(
                         **model_inputs,
-                        max_new_tokens=max_new_tokens,
-                        do_sample=request.temperature > 0,
-                        temperature=request.temperature,
-                        top_p=request.top_p,
-                        repetition_penalty=request.repetition_penalty,
                         **generation_kwargs,
                     )
                 except Exception as error:
@@ -473,11 +487,6 @@ class PersonaBackend:
                         generation_kwargs["cache_implementation"] = "dynamic"
                     output_ids = model.generate(
                         **model_inputs,
-                        max_new_tokens=max_new_tokens,
-                        do_sample=request.temperature > 0,
-                        temperature=request.temperature,
-                        top_p=request.top_p,
-                        repetition_penalty=request.repetition_penalty,
                         **generation_kwargs,
                     )
 
