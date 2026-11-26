@@ -6,27 +6,19 @@ import asyncio
 import logging
 import tempfile
 import threading
-from types import SimpleNamespace
-from typing import Optional, cast
 from pathlib import Path
 from unittest import mock
 from functools import partial
+from types import SimpleNamespace
+from typing import Optional, cast
 from collections.abc import Callable, Iterator
 
-import numpy as np
 import pytest
+import numpy as np
 from textual import events
 from textual.widget import Widget
 from textual.widgets import Label, RichLog, TextArea, ProgressBar
 
-from celune.ui import app as ui_app
-from celune.ui import runtime as ui_runtime
-from celune.ui import resources as ui_resources
-from celune.i18n import string
-from celune.theme import colors
-from celune.utils import discard
-from celune.celune import Celune
-from celune.config import Config
 from celune.ui.app import (
     Button,
     CeluneUI,
@@ -34,8 +26,18 @@ from celune.ui.app import (
     ButtonActions,
     ProgressLabel,
 )
+from celune.i18n import string
+from celune.theme import colors
+from celune.celune import Celune
+from celune.config import Config
+from celune.utils import discard
+from celune.constants import APP_NAME
+from celune.ui import app as ui_app
 from celune.ui.theme import severity_color
+from celune.ui import runtime as ui_runtime
 from celune.typing.agent import AgentTaskState
+from celune.typing.modes import OperationState
+from celune.ui import resources as ui_resources
 from celune.typing.common import JSONSerializable
 from celune.dataclasses.events import AgentTaskFinishedEvent
 
@@ -1393,6 +1395,45 @@ class TestUIInteractions:
         assert not ui.style_button.has_class("-actions-disabled")
         available.assert_called_once_with()
         thread_cls.return_value.start.assert_called_once()
+
+    @pytest.mark.parametrize(
+        ("operation_state", "placeholder_key"),
+        (
+            (OperationState.NORMAL, "ui.error_placeholder"),
+            (OperationState.SEMI_FATAL, "ui.error_placeholder"),
+            (OperationState.FATAL, "ui.fatal_error_placeholder"),
+        ),
+    )
+    def test_error_placeholder_reflects_operation_fatality(
+        self,
+        operation_state: OperationState,
+        placeholder_key: str,
+    ) -> None:
+        """Use fatal wording only when the core operation is fully fatal."""
+        ui = CeluneUI()
+        ui.input_box = TextArea()
+        ui.style_button = VoiceButton(
+            "Voice",
+            actions=ButtonActions(press=False, hold=False),
+        )
+        ui.resources = cast(Label, None)
+        ui.update_resources = mock.Mock()
+        ui.refresh_vc_controls = mock.Mock()
+        ui.celune = cast(
+            Celune,
+            SimpleNamespace(
+                config={},
+                cur_state="error",
+                operation_state=operation_state,
+            ),
+        )
+
+        ui.change_input_state(locked=True)
+
+        assert ui.input_box.placeholder == string(
+            placeholder_key,
+            app_name=APP_NAME,
+        )
 
     def test_idle_error_restores_singing_input_placeholder(self) -> None:
         """Restore the active CESN prompt after a rejected singing request."""

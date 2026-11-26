@@ -590,7 +590,12 @@ def change_input_state(self, locked: bool) -> None:
                 "ui.wake_placeholder", character_name=character_name
             )
         elif locked and engine_state == "error":
-            placeholder = _app.string("ui.error_placeholder", app_name=APP_NAME)
+            placeholder_key = (
+                "ui.fatal_error_placeholder"
+                if operation_state is OperationState.FATAL
+                else "ui.error_placeholder"
+            )
+            placeholder = _app.string(placeholder_key, app_name=APP_NAME)
         elif locked:
             placeholder = _app.string("ui.wait_placeholder")
         elif self._agent_test_response_queue is not None:
