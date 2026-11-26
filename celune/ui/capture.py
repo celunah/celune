@@ -592,7 +592,7 @@ def change_input_state(self, locked: bool) -> None:
         elif locked and engine_state == "error":
             placeholder_key = (
                 "ui.fatal_error_placeholder"
-                if operation_state is OperationState.FATAL
+                if operation_state in {OperationState.FATAL, OperationState.SEMI_FATAL}
                 else "ui.error_placeholder"
             )
             placeholder = _app.string(placeholder_key, app_name=APP_NAME)

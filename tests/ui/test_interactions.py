@@ -1400,7 +1400,7 @@ class TestUIInteractions:
         ("operation_state", "placeholder_key"),
         (
             (OperationState.NORMAL, "ui.error_placeholder"),
-            (OperationState.SEMI_FATAL, "ui.error_placeholder"),
+            (OperationState.SEMI_FATAL, "ui.fatal_error_placeholder"),
             (OperationState.FATAL, "ui.fatal_error_placeholder"),
         ),
     )
@@ -1409,7 +1409,7 @@ class TestUIInteractions:
         operation_state: OperationState,
         placeholder_key: str,
     ) -> None:
-        """Use fatal wording only when the core operation is fully fatal."""
+        """Use fatal wording only for fatal-class operation states."""
         ui = CeluneUI()
         ui.input_box = TextArea()
         ui.style_button = VoiceButton(
