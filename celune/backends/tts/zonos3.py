@@ -5,6 +5,7 @@ import gc
 import os
 import queue
 import base64
+import warnings
 import threading
 from pathlib import Path
 from dataclasses import dataclass
@@ -15,17 +16,17 @@ import torch
 import numpy as np
 from huggingface_hub import snapshot_download, try_to_load_from_cache
 
-from .base import CeluneBackend
-from ...typing.aliases import AudioChunk
-from ...cevoice import CEVoiceLoader, default_loader
-from ...paths import huggingface_hub_cache_dir, huggingface_progress
-from ...registry.consent import require_model_consent
-from ...typing.backends import BackendArgumentValue, BackendArguments
 from ...registry.tts import (
     TTS_DEFAULT_VOICE,
     ZONOS3_TTS_MODEL_ID,
     ZONOS3_TTS_REVISION,
 )
+from .base import CeluneBackend
+from ...typing.aliases import AudioChunk
+from ...cevoice import CEVoiceLoader, default_loader
+from ...registry.consent import require_model_consent
+from ...paths import huggingface_hub_cache_dir, huggingface_progress
+from ...typing.backends import BackendArgumentValue, BackendArguments
 
 
 _SAMPLE_RATE = 44_100
@@ -135,21 +136,30 @@ def _load_codec_decoder_with_fallback(
     Returns:
         tuple[torch.nn.Module, torch.device]: Loaded decoder and its device.
     """
-    try:
-        decoder_model = load_decoder(device)
-    except torch.cuda.OutOfMemoryError as error:
-        if not automatic or device.type != "cuda":
-            raise
-        error.__traceback__ = None
-        del error
-        gc.collect()
-        torch.cuda.empty_cache()
-        device = torch.device("cpu")
-        log(
-            "[ZONOS3] Matched codec decoder did not fit on CUDA, retrying on CPU",
-            "warning",
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message=(
+                r"`torch\.nn\.utils\.weight_norm` is deprecated in favor of "
+                r"`torch\.nn\.utils\.parametrizations\.weight_norm`\."
+            ),
+            category=FutureWarning,
         )
-        decoder_model = load_decoder(device)
+        try:
+            decoder_model = load_decoder(device)
+        except torch.cuda.OutOfMemoryError as error:
+            if not automatic or device.type != "cuda":
+                raise
+            error.__traceback__ = None
+            del error
+            gc.collect()
+            torch.cuda.empty_cache()
+            device = torch.device("cpu")
+            log(
+                "[ZONOS3] Matched codec decoder did not fit on CUDA, retrying on CPU",
+                "warning",
+            )
+            decoder_model = load_decoder(device)
     return decoder_model, device
 
 
@@ -583,10 +593,15 @@ class Zonos3(CeluneBackend[Zonos3Runtime]):
             "stream": True,
             "stream_decode": "prefix",
         }
-        for option in ("temperature", "top_p", "top_k", "speaker_cfg_scale"):
+        for option, request_option in (
+            ("temperature", "temperature"),
+            ("top_k", "topk"),
+            ("top_p", "top_p"),
+            ("speaker_cfg_scale", "speaker_cfg_scale"),
+        ):
             value = kwargs.pop(option, None)
             if value is not None:
-                request[option] = value
+                request[request_option] = value
 
         output: queue.Queue[_AudioStreamEvent] = queue.Queue(_QUEUE_CAPACITY)
         cancelled = threading.Event()

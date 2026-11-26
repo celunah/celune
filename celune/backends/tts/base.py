@@ -313,7 +313,7 @@ class CeluneBackend[ModelT](ABC):
         if inference_mode == "gguf" and not self.supports_audio_cpp:
             self.log(
                 string("inference.audio_cpp_unavailable", backend=self.name),
-                "warning",
+                "info",
             )
         self.log(
             string(

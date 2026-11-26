@@ -14,8 +14,8 @@ import pytest
 from transformers.modeling_utils import PreTrainedModel
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 
-from celune.utils import discard
 from celune.celune import Celune
+from celune.utils import discard
 from celune.core import sleep as core_sleep
 from celune.core import voice as core_voice
 from celune.core import reload as core_reload
@@ -171,6 +171,8 @@ class TestCeluneReload(CeluneCoreTestSupport):
             supports_audio_cpp = True
 
         celune = self._make_celune(request, {"inference_mode": "gguf"})
+        log_callback = mock.Mock()
+        celune.log_callback = log_callback
         reload_kwargs = core_reload._backend_reload_kwargs(celune, FakeBackend)
         assert reload_kwargs["inference_mode"] == "gguf"
         unsupported = FakeBackend(log=mock.Mock())
@@ -186,6 +188,13 @@ class TestCeluneReload(CeluneCoreTestSupport):
             )
         assert unsupported.requested_inference_mode == "gguf"
         assert unsupported.effective_inference_mode == "native"
+        fallback_logs = [
+            call
+            for call in log_callback.call_args_list
+            if "audio.cpp adapter" in call.args[0]
+        ]
+        assert len(fallback_logs) == 1
+        assert fallback_logs[0].args[1] == "info"
 
         supported = AudioCppFakeBackend(log=mock.Mock())
         with mock.patch(

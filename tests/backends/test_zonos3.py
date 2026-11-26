@@ -2,18 +2,17 @@
 """Tests for ZONOS3-Mini backend selection and progressive stream adaptation."""
 
 import base64
+import warnings
 import threading
 from pathlib import Path
 from unittest import mock
 from types import SimpleNamespace
 from collections.abc import Callable
 
-import pytest
 import torch
+import pytest
 import numpy as np
 
-from celune.typing.backends import BackendArgumentValue
-from celune.registry.tts import TTS_MODELS, ZONOS3_TTS_MODEL_ID, ZONOS3_TTS_REVISION
 from celune.backends.tts.zonos3 import (
     Zonos3,
     Zonos3Runtime,
@@ -21,6 +20,8 @@ from celune.backends.tts.zonos3 import (
     _resolve_codec_device,
     _snapshot_asset_path,
 )
+from celune.typing.backends import BackendArgumentValue
+from celune.registry.tts import TTS_MODELS, ZONOS3_TTS_MODEL_ID, ZONOS3_TTS_REVISION
 
 
 def _backend() -> Zonos3:
@@ -51,6 +52,19 @@ def test_zonos3_resolves_celune_language_codes(
     assert _backend().resolve_generation_language(language) == expected
 
 
+def test_zonos3_uses_info_for_expected_native_inference_fallback() -> None:
+    """Report the expected lack of an audio.cpp adapter without a warning."""
+    log = mock.Mock()
+    backend = Zonos3(log=log)
+
+    backend.configure_inference_mode("gguf")
+
+    fallback_log = next(
+        call for call in log.call_args_list if "audio.cpp adapter" in call.args[0]
+    )
+    assert fallback_log.args[1] == "info"
+
+
 def test_zonos3_registers_apache_model_snapshot() -> None:
     """Expose the pinned Apache-2.0 weight snapshot through Celune consent."""
     metadata = next(item for item in TTS_MODELS if item.model_id == ZONOS3_TTS_MODEL_ID)
@@ -72,6 +86,34 @@ def test_zonos3_defaults_codec_to_the_model_device_and_respects_override(
     monkeypatch.setenv("ZONOS3_AUDIO_CODEC_DEVICE", "cpu")
 
     assert _resolve_codec_device(model_device) == (torch.device("cpu"), False)
+
+
+def test_zonos3_suppresses_only_the_legacy_codec_weight_norm_warning() -> None:
+    """Filter the PyTorch warning while preserving unrelated decoder warnings."""
+    warnings_seen: list[warnings.WarningMessage]
+
+    def load_decoder(_device: torch.device) -> torch.nn.Module:
+        """Emit the known deprecation and an unrelated warning."""
+        warnings.warn(
+            "`torch.nn.utils.weight_norm` is deprecated in favor of "
+            "`torch.nn.utils.parametrizations.weight_norm`.",
+            FutureWarning,
+        )
+        warnings.warn("Unrelated decoder warning", UserWarning)
+        return torch.nn.Identity()
+
+    with warnings.catch_warnings(record=True) as warnings_seen:
+        warnings.simplefilter("always")
+        _load_codec_decoder_with_fallback(
+            load_decoder,
+            torch.device("cpu"),
+            automatic=False,
+            log=mock.Mock(),
+        )
+
+    assert [str(item.message) for item in warnings_seen] == [
+        "Unrelated decoder warning"
+    ]
 
 
 def test_zonos3_retries_automatic_cuda_decoder_load_on_cpu(
@@ -148,6 +190,11 @@ def test_zonos3_forwards_progressive_audio_before_synthesis_finishes(
         assert request["speaker_audio_base64"] == base64.b64encode(
             reference.read_bytes()
         ).decode("ascii")
+        assert request["topk"] == 40
+        assert "top_k" not in request
+        assert request["temperature"] == 0.8
+        assert request["top_p"] == 0.9
+        assert request["speaker_cfg_scale"] == 1.1
         on_audio(np.array([0.0, 0.5], dtype=np.float32))
         first_chunk.set()
         assert allow_second_chunk.wait(timeout=5)
@@ -178,6 +225,10 @@ def test_zonos3_forwards_progressive_audio_before_synthesis_finishes(
             voice="balanced",
             language="en-US",
             max_new_tokens=1024,
+            temperature=0.8,
+            top_k=40,
+            top_p=0.9,
+            speaker_cfg_scale=1.1,
         )
 
         release = threading.Thread(target=release_second_chunk)
