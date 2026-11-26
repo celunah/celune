@@ -130,8 +130,7 @@ int main(int argc, char **argv) {
 
     int return_code = launcher_run(argc, argv);
 
-    if (main_operation &&
-        (return_code != 0 || launcher_startup_was_interrupted())) {
+    if (main_operation && return_code != 0) {
         launcher_reset_terminal_state();
         launcher_prepare_failure_output();
         launcher_report_failure(return_code);

@@ -775,7 +775,9 @@ class TestBackendProxyLifecycle:
             BACKEND_MANIFESTS["mini"], Path("C:/backend")
         )
         with (
-            mock.patch.object(remote.subprocess, "Popen", return_value=process),
+            mock.patch.object(
+                remote.subprocess, "Popen", return_value=process
+            ) as popen,
             mock.patch.object(
                 remote.os,
                 "fdopen",
@@ -789,6 +791,12 @@ class TestBackendProxyLifecycle:
                 {},
             )
 
+        if os.name == "nt":
+            assert popen.call_args.kwargs["creationflags"] & (
+                subprocess.CREATE_NEW_PROCESS_GROUP
+            )
+        else:
+            assert popen.call_args.kwargs["start_new_session"] is True
         assert process.terminated
         assert process.stdin.closed
         assert process.stdout.closed

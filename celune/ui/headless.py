@@ -133,16 +133,18 @@ class CeluneHeadlessUI:
             if SIGTSTP is not None:
                 signal.signal(SIGTSTP, self._signal_handler)
 
-        while not self._exit:
-            if launcher_loss_requested():
-                self.close()
-                self._exit = True
-                continue
-            time.sleep(0.1)
+        try:
+            while not self._exit:
+                if launcher_loss_requested():
+                    self._exit = True
+                    break
+                time.sleep(0.1)
+        finally:
+            self.close()
 
     def close(self) -> None:
         """Exit from Celune's headless interface."""
-
+        self._exit = True
         if self.celune is not None:
             self.celune.close()
 
@@ -165,19 +167,17 @@ class CeluneHeadlessUI:
         )
 
     def _signal_handler_windows(self, sig: int) -> bool:
-        """Handle incoming Windows signals."""
+        """Request orderly shutdown after an incoming Windows signal."""
         if sig in (2, 5, 6):
-            self.close()
             self._exit = True
             return True
         return False
 
     def _signal_handler(self, sig: int, frame: Optional[FrameType]) -> None:
-        """Handle incoming signals."""
+        """Request orderly shutdown after an incoming signal."""
         discard(frame)
 
         if SIGTSTP is not None and sig == SIGTSTP:
             return
 
-        self.close()
         self._exit = True

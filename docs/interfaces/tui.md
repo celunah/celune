@@ -188,4 +188,6 @@ Linux uses Textual when a desktop session is detected, and uses headless mode
 for TTY-only or non-interactive sessions. If detection fails, the application
 attempts the full Textual UI and retains its existing unsupported-terminal handling.
 The headless UI forwards logs and lifecycle callbacks but has no editable input
-box. Use the REST API, Python calls, or extensions to submit work.
+box. Use the REST API, Python calls, or extensions to submit work. Press Ctrl+C
+to request an orderly shutdown. Celune stops isolated backend workers before
+exiting, and the launcher treats a clean shutdown as success.

@@ -563,6 +563,7 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
                     env=environment_variables,
                     close_fds=True,
                     startupinfo=startup_info,
+                    creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
                 )
             else:
                 command.extend(
@@ -580,6 +581,7 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
                     stderr=subprocess.PIPE,
                     env=environment_variables,
                     pass_fds=(worker_binary_input, worker_binary_output),
+                    start_new_session=True,
                 )
             for handle in windows_binary_handles:
                 with contextlib.suppress(OSError):

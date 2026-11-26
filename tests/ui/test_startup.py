@@ -4,6 +4,7 @@
 import sys
 import time
 import queue
+import signal
 import asyncio
 import tempfile
 import warnings
@@ -1725,6 +1726,28 @@ class TestUIStartup:
         assert not schedule_thread.is_alive()
         assert not cancel_thread.is_alive()
         assert (ui.call_from_thread.call_count) == (2)
+
+    def test_headless_sigint_closes_celune_after_the_run_loop(self) -> None:
+        """Handle Ctrl+C as a graceful exit and close Celune outside the signal handler."""
+        ui = CeluneHeadlessUI({"headless_nocolor": True})
+        celune = mock.Mock()
+        ui.celune = cast(Celune, celune)
+
+        def interrupt(_interval: float) -> None:
+            ui._signal_handler(signal.SIGINT, None)
+            celune.close.assert_not_called()
+
+        with (
+            mock.patch("celune.ui.headless.signal.signal"),
+            mock.patch("celune.ui.headless.time.sleep", side_effect=interrupt),
+            mock.patch(
+                "celune.ui.headless.launcher_loss_requested", return_value=False
+            ),
+        ):
+            ui.run()
+
+        assert ui._exit
+        celune.close.assert_called_once_with()
 
     def test_headless_ui_warns_without_attached_celune(self) -> None:
         """Verify headless mode warns before doing nothing without Celune."""
