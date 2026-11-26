@@ -1750,12 +1750,16 @@ class DebugInspectorScreen(screen.ModalScreen[None]):
         if event.input.id == "debug-filter":
             self._populate_tree(event.value)
         elif event.input.id == "debug-glow-color":
+            if event.value != event.input.value:
+                return
             validation = event.input.validate(event.value)
             if event.value and (validation is None or not validation.is_valid):
                 self._show_glow_validation_message(string("debug.glow_invalid_color"))
             elif validation is not None and validation.is_valid:
                 self._clear_glow_validation_message()
         elif event.input.id == "debug-glow-duration":
+            if event.value != event.input.value:
+                return
             validation = event.input.validate(event.value)
             if event.value and (validation is None or not validation.is_valid):
                 self._show_glow_validation_message(

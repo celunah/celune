@@ -590,6 +590,10 @@ def test_glow_effects_component_validates_inputs_and_runs_actions() -> None:
             glow.set_color.assert_called_once_with("#baceff", 2.06)
             assert not validation.display
 
+            screen.on_input_changed(Input.Changed(color_input, "#12"))
+            assert not validation.display
+            assert str(validation.content) == ""
+
             await pilot.click("#debug-glow-effect-halloween")
             await pilot.click("#debug-glow-effect-christmas")
             await pilot.click("#debug-glow-effect-june")
