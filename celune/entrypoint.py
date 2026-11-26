@@ -213,6 +213,14 @@ def _flush_startup_diagnostics() -> None:
     _STARTUP_DIAGNOSTICS.clear()
 
 
+def _report_startup_progress(message: str) -> None:
+    """Deliver live startup progress to the active UI or headless console."""
+    if _STARTUP_DIAGNOSTIC_SINK is not None:
+        _STARTUP_DIAGNOSTIC_SINK(message)
+    else:
+        print(message, flush=True)
+
+
 def normalize_argv0(argv: Optional[list[str]] = None) -> list[str]:
     """Return argv with the launcher-facing program name normalized when applicable.
 
@@ -1788,7 +1796,7 @@ def start(
                     caption_callback=ui.tts_caption,
                     log_level=active_log_level,
                     config=config,
-                    startup_callback=_print_startup_diagnostic,
+                    startup_callback=_report_startup_progress,
                 )
 
             ui = CeluneUI(
@@ -1821,7 +1829,7 @@ def start(
                 error_callback=ui_headless.headless_error,
                 log_level=active_log_level,
                 config=config,
-                startup_callback=_print_startup_diagnostic,
+                startup_callback=_report_startup_progress,
             )
             ui_headless.celune = celune
             _flush_startup_diagnostics()

@@ -212,10 +212,10 @@ class Celune(CeluneStateAccessors):
         startup_callback: Optional[Callable[[str], None]] = None,
         toast_callback: Optional[ToastCallback] = None,
     ) -> None:
-        """Create the Celune engine and retain its deferred startup callback.
+        """Create Celune and retain its startup progress callback.
 
-        The optional ``startup_callback`` receives the initialization-core
-        checkpoint when :meth:`load` begins.
+        The optional ``startup_callback`` receives live isolated-backend environment
+        progress and the initialization-core checkpoint when :meth:`load` begins.
         """
         core_lifecycle.initialize(
             self,

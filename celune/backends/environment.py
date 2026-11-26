@@ -13,11 +13,13 @@ import contextlib
 import subprocess
 from pathlib import Path
 from typing import Optional
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from dataclasses import asdict, dataclass
 
 
+from ..i18n import string
 from ..paths import backend_environments_dir, temp_directory_environment
+from ..typing.aliases import LogCallback
 from ..exceptions import BackendEnvironmentError as _BackendEnvironmentError
 
 __all__ = [
@@ -390,12 +392,16 @@ class BackendEnvironmentManager:
         self,
         manifest: BackendManifest,
         python_executable: Optional[str] = None,
+        log_callback: Optional[LogCallback] = None,
+        progress_callback: Optional[Callable[[str], None]] = None,
     ) -> BackendEnvironment:
         """Install a backend environment if it is not already ready.
 
         Args:
             manifest: The backend dependency manifest to install.
             python_executable: Optional Python interpreter used to create the venv.
+            log_callback: Optional logger used for environment setup milestones.
+            progress_callback: Optional immediate callback for startup progress.
 
         Returns:
             BackendEnvironment: The ready backend environment.
@@ -405,11 +411,20 @@ class BackendEnvironmentManager:
         """
         environment = self.environment_for(manifest)
         lock_path = self.root / manifest.backend_id / ".install.lock"
+
+        def report_progress(key: str) -> None:
+            message = string(key, backend=manifest.backend_id)
+            if progress_callback is not None:
+                progress_callback(message)
+            elif log_callback is not None:
+                log_callback(message)
+
         if environment.is_ready:
             with exclusive_lock(lock_path, self.lock_timeout):
                 self._remove_superseded_environments(environment)
             return environment
 
+        report_progress("backend.environment_preparing")
         if self.uv_executable is None:
             raise _BackendEnvironmentError(
                 "uv is required to install isolated backend environments"
@@ -417,6 +432,7 @@ class BackendEnvironmentManager:
 
         with exclusive_lock(lock_path, self.lock_timeout):
             if environment.is_ready:
+                report_progress("backend.environment_ready")
                 self._remove_superseded_environments(environment)
                 return environment
 
@@ -428,6 +444,7 @@ class BackendEnvironmentManager:
             try:
                 temporary_root.mkdir(parents=True, exist_ok=True)
                 virtualenv = temporary_root / "venv"
+                report_progress("backend.environment_creating")
                 self._run_uv(
                     "venv",
                     "--python",
@@ -471,6 +488,7 @@ class BackendEnvironmentManager:
                         encoding="utf-8",
                     )
                     install_arguments.extend(("--overrides", str(overrides_path)))
+                report_progress("backend.environment_installing")
                 self._run_uv(*install_arguments, *manifest.requirements)
                 metadata = {
                     "manifest": asdict(manifest),
@@ -490,6 +508,7 @@ class BackendEnvironmentManager:
                 )
             self._remove_superseded_environments(environment)
 
+        report_progress("backend.environment_ready")
         return environment
 
     @staticmethod

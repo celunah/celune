@@ -138,10 +138,10 @@ def initialize(
     startup_callback: Optional[Callable[[str], None]] = None,
     toast_callback: Optional[ToastCallback] = None,
 ) -> None:
-    """Create the Celune engine and retain its deferred startup callback.
+    """Create Celune and retain its startup progress callback.
 
-    The optional ``startup_callback`` receives the initialization-core
-    checkpoint when :meth:`load` begins.
+    The optional ``startup_callback`` receives live isolated-backend environment
+    progress and the initialization-core checkpoint when :meth:`load` begins.
     """
 
     # "protected member" - she is being created, what are you on?
@@ -155,6 +155,7 @@ def initialize(
     self._startup_banner_emitted = False
     self._startup_log_sink = log_callback or _noop_message
     self._startup_callback = startup_callback
+    self._startup_environment_callback = startup_callback
     self._callbacks = CeluneCallbackState(
         log_callback=partial(_buffer_startup_log, self),
         toast_callback=toast_callback or _noop_toast,
@@ -409,6 +410,7 @@ def initialize(
                     self,
                     resolved_vc_backend,
                     log=self.log_callback,
+                    startup_progress_callback=self._startup_callback,
                 )
             if available("f0_condition", obj=self.vc_backend):
                 self.vc_backend.f0_condition = self.vc_f0_condition
@@ -434,6 +436,8 @@ def initialize(
                 log_level,
             )
         ) from e
+
+    self._startup_environment_callback = None
 
     if chunk_size:
         self.chunk_size = chunk_size

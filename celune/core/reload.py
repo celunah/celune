@@ -8,6 +8,7 @@ import time
 import contextlib
 from pathlib import Path
 from dataclasses import dataclass
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Union, Optional, cast
 
 from transformers.modeling_utils import PreTrainedModel
@@ -213,7 +214,11 @@ def resolve_tts_backend(
             effective=effective_mode,
         )
     )
-    backend = resolve_backend(backend_spec, **backend_kwargs)
+    backend = resolve_backend(
+        backend_spec,
+        startup_progress_callback=self._startup_environment_callback,
+        **backend_kwargs,
+    )
     backend.configure_inference_mode(inference_mode, log=False)
     backend.bind_progress(self.progress_callback)
     backend.log_level = getattr(self, "log_level", "info")
@@ -224,9 +229,14 @@ def resolve_vc_backend(
     self,
     backend_spec: VCBackendSpec,
     log: Optional[MessageCallback] = None,
+    startup_progress_callback: Optional[Callable[[str], None]] = None,
 ) -> CeluneVCBackend:
     """Resolve a voice-conversion backend and bind runtime callbacks."""
-    backend = create_vc_backend(backend_spec, log=log)
+    backend = create_vc_backend(
+        backend_spec,
+        log=log,
+        startup_progress_callback=startup_progress_callback,
+    )
     backend.bind_progress(self.progress_callback)
     backend.log_level = getattr(self, "log_level", "info")
     return backend

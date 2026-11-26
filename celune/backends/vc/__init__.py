@@ -2,6 +2,7 @@
 """Celune voice-conversion backend initialization manager."""
 
 from typing import Union, Optional
+from collections.abc import Callable
 
 from ...utils import discard
 from .base import CeluneVCBackend
@@ -40,12 +41,14 @@ def _default_log(
 def resolve_vc_backend(
     backend_name: Union[str, type[CeluneVCBackend], CeluneVCBackend],
     log: Optional[LogCallback] = None,
+    startup_progress_callback: Optional[Callable[[str], None]] = None,
 ) -> CeluneVCBackend:
     """Resolve a voice-conversion backend specification into an instance.
 
     Args:
         backend_name: A backend name, backend class, or backend instance.
         log: Optional log callback to expose during backend construction.
+        startup_progress_callback: Optional immediate callback for isolated environment setup.
 
     Returns:
         CeluneVCBackend: The resolved voice-conversion backend instance.
@@ -77,7 +80,11 @@ def resolve_vc_backend(
 
         from ...cedts.remote import RemoteVCBackendProxy
 
-        return RemoteVCBackendProxy(BACKEND_MANIFESTS[key], log=log)
+        return RemoteVCBackendProxy(
+            BACKEND_MANIFESTS[key],
+            log=log,
+            startup_progress_callback=startup_progress_callback,
+        )
 
     raise TypeError(
         "'backend_name' must be a voice-conversion backend instance, "

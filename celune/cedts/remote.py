@@ -350,6 +350,7 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
         fatal: Optional[abc.Callable[[], None]] = None,
         environment_manager: Optional[BackendEnvironmentManager] = None,
         event_callback: Optional[abc.Callable[[WorkerMessage], None]] = None,
+        startup_progress_callback: Optional[abc.Callable[[str], None]] = None,
         **backend_kwargs: BackendArgumentValue,
     ) -> None:
         from ..config import inference_mode as config_inference_mode
@@ -419,7 +420,11 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
         self._response_queue_item_sizes = {}
         self._response_queue_bytes = {}
 
-        environment = self._environment_manager.ensure(manifest)
+        environment = self._environment_manager.ensure(
+            manifest,
+            log_callback=log,
+            progress_callback=startup_progress_callback,
+        )
         try:
             if effective_mode == "audio_cpp":
                 try:
@@ -2345,11 +2350,13 @@ class RemoteVCBackendProxy(CeluneVCBackend):
         manifest: BackendManifest,
         log: LogCallback,
         environment_manager: Optional[BackendEnvironmentManager] = None,
+        startup_progress_callback: Optional[abc.Callable[[str], None]] = None,
     ) -> None:
         self._worker = RemoteBackendProxy(
             manifest,
             log=log,
             environment_manager=environment_manager,
+            startup_progress_callback=startup_progress_callback,
         )
         super().__init__(log=log)
         self.name = self._worker.name

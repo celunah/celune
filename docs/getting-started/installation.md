@@ -139,7 +139,10 @@ workers. On Windows this is typically
 `C:\Users\<user>\AppData\Local\Celune\huggingface\hub`. Explicit
 `HF_HOME` or `HF_HUB_CACHE` environment variables override these defaults.
 Downloads are reported through Celune's startup progress path rather than raw
-model progress bars.
+model progress bars. When an isolated backend environment must be created,
+Celune also reports environment preparation, Python environment creation, and
+dependency installation as they begin. These updates appear in the loading UI or
+headless console while setup is still running.
 
 ## Optional environment variables
 

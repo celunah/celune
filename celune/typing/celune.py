@@ -259,6 +259,7 @@ class CeluneStateAccessors:
     _startup_banner_emitted: bool
     _startup_log_sink: MessageCallback
     _startup_callback: Optional[Callable[[str], None]]
+    _startup_environment_callback: Optional[Callable[[str], None]]
     _voice_reload_guard: threading.Lock
     _voice_reload_active: bool
     _agent_needle_error: Optional[str]

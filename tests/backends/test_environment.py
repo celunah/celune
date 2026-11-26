@@ -31,6 +31,7 @@ from celune.exceptions import (
     CEDTSProtocolError,
     BackendEnvironmentError,
 )
+from celune.i18n import string
 from celune.utils import discard
 from celune.typing.worker import (
     WorkerValue,
@@ -59,6 +60,7 @@ from celune.typing.backends import (
 from celune.paths import temp_data_dir
 from celune.backends import environment
 from celune.cedts import remote, worker
+from celune.backends.tts import resolve_backend
 from celune.backends.environment import (
     BACKEND_MANIFESTS,
     BackendManifest,
@@ -103,6 +105,14 @@ class TestBackendEnvironment:
         assert manager.environment_for(native).root != (
             manager.environment_for(audio_cpp).root
         )
+
+    def test_backend_resolver_forwards_startup_progress_to_worker_proxy(self) -> None:
+        """Connect the engine startup callback to isolated worker setup."""
+        progress_callback = mock.Mock()
+        with mock.patch("celune.cedts.remote.RemoteBackendProxy") as proxy:
+            resolve_backend("mini", startup_progress_callback=progress_callback)
+
+        assert proxy.call_args.kwargs["startup_progress_callback"] is progress_callback
 
     def test_worker_description_and_proxy_preserve_singing_capability(self) -> None:
         """Expose the worker's singing capability to the core proxy."""
@@ -636,6 +646,44 @@ class TestBackendEnvironment:
             assert "--no-cache" in run.call_args_list[1].args[0]
             assert "--no-sources" in run.call_args_list[1].args[0]
             assert "--no-deps" not in run.call_args_list[1].args[0]
+
+    def test_ensure_reports_setup_progress_before_uv_operations(self) -> None:
+        """Show each long environment setup stage as it begins."""
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            manager = BackendEnvironmentManager(
+                root=Path(temporary_directory), uv_executable="uv"
+            )
+            manifest = BackendManifest("test", "tts", (), "module", "Backend")
+            progress: list[str] = []
+
+            def fake_run(command: list[str], **_kwargs) -> None:
+                if command[1] == "venv":
+                    assert progress[-1] == string(
+                        "backend.environment_creating", backend="test"
+                    )
+                    backend_environment = manager.environment_for(manifest)
+                    relative_python = backend_environment.python.relative_to(
+                        backend_environment.virtualenv
+                    )
+                    virtualenv_python = Path(command[-1]) / relative_python
+                    virtualenv_python.parent.mkdir(parents=True, exist_ok=True)
+                    virtualenv_python.touch()
+                elif command[1] == "pip":
+                    assert progress[-1] == string(
+                        "backend.environment_installing", backend="test"
+                    )
+
+            with mock.patch(
+                "celune.backends.environment.subprocess.run", side_effect=fake_run
+            ):
+                manager.ensure(manifest, progress_callback=progress.append)
+
+            assert progress == [
+                string("backend.environment_preparing", backend="test"),
+                string("backend.environment_creating", backend="test"),
+                string("backend.environment_installing", backend="test"),
+                string("backend.environment_ready", backend="test"),
+            ]
 
     def test_ensure_installs_into_a_temporary_environment_then_publishes_it(
         self,

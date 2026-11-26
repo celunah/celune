@@ -21,6 +21,22 @@ entrypoint = main.load_entrypoint_module()
 class TestDoctorCommand:
     """Verify `celune doctor` works without booting the full app."""
 
+    def test_startup_progress_is_delivered_immediately(self, capsys) -> None:
+        """Write headless setup progress immediately when no UI sink exists."""
+        with mock.patch.object(entrypoint, "_STARTUP_DIAGNOSTIC_SINK", None):
+            entrypoint._report_startup_progress("Installing backend dependencies...")
+
+        assert capsys.readouterr().out == "Installing backend dependencies...\n"
+
+    def test_startup_progress_uses_the_active_ui_sink(self, capsys) -> None:
+        """Deliver live setup progress to the UI when its sink is available."""
+        sink = mock.Mock()
+        with mock.patch.object(entrypoint, "_STARTUP_DIAGNOSTIC_SINK", sink):
+            entrypoint._report_startup_progress("Installing backend dependencies...")
+
+        sink.assert_called_once_with("Installing backend dependencies...")
+        assert capsys.readouterr().out == ""
+
     @pytest.mark.parametrize(
         ("cuda_version", "expected_ok"),
         (

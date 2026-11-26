@@ -66,6 +66,7 @@ def resolve_backend(
     backend_name: Union[str, type[CeluneBackend], CeluneBackend],
     log: Optional[LogCallback] = None,
     fatal: Optional[Callable[[], None]] = None,
+    startup_progress_callback: Optional[Callable[[str], None]] = None,
     **backend_kwargs,
 ) -> CeluneBackend:
     """Resolve a backend specification into a backend instance.
@@ -74,6 +75,7 @@ def resolve_backend(
         backend_name: A backend name, backend class, or backend instance.
         log: Optional log callback to expose during backend construction.
         fatal: Optional fatal callback to expose during backend construction.
+        startup_progress_callback: Optional immediate callback for isolated environment setup.
         backend_kwargs: Backend-specific constructor options.
 
     Returns:
@@ -118,6 +120,7 @@ def resolve_backend(
             manifest,
             log=log,
             fatal=fatal,
+            startup_progress_callback=startup_progress_callback,
             **backend_kwargs,
         )
 
