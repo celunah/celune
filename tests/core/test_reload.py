@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for Celune core behavior without real models or GPU work."""
 
+import asyncio
 import weakref
 import threading
 import contextlib
@@ -288,6 +289,34 @@ class TestCeluneReload(CeluneCoreTestSupport):
         assert celune._reload_pending
         assert not celune._model_ready.is_set()
         thread_cls.return_value.start.assert_called_once_with()
+
+    def test_set_voice_async_prepares_voice_with_the_core_helper(
+        self,
+        request: pytest.FixtureRequest,
+    ) -> None:
+        """Run async voice preparation through its module-level core helper."""
+        celune = self._make_celune(request, {})
+        celune.loaded = True
+        celune.current_voice = "balanced"
+        celune.voices = ("balanced", "bold")
+
+        def set_active_voice(name: str) -> None:
+            """Make the fake reload publish its selected voice."""
+            celune.current_voice = name
+            celune.loaded = True
+
+        with (
+            mock.patch.object(
+                core_voice,
+                "_prepare_voice_change",
+                return_value=True,
+            ) as prepare_voice,
+            mock.patch.object(celune, "change_voice", side_effect=set_active_voice),
+        ):
+            assert asyncio.run(celune.set_voice_async("bold"))
+
+        prepare_voice.assert_called_once_with(celune, "bold")
+        assert celune.current_voice == "bold"
 
     def test_set_voice_locks_voice_controls_during_reload(
         self, request: pytest.FixtureRequest

@@ -264,7 +264,7 @@ async def set_voice_async(self, name: str, timeout: float = 30.0) -> bool:
                 self.log(string("celune.reload_already_in_progress"), "warning")
                 return False
             self._voice_reload_active = True
-        if not await run_in_daemon_thread(self._prepare_voice_change, name):
+        if not await run_in_daemon_thread(_prepare_voice_change, self, name):
             _clear_voice_reload_guard(self)
             return False
         worker = asyncio.create_task(
