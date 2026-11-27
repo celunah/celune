@@ -883,7 +883,22 @@ class TestApiWebUI:
                 change_voice_lock_state_callback=lambda locked: None,
             ),
         )
+        original_log_callback = celune.log_callback
+        original_input_state_callback = celune.change_input_state_callback
         api.bind_celune(celune)
+
+        assert (
+            getattr(celune.log_callback, "_celune_callback_trace_target", None)
+            is original_log_callback
+        )
+        assert (
+            getattr(
+                celune.change_input_state_callback,
+                "_celune_callback_trace_target",
+                None,
+            )
+            is original_input_state_callback
+        )
 
         celune.change_input_state_callback(True)
         celune.change_voice_lock_state_callback(True)

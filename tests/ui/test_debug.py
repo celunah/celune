@@ -638,6 +638,32 @@ def replacement_callback(_message: str) -> None:
     """Serve as a replacement module-level callback for the live inspector test."""
 
 
+def test_callback_usage_follows_outer_callback_trace_targets() -> None:
+    """Use explicit inner-wrapper counts for nested runtime callbacks."""
+    invoked: list[str] = []
+    trace = DebugCallTrace(SimpleNamespace())
+    trace.set_inspector_open(True)
+
+    def traced_callback(message: str) -> None:
+        invoked.append(message)
+
+    def outer_callback(message: str) -> None:
+        trace.record_callback_invocation(traced_callback)
+        traced_callback(message)
+
+    outer_callback._celune_callback_trace_target = traced_callback  # type: ignore[attr-defined]
+    try:
+        outer_callback("message")
+
+        call_count, last_called_ns = trace.callback_usage(outer_callback)
+
+        assert invoked == ["message"]
+        assert call_count == 1
+        assert last_called_ns is not None
+    finally:
+        trace.set_inspector_open(False)
+
+
 def test_engine_callbacks_render_as_a_live_callback_viewer() -> None:
     """Show current callback handlers and update their observed call counts."""
 

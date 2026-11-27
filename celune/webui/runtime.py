@@ -832,6 +832,22 @@ def wrap_celune_callbacks(
         )
         original_voice_lock_state(locked)
 
+    callback_trace_targets = (
+        (wrapped_log, original_log),
+        (wrapped_status, original_status),
+        (wrapped_error, original_error),
+        (wrapped_progress, original_progress),
+        (wrapped_idle, original_idle),
+        (wrapped_queue_available, original_queue_available),
+        (wrapped_caption_progress, original_caption_progress),
+        (wrapped_caption, original_caption),
+        (wrapped_voice_changed, original_voice_changed),
+        (wrapped_input_state, original_input_state),
+        (wrapped_voice_lock_state, original_voice_lock_state),
+    )
+    for callback, trace_target in callback_trace_targets:
+        callback._celune_callback_trace_target = trace_target  # type: ignore[attr-defined]
+
     glow = getattr(celune, "glow", None)
     if glow is not None and available("fatal", obj=glow):
         original_fatal = glow.fatal

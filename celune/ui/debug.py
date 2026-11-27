@@ -562,11 +562,21 @@ class DebugCallTrace:
 
     def callback_usage(self, target: object) -> tuple[int, Optional[int]]:
         """Return and collect invocations for one current callback target."""
-        if isinstance(target, FunctionType):
-            with self._lock:
-                target_calls = self._callback_target_calls.get(target)
+        trace_target = target
+        visited_targets: set[int] = set()
+        while callable(trace_target) and id(trace_target) not in visited_targets:
+            visited_targets.add(id(trace_target))
+            if isinstance(trace_target, FunctionType):
+                with self._lock:
+                    target_calls = self._callback_target_calls.get(trace_target)
                 if target_calls is not None:
                     return target_calls[0], target_calls[1] or None
+            trace_target = getattr(
+                trace_target,
+                "_celune_callback_trace_target",
+                None,
+            )
+
         code_target = target.func if isinstance(target, functools.partial) else target
         if isinstance(code_target, MethodType):
             code_target = code_target.__func__
