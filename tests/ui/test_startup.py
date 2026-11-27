@@ -1184,8 +1184,8 @@ class TestUIStartup:
         assert runtime._closed
         assert ui._interaction_state.runtime_shutdown_complete
 
-    def test_callback_binding_does_not_chain_same_callback(self) -> None:
-        """Verify an already-installed callback is not invoked through a wrapper."""
+    def test_callback_binding_tracks_same_callback_without_duplicating_it(self) -> None:
+        """Count an already-installed callback while invoking it only once."""
         calls: list[str] = []
 
         def callback(message: str) -> None:
@@ -1197,12 +1197,20 @@ class TestUIStartup:
             SimpleNamespace(log_callback=callback),
         )
         ui.celune = fake_celune
+        trace = ui._debug_call_trace
+        trace.set_enabled(True)
+        trace.set_inspector_open(True)
+        try:
+            ui._chain_runtime_callback("log_callback", callback)
+            fake_celune.log_callback("message")
 
-        ui._chain_runtime_callback("log_callback", callback)
-        fake_celune.log_callback("message")
-
-        assert calls == ["message"]
-        assert fake_celune.log_callback is callback
+            assert calls == ["message"]
+            assert fake_celune.log_callback is not callback
+            assert trace.callback_usage(fake_celune.log_callback)[0] == 1
+        finally:
+            trace.set_inspector_open(False)
+            trace.set_enabled(False)
+            ui.release_instance()
 
     def test_callback_binding_tracks_each_chained_invocation(self) -> None:
         """Count UI callback wrappers separately even though they share code."""

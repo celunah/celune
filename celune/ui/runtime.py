@@ -370,12 +370,11 @@ def _chain_runtime_callback(
         setattr(self.celune, attribute, callback)
         return
     current = cast(Callable[..., None], current_value)
-    if current == callback:
-        return
     if attribute == "log_callback" and callback == getattr(
         self.celune, "_startup_log_sink", None
     ):
         return
+    same_callback = current == callback
     chained_callbacks = getattr(current, "_celune_callback_chain", ())
     if callback in chained_callbacks:
         return
@@ -441,7 +440,8 @@ def _chain_runtime_callback(
         if callable(record_invocation):
             record_invocation(chained)
         invoke(callback, args, kwargs)
-        invoke(current, args, kwargs)
+        if not same_callback:
+            invoke(current, args, kwargs)
 
     chained._celune_callback_chain = (  # type: ignore[attr-defined]
         *chained_callbacks,

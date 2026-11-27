@@ -707,8 +707,10 @@ def test_engine_callbacks_render_as_a_live_callback_viewer() -> None:
             trace.set_paused(False)
             callback_state.log_callback("first message")
             callback_state.log_callback("second message")
-            screen._refresh_live_calls(force=True)
-            await pilot.pause()
+            for _ in range(40):
+                await pilot.pause(0.05)
+                if screen._callback_entries["log_callback"].call_count == 2:
+                    break
 
             callback_record = screen._callback_entries["log_callback"]
             assert callback_record.call_count == 2
@@ -729,8 +731,10 @@ def test_engine_callbacks_render_as_a_live_callback_viewer() -> None:
 
             trace.set_paused(False)
             callback_state.log_callback("replacement message")
-            screen._refresh_live_calls(force=True)
-            await pilot.pause()
+            for _ in range(40):
+                await pilot.pause(0.05)
+                if screen._callback_entries["log_callback"].call_count == 1:
+                    break
 
             callback_record = screen._callback_entries["log_callback"]
             assert callback_record.call_count == 1
