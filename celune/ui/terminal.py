@@ -5,6 +5,7 @@ import re
 import sys
 import time
 import logging
+import traceback
 import threading
 from typing import Literal, Optional
 from dataclasses import replace, dataclass
@@ -861,6 +862,11 @@ class UILogHandler(logging.Handler):
 
         if not message:
             return
+
+        if record.exc_info is not None and record.levelno >= logging.ERROR:
+            exception_text = "".join(traceback.format_exception(*record.exc_info))
+            if exception_text:
+                message = f"{message}\n{exception_text.rstrip()}"
 
         if (
             message.startswith("triton not found")

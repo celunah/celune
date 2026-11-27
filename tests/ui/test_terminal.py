@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for terminal and Textual selection menus."""
 
+import logging
+
 import pytest
 from textual.app import App
 from textual.message import Message
@@ -9,7 +11,36 @@ from textual.widgets import Button, Static
 
 from celune.ui.theme import CELUNE_CSS
 from celune.ui.app import CeluneUI, SelectMenuOverlay
-from celune.ui.terminal import SelectMenuOption, SelectMenuWidget
+from celune.ui.terminal import SelectMenuOption, SelectMenuWidget, UILogHandler
+
+
+def test_ui_log_handler_preserves_error_tracebacks() -> None:
+    """Include captured Python exception details in UI error logs."""
+    captured: list[tuple[str, str]] = []
+    handler = UILogHandler(
+        lambda msg, severity="info", **_kwargs: captured.append((msg, severity))
+    )
+    with pytest.raises(RuntimeError) as caught:
+        raise RuntimeError("voice reload failed")
+    error = caught.value
+    record = logging.LogRecord(
+        "uvicorn.error",
+        logging.ERROR,
+        __file__,
+        1,
+        "Exception in ASGI application",
+        (),
+        (type(error), error, error.__traceback__),
+    )
+
+    handler.emit(record)
+
+    assert len(captured) == 1
+    message, severity = captured[0]
+    assert severity == "error"
+    assert message.startswith("Internal runtime error: Exception in ASGI application")
+    assert "Traceback (most recent call last):" in message
+    assert "RuntimeError: voice reload failed" in message
 
 
 def test_select_menu_widget_aligns_values_after_longest_label() -> None:
